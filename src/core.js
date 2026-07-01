@@ -78,17 +78,43 @@ function addCurrent(ctx, nameOverride) {
   return { name: name, email: email, refreshed: false };
 }
 
+// A stored credential must at least be a non-empty string, and if it looks like
+// JSON it must parse — a truncated blob is refused instead of restored.
+function validateBlob(name, blob) {
+  if (typeof blob !== 'string' || !blob.trim()) {
+    throw new Error("profile '" + name + "' credential data is empty — remove it and run 'ccswitch add' again");
+  }
+  const t = blob.trim();
+  if (t[0] === '{' || t[0] === '[') {
+    try { JSON.parse(t); } catch (e) {
+      throw new Error("profile '" + name + "' credential data is unreadable (corrupt/truncated) — remove it and run 'ccswitch add' again");
+    }
+  }
+}
+
 // Load a saved profile: write its token to the live store and patch the pointer.
+// Transactional: the config pointer is written first and rolled back if the live
+// credential write fails, so a half-switched state never survives.
 function applyProfile(ctx, name) {
   const meta = profiles.read(ctx.configDir, name);
   if (!meta) throw new Error("no such profile: '" + name + "'");
   const blob = ctx.store.getProfile(name);
   if (!blob) throw new Error("profile '" + name + "' has no stored credentials");
+  validateBlob(name, blob);
   const cfg = claude.loadForWrite(ctx.claudeConfigPath); // {} if missing, throws if corrupt
+  const prevCfg = JSON.parse(JSON.stringify(cfg));
   if (meta.oauthAccount) cfg.oauthAccount = meta.oauthAccount;
   if (meta.userID) cfg.userID = meta.userID;
-  ctx.store.setLive(blob);
   claude.writeConfig(ctx.claudeConfigPath, cfg);
+  try {
+    ctx.store.setLive(blob);
+  } catch (e) {
+    try { claude.writeConfig(ctx.claudeConfigPath, prevCfg); } catch (e2) { /* best effort */ }
+    const err = new Error('switch failed while writing the live credential (rolled back): ' +
+      ((e && e.message) || e));
+    err.code = (e && e.code) || 'ESWITCH';
+    throw err;
+  }
 }
 
 // Before switching away, preserve the live account's (possibly rotated) token:

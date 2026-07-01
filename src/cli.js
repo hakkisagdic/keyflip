@@ -41,6 +41,11 @@ function fail(msg) {
   process.exitCode = 1;
 }
 
+// True/false when readable; null when the keychain is locked/unavailable.
+function capturedCliSafe(ctx, name) {
+  try { return !!ctx.store.getProfile(name); } catch (e) { return null; }
+}
+
 function usage() {
   print('ccswitch ' + VERSION + ' — switch between Anthropic / Claude Code accounts (macOS, Linux, Windows)');
   print('');
@@ -290,7 +295,7 @@ async function cmdAdd(ctx, rest) {
     print("↳ The desktop app is signed in but its account couldn't be identified. If it's a");
     print('  different account than the CLI, capture it with:  ccswitch add <name> --app');
   }
-  const anyIncomplete = profiles.list(ctx.configDir).some(function (n) { return !ctx.store.getProfile(n) || !appauth.hasProfile(ctx, n); });
+  const anyIncomplete = profiles.list(ctx.configDir).some(function (n) { return capturedCliSafe(ctx, n) === false || !appauth.hasProfile(ctx, n); });
   if (anyIncomplete) print("Tip: 'ccswitch list' shows what each account has captured ([cli|app]).");
 }
 
@@ -382,7 +387,7 @@ function cmdList(ctx) {
       accounts: list.map(function (e) {
         return {
           index: e.index, name: e.name, email: e.email || null,
-          cliCaptured: !!ctx.store.getProfile(e.name),
+          cliCaptured: capturedCliSafe(ctx, e.name),
           appCaptured: appauth.hasProfile(ctx, e.name),
           activeCli: !!e.active,
           activeApp: e.name === appActive,
@@ -397,13 +402,13 @@ function cmdList(ctx) {
   if (!list.length) { print("  (none yet — log in in Claude, then run 'ccswitch add')"); }
   else {
     list.forEach(function (e) {
-      const cli = !!ctx.store.getProfile(e.name);
+      const cli = capturedCliSafe(ctx, e.name);
       const app = appauth.hasProfile(ctx, e.name);
       const now = [];
       if (e.active) now.push('CLI');
       if (e.name === appActive) now.push('app');
       print(' ' + (now.length ? '→' : ' ') + ' [' + e.index + '] ' + (e.email || e.name) +
-        '   [cli ' + (cli ? '✓' : '—') + ' | app ' + (app ? '✓' : '—') + ']' +
+        '   [cli ' + (cli === null ? '?' : (cli ? '✓' : '—')) + ' | app ' + (app ? '✓' : '—') + ']' +
         (now.length ? '   ← active: ' + now.join(' + ') : ''));
     });
   }

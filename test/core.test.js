@@ -179,6 +179,28 @@ test('applyProfile refuses to overwrite a corrupt ~/.claude.json (no data loss)'
   assert.strictEqual(fs.readFileSync(ctx.claudeConfigPath, 'utf8'), '{ "mcpServers": {}, broken');
 });
 
+test('applyProfile refuses a corrupt/truncated credential blob', function () {
+  const ctx = makeCtx();
+  login(ctx, 'alice@example.com', 'u1', 'ALICE'); core.addCurrent(ctx);
+  ctx.store.setProfile('alice', '{"claudeAiOauth":{"accessToken":"tru'); // truncated JSON
+  assert.throws(function () { core.applyProfile(ctx, 'alice'); }, /unreadable|corrupt/);
+  ctx.store.setProfile('alice', '   ');
+  assert.throws(function () { core.applyProfile(ctx, 'alice'); }, /empty/);
+});
+
+test('a failed live-credential write rolls the config pointer back (no half-switch)', function () {
+  const ctx = makeCtx();
+  login(ctx, 'alice@example.com', 'u1', 'ALICE'); core.addCurrent(ctx);
+  login(ctx, 'bob@example.com', 'u2', 'BOB'); core.addCurrent(ctx); // bob active
+  const realSetLive = ctx.store.setLive.bind(ctx.store);
+  ctx.store.setLive = function () { const e = new Error('keychain locked'); e.code = 'EKEYCHAIN'; throw e; };
+  assert.throws(function () { core.applyProfile(ctx, 'alice'); }, /rolled back/);
+  // pointer still bob, live blob still bob's
+  assert.strictEqual(core.currentEmail(ctx), 'bob@example.com');
+  ctx.store.setLive = realSetLive;
+  assert.strictEqual(ctx.store.getLive(), 'BOB');
+});
+
 test('resolveProfile treats a number as the menu index, not a digit-named profile', function () {
   const ctx = makeCtx();
   login(ctx, 'z@example.com', 'u1', 'Z'); core.saveAs(ctx, '2');

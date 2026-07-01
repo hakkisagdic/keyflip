@@ -1,36 +1,65 @@
 'use strict';
-// macOS credential store backed by the login Keychain via the `security` CLI.
-// Secrets never touch the filesystem here.
-const { run } = require('../exec');
+// macOS credential store backed by the login Keychain via /usr/bin/security.
+// Secrets never touch the filesystem here, and writes go through stdin so the
+// secret never appears in the process table.
+//
+// Error taxonomy: `security` exit 44 (errSecItemNotFound) is a genuine miss and
+// reads return null; any other failure (locked keychain, denied ACL, timeout)
+// throws an Error with code 'EKEYCHAIN' so callers can say "keychain locked"
+// instead of the misleading "no credentials".
+const defaultRun = require('../exec').run;
 
 const SERVICE_LIVE = 'Claude Code-credentials'; // the item Claude itself manages
 const PROFILE_PREFIX = 'ccswitch:';
+const SECURITY = '/usr/bin/security';
+const NOT_FOUND = 44;          // errSecItemNotFound
+const TIMEOUT_MS = 5000;       // a locked keychain must not hang the CLI
+const STDIN_CMD_LIMIT = 3800;  // conservative `security -i` line-length budget
+
+function keychainError(op, r) {
+  const detail = r.timedOut ? 'timed out (keychain locked or waiting on a prompt?)'
+    : ((r.stderr || '').trim() || ('exit ' + r.code));
+  const err = new Error('Keychain ' + op + ' failed: ' + detail +
+    ' — unlock the login keychain and try again');
+  err.code = 'EKEYCHAIN';
+  return err;
+}
+
+// Quote a value for a `security -i` command line.
+function q(s) { return '"' + String(s).replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"'; }
 
 class KeychainStore {
   constructor(opts) {
     this.account = (opts && opts.account) || '';
+    this.run = (opts && opts.runner) || defaultRun;
     this.type = 'keychain';
   }
 
   _read(service) {
-    const r = run('/usr/bin/security', ['find-generic-password', '-s', service, '-a', this.account, '-w']);
-    if (r.code !== 0) return null;
-    return r.stdout.replace(/\r?\n$/, '');
+    const r = this.run(SECURITY, ['find-generic-password', '-s', service, '-a', this.account, '-w'], undefined, { timeoutMs: TIMEOUT_MS });
+    if (r.code === 0) return r.stdout.replace(/\r?\n$/, '');
+    if (r.code === NOT_FOUND) return null;
+    throw keychainError('read of "' + service + '"', r);
   }
 
   _write(service, blob) {
-    // NOTE: `security` has no stdin input for the password, so the secret is passed
-    // as an argv value and is briefly visible in the process table (`ps`) for the
-    // duration of this call. Acceptable for a single-user macOS machine; documented
-    // in the README's security notes. (The read path does not expose the secret.)
-    const r = run('/usr/bin/security', ['add-generic-password', '-U', '-s', service, '-a', this.account, '-w', blob]);
-    if (r.code !== 0) {
-      throw new Error('Keychain write failed for "' + service + '": ' + (r.stderr || r.code));
+    // Preferred: feed `add-generic-password ... -X <hex>` to `security -i` on
+    // stdin — the secret never becomes an argv value visible in `ps`. Very large
+    // blobs fall back to argv (-w) rather than risk truncating the command line.
+    const hex = Buffer.from(String(blob), 'utf8').toString('hex');
+    let r;
+    if (hex.length <= STDIN_CMD_LIMIT) {
+      const cmd = 'add-generic-password -U -s ' + q(service) + ' -a ' + q(this.account) + ' -X ' + hex + '\n';
+      r = this.run(SECURITY, ['-i'], cmd, { timeoutMs: TIMEOUT_MS });
+    } else {
+      r = this.run(SECURITY, ['add-generic-password', '-U', '-s', service, '-a', this.account, '-w', blob], undefined, { timeoutMs: TIMEOUT_MS });
     }
+    if (r.code !== 0) throw keychainError('write of "' + service + '"', r);
   }
 
   _delete(service) {
-    run('/usr/bin/security', ['delete-generic-password', '-s', service, '-a', this.account]);
+    const r = this.run(SECURITY, ['delete-generic-password', '-s', service, '-a', this.account], undefined, { timeoutMs: TIMEOUT_MS });
+    if (r.code !== 0 && r.code !== NOT_FOUND && r.timedOut) throw keychainError('delete of "' + service + '"', r);
   }
 
   getLive() { return this._read(SERVICE_LIVE); }
@@ -44,3 +73,4 @@ class KeychainStore {
 module.exports = KeychainStore;
 module.exports.SERVICE_LIVE = SERVICE_LIVE;
 module.exports.PROFILE_PREFIX = PROFILE_PREFIX;
+module.exports.SECURITY = SECURITY;
