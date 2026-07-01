@@ -18,11 +18,12 @@ function accessTokenOf(blob) {
   try { return JSON.parse(blob).claudeAiOauth.accessToken || null; } catch (e) { return null; }
 }
 
-// -> { fiveHour: {pct, resetsAt}, sevenDay: {pct, resetsAt} } | null
-async function fetchUsage(accessToken, opts) {
+// Detailed variant: { usage, httpStatus } — httpStatus lets callers distinguish
+// an expired/invalid token (401/403) from a network failure.
+async function fetchUsageDetailed(accessToken, opts) {
   opts = opts || {};
   const doFetch = opts.fetch || (typeof fetch !== 'undefined' ? fetch : null);
-  if (!doFetch || !accessToken) return null;
+  if (!doFetch || !accessToken) return { usage: null, httpStatus: null };
   try {
     const res = await doFetch(USAGE_URL, {
       headers: {
@@ -32,7 +33,7 @@ async function fetchUsage(accessToken, opts) {
       },
       signal: (typeof AbortSignal !== 'undefined' && AbortSignal.timeout) ? AbortSignal.timeout(opts.timeoutMs || 5000) : undefined,
     });
-    if (!res || !res.ok) return null;
+    if (!res || !res.ok) return { usage: null, httpStatus: (res && res.status) || null };
     const data = await res.json();
     const out = {};
     if (data.five_hour && typeof data.five_hour.utilization === 'number') {
@@ -41,8 +42,13 @@ async function fetchUsage(accessToken, opts) {
     if (data.seven_day && typeof data.seven_day.utilization === 'number') {
       out.sevenDay = { pct: data.seven_day.utilization, resetsAt: data.seven_day.resets_at || null };
     }
-    return (out.fiveHour || out.sevenDay) ? out : null;
-  } catch (e) { return null; }
+    return { usage: (out.fiveHour || out.sevenDay) ? out : null, httpStatus: res.status };
+  } catch (e) { return { usage: null, httpStatus: null }; }
+}
+
+// -> { fiveHour: {pct, resetsAt}, sevenDay: {pct, resetsAt} } | null
+async function fetchUsage(accessToken, opts) {
+  return (await fetchUsageDetailed(accessToken, opts)).usage;
 }
 
 // Remaining % before the binding rate-limit window; null = unknown.
@@ -78,19 +84,27 @@ async function usageForProfiles(ctx, names, opts) {
     const name = names[i];
     const c = cache[name];
     if (c && c.at && nowMs - c.at < (opts.cacheTtlMs || CACHE_TTL_MS)) {
-      out[name] = { status: c.status, usage: c.usage || null, headroom: headroom(c.usage) };
+      out[name] = { status: c.status, usage: c.usage || null,
+        headroom: c.status === 'rate-limited' ? 0 : headroom(c.usage) };
       continue;
     }
+    // For the ACTIVE account prefer the LIVE credential — Claude keeps it fresh,
+    // while the stored snapshot may hold an already-expired access token.
     let blob = null;
-    try { blob = ctx.store.getProfile(name); } catch (e) { blob = null; }
+    if (opts.liveFor && opts.liveFor === name) {
+      try { blob = ctx.store.getLive(); } catch (e) { blob = null; }
+    }
+    if (!blob) { try { blob = ctx.store.getProfile(name); } catch (e) { blob = null; } }
     if (!blob) { out[name] = { status: 'no-creds', usage: null, headroom: null }; }
     else {
       const token = accessTokenOf(blob);
       if (!token) { out[name] = { status: 'no-token', usage: null, headroom: null }; }
       else {
-        const u = await fetchUsage(token, opts);
-        out[name] = u ? { status: 'ok', usage: u, headroom: headroom(u) }
-                      : { status: 'error', usage: null, headroom: null };
+        const r = await fetchUsageDetailed(token, opts);
+        if (r.usage) out[name] = { status: 'ok', usage: r.usage, headroom: headroom(r.usage) };
+        else if (r.httpStatus === 401 || r.httpStatus === 403) out[name] = { status: 'expired', usage: null, headroom: null };
+        else if (r.httpStatus === 429) out[name] = { status: 'rate-limited', usage: null, headroom: 0 }; // skippable by next-available
+        else out[name] = { status: 'error', usage: null, headroom: null };
       }
     }
     cache[name] = { at: nowMs, status: out[name].status, usage: out[name].usage };
@@ -125,6 +139,7 @@ function pickByStrategy(candidates, infos, strategy) {
 
 module.exports = {
   fetchUsage: fetchUsage,
+  fetchUsageDetailed: fetchUsageDetailed,
   headroom: headroom,
   fmt: fmt,
   usageForProfiles: usageForProfiles,

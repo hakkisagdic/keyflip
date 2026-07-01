@@ -1,0 +1,45 @@
+{
+  "name": "ccswitch-vscode",
+  "displayName": "ccswitch — Claude Account Switcher",
+  "description": "Shows the active Claude account in the status bar and switches accounts via the ccswitch CLI.",
+  "version": "0.1.0",
+  "publisher": "hakkisagdic",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/hakkisagdic/ccswitch.git",
+    "directory": "vscode-ccswitch"
+  },
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "main": "./extension.js",
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "ccswitch.switch",
+        "title": "ccswitch: Switch Claude Account"
+      },
+      {
+        "command": "ccswitch.refresh",
+        "title": "ccswitch: Refresh Account Status"
+      }
+    ],
+    "configuration": {
+      "title": "ccswitch",
+      "properties": {
+        "ccswitch.path": {
+          "type": "string",
+          "default": "ccswitch",
+          "description": "Path to the ccswitch executable (default: resolve from PATH)."
+        }
+      }
+    }
+  }
+}

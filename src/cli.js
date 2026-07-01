@@ -478,7 +478,9 @@ async function cmdList(ctx, rest) {
   const withUsage = (rest || []).indexOf('--usage') !== -1;
   let infos = null;
   if (withUsage && list.length) {
-    infos = await usagemod.usageForProfiles(ctx, list.map(function (e) { return e.name; }), {});
+    const activeEntry = list.filter(function (e) { return e.active; })[0];
+    infos = await usagemod.usageForProfiles(ctx, list.map(function (e) { return e.name; }),
+      { liveFor: activeEntry ? activeEntry.name : null });
   }
   if (JSON_MODE) {
     jsonOut({

@@ -87,14 +87,45 @@ If Claude / Claude Code is open, ccswitch first asks **“Claude will be closed 
 
 ```bash
 ccswitch                       # interactive menu (↑/↓ + Enter)
-ccswitch add [name]            # save the account(s) you're logged into — CLI + desktop app
+ccswitch add [name] [--app]    # save the logged-in account(s) — CLI + desktop app
 ccswitch <name|number>         # switch to that account (asks before closing Claude)
 ccswitch <name> --restart      # ...close & reopen Claude without asking
 ccswitch <name> --force        # ...swap without closing Claude (restart it yourself)
-ccswitch list                  # saved accounts (* active, [cli|app] = what's captured)
+ccswitch next                  # rotate to the next saved account
+ccswitch next --strategy best  # ...or pick by remaining quota (also: next-available)
+ccswitch status                # which account each surface is on (CLI + desktop app)
+ccswitch list [--usage]        # accounts; --usage adds each one's 5h/7d utilization
+ccswitch export [file|-]       # back up accounts to a file (CONTAINS SECRETS)
+ccswitch import <file|->       # restore accounts from an export (--force overwrites)
 ccswitch remove <name|number>  # delete a saved account
 ccswitch clean [--logout]      # reset ccswitch data; --logout also signs out everywhere
+ccswitch upgrade               # update ccswitch itself (detects how it was installed)
 ```
+
+Global flags: `--json` (machine-readable stdout — one JSON object, `schemaVersion: 1`,
+human text to stderr; ideal for scripts/status lines) and `--debug` (verbose log).
+`ccs` works as a short alias. A passive "new version available" notice appears at
+most once a day (never blocks a command).
+
+### Reliability guarantees
+
+- Every mutation runs under a **cross-process lock** — two ccswitch invocations
+  can't interleave a switch.
+- A switch is **transactional**: the account pointer is rolled back if the live
+  credential write fails, so a half-switched state never survives.
+- Stored blobs are **validated** before restore; corrupt profiles are refused
+  with a clean re-add message instead of being restored.
+- Expiring OAuth tokens are **refreshed automatically** on switch (skipped when a
+  live Claude session owns the credential; failures warn loudly).
+- A locked macOS Keychain reads as **"keychain locked"** (not "no credentials"),
+  with 5s timeouts; profile storage falls back to files so you can keep working.
+
+### VS Code
+
+The VS Code Claude Code extension shares the CLI's credential store, so every
+ccswitch switch already applies to it (reload the window to pick it up). A thin
+companion extension in [`vscode-ccswitch/`](vscode-ccswitch/) adds a status-bar
+account indicator and a QuickPick switcher — see its README for local install.
 
 
 ### Seeing all your sessions after a switch (macOS)
@@ -159,7 +190,8 @@ The backend is auto-detected: if a credentials **file** already exists it's used
 ### Security notes
 
 - **Config integrity:** writes to `~/.claude.json` are atomic and preserve the file's mode; if that file exists but is not valid JSON, ccswitch refuses to touch it rather than risk clobbering your settings.
-- **macOS Keychain:** writing a token shells out to `security add-generic-password`, which (having no stdin option for the value) passes the token as a command-line argument — briefly visible in the process list during that call. On a single-user Mac this is low risk; on shared machines be aware of it.
+- **macOS Keychain:** tokens are written by feeding `security -i` on **stdin** (hex-encoded), so the secret never appears in the process table; `/usr/bin/security` is invoked by absolute path. (Only blobs too large for the stdin line-length budget fall back to an argv write.)
+- **Exports:** `ccswitch export` files contain login secrets — they're written `0600` with a loud warning; pipe to `-` and encrypt (e.g. gpg) for transport, and delete after importing.
 - Switch while Claude is closed. The macOS app/`--restart` quit and reopen it for you; elsewhere ccswitch warns if Claude is running and asks you to restart it after switching.
 
 ---
