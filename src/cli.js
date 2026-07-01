@@ -18,6 +18,7 @@ const usagemod = require('./usage');
 const session = require('./session');
 const links = require('./links');
 const autosw = require('./autoswitch');
+const mcp = require('./mcp');
 const style = require('./style').make(process.stdout);
 
 // Serialize every mutation across processes (double-fired alias, launcher app
@@ -76,6 +77,8 @@ function usage() {
   print('                                 --force for scripts; NEVER pass the token as an argument)');
   print('  ccswitch export [file|-]       back up saved accounts to a file (contains secrets!)');
   print('  ccswitch import <file|->       restore accounts from an export (--force overwrites)');
+  print('  ccswitch mcp [--setup]         MCP server over stdio for agents (--setup shows config)');
+  print('  ccswitch install-skill         install the Claude Code skill that teaches agents ccswitch');
   print('  ccswitch upgrade               update ccswitch itself (auto-detects install method)');
   print('  ccswitch clean [--logout]      reset ccswitch data; --logout also signs out of');
   print('                                 Claude Code + the desktop app (asks to confirm)');
@@ -314,6 +317,38 @@ function cmdLink(ctx, rest) {
   if (!name) return fail("no such account: '" + arg + "'");
   links.set(ctx, process.cwd(), name);
   print(style.ok('✅') + ' linked ' + process.cwd() + ' → ' + name + "  (used by 'ccswitch run' here)");
+}
+
+// MCP server (stdio) so agents can inspect/switch accounts themselves.
+async function cmdMcp(ctx, rest) {
+  if (rest.indexOf('--setup') !== -1) {
+    print('Add ccswitch as an MCP server:');
+    print('');
+    print('  Claude Code (CLI):');
+    print('    claude mcp add ccswitch -- ccswitch mcp');
+    print('');
+    print('  Or in .mcp.json / mcp.json:');
+    print(JSON.stringify({ mcpServers: { ccswitch: { command: 'ccswitch', args: ['mcp'] } } }, null, 2));
+    print('');
+    print('Tools: ccswitch_status, ccswitch_list (include_usage), ccswitch_switch, ccswitch_next.');
+    print('Mutating tools require confirm=true — the agent is instructed to ask the user first.');
+    return;
+  }
+  logmod.log('mcp server started');
+  return mcp.serve(ctx);
+}
+
+// Install the bundled agent skill into ~/.claude/skills so Claude Code learns
+// when and how to drive ccswitch.
+function cmdInstallSkill(ctx) {
+  const src = path.join(__dirname, '..', 'skills', 'ccswitch');
+  if (!fs.existsSync(path.join(src, 'SKILL.md'))) return fail('bundled skill not found (reinstall ccswitch)');
+  const dest = path.join(ctx.home, '.claude', 'skills', 'ccswitch');
+  fs.mkdirSync(dest, { recursive: true });
+  fs.cpSync(src, dest, { recursive: true });
+  print(style.ok('✅') + ' installed the ccswitch skill to ' + dest);
+  print('Claude Code will pick it up on the next session (it teaches account switching,');
+  print('usage-aware rotation, parallel sessions and the MCP tools).');
 }
 
 // Parallel session: run Claude Code as <name> in THIS terminal only.
@@ -749,6 +784,10 @@ async function dispatch(ctx, cmd, rest) {
           logmod.log('removed profile ' + n);
           print('🗑  removed: ' + n);
         });
+      case 'mcp':
+        return cmdMcp(ctx, rest);
+      case 'install-skill':
+        return cmdInstallSkill(ctx);
       case 'autoswitch':
         return cmdAutoswitch(ctx, rest);
       case 'link':

@@ -1,5 +1,7 @@
 # ccswitch — Claude Account Switcher
 
+**English** | [Türkçe](README.tr.md)
+
 Switch between multiple **Anthropic / Claude Code** accounts with a click (or one command).
 Log in to several accounts once, then hop between them without repeatedly logging in and out.
 
@@ -95,8 +97,12 @@ ccswitch next                  # rotate to the next saved account
 ccswitch next --strategy best  # ...or pick by remaining quota (also: next-available)
 ccswitch status                # which account each surface is on (CLI + desktop app)
 ccswitch list [--usage]        # accounts; --usage adds each one's 5h/7d utilization
+ccswitch autoswitch            # watch usage; auto-swap the CLI account at a threshold
+ccswitch link [name|--remove]  # map this directory tree to an account for `run`
 ccswitch run <name> [-- args]  # PARALLEL session: that account in THIS terminal only
 ccswitch add <name> --token <file|->   # headless import of a raw credential
+ccswitch mcp [--setup]         # MCP server over stdio so agents can drive ccswitch
+ccswitch install-skill         # install the Claude Code skill that teaches agents ccswitch
 ccswitch export [file|-]       # back up accounts to a file (CONTAINS SECRETS)
 ccswitch import <file|->       # restore accounts from an export (--force overwrites)
 ccswitch remove <name|number>  # delete a saved account
@@ -136,6 +142,37 @@ ccswitch saves it back to the profile on exit.
 > ⚠️ **Asks for confirmation first** (skip with `-y`): a token refresh inside a
 > parallel session rotates that account's refresh token, which can log out
 > *other live copies of the same account*.
+
+### Auto-switch on usage (`autoswitch`)
+
+`ccswitch autoswitch --threshold 90 --interval 60 --strategy next-available`
+watches the active account and, when its 5h/7d utilization crosses the
+threshold, **swaps the CLI credential automatically** to the chosen account —
+without closing anything (Claude Code picks the new account up on its next
+request). It confirms once at start (`-y` for scripts) and never touches the
+desktop app. Pair with `ccswitch link <name>` to pin directories to accounts:
+`ccswitch run` with no name uses the nearest linked ancestor directory.
+
+### For agents: MCP server & skill
+
+Agents shouldn't have to guess the CLI — ccswitch speaks **MCP**:
+
+```bash
+claude mcp add ccswitch -- ccswitch mcp     # or see: ccswitch mcp --setup
+```
+
+Tools: `ccswitch_status`, `ccswitch_list` (with `include_usage`),
+`ccswitch_switch`, `ccswitch_next` — proper JSON Schemas, read-only/destructive
+annotations, and **mutating tools require `confirm: true`**, with descriptions
+instructing the agent to ask the user first. Switching via MCP is always
+in-place (never closes the app under the user).
+
+There's also a bundled **Claude Code skill** that teaches the agent when and
+how to use all of this (rate-limit playbook, sentinels, parallel sessions):
+
+```bash
+ccswitch install-skill      # copies it to ~/.claude/skills/ccswitch
+```
 
 ### Headless import (`add --token`)
 
@@ -234,6 +271,20 @@ You don't need to own every OS. Two layers:
 2. **GitHub Actions matrix** (`.github/workflows/ci.yml`) runs the suite on **`ubuntu-latest` + `macos-latest` + `windows-latest`** across **Node 18 / 20 / 22** — real different OSes and versions, on every push. That is the "simulate different versions" part, for free.
 
 Add more Node versions or OS images by editing the `matrix` in the workflow.
+
+---
+
+## Troubleshooting
+
+- **Corporate proxy / TLS interception:** token refresh and usage checks hit
+  Anthropic over HTTPS with Node's bundled CAs. Behind a MITM proxy, point Node
+  at your CA bundle: `export NODE_EXTRA_CA_CERTS=/path/to/corp-ca.pem`.
+- **`[throttled]` in `list --usage`:** the usage *endpoint* throttled that
+  token — it does **not** mean the account is rate-limited. Try again later.
+- **`[expired]`:** the stored token can't authenticate anymore — log that
+  account in once and run `ccswitch add`.
+- **"keychain locked":** unlock the login keychain; ccswitch's own profile
+  storage falls back to files automatically so you can keep working.
 
 ---
 
