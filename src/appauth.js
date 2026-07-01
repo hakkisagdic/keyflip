@@ -14,6 +14,7 @@ const path = require('path');
 const crypto = require('crypto');
 const { atomicWrite } = require('./fsutil');
 const { run } = require('./exec');
+const profiles = require('./profiles');
 
 const KEYS = ['oauth:tokenCache', 'oauth:tokenCacheV2'];
 
@@ -279,10 +280,26 @@ function signOutApp(ctx) {
   return { ok: true };
 }
 
+// Which saved profile is the desktop app CURRENTLY signed into? Identified by the
+// org uuid inside its (rotating) token — stable per account, unlike token/cookie
+// values. Returns the profile name, or null. (Decrypts the token cache; may prompt
+// the Keychain once — so call sparingly, not on every render.)
+function activeProfileName(ctx) {
+  const det = detectAppAccount(ctx);
+  if (!det || !det.org) return null;
+  const names = profiles.list(ctx.configDir);
+  for (let i = 0; i < names.length; i++) {
+    const m = profiles.read(ctx.configDir, names[i]);
+    if (m && m.oauthAccount && m.oauthAccount.organizationUuid === det.org) return names[i];
+  }
+  return null;
+}
+
 module.exports = {
   snapshotToProfile: snapshotToProfile,
   applyFromProfile: applyFromProfile,
   signOutApp: signOutApp,
+  activeProfileName: activeProfileName,
   hasProfile: hasProfile,
   detectActiveOrg: detectActiveOrg,
   detectAppAccount: detectAppAccount,

@@ -55,7 +55,7 @@ test('switch changes the active account (via CLI, --force)', function () {
   const sw = run(home, ['alice', '--force']); // --force: Claude may be running on dev machines
   assert.strictEqual(sw.status, 0, sw.stderr);
   const cur = run(home, ['list']);
-  assert.match(cur.stdout, /Active CLI account: alice@example\.com/);
+  assert.match(cur.stdout, /Claude Code: alice@example\.com/);
 });
 
 test('capture-app captures the desktop login for a named profile (macOS)', function (t) {
@@ -112,7 +112,7 @@ test('clean --force deletes all saved ccswitch data', function () {
   const list = run(home, ['list']).stdout;
   assert.match(list, /none yet/);          // saved profiles gone
   assert.doesNotMatch(list, /\[1\]/);      // no numbered entries
-  assert.match(list, /Active CLI account: alice@example\.com/); // live login untouched
+  assert.match(list, /Claude Code: alice@example\.com/); // live login untouched
 });
 
 test('clean --logout --force signs out of Claude Code (and the desktop app on macOS)', function () {
@@ -165,7 +165,7 @@ test('ccswitch <name> switches directly (no "switch" keyword)', function () {
   run(home, ['add']);
   const r = run(home, ['alice', '--force']);
   assert.strictEqual(r.status, 0, r.stderr);
-  assert.match(run(home, ['list']).stdout, /Active CLI account: alice@example\.com/);
+  assert.match(run(home, ['list']).stdout, /Claude Code: alice@example\.com/);
 });
 
 test('unified add captures the desktop login too when only the app is signed in (macOS)', function (t) {
@@ -207,7 +207,7 @@ test('switch --restart proceeds while Claude is running (closes/reopens, or swap
   run(home, ['add']);
   const r = run(home, ['alice', '--restart'], { CCSWITCH_TEST_CLAUDE: 'running' });
   assert.strictEqual(r.status, 0, r.stderr);
-  assert.match(run(home, ['list']).stdout, /Active CLI account: alice@example\.com/);
+  assert.match(run(home, ['list']).stdout, /Claude Code: alice@example\.com/);
 });
 
 test('switch --force swaps in place without closing a running Claude', function () {
@@ -217,7 +217,7 @@ test('switch --force swaps in place without closing a running Claude', function 
   run(home, ['add']);
   const r = run(home, ['alice', '--force'], { CCSWITCH_TEST_CLAUDE: 'running' });
   assert.strictEqual(r.status, 0, r.stderr);
-  assert.match(run(home, ['list']).stdout, /Active CLI account: alice@example\.com/);
+  assert.match(run(home, ['list']).stdout, /Claude Code: alice@example\.com/);
 });
 
 test('menu survives EOF during a sub-prompt (no crash)', function () {

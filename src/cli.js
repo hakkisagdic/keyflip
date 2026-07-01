@@ -300,18 +300,24 @@ async function cmdClean(ctx, rest) {
 
 function cmdList(ctx) {
   const list = core.listProfiles(ctx);
+  const appActive = ctx.appDataDir ? appauth.activeProfileName(ctx) : null;
   print('Saved accounts (' + ctx.configDir + '):');
   if (!list.length) { print("  (none yet — log in in Claude, then run 'ccswitch add')"); }
   else {
     list.forEach(function (e) {
       const cli = !!ctx.store.getProfile(e.name);
       const app = appauth.hasProfile(ctx, e.name);
-      print(' ' + (e.active ? '*' : ' ') + ' [' + e.index + '] ' + (e.email || e.name) + '  (' + e.name + ')' +
-        '   [cli ' + (cli ? '✓' : '—') + ' | app ' + (app ? '✓' : '—') + ']');
+      const now = [];
+      if (e.active) now.push('CLI');
+      if (e.name === appActive) now.push('app');
+      print(' ' + (now.length ? '→' : ' ') + ' [' + e.index + '] ' + (e.email || e.name) +
+        '   [cli ' + (cli ? '✓' : '—') + ' | app ' + (app ? '✓' : '—') + ']' +
+        (now.length ? '   ← active: ' + now.join(' + ') : ''));
     });
   }
   print('');
-  print('Active CLI account: ' + (core.currentEmail(ctx) || 'not logged in'));
+  print('Active — Claude Code: ' + (core.currentEmail(ctx) || 'not logged in') +
+    (ctx.appDataDir ? '   ·   desktop app: ' + (appActive ? profiles.email(ctx.configDir, appActive) || appActive : 'unknown') : ''));
 }
 
 async function main(argv) {

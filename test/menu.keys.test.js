@@ -37,7 +37,7 @@ test('keys menu pre-selects the first NON-active account (the one you would swit
   const done = menu.runMenuKeys(ctx, io);
   const f = lastFrame(io.get());
   assert.match(f, /\x1b\[7m❯ \[1\] alice@x\.com/);   // alice highlighted by default
-  assert.match(f, /\[2\] bob@x\.com {2}● active/);    // bob marked active, not highlighted
+  assert.match(f, /\[2\] bob@x\.com  ● cli/);    // bob marked active (CLI), not highlighted
   io.input.emit('keypress', 'q', { name: 'q' });
   await done;
 });

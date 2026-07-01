@@ -108,6 +108,7 @@ async function runMenuLine(ctx, io) {
   const rl = readline.createInterface({ input: io.input || process.stdin, output: out, terminal: false });
   rl.on('close', function () { rl.__closed = true; });
   const p = function (s) { out.write((s == null ? '' : s) + '\n'); };
+  let appActive = ctx.appDataDir ? appauth.activeProfileName(ctx) : null;
   try {
     for (;;) {
       const cur = core.currentEmail(ctx);
@@ -115,10 +116,14 @@ async function runMenuLine(ctx, io) {
       p('════════════════════════════════════════════');
       p('        Claude Account Switcher (ccswitch)');
       p('════════════════════════════════════════════');
-      p('  Active: ' + (cur || 'not logged in'));
+      p('  Claude Code: ' + (cur || 'not logged in') +
+        (ctx.appDataDir ? '   ·   Desktop app: ' + (appActive ? profiles.email(ctx.configDir, appActive) || appActive : 'unknown') : ''));
       p('');
       if (!list.length) p('  No saved accounts yet — press [a] to save the current one.');
-      else list.forEach(function (e) { p('  ' + (e.active ? '● ' : '  ') + '[' + e.index + '] ' + (e.email || e.name)); });
+      else list.forEach(function (e) {
+        const now = (e.active ? 'cli' : '') + (e.name === appActive ? (e.active ? '+app' : 'app') : '');
+        p('  ' + (now ? '● ' : '  ') + '[' + e.index + '] ' + (e.email || e.name) + (now ? '   (' + now + ')' : ''));
+      });
       p('');
       p('  [number] switch   [a] save current   [d] delete   [r] refresh   [q] quit');
       p('════════════════════════════════════════════');
@@ -126,9 +131,9 @@ async function runMenuLine(ctx, io) {
       if (raw === null) { break; }
       const c = raw.trim();
       if (c === '' || c === 'q' || c === 'Q') { p(''); p('  Bye.'); break; }
-      if (c === 'a' || c === 'A') { await menuAdd(ctx, rl, p); continue; }
+      if (c === 'a' || c === 'A') { await menuAdd(ctx, rl, p); appActive = ctx.appDataDir ? appauth.activeProfileName(ctx) : null; continue; }
       if (c === 'd' || c === 'D') { await menuRemove(ctx, rl, p); continue; }
-      if (c === 'r' || c === 'R') { continue; }
+      if (c === 'r' || c === 'R') { appActive = ctx.appDataDir ? appauth.activeProfileName(ctx) : null; continue; }
       if (/^[0-9]+$/.test(c)) {
         const name = core.resolveProfile(ctx, c);
         if (!name) { p('  Invalid choice.'); continue; }
@@ -160,6 +165,7 @@ function runMenuKeys(ctx, io) {
   if (input.resume) input.resume();
 
   let sel = firstNonActiveIndex(ctx);
+  let appActive = ctx.appDataDir ? appauth.activeProfileName(ctx) : null;
 
   return new Promise(function (resolve) {
     let finished = false;
@@ -185,12 +191,14 @@ function runMenuKeys(ctx, io) {
       write('════════════════════════════════════════════\n');
       write('        Claude Account Switcher (ccswitch)\n');
       write('════════════════════════════════════════════\n');
-      write('  Active: ' + (cur || 'not logged in') + '\n\n');
+      write('  Claude Code: ' + (cur || 'not logged in') +
+        (ctx.appDataDir ? '\n  Desktop app: ' + (appActive ? profiles.email(ctx.configDir, appActive) || appActive : 'unknown') : '') + '\n\n');
       if (!list.length) {
         write('  No saved accounts yet — press [a] to save the current one.\n');
       } else {
         list.forEach(function (e, i) {
-          const label = ' [' + e.index + '] ' + (e.email || e.name) + (e.active ? '  ● active' : '');
+          const now = (e.active ? 'cli' : '') + (e.name === appActive ? (e.active ? '+app' : 'app') : '');
+          const label = ' [' + e.index + '] ' + (e.email || e.name) + (now ? '  ● ' + now : '');
           if (i === sel) write('\x1b[7m❯' + label + '\x1b[0m\n');
           else write('  ' + label + '\n');
         });
@@ -270,7 +278,7 @@ function runMenuKeys(ctx, io) {
       if (key.ctrl || key.meta) return; // ignore all other Ctrl-/Alt- chords (Ctrl-A, Ctrl-K, ...)
       if (key.name === 'up' || key.name === 'k') { sel -= 1; render(); return; }
       if (key.name === 'down' || key.name === 'j') { sel += 1; render(); return; }
-      if (key.name === 'r') { render(); return; }
+      if (key.name === 'r') { appActive = ctx.appDataDir ? appauth.activeProfileName(ctx) : null; render(); return; }
       if (key.name === 'return') { await switchSel(); return; } // CR only, not Ctrl-J/LF
       if (str && /^[0-9]$/.test(str)) {
         const list = core.listProfiles(ctx);
