@@ -26,6 +26,7 @@ class FileStore {
 
   getLive() { return this._read(this.credsFilePath); }
   setLive(blob) { this._write(this.credsFilePath, blob); }
+  delLive() { try { fs.unlinkSync(this.credsFilePath); } catch (e) { /* already gone */ } }
   getProfile(name) { return this._read(this._profPath(name)); }
   setProfile(name, blob) { this._write(this._profPath(name), blob); }
   delProfile(name) { try { fs.unlinkSync(this._profPath(name)); } catch (e) { /* ignore */ } }

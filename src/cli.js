@@ -4,6 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const { createContext } = require('./context');
 const core = require('./core');
+const claude = require('./claude');
 const profiles = require('./profiles');
 const appctl = require('./platform');
 const appsessions = require('./appsessions');
@@ -25,7 +26,8 @@ function usage() {
   print('  ccswitch switch <name|number>  switch accounts   [--restart quits/reopens Claude, --force]');
   print('  ccswitch list                  list saved accounts (* = active)');
   print('  ccswitch remove <name|number>  delete a saved account');
-  print('  ccswitch clean [--force]       delete ALL ccswitch saved data (reset; live login kept)');
+  print('  ccswitch clean [--logout]      reset ccswitch\'s saved data (asks to confirm; --force skips).');
+  print('                                 Add --logout to ALSO sign out of Claude Code + the desktop app.');
   print('  ccswitch current               show the active account');
   print('  ccswitch consolidate           merge the desktop app\'s Code sessions from all');
   print('                                 accounts into the active one (macOS; runs on switch too)');
@@ -188,28 +190,66 @@ async function waitForQuit(ctx, timeoutMs) {
 
 async function cmdClean(ctx, rest) {
   const force = rest.indexOf('--force') !== -1 || rest.indexOf('-y') !== -1 || rest.indexOf('--yes') !== -1;
+  const logout = rest.indexOf('--logout') !== -1 || rest.indexOf('--signout') !== -1 || rest.indexOf('--all') !== -1;
   const names = profiles.list(ctx.configDir);
   let appCount = 0, backupCount = 0;
   try { appCount = fs.readdirSync(path.join(ctx.configDir, 'app')).length; } catch (e) { /* none */ }
   try { backupCount = fs.readdirSync(path.join(ctx.configDir, 'backups')).length; } catch (e) { /* none */ }
+  const hasSaved = names.length || appCount || backupCount;
 
-  if (!names.length && !appCount && !backupCount) { print('Nothing to clean — ccswitch has no saved data.'); return; }
+  if (!hasSaved && !logout) { print('Nothing to clean — ccswitch has no saved data.'); return; }
 
-  print("This deletes ccswitch's SAVED data (NOT your live Claude login):");
-  print('  • saved accounts:            ' + (names.length ? names.join(', ') : '(none)'));
-  print('  • captured desktop logins:   ' + appCount);
-  print('  • backups:                   ' + backupCount);
-  print('  • Keychain items:            ccswitch:<name> for each account');
-  print('Your current Claude Code / desktop login, ~/.claude.json and config.json are NOT touched.');
+  const managesApp = !!ctx.appDataDir;
+  print('This will:');
+  if (hasSaved) {
+    print("  • delete ccswitch's saved data — accounts: " + (names.length ? names.join(', ') : 'none') +
+      '; captured desktop logins: ' + appCount + '; backups: ' + backupCount + '; Keychain ccswitch:*');
+  }
+  if (logout) {
+    print('  • SIGN OUT of Claude Code (CLI)' + (managesApp ? ' AND the Claude desktop app' : '') + ' — you will log in again next time');
+    if (managesApp && appctl.isClaudeRunning(ctx.platform) && appctl.canManageApp(ctx.platform)) {
+      print('  • CLOSE and reopen the desktop app (this window will close if you run it from inside Claude)');
+    }
+  }
+  print('Not affected: your chats/sessions in ~/.claude/projects.');
 
   if (!force) {
-    if (!process.stdin.isTTY) return fail('Re-run with --force (or -y) to confirm.');
-    const ok = await confirm('\nDelete all of the above? [y/N] ');
-    if (!ok) { print('Cancelled — nothing was deleted.'); return; }
+    if (!process.stdin.isTTY) return fail('Re-run with --force to confirm' + (logout ? ' the sign-out.' : '.'));
+    const ok = await confirm('\nProceed? [y/N] ');
+    if (!ok) { print('Cancelled — nothing was changed.'); return; }
   }
-  names.forEach(function (n) { try { ctx.store.delProfile(n); } catch (e) { /* keychain item */ } });
-  try { fs.rmSync(ctx.configDir, { recursive: true, force: true }); } catch (e) { /* ignore */ }
-  print('✅ Cleaned. ccswitch is reset; your current Claude login is untouched.');
+
+  if (hasSaved) {
+    names.forEach(function (n) { try { ctx.store.delProfile(n); } catch (e) { /* keychain */ } });
+    try { fs.rmSync(ctx.configDir, { recursive: true, force: true }); } catch (e) { /* ignore */ }
+    print('  ✓ ccswitch saved data removed.');
+  }
+
+  if (logout) {
+    try { ctx.store.delLive(); } catch (e) { /* already gone */ }
+    try {
+      const c = claude.readConfig(ctx.claudeConfigPath);
+      if (c && (c.oauthAccount || c.userID)) { delete c.oauthAccount; delete c.userID; claude.writeConfig(ctx.claudeConfigPath, c); }
+    } catch (e) { /* ignore */ }
+    print('  ✓ signed out of Claude Code (CLI).');
+
+    if (ctx.appDataDir) {
+      const wasRunning = appctl.isClaudeRunning(ctx.platform);
+      if (wasRunning && appctl.canManageApp(ctx.platform)) {
+        print('  Closing the desktop app to sign it out...');
+        appctl.quitClaude(ctx.platform);
+        await waitForQuit(ctx);
+      }
+      if (!appctl.isClaudeRunning(ctx.platform)) {
+        const r = appauth.signOutApp(ctx);
+        if (r.ok) print('  ✓ signed out of the Claude desktop app.');
+        if (wasRunning && appctl.canManageApp(ctx.platform)) { appctl.openClaude(ctx.platform); }
+      } else {
+        print('  ⚠️ Close the Claude desktop app, then re-run to sign it out.');
+      }
+    }
+  }
+  print('✅ Done.');
 }
 
 function cmdList(ctx) {

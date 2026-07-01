@@ -33,6 +33,7 @@ class MemoryStore {
   }
   getLive() { return this.live; }
   setLive(blob) { this.live = blob; }
+  delLive() { this.live = null; }
   getProfile(name) {
     return Object.prototype.hasOwnProperty.call(this.profiles, name) ? this.profiles[name] : null;
   }

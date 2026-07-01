@@ -96,9 +96,32 @@ function applyFromProfile(ctx, name) {
   return { ok: true };
 }
 
+// Sign the desktop app out: remove its login tokens from config.json (app closed).
+function signOutApp(ctx) {
+  const cp = configPath(ctx);
+  if (!cp) return { ok: false, reason: 'only the macOS desktop app has this' };
+  const cfg = readJSON(cp);
+  if (!cfg) return { ok: false, reason: 'no desktop config.json' };
+  let changed = false;
+  KEYS.forEach(function (k) { if (k in cfg) { delete cfg[k]; changed = true; } });
+  if (!changed) return { ok: false, reason: 'already signed out' };
+  try {
+    const ts = String(ctx.now()).replace(/[:.]/g, '-');
+    const backup = path.join(ctx.configDir, 'backups', 'config-' + ts + '.json');
+    fs.mkdirSync(path.dirname(backup), { recursive: true });
+    fs.copyFileSync(cp, backup);
+    pruneConfigBackups(ctx, 5);
+  } catch (e) { /* non-fatal */ }
+  let mode = 0o600;
+  try { mode = fs.statSync(cp).mode & 0o777; } catch (e) { /* keep default */ }
+  atomicWrite(cp, JSON.stringify(cfg, null, 2), mode);
+  return { ok: true };
+}
+
 module.exports = {
   snapshotToProfile: snapshotToProfile,
   applyFromProfile: applyFromProfile,
+  signOutApp: signOutApp,
   hasProfile: hasProfile,
   detectActiveOrg: detectActiveOrg,
   configPath: configPath,

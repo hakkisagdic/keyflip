@@ -35,6 +35,7 @@ class KeychainStore {
 
   getLive() { return this._read(SERVICE_LIVE); }
   setLive(blob) { this._write(SERVICE_LIVE, blob); }
+  delLive() { this._delete(SERVICE_LIVE); }
   getProfile(name) { return this._read(PROFILE_PREFIX + name); }
   setProfile(name, blob) { this._write(PROFILE_PREFIX + name, blob); }
   delProfile(name) { this._delete(PROFILE_PREFIX + name); }
