@@ -93,6 +93,7 @@ ccswitch switch <name|number>  # switch accounts
 ccswitch switch <name> --restart  # close & reopen Claude automatically (no prompt)
 ccswitch switch <name> --force    # swap without closing Claude (restart it yourself)
 ccswitch remove <name|number>  # delete a saved account
+ccswitch clean [--force]       # delete ALL ccswitch saved data (reset; live login kept)
 ccswitch current               # show the active account
 ccswitch consolidate           # merge the desktop app's Code sessions across accounts (macOS)
 ccswitch version

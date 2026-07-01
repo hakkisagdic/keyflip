@@ -70,6 +70,26 @@ test('capture-app captures the desktop login for a named profile (macOS)', funct
   assert.ok(fs.existsSync(path.join(home, '.config', 'ccswitch', 'app', 'alice.json')), 'app token saved');
 });
 
+test('clean --force deletes all saved ccswitch data', function () {
+  const home = setupHome();
+  run(home, ['add']); // -> profile alice
+  assert.match(run(home, ['list']).stdout, /alice@example\.com/);
+  const r = run(home, ['clean', '--force']);
+  assert.strictEqual(r.status, 0, r.stderr);
+  const list = run(home, ['list']).stdout;
+  assert.match(list, /none yet/);          // saved profiles gone
+  assert.doesNotMatch(list, /\[1\]/);      // no numbered entries
+  assert.match(list, /Active account: alice@example\.com/); // live login untouched
+});
+
+test('clean without --force in a non-interactive shell refuses', function () {
+  const home = setupHome();
+  run(home, ['add']);
+  const r = run(home, ['clean']); // no TTY, no --force
+  assert.notStrictEqual(r.status, 0);
+  assert.match(run(home, ['list']).stdout, /\[1\] alice@example\.com/); // still saved
+});
+
 test('an unknown command exits non-zero', function () {
   const home = setupHome();
   const r = run(home, ['definitely-not-a-command']);
