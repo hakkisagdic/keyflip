@@ -19,24 +19,18 @@ function fail(msg) { process.stderr.write('❌ ' + msg + '\n'); process.exitCode
 function usage() {
   print('ccswitch ' + VERSION + ' — switch between Anthropic / Claude Code accounts (macOS, Linux, Windows)');
   print('');
-  print('  ccswitch                       open the interactive menu (same as the app)');
-  print('  ccswitch add [name]            detect the logged-in (CLI) account and save it (auto-named)');
-  print('  ccswitch capture-app [name]    capture the desktop app\'s current login (macOS). Works without');
-  print('                                 a CLI login: creates the account entry, auto-detecting it when');
-  print('                                 possible — otherwise pass a name. Run once per account.');
-  print('  ccswitch switch <name|number>  switch accounts   [--restart quits/reopens Claude, --force]');
-  print('  ccswitch list                  list saved accounts (* = active)');
+  print('  ccswitch                       interactive menu (↑/↓ + Enter)');
+  print('  ccswitch add [name]            save the account(s) you are logged into — Claude Code');
+  print('                                 AND the desktop app, auto-detected. Once per account.');
+  print('  ccswitch <name|number>         switch to that account (asks before closing Claude;');
+  print('                                 --restart = no prompt, --force = swap without closing)');
+  print('  ccswitch list                  saved accounts (* active, [cli|app] = what\'s captured)');
   print('  ccswitch remove <name|number>  delete a saved account');
-  print('  ccswitch clean [--logout]      reset ccswitch\'s saved data (asks to confirm; --force skips).');
-  print('                                 Add --logout to ALSO sign out of Claude Code + the desktop app.');
-  print('  ccswitch current               show the active account');
-  print('  ccswitch consolidate           merge the desktop app\'s Code sessions from all');
-  print('                                 accounts into the active one (macOS; runs on switch too)');
-  print('  ccswitch version');
+  print('  ccswitch clean [--logout]      reset ccswitch data; --logout also signs out of');
+  print('                                 Claude Code + the desktop app (asks to confirm)');
   print('');
-  print('How it works: OAuth tokens stay in the OS credential store (macOS Keychain, or');
-  print("~/.claude/.credentials.json elsewhere); only the pointer in ~/.claude.json and the");
-  print('live credential are swapped. Session history in ~/.claude/projects is account-independent.');
+  print('Also available: switch, capture-app, save, consolidate, current, version.');
+  print('Tokens stay in the OS credential store; ~/.claude/projects history is account-independent.');
 }
 
 function confirm(question) {
@@ -114,16 +108,16 @@ function switchDesktopLogin(ctx, name) {
 // the CLI (which may be logged out or on another account). Creates the profile if
 // needed: identifies the app's account by decrypting its token cache (org uuid),
 // mapping it to the app's per-account folders, and best-effort finding the email.
-function cmdCaptureApp(ctx, rest) {
-  if (!ctx.appDataDir) return fail('The desktop app store is macOS-only.');
-  let name = rest[0] || null;
-  if (name && !profiles.isValidName(name)) return fail("invalid profile name: '" + name + "'");
+// Returns { ok, name?, email?, needName?, reason? } — printing is the caller's job.
+function captureApp(ctx, nameArg) {
+  if (!ctx.appDataDir) return { ok: false, reason: 'macos-only' };
+  let name = nameArg || null;
+  if (name && !profiles.isValidName(name)) return { ok: false, reason: "invalid profile name: '" + name + "'" };
 
   const det = appauth.detectAppAccount(ctx) || {};
   const email = det.email || null;
 
   if (!name) {
-    // 1) an existing profile with the detected email or org
     profiles.list(ctx.configDir).forEach(function (n) {
       if (name) return;
       const m = profiles.read(ctx.configDir, n);
@@ -131,12 +125,8 @@ function cmdCaptureApp(ctx, rest) {
       if ((email && m.email === email) ||
           (det.org && m.oauthAccount && m.oauthAccount.organizationUuid === det.org)) name = n;
     });
-    // 2) a fresh profile named from the detected email
     if (!name && email) name = core.uniqueName(ctx, profiles.sanitizeName(email), email);
-    if (!name) {
-      return fail("Couldn't auto-identify the app's account (no email found in its data).\n" +
-        'Give the account a name yourself:  ccswitch capture-app <name>   (e.g. ccswitch capture-app yahoo)');
-    }
+    if (!name) return { ok: false, needName: true };
   }
 
   if (!profiles.exists(ctx.configDir, name)) {
@@ -147,13 +137,43 @@ function cmdCaptureApp(ctx, rest) {
     profiles.write(ctx.configDir, { name: name, email: email || '', oauthAccount: oa, appOnly: true, savedAt: ctx.now() });
   }
   const r = appauth.snapshotToProfile(ctx, name);
-  if (!r.ok) return fail('Could not capture the desktop-app login: ' + r.reason);
-  print("✅ Captured the desktop app's current login as '" + name + "'" + (email ? ' (' + email + ')' : '') + '.');
-  if (!ctx.store.getProfile(name)) {
-    print("  ↳ Claude Code (CLI) login for this account isn't captured yet — when the CLI is");
-    print("    logged into it, run 'ccswitch add' to complete the pair.");
+  if (!r.ok) return { ok: false, reason: r.reason };
+  return { ok: true, name: name, email: email };
+}
+
+// Unified `add`: capture EVERYTHING that's currently logged in — the Claude Code
+// (CLI) account and/or the desktop app's account — creating profiles as needed.
+function cmdAdd(ctx, rest) {
+  const nameArg = rest[0];
+  let cliRes = null, cliErr = null;
+  try { cliRes = core.addCurrent(ctx, nameArg); } catch (e) { cliErr = (e && e.message) || String(e); }
+  if (cliRes) {
+    print(cliRes.refreshed ? "↻ CLI login: '" + cliRes.email + "' already saved as '" + cliRes.name + "' — refreshed."
+                           : "💾 CLI login: saved '" + cliRes.email + "' as '" + cliRes.name + "'.");
   }
-  print('Repeat for your other account(s), then switch with: ccswitch switch <name>');
+
+  // Desktop app: pass the explicit name through only when the CLI didn't take it
+  // (otherwise auto-detect, so we never mis-pair the app with the wrong account).
+  const appRes = captureApp(ctx, cliRes ? null : nameArg);
+  if (appRes.ok) {
+    print("💾 Desktop app login: captured as '" + appRes.name + "'" + (appRes.email ? ' (' + appRes.email + ')' : '') + '.');
+  } else if (appRes.needName) {
+    print("↳ The desktop app is signed in, but I couldn't identify its account.");
+    print("  If it's a different account than the CLI, capture it with:  ccswitch add <name>  (while the CLI is logged out)");
+  }
+
+  if (!cliRes && !appRes.ok && !appRes.needName) {
+    return fail('Nothing to capture. Log in in Claude first.' + (cliErr ? '\n(CLI: ' + cliErr + ')' : ''));
+  }
+  const anyIncomplete = profiles.list(ctx.configDir).some(function (n) { return !ctx.store.getProfile(n) || !appauth.hasProfile(ctx, n); });
+  if (anyIncomplete) print("Tip: 'ccswitch list' shows what each account has captured ([cli|app]).");
+}
+
+function cmdCaptureApp(ctx, rest) { // kept as an explicit/advanced alias
+  const r = captureApp(ctx, rest[0] || null);
+  if (r.ok) { print("✅ Captured the desktop app's current login as '" + r.name + "'" + (r.email ? ' (' + r.email + ')' : '') + '.'); return; }
+  if (r.needName) return fail("Couldn't auto-identify the app's account. Name it yourself:  ccswitch capture-app <name>");
+  return fail('Could not capture the desktop-app login: ' + (r.reason === 'macos-only' ? 'the desktop app store is macOS-only.' : r.reason));
 }
 
 function consolidateAndReport(ctx) {
@@ -302,12 +322,9 @@ async function main(argv) {
         return require('./menu').runMenu(ctx);
       case 'menu':
         return require('./menu').runMenu(ctx);
-      case 'add': {
-        const r = core.addCurrent(ctx, rest[0]);
-        print(r.refreshed ? "↻ '" + r.email + "' already saved as '" + r.name + "' — refreshed."
-                          : "💾 saved '" + r.email + "' as '" + r.name + "'.");
-        return;
-      }
+      case 'add':
+      case 'capture':
+        return cmdAdd(ctx, rest);
       case 'capture-app':
       case 'app-capture':
         return cmdCaptureApp(ctx, rest);
@@ -351,11 +368,14 @@ async function main(argv) {
       case '-h':
         usage();
         return;
-      default:
-        process.stderr.write("ccswitch: unknown command '" + cmd + "'\n\n");
+      default: {
+        // `ccswitch <name|number>` is a direct switch — no need to type "switch".
+        if (core.resolveProfile(ctx, cmd)) return cmdSwitch(ctx, [cmd].concat(rest));
+        process.stderr.write("ccswitch: unknown command or account '" + cmd + "'\n\n");
         usage();
         process.exitCode = 1;
         return;
+      }
     }
   } catch (e) {
     fail(e && e.message ? e.message : String(e));

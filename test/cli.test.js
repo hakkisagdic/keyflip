@@ -158,6 +158,30 @@ test('an unknown command exits non-zero', function () {
   assert.strictEqual(r.status, 1);
 });
 
+test('ccswitch <name> switches directly (no "switch" keyword)', function () {
+  const home = setupHome();
+  run(home, ['add']);
+  loginAs(home, 'bob@example.com', 'u2', 'TOKEN-2');
+  run(home, ['add']);
+  const r = run(home, ['alice', '--force']);
+  assert.strictEqual(r.status, 0, r.stderr);
+  assert.match(run(home, ['current']).stdout, /alice@example\.com/);
+});
+
+test('unified add captures the desktop login too when only the app is signed in (macOS)', function (t) {
+  if (process.platform !== 'darwin') return t.skip('the desktop app store is macOS-only');
+  const home = setupHome();
+  fs.rmSync(path.join(home, '.claude', '.credentials.json'), { force: true }); // CLI logged out
+  fs.writeFileSync(path.join(home, '.claude.json'), '{}');
+  const appCfgDir = path.join(home, 'Library', 'Application Support', 'Claude');
+  fs.mkdirSync(appCfgDir, { recursive: true });
+  fs.writeFileSync(path.join(appCfgDir, 'config.json'), JSON.stringify({ 'oauth:tokenCacheV2': 'APP-TOK' }));
+  const r = run(home, ['add', 'yahoo']); // name flows to the app capture since the CLI is out
+  assert.strictEqual(r.status, 0, r.stderr);
+  assert.match(r.stdout, /Desktop app login: captured as 'yahoo'/);
+  assert.match(run(home, ['list']).stdout, /yahoo.*app ✓/);
+});
+
 test('version prints and exits 0', function () {
   const home = setupHome();
   const r = run(home, ['version']);

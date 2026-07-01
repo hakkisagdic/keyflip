@@ -86,18 +86,17 @@ If Claude / Claude Code is open, ccswitch first asks **“Claude will be closed 
 ### CLI
 
 ```bash
-ccswitch                       # interactive menu
-ccswitch add [name]            # detect & save the logged-in account
-ccswitch list                  # list saved accounts (* = active)
-ccswitch switch <name|number>  # switch accounts
-ccswitch switch <name> --restart  # close & reopen Claude automatically (no prompt)
-ccswitch switch <name> --force    # swap without closing Claude (restart it yourself)
+ccswitch                       # interactive menu (↑/↓ + Enter)
+ccswitch add [name]            # save the account(s) you're logged into — CLI + desktop app
+ccswitch <name|number>         # switch to that account (asks before closing Claude)
+ccswitch <name> --restart      # ...close & reopen Claude without asking
+ccswitch <name> --force        # ...swap without closing Claude (restart it yourself)
+ccswitch list                  # saved accounts (* active, [cli|app] = what's captured)
 ccswitch remove <name|number>  # delete a saved account
-ccswitch clean [--force]       # delete ALL ccswitch saved data (reset; live login kept)
-ccswitch current               # show the active account
-ccswitch consolidate           # merge the desktop app's Code sessions across accounts (macOS)
-ccswitch version
+ccswitch clean [--logout]      # reset ccswitch data; --logout also signs out everywhere
 ```
+
+<sub>Also available: `switch`, `capture-app`, `save`, `consolidate`, `current`, `version`.</sub>
 
 ### Seeing all your sessions after a switch (macOS)
 
@@ -124,17 +123,16 @@ CLI *and* the desktop app to the same account, once each account's desktop login
 has been captured.
 
 The desktop app's login is **independent** from the CLI's — they can even be on
-different accounts at the same time — so capture each separately:
+different accounts at the same time. `ccswitch add` captures **whatever is signed
+in right now**: the CLI login and/or the desktop app's (auto-detected). So per
+account: sign in (app and/or CLI), run `ccswitch add`, done. `ccswitch list`
+shows what each account has captured (`[cli ✓|— | app ✓|—]`); if the app's account
+can't be auto-identified, name it explicitly (`ccswitch capture-app <name>`).
 
-- **CLI account:** while Claude Code is logged in to it, run `ccswitch add`.
-- **Desktop app:** sign the app into an account (Claude menu → your account), then
-  run `ccswitch capture-app`. It **auto-detects** which saved account the app is on
-  and attaches its login to that profile (or pass a name: `ccswitch capture-app <name>`).
-
-Repeat `capture-app` once per account the app is signed into. After that,
-`ccswitch switch <name>` (app closed → reopened) swaps the CLI creds **and** the
-desktop-app token, so both come up on the chosen account — no manual re-login.
-`config.json` is backed up first (`~/.config/ccswitch/backups/`).
+After that, `ccswitch <name>` (app closed → reopened) swaps the CLI creds **and**
+the desktop-app login (token + session cookie), so both come up on the chosen
+account — no manual re-login. `config.json` and the cookie DB are backed up first
+(`~/.config/ccswitch/backups/`).
 
 > Experimental: it rewrites the app's `config.json` login while the app is closed.
 > If a saved token has fully expired the app may ask you to log in again; just
