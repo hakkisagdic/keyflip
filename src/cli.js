@@ -16,6 +16,8 @@ const update = require('./update');
 const transfer = require('./transfer');
 const usagemod = require('./usage');
 const session = require('./session');
+const links = require('./links');
+const autosw = require('./autoswitch');
 const style = require('./style').make(process.stdout);
 
 // Serialize every mutation across processes (double-fired alias, launcher app
@@ -65,6 +67,9 @@ function usage() {
   print('  ccswitch status                which account each surface is on (CLI + desktop app)');
   print('  ccswitch list [--usage]        saved accounts; --usage adds 5h/7d quota per account');
   print('  ccswitch remove <name|number>  delete a saved account');
+  print('  ccswitch autoswitch            watch usage; auto-swap the CLI account at a threshold');
+  print('                                 (--threshold 90 --interval 60 --strategy next-available)');
+  print('  ccswitch link [name|--remove]  map this directory to an account for `run`');
   print('  ccswitch run <name> [-- args]  PARALLEL session: run Claude as that account in THIS');
   print('                                 terminal only (asks first; --no-share = bare profile)');
   print('  ccswitch add <name> --token <file|->   headless import of a raw credential (asks first;');
@@ -244,6 +249,73 @@ function cmdImport(ctx, rest) {
   logmod.log('import: ' + r.imported.length + ' account(s)');
 }
 
+// Watch the active account and auto-switch the CLI credential at a usage
+// threshold (claude-swap PR #76 / issues #38, #50). The desktop app is never
+// closed; Claude Code picks the new credential up on its next request.
+async function cmdAutoswitch(ctx, rest) {
+  function numFlag(flag, dflt) { const i = rest.indexOf(flag); const v = i !== -1 ? parseInt(rest[i + 1], 10) : NaN; return isNaN(v) ? dflt : v; }
+  const threshold = Math.min(100, Math.max(50, numFlag('--threshold', 90)));
+  const interval = Math.max(30, numFlag('--interval', 60));
+  const si = rest.indexOf('--strategy');
+  const strategy = si !== -1 ? rest[si + 1] : 'next-available';
+  if (strategy !== 'best' && strategy !== 'next-available') return fail('unknown strategy — use: best | next-available');
+  const autoYes = rest.indexOf('-y') !== -1 || rest.indexOf('--yes') !== -1;
+  if (!autoYes) {
+    if (!process.stdin.isTTY) return fail('autoswitch swaps accounts WITHOUT asking each time — re-run with -y to confirm.');
+    print('Autoswitch will monitor the active account every ' + interval + 's and, at ' + threshold + '% usage,');
+    print(style.warn('swap the CLI credential automatically WITHOUT asking') + ' (strategy: ' + strategy + ').');
+    print('The desktop app is never closed. Stop anytime with Ctrl-C.');
+    const ok = await confirm('Start? [y/N] ');
+    if (!ok) { print('Cancelled.'); return; }
+  }
+  logmod.log('autoswitch started (threshold=' + threshold + ', strategy=' + strategy + ')');
+  for (;;) {
+    let r;
+    try {
+      r = await autosw.tick(ctx, {
+        threshold: threshold, strategy: strategy,
+        performSwitch: function (name) { return withLock(ctx, function () { return core.performSwitch(ctx, name); }); },
+      });
+    } catch (e) { r = { state: 'error', error: (e && e.message) || String(e) }; }
+    const at = new Date().toTimeString().slice(0, 8);
+    if (r.state === 'switched') {
+      print('[' + at + '] ' + style.ok('⇄ switched: ') + (r.active.email || r.active.name) + ' → ' + (r.switchedTo.email || r.switchedTo.name) + ' (usage crossed ' + threshold + '%)');
+      logmod.log('autoswitch: ' + r.active.name + ' -> ' + r.switchedTo.name);
+    } else if (r.state === 'below') {
+      print('[' + at + '] ' + (r.active.email || r.active.name) + ': ' + Math.round(100 - r.headroom) + '% used — ok');
+    } else if (r.state === 'no-candidate') {
+      print('[' + at + '] ' + style.warn('threshold crossed but no other account is available'));
+    } else if (r.state === 'unknown') {
+      print('[' + at + '] usage unknown (endpoint throttled or offline) — waiting');
+    } else if (r.state === 'no-active') {
+      print('[' + at + '] no active CLI account — waiting');
+    } else if (r.state === 'error') {
+      print('[' + at + '] ' + style.warn('tick failed: ' + r.error));
+    }
+    await sleep(interval * 1000);
+  }
+}
+
+// Map the current directory (tree) to an account for `ccswitch run`.
+function cmdLink(ctx, rest) {
+  if (rest.indexOf('--remove') !== -1) {
+    if (links.remove(ctx, process.cwd())) print('🗑  unlinked ' + process.cwd());
+    else print('this directory has no link.');
+    return;
+  }
+  const arg = rest.filter(function (a) { return a.indexOf('-') !== 0; })[0];
+  if (!arg) {
+    const hit = links.lookup(ctx, process.cwd());
+    if (hit) print('linked: ' + hit.name + '  (via ' + hit.dir + ')');
+    else print('this directory is not linked — link it with: ccswitch link <name>');
+    return;
+  }
+  const name = core.resolveProfile(ctx, arg);
+  if (!name) return fail("no such account: '" + arg + "'");
+  links.set(ctx, process.cwd(), name);
+  print(style.ok('✅') + ' linked ' + process.cwd() + ' → ' + name + "  (used by 'ccswitch run' here)");
+}
+
 // Parallel session: run Claude Code as <name> in THIS terminal only.
 async function cmdRun(ctx, rest) {
   const sep = rest.indexOf('--');
@@ -251,8 +323,13 @@ async function cmdRun(ctx, rest) {
   const own = sep === -1 ? rest : rest.slice(0, sep);
   const noShare = own.indexOf('--no-share') !== -1;
   const autoYes = own.indexOf('-y') !== -1 || own.indexOf('--yes') !== -1 || own.indexOf('--force') !== -1;
-  const arg = own.filter(function (a) { return a.indexOf('-') !== 0; })[0];
-  if (!arg) return fail('usage: ccswitch run <name|number> [--no-share] [-y] [-- <claude args>]');
+  const shareHistory = own.indexOf('--share-history') !== -1;
+  let arg = own.filter(function (a) { return a.indexOf('-') !== 0; })[0];
+  if (!arg) {
+    const hit = links.lookup(ctx, process.cwd());
+    if (hit) { arg = hit.name; print('Using linked account for this directory: ' + hit.name); }
+    else return fail('usage: ccswitch run <name|number> [--no-share] [--share-history] [-y] [-- <claude args>]\n(or link this directory once:  ccswitch link <name>)');
+  }
   const name = core.resolveProfile(ctx, arg);
   if (!name) return fail("no such account: '" + arg + "'");
   const em = profiles.email(ctx.configDir, name) || name;
@@ -272,7 +349,7 @@ async function cmdRun(ctx, rest) {
   }
 
   let dir;
-  await withLock(ctx, function () { dir = session.prepareSession(ctx, name, { share: !noShare }); });
+  await withLock(ctx, function () { dir = session.prepareSession(ctx, name, { share: !noShare, shareHistory: shareHistory }); });
   const se = session.sessionEnv(ctx, dir);
   se.scrubbed.forEach(function (k) { print('  ⚠️ ignoring ' + k + ' for this session (it would override the account).'); });
   print('Launching Claude Code as ' + em + ' (this terminal only)…');
@@ -672,6 +749,10 @@ async function dispatch(ctx, cmd, rest) {
           logmod.log('removed profile ' + n);
           print('🗑  removed: ' + n);
         });
+      case 'autoswitch':
+        return cmdAutoswitch(ctx, rest);
+      case 'link':
+        return cmdLink(ctx, rest);
       case 'run':
         return cmdRun(ctx, rest);
       case 'export':

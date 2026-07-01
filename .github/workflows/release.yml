@@ -1,0 +1,37 @@
+# Version & artifact management (adapted from claude-swap's tag->publish chain):
+# pushing a tag `vX.Y.Z` verifies it matches package.json, runs the tests, packs
+# the npm tarball, and creates a GitHub Release with the artifact attached.
+# Publishing the release then triggers publish.yml (npm publish --provenance).
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Verify tag matches package.json version
+        run: |
+          PKG="$(node -p "require('./package.json').version")"
+          TAG="${GITHUB_REF_NAME#v}"
+          if [ "$PKG" != "$TAG" ]; then
+            echo "::error::package.json version ($PKG) does not match tag ($TAG)"
+            exit 1
+          fi
+      - name: Run tests
+        run: npm test
+      - name: Build artifact
+        run: npm pack
+      - name: Create GitHub release with the tarball
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" ccswitch-*.tgz --generate-notes --verify-tag

@@ -46,7 +46,10 @@ function writeManifest(dir, created) {
 
 // Mirror the user's customizations into the session profile. Only ever creates
 // (and later removes) entries listed in the manifest — never user data.
-function syncShared(ctx, dir, share) {
+// `extra` adds opt-in items (e.g. 'projects' for --share-history, issue #74:
+// two accounts sharing the same conversation history).
+function syncShared(ctx, dir, share, extra) {
+  const items = SHARED_ITEMS.concat(extra || []);
   const src = path.join(ctx.home, '.claude');
   const prev = readManifest(dir);
   // remove what we created before (re-synced below when share is on)
@@ -59,7 +62,7 @@ function syncShared(ctx, dir, share) {
   });
   const created = [];
   if (share) {
-    SHARED_ITEMS.forEach(function (n) {
+    items.forEach(function (n) {
       const from = path.join(src, n);
       const to = path.join(dir, n);
       if (!fs.existsSync(from) || fs.existsSync(to)) return; // never clobber user files
@@ -97,7 +100,7 @@ function prepareSession(ctx, name, opts) {
   if (meta.userID) existing.userID = meta.userID;
   claudeCfg.writeConfig(cfgPath, existing);
 
-  syncShared(ctx, dir, opts.share !== false);
+  syncShared(ctx, dir, opts.share !== false, opts.shareHistory ? ['projects'] : []);
   return dir;
 }
 

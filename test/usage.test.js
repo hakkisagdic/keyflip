@@ -57,13 +57,13 @@ test('a 401 from the usage API surfaces as the "expired" sentinel', async functi
   assert.strictEqual(r.stale.status, 'expired');
 });
 
-test('a 429 surfaces as rate-limited with zero headroom (skippable)', async function () {
+test('a 429 (endpoint throttle) surfaces as throttled/unknown — never auto-skipped', async function () {
   const ctx = makeCtx();
   ctx.store.setProfile('busy', blobWithToken('T'));
   const f429 = async function () { return { ok: false, status: 429 }; };
   const r = await usage.usageForProfiles(ctx, ['busy'], { fetch: f429, nowMs: 1800000000000 });
-  assert.strictEqual(r.busy.status, 'rate-limited');
-  assert.strictEqual(r.busy.headroom, 0);
+  assert.strictEqual(r.busy.status, 'throttled');
+  assert.strictEqual(r.busy.headroom, null); // unknown, not "account exhausted"
 });
 
 test('the active account uses the LIVE credential for usage (liveFor)', async function () {

@@ -85,7 +85,7 @@ async function usageForProfiles(ctx, names, opts) {
     const c = cache[name];
     if (c && c.at && nowMs - c.at < (opts.cacheTtlMs || CACHE_TTL_MS)) {
       out[name] = { status: c.status, usage: c.usage || null,
-        headroom: c.status === 'rate-limited' ? 0 : headroom(c.usage) };
+        headroom: headroom(c.usage) };
       continue;
     }
     // For the ACTIVE account prefer the LIVE credential — Claude keeps it fresh,
@@ -103,7 +103,10 @@ async function usageForProfiles(ctx, names, opts) {
         const r = await fetchUsageDetailed(token, opts);
         if (r.usage) out[name] = { status: 'ok', usage: r.usage, headroom: headroom(r.usage) };
         else if (r.httpStatus === 401 || r.httpStatus === 403) out[name] = { status: 'expired', usage: null, headroom: null };
-        else if (r.httpStatus === 429) out[name] = { status: 'rate-limited', usage: null, headroom: 0 }; // skippable by next-available
+        // 429 here means the USAGE ENDPOINT throttled this token — it does NOT
+        // prove the account's inference is rate-limited (verified live: a 429
+        // account kept working). Report unknown, never auto-skip on it.
+        else if (r.httpStatus === 429) out[name] = { status: 'throttled', usage: null, headroom: null };
         else out[name] = { status: 'error', usage: null, headroom: null };
       }
     }
