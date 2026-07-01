@@ -27,32 +27,31 @@ Log in to several accounts once, then hop between them without repeatedly loggin
 
 ## Install
 
-**Universal (any OS) — via npm:**
+**macOS / Linux — one line** (no npm, no sudo; fetches the sources and, on macOS, builds a launcher app):
 
 ```bash
-# public repo
-npm install --global git+https://github.com/hakkisagdic/ccswitch.git
-# or, from a checkout of any OS
-git clone https://github.com/hakkisagdic/ccswitch.git && cd ccswitch && npm install --global .
-```
-
-**macOS / Linux — installer script** (no npm/sudo needed; also builds a launcher app on macOS):
-
-```bash
-git clone https://github.com/hakkisagdic/ccswitch.git && cd ccswitch && ./install.sh
+curl -fsSL https://raw.githubusercontent.com/hakkisagdic/ccswitch/main/install.sh | bash
 ```
 
 **Windows — PowerShell** (also creates a Start Menu / Desktop shortcut):
 
 ```powershell
-git clone https://github.com/hakkisagdic/ccswitch.git; cd ccswitch; .\install.ps1
+irm https://raw.githubusercontent.com/hakkisagdic/ccswitch/main/install.ps1 | iex
 ```
 
-**Private repo?** Clone with the GitHub CLI first, then run the installer:
+**Via npm (any OS):**
 
 ```bash
-gh repo clone hakkisagdic/ccswitch /tmp/ccswitch && bash /tmp/ccswitch/install.sh   # macOS/Linux
+npm install --global git+https://github.com/hakkisagdic/ccswitch.git
 ```
+
+**From a clone:**
+
+```bash
+git clone https://github.com/hakkisagdic/ccswitch.git && cd ccswitch && ./install.sh   # or: .\install.ps1 on Windows
+```
+
+The installer places the code in `~/.local/share/ccswitch`, links `ccswitch` into `~/.local/bin`, and adds it to your `PATH`. Uninstall with `./uninstall.sh` (or `npm uninstall -g ccswitch`).
 
 ---
 

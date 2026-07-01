@@ -3,7 +3,7 @@
 # Saved profiles are kept unless you pass --purge.
 set -euo pipefail
 
-SHARE_DIR="${CCSWITCH_SHARE_DIR:-$HOME/.local/share/ccswitch}"
+SHARE_DIR="${CCSWITCH_DIR:-${CCSWITCH_SHARE_DIR:-$HOME/.local/share/ccswitch}}"
 BIN_DIR="${CCSWITCH_BIN_DIR:-$HOME/.local/bin}"
 APP_DIR="${CCSWITCH_APP_DIR:-$HOME/Applications}"
 APP_NAME="Claude Account Switcher"
