@@ -12,7 +12,7 @@ function list(dir) {
   let files;
   try { files = fs.readdirSync(dir); } catch (e) { return []; }
   return files
-    .filter(function (f) { return f.length > 5 && f.slice(-5) === '.json'; })
+    .filter(function (f) { return f.length > 5 && f.slice(-5) === '.json' && f[0] !== '.'; })
     .map(function (f) { return f.slice(0, -5); })
     .sort();
 }
@@ -26,6 +26,7 @@ function exists(dir, name) {
 }
 
 function write(dir, meta) {
+  if (!meta.schemaVersion) meta.schemaVersion = 1;
   atomicWrite(metaPath(dir, meta.name), JSON.stringify(meta, null, 2), 0o600);
 }
 

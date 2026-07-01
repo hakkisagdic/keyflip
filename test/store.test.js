@@ -44,7 +44,7 @@ test('createStore uses the file backend when a credentials file exists (even on 
 test('createStore uses Keychain on macOS when no credentials file exists', function () {
   const home = tmpdir();
   const store = createStore({ platform: 'darwin', credsFilePath: path.join(home, 'nope.json'), configDir: path.join(home, 'cfg'), account: 'me' });
-  assert.ok(store instanceof KeychainStore);
+  assert.strictEqual(store.type, 'keychain');
 });
 
 test('createStore defaults to the file backend on Linux/Windows', function () {

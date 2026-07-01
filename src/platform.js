@@ -47,6 +47,32 @@ function openClaude(p) {
   return false;
 }
 
+// Structured detection of live Claude Code sessions from the PID files Claude
+// itself writes (~/.claude/sessions/<pid>.json) — tells us WHICH instances are
+// running (pid, cwd, entrypoint) with real liveness, unlike ps|grep.
+function pidAlive(pid) {
+  try { process.kill(pid, 0); return true; }
+  catch (e) { return e && e.code === 'EPERM'; }
+}
+function claudeInstances(home) {
+  const fs = require('fs');
+  const path = require('path');
+  const dir = path.join(home, '.claude', 'sessions');
+  let files;
+  try { files = fs.readdirSync(dir); } catch (e) { return []; }
+  const out = [];
+  files.forEach(function (f) {
+    if (!/^[0-9]+\.json$/.test(f)) return;
+    try {
+      const j = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8'));
+      if (j && j.pid && pidAlive(j.pid)) {
+        out.push({ pid: j.pid, cwd: j.cwd || null, entrypoint: j.entrypoint || 'cli', kind: j.kind || null });
+      }
+    } catch (e) { /* skip unreadable */ }
+  });
+  return out;
+}
+
 // Can we reliably quit AND relaunch the desktop app automatically?
 // macOS only: `osascript quit` + `open -a Claude` are dependable. On Windows the
 // relaunch (`start "" Claude`) is not reliable, and on Linux there is no managed
@@ -61,4 +87,5 @@ module.exports = {
   quitClaude: quitClaude,
   openClaude: openClaude,
   canManageApp: canManageApp,
+  claudeInstances: claudeInstances,
 };

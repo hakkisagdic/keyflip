@@ -427,6 +427,7 @@ async function main(argv) {
   const rest = argv.slice(1);
   const ctx = createContext();
   logmod.init(ctx.configDir, debug);
+  try { require('./migrations').runMigrations(ctx); } catch (e) { /* never blocks startup */ }
   try {
     switch (cmd) {
       case undefined:
@@ -446,7 +447,17 @@ async function main(argv) {
         return withLock(ctx, function () {
           const n = core.resolveProfile(ctx, rest[0]);
           if (!n) return fail("no such account: '" + (rest[0] || '') + "'");
+          // Never yank the account live Claude sessions are using out from under them.
+          const em = profiles.email(ctx.configDir, n);
+          if (em && em === core.currentEmail(ctx) && rest.indexOf('--force') === -1) {
+            const live = appctl.claudeInstances(ctx.home);
+            if (live.length) {
+              return fail("'" + em + "' is the account " + live.length + ' running Claude session(s) are using ' +
+                '(pid ' + live.map(function (i) { return i.pid; }).join(', ') + ') — close them first, or pass --force.');
+            }
+          }
           core.removeProfile(ctx, n);
+          logmod.log('removed profile ' + n);
           print('🗑  removed: ' + n);
         });
       case 'clean':

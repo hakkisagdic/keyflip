@@ -115,6 +115,9 @@ function applyProfile(ctx, name) {
     err.code = (e && e.code) || 'ESWITCH';
     throw err;
   }
+  // Claude Code reads the Keychain before the credentials file — after a file
+  // write, clear any stale Keychain copy so it can't resurrect the old account.
+  try { require('./stores').reconcileStaleKeychain(ctx); } catch (e) { /* best effort */ }
 }
 
 // Before switching away, preserve the live account's (possibly rotated) token:
