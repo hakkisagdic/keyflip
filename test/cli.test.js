@@ -25,7 +25,7 @@ function loginAs(home, email, userID, token) {
     JSON.stringify({ oauthAccount: { emailAddress: email }, userID: userID }));
 }
 
-function run(home, args) {
+function run(home, args, extraEnv) {
   return require('child_process').spawnSync(process.execPath, [BIN].concat(args), {
     encoding: 'utf8',
     env: Object.assign({}, process.env, {
@@ -33,7 +33,8 @@ function run(home, args) {
       USERPROFILE: home, // Windows homedir
       XDG_CONFIG_HOME: path.join(home, '.config'),
       APPDATA: path.join(home, 'AppData', 'Roaming'),
-    }),
+      CCSWITCH_TEST_CLAUDE: 'stopped', // never touch a real app; deterministic across machines
+    }, extraEnv || {}),
   });
 }
 
@@ -68,6 +69,37 @@ test('version prints and exits 0', function () {
   const r = run(home, ['version']);
   assert.strictEqual(r.status, 0);
   assert.match(r.stdout, /ccswitch \d+\.\d+\.\d+/);
+});
+
+test('switch refuses to auto-close a running Claude without confirmation (non-interactive)', function () {
+  const home = setupHome();
+  run(home, ['add']);                                   // save alice (current)
+  loginAs(home, 'bob@example.com', 'u2', 'TOKEN-2');
+  run(home, ['add']);                                   // save bob (current = bob)
+  const r = run(home, ['switch', 'alice'], { CCSWITCH_TEST_CLAUDE: 'running' });
+  assert.notStrictEqual(r.status, 0);                   // must not silently close/switch
+  const cur = run(home, ['current'], { CCSWITCH_TEST_CLAUDE: 'running' });
+  assert.match(cur.stdout, /bob@example\.com/);         // still on bob — nothing changed
+});
+
+test('switch --restart proceeds while Claude is running (closes/reopens, or swaps where it cannot)', function () {
+  const home = setupHome();
+  run(home, ['add']);
+  loginAs(home, 'bob@example.com', 'u2', 'TOKEN-2');
+  run(home, ['add']);
+  const r = run(home, ['switch', 'alice', '--restart'], { CCSWITCH_TEST_CLAUDE: 'running' });
+  assert.strictEqual(r.status, 0, r.stderr);
+  assert.match(run(home, ['current']).stdout, /alice@example\.com/);
+});
+
+test('switch --force swaps in place without closing a running Claude', function () {
+  const home = setupHome();
+  run(home, ['add']);
+  loginAs(home, 'bob@example.com', 'u2', 'TOKEN-2');
+  run(home, ['add']);
+  const r = run(home, ['switch', 'alice', '--force'], { CCSWITCH_TEST_CLAUDE: 'running' });
+  assert.strictEqual(r.status, 0, r.stderr);
+  assert.match(run(home, ['current']).stdout, /alice@example\.com/);
 });
 
 test('menu survives EOF during a sub-prompt (no crash)', function () {

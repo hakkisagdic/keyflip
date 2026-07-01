@@ -1,11 +1,19 @@
 'use strict';
 // Best-effort control of the Claude desktop app, per platform. Only used by the
 // CLI/menu (never by core), so the core stays hermetically testable.
+//
+// Test hook: set CCSWITCH_TEST_CLAUDE=running|stopped to control detection and make
+// quit/open no-ops (so tests never touch a real app). quit flips state to stopped.
 const { run } = require('./exec');
 
+let _testStopped = false;
+
 function plat(p) { return p || process.platform; }
+function testMode() { return process.env.CCSWITCH_TEST_CLAUDE; }
 
 function isClaudeRunning(p) {
+  const t = testMode();
+  if (t) return t === 'running' && !_testStopped;
   p = plat(p);
   if (p === 'darwin') {
     const r = run('sh', ['-c',
@@ -22,6 +30,7 @@ function isClaudeRunning(p) {
 }
 
 function quitClaude(p) {
+  if (testMode()) { _testStopped = true; return true; }
   p = plat(p);
   if (p === 'darwin') { run('osascript', ['-e', 'tell application "Claude" to quit']); return true; }
   if (p === 'win32') { run('taskkill', ['/IM', 'Claude.exe', '/F']); return true; }
@@ -29,6 +38,7 @@ function quitClaude(p) {
 }
 
 function openClaude(p) {
+  if (testMode()) { return true; }
   p = plat(p);
   if (p === 'darwin') { run('open', ['-a', 'Claude']); return true; }
   if (p === 'win32') { run('cmd', ['/c', 'start', '', 'Claude']); return true; }

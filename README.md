@@ -81,7 +81,7 @@ Run `ccswitch` (or, on macOS/Windows, open the **“Claude Account Switcher”**
   [number] switch   [a] save current   [d] delete   [r] refresh   [q] quit
 ```
 
-On macOS/Windows, choosing an account **quits Claude, switches, and reopens it**. On Linux it switches and asks you to restart Claude Code.
+If Claude / Claude Code is open, ccswitch first asks **“Claude will be closed to switch — continue?”** On **yes** it closes Claude, switches, and reopens it (macOS); on **no** it cancels and changes nothing.
 
 ### CLI
 
@@ -89,13 +89,19 @@ On macOS/Windows, choosing an account **quits Claude, switches, and reopens it**
 ccswitch                       # interactive menu
 ccswitch add [name]            # detect & save the logged-in account
 ccswitch list                  # list saved accounts (* = active)
-ccswitch switch <name|number>  # switch (add --restart to auto quit/reopen the app)
+ccswitch switch <name|number>  # switch accounts
+ccswitch switch <name> --restart  # close & reopen Claude automatically (no prompt)
+ccswitch switch <name> --force    # swap without closing Claude (restart it yourself)
 ccswitch remove <name|number>  # delete a saved account
 ccswitch current               # show the active account
 ccswitch version
 ```
 
-> Switching should happen while Claude is closed, or Claude may overwrite the change on exit. The launcher and `--restart` handle this for you; the plain `switch` warns if Claude is running (override with `--force`).
+> Switching should happen while Claude is closed, or Claude may overwrite the change on exit.
+> - **Interactive** (menu, or `switch` in a terminal): if Claude is open you're **asked before it's closed** — answer *no* to cancel.
+> - `--restart`: close & reopen Claude without asking (macOS).
+> - `--force`: switch without closing Claude — restart it yourself afterward.
+> - Non-interactive (piped/CI) with Claude open and no flag: refuses rather than closing your app unexpectedly.
 
 ---
 

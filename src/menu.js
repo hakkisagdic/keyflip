@@ -23,10 +23,12 @@ function ask(rl, q) {
 }
 function delay(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
 
-async function switchInteractive(ctx, name, p) {
+async function switchInteractive(ctx, name, p, rl) {
   const managed = appctl.canManageApp(ctx.platform);
   const running = managed && appctl.isClaudeRunning(ctx.platform);
   if (running) {
+    const ans = await ask(rl, '  Claude / Claude Code is open and will be closed to switch. Continue? [y/N] ');
+    if (ans === null || !/^y(es)?$/i.test(ans.trim())) { p('  Cancelled — nothing was changed.'); return false; }
     p('  Quitting Claude...');
     appctl.quitClaude(ctx.platform);
     for (let i = 0; i < 40 && appctl.isClaudeRunning(ctx.platform); i++) { await delay(500); } // ~20s max
@@ -36,6 +38,7 @@ async function switchInteractive(ctx, name, p) {
   const em = profiles.email(ctx.configDir, name);
   p('  ✅ Switched to: ' + (em || name));
   if (!managed) p('  ↪ Restart Claude Code to apply.');
+  return true;
 }
 
 async function menuAdd(ctx, rl, p) {
@@ -105,7 +108,8 @@ async function runMenu(ctx, io) {
         if (!name) { p('  Invalid choice.'); continue; }
         const em = profiles.email(ctx.configDir, name);
         if (em && em === cur) { p("  '" + em + "' is already active."); continue; }
-        await switchInteractive(ctx, name, p);
+        const did = await switchInteractive(ctx, name, p, rl);
+        if (!did) { continue; } // cancelled -> back to the menu
         p(''); p('  Done — you can close this window.'); p('');
         break;
       }
