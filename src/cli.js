@@ -13,6 +13,8 @@ const lock = require('./lock');
 const logmod = require('./log');
 const oauth = require('./oauth');
 const update = require('./update');
+const transfer = require('./transfer');
+const usagemod = require('./usage');
 const style = require('./style').make(process.stdout);
 
 // Serialize every mutation across processes (double-fired alias, launcher app
@@ -57,10 +59,13 @@ function usage() {
   print('                                 (--app: desktop app only; name it if undetected)');
   print('  ccswitch <name|number>         switch to that account (asks before closing Claude;');
   print('                                 --restart = no prompt, --force = swap without closing)');
-  print('  ccswitch next                  rotate to the next saved account');
+  print('  ccswitch next [--strategy best|next-available]');
+  print('                                 rotate to the next account — or pick by remaining quota');
   print('  ccswitch status                which account each surface is on (CLI + desktop app)');
-  print('  ccswitch list                  saved accounts (* active, [cli|app] = what\'s captured)');
+  print('  ccswitch list [--usage]        saved accounts; --usage adds 5h/7d quota per account');
   print('  ccswitch remove <name|number>  delete a saved account');
+  print('  ccswitch export [file|-]       back up saved accounts to a file (contains secrets!)');
+  print('  ccswitch import <file|->       restore accounts from an export (--force overwrites)');
   print('  ccswitch upgrade               update ccswitch itself (auto-detects install method)');
   print('  ccswitch clean [--logout]      reset ccswitch data; --logout also signs out of');
   print('                                 Claude Code + the desktop app (asks to confirm)');
@@ -173,10 +178,65 @@ async function cmdNext(ctx, rest) {
   if (list.length < 2) return fail('need at least 2 saved accounts to rotate (see: ccswitch add)');
   let idx = -1;
   list.forEach(function (e, i) { if (e.active) idx = i; });
-  const target = list[(idx + 1) % list.length];
-  if (target.active) return fail('no other account to rotate to');
-  print('Rotating to: ' + (target.email || target.name));
-  return cmdSwitch(ctx, [target.name].concat(rest.filter(function (a) { return a.indexOf('--') === 0; })));
+  // candidates in rotation order, starting right after the active account
+  const candidates = [];
+  for (let k = 1; k <= list.length; k++) {
+    const e = list[(idx + k) % list.length];
+    if (!e.active) candidates.push(e);
+  }
+  if (!candidates.length) return fail('no other account to rotate to');
+
+  const si = rest.indexOf('--strategy');
+  const strategy = si !== -1 ? rest[si + 1] : null;
+  let target = candidates[0];
+  if (strategy) {
+    if (strategy !== 'best' && strategy !== 'next-available') {
+      return fail("unknown strategy '" + strategy + "' — use: best | next-available");
+    }
+    const infos = await usagemod.usageForProfiles(ctx, candidates.map(function (e) { return e.name; }), {});
+    const picked = usagemod.pickByStrategy(candidates, infos, strategy);
+    if (!picked) return fail('no account matches strategy \'' + strategy + '\' (usage unknown or all rate-limited)');
+    target = picked;
+    const info = infos[target.name];
+    print('Rotating to: ' + (target.email || target.name) +
+      (info && typeof info.headroom === 'number' ? '  (' + usagemod.fmt(info.usage) + ', headroom ' + Math.round(info.headroom) + '%)' : ''));
+  } else {
+    print('Rotating to: ' + (target.email || target.name));
+  }
+  return cmdSwitch(ctx, [target.name].concat(rest.filter(function (a) { return a.indexOf('--') === 0 && a !== '--strategy'; })));
+}
+
+// Backup / machine migration: a versioned envelope of saved accounts.
+function cmdExport(ctx, rest) {
+  const target = rest.filter(function (a) { return a.indexOf('--') !== 0; })[0] || 'ccswitch-export.json';
+  const r = transfer.buildExport(ctx);
+  if (!r.envelope.accounts.length) {
+    return fail('nothing to export' + (r.skipped.length ? ' (credentials unreadable for: ' + r.skipped.join(', ') + ')' : ''));
+  }
+  const json = JSON.stringify(r.envelope, null, 2);
+  if (target === '-') process.stdout.write(json + '\n');
+  else {
+    fs.writeFileSync(target, json + '\n', { mode: 0o600 });
+    print('💾 exported ' + r.envelope.accounts.length + " account(s) to '" + target + "'.");
+  }
+  r.skipped.forEach(function (n) { print('  ⚠️ skipped (credentials unreadable): ' + n); });
+  print(style.warn('⚠️  The export CONTAINS LOGIN SECRETS') + ' — store it safely (or pipe through gpg) and delete it after importing.');
+  print('   Desktop-app logins are machine-bound and not included — run ccswitch add on the new machine.');
+  logmod.log('export: ' + r.envelope.accounts.length + ' account(s)');
+}
+
+function cmdImport(ctx, rest) {
+  const target = rest.filter(function (a) { return a.indexOf('--') !== 0; })[0];
+  if (!target) return fail('usage: ccswitch import <file|-> [--force]');
+  let raw;
+  try { raw = target === '-' ? fs.readFileSync(0, 'utf8') : fs.readFileSync(target, 'utf8'); }
+  catch (e) { return fail('cannot read ' + target + ': ' + e.message); }
+  let env;
+  try { env = JSON.parse(raw); } catch (e) { return fail('that file is not valid JSON'); }
+  const r = transfer.applyImport(ctx, env, { force: rest.indexOf('--force') !== -1 });
+  print(style.ok('✅') + ' imported: ' + (r.imported.join(', ') || '(none)'));
+  if (r.skipped.length) print('  ↳ already present, skipped (use --force to overwrite): ' + r.skipped.join(', '));
+  logmod.log('import: ' + r.imported.length + ' account(s)');
 }
 
 // Self-upgrade: re-run whichever installer put this copy here.
@@ -412,9 +472,14 @@ async function cmdClean(ctx, rest) {
   print('✅ Done.');
 }
 
-function cmdList(ctx) {
+async function cmdList(ctx, rest) {
   const list = core.listProfiles(ctx);
   const appActive = ctx.appDataDir ? appauth.activeProfileName(ctx) : null;
+  const withUsage = (rest || []).indexOf('--usage') !== -1;
+  let infos = null;
+  if (withUsage && list.length) {
+    infos = await usagemod.usageForProfiles(ctx, list.map(function (e) { return e.name; }), {});
+  }
   if (JSON_MODE) {
     jsonOut({
       accounts: list.map(function (e) {
@@ -424,6 +489,8 @@ function cmdList(ctx) {
           appCaptured: appauth.hasProfile(ctx, e.name),
           activeCli: !!e.active,
           activeApp: e.name === appActive,
+          usage: infos ? ((infos[e.name] && infos[e.name].usage) || null) : undefined,
+          usageStatus: infos ? ((infos[e.name] && infos[e.name].status) || null) : undefined,
         };
       }),
       activeCli: core.currentEmail(ctx) || null,
@@ -440,8 +507,13 @@ function cmdList(ctx) {
       const now = [];
       if (e.active) now.push('CLI');
       if (e.name === appActive) now.push('app');
+      let usageCol = '';
+      if (infos) {
+        const info = infos[e.name] || {};
+        usageCol = '   [' + (info.status === 'ok' ? usagemod.fmt(info.usage) : (info.status || '?')) + ']';
+      }
       print(' ' + (now.length ? '→' : ' ') + ' [' + e.index + '] ' + (e.email || e.name) +
-        '   [cli ' + (cli === null ? '?' : (cli ? '✓' : '—')) + ' | app ' + (app ? '✓' : '—') + ']' +
+        '   [cli ' + (cli === null ? '?' : (cli ? '✓' : '—')) + ' | app ' + (app ? '✓' : '—') + ']' + usageCol +
         (now.length ? '   ← active: ' + now.join(' + ') : ''));
     });
   }
@@ -482,7 +554,7 @@ async function dispatch(ctx, cmd, rest) {
       case 'add':
         return withLock(ctx, function () { return cmdAdd(ctx, rest); });
       case 'list':
-        return cmdList(ctx);
+        return cmdList(ctx, rest);
       case 'status':
         return cmdStatus(ctx);
       case 'next':
@@ -504,6 +576,10 @@ async function dispatch(ctx, cmd, rest) {
           logmod.log('removed profile ' + n);
           print('🗑  removed: ' + n);
         });
+      case 'export':
+        return cmdExport(ctx, rest);
+      case 'import':
+        return withLock(ctx, function () { return cmdImport(ctx, rest); });
       case 'upgrade':
         return cmdUpgrade(ctx);
       case 'clean':
