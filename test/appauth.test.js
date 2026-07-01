@@ -133,3 +133,42 @@ test('applyFromProfile clears a stale counterpart key (no mismatched V1/V2)', fu
   assert.strictEqual('oauth:tokenCacheV2' in cfg, false); // stale B-V2 removed
   assert.strictEqual(cfg.keep, 'me');
 });
+
+function encryptV10(text, password) {
+  const crypto = require('crypto');
+  const key = crypto.pbkdf2Sync(password, 'saltysalt', 1003, 16, 'sha1');
+  const c = crypto.createCipheriv('aes-128-cbc', key, Buffer.alloc(16, 0x20));
+  return Buffer.concat([Buffer.from('v10'), c.update(text, 'utf8'), c.final()]).toString('base64');
+}
+
+test('decryptBlob round-trips an Electron safeStorage (v10) blob', function () {
+  const blob = encryptV10('{"hello":"world"}', 'pw123');
+  assert.strictEqual(appauth.decryptBlob(blob, 'pw123'), '{"hello":"world"}');
+  assert.strictEqual(appauth.decryptBlob(blob, 'wrong'), null);
+  assert.strictEqual(appauth.decryptBlob('bm90LXYxMA==', 'pw123'), null); // not v10
+});
+
+test('detectAppAccount identifies org/account/email from the app\'s own data', function () {
+  const s = setup();
+  const ORG = '48ebd0e4-4225-4565-93b1-beb21171933e', ACCT = '99b327a0-bd81-4e43-b2ef-ee618d301400';
+  const obj = {};
+  obj['oauth:tokenCacheV2'] = encryptV10('{"org":"' + ORG + '","scopes":[]}', 'pw123');
+  obj['dxt:allowlistLastUpdated:' + ORG] = '2026-07-01T00:00:00.000Z';
+  fs.writeFileSync(s.cfg, JSON.stringify(obj));
+  fs.mkdirSync(path.join(s.ctx.appDataDir, 'claude-code-sessions', ACCT, ORG), { recursive: true });
+  const lam = path.join(s.ctx.appDataDir, 'local-agent-mode-sessions', ACCT, ORG);
+  fs.mkdirSync(lam, { recursive: true });
+  fs.writeFileSync(path.join(lam, 'x.json'), JSON.stringify({ oauthAccount: { emailAddress: 'y@yahoo.com' } }));
+  s.ctx.safeStoragePassword = 'pw123';
+  const det = appauth.detectAppAccount(s.ctx);
+  assert.ok(det);
+  assert.strictEqual(det.org, ORG);
+  assert.strictEqual(det.account, ACCT);
+  assert.strictEqual(det.email, 'y@yahoo.com');
+});
+
+test('detectAppAccount returns null (no Keychain prompt) when the blob is not v10', function () {
+  const s = setup(); // plain 'TOKEN-A-V2' — not a v10 blob
+  s.ctx.safeStoragePassword = 'pw123';
+  assert.strictEqual(appauth.detectAppAccount(s.ctx), null);
+});

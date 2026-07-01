@@ -11,7 +11,9 @@
 // macOS desktop app only.
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const { atomicWrite } = require('./fsutil');
+const { run } = require('./exec');
 
 const KEYS = ['oauth:tokenCache', 'oauth:tokenCacheV2'];
 
@@ -46,6 +48,92 @@ function detectActiveOrg(ctx) {
     if (m && typeof cfg[k] === 'string' && cfg[k] > bestTs) { bestTs = cfg[k]; best = m[1]; }
   });
   return best;
+}
+
+// ---- decrypting the app's token cache (Electron safeStorage, macOS) ----
+// Format: base64( "v10" + AES-128-CBC(data) ), key = PBKDF2-SHA1(password,
+// "saltysalt", 1003, 16), IV = 16 spaces; password lives in the login Keychain
+// ("Claude Safe Storage"/"Claude Key"). We only use this to identify WHICH
+// account the app is signed into — nothing decrypted is ever written or printed.
+function isV10(b64) {
+  try { return Buffer.from(String(b64), 'base64').slice(0, 3).toString() === 'v10'; }
+  catch (e) { return false; }
+}
+function decryptBlob(b64, password) {
+  try {
+    const buf = Buffer.from(String(b64), 'base64');
+    if (buf.slice(0, 3).toString() !== 'v10') return null;
+    const key = crypto.pbkdf2Sync(password, 'saltysalt', 1003, 16, 'sha1');
+    const d = crypto.createDecipheriv('aes-128-cbc', key, Buffer.alloc(16, 0x20));
+    return Buffer.concat([d.update(buf.slice(3)), d.final()]).toString('utf8');
+  } catch (e) { return null; }
+}
+function getSafeStoragePassword(ctx) {
+  if (ctx && ctx.safeStoragePassword) return ctx.safeStoragePassword;
+  const r = run('security', ['find-generic-password', '-s', 'Claude Safe Storage', '-a', 'Claude Key', '-w']);
+  return r.code === 0 ? r.stdout.replace(/\r?\n$/, '') : null;
+}
+
+const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g;
+
+// Scan a small tree for an "emailAddress" field (bounded; best-effort).
+function findEmailUnder(dir, budget) {
+  let left = budget || 80;
+  function walk(d) {
+    if (left <= 0) return null;
+    let entries;
+    try { entries = fs.readdirSync(d, { withFileTypes: true }); } catch (e) { return null; }
+    for (const ent of entries) {
+      if (left <= 0) return null;
+      const p = path.join(d, ent.name);
+      if (ent.isDirectory()) { const r = walk(p); if (r) return r; }
+      else if (ent.isFile() && /\.(json|backup\.[0-9]+)$/.test(ent.name)) {
+        left -= 1;
+        try {
+          const txt = fs.readFileSync(p, 'utf8');
+          const m = /"emailAddress"\s*:\s*"([^"]+)"/.exec(txt);
+          if (m) return m[1];
+        } catch (e) { /* skip */ }
+      }
+    }
+    return null;
+  }
+  return walk(dir);
+}
+
+// Identify the account the desktop app is CURRENTLY signed into, independent of
+// the CLI: decrypt the token cache -> org uuid -> account uuid (via the app's own
+// per-account folders) -> email (best-effort from the app's data). Returns
+// { org, account, email } (fields may be null) or null.
+function detectAppAccount(ctx) {
+  const cfg = readJSON(configPath(ctx));
+  if (!cfg || !ctx.appDataDir) return null;
+  let blob = null;
+  ['oauth:tokenCacheV2', 'oauth:tokenCache'].forEach(function (k) {
+    if (!blob && typeof cfg[k] === 'string' && isV10(cfg[k])) blob = cfg[k];
+  });
+  if (!blob) return null; // also avoids a Keychain prompt when there's nothing to decrypt
+  const pw = getSafeStoragePassword(ctx);
+  if (!pw) return null;
+  const text = decryptBlob(blob, pw);
+  if (!text) return null;
+  const uuids = []; let m;
+  const re = new RegExp(UUID_RE.source, 'g');
+  while ((m = re.exec(text)) !== null) { if (uuids.indexOf(m[0]) === -1) uuids.push(m[0]); }
+
+  const store = path.join(ctx.appDataDir, 'claude-code-sessions');
+  let org = null, account = null;
+  uuids.forEach(function (u) { if (!org && cfg['dxt:allowlistLastUpdated:' + u] !== undefined) org = u; });
+  const accts = (function () { try { return fs.readdirSync(store); } catch (e) { return []; } })();
+  accts.forEach(function (a) {
+    let orgs; try { orgs = fs.readdirSync(path.join(store, a)); } catch (e) { return; }
+    orgs.forEach(function (o) {
+      if (org ? o === org : uuids.indexOf(o) !== -1) { org = org || o; if (!account) account = a; }
+    });
+  });
+  let email = null;
+  if (account) email = findEmailUnder(path.join(ctx.appDataDir, 'local-agent-mode-sessions', account));
+  return { org: org, account: account, email: email };
 }
 
 // Capture the app's current login (token cache + the session Cookies DB that is
@@ -168,6 +256,8 @@ module.exports = {
   signOutApp: signOutApp,
   hasProfile: hasProfile,
   detectActiveOrg: detectActiveOrg,
+  detectAppAccount: detectAppAccount,
+  decryptBlob: decryptBlob,
   configPath: configPath,
   profilePath: profilePath,
   cookiesPath: cookiesPath,

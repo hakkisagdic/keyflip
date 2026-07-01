@@ -115,6 +115,16 @@ function doSwitch(ctx, name) {
   applyProfile(ctx, name);
 }
 
+// Switch as far as the profile allows: swap the CLI creds when they were captured
+// for this profile; otherwise leave the CLI alone (app-only profile). Returns
+// { cli: <whether the CLI login was switched> }.
+function performSwitch(ctx, name) {
+  const hasCli = !!ctx.store.getProfile(name);
+  if (hasCli) doSwitch(ctx, name);
+  else refreshCurrent(ctx, name); // still preserve the current CLI account's tokens
+  return { cli: hasCli };
+}
+
 function listProfiles(ctx) {
   const cur = currentEmail(ctx);
   return profiles.list(ctx.configDir).map(function (name, i) {
@@ -150,6 +160,7 @@ module.exports = {
   applyProfile: applyProfile,
   refreshCurrent: refreshCurrent,
   doSwitch: doSwitch,
+  performSwitch: performSwitch,
   listProfiles: listProfiles,
   resolveProfile: resolveProfile,
   removeProfile: removeProfile,

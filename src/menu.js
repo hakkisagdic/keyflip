@@ -59,7 +59,8 @@ async function switchInteractive(ctx, name, p, rl) {
     appctl.quitClaude(ctx.platform);
     for (let i = 0; i < 40 && appctl.isClaudeRunning(ctx.platform); i++) { await delay(500); }
   }
-  core.doSwitch(ctx, name);
+  const did = core.performSwitch(ctx, name);
+  if (!did.cli) p("  ↳ CLI login for this profile isn't captured — switching the desktop app only.");
   const appl = switchDesktopSilent(ctx, name);
   if (appl.ok) p('  ↳ switched the Claude desktop-app login too.');
   const cons = consolidateSilent(ctx);
@@ -220,7 +221,8 @@ function runMenuKeys(ctx, io) {
         appctl.quitClaude(ctx.platform);
         for (let i = 0; i < 40 && appctl.isClaudeRunning(ctx.platform); i++) { await delay(500); }
       }
-      core.doSwitch(ctx, name);
+      const did = core.performSwitch(ctx, name);
+      if (!did.cli) write("  ↳ CLI login for this profile isn't captured — switching the desktop app only.\n");
       const appl = switchDesktopSilent(ctx, name);
       if (appl.ok) write('  ↳ switched the Claude desktop-app login too.\n');
       const cons = consolidateSilent(ctx);

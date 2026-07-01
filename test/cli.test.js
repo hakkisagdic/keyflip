@@ -70,6 +70,39 @@ test('capture-app captures the desktop login for a named profile (macOS)', funct
   assert.ok(fs.existsSync(path.join(home, '.config', 'ccswitch', 'app', 'alice.json')), 'app token saved');
 });
 
+test('capture-app works with NO CLI login — creates an app-only account (macOS)', function (t) {
+  if (process.platform !== 'darwin') return t.skip('the desktop app store is macOS-only');
+  const home = setupHome();
+  // CLI fully logged out:
+  fs.rmSync(path.join(home, '.claude', '.credentials.json'), { force: true });
+  fs.writeFileSync(path.join(home, '.claude.json'), '{}');
+  const appCfgDir = path.join(home, 'Library', 'Application Support', 'Claude');
+  fs.mkdirSync(appCfgDir, { recursive: true });
+  fs.writeFileSync(path.join(appCfgDir, 'config.json'), JSON.stringify({ 'oauth:tokenCacheV2': 'YAHOO-APP-TOKEN' }));
+  fs.writeFileSync(path.join(appCfgDir, 'Cookies'), 'YAHOO-COOKIES');
+
+  const r = run(home, ['capture-app', 'yahoo']); // named (no auto-detect data in this fake env)
+  assert.strictEqual(r.status, 0, r.stderr);
+  assert.match(run(home, ['list']).stdout, /yahoo.*\[cli — \| app ✓\]/);
+
+  // switching to an app-only profile must not fail on missing CLI creds
+  const sw = run(home, ['switch', 'yahoo', '--force']);
+  assert.strictEqual(sw.status, 0, sw.stderr);
+  assert.match(sw.stdout, /desktop app only|nothing to swap for the CLI/);
+});
+
+test('capture-app without a name and no detectable identity gives a helpful error', function (t) {
+  if (process.platform !== 'darwin') return t.skip('the desktop app store is macOS-only');
+  const home = setupHome();
+  fs.writeFileSync(path.join(home, '.claude.json'), '{}');
+  const appCfgDir = path.join(home, 'Library', 'Application Support', 'Claude');
+  fs.mkdirSync(appCfgDir, { recursive: true });
+  fs.writeFileSync(path.join(appCfgDir, 'config.json'), JSON.stringify({ 'oauth:tokenCacheV2': 'TOK' }));
+  const r = run(home, ['capture-app']);
+  assert.notStrictEqual(r.status, 0);
+  assert.match(r.stderr, /capture-app <name>/);
+});
+
 test('clean --force deletes all saved ccswitch data', function () {
   const home = setupHome();
   run(home, ['add']); // -> profile alice
@@ -79,7 +112,7 @@ test('clean --force deletes all saved ccswitch data', function () {
   const list = run(home, ['list']).stdout;
   assert.match(list, /none yet/);          // saved profiles gone
   assert.doesNotMatch(list, /\[1\]/);      // no numbered entries
-  assert.match(list, /Active account: alice@example\.com/); // live login untouched
+  assert.match(list, /Active CLI account: alice@example\.com/); // live login untouched
 });
 
 test('clean --logout --force signs out of Claude Code (and the desktop app on macOS)', function () {
