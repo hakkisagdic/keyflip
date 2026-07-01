@@ -95,6 +95,8 @@ ccswitch next                  # rotate to the next saved account
 ccswitch next --strategy best  # ...or pick by remaining quota (also: next-available)
 ccswitch status                # which account each surface is on (CLI + desktop app)
 ccswitch list [--usage]        # accounts; --usage adds each one's 5h/7d utilization
+ccswitch run <name> [-- args]  # PARALLEL session: that account in THIS terminal only
+ccswitch add <name> --token <file|->   # headless import of a raw credential
 ccswitch export [file|-]       # back up accounts to a file (CONTAINS SECRETS)
 ccswitch import <file|->       # restore accounts from an export (--force overwrites)
 ccswitch remove <name|number>  # delete a saved account
@@ -119,6 +121,29 @@ most once a day (never blocks a command).
   live Claude session owns the credential; failures warn loudly).
 - A locked macOS Keychain reads as **"keychain locked"** (not "no credentials"),
   with 5s timeouts; profile storage falls back to files so you can keep working.
+
+### Parallel sessions (`run`)
+
+`ccswitch run <name>` launches Claude Code as that account **in the current
+terminal only** — every other terminal, the desktop app and VS Code keep their
+current account, so two accounts can work side by side. Your `~/.claude`
+customizations (settings, keybindings, CLAUDE.md, skills, commands, agents)
+follow you in via symlinks (`--no-share` for a bare profile); conversation
+history stays per-account. Everything after `--` is forwarded to `claude`
+(e.g. `ccswitch run work -- --resume`). If the session refreshes the token,
+ccswitch saves it back to the profile on exit.
+
+> ⚠️ **Asks for confirmation first** (skip with `-y`): a token refresh inside a
+> parallel session rotates that account's refresh token, which can log out
+> *other live copies of the same account*.
+
+### Headless import (`add --token`)
+
+`ccswitch add <name> --token <file|->` saves a raw credentials JSON blob
+(`{"claudeAiOauth":{...}}`) as an account without any login flow — for CI or
+provisioning. The blob is read from a **file or stdin, never argv**. It asks
+for confirmation on a TTY; piped/scripted use must pass `--force`, and
+overwriting an existing account always requires `--force`.
 
 ### VS Code
 

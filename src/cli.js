@@ -15,6 +15,7 @@ const oauth = require('./oauth');
 const update = require('./update');
 const transfer = require('./transfer');
 const usagemod = require('./usage');
+const session = require('./session');
 const style = require('./style').make(process.stdout);
 
 // Serialize every mutation across processes (double-fired alias, launcher app
@@ -64,6 +65,10 @@ function usage() {
   print('  ccswitch status                which account each surface is on (CLI + desktop app)');
   print('  ccswitch list [--usage]        saved accounts; --usage adds 5h/7d quota per account');
   print('  ccswitch remove <name|number>  delete a saved account');
+  print('  ccswitch run <name> [-- args]  PARALLEL session: run Claude as that account in THIS');
+  print('                                 terminal only (asks first; --no-share = bare profile)');
+  print('  ccswitch add <name> --token <file|->   headless import of a raw credential (asks first;');
+  print('                                 --force for scripts; NEVER pass the token as an argument)');
   print('  ccswitch export [file|-]       back up saved accounts to a file (contains secrets!)');
   print('  ccswitch import <file|->       restore accounts from an export (--force overwrites)');
   print('  ccswitch upgrade               update ccswitch itself (auto-detects install method)');
@@ -239,6 +244,94 @@ function cmdImport(ctx, rest) {
   logmod.log('import: ' + r.imported.length + ' account(s)');
 }
 
+// Parallel session: run Claude Code as <name> in THIS terminal only.
+async function cmdRun(ctx, rest) {
+  const sep = rest.indexOf('--');
+  const fwd = sep === -1 ? [] : rest.slice(sep + 1);
+  const own = sep === -1 ? rest : rest.slice(0, sep);
+  const noShare = own.indexOf('--no-share') !== -1;
+  const autoYes = own.indexOf('-y') !== -1 || own.indexOf('--yes') !== -1 || own.indexOf('--force') !== -1;
+  const arg = own.filter(function (a) { return a.indexOf('-') !== 0; })[0];
+  if (!arg) return fail('usage: ccswitch run <name|number> [--no-share] [-y] [-- <claude args>]');
+  const name = core.resolveProfile(ctx, arg);
+  if (!name) return fail("no such account: '" + arg + "'");
+  const em = profiles.email(ctx.configDir, name) || name;
+
+  // Risky: an in-session token refresh rotates this account's refresh token,
+  // which can log out OTHER live copies of the same account. Ask first.
+  if (!autoYes) {
+    if (!process.stdin.isTTY) {
+      return fail('run launches a PARALLEL session for ' + em + ' — re-run with -y to confirm.');
+    }
+    print('Parallel session: ' + em + ' will run ONLY in this terminal — every other');
+    print('terminal, the desktop app and VS Code keep their current account.');
+    print(style.warn('⚠️  If Claude refreshes the token in-session, OTHER live copies of this'));
+    print(style.warn('   same account may get logged out.'));
+    const ok = await confirm('Continue? [y/N] ');
+    if (!ok) { print('Cancelled.'); return; }
+  }
+
+  let dir;
+  await withLock(ctx, function () { dir = session.prepareSession(ctx, name, { share: !noShare }); });
+  const se = session.sessionEnv(ctx, dir);
+  se.scrubbed.forEach(function (k) { print('  ⚠️ ignoring ' + k + ' for this session (it would override the account).'); });
+  print('Launching Claude Code as ' + em + ' (this terminal only)…');
+  logmod.log('run session: ' + name);
+  const bin = process.env.CCSWITCH_CLAUDE_BIN || 'claude';
+  const r = require('child_process').spawnSync(bin, fwd, { stdio: 'inherit', env: se.env });
+  await withLock(ctx, function () {
+    if (session.syncBack(ctx, name)) print('  ↳ session token rotated — saved back to the profile.');
+  });
+  if (r.error) return fail('could not launch ' + bin + ': ' + r.error.message);
+  process.exitCode = typeof r.status === 'number' ? r.status : 1;
+}
+
+// Headless account import from a RAW credentials blob (file or stdin).
+async function cmdAddToken(ctx, rest) {
+  const force = rest.indexOf('--force') !== -1 || rest.indexOf('-y') !== -1;
+  const ti = rest.indexOf('--token');
+  const srcArg = rest[ti + 1] && rest[ti + 1].indexOf('--') !== 0 ? rest[ti + 1] : null;
+  const name = rest.filter(function (a, i) { return a.indexOf('-') !== 0 && i !== ti + 1; })[0];
+  const ei = rest.indexOf('--email');
+  const email = ei !== -1 ? rest[ei + 1] : null;
+  if (!name || !profiles.isValidName(name) || !srcArg) {
+    return fail('usage: ccswitch add <name> --token <file|-> [--email a@b.c] [--force]\n(the raw credentials JSON is read from a file or stdin — NEVER pass it as an argument)');
+  }
+  let raw;
+  try { raw = srcArg === '-' ? fs.readFileSync(0, 'utf8') : fs.readFileSync(srcArg, 'utf8'); }
+  catch (e) { return fail('could not read the credential: ' + e.message); }
+  let parsed;
+  try { parsed = JSON.parse(raw); } catch (e) { return fail('that is not valid credentials JSON'); }
+  if (!parsed || !parsed.claudeAiOauth || typeof parsed.claudeAiOauth.accessToken !== 'string') {
+    return fail('credentials JSON must contain claudeAiOauth.accessToken');
+  }
+  if (profiles.exists(ctx.configDir, name) && !force) {
+    return fail("'" + name + "' already exists — pass --force to overwrite its credentials.");
+  }
+  // Risky import: confirm on a TTY; piped stdin cannot prompt, so require --force.
+  if (!force) {
+    if (!process.stdin.isTTY) {
+      return fail('importing a raw credential non-interactively requires --force (make sure you trust its source).');
+    }
+    print(style.warn('⚠️  You are importing a RAW login credential for \'' + name + '\'.'));
+    print('   Only do this with a credential you exported yourself or fully trust —');
+    print('   whoever holds this token has full access to the account.');
+    const ok = await confirm('Import it? [y/N] ');
+    if (!ok) { print('Cancelled — nothing was imported.'); return; }
+  }
+  ctx.store.setProfile(name, raw.trim());
+  profiles.write(ctx.configDir, {
+    name: name,
+    email: email || '',
+    oauthAccount: email ? { emailAddress: email } : {},
+    userID: '',
+    savedAt: ctx.now(),
+    tokenImport: true,
+  });
+  logmod.log('token import: ' + name);
+  print(style.ok('✅') + " imported '" + name + "'" + (email ? ' (' + email + ')' : '') + '.');
+}
+
 // Self-upgrade: re-run whichever installer put this copy here.
 async function cmdUpgrade(ctx) {
   const method = update.detectInstallMethod(process.argv[1] || '');
@@ -344,6 +437,7 @@ function warnIncompleteCookies(name) {
 // identify which account the app is signed into).
 async function cmdAdd(ctx, rest) {
   logmod.log("add invoked");
+  if (rest.indexOf('--token') !== -1) return cmdAddToken(ctx, rest);
   const appOnly = rest.indexOf('--app') !== -1;
   const nameArg = rest.filter(function (a) { return a.indexOf('--') !== 0; })[0];
 
@@ -578,6 +672,8 @@ async function dispatch(ctx, cmd, rest) {
           logmod.log('removed profile ' + n);
           print('🗑  removed: ' + n);
         });
+      case 'run':
+        return cmdRun(ctx, rest);
       case 'export':
         return cmdExport(ctx, rest);
       case 'import':
