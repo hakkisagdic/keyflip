@@ -1,0 +1,22 @@
+# dependencies / build
+node_modules/
+*.tgz
+coverage/
+.nyc_output/
+
+# macOS
+.DS_Store
+
+# editors
+.vscode/
+.idea/
+
+# never commit local state / secrets (ccswitch stores nothing here, but be safe)
+*.credentials
+*.credentials.json
+*.cred
+.env
+.env.*
+*.pem
+*.key
+secrets*
