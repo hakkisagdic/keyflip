@@ -1,9 +1,10 @@
 {
   "name": "ccswitch",
-  "version": "1.0.0",
-  "description": "Switch between multiple Anthropic / Claude Code accounts on macOS, Linux, and Windows.",
+  "version": "1.1.0",
+  "description": "Switch between multiple Anthropic / Claude Code accounts on macOS, Linux, and Windows — CLI, desktop app and VS Code extension logins together.",
   "bin": {
-    "ccswitch": "bin/ccswitch.js"
+    "ccswitch": "bin/ccswitch.js",
+    "ccs": "bin/ccswitch.js"
   },
   "scripts": {
     "test": "node --test",
@@ -22,10 +23,17 @@
     "anthropic",
     "account",
     "switch",
+    "multi-account",
+    "keychain",
+    "oauth",
     "cli"
   ],
   "author": "Hakkı Sağdıç",
   "license": "MIT",
+  "homepage": "https://github.com/hakkisagdic/ccswitch#readme",
+  "bugs": {
+    "url": "https://github.com/hakkisagdic/ccswitch/issues"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/hakkisagdic/ccswitch.git"

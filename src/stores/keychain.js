@@ -32,11 +32,14 @@ class KeychainStore {
   constructor(opts) {
     this.account = (opts && opts.account) || '';
     this.run = (opts && opts.runner) || defaultRun;
+    this.keychainPath = (opts && opts.keychainPath) || null; // for tests/CI: a throwaway keychain
     this.type = 'keychain';
   }
 
+  _tail() { return this.keychainPath ? [this.keychainPath] : []; }
+
   _read(service) {
-    const r = this.run(SECURITY, ['find-generic-password', '-s', service, '-a', this.account, '-w'], undefined, { timeoutMs: TIMEOUT_MS });
+    const r = this.run(SECURITY, ['find-generic-password', '-s', service, '-a', this.account, '-w'].concat(this._tail()), undefined, { timeoutMs: TIMEOUT_MS });
     if (r.code === 0) return r.stdout.replace(/\r?\n$/, '');
     if (r.code === NOT_FOUND) return null;
     throw keychainError('read of "' + service + '"', r);
@@ -47,18 +50,19 @@ class KeychainStore {
     // stdin — the secret never becomes an argv value visible in `ps`. Very large
     // blobs fall back to argv (-w) rather than risk truncating the command line.
     const hex = Buffer.from(String(blob), 'utf8').toString('hex');
+    const tail = this.keychainPath ? ' ' + q(this.keychainPath) : '';
     let r;
     if (hex.length <= STDIN_CMD_LIMIT) {
-      const cmd = 'add-generic-password -U -s ' + q(service) + ' -a ' + q(this.account) + ' -X ' + hex + '\n';
+      const cmd = 'add-generic-password -U -s ' + q(service) + ' -a ' + q(this.account) + ' -X ' + hex + tail + '\n';
       r = this.run(SECURITY, ['-i'], cmd, { timeoutMs: TIMEOUT_MS });
     } else {
-      r = this.run(SECURITY, ['add-generic-password', '-U', '-s', service, '-a', this.account, '-w', blob], undefined, { timeoutMs: TIMEOUT_MS });
+      r = this.run(SECURITY, ['add-generic-password', '-U', '-s', service, '-a', this.account, '-w', blob].concat(this._tail()), undefined, { timeoutMs: TIMEOUT_MS });
     }
     if (r.code !== 0) throw keychainError('write of "' + service + '"', r);
   }
 
   _delete(service) {
-    const r = this.run(SECURITY, ['delete-generic-password', '-s', service, '-a', this.account], undefined, { timeoutMs: TIMEOUT_MS });
+    const r = this.run(SECURITY, ['delete-generic-password', '-s', service, '-a', this.account].concat(this._tail()), undefined, { timeoutMs: TIMEOUT_MS });
     if (r.code !== 0 && r.code !== NOT_FOUND && r.timedOut) throw keychainError('delete of "' + service + '"', r);
   }
 

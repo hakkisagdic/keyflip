@@ -11,6 +11,8 @@ const appsessions = require('./appsessions');
 const appauth = require('./appauth');
 const lock = require('./lock');
 const logmod = require('./log');
+const oauth = require('./oauth');
+const update = require('./update');
 const style = require('./style').make(process.stdout);
 
 // Serialize every mutation across processes (double-fired alias, launcher app
@@ -59,6 +61,7 @@ function usage() {
   print('  ccswitch status                which account each surface is on (CLI + desktop app)');
   print('  ccswitch list                  saved accounts (* active, [cli|app] = what\'s captured)');
   print('  ccswitch remove <name|number>  delete a saved account');
+  print('  ccswitch upgrade               update ccswitch itself (auto-detects install method)');
   print('  ccswitch clean [--logout]      reset ccswitch data; --logout also signs out of');
   print('                                 Claude Code + the desktop app (asks to confirm)');
   print('');
@@ -91,6 +94,20 @@ async function cmdSwitch(ctx, rest) {
   const running = appctl.isClaudeRunning(ctx.platform);
   const manage = appctl.canManageApp(ctx.platform);
 
+  async function refreshIfNeeded() {
+    const r = await oauth.maybeRefreshProfile(ctx, name, {
+      isRunning: function () { return appctl.isClaudeRunning(ctx.platform); },
+      instances: function () { return appctl.claudeInstances(ctx.home); },
+    });
+    if (r.status === 'refreshed') print('  ↳ refreshed the saved OAuth token (was expiring).');
+    else if (r.status === 'refresh-failed') print('  ⚠️ the saved token is expiring and could not be refreshed — you may be asked to log in.');
+    else if (r.status === 'persist-failed') {
+      print('  ⚠️ token refreshed but could NOT be saved — the stored refresh token is now STALE.');
+      print("     Log into this account once and run 'ccswitch add' to repair it.");
+    }
+    logmod.log('oauth refresh: ' + r.status);
+  }
+
   function emitSwitched(did, appl, cons) {
     logmod.log('switched -> ' + name + ' (cli=' + !!(did && did.cli) + ', app=' + !!(appl && appl.ok) + ')');
     jsonOut({
@@ -120,6 +137,7 @@ async function cmdSwitch(ctx, rest) {
       if (!ok) { print('Cancelled — nothing was changed.'); return; }
     }
     print('Quitting Claude...'); appctl.quitClaude(ctx.platform); await waitForQuit(ctx);
+    await refreshIfNeeded();
     const did = core.performSwitch(ctx, name);
     if (!did.cli) print("  ↳ CLI login for this profile isn't captured — switched the desktop app only.");
     const appl = switchDesktopLogin(ctx, name);
@@ -140,6 +158,7 @@ async function cmdSwitch(ctx, rest) {
     return fail('Claude / Claude Code is open — close it first (it cannot be auto-closed on this OS), or re-run with --force.');
   }
   // Not running: just swap.
+  await refreshIfNeeded();
   const did = core.performSwitch(ctx, name);
   if (!did.cli) print("  ↳ CLI login for this profile isn't captured — switched the desktop app only.");
   const appl = switchDesktopLogin(ctx, name);
@@ -158,6 +177,20 @@ async function cmdNext(ctx, rest) {
   if (target.active) return fail('no other account to rotate to');
   print('Rotating to: ' + (target.email || target.name));
   return cmdSwitch(ctx, [target.name].concat(rest.filter(function (a) { return a.indexOf('--') === 0; })));
+}
+
+// Self-upgrade: re-run whichever installer put this copy here.
+async function cmdUpgrade(ctx) {
+  const method = update.detectInstallMethod(process.argv[1] || '');
+  const cmd = update.upgradeCommand(method);
+  if (!cmd) {
+    return fail("couldn't detect how ccswitch was installed — upgrade manually with either:\n  " +
+      update.upgradeCommand('installer') + '\n  ' + update.upgradeCommand('npm'));
+  }
+  print('Upgrading (' + method + '):  ' + cmd);
+  const r = require('child_process').spawnSync('bash', ['-lc', cmd], { stdio: 'inherit' });
+  if (r.status !== 0) return fail('upgrade failed (exit ' + r.status + ') — run the command above manually.');
+  print(style.ok('✅') + ' Upgraded — run ccswitch version to confirm.');
 }
 
 // One-line answer to "which account am I on?" (both surfaces).
@@ -429,6 +462,17 @@ async function main(argv) {
   logmod.init(ctx.configDir, debug);
   try { require('./migrations').runMigrations(ctx); } catch (e) { /* never blocks startup */ }
   try {
+    await dispatch(ctx, cmd, rest);
+  } catch (e) {
+    fail(e && e.message ? e.message : String(e));
+  }
+  // Passive update notice — after the command; never for --json/menu/upgrade/clean.
+  const skipNotice = JSON_MODE || cmd === undefined || ['menu', 'upgrade', 'clean'].indexOf(cmd) !== -1;
+  if (!skipNotice) { try { await update.maybeNotify(ctx, VERSION); } catch (e) { /* ignore */ } }
+}
+
+async function dispatch(ctx, cmd, rest) {
+  {
     switch (cmd) {
       case undefined:
         if (!process.stdin.isTTY) { usage(); return; }
@@ -460,6 +504,8 @@ async function main(argv) {
           logmod.log('removed profile ' + n);
           print('🗑  removed: ' + n);
         });
+      case 'upgrade':
+        return cmdUpgrade(ctx);
       case 'clean':
         return withLock(ctx, function () { return cmdClean(ctx, rest); });
       case 'version':
@@ -481,8 +527,6 @@ async function main(argv) {
         return;
       }
     }
-  } catch (e) {
-    fail(e && e.message ? e.message : String(e));
   }
 }
 

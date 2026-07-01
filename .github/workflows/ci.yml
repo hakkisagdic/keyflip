@@ -26,3 +26,20 @@ jobs:
         run: npm test
       - name: CLI smoke test
         run: node bin/ccswitch.js version
+
+  # Real-keychain end-to-end: exercises /usr/bin/security against a throwaway
+  # keychain (never the runner's login keychain). Hard timeout so a stuck
+  # SecurityAgent dialog fails loudly instead of hanging the job.
+  keychain-macos:
+    name: real keychain (macOS)
+    runs-on: macos-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Real keychain round-trip
+        env:
+          CCSWITCH_REAL_KEYCHAIN: '1'
+        run: node --test test/keychain.real.test.js

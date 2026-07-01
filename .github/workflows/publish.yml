@@ -1,0 +1,29 @@
+# Publishes ccswitch to the npm registry when a GitHub release is published.
+# Requires the repository secret NPM_TOKEN (an npm automation token). If the
+# unscoped name "ccswitch" is taken, rename the package to @hakkisagdic/ccswitch
+# in package.json and publish with access public.
+name: Publish
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+  id-token: write # npm --provenance
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+      - name: Test before publishing
+        run: npm test
+      - name: Publish
+        run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
