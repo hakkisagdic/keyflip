@@ -43,18 +43,26 @@ mkdir -p "$INSTALL_DIR" "$BIN_DIR"
 
 if [ -n "$SELF_DIR" ] && [ -f "$SELF_DIR/package.json" ] && [ -f "$SELF_DIR/bin/ccswitch.js" ]; then
   cp -R "$SELF_DIR/bin" "$SELF_DIR/src" "$SELF_DIR/package.json" "$INSTALL_DIR/"
-  info "  • source -> $SELF_DIR (local)"
-elif command -v git >/dev/null 2>&1; then
-  git clone -q --depth 1 --branch "$REPO_REF" "$GIT_URL" "$INSTALL_DIR" 2>/dev/null \
-    || git clone -q --depth 1 "$GIT_URL" "$INSTALL_DIR" \
-    || die "git clone failed. If the repo is private, clone it manually: gh repo clone $REPO_OWNER/$REPO_NAME"
-  info "  • source -> $GIT_URL (git)"
-elif command -v curl >/dev/null 2>&1; then
-  curl -fsSL "$TARBALL_URL" | tar xz -C "$INSTALL_DIR" --strip-components=1 \
-    || die "download failed (is the repo public?). Tarball: $TARBALL_URL"
-  info "  • source -> tarball"
+  info "  • source -> local checkout"
 else
-  die "need git or curl to fetch ccswitch"
+  # Remote install: try git, then fall back to a tarball (like nvm). Either works
+  # for a public repo without auth.
+  fetched=0
+  if command -v git >/dev/null 2>&1; then
+    if git clone -q --depth 1 --branch "$REPO_REF" "$GIT_URL" "$INSTALL_DIR" 2>/dev/null \
+       || { rm -rf "$INSTALL_DIR"; git clone -q --depth 1 "$GIT_URL" "$INSTALL_DIR" 2>/dev/null; }; then
+      fetched=1; info "  • source -> git clone"
+    fi
+  fi
+  if [ "$fetched" -eq 0 ] && command -v curl >/dev/null 2>&1; then
+    rm -rf "$INSTALL_DIR"; mkdir -p "$INSTALL_DIR"
+    if curl -fsSL "$TARBALL_URL" | tar xz -C "$INSTALL_DIR" --strip-components=1; then
+      fetched=1; info "  • source -> tarball"
+    fi
+  fi
+  [ "$fetched" -eq 1 ] || die \
+"could not fetch ccswitch (no network, or the repo is private).
+Manual install: gh repo clone $REPO_OWNER/$REPO_NAME && cd $REPO_NAME && ./install.sh"
 fi
 
 [ -f "$INSTALL_DIR/bin/ccswitch.js" ] || die "install payload is missing bin/ccswitch.js"
