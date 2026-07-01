@@ -89,6 +89,8 @@ async function cmdSwitch(ctx, rest) {
 }
 
 function consolidateAndReport(ctx) {
+  // Never write into the app's session store while it is still open.
+  if (appctl.isClaudeRunning(ctx.platform)) return { ok: false, merged: 0, reason: 'Claude still running' };
   const c = appsessions.consolidate(ctx);
   if (c.ok && c.merged) print('  ↳ pulled ' + c.merged + ' session(s) from your other account(s) into this one.');
   return c;

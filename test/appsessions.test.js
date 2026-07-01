@@ -3,7 +3,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
 const path = require('path');
-const { consolidate } = require('../src/appsessions');
+const { consolidate, pruneBackups } = require('../src/appsessions');
 const { tmpdir } = require('./helpers');
 
 // Build a fake Claude desktop app store with two accounts.
@@ -64,4 +64,27 @@ test('consolidate is a no-op when there is no app store (non-macOS)', function (
   const r = consolidate(s.ctx);
   assert.strictEqual(r.ok, false);
   assert.strictEqual(r.merged, 0);
+});
+
+test('consolidate does not back up when there is nothing to merge', function () {
+  const s = setup();
+  consolidate(s.ctx); // first run merges cs2 and creates a backup
+  const bdir = path.join(s.ctx.configDir, 'backups');
+  const before = fs.existsSync(bdir) ? fs.readdirSync(bdir).length : 0;
+  const r2 = consolidate(s.ctx); // nothing new -> no backup
+  assert.strictEqual(r2.merged, 0);
+  assert.strictEqual(r2.backup, null);
+  const after = fs.existsSync(bdir) ? fs.readdirSync(bdir).length : 0;
+  assert.strictEqual(after, before);
+});
+
+test('pruneBackups keeps only the last N backups', function () {
+  const dir = tmpdir();
+  const bdir = path.join(dir, 'backups');
+  fs.mkdirSync(bdir, { recursive: true });
+  for (let i = 1; i <= 8; i++) fs.mkdirSync(path.join(bdir, 'claude-code-sessions-2026-01-0' + i + 'T00-00-00'));
+  pruneBackups(dir, 5);
+  const left = fs.readdirSync(bdir).sort();
+  assert.strictEqual(left.length, 5);
+  assert.strictEqual(left[0], 'claude-code-sessions-2026-01-04T00-00-00'); // 1..3 pruned
 });

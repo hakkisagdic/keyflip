@@ -10,6 +10,12 @@ const appsessions = require('./appsessions');
 
 function delay(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
 
+// Only merge into the app store while the app is actually closed.
+function consolidateSilent(ctx) {
+  if (appctl.isClaudeRunning(ctx.platform)) return { ok: false, merged: 0 };
+  return appsessions.consolidate(ctx);
+}
+
 // Default the highlight to the first NON-active account (the one you'd switch to).
 function firstNonActiveIndex(ctx) {
   const list = core.listProfiles(ctx);
@@ -47,7 +53,7 @@ async function switchInteractive(ctx, name, p, rl) {
     for (let i = 0; i < 40 && appctl.isClaudeRunning(ctx.platform); i++) { await delay(500); }
   }
   core.doSwitch(ctx, name);
-  const cons = appsessions.consolidate(ctx);
+  const cons = consolidateSilent(ctx);
   if (cons.ok && cons.merged) p('  ↳ pulled ' + cons.merged + ' session(s) from your other account(s) into this one.');
   if (running) { p('  Reopening Claude...'); appctl.openClaude(ctx.platform); }
   const em = profiles.email(ctx.configDir, name);
@@ -206,7 +212,7 @@ function runMenuKeys(ctx, io) {
         for (let i = 0; i < 40 && appctl.isClaudeRunning(ctx.platform); i++) { await delay(500); }
       }
       core.doSwitch(ctx, name);
-      const cons = appsessions.consolidate(ctx);
+      const cons = consolidateSilent(ctx);
       if (cons.ok && cons.merged) write('  ↳ pulled ' + cons.merged + ' session(s) from your other account(s) into this one.\n');
       if (running) { write('  Reopening Claude...\n'); appctl.openClaude(ctx.platform); }
       const em = profiles.email(ctx.configDir, name);
