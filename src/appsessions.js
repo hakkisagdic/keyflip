@@ -5,14 +5,17 @@
 //   <appData>/claude-code-sessions/<accountUuid>/<orgUuid>/local_*.json
 // keyed by account. Those files embed NO account id (association is purely the
 // folder), and each points at a cliSessionId — the account-independent transcript
-// in ~/.claude/projects. So we can make every account's Recents show all sessions
-// by copying the index files from other accounts into the active account's folder.
+// in ~/.claude/projects.
+//
+// We UNION every account's folder: give each folder the sessions it is missing, so
+// no matter which account the desktop app is actually logged in to, its Recents
+// shows them all. (The app's own login can differ from ~/.claude.json, so we don't
+// rely on a single "active" account.)
 //
 // macOS desktop app only. The cloud "Chat" conversations (claude.ai) are NOT here —
 // they live server-side per account and cannot be merged locally.
 const fs = require('fs');
 const path = require('path');
-const claude = require('./claude');
 
 const BACKUP_PREFIX = 'claude-code-sessions-';
 const BACKUPS_TO_KEEP = 5;
@@ -56,39 +59,39 @@ function consolidate(ctx) {
   const store = path.join(appDir, 'claude-code-sessions');
   if (!fs.existsSync(store)) return { ok: false, merged: 0, reason: 'no app session store found' };
 
-  const cfg = claude.readConfig(ctx.claudeConfigPath);
-  const oa = cfg && cfg.oauthAccount;
-  if (!oa || !oa.accountUuid || !oa.organizationUuid) {
-    return { ok: false, merged: 0, reason: 'no active account (accountUuid/organizationUuid) in ~/.claude.json' };
-  }
-
-  const activeDir = path.join(store, oa.accountUuid, oa.organizationUuid);
-  fs.mkdirSync(activeDir, { recursive: true });
-
-  // Sessions already present in the active account (dedupe by cliSessionId).
-  const seen = Object.create(null);
-  listIndexFiles(activeDir).forEach(function (f) { const id = cliIdOf(path.join(activeDir, f)); if (id) seen[id] = true; });
-
-  // Plan the copies first — so we only back up / write when there is actually work.
-  const plan = [];
+  // Every <accountUuid>/<orgUuid>/ folder that holds session index files.
+  const orgDirs = [];
   listDirs(store).forEach(function (acct) {
-    if (acct === oa.accountUuid) return;
-    listDirs(path.join(store, acct)).forEach(function (org) {
-      const src = path.join(store, acct, org);
-      listIndexFiles(src).forEach(function (f) {
-        const id = cliIdOf(path.join(src, f));
-        if (id && seen[id]) return;
-        const dest = path.join(activeDir, f);
-        if (fs.existsSync(dest)) return; // same index file already here
-        plan.push({ from: path.join(src, f), to: dest });
-        if (id) seen[id] = true;
-      });
+    listDirs(path.join(store, acct)).forEach(function (org) { orgDirs.push(path.join(store, acct, org)); });
+  });
+  if (orgDirs.length < 2) return { ok: true, merged: 0, backup: null, accounts: orgDirs.length };
+
+  // Master set: one representative index file per unique cliSessionId.
+  const master = Object.create(null); // cliId -> { name, from }
+  orgDirs.forEach(function (dir) {
+    listIndexFiles(dir).forEach(function (f) {
+      const id = cliIdOf(path.join(dir, f));
+      if (id && !master[id]) master[id] = { name: f, from: path.join(dir, f) };
     });
   });
 
-  if (!plan.length) return { ok: true, merged: 0, backup: null, activeDir: activeDir };
+  // Plan: give every folder the sessions it is missing.
+  const plan = [];
+  orgDirs.forEach(function (dir) {
+    const have = Object.create(null);
+    listIndexFiles(dir).forEach(function (f) { const id = cliIdOf(path.join(dir, f)); if (id) have[id] = true; });
+    Object.keys(master).forEach(function (id) {
+      if (have[id]) return;
+      const m = master[id];
+      const dest = path.join(dir, m.name);
+      if (fs.existsSync(dest)) return; // filename clash safety (add-only)
+      plan.push({ from: m.from, to: dest });
+    });
+  });
 
-  // Back up the store once (only when we will change it), and keep only the last few.
+  if (!plan.length) return { ok: true, merged: 0, backup: null, accounts: orgDirs.length };
+
+  // Back up the store once (only when we will change it), keep only the last few.
   let backup = null;
   try {
     const ts = String(ctx.now()).replace(/[:.]/g, '-');
@@ -99,7 +102,7 @@ function consolidate(ctx) {
 
   let merged = 0;
   plan.forEach(function (p) { try { fs.copyFileSync(p.from, p.to); merged += 1; } catch (e) { /* skip */ } });
-  return { ok: true, merged: merged, backup: backup, activeDir: activeDir };
+  return { ok: true, merged: merged, backup: backup, accounts: orgDirs.length };
 }
 
 module.exports = { consolidate: consolidate, pruneBackups: pruneBackups };

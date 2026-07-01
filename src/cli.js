@@ -92,8 +92,48 @@ function consolidateAndReport(ctx) {
   // Never write into the app's session store while it is still open.
   if (appctl.isClaudeRunning(ctx.platform)) return { ok: false, merged: 0, reason: 'Claude still running' };
   const c = appsessions.consolidate(ctx);
-  if (c.ok && c.merged) print('  ↳ pulled ' + c.merged + ' session(s) from your other account(s) into this one.');
+  if (c.ok && c.merged) print('  ↳ shared ' + c.merged + ' session pointer(s) so every account shows them all.');
   return c;
+}
+
+function reportConsolidate(ctx) {
+  const c = appsessions.consolidate(ctx);
+  if (!c.ok) { print('Nothing to consolidate: ' + c.reason); return c; }
+  if (!c.merged) { print('Already consolidated — every account already has all Code sessions.'); return c; }
+  print('✅ Shared ' + c.merged + ' session pointer(s) across your accounts' + (c.backup ? ' (backup: ' + c.backup + ')' : '') + '.');
+  return c;
+}
+
+async function cmdConsolidate(ctx, rest) {
+  const autoYes = rest.indexOf('--restart') !== -1 || rest.indexOf('-y') !== -1 || rest.indexOf('--yes') !== -1;
+  const force = rest.indexOf('--force') !== -1; // merge in place, don't close the app
+  const running = appctl.isClaudeRunning(ctx.platform);
+  const manage = appctl.canManageApp(ctx.platform);
+
+  if (running && manage && !force) {
+    if (!autoYes) {
+      if (!process.stdin.isTTY) {
+        return fail('Claude is open. Re-run with --restart to close & reopen it automatically, ' +
+          '--force to merge without closing (then restart Claude yourself), or quit Claude first.');
+      }
+      const ok = await confirm('Claude will be closed, your sessions consolidated, and Claude reopened. Continue? [y/N] ');
+      if (!ok) { print('Cancelled — nothing was changed.'); return; }
+    }
+    print('Quitting Claude...'); appctl.quitClaude(ctx.platform); await waitForQuit(ctx);
+    if (appctl.isClaudeRunning(ctx.platform)) return fail('Claude did not quit; aborting so nothing is written into a live store.');
+    const c = reportConsolidate(ctx);
+    print('Reopening Claude...'); appctl.openClaude(ctx.platform);
+    if (c.ok && c.merged) print('Done — all your Code sessions are now in Recents.');
+    return;
+  }
+
+  // App not running, or --force (merge in place), or a platform we can't manage.
+  const c = reportConsolidate(ctx);
+  if (c.ok && c.merged) {
+    print(running ? '↪ Fully quit and reopen Claude to see them all in Recents.'
+                  : '↪ Open Claude to see them all in Recents.');
+    print('(Cloud "Chat" conversations stay per-account and are not touched.)');
+  }
 }
 
 function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
@@ -159,16 +199,8 @@ async function main(argv) {
         return;
       }
       case 'consolidate':
-      case 'merge': {
-        if (appctl.isClaudeRunning(ctx.platform) && rest.indexOf('--force') === -1) {
-          return fail('Close Claude / Claude Code first (its session store is open), then re-run — or pass --force.');
-        }
-        const c = appsessions.consolidate(ctx);
-        if (!c.ok) { print('Nothing to consolidate: ' + c.reason); return; }
-        print('✅ Consolidated ' + c.merged + ' Code session(s) into the active account' + (c.backup ? ' (backup: ' + c.backup + ')' : '') + '.');
-        print('Restart Claude to see them all in Recents. (Cloud "Chat" conversations stay per-account.)');
-        return;
-      }
+      case 'merge':
+        return cmdConsolidate(ctx, rest);
       case 'version':
       case '--version':
       case '-v':
