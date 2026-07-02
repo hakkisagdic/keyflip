@@ -7,6 +7,8 @@
 // ~30s) — the desktop app is never closed from under the user.
 const core = require('./core');
 const usage = require('./usage');
+const breaker = require('./breaker');
+const history = require('./history');
 
 // One watch iteration. Injectable deps for tests. Returns
 //   { state: 'idle'|'no-active'|'below'|'switched'|'no-candidate'|'unknown',
@@ -22,7 +24,7 @@ async function tick(ctx, opts) {
   const active = list[activeIdx];
 
   const infos = await usage.usageForProfiles(ctx, [active.name], {
-    fetch: opts.fetch, nowMs: opts.nowMs, cacheTtlMs: opts.cacheTtlMs, liveFor: active.name,
+    fetch: opts.fetch, nowMs: opts.nowMs, cacheTtlMs: opts.cacheTtlMs, liveFor: active.name, recordHistory: true,
   });
   const h = infos[active.name] ? infos[active.name].headroom : null;
   if (typeof h !== 'number') return { state: 'unknown', active: active, headroom: null, switchedTo: null };
@@ -44,17 +46,22 @@ async function tick(ctx, opts) {
   const cinfos = await usage.usageForProfiles(ctx, candidates.map(function (e) { return e.name; }), {
     fetch: opts.fetch, nowMs: opts.nowMs, cacheTtlMs: opts.cacheTtlMs,
   });
-  // Only rotate to an account that is itself BELOW the threshold (headroom greater
-  // than the switch margin). Without this, two accounts both near the limit would
-  // ping-pong every interval. Unknown-usage candidates are eligible only when NO
-  // known-good account exists (better to try than to stay stuck at the limit).
-  // Only rotate to an account we KNOW is below the threshold — never to one whose
-  // usage is unknown (would risk switching to an equally-exhausted account and
-  // thrashing back next tick). If none qualifies, wait rather than switch blind.
+  const bopts = { nowMs: opts.nowMs };
+  // Feed the circuit breaker: an expired token is a real failure signal; a
+  // healthy read is a success. (Only definitive signals — throttled/unknown
+  // never move breaker state.)
+  candidates.forEach(function (c) {
+    const st = cinfos[c.name] && cinfos[c.name].status;
+    if (st === 'expired') breaker.recordFailure(ctx, c.name, bopts);
+    else if (st === 'ok') breaker.recordSuccess(ctx, c.name, bopts);
+  });
+  // Only rotate to an account we KNOW is below the threshold AND whose breaker is
+  // not open (recently-failing accounts are skipped until their recovery window).
   const margin = 100 - threshold;
   const pool = candidates.filter(function (c) {
     const info = cinfos[c.name];
-    return info && typeof info.headroom === 'number' && info.headroom > margin;
+    return info && typeof info.headroom === 'number' && info.headroom > margin &&
+      breaker.isAvailable(ctx, c.name, bopts);
   });
   if (!pool.length) return { state: 'no-candidate', active: active, headroom: h, switchedTo: null };
   const picked = usage.pickByStrategy(pool, cinfos, strategy) || pool[0];
@@ -65,6 +72,7 @@ async function tick(ctx, opts) {
   // If nothing actually swapped (no CLI credential), report it rather than
   // claiming a switch — prevents the caller from looping on a phantom success.
   if (did && did.cli === false) return { state: 'no-candidate', active: active, headroom: h, switchedTo: null };
+  history.recordEvent(ctx, { kind: 'autoswitch', from: active.name, to: picked.name, reason: 'usage ' + Math.round(100 - h) + '% >= threshold ' + threshold });
   return { state: 'switched', active: active, headroom: h, switchedTo: picked };
 }
 

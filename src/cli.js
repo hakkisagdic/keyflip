@@ -19,6 +19,8 @@ const session = require('./session');
 const links = require('./links');
 const autosw = require('./autoswitch');
 const provider = require('./provider');
+const doctor = require('./doctor');
+const history = require('./history');
 const mcp = require('./mcp');
 const style = require('./style').make(process.stdout);
 
@@ -71,6 +73,9 @@ function usage() {
   print('  keyflip use <name>             route Claude Code to that provider (no restart);');
   print('                                 keyflip provider off = back to your subscription');
   print('  keyflip speedtest [name]       time a provider\'s endpoints, pick the fastest');
+  print('  keyflip doctor                 diagnose config, login and endpoint reachability');
+  print('  keyflip test <provider>        fire one real request to check a provider\'s auth');
+  print('  keyflip usage --history        per-account usage trend + autoswitch/failover events');
   print('  keyflip status                which account each surface is on (CLI + desktop app)');
   print('  keyflip list [--usage]        saved accounts; --usage adds 5h/7d quota per account');
   print('  keyflip remove <name|number>  delete a saved account');
@@ -487,6 +492,51 @@ async function cmdSpeedtest(ctx, rest) {
   }
 }
 
+// #12 usage trend + failover event history
+async function cmdUsage(ctx, rest) {
+  if (rest.indexOf('--history') === -1) {
+    // no --history: behave like `list --usage`
+    return cmdList(ctx, ['--usage'].concat(rest));
+  }
+  const li = rest.indexOf('--limit');
+  const limit = li !== -1 ? (parseInt(rest[li + 1], 10) || 50) : 50;
+  const samples = history.readUsage(ctx, limit);
+  const events = history.readEvents(ctx, limit);
+  if (JSON_MODE) { jsonOut({ usage: samples, events: events }); return; }
+  print('Usage history (last ' + samples.length + ' samples):');
+  samples.forEach(function (s) {
+    print('  ' + s.at + '  ' + s.account + '  ' + (s.status === 'ok' ? ('5h ' + Math.round(s.fiveHour) + '% · 7d ' + Math.round(s.sevenDay) + '%') : s.status));
+  });
+  if (events.length) {
+    print('');
+    print('Failover / autoswitch events:');
+    events.forEach(function (e) { print('  ' + e.at + '  ' + (e.kind || 'event') + ': ' + (e.from || '?') + ' → ' + (e.to || '?') + (e.reason ? '  (' + e.reason + ')' : '')); });
+  }
+  if (!samples.length && !events.length) print('  (nothing recorded yet — run: keyflip list --usage)');
+}
+
+// #13 diagnostics
+async function cmdDoctor(ctx, rest) {
+  const r = await doctor.diagnose(ctx);
+  if (JSON_MODE) { jsonOut({ ok: r.ok, checks: r.checks }); return; }
+  print('keyflip doctor:');
+  r.checks.forEach(function (c) {
+    print('  ' + (c.ok === false ? style.err('✗') : (c.ok === true ? style.ok('✓') : '•')) + ' ' + c.name + (c.detail ? '  — ' + c.detail : ''));
+  });
+  print('');
+  print(r.ok ? style.ok('All good.') : style.warn('Some checks need attention (see ✗ above).'));
+}
+
+async function cmdTest(ctx, rest) {
+  const name = rest.filter(function (a) { return a.indexOf('-') !== 0; })[0];
+  if (!name) return fail('usage: keyflip test <provider>   (fires one minimal real request to check auth + reachability)');
+  if (!provider.exists(ctx, name)) return fail("no such provider: '" + name + "'");
+  const r = await doctor.testProvider(ctx, name);
+  if (JSON_MODE) { jsonOut({ provider: name, result: r }); return; }
+  if (r.ok) print(style.ok('✓') + ' ' + name + ': ok (' + r.ms + 'ms, http ' + r.httpStatus + ')');
+  else print(style.err('✗') + ' ' + name + ': ' + r.category + (r.httpStatus ? ' (http ' + r.httpStatus + ')' : '') + (r.reason ? ' — ' + r.reason : ''));
+}
+
 // Parallel session: run Claude Code as <name> in THIS terminal only.
 async function cmdRun(ctx, rest) {
   const sep = rest.indexOf('--');
@@ -839,7 +889,7 @@ async function cmdList(ctx, rest) {
   if (withUsage && list.length) {
     const activeEntry = list.filter(function (e) { return e.active; })[0];
     infos = await usagemod.usageForProfiles(ctx, list.map(function (e) { return e.name; }),
-      { liveFor: activeEntry ? activeEntry.name : null });
+      { liveFor: activeEntry ? activeEntry.name : null, recordHistory: true });
   }
   if (JSON_MODE) {
     jsonOut({
@@ -947,6 +997,12 @@ async function dispatch(ctx, cmd, rest) {
         return withLock(ctx, function () { return cmdProviderUse(ctx, rest[0]); }, 'provider');
       case 'speedtest':
         return cmdSpeedtest(ctx, rest);
+      case 'doctor':
+        return cmdDoctor(ctx, rest);
+      case 'test':
+        return cmdTest(ctx, rest);
+      case 'usage':
+        return cmdUsage(ctx, rest);
       case 'mcp':
         return cmdMcp(ctx, rest);
       case 'install-skill':

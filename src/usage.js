@@ -118,6 +118,8 @@ async function usageForProfiles(ctx, names, opts) {
       }
     }
     cache[name] = { at: nowMs, status: out[name].status, usage: out[name].usage };
+    // #12: record every FRESH sample (cache hits `continue` above) to the trend log.
+    if (opts.recordHistory) { try { require('./history').recordUsage(ctx, name, out[name]); } catch (e) { /* best effort */ } }
   }
   try { atomicWrite(cachePath(ctx), JSON.stringify(cache), 0o600); } catch (e) { /* best effort */ }
   return out;
