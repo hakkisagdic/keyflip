@@ -33,9 +33,16 @@ function createContext(opts) {
   const claudeSettingsPath = opts.claudeSettingsPath || path.join(claudeDir, 'settings.json');
 
   // The Claude desktop app's data dir (holds its account-keyed session index).
+  // The Claude desktop app's data dir. macOS + Windows have the app; Linux has
+  // no official desktop app. On Windows the local index features (Cowork/session
+  // consolidation, gateway, MCP-registry projection) work; the cookie/token
+  // DECRYPTION features (auto-detect account, Chat) are macOS-only for now
+  // (Windows encrypts with DPAPI, a different scheme).
   let appDataDir = opts.appDataDir;
   if (appDataDir === undefined) {
-    appDataDir = platform === 'darwin' ? path.join(home, 'Library', 'Application Support', 'Claude') : null;
+    if (platform === 'darwin') appDataDir = path.join(home, 'Library', 'Application Support', 'Claude');
+    else if (platform === 'win32') { const appData = process.env.APPDATA || path.join(home, 'AppData', 'Roaming'); appDataDir = path.join(appData, 'Claude'); }
+    else appDataDir = null;
   }
 
   let account = opts.account;

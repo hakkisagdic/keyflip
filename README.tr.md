@@ -9,6 +9,15 @@ Hesaplarınıza bir kez giriş yapın, sonra tekrar tekrar çıkış/giriş yapm
 
 [![CI](https://github.com/hakkisagdic/keyflip/actions/workflows/ci.yml/badge.svg)](https://github.com/hakkisagdic/keyflip/actions/workflows/ci.yml)
 
+> **Platform kapsamı.** Çekirdek — hesap değiştirme, provider'lar, oturumlar,
+> failover proxy, skill'ler, MCP — **çapraz-platformdur** (macOS/Linux/Windows,
+> üçünde de CI-testli). **Masaüstü-uygulaması** özellikleri (desktop login
+> takası, Cowork, oturum birleştirme, gateway) uygulama verisini okur: **macOS
+> ve Windows'ta** çalışır (Linux'ta resmi masaüstü uygulaması yok). Uygulamanın
+> çerez/token'ını *çözmesi* gerekenler (uygulamanın hesabını otomatik algılama ve
+> `keyflip chat`) şimdilik **yalnız macOS** — Windows bunları DPAPI ile şifreler
+> (henüz eklemediğimiz farklı bir şema).
+
 ---
 
 ## Neden güvenli
@@ -316,6 +325,32 @@ giriş yok. `config.json` ve çerez veritabanı önce yedeklenir
 > - `--force`: kapatmadan geçer — sonrasında Claude'u kendiniz yeniden başlatın.
 > - Etkileşimsiz (pipe/CI) ve Claude açıkken bayraksız: uygulamanızı beklenmedik
 >   şekilde kapatmak yerine reddeder.
+
+---
+
+## Alternatifler & keyflip nasıl kıyaslanıyor
+
+Claude araç ekosistemi kalabalık, ama çoğu araç bu işlerden **birini** yapıyor;
+keyflip hepsini tek bir CLI+MCP aracında birleştiriyor — **GUI yok, her-zaman-açık
+daemon yok** — ve **masaüstü uygulamasının** girişini de takas eden nadir araç.
+
+| Proje | Yıldız | Tür | Ne yapar |
+|---|---|---|---|
+| [farion1231/cc-switch](https://github.com/farion1231/cc-switch) | 112k | Rust/Tauri GUI | 7 AI CLI için provider+MCP+skill yöneticisi (GUI) |
+| [musistudio/claude-code-router](https://github.com/musistudio/claude-code-router) | 35k | TS router | İstekleri farklı model/provider'a yönlendirir |
+| [Wei-Shaw/claude-relay-service](https://github.com/Wei-Shaw/claude-relay-service) | 12k | Barındırılan relay | Kendi kendine barındırılan çok-hesap relay + pano |
+| [realiti4/claude-swap](https://github.com/realiti4/claude-swap) | 712 | Python CLI | Claude Code **hesap** değiştirme (ilk ilhamımız) |
+| [jolehuit/clother](https://github.com/jolehuit/clother) | 371 | Go CLI | Çoklu provider değiştirme |
+| [guyskk/claude-code-config-switcher](https://github.com/guyskk/claude-code-config-switcher) | 83 | Go CLI | Provider değiştirme (Kimi/GLM/MiniMax…) |
+| [Danielmelody/ccconfig](https://github.com/Danielmelody/ccconfig) | 62 | JS CLI | Hızlı provider değiştirme |
+| [yaakua/cc-copilot](https://github.com/yaakua/cc-copilot.com) | 56 | TS GUI | Masaüstü GUI: proje+provider+oturum |
+
+**keyflip'in nişi:** OAuth **hesap** değiştirme **+** 3. taraf **provider**
+yönlendirme **+** **failover proxy** **+** **masaüstü uygulaması** login takası
+**+** oturum/Cowork/Chat tarama **+** tam **MCP** yüzeyi + agent skill — tek,
+bağımlılıksız araç, provenance'lı token'sız yayın. Yepyeni (henüz kullanıcı yok);
+yukarıdaki devlerin çok daha fazla kitlesi var ve keyflip'in masaüstü-kripto
+özellikleri macOS-öncelikli (yukarıdaki *Platform kapsamı*'na bakın).
 
 ---
 

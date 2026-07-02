@@ -9,6 +9,15 @@ Log in to several accounts once, then hop between them without repeatedly loggin
 
 [![CI](https://github.com/hakkisagdic/keyflip/actions/workflows/ci.yml/badge.svg)](https://github.com/hakkisagdic/keyflip/actions/workflows/ci.yml)
 
+> **Platform scope.** The core — account switch, providers, sessions, the
+> failover proxy, skills, MCP — is **cross-platform** (macOS/Linux/Windows,
+> CI-tested on all three). The **desktop-app** features (desktop login swap,
+> Cowork, session consolidation, gateway) read the Claude desktop app's data:
+> they run on **macOS and Windows** (Linux has no official desktop app), and the
+> ones that must *decrypt* the app's cookies/token (auto-detect the app's
+> account, and `keyflip chat`) are **macOS-only** for now — Windows encrypts
+> those with DPAPI, a different scheme we haven't wired up yet.
+
 ---
 
 ## Why it's safe
@@ -315,6 +324,32 @@ account — no manual re-login. `config.json` and the cookie DB are backed up fi
 > - `--restart`: close & reopen Claude without asking (macOS).
 > - `--force`: switch without closing Claude — restart it yourself afterward.
 > - Non-interactive (piped/CI) with Claude open and no flag: refuses rather than closing your app unexpectedly.
+
+---
+
+## Alternatives & how keyflip compares
+
+The Claude tooling space is crowded, but most tools do **one** of these jobs;
+keyflip combines them in a single CLI+MCP tool with **no GUI and no always-on
+daemon**, and it's the rare one that also swaps the **desktop app's** login.
+
+| Project | Stars | Type | What it does | keyflip also… |
+|---|---|---|---|---|
+| [farion1231/cc-switch](https://github.com/farion1231/cc-switch) | 112k | Rust/Tauri **GUI** | All-in-one provider + MCP + skills manager for 7 AI CLIs | …does providers/MCP/skills **in CLI+MCP**, plus OAuth account & desktop-app switching |
+| [musistudio/claude-code-router](https://github.com/musistudio/claude-code-router) | 35k | TS router | Routes requests to different models/providers (rules, transformers) | …has a **command-started** failover proxy (not an always-on router) |
+| [Wei-Shaw/claude-relay-service](https://github.com/Wei-Shaw/claude-relay-service) | 12k | Hosted relay | Self-hosted multi-account relay + dashboard | …pools/rotates accounts **locally**, no server to run |
+| [realiti4/claude-swap](https://github.com/realiti4/claude-swap) | 712 | Python CLI | Switch Claude Code **accounts** (our original inspiration) | …+ providers, proxy, desktop app, sessions, MCP |
+| [jolehuit/clother](https://github.com/jolehuit/clother) | 371 | Go CLI | Multi-provider switch | …+ accounts, proxy, sessions, desktop, MCP |
+| [guyskk/claude-code-config-switcher](https://github.com/guyskk/claude-code-config-switcher) | 83 | Go CLI | Provider switch (Kimi/GLM/MiniMax…) | …+ everything above |
+| [Danielmelody/ccconfig](https://github.com/Danielmelody/ccconfig) | 62 | JS CLI | Quick provider switch | …+ everything above |
+| [yaakua/cc-copilot](https://github.com/yaakua/cc-copilot.com) | 56 | TS GUI | Desktop GUI: projects + providers + sessions | …CLI+MCP, agent-drivable |
+
+**keyflip's niche:** OAuth **account** switching **+** third-party **provider**
+routing **+** a **failover proxy** **+** **desktop-app** login swap **+**
+session/Cowork/Chat browsing **+** a full **MCP** surface + agent skill — one
+dependency-free tool, tokenless-published with provenance. It's brand new (no
+mindshare yet); the giants above have far more users, and keyflip's desktop-app
+crypto features are macOS-first (see *Platform scope* above).
 
 ---
 
