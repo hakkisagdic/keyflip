@@ -1,24 +1,23 @@
-# Publishes keyflip to npm when a GitHub Release is published.
+# Tag push (vX.Y.Z) -> test -> publish to npm via Trusted Publishing (OIDC) ->
+# create the GitHub Release with the tarball. ONE workflow, one trigger.
 #
-# Uses npm **Trusted Publishing (OIDC)** — there is NO NPM_TOKEN secret. GitHub
-# Actions proves the workflow's identity to npm via a short-lived OIDC token, and
-# npm auto-attaches build provenance. This is npm's recommended path for CI/CD
-# (classic automation tokens are discouraged for exactly this reason).
+# Why not a separate release-then-publish chain: a GitHub Release created by a
+# workflow using the default GITHUB_TOKEN does NOT trigger `on: release`
+# (recursion guard), so the publish step must live on the tag-push trigger.
 #
-# One-time setup on npmjs.com (package must exist first — see README "Publishing"):
-#   Package → Settings → Trusted Publisher → GitHub Actions:
-#     Organization or user: hakkisagdic
-#     Repository:           keyflip
-#     Workflow filename:    publish.yml
+# No NPM_TOKEN: npm authenticates this workflow via OIDC. One-time setup on
+# npmjs.com — package keyflip → Settings → Trusted Publisher → GitHub Actions:
+#   user hakkisagdic · repo keyflip · workflow publish.yml
 name: Publish
 
 on:
-  release:
-    types: [published]
+  push:
+    tags: ['v*']
+  workflow_dispatch:
 
 permissions:
-  contents: read
-  id-token: write # required for npm Trusted Publishing (OIDC)
+  contents: write   # gh release create
+  id-token: write   # npm Trusted Publishing (OIDC)
 
 jobs:
   publish:
@@ -29,18 +28,23 @@ jobs:
         with:
           node-version: 22
           registry-url: https://registry.npmjs.org
-      # Trusted Publishing (OIDC) needs npm >= 11.5.1; the runner's bundled npm
-      # may be older, so upgrade it explicitly.
-      - name: Upgrade npm (OIDC support)
+      - name: Upgrade npm (OIDC needs >= 11.5.1)
         run: npm install -g npm@latest
-      - name: Verify tag matches package.json
+      - name: Verify tag matches package.json (tag pushes only)
+        if: startsWith(github.ref, 'refs/tags/')
         run: |
           PKG="$(node -p "require('./package.json').version")"
           TAG="${GITHUB_REF_NAME#v}"
           test "$PKG" = "$TAG" || { echo "::error::version $PKG != tag $TAG"; exit 1; }
       - name: Test
         run: npm test
-      # No NODE_AUTH_TOKEN: authentication is via OIDC. --provenance is automatic
-      # with trusted publishing; --access public is required for a scoped package.
-      - name: Publish (Trusted Publishing)
+      - name: Publish to npm (OIDC, provenance)
         run: npm publish --provenance --access public
+      - name: Create the GitHub Release with the tarball
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          npm pack
+          gh release create "$GITHUB_REF_NAME" ./*.tgz --generate-notes --verify-tag || \
+            gh release upload "$GITHUB_REF_NAME" ./*.tgz --clobber
