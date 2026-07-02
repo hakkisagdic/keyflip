@@ -24,6 +24,9 @@ const history = require('./history');
 const backup = require('./backup');
 const share = require('./share');
 const skill = require('./skill');
+const mcpreg = require('./mcpreg');
+const desktopgw = require('./desktopgw');
+const sync = require('./sync');
 const mcp = require('./mcp');
 const style = require('./style').make(process.stdout);
 
@@ -81,6 +84,9 @@ function usage() {
   print('  keyflip usage --history        per-account usage trend + autoswitch/failover events');
   print('  keyflip backup [now|list|restore <n>|prune]   snapshot keyflip metadata (no secrets)');
   print('  keyflip share <name> [--no-secrets]   make a keyflip:// link; import with `keyflip import`');
+  print('  keyflip mcpreg [add|list|enable|disable|import]   manage MCP servers across Claude Code + Desktop');
+  print('  keyflip gateway use <provider> | off   route the Claude DESKTOP app through a provider gateway');
+  print('  keyflip sync [push|pull|test] --url <webdav> --passphrase-file <f>   encrypted cross-device sync');
   print('  keyflip status                which account each surface is on (CLI + desktop app)');
   print('  keyflip list [--usage]        saved accounts; --usage adds 5h/7d quota per account');
   print('  keyflip remove <name|number>  delete a saved account');
@@ -538,6 +544,87 @@ async function cmdUsage(ctx, rest) {
     events.forEach(function (e) { print('  ' + e.at + '  ' + (e.kind || 'event') + ': ' + (e.from || '?') + ' → ' + (e.to || '?') + (e.reason ? '  (' + e.reason + ')' : '')); });
   }
   if (!samples.length && !events.length) print('  (nothing recorded yet — run: keyflip list --usage)');
+}
+
+// #15 MCP registry
+function readSecretArg(rest, flag) {
+  const i = rest.indexOf(flag);
+  if (i === -1 || !rest[i + 1]) return null;
+  try { return (rest[i + 1] === '-' ? fs.readFileSync(0, 'utf8') : fs.readFileSync(rest[i + 1], 'utf8')).trim(); }
+  catch (e) { return null; }
+}
+function cmdMcpreg(ctx, rest) {
+  const sub = rest[0]; const args = rest.slice(1);
+  if (sub === 'add') {
+    const name = args.filter(function (a) { return a.indexOf('-') !== 0; })[0];
+    const sep = args.indexOf('--');
+    if (!name || sep === -1) return fail('usage: keyflip mcpreg add <name> -- <command> [args…]');
+    const cmdArr = args.slice(sep + 1);
+    mcpreg.add(ctx, name, { command: cmdArr[0], args: cmdArr.slice(1) });
+    print(style.ok('✅') + " registered MCP server '" + name + "'  (enable it: keyflip mcpreg enable " + name + " --all)");
+    return;
+  }
+  if (sub === 'list' || sub === undefined) {
+    const items = mcpreg.list(ctx);
+    if (JSON_MODE) { jsonOut({ servers: items }); return; }
+    if (!items.length) { print('No MCP servers registered (add one: keyflip mcpreg add …).'); return; }
+    items.forEach(function (s) { print('  ' + s.name + '   ' + s.command + ' ' + (s.args || []).join(' ')); });
+    return;
+  }
+  if (sub === 'enable' || sub === 'disable') {
+    const name = args.filter(function (a) { return a.indexOf('-') !== 0; })[0];
+    if (!name) return fail('usage: keyflip mcpreg ' + sub + ' <name> [--code|--desktop|--all]');
+    const surfaces = [];
+    if (args.indexOf('--all') !== -1 || (args.indexOf('--code') === -1 && args.indexOf('--desktop') === -1)) { surfaces.push('claude-code', 'claude-desktop'); }
+    else { if (args.indexOf('--code') !== -1) surfaces.push('claude-code'); if (args.indexOf('--desktop') !== -1) surfaces.push('claude-desktop'); }
+    surfaces.forEach(function (s) {
+      const r = mcpreg.setEnabled(ctx, name, s, sub === 'enable');
+      print('  ' + s + ': ' + (r === 'skipped-no-config' ? 'skipped (app config not present)' : (sub === 'enable' ? 'enabled' : 'disabled')));
+    });
+    return;
+  }
+  if (sub === 'remove' || sub === 'rm') { mcpreg.remove(ctx, args[0]); print('🗑  removed MCP server: ' + args[0]); return; }
+  if (sub === 'import') { const imp = mcpreg.importLive(ctx); print('imported ' + imp.length + ' server(s): ' + imp.join(', ')); return; }
+  return fail('usage: keyflip mcpreg [add|list|enable|disable|remove|import]');
+}
+
+// #17 Claude Desktop third-party gateway
+function cmdGateway(ctx, rest) {
+  const sub = rest[0];
+  if (sub === 'use') {
+    if (!provider.exists(ctx, rest[1])) return fail("no such provider: '" + (rest[1] || '') + "'");
+    const r = desktopgw.use(ctx, rest[1]);
+    print(style.ok('✅') + ' Claude desktop app -> gateway "' + rest[1] + '" (' + r.dirs + ' config dir(s)). Restart the app to apply.');
+    return;
+  }
+  if (sub === 'off' || sub === 'restore') { desktopgw.restore(ctx); print(style.ok('✅') + ' Claude desktop app restored to first-party (Anthropic). Restart the app.'); return; }
+  if (sub === 'status' || sub === undefined) { const a = desktopgw.active(ctx); print(a ? ('Desktop gateway: ' + a.provider) : 'Desktop app: first-party (Anthropic)'); return; }
+  return fail('usage: keyflip gateway [use <provider>|off|status]');
+}
+
+// #18 encrypted WebDAV sync
+async function cmdSync(ctx, rest) {
+  const sub = rest[0];
+  const ui = rest.indexOf('--url'); const url = ui !== -1 ? rest[ui + 1] : null;
+  const useri = rest.indexOf('--user'); const user = useri !== -1 ? rest[useri + 1] : null;
+  const o = { url: url, user: user, pass: readSecretArg(rest, '--pass-file'), passphrase: readSecretArg(rest, '--passphrase-file') };
+  if (sub === 'test') { if (!url) return fail('usage: keyflip sync test --url <webdav-url> [--user U --pass-file f]'); const r = await sync.test(o); print(r.ok ? style.ok('✓') + ' reachable (http ' + r.httpStatus + ')' : style.err('✗') + ' ' + (r.reason || 'unreachable')); return; }
+  if (sub === 'push') { if (!url || !o.passphrase) return fail('usage: keyflip sync push --url <u> --passphrase-file <f> [--user U --pass-file f]'); const r = await sync.push(ctx, o); print(style.ok('✅') + ' pushed ' + r.pushed + ' account(s), encrypted.'); return; }
+  if (sub === 'pull') {
+    if (!url || !o.passphrase) return fail('usage: keyflip sync pull --url <u> --passphrase-file <f> [--force]');
+    const p = await sync.pull(ctx, o);
+    if (!p.found) return fail('no snapshot at that URL');
+    print('Remote snapshot: ' + p.meta.accounts + ' account(s), from "' + p.meta.device + '" at ' + p.meta.at + ' (schema v' + p.meta.schema + ')');
+    if (rest.indexOf('--force') === -1) {
+      if (!process.stdin.isTTY) return fail('applying a pulled snapshot non-interactively requires --force');
+      const ok = await confirm('Apply it? A safety backup will be taken first. [y/N] ');
+      if (!ok) { print('Cancelled.'); return; }
+    }
+    const res = sync.apply(ctx, p, { force: rest.indexOf('--force') !== -1 });
+    print(style.ok('✅') + ' applied. imported: ' + (res.imported.join(', ') || '(none)') + (res.skipped.length ? '; skipped: ' + res.skipped.join(', ') : ''));
+    return;
+  }
+  return fail('usage: keyflip sync [test|push|pull] --url <webdav-url> --passphrase-file <file> [--user U --pass-file f]');
 }
 
 // #6 backup
@@ -1077,6 +1164,12 @@ async function dispatch(ctx, cmd, rest) {
         return withLock(ctx, function () { return cmdBackup(ctx, rest); });
       case 'share':
         return cmdShare(ctx, rest);
+      case 'mcpreg':
+        return withLock(ctx, function () { return cmdMcpreg(ctx, rest); });
+      case 'gateway':
+        return withLock(ctx, function () { return cmdGateway(ctx, rest); }, 'claude-desktop');
+      case 'sync':
+        return cmdSync(ctx, rest);
       case 'mcp':
         return cmdMcp(ctx, rest);
       case 'install-skill':
