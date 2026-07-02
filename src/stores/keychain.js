@@ -14,10 +14,12 @@ const PROFILE_PREFIX = 'ccswitch:';
 const SECURITY = '/usr/bin/security';
 const NOT_FOUND = 44;          // errSecItemNotFound
 const TIMEOUT_MS = 5000;       // a locked keychain must not hang the CLI
-// `security -i` reads whole command lines from stdin (no small fixed cap), so
-// this only needs to comfortably exceed any real OAuth blob (a few KB). Set well
-// above that so secrets are ALWAYS fed on stdin, never as a process-visible argv.
-const STDIN_CMD_LIMIT = 262144; // 256 KB of hex = 128 KB blob
+// `security -i` reads stdin with a ~4096-byte line buffer; a longer command line
+// is split and its tail is mis-parsed as a bogus command. Keep the whole
+// `add-generic-password … -X <hex>` line safely under that. A real Claude OAuth
+// blob is ~500 bytes (≈1000 hex), so the stdin path ALWAYS covers real
+// credentials; only a synthetic >~1.9 KB blob ever falls back to argv.
+const STDIN_CMD_LIMIT = 3800;  // hex chars (≈1900-byte blob)
 
 function keychainError(op, r) {
   const detail = r.timedOut ? 'timed out (keychain locked or waiting on a prompt?)'
@@ -54,14 +56,17 @@ class KeychainStore {
     // blobs fall back to argv (-w) rather than risk truncating the command line.
     const hex = Buffer.from(String(blob), 'utf8').toString('hex');
     const tail = this.keychainPath ? ' ' + q(this.keychainPath) : '';
-    // A blob past the (very large) stdin budget is refused rather than leaked as
-    // an argv `-w` value — no real credential is anywhere near this size, so this
-    // only triggers on corruption/abuse.
-    if (hex.length > STDIN_CMD_LIMIT) {
-      throw keychainError('write of "' + service + '"', { stderr: 'credential is implausibly large (' + Math.round(hex.length / 2) + ' bytes) — refusing to store it', code: 1 });
+    let r;
+    if (hex.length <= STDIN_CMD_LIMIT) {
+      // Preferred: hex-encoded value fed to `security -i` on stdin so the secret
+      // never appears in argv (`ps`). Fits the ~4 KB stdin line for any real blob.
+      const cmd = 'add-generic-password -U -s ' + q(service) + ' -a ' + q(this.account) + ' -X ' + hex + tail + '\n';
+      r = this.run(SECURITY, ['-i'], cmd, { timeoutMs: TIMEOUT_MS });
+    } else {
+      // Only synthetic, larger-than-any-real-credential blobs land here: the
+      // stdin line would overflow, so fall back to argv (briefly `ps`-visible).
+      r = this.run(SECURITY, ['add-generic-password', '-U', '-s', service, '-a', this.account, '-X', hex].concat(this._tail()), undefined, { timeoutMs: TIMEOUT_MS });
     }
-    const cmd = 'add-generic-password -U -s ' + q(service) + ' -a ' + q(this.account) + ' -X ' + hex + tail + '\n';
-    const r = this.run(SECURITY, ['-i'], cmd, { timeoutMs: TIMEOUT_MS });
     if (r.code !== 0) throw keychainError('write of "' + service + '"', r);
   }
 

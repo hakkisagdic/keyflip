@@ -21,7 +21,8 @@ function cliRun(home, args, input) {
     encoding: 'utf8', input: input,
     env: Object.assign({}, process.env, {
       HOME: home, USERPROFILE: home,
-      XDG_CONFIG_HOME: path.join(home, '.config'), APPDATA: path.join(home, 'AppData', 'Roaming'),
+      XDG_CONFIG_HOME: path.join(home, '.config'),
+      CCSWITCH_CONFIG_DIR: path.join(home, '.config', 'ccswitch'), APPDATA: path.join(home, 'AppData', 'Roaming'),
       CCSWITCH_TEST_CLAUDE: 'stopped',
     }),
   });
@@ -34,7 +35,8 @@ function mcpSession(home, messages, expectIds) {
     const child = spawn(process.execPath, [BIN, 'mcp'], {
       env: Object.assign({}, process.env, {
         HOME: home, USERPROFILE: home,
-        XDG_CONFIG_HOME: path.join(home, '.config'), APPDATA: path.join(home, 'AppData', 'Roaming'),
+        XDG_CONFIG_HOME: path.join(home, '.config'),
+      CCSWITCH_CONFIG_DIR: path.join(home, '.config', 'ccswitch'), APPDATA: path.join(home, 'AppData', 'Roaming'),
         CCSWITCH_TEST_CLAUDE: 'stopped',
       }),
     });
@@ -108,7 +110,8 @@ test('MCP: unknown method -> -32601, unknown tool -> -32602, parse error -> -327
   const home = mkhome();
   const got = await new Promise(function (resolve, reject) {
     const child = spawn(process.execPath, [BIN, 'mcp'], {
-      env: Object.assign({}, process.env, { HOME: home, USERPROFILE: home, XDG_CONFIG_HOME: path.join(home, '.config'), APPDATA: path.join(home, 'AppData', 'Roaming'), CCSWITCH_TEST_CLAUDE: 'stopped' }),
+      env: Object.assign({}, process.env, { HOME: home, USERPROFILE: home, XDG_CONFIG_HOME: path.join(home, '.config'),
+      CCSWITCH_CONFIG_DIR: path.join(home, '.config', 'ccswitch'), APPDATA: path.join(home, 'AppData', 'Roaming'), CCSWITCH_TEST_CLAUDE: 'stopped' }),
     });
     const lines = [];
     const timer = setTimeout(function () { child.kill(); reject(new Error('timeout')); }, 15000);
@@ -145,7 +148,8 @@ test('MCP handles a JSON-RPC batch, dropping the notifications from the reply ar
   const home = mkhome();
   const got = await new Promise(function (resolve, reject) {
     const child = spawn(process.execPath, [BIN, 'mcp'], {
-      env: Object.assign({}, process.env, { HOME: home, USERPROFILE: home, XDG_CONFIG_HOME: path.join(home, '.config'), APPDATA: path.join(home, 'AppData', 'Roaming'), CCSWITCH_TEST_CLAUDE: 'stopped' }),
+      env: Object.assign({}, process.env, { HOME: home, USERPROFILE: home, XDG_CONFIG_HOME: path.join(home, '.config'),
+      CCSWITCH_CONFIG_DIR: path.join(home, '.config', 'ccswitch'), APPDATA: path.join(home, 'AppData', 'Roaming'), CCSWITCH_TEST_CLAUDE: 'stopped' }),
     });
     let buf = '';
     const timer = setTimeout(function () { child.kill(); reject(new Error('timeout')); }, 15000);
@@ -171,5 +175,5 @@ test('install-skill copies the bundled skill into ~/.claude/skills', function ()
   assert.strictEqual(r.status, 0, r.stderr);
   const dest = path.join(home, '.claude', 'skills', 'ccswitch', 'SKILL.md');
   assert.ok(fs.existsSync(dest));
-  assert.match(fs.readFileSync(dest, 'utf8'), /^---\nname: ccswitch/);
+  assert.match(fs.readFileSync(dest, 'utf8'), /^---\r?\nname: ccswitch/);
 });

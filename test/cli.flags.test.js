@@ -27,6 +27,7 @@ function run(home, args, extraEnv) {
     env: Object.assign({}, process.env, {
       HOME: home, USERPROFILE: home,
       XDG_CONFIG_HOME: path.join(home, '.config'),
+      CCSWITCH_CONFIG_DIR: path.join(home, '.config', 'ccswitch'), // deterministic across OSes (Windows uses APPDATA otherwise)
       APPDATA: path.join(home, 'AppData', 'Roaming'),
       CCSWITCH_TEST_CLAUDE: 'stopped',
     }, extraEnv || {}),

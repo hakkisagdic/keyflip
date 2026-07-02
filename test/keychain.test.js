@@ -47,21 +47,25 @@ test('writes go through `security -i` stdin as hex — the secret is never in ar
   assert.strictEqual(Buffer.from(hex, 'hex').toString('utf8'), '{"top":"secret"}');
 });
 
-test('a normal-size credential always goes through stdin (never argv), even at a few KB', function () {
+test('a real-size credential goes through stdin (secret never in argv)', function () {
   const r = fakeRunner(function () { return { code: 0, stdout: '', stderr: '' }; });
   const s = new KeychainStore({ account: 'me', runner: r });
-  const realistic = 'x'.repeat(4000); // ~4 KB — bigger than any real OAuth blob
+  const realistic = 'x'.repeat(500); // ~real OAuth blob size (well under the stdin line)
   s.setLive(realistic);
   const c = r.calls[0];
   assert.deepStrictEqual(c.args, ['-i']);                 // stdin path, secret not in argv
-  assert.match(c.input, /-X [0-9a-f]+\n$/);
+  assert.match(c.input, /^add-generic-password -U -s "Claude Code-credentials" -a "me" -X [0-9a-f]+\n$/);
 });
 
-test('an implausibly large blob is refused, never leaked to argv', function () {
+test('an oversized blob (never a real credential) falls back to argv, still hex-encoded', function () {
   const r = fakeRunner(function () { return { code: 0, stdout: '', stderr: '' }; });
   const s = new KeychainStore({ account: 'me', runner: r });
-  assert.throws(function () { s.setLive('x'.repeat(200000)); }, /implausibly large/);
-  assert.strictEqual(r.calls.length, 0); // security never invoked with the secret
+  const big = 'x'.repeat(4000); // 8000 hex > stdin line budget
+  s.setLive(big);
+  const c = r.calls[0];
+  assert.strictEqual(c.args[0], 'add-generic-password');
+  assert.strictEqual(c.args[c.args.length - 2], '-X');    // hex-encoded, not raw -w
+  assert.strictEqual(c.args[c.args.length - 1], Buffer.from(big).toString('hex'));
 });
 
 test('write failures throw EKEYCHAIN with the stderr detail', function () {
