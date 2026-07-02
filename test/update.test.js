@@ -52,6 +52,12 @@ test('detectInstallMethod recognizes installer copies and npm globals', function
   assert.strictEqual(update.detectInstallMethod(inst), 'installer');
   assert.strictEqual(update.detectInstallMethod('/usr/local/lib/node_modules/ccswitch/bin/ccswitch.js'), 'npm');
   assert.strictEqual(update.detectInstallMethod('/some/random/place/ccswitch.js'), 'unknown');
-  assert.ok(update.upgradeCommand('installer').indexOf('install.sh') !== -1);
-  assert.ok(update.upgradeCommand('npm').indexOf('npm install -g') !== -1);
+  // Platform-explicit so the assertion holds on the Windows CI runner too.
+  assert.ok(update.upgradeCommand('installer', 'linux').indexOf('install.sh') !== -1);
+  assert.ok(update.upgradeCommand('installer', 'win32').indexOf('install.ps1') !== -1);
+  assert.ok(update.upgradeCommand('npm', 'linux').indexOf('npm install -g') !== -1);
+  // upgradeSpawn never uses bash on Windows.
+  assert.strictEqual(update.upgradeSpawn('npm', 'win32').cmd, 'npm.cmd');
+  assert.strictEqual(update.upgradeSpawn('installer', 'win32').cmd, 'powershell');
+  assert.strictEqual(update.upgradeSpawn('installer', 'linux').cmd, 'bash');
 });
