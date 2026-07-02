@@ -88,6 +88,11 @@ function usage() {
   print('  keyflip mcpreg [add|list|enable|disable|import]   manage MCP servers across Claude Code + Desktop');
   print('  keyflip gateway use <provider> | off   route the Claude DESKTOP app through a provider gateway');
   print('  keyflip sync [push|pull|test] --url <webdav> --passphrase-file <f>   encrypted cross-device sync');
+  print('  keyflip sessions [--search T] [--here]   browse Claude Code conversations (all accounts)');
+  print('  keyflip resume <n|id> [--run]  resume a past session in its original directory');
+  print('  keyflip skill add <owner/repo|./dir|file.tgz>   install a skill; also: skill list|remove');
+  print('  keyflip proxy start [--wire] | stop | status | stats');
+  print('                                 command-started failover proxy (429/5xx → next account)');
   print('  keyflip status                which account each surface is on (CLI + desktop app)');
   print('  keyflip list [--usage]        saved accounts; --usage adds 5h/7d quota per account');
   print('  keyflip remove <name|number>  delete a saved account');
@@ -626,6 +631,75 @@ async function cmdSync(ctx, rest) {
     return;
   }
   return fail('usage: keyflip sync [test|push|pull] --url <webdav-url> --passphrase-file <file> [--user U --pass-file f]');
+}
+
+// Command-activated failover proxy (never a resident daemon).
+function pidAlive(pid) { try { process.kill(pid, 0); return true; } catch (e) { return e && e.code === 'EPERM'; } }
+
+function wireSettings(ctx, url) {
+  const provider = require('./provider'); const settings = require('./settings'); const { writeJsonStable } = require('./fsutil');
+  const cfg = settings.read(ctx.claudeSettingsPath); // throws on corrupt (safe)
+  cfg.env = cfg.env || {};
+  if (url) cfg.env.ANTHROPIC_BASE_URL = url; else delete cfg.env.ANTHROPIC_BASE_URL;
+  if (!Object.keys(cfg.env).length) delete cfg.env;
+  writeJsonStable(ctx.claudeSettingsPath, cfg, 0o600);
+}
+
+async function cmdProxy(ctx, rest) {
+  const proxy = require('./proxy');
+  const sub = rest[0];
+  const meta = proxy.readMeta(ctx);
+  const running = meta && meta.pid && pidAlive(meta.pid);
+
+  if (sub === 'start') {
+    if (running) return fail('proxy already running on 127.0.0.1:' + meta.port + ' (pid ' + meta.pid + ')');
+    const pi = rest.indexOf('--port'); const port = pi !== -1 ? parseInt(rest[pi + 1], 10) : proxy.DEFAULT_PORT;
+    const wire = rest.indexOf('--wire') !== -1;
+    const child = require('child_process').spawn(process.execPath, [process.argv[1], '__proxy-serve', '--port', String(port)], { detached: true, stdio: 'ignore' });
+    child.unref();
+    const url = 'http://127.0.0.1:' + port;
+    require('./fsutil').writeJsonStable(proxy.metaPath(ctx), { pid: child.pid, port: port, url: url, wired: wire, at: ctx.now() }, 0o600);
+    if (wire) { try { wireSettings(ctx, url); } catch (e) { print(style.warn('⚠️ could not wire settings.json: ' + e.message)); } }
+    print(style.ok('✅') + ' proxy started on ' + url + ' (pid ' + child.pid + ')');
+    print(wire ? 'Wired: Claude Code now routes through it (ANTHROPIC_BASE_URL set). Stop with: keyflip proxy stop'
+               : 'Point Claude Code at it:  export ANTHROPIC_BASE_URL=' + url + '   (or start with --wire)');
+    print('Requests failover across your accounts on 429/5xx; stop it with: keyflip proxy stop');
+    return;
+  }
+  if (sub === 'stop') {
+    if (!meta) return print('proxy is not running.');
+    if (meta.pid && pidAlive(meta.pid)) { try { process.kill(meta.pid); } catch (e) { /* */ } }
+    if (meta.wired) { try { wireSettings(ctx, null); } catch (e) { /* */ } }
+    try { fs.rmSync(proxy.metaPath(ctx), { force: true }); } catch (e) { /* */ }
+    print(style.ok('✅') + ' proxy stopped.' + (meta.wired ? ' Unwired settings.json.' : ''));
+    return;
+  }
+  if (sub === 'status' || sub === undefined) {
+    if (JSON_MODE) { jsonOut({ running: !!running, meta: meta }); return; }
+    if (!running) { print('proxy: not running (start it with: keyflip proxy start [--wire])'); return; }
+    print('proxy: running on ' + meta.url + ' (pid ' + meta.pid + ')' + (meta.wired ? ', wired' : ''));
+    const st = proxy.stats(ctx);
+    print('  routed ' + st.total + ' request(s); accounts used: ' + (Object.keys(st.byAccount).join(', ') || 'none yet'));
+    return;
+  }
+  if (sub === 'stats') {
+    const st = proxy.stats(ctx);
+    if (JSON_MODE) { jsonOut(st); return; }
+    print('Proxy usage (' + st.total + ' requests):');
+    Object.keys(st.byAccount).forEach(function (a) { const x = st.byAccount[a]; print('  ' + a + ': ' + x.requests + ' req, ' + x.inputTokens + ' in / ' + x.outputTokens + ' out tokens'); });
+    if (!st.total) print('  (nothing yet)');
+    return;
+  }
+  return fail('usage: keyflip proxy [start [--port N] [--wire] | stop | status | stats]');
+}
+
+// The detached background server. Runs until killed.
+async function proxyServe(ctx, rest) {
+  const proxy = require('./proxy');
+  const pi = rest.indexOf('--port'); const port = pi !== -1 ? parseInt(rest[pi + 1], 10) : proxy.DEFAULT_PORT;
+  logmod.log('proxy serving on ' + port);
+  await proxy.serve(ctx, { port: port });
+  return new Promise(function () { /* run forever until the process is killed */ });
 }
 
 // Skills marketplace: install arbitrary skills from GitHub/dir/archive.
@@ -1248,6 +1322,10 @@ async function dispatch(ctx, cmd, rest) {
         return cmdResume(ctx, rest);
       case 'skill':
         return cmdSkill(ctx, rest);
+      case 'proxy':
+        return cmdProxy(ctx, rest);
+      case '__proxy-serve': // hidden: the detached background server process
+        return proxyServe(ctx, rest);
       case 'mcp':
         return cmdMcp(ctx, rest);
       case 'install-skill':
