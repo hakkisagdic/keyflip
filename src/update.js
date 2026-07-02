@@ -60,8 +60,7 @@ async function maybeNotify(ctx, currentVersion, opts) {
 function detectInstallMethod(binPath) {
   let real = binPath;
   try { real = fs.realpathSync(binPath); } catch (e) { /* keep */ }
-  if (real.indexOf(path.join('.local', 'share', 'keyflip')) !== -1 ||
-      real.indexOf(path.join('.local', 'share', 'ccswitch')) !== -1) return 'installer'; // legacy install dir
+  if (real.indexOf(path.join('.local', 'share', 'keyflip')) !== -1) return 'installer';
   if (real.indexOf('node_modules') !== -1) return 'npm';
   return 'unknown';
 }

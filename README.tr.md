@@ -1,7 +1,5 @@
 # keyflip — Hesap Değiştirici
 
-> Eski adıyla **ccswitch** — alakasız cc-switch masaüstü uygulamasıyla karışmaması için yeniden adlandırıldı. Kayıtlı hesaplarınız ilk çalıştırmada otomatik taşınır.
-
 [English](README.md) | **Türkçe**
 
 Birden çok **Anthropic / Claude Code** hesabı arasında tek tıkla (veya tek komutla) geçiş yapın.

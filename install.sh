@@ -113,14 +113,6 @@ AS
   rm -f "$TMP_AS"
 fi
 
-# --- clean up a legacy ccswitch install (the tool's former name) -------------
-if [ -e "$BIN_DIR/ccswitch" ] || [ -d "$HOME/.local/share/ccswitch" ]; then
-  rm -f "$BIN_DIR/ccswitch" "$BIN_DIR/ccs" 2>/dev/null || true
-  rm -rf "$HOME/.local/share/ccswitch" 2>/dev/null || true
-  rm -rf "$HOME/Applications/Claude Account Switcher.app" 2>/dev/null || true
-  info "  • removed the old ccswitch install (this tool is now keyflip; saved accounts migrate automatically)"
-fi
-
 info ""
 info "✅ Installed."
 info ""

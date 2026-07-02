@@ -37,18 +37,10 @@ const AUTH_OVERRIDE_ENV_VARS = [
 function sessionDir(ctx, name) { return path.join(ctx.configDir, 'sessions', name); }
 
 function readManifest(dir) {
-  const names = [];
-  [SHARE_MANIFEST, '.ccswitch-shared.json' /* legacy (pre-rename) */].forEach(function (f) {
-    try {
-      JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8')).created.forEach(function (n) {
-        if (names.indexOf(n) === -1) names.push(n);
-      });
-    } catch (e) { /* absent */ }
-  });
-  return names;
+  try { return JSON.parse(fs.readFileSync(path.join(dir, SHARE_MANIFEST), 'utf8')).created || []; }
+  catch (e) { return []; }
 }
 function writeManifest(dir, created) {
-  try { fs.rmSync(path.join(dir, '.ccswitch-shared.json'), { force: true }); } catch (e) { /* legacy */ }
   atomicWrite(path.join(dir, SHARE_MANIFEST), JSON.stringify({ created: created }, null, 2), 0o600);
 }
 

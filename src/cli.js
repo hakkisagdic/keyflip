@@ -400,7 +400,7 @@ async function cmdRun(ctx, rest) {
   se.scrubbed.forEach(function (k) { print('  ⚠️ ignoring ' + k + ' for this session (it would override the account).'); });
   print('Launching Claude Code as ' + em + ' (this terminal only)…');
   logmod.log('run session: ' + name);
-  const bin = process.env.KEYFLIP_CLAUDE_BIN || process.env.CCSWITCH_CLAUDE_BIN || 'claude';
+  const bin = process.env.KEYFLIP_CLAUDE_BIN || 'claude';
   const r = require('child_process').spawnSync(bin, fwd, { stdio: 'inherit', env: se.env });
   await withLock(ctx, function () {
     if (session.syncBack(ctx, name)) print('  ↳ session token rotated — saved back to the profile.');

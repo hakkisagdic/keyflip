@@ -10,7 +10,7 @@ function createContext(opts) {
   const home = opts.home || os.homedir();
   const platform = opts.platform || process.platform;
 
-  let configDir = opts.configDir || process.env.KEYFLIP_CONFIG_DIR || process.env.CCSWITCH_CONFIG_DIR;
+  let configDir = opts.configDir || process.env.KEYFLIP_CONFIG_DIR;
   if (!configDir) {
     if (platform === 'win32') {
       const appData = process.env.APPDATA || path.join(home, 'AppData', 'Roaming');

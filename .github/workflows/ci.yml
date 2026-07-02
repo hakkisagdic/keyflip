@@ -41,5 +41,5 @@ jobs:
           node-version: 22
       - name: Real keychain round-trip
         env:
-          CCSWITCH_REAL_KEYCHAIN: '1'
+          KEYFLIP_REAL_KEYCHAIN: '1'
         run: node --test test/keychain.real.test.js

@@ -1,7 +1,5 @@
 # keyflip
 
-> Formerly **ccswitch** — renamed to avoid confusion with the unrelated cc-switch desktop app. Your saved accounts migrate automatically on first run.
-
 **English** | [Türkçe](README.tr.md)
 
 Switch between multiple **Anthropic / Claude Code** accounts with a click (or one command).

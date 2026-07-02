@@ -9,7 +9,7 @@ const { run } = require('./exec');
 let _testStopped = false;
 
 function plat(p) { return p || process.platform; }
-function testMode() { return process.env.KEYFLIP_TEST_CLAUDE || process.env.CCSWITCH_TEST_CLAUDE; }
+function testMode() { return process.env.KEYFLIP_TEST_CLAUDE; }
 
 function isClaudeRunning(p) {
   const t = testMode();
