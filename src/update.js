@@ -65,9 +65,31 @@ function detectInstallMethod(binPath) {
   return 'unknown';
 }
 
-function upgradeCommand(method) {
-  if (method === 'installer') return 'curl -fsSL https://raw.githubusercontent.com/hakkisagdic/ccswitch/main/install.sh | bash';
+// Human-readable command (for messages/manual fallback).
+function upgradeCommand(method, platform) {
+  platform = platform || process.platform;
+  if (method === 'installer') {
+    return platform === 'win32'
+      ? 'irm https://raw.githubusercontent.com/hakkisagdic/ccswitch/main/install.ps1 | iex'
+      : 'curl -fsSL https://raw.githubusercontent.com/hakkisagdic/ccswitch/main/install.sh | bash';
+  }
   if (method === 'npm') return 'npm install -g git+https://github.com/hakkisagdic/ccswitch.git';
+  return null;
+}
+
+// The actual { cmd, args } to spawn — platform-appropriate, no shell assumptions
+// (bash isn't present on Windows). npm is invoked directly (npm.cmd on Windows).
+function upgradeSpawn(method, platform) {
+  platform = platform || process.platform;
+  if (method === 'npm') {
+    return { cmd: platform === 'win32' ? 'npm.cmd' : 'npm', args: ['install', '-g', 'git+https://github.com/hakkisagdic/ccswitch.git'] };
+  }
+  if (method === 'installer') {
+    if (platform === 'win32') {
+      return { cmd: 'powershell', args: ['-NoProfile', '-Command', 'irm https://raw.githubusercontent.com/hakkisagdic/ccswitch/main/install.ps1 | iex'] };
+    }
+    return { cmd: 'bash', args: ['-lc', 'curl -fsSL https://raw.githubusercontent.com/hakkisagdic/ccswitch/main/install.sh | bash'] };
+  }
   return null;
 }
 
@@ -77,5 +99,6 @@ module.exports = {
   cmpVersions: cmpVersions,
   detectInstallMethod: detectInstallMethod,
   upgradeCommand: upgradeCommand,
+  upgradeSpawn: upgradeSpawn,
   RAW_PKG_URL: RAW_PKG_URL,
 };

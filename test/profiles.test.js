@@ -44,3 +44,11 @@ test('metadata files are written with 0600 permissions (non-Windows)', function 
   const mode = fs.statSync(profiles.metaPath(dir, 'secret')).mode & 0o777;
   assert.strictEqual(mode, 0o600);
 });
+
+test('isValidName rejects reserved, traversal, and flag-like names', function () {
+  const profiles = require('../src/profiles');
+  ['alice', 'a.b_c-1', 'Bob2'].forEach(function (n) { assert.strictEqual(profiles.isValidName(n), true, n); });
+  ['__proto__', 'prototype', 'constructor', '..', '.hidden', '-y', '--force', '', 'a/b', 'a b'].forEach(function (n) {
+    assert.strictEqual(profiles.isValidName(n), false, n);
+  });
+});

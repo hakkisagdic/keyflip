@@ -77,15 +77,22 @@ function cachePath(ctx) { return path.join(ctx.configDir, '.usage-cache.json'); 
 async function usageForProfiles(ctx, names, opts) {
   opts = opts || {};
   const nowMs = opts.nowMs !== undefined ? opts.nowMs : Date.now();
-  let cache = {};
-  try { cache = JSON.parse(fs.readFileSync(cachePath(ctx), 'utf8')); } catch (e) { /* none */ }
+  const ttl = opts.cacheTtlMs || CACHE_TTL_MS;
+  // Null-prototype + shape check: a corrupt/tampered cache (scalar JSON, a
+  // far-future timestamp pinning fake usage, or a '__proto__' key) must never
+  // poison a lookup — fall back to a fresh fetch instead.
+  let cache = Object.create(null);
+  try {
+    const parsed = JSON.parse(fs.readFileSync(cachePath(ctx), 'utf8'));
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) cache = Object.assign(Object.create(null), parsed);
+  } catch (e) { /* none / corrupt — start empty */ }
   const out = {};
   for (let i = 0; i < names.length; i++) {
     const name = names[i];
     const c = cache[name];
-    if (c && c.at && nowMs - c.at < (opts.cacheTtlMs || CACHE_TTL_MS)) {
-      out[name] = { status: c.status, usage: c.usage || null,
-        headroom: headroom(c.usage) };
+    // Trust a cache entry only if its timestamp is a sane, non-future number.
+    if (c && typeof c.at === 'number' && c.at <= nowMs && nowMs - c.at < ttl) {
+      out[name] = { status: c.status, usage: c.usage || null, headroom: headroom(c.usage) };
       continue;
     }
     // For the ACTIVE account prefer the LIVE credential — Claude keeps it fresh,

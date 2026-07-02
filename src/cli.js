@@ -89,7 +89,9 @@ function usage() {
 
 function confirm(question) {
   return new Promise(function (resolve) {
-    const rl = require('readline').createInterface({ input: process.stdin, output: process.stdout });
+    // Prompt goes to stderr so it never pollutes stdout (keeps the --json contract:
+    // stdout carries only the single JSON object).
+    const rl = require('readline').createInterface({ input: process.stdin, output: process.stderr });
     rl.question(question, function (a) { rl.close(); resolve(/^y(es)?$/i.test((a || '').trim())); });
   });
 }
@@ -216,7 +218,13 @@ async function cmdNext(ctx, rest) {
   } else {
     print('Rotating to: ' + (target.email || target.name));
   }
-  return cmdSwitch(ctx, [target.name].concat(rest.filter(function (a) { return a.indexOf('--') === 0 && a !== '--strategy'; })));
+  // Forward the switch-relevant flags (incl. single-dash -y) so `next -y` doesn't
+  // re-prompt; drop --strategy (already consumed here).
+  const SWITCH_FLAGS = ['-y', '--yes', '--restart', '--force'];
+  const forward = rest.filter(function (a) {
+    return SWITCH_FLAGS.indexOf(a) !== -1 || (a.indexOf('--') === 0 && a !== '--strategy');
+  });
+  return cmdSwitch(ctx, [target.name].concat(forward));
 }
 
 // Backup / machine migration: a versioned envelope of saved accounts.
@@ -230,6 +238,9 @@ function cmdExport(ctx, rest) {
   if (target === '-') process.stdout.write(json + '\n');
   else {
     fs.writeFileSync(target, json + '\n', { mode: 0o600 });
+    // writeFileSync's mode does NOT tighten a pre-existing file — chmod explicitly
+    // so an export never inherits a looser (world/group-readable) prior mode.
+    try { fs.chmodSync(target, 0o600); } catch (e) { /* non-POSIX FS */ }
     print('💾 exported ' + r.envelope.accounts.length + " account(s) to '" + target + "'.");
   }
   r.skipped.forEach(function (n) { print('  ⚠️ skipped (credentials unreadable): ' + n); });
@@ -402,20 +413,31 @@ async function cmdRun(ctx, rest) {
 async function cmdAddToken(ctx, rest) {
   const force = rest.indexOf('--force') !== -1 || rest.indexOf('-y') !== -1;
   const ti = rest.indexOf('--token');
-  const srcArg = rest[ti + 1] && rest[ti + 1].indexOf('--') !== 0 ? rest[ti + 1] : null;
-  const name = rest.filter(function (a, i) { return a.indexOf('-') !== 0 && i !== ti + 1; })[0];
+  const srcArg = ti !== -1 && rest[ti + 1] && rest[ti + 1].indexOf('--') !== 0 ? rest[ti + 1] : null;
   const ei = rest.indexOf('--email');
   const email = ei !== -1 ? rest[ei + 1] : null;
+  // The profile name is the first positional — excluding BOTH the --token value
+  // and the --email value (so `--email a@b.c` can't be misparsed as the name).
+  // Guard the -1 case: a missing flag must NOT exclude index 0 (the name).
+  const tokValIdx = ti !== -1 ? ti + 1 : -1;
+  const emailValIdx = ei !== -1 ? ei + 1 : -1;
+  const name = rest.filter(function (a, i) {
+    return a.indexOf('-') !== 0 && i !== tokValIdx && i !== emailValIdx;
+  })[0];
   if (!name || !profiles.isValidName(name) || !srcArg) {
     return fail('usage: ccswitch add <name> --token <file|-> [--email a@b.c] [--force]\n(the raw credentials JSON is read from a file or stdin — NEVER pass it as an argument)');
+  }
+  if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return fail("'" + email + "' is not a valid email address");
   }
   let raw;
   try { raw = srcArg === '-' ? fs.readFileSync(0, 'utf8') : fs.readFileSync(srcArg, 'utf8'); }
   catch (e) { return fail('could not read the credential: ' + e.message); }
   let parsed;
   try { parsed = JSON.parse(raw); } catch (e) { return fail('that is not valid credentials JSON'); }
-  if (!parsed || !parsed.claudeAiOauth || typeof parsed.claudeAiOauth.accessToken !== 'string') {
-    return fail('credentials JSON must contain claudeAiOauth.accessToken');
+  if (!parsed || !parsed.claudeAiOauth || typeof parsed.claudeAiOauth.accessToken !== 'string' ||
+      !parsed.claudeAiOauth.accessToken.trim()) {
+    return fail('credentials JSON must contain a non-empty claudeAiOauth.accessToken');
   }
   if (profiles.exists(ctx.configDir, name) && !force) {
     return fail("'" + name + "' already exists — pass --force to overwrite its credentials.");
@@ -444,17 +466,20 @@ async function cmdAddToken(ctx, rest) {
   print(style.ok('✅') + " imported '" + name + "'" + (email ? ' (' + email + ')' : '') + '.');
 }
 
-// Self-upgrade: re-run whichever installer put this copy here.
+// Self-upgrade: re-run whichever installer put this copy here (platform-aware).
 async function cmdUpgrade(ctx) {
+  if (JSON_MODE) return fail('upgrade is interactive and streams installer output — do not run it with --json');
   const method = update.detectInstallMethod(process.argv[1] || '');
-  const cmd = update.upgradeCommand(method);
-  if (!cmd) {
+  const spawn = update.upgradeSpawn(method);
+  if (!spawn) {
     return fail("couldn't detect how ccswitch was installed — upgrade manually with either:\n  " +
       update.upgradeCommand('installer') + '\n  ' + update.upgradeCommand('npm'));
   }
-  print('Upgrading (' + method + '):  ' + cmd);
-  const r = require('child_process').spawnSync('bash', ['-lc', cmd], { stdio: 'inherit' });
-  if (r.status !== 0) return fail('upgrade failed (exit ' + r.status + ') — run the command above manually.');
+  print('Upgrading (' + method + '):  ' + update.upgradeCommand(method));
+  const r = require('child_process').spawnSync(spawn.cmd, spawn.args, { stdio: 'inherit' });
+  if (r.error) return fail('could not run the upgrade (' + spawn.cmd + ' not found?): ' + r.error.message +
+    '\nRun manually:  ' + update.upgradeCommand(method));
+  if (r.status !== 0) return fail('upgrade failed (exit ' + r.status + ') — run manually:  ' + update.upgradeCommand(method));
   print(style.ok('✅') + ' Upgraded — run ccswitch version to confirm.');
 }
 
@@ -747,7 +772,11 @@ async function main(argv) {
     fail(e && e.message ? e.message : String(e));
   }
   // Passive update notice — after the command; never for --json/menu/upgrade/clean.
-  const skipNotice = JSON_MODE || cmd === undefined || ['menu', 'upgrade', 'clean'].indexOf(cmd) !== -1;
+  // Skip the passive update fetch for machine/interactive/long-lived commands: it
+  // would corrupt the MCP stdio stream, delay `run`/`mcp` exit on a slow network,
+  // or print a stray line during a destructive/JSON op.
+  const NO_NOTICE = ['menu', 'upgrade', 'clean', 'mcp', 'run', 'autoswitch', 'install-skill'];
+  const skipNotice = JSON_MODE || cmd === undefined || NO_NOTICE.indexOf(cmd) !== -1;
   if (!skipNotice) { try { await update.maybeNotify(ctx, VERSION); } catch (e) { /* ignore */ } }
 }
 

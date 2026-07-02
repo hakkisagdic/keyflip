@@ -93,8 +93,14 @@ function validateBlob(name, blob) {
 }
 
 // Load a saved profile: write its token to the live store and patch the pointer.
-// Transactional: the config pointer is written first and rolled back if the live
-// credential write fails, so a half-switched state never survives.
+//
+// Ordering is credential-FIRST, pointer-second:
+//   * The credential (Keychain / creds file) is Claude Code's actual login; the
+//     ~/.claude.json pointer is derived metadata Claude re-syncs from the token.
+//     So a crash between the two writes leaves the *credential* authoritative and
+//     the pointer merely lagging (Claude reconciles it) — never the reverse, which
+//     would let a later "save the current account" grab the wrong token.
+//   * If the pointer write fails, we roll the credential back to what it was.
 function applyProfile(ctx, name) {
   const meta = profiles.read(ctx.configDir, name);
   if (!meta) throw new Error("no such profile: '" + name + "'");
@@ -102,15 +108,25 @@ function applyProfile(ctx, name) {
   if (!blob) throw new Error("profile '" + name + "' has no stored credentials");
   validateBlob(name, blob);
   const cfg = claude.loadForWrite(ctx.claudeConfigPath); // {} if missing, throws if corrupt
-  const prevCfg = JSON.parse(JSON.stringify(cfg));
-  if (meta.oauthAccount) cfg.oauthAccount = meta.oauthAccount;
-  if (meta.userID) cfg.userID = meta.userID;
-  claude.writeConfig(ctx.claudeConfigPath, cfg);
+  // Point ~/.claude.json at the target account. An empty {} oauthAccount (e.g. a
+  // --token import with no identity) is NOT a valid pointer — clear the stale keys
+  // so we never leave a mixed identity (new account's token + old account's userID).
+  const hasOauth = meta.oauthAccount && Object.keys(meta.oauthAccount).length > 0;
+  if (hasOauth) cfg.oauthAccount = meta.oauthAccount; else delete cfg.oauthAccount;
+  if (meta.userID) cfg.userID = meta.userID; else delete cfg.userID;
+
+  let prevBlob;
+  try { prevBlob = ctx.store.getLive(); } // captured for rollback if the pointer write fails
+  catch (e) { prevBlob = undefined; }     // can't read previous (locked keychain) — no rollback possible
+
+  ctx.store.setLive(blob); // credential first (Claude's real login)
   try {
-    ctx.store.setLive(blob);
+    claude.writeConfig(ctx.claudeConfigPath, cfg);
   } catch (e) {
-    try { claude.writeConfig(ctx.claudeConfigPath, prevCfg); } catch (e2) { /* best effort */ }
-    const err = new Error('switch failed while writing the live credential (rolled back): ' +
+    if (prevBlob !== undefined && prevBlob !== null) {
+      try { ctx.store.setLive(prevBlob); } catch (e2) { /* best effort */ }
+    }
+    const err = new Error('switch failed while writing the account pointer (credential rolled back): ' +
       ((e && e.message) || e));
     err.code = (e && e.code) || 'ESWITCH';
     throw err;

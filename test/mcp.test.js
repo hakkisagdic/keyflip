@@ -126,6 +126,45 @@ test('MCP: unknown method -> -32601, unknown tool -> -32602, parse error -> -327
   assert.ok(got.some(function (m) { return m.error && m.error.code === -32700; }));
 });
 
+test('notifications get NO response; id:null is rejected; a batch returns an array', async function () {
+  const mcp = require('../src/mcp');
+  const ctx = { configDir: '/tmp/nope', appDataDir: null, home: '/tmp', store: { getProfile: function () { return null; }, getLive: function () { return null; } } };
+
+  // notification (no id) -> null (no reply)
+  assert.strictEqual(await mcp.handle(ctx, { jsonrpc: '2.0', method: 'ping' }), null);
+  assert.strictEqual(await mcp.handle(ctx, { jsonrpc: '2.0', method: 'tools/list' }), null);
+  // id:null -> invalid request
+  const nul = await mcp.handle(ctx, { jsonrpc: '2.0', id: null, method: 'ping' });
+  assert.strictEqual(nul.error.code, -32600);
+  // a request still gets a reply
+  const ok = await mcp.handle(ctx, { jsonrpc: '2.0', id: 9, method: 'ping' });
+  assert.deepStrictEqual(ok, { jsonrpc: '2.0', id: 9, result: {} });
+});
+
+test('MCP handles a JSON-RPC batch, dropping the notifications from the reply array', async function () {
+  const home = mkhome();
+  const got = await new Promise(function (resolve, reject) {
+    const child = spawn(process.execPath, [BIN, 'mcp'], {
+      env: Object.assign({}, process.env, { HOME: home, USERPROFILE: home, XDG_CONFIG_HOME: path.join(home, '.config'), APPDATA: path.join(home, 'AppData', 'Roaming'), CCSWITCH_TEST_CLAUDE: 'stopped' }),
+    });
+    let buf = '';
+    const timer = setTimeout(function () { child.kill(); reject(new Error('timeout')); }, 15000);
+    child.stdout.on('data', function (d) {
+      buf += d;
+      const nl = buf.indexOf('\n');
+      if (nl !== -1) { clearTimeout(timer); child.kill(); resolve(JSON.parse(buf.slice(0, nl))); }
+    });
+    child.stdin.write(JSON.stringify([
+      { jsonrpc: '2.0', id: 1, method: 'ping' },
+      { jsonrpc: '2.0', method: 'notifications/initialized' }, // no reply
+      { jsonrpc: '2.0', id: 2, method: 'tools/list' },
+    ]) + '\n');
+  });
+  assert.ok(Array.isArray(got));
+  assert.strictEqual(got.length, 2); // the notification produced no entry
+  assert.deepStrictEqual(got.map(function (m) { return m.id; }).sort(), [1, 2]);
+});
+
 test('install-skill copies the bundled skill into ~/.claude/skills', function () {
   const home = mkhome();
   const r = cliRun(home, ['install-skill']);

@@ -57,6 +57,22 @@ test('autoswitch tick treats throttled/unknown usage as unknown (never switches 
   assert.strictEqual(r.state, 'unknown');
 });
 
+test('autoswitch does NOT ping-pong when the only alternative is also over threshold', async function () {
+  const ctx = twoAccounts(); // active b
+  // active b=95 (over), candidate a=92 (also over) -> must stay put, not switch
+  const r = await autosw.tick(ctx, { threshold: 90, fetch: usageFetch({ TB: 95, TA: 92 }), nowMs: 1, cacheTtlMs: 0 });
+  assert.strictEqual(r.state, 'no-candidate');
+  assert.strictEqual(core.currentEmail(ctx), 'b@x.com');
+});
+
+test('autoswitch reports no-candidate when the alternative is app-only (no CLI creds)', async function () {
+  const ctx = twoAccounts();               // a and b both have CLI creds
+  ctx.store.delProfile('a');               // make 'a' app-only (no CLI credential)
+  const r = await autosw.tick(ctx, { threshold: 90, fetch: usageFetch({ TB: 99, TA: 5 }), nowMs: 1, cacheTtlMs: 0 });
+  assert.strictEqual(r.state, 'no-candidate'); // a is filtered out; no other candidate
+  assert.strictEqual(core.currentEmail(ctx), 'b@x.com');
+});
+
 // ---- directory links ----
 test('link set/lookup resolves through ancestors; remove unlinks', function () {
   const ctx = makeCtx();

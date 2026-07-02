@@ -164,7 +164,15 @@ function toolDescriptor(t) {
 }
 
 async function handle(ctx, msg) {
+  // A message without an id is a NOTIFICATION — the spec forbids replying to it,
+  // whatever its method. Process nothing that needs a response and stay silent.
+  if (!msg || typeof msg !== 'object' || Array.isArray(msg)) {
+    return { jsonrpc: '2.0', id: null, error: { code: -32600, message: 'invalid request' } };
+  }
   const id = msg.id;
+  if (id === undefined) return null;                 // notification → no response ever
+  if (id === null) return { jsonrpc: '2.0', id: null, error: { code: -32600, message: 'request id must not be null' } };
+
   const respond = function (result) { return { jsonrpc: '2.0', id: id, result: result }; };
   const rpcError = function (code, message) { return { jsonrpc: '2.0', id: id, error: { code: code, message: message } }; };
 
@@ -201,9 +209,24 @@ async function handle(ctx, msg) {
       }
     }
     default:
-      if (id === undefined) return null; // notification (e.g. notifications/initialized) — no response
       return rpcError(-32601, 'method not found: ' + msg.method);
   }
+}
+
+// Process one parsed message (or a JSON-RPC batch array) and return the response
+// to write, or null when there is nothing to send (all-notification batch, or a
+// lone notification).
+async function handleEnvelope(ctx, parsed) {
+  if (Array.isArray(parsed)) {
+    if (!parsed.length) return { jsonrpc: '2.0', id: null, error: { code: -32600, message: 'invalid request (empty batch)' } };
+    const responses = [];
+    for (let i = 0; i < parsed.length; i++) {
+      const r = await handle(ctx, parsed[i]);
+      if (r) responses.push(r);
+    }
+    return responses.length ? responses : null;
+  }
+  return handle(ctx, parsed);
 }
 
 // Newline-delimited JSON-RPC over stdio (the MCP stdio transport). Requests are
@@ -216,24 +239,25 @@ function serve(ctx, io) {
   const output = io.output || process.stdout;
   const rl = readline.createInterface({ input: input, terminal: false });
   let chain = Promise.resolve();
+  // Safe write: a broken stdout must not throw into the queue and poison it.
+  const send = function (obj) { try { output.write(JSON.stringify(obj) + '\n'); } catch (e) { /* peer gone */ } };
+
   rl.on('line', function (line) {
     line = line.trim();
     if (!line) return;
-    let msg;
-    try { msg = JSON.parse(line); }
-    catch (e) {
-      output.write(JSON.stringify({ jsonrpc: '2.0', id: null, error: { code: -32700, message: 'parse error' } }) + '\n');
-      return;
-    }
+    let parsed;
+    try { parsed = JSON.parse(line); }
+    catch (e) { send({ jsonrpc: '2.0', id: null, error: { code: -32700, message: 'parse error' } }); return; }
+    // Each step handles its own errors and the trailing .catch guarantees the
+    // chain always resolves — one failing request can never silently stall the rest.
     chain = chain.then(function () {
-      return Promise.resolve(handle(ctx, msg)).then(function (res) {
-        if (res) output.write(JSON.stringify(res) + '\n');
+      return Promise.resolve(handleEnvelope(ctx, parsed)).then(function (res) {
+        if (res) send(res);
       }).catch(function (e) {
-        if (msg && msg.id !== undefined) {
-          output.write(JSON.stringify({ jsonrpc: '2.0', id: msg.id, error: { code: -32603, message: (e && e.message) || 'internal error' } }) + '\n');
-        }
+        const rid = (parsed && !Array.isArray(parsed) && parsed.id !== undefined) ? parsed.id : null;
+        send({ jsonrpc: '2.0', id: rid, error: { code: -32603, message: (e && e.message) || 'internal error' } });
       });
-    });
+    }).catch(function () { /* never leave the chain rejected */ });
   });
   return new Promise(function (resolve) { rl.on('close', function () { chain.then(resolve, resolve); }); });
 }

@@ -188,17 +188,29 @@ test('applyProfile refuses a corrupt/truncated credential blob', function () {
   assert.throws(function () { core.applyProfile(ctx, 'alice'); }, /empty/);
 });
 
-test('a failed live-credential write rolls the config pointer back (no half-switch)', function () {
+test('a failed pointer write rolls the live credential back (no half-switch)', function () {
   const ctx = makeCtx();
   login(ctx, 'alice@example.com', 'u1', 'ALICE'); core.addCurrent(ctx);
-  login(ctx, 'bob@example.com', 'u2', 'BOB'); core.addCurrent(ctx); // bob active
+  login(ctx, 'bob@example.com', 'u2', 'BOB'); core.addCurrent(ctx); // bob active, live=BOB
+  // Credential is written first, then the pointer; make the pointer write fail.
+  const realWrite = claude.writeConfig;
+  let calls = 0;
+  claude.writeConfig = function (p, cfg) { calls++; if (calls === 1) throw new Error('disk full'); return realWrite(p, cfg); };
+  assert.throws(function () { core.applyProfile(ctx, 'alice'); }, /rolled back/);
+  claude.writeConfig = realWrite;
+  // live credential restored to bob's — no half-switch
+  assert.strictEqual(ctx.store.getLive(), 'BOB');
+});
+
+test('a setLive failure surfaces cleanly (nothing half-written)', function () {
+  const ctx = makeCtx();
+  login(ctx, 'alice@example.com', 'u1', 'ALICE'); core.addCurrent(ctx);
+  login(ctx, 'bob@example.com', 'u2', 'BOB'); core.addCurrent(ctx);
   const realSetLive = ctx.store.setLive.bind(ctx.store);
   ctx.store.setLive = function () { const e = new Error('keychain locked'); e.code = 'EKEYCHAIN'; throw e; };
-  assert.throws(function () { core.applyProfile(ctx, 'alice'); }, /rolled back/);
-  // pointer still bob, live blob still bob's
-  assert.strictEqual(core.currentEmail(ctx), 'bob@example.com');
+  assert.throws(function () { core.applyProfile(ctx, 'alice'); }, /keychain locked/);
   ctx.store.setLive = realSetLive;
-  assert.strictEqual(ctx.store.getLive(), 'BOB');
+  assert.strictEqual(core.currentEmail(ctx), 'bob@example.com'); // pointer untouched
 });
 
 test('resolveProfile treats a number as the menu index, not a digit-named profile', function () {

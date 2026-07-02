@@ -4,7 +4,11 @@ const fs = require('fs');
 const path = require('path');
 const { atomicWrite } = require('./fsutil');
 
-const NAME_RE = /^[A-Za-z0-9._-]+$/;
+// Must start with an alphanumeric (blocks '-flag', '.dotfile', '..') and use only
+// safe chars. Reserved object-property names are rejected outright so a profile
+// name can never collide with a prototype key in any map keyed by name.
+const NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+const RESERVED_NAMES = ['__proto__', 'prototype', 'constructor'];
 
 function metaPath(dir, name) { return path.join(dir, name + '.json'); }
 
@@ -39,7 +43,9 @@ function email(dir, name) {
   return (m && m.email) || '';
 }
 
-function isValidName(name) { return typeof name === 'string' && NAME_RE.test(name); }
+function isValidName(name) {
+  return typeof name === 'string' && NAME_RE.test(name) && RESERVED_NAMES.indexOf(name) === -1;
+}
 
 // Turn an email into a safe, human profile name (local-part, lowercased).
 function sanitizeName(emailAddr) {

@@ -28,21 +28,43 @@ async function tick(ctx, opts) {
   if (typeof h !== 'number') return { state: 'unknown', active: active, headroom: null, switchedTo: null };
   if (h > 100 - threshold) return { state: 'below', active: active, headroom: h, switchedTo: null };
 
-  // Threshold crossed — pick a target in rotation order.
+  // Threshold crossed — pick a target in rotation order. Only accounts with a
+  // captured CLI credential are candidates: switching to an app-only profile
+  // wouldn't change the live login, so every tick would re-pick it forever.
   const candidates = [];
   for (let k = 1; k <= list.length; k++) {
     const e = list[(activeIdx + k) % list.length];
-    if (!e.active) candidates.push(e);
+    if (e.active) continue;
+    let hasCli = false;
+    try { hasCli = !!ctx.store.getProfile(e.name); } catch (err) { hasCli = false; }
+    if (hasCli) candidates.push(e);
   }
+  if (!candidates.length) return { state: 'no-candidate', active: active, headroom: h, switchedTo: null };
+
   const cinfos = await usage.usageForProfiles(ctx, candidates.map(function (e) { return e.name; }), {
     fetch: opts.fetch, nowMs: opts.nowMs, cacheTtlMs: opts.cacheTtlMs,
   });
-  const picked = usage.pickByStrategy(candidates, cinfos, strategy) ||
-    (strategy === 'best' ? null : null);
+  // Only rotate to an account that is itself BELOW the threshold (headroom greater
+  // than the switch margin). Without this, two accounts both near the limit would
+  // ping-pong every interval. Unknown-usage candidates are eligible only when NO
+  // known-good account exists (better to try than to stay stuck at the limit).
+  // Only rotate to an account we KNOW is below the threshold — never to one whose
+  // usage is unknown (would risk switching to an equally-exhausted account and
+  // thrashing back next tick). If none qualifies, wait rather than switch blind.
+  const margin = 100 - threshold;
+  const pool = candidates.filter(function (c) {
+    const info = cinfos[c.name];
+    return info && typeof info.headroom === 'number' && info.headroom > margin;
+  });
+  if (!pool.length) return { state: 'no-candidate', active: active, headroom: h, switchedTo: null };
+  const picked = usage.pickByStrategy(pool, cinfos, strategy) || pool[0];
   if (!picked) return { state: 'no-candidate', active: active, headroom: h, switchedTo: null };
 
   const doSwitch = opts.performSwitch || function (name) { return core.performSwitch(ctx, name); };
-  await doSwitch(picked.name);
+  const did = await doSwitch(picked.name);
+  // If nothing actually swapped (no CLI credential), report it rather than
+  // claiming a switch — prevents the caller from looping on a phantom success.
+  if (did && did.cli === false) return { state: 'no-candidate', active: active, headroom: h, switchedTo: null };
   return { state: 'switched', active: active, headroom: h, switchedTo: picked };
 }
 

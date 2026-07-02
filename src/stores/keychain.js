@@ -14,7 +14,10 @@ const PROFILE_PREFIX = 'ccswitch:';
 const SECURITY = '/usr/bin/security';
 const NOT_FOUND = 44;          // errSecItemNotFound
 const TIMEOUT_MS = 5000;       // a locked keychain must not hang the CLI
-const STDIN_CMD_LIMIT = 3800;  // conservative `security -i` line-length budget
+// `security -i` reads whole command lines from stdin (no small fixed cap), so
+// this only needs to comfortably exceed any real OAuth blob (a few KB). Set well
+// above that so secrets are ALWAYS fed on stdin, never as a process-visible argv.
+const STDIN_CMD_LIMIT = 262144; // 256 KB of hex = 128 KB blob
 
 function keychainError(op, r) {
   const detail = r.timedOut ? 'timed out (keychain locked or waiting on a prompt?)'
@@ -51,13 +54,14 @@ class KeychainStore {
     // blobs fall back to argv (-w) rather than risk truncating the command line.
     const hex = Buffer.from(String(blob), 'utf8').toString('hex');
     const tail = this.keychainPath ? ' ' + q(this.keychainPath) : '';
-    let r;
-    if (hex.length <= STDIN_CMD_LIMIT) {
-      const cmd = 'add-generic-password -U -s ' + q(service) + ' -a ' + q(this.account) + ' -X ' + hex + tail + '\n';
-      r = this.run(SECURITY, ['-i'], cmd, { timeoutMs: TIMEOUT_MS });
-    } else {
-      r = this.run(SECURITY, ['add-generic-password', '-U', '-s', service, '-a', this.account, '-w', blob].concat(this._tail()), undefined, { timeoutMs: TIMEOUT_MS });
+    // A blob past the (very large) stdin budget is refused rather than leaked as
+    // an argv `-w` value — no real credential is anywhere near this size, so this
+    // only triggers on corruption/abuse.
+    if (hex.length > STDIN_CMD_LIMIT) {
+      throw keychainError('write of "' + service + '"', { stderr: 'credential is implausibly large (' + Math.round(hex.length / 2) + ' bytes) — refusing to store it', code: 1 });
     }
+    const cmd = 'add-generic-password -U -s ' + q(service) + ' -a ' + q(this.account) + ' -X ' + hex + tail + '\n';
+    const r = this.run(SECURITY, ['-i'], cmd, { timeoutMs: TIMEOUT_MS });
     if (r.code !== 0) throw keychainError('write of "' + service + '"', r);
   }
 
