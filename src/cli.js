@@ -21,6 +21,9 @@ const autosw = require('./autoswitch');
 const provider = require('./provider');
 const doctor = require('./doctor');
 const history = require('./history');
+const backup = require('./backup');
+const share = require('./share');
+const skill = require('./skill');
 const mcp = require('./mcp');
 const style = require('./style').make(process.stdout);
 
@@ -76,6 +79,8 @@ function usage() {
   print('  keyflip doctor                 diagnose config, login and endpoint reachability');
   print('  keyflip test <provider>        fire one real request to check a provider\'s auth');
   print('  keyflip usage --history        per-account usage trend + autoswitch/failover events');
+  print('  keyflip backup [now|list|restore <n>|prune]   snapshot keyflip metadata (no secrets)');
+  print('  keyflip share <name> [--no-secrets]   make a keyflip:// link; import with `keyflip import`');
   print('  keyflip status                which account each surface is on (CLI + desktop app)');
   print('  keyflip list [--usage]        saved accounts; --usage adds 5h/7d quota per account');
   print('  keyflip remove <name|number>  delete a saved account');
@@ -273,9 +278,24 @@ function cmdExport(ctx, rest) {
   logmod.log('export: ' + r.envelope.accounts.length + ' account(s)');
 }
 
-function cmdImport(ctx, rest) {
+async function cmdImport(ctx, rest) {
   const target = rest.filter(function (a) { return a.indexOf('--') !== 0; })[0];
-  if (!target) return fail('usage: keyflip import <file|-> [--force]');
+  if (!target) return fail('usage: keyflip import <file|-|keyflip://…> [--force]');
+  // #11: a keyflip:// share link — decode, PREVIEW, confirm, apply.
+  if (/^keyflip:\/\//.test(target)) {
+    let parsed;
+    try { parsed = share.parse(target); } catch (e) { return fail(e.message); }
+    print('This link will import:'); print('  ' + share.preview(parsed).replace(/\n/g, '\n  '));
+    if (rest.indexOf('--force') === -1) {
+      if (!process.stdin.isTTY) return fail('importing a share link non-interactively requires --force');
+      const ok = await confirm('Import it? [y/N] ');
+      if (!ok) { print('Cancelled.'); return; }
+    }
+    const r = share.apply(ctx, parsed);
+    print(style.ok('✅') + ' imported ' + r.resource + ' "' + r.name + '"' + (r.note ? '\n  ↳ ' + r.note : ''));
+    jsonOut({ imported: r });
+    return;
+  }
   let raw;
   try { raw = target === '-' ? fs.readFileSync(0, 'utf8') : fs.readFileSync(target, 'utf8'); }
   catch (e) { return fail('cannot read ' + target + ': ' + e.message); }
@@ -375,14 +395,19 @@ async function cmdMcp(ctx, rest) {
 
 // Install the bundled agent skill into ~/.claude/skills so Claude Code learns
 // when and how to drive keyflip.
-function cmdInstallSkill(ctx) {
-  const src = path.join(__dirname, '..', 'skills', 'keyflip');
-  if (!fs.existsSync(path.join(src, 'SKILL.md'))) return fail('bundled skill not found (reinstall keyflip)');
-  const dest = path.join(ctx.home, '.claude', 'skills', 'keyflip');
-  fs.mkdirSync(dest, { recursive: true });
-  fs.cpSync(src, dest, { recursive: true });
-  print(style.ok('✅') + ' installed the keyflip skill to ' + dest);
-  print('Claude Code will pick it up on the next session (it teaches account switching,');
+function cmdInstallSkill(ctx, rest) {
+  rest = rest || [];
+  if (rest.indexOf('--check') !== -1) {
+    const st = skill.status(ctx);
+    print(st === 'current' ? style.ok('✓ up to date') : (st === 'stale' ? style.warn('⚠ installed skill is out of date — run: keyflip install-skill --update') : 'not installed — run: keyflip install-skill'));
+    jsonOut({ skillStatus: st });
+    return;
+  }
+  let r;
+  try { r = skill.install(ctx); } catch (e) { return fail(e.message); }
+  print(style.ok('✅') + ' installed the keyflip skill to ' + r.dest + '  (' + r.mode + ')');
+  if (r.mode === 'symlink') print('Symlinked — future keyflip upgrades update it automatically.');
+  print('Claude Code picks it up next session (account switching, provider routing,');
   print('usage-aware rotation, parallel sessions and the MCP tools).');
 }
 
@@ -513,6 +538,51 @@ async function cmdUsage(ctx, rest) {
     events.forEach(function (e) { print('  ' + e.at + '  ' + (e.kind || 'event') + ': ' + (e.from || '?') + ' → ' + (e.to || '?') + (e.reason ? '  (' + e.reason + ')' : '')); });
   }
   if (!samples.length && !events.length) print('  (nothing recorded yet — run: keyflip list --usage)');
+}
+
+// #6 backup
+function cmdBackup(ctx, rest) {
+  const sub = rest[0] || 'now';
+  if (sub === 'now' || sub === 'create') {
+    const r = backup.create(ctx);
+    print(style.ok('✅') + ' backup ' + r.name + '  (' + r.files + ' files, ' + Math.round(r.sizeBytes / 1024) + ' KB)');
+    jsonOut({ created: r.name, files: r.files });
+    return;
+  }
+  if (sub === 'list') {
+    const all = backup.list(ctx);
+    if (JSON_MODE) { jsonOut({ backups: all }); return; }
+    if (!all.length) { print('No backups yet — make one: keyflip backup now'); return; }
+    all.forEach(function (b, i) { print('  [' + (i + 1) + '] ' + b.name + '   ' + Math.round(b.sizeBytes / 1024) + ' KB   ' + (b.mtime || '')); });
+    return;
+  }
+  if (sub === 'restore') {
+    if (!rest[1]) return fail('usage: keyflip backup restore <number|name>');
+    const r = backup.restore(ctx, rest[1]);
+    print(style.ok('✅') + ' restored ' + r.name + ' (' + r.files + ' files). A pre-restore safety backup was taken.');
+    jsonOut({ restored: r.name });
+    return;
+  }
+  if (sub === 'prune') {
+    const keep = rest[1] ? (parseInt(rest[1], 10) || backup.DEFAULT_KEEP) : backup.DEFAULT_KEEP;
+    const removed = backup.prune(ctx, keep);
+    print('pruned ' + removed + ' old backup(s), kept ' + keep + '.');
+    return;
+  }
+  return fail('usage: keyflip backup [now|list|restore <n>|prune [keep]]');
+}
+
+// #11 keyflip:// share URL
+function cmdShare(ctx, rest) {
+  const resource = provider.exists(ctx, rest[0]) ? 'provider' : (profiles.read(ctx.configDir, rest[0]) ? 'account' : null);
+  const name = rest[0];
+  if (!name || !resource) return fail("usage: keyflip share <provider-or-account> [--no-secrets]");
+  const url = share.build(ctx, resource, name, { noSecrets: rest.indexOf('--no-secrets') !== -1 });
+  if (JSON_MODE) { jsonOut({ url: url, resource: resource }); return; }
+  if (resource === 'provider' && rest.indexOf('--no-secrets') === -1) {
+    print(style.warn('⚠️  This link may carry the API key — treat it as a secret.'));
+  }
+  print(url);
 }
 
 // #13 diagnostics
@@ -1003,10 +1073,14 @@ async function dispatch(ctx, cmd, rest) {
         return cmdTest(ctx, rest);
       case 'usage':
         return cmdUsage(ctx, rest);
+      case 'backup':
+        return withLock(ctx, function () { return cmdBackup(ctx, rest); });
+      case 'share':
+        return cmdShare(ctx, rest);
       case 'mcp':
         return cmdMcp(ctx, rest);
       case 'install-skill':
-        return cmdInstallSkill(ctx);
+        return cmdInstallSkill(ctx, rest);
       case 'autoswitch':
         return cmdAutoswitch(ctx, rest);
       case 'link':
