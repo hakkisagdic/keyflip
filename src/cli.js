@@ -1479,7 +1479,9 @@ async function logoutSurfaces(ctx, opts) {
     const list = browser.installed(ctx.home);
     if (!list.length) print('  ' + style.dim('· no Chromium browser to sign out.'));
     list.forEach(function (b) {
-      const r = browser.clearClaudeCookies(b, { force: !!opts.force });
+      // NB: never forced by the reset/clean confirmation flag — clearing a running
+      // browser's live Cookies DB can corrupt it, so we always refuse while it runs.
+      const r = browser.clearClaudeCookies(b, { force: !!opts.forceBrowser });
       if (r.ok) { print('  ' + style.ok('✓') + ' cleared ' + b.name + ' claude.ai session (backup: ' + r.backup + ').'); out.push('browser:' + b.id); }
       else if (r.reason === 'browser-running') print('  ' + style.warn('⏭') + ' ' + b.name + ' is running — quit it, then re-run to clear its session.');
       else print('  ' + style.warn('⚠️') + ' ' + b.name + ': ' + r.reason);
