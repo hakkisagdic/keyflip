@@ -70,13 +70,20 @@ The installer places the code in `~/.local/share/keyflip`, links `keyflip` into 
 
 ## First-time setup (find & save your accounts)
 
-Nothing to configure by hand — keyflip **detects the account you're currently logged in to** and names the profile from your email automatically.
+The easy way — run the guided wizard and it captures every account for you:
 
-1. In Claude, make sure you're logged in to your **first** account, then run `keyflip add`.
-2. In Claude, `/login` to your **second** account, then run `keyflip add`.
-3. Repeat for as many accounts as you like.
+```bash
+keyflip setup
+```
 
-On macOS the first Keychain read shows an **“Always Allow”** prompt — approve it.
+It saves whatever you're logged in to right now, then loops: sign out and into
+your next account (`/logout` then `/login` in Claude Code, or the desktop app) and
+keyflip **detects the new login automatically and saves it** — no keypress needed.
+Type `d` when you're done. Profiles are named from your email automatically.
+
+Prefer to do it by hand? `keyflip add` saves whatever you're logged in to right now
+(one account at a time). On macOS the first Keychain read shows an **“Always
+Allow”** prompt — approve it.
 
 ---
 
@@ -100,6 +107,7 @@ If Claude / Claude Code is open, keyflip first asks **“Claude will be closed t
 
 ```bash
 keyflip                       # interactive menu (↑/↓ + Enter)
+keyflip setup                 # guided wizard: log into each account, auto-captured for you
 keyflip add [name] [--app]    # save the logged-in account(s) — CLI + desktop app
 keyflip <name|number>         # switch to that account (asks before closing Claude)
 keyflip <name> --restart      # ...close & reopen Claude without asking
@@ -122,7 +130,9 @@ keyflip install-skill         # install the Claude Code skill that teaches agent
 keyflip export [file|-]       # back up accounts to a file (CONTAINS SECRETS)
 keyflip import <file|->       # restore accounts from an export (--force overwrites)
 keyflip remove <name|number>  # delete a saved account
-keyflip clean [--logout]      # reset keyflip data; --logout also signs out everywhere
+keyflip reset [--all]         # reset to a clean state, KEEP accounts (--all wipes everything)
+keyflip clean [--logout]      # delete ALL keyflip data; --logout also signs out everywhere
+keyflip uninstall [--purge]   # remove keyflip from this machine (--purge also deletes data)
 keyflip upgrade               # update keyflip itself (detects how it was installed)
 ```
 
@@ -403,12 +413,28 @@ Add more Node versions or OS images by editing the `matrix` in the workflow.
 
 ---
 
-## Uninstall
+## Reset & uninstall
 
 ```bash
-./uninstall.sh                       # macOS/Linux: remove CLI + app, keep saved profiles
-./uninstall.sh --purge               # also delete saved profiles
-npm uninstall -g @hakkisagdic/keyflip  # if installed via npm (any OS)
+keyflip reset                # back to a clean state, KEEP accounts (clears usage
+                             #   history, breakers, proxy state, caches, logs; routes
+                             #   Claude Code back to your subscription). App stays.
+keyflip reset --all          # wipe ALL keyflip data (accounts too) but keep it installed
+keyflip clean --logout       # wipe all data AND sign out of Claude Code + the desktop app
+
+keyflip uninstall            # remove keyflip from this machine, keep saved data
+keyflip uninstall --purge    # ...and delete saved data + Keychain items too
+```
+
+`uninstall` auto-detects how keyflip was installed (the `install.sh` layout or an
+npm global) and removes the right things; it never touches your live Claude login
+(run `keyflip clean --logout` first if you also want to sign out) or a source
+checkout. The shell script still works too:
+
+```bash
+./uninstall.sh               # macOS/Linux: remove CLI + app, keep saved profiles
+./uninstall.sh --purge       # also delete saved profiles
+npm uninstall -g keyflip     # if installed via npm (any OS)
 ```
 
 ---

@@ -9,6 +9,10 @@ const { atomicWrite } = require('./fsutil');
 // name can never collide with a prototype key in any map keyed by name.
 const NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const RESERVED_NAMES = ['__proto__', 'prototype', 'constructor'];
+// keyflip's own top-level state files (<configDir>/*.json) that are NOT account
+// profiles. Without this, list() counts breakers.json/proxy.json/etc. as phantom
+// accounts and the schema migration rewrites them to a bogus `undefined.json`.
+const RESERVED_FILES = ['breakers', 'proxy', 'mcp-registry', 'links', 'installed-skills'];
 
 function metaPath(dir, name) { return path.join(dir, name + '.json'); }
 
@@ -18,6 +22,7 @@ function list(dir) {
   return files
     .filter(function (f) { return f.length > 5 && f.slice(-5) === '.json' && f[0] !== '.'; })
     .map(function (f) { return f.slice(0, -5); })
+    .filter(function (n) { return RESERVED_FILES.indexOf(n) === -1; })
     .sort();
 }
 

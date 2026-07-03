@@ -29,6 +29,20 @@ account-independent and always safe.
 4. If MCP tools named `keyflip_*` are available, prefer them over shelling
    out; their semantics match the CLI (`keyflip mcp --setup` shows setup).
 
+## Capturing accounts (onboarding)
+
+To save accounts, the user must be logged into each one; keyflip reads the live
+login and stores it. Two ways:
+
+- **`keyflip setup`** — an interactive wizard: it captures the current login, then
+  auto-detects each new account as the user signs into it (`/logout`→`/login`, or
+  the desktop app) and saves it, until they type `d`. **Recommend this to the user
+  for first-time / multi-account setup**, but it needs a real terminal (TTY) — do
+  NOT try to drive it non-interactively; tell the user to run it themselves.
+- **`keyflip add [name]`** — captures whatever is logged in right now (one account).
+  Scriptable. `--app` = desktop app only. `--token <file|->` imports a raw
+  credential (secrets via file/stdin, never argv).
+
 ## Read state (safe, no confirmation needed)
 
 ```bash
@@ -159,5 +173,9 @@ live copies of the same account.
 | "keychain locked" errors | ask the user to unlock the login keychain; profile storage falls back to files automatically |
 | switch says an account is in use by live sessions | those PIDs are real running Claudes — ask the user before `--force` |
 | moving to a new machine | `keyflip export -` (SECRETS — pipe through gpg) → `keyflip import` there; desktop logins must be re-captured on the new machine |
+| keyflip is misbehaving but accounts are fine | `keyflip reset` — clears only runtime state (usage history, breakers, proxy state, caches, logs) and routes back to the subscription; **keeps saved accounts**. Confirm first (`--force` to skip). |
+| user wants a full wipe / remove keyflip | `keyflip clean` wipes ALL keyflip data (accounts too, app kept); `keyflip clean --logout` also signs out. `keyflip uninstall` removes the app (add `--purge` to also delete data). All are destructive — get consent, they prompt unless `--force`. |
 
+`reset` / `clean` / `uninstall` never touch the live Claude login (only `clean
+--logout` does) or `~/.claude/projects`. `uninstall` won't delete a source checkout.
 Never print or log credential blobs, tokens, or export file contents.

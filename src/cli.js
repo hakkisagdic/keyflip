@@ -29,6 +29,8 @@ const desktopgw = require('./desktopgw');
 const sync = require('./sync');
 const sessions = require('./sessions');
 const mcp = require('./mcp');
+const proxy = require('./proxy');
+const uninstallmod = require('./uninstall');
 const style = require('./style').make(process.stdout);
 
 // Serialize every mutation across processes (double-fired alias, launcher app
@@ -68,6 +70,8 @@ function usage() {
   print('keyflip ' + VERSION + ' — switch between Anthropic / Claude Code accounts (macOS, Linux, Windows)');
   print('');
   print('  keyflip                       interactive menu (↑/↓ + Enter)');
+  print('  keyflip setup                 guided wizard: log into each account, keyflip captures');
+  print('                                 them for you automatically (the easy way to add several)');
   print('  keyflip add [name] [--app]    save the account(s) you are logged into — Claude Code');
   print('                                 AND the desktop app, auto-detected. Once per account.');
   print('                                 (--app: desktop app only; name it if undetected)');
@@ -110,8 +114,12 @@ function usage() {
   print('  keyflip mcp [--setup]         MCP server over stdio for agents (--setup shows config)');
   print('  keyflip install-skill         install the Claude Code skill that teaches agents keyflip');
   print('  keyflip upgrade               update keyflip itself (auto-detects install method)');
-  print('  keyflip clean [--logout]      reset keyflip data; --logout also signs out of');
+  print('  keyflip reset [--all]         reset keyflip to a clean state, KEEP it installed +');
+  print('                                 keep accounts (clears runtime state; --all wipes all data)');
+  print('  keyflip clean [--logout]      delete ALL keyflip data; --logout also signs out of');
   print('                                 Claude Code + the desktop app (asks to confirm)');
+  print('  keyflip uninstall [--purge]   remove keyflip from this machine (auto-detects install;');
+  print('                                 --purge also deletes saved data + Keychain items)');
   print('');
   print('Global flags: --json (machine-readable stdout)   --debug (verbose log to stderr + file)');
   print('Tokens stay in the OS credential store; ~/.claude/projects history is account-independent.');
@@ -1144,6 +1152,111 @@ async function cmdAdd(ctx, rest) {
   if (anyIncomplete) print("Tip: 'keyflip list' shows what each account has captured ([cli|app]).");
 }
 
+// Capture whatever accounts are logged in RIGHT NOW (Claude Code CLI + desktop app)
+// that aren't already saved. Mutates `captured` (a Set of lowercased emails) and
+// returns the freshly-saved ones: [{ name, email, surface }].
+function captureLive(ctx, captured) {
+  const out = [];
+  const cliEmail = core.currentEmail(ctx);
+  if (cliEmail && !captured.has(cliEmail.toLowerCase())) {
+    try {
+      const r = core.addCurrent(ctx, null);
+      if (r && r.email) { captured.add(r.email.toLowerCase()); out.push({ name: r.name, email: r.email, surface: 'CLI' }); }
+    } catch (e) { logmod.log('setup: cli capture failed: ' + (e && e.message)); }
+  }
+  if (ctx.appDataDir) {
+    let appEmail = null;
+    try { const d = appauth.detectAppAccount(ctx); appEmail = d && d.email; } catch (e) { /* ignore */ }
+    if (appEmail && !captured.has(String(appEmail).toLowerCase())) {
+      const r = captureApp(ctx, null);
+      if (r && r.ok) { captured.add(String(r.email || appEmail).toLowerCase()); out.push({ name: r.name, email: r.email, surface: 'app' }); }
+    }
+  }
+  return out;
+}
+
+// Wait until either a brand-new login appears (polled every 1.5s) or the user
+// presses Enter / types 'd'. Uses ONE shared readline (`rl`) for the whole wizard
+// — creating a fresh interface per round breaks stdin on the second prompt.
+// Resolves { found } | { rescan } | { done }.
+function waitForNextLogin(ctx, captured, rl, isClosed) {
+  const onboard = require('./onboard');
+  return new Promise(function (resolve) {
+    if (isClosed()) return resolve({ done: true });
+    let settled = false;
+    function finish(v) {
+      if (settled) return; settled = true;
+      clearInterval(timer);
+      rl.removeListener('line', onLine);
+      rl.removeListener('close', onClose);
+      resolve(v);
+    }
+    function onLine(a) {
+      const s = (a || '').trim().toLowerCase();
+      finish(s === 'd' || s === 'done' || s === 'q' || s === 'quit' ? { done: true } : { rescan: true });
+    }
+    function onClose() { finish({ done: true }); }
+    const timer = setInterval(function () {
+      let found = null;
+      try { found = onboard.firstNewLogin(ctx, captured); } catch (e) { /* ignore */ }
+      if (found) finish({ found: found });
+    }, 1500);
+    rl.on('line', onLine);
+    rl.once('close', onClose);
+  });
+}
+
+// `keyflip setup` — guided wizard that walks the user through logging into each
+// account and captures it automatically. Solves the painful manual add-per-account.
+async function cmdSetup(ctx, rest) {
+  logmod.log('setup invoked');
+  if (!process.stdin.isTTY) {
+    return fail('`keyflip setup` is an interactive wizard — run it directly in a terminal.\n' +
+      'Non-interactive: log in, then `keyflip add` (once per account).');
+  }
+  const onboard = require('./onboard');
+  const captured = onboard.capturedEmails(ctx);
+  let total = captured.size;
+
+  print(style.bold('keyflip setup') + ' — save all your Claude accounts, one login at a time.');
+  print('For each account you log in once (Claude Code and/or the desktop app) and I capture it.');
+  print(style.dim('Your chats in ~/.claude/projects are never touched; your live login is only read.') + '\n');
+  if (captured.size) print('Already saved: ' + style.bold(String(captured.size)) + ' account(s).');
+
+  const first = captureLive(ctx, captured);
+  first.forEach(function (g) { total++; print('  ' + style.ok('✅') + " saved '" + style.bold(g.name) + "'" + (g.email ? ' (' + g.email + ')' : '') + ' [' + g.surface + ']'); });
+  if (!first.length && !captured.size) {
+    print('No account is logged in yet. In Claude Code run ' + style.bold('/login') + ' (or open the desktop app and sign in).');
+  }
+
+  // One readline for the whole wizard (a fresh one per round breaks stdin).
+  const rl = require('readline').createInterface({ input: process.stdin, output: process.stderr });
+  let rlClosed = false;
+  rl.once('close', function () { rlClosed = true; });
+  const isClosed = function () { return rlClosed; };
+  try {
+    for (;;) {
+      print('\n' + style.bold('Add another account?') + ' Switch to the next one:');
+      print('  • Claude Code:  ' + style.bold('/logout') + ' then ' + style.bold('/login') + '    • or the desktop app: sign out, sign in');
+      print("I'll capture it automatically — press " + style.bold('Enter') + ' to rescan now, or type ' + style.bold('d') + ' when done.');
+      const ev = await waitForNextLogin(ctx, captured, rl, isClosed);
+      if (ev.done) break;
+      const got = captureLive(ctx, captured);
+      if (got.length) {
+        got.forEach(function (g) { total++; print('  ' + style.ok('✅') + " saved '" + style.bold(g.name) + "'" + (g.email ? ' (' + g.email + ')' : '') + ' [' + g.surface + ']'); });
+      } else {
+        const now = core.currentEmail(ctx);
+        print('  ' + style.warn('…') + ' no new account detected' + (now ? ' (still ' + now + ')' : ' (signed out)') +
+          ' — did you ' + style.bold('/logout') + ' then ' + style.bold('/login') + '? Try again, or type ' + style.bold('d') + '.');
+      }
+    }
+  } finally { rl.close(); }
+
+  print('\n' + style.ok('✅') + ' Done — ' + style.bold(String(total)) + ' account(s) saved.');
+  print('Switch anytime:  ' + style.bold('keyflip') + ' (menu) or ' + style.bold('keyflip <name>') + '.   See all:  ' + style.bold('keyflip list --usage'));
+  jsonOut({ setup: true, saved: total });
+}
+
 function consolidateAndReport(ctx) {
   // Never write into the app's session store while it is still open.
   if (appctl.isClaudeRunning(ctx.platform)) return { ok: false, merged: 0, reason: 'Claude still running' };
@@ -1157,6 +1270,112 @@ async function waitForQuit(ctx, timeoutMs) {
   const deadline = timeoutMs || 20000;
   let waited = 0;
   while (appctl.isClaudeRunning(ctx.platform) && waited < deadline) { await sleep(500); waited += 500; }
+}
+
+// Delete ALL of keyflip's saved data: every profile secret from the credential
+// store, then the whole config dir. Shared by `clean` and `uninstall --purge`.
+function wipeKeyflipData(ctx) {
+  const names = profiles.list(ctx.configDir);
+  names.forEach(function (n) { try { ctx.store.delProfile(n); } catch (e) { /* keychain locked / already gone */ } });
+  try { fs.rmSync(ctx.configDir, { recursive: true, force: true }); } catch (e) { /* ignore */ }
+  return names.length;
+}
+
+// `keyflip reset` — return keyflip to a clean working state but KEEP it installed
+// and KEEP saved accounts. Clears only runtime/derived state, stops a running
+// proxy, and routes Claude Code back to the subscription. `--all` = full wipe.
+async function cmdReset(ctx, rest) {
+  logmod.log('reset invoked');
+  const force = rest.indexOf('--force') !== -1 || rest.indexOf('-y') !== -1 || rest.indexOf('--yes') !== -1;
+  if (rest.indexOf('--all') !== -1 || rest.indexOf('--hard') !== -1) {
+    // Full data wipe (accounts included), still keeping keyflip installed = clean.
+    return cmdClean(ctx, force ? ['--force'] : []);
+  }
+  const names = profiles.list(ctx.configDir);
+  const derived = uninstallmod.derivedStatePaths(ctx).filter(function (d) { return fs.existsSync(d.path); });
+  const proxyUp = proxy.isRunning(ctx);
+  const active = provider.readActive(ctx);
+  const provName = active && active.name;
+
+  if (!derived.length && !proxyUp && !provName) {
+    print('Nothing to reset — keyflip is already at a clean state.');
+    jsonOut({ reset: true, cleared: [], keptAccounts: names.length });
+    return;
+  }
+
+  print('Reset keyflip to a clean state (it stays installed):');
+  if (derived.length) print('  • clear runtime state: ' + derived.map(function (d) { return d.name; }).join(', '));
+  if (proxyUp) print('  • stop the running failover proxy');
+  if (provName) print('  • route Claude Code back to your subscription (was: provider ' + provName + ')');
+  print('Kept: ' + names.length + ' saved account(s), providers, backups, captured desktop logins.');
+  print('Not touched: your Claude login, ~/.claude/projects history.');
+
+  if (!force) {
+    if (!process.stdin.isTTY) return fail('Re-run with --force to confirm the reset.');
+    const ok = await confirm('\nProceed? [y/N] ');
+    if (!ok) { print('Cancelled — nothing was changed.'); return; }
+  }
+
+  if (proxyUp) { try { await proxy.stop(ctx); print('  ✓ stopped the proxy.'); } catch (e) { /* ignore */ } }
+  if (provName) { try { provider.useOfficial(ctx); print('  ✓ routed Claude Code back to your subscription.'); } catch (e) { /* ignore */ } }
+  derived.forEach(function (d) { try { fs.rmSync(d.path, { recursive: true, force: true }); } catch (e) { /* ignore */ } });
+  if (derived.length) print('  ✓ cleared runtime state.');
+  print(style.ok('✅') + ' Reset complete — your accounts are intact.');
+  jsonOut({ reset: true, cleared: derived.map(function (d) { return d.name; }), stoppedProxy: proxyUp, revertedProvider: provName || null, keptAccounts: names.length });
+}
+
+// `keyflip uninstall` — remove keyflip from this machine (npm-global or install.sh
+// layout, auto-detected). Keeps saved data unless --purge. Never touches the live
+// Claude login (use `clean --logout` first) or a source checkout.
+async function cmdUninstall(ctx, rest) {
+  logmod.log('uninstall invoked');
+  const force = rest.indexOf('--force') !== -1 || rest.indexOf('-y') !== -1 || rest.indexOf('--yes') !== -1;
+  const purge = rest.indexOf('--purge') !== -1;
+  const binPath = process.argv[1] || '';
+  let real = binPath; try { real = fs.realpathSync(binPath); } catch (e) { /* keep */ }
+  const method = uninstallmod.classifyInstall(real, ctx.platform);
+  const plan = uninstallmod.planUninstall({ method: method, home: ctx.home, platform: ctx.platform });
+  const names = profiles.list(ctx.configDir);
+
+  print('Uninstall keyflip from this machine:');
+  if (method === 'dev') {
+    print('  • running from a source checkout (' + path.dirname(path.dirname(real)) + ') — that folder is left untouched');
+  } else if (method === 'npm') {
+    print('  • ' + plan.npm.cmd + ' ' + plan.npm.args.join(' '));
+  } else {
+    plan.files.forEach(function (f) { print('  • remove ' + f.label + ': ' + f.path); });
+  }
+  if (purge) {
+    print('  • PURGE keyflip data: ' + names.length + ' account(s), providers, backups, Keychain keyflip:*');
+  } else {
+    print('  • keep saved keyflip data (accounts/providers/backups) — add --purge to delete it too');
+  }
+  print('Not touched: your Claude login (run `keyflip clean --logout` first to sign out), ~/.claude/projects.');
+  if (method === 'dev' && !purge) { print('\nNothing to do (source checkout, no --purge).'); jsonOut({ uninstalled: false, method: method, purged: false }); return; }
+
+  if (!force) {
+    if (!process.stdin.isTTY) return fail('Re-run with --force to confirm the uninstall.');
+    const ok = await confirm('\nProceed? [y/N] ');
+    if (!ok) { print('Cancelled — nothing was changed.'); return; }
+  }
+
+  // Data first, so it still succeeds even if removing our own files fails midway.
+  if (purge) { const n = wipeKeyflipData(ctx); print('  ✓ purged keyflip data (' + n + ' account(s)).'); }
+
+  if (method === 'npm') {
+    const r = require('child_process').spawnSync(plan.npm.cmd, plan.npm.args, { stdio: 'inherit' });
+    if (r.error || r.status !== 0) print(style.warn('⚠️ could not auto-remove the npm package — run it yourself: ' + plan.npm.cmd + ' ' + plan.npm.args.join(' ')));
+    else print('  ✓ removed the npm global package.');
+  } else if (method !== 'dev') {
+    const failed = [];
+    plan.files.forEach(function (f) { try { fs.rmSync(f.path, { recursive: true, force: true }); } catch (e) { failed.push(f.path); } });
+    if (failed.length) print(style.warn('⚠️ could not remove (delete manually): ' + failed.join(', ')));
+    else print('  ✓ removed keyflip program files' + (ctx.platform === 'darwin' ? ' and launcher app' : '') + '.');
+    if (plan.pathNote) print('  • ' + plan.pathNote);
+  }
+
+  print(style.ok('✅') + ' keyflip uninstalled.' + (purge ? '' : ' (Saved data kept — re-run with --purge to remove it.)'));
+  jsonOut({ uninstalled: true, method: method, purged: purge });
 }
 
 async function cmdClean(ctx, rest) {
@@ -1192,8 +1411,7 @@ async function cmdClean(ctx, rest) {
   }
 
   if (hasSaved) {
-    names.forEach(function (n) { try { ctx.store.delProfile(n); } catch (e) { /* keychain */ } });
-    try { fs.rmSync(ctx.configDir, { recursive: true, force: true }); } catch (e) { /* ignore */ }
+    wipeKeyflipData(ctx);
     print('  ✓ keyflip saved data removed.');
   }
 
@@ -1296,7 +1514,7 @@ async function main(argv) {
   // Skip the passive update fetch for machine/interactive/long-lived commands: it
   // would corrupt the MCP stdio stream, delay `run`/`mcp` exit on a slow network,
   // or print a stray line during a destructive/JSON op.
-  const NO_NOTICE = ['menu', 'upgrade', 'clean', 'mcp', 'run', 'autoswitch', 'install-skill'];
+  const NO_NOTICE = ['menu', 'upgrade', 'clean', 'reset', 'uninstall', 'setup', 'onboard', 'mcp', 'run', 'autoswitch', 'install-skill'];
   const skipNotice = JSON_MODE || cmd === undefined || NO_NOTICE.indexOf(cmd) !== -1;
   if (!skipNotice) { try { await update.maybeNotify(ctx, VERSION); } catch (e) { /* ignore */ } }
 }
@@ -1311,6 +1529,9 @@ async function dispatch(ctx, cmd, rest) {
         return require('./menu').runMenu(ctx);
       case 'add':
         return withLock(ctx, function () { return cmdAdd(ctx, rest); });
+      case 'setup':
+      case 'onboard':
+        return withLock(ctx, function () { return cmdSetup(ctx, rest); });
       case 'list':
         return cmdList(ctx, rest);
       case 'status':
@@ -1388,6 +1609,10 @@ async function dispatch(ctx, cmd, rest) {
         return cmdUpgrade(ctx);
       case 'clean':
         return withLock(ctx, function () { return cmdClean(ctx, rest); });
+      case 'reset':
+        return withLock(ctx, function () { return cmdReset(ctx, rest); });
+      case 'uninstall':
+        return withLock(ctx, function () { return cmdUninstall(ctx, rest); });
       case 'version':
       case '--version':
       case '-v':

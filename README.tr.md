@@ -70,13 +70,20 @@ Kurulum kodu `~/.local/share/keyflip`'e yerleştirir, `keyflip`'i `~/.local/bin`
 
 ## İlk kurulum (hesapları bul ve kaydet)
 
-Elle yapılandırılacak bir şey yok — keyflip **şu an giriş yaptığınız hesabı algılar** ve profili e-postanızdan otomatik adlandırır.
+Kolay yol — yönlendirmeli sihirbazı çalıştırın, tüm hesapları sizin için yakalar:
 
-1. Claude'da **ilk** hesabınıza girişli olduğunuzdan emin olun, sonra `keyflip add` çalıştırın.
-2. Claude'da `/login` ile **ikinci** hesabınıza geçin, sonra yine `keyflip add`.
-3. İstediğiniz kadar hesap için tekrarlayın.
+```bash
+keyflip setup
+```
 
-macOS'ta ilk Keychain okumasında **"Always Allow"** (Her Zaman İzin Ver) sorusu çıkar — onaylayın.
+Önce o an girişli olduğunuz hesabı kaydeder, sonra döngüye girer: bir sonraki
+hesaba geçin (Claude Code'da `/logout` sonra `/login`, ya da masaüstü uygulaması) ve
+keyflip **yeni girişi otomatik algılayıp kaydeder** — tuşa basmanıza gerek yok.
+Bittiğinde `d` yazın. Profiller e-postanızdan otomatik adlandırılır.
+
+Elle yapmayı mı tercih edersiniz? `keyflip add` o an girişli olduğunuz hesabı
+kaydeder (tek tek). macOS'ta ilk Keychain okumasında **"Always Allow"** (Her Zaman
+İzin Ver) sorusu çıkar — onaylayın.
 
 ---
 
@@ -100,6 +107,7 @@ Claude / Claude Code açıksa keyflip önce **"Geçiş için Claude kapatılacak
 
 ```bash
 keyflip                       # etkileşimli menü (↑/↓ + Enter)
+keyflip setup                 # yönlendirmeli sihirbaz: her hesaba giriş yap, otomatik yakalanır
 keyflip add [ad] [--app]      # girişli hesap(lar)ı kaydet — CLI + masaüstü uygulaması
 keyflip <ad|numara>           # o hesaba geç (Claude'u kapatmadan önce sorar)
 keyflip <ad> --restart        # ...sormadan Claude'u kapatıp yeniden açar
@@ -122,7 +130,9 @@ keyflip install-skill         # agent'lara keyflip'i öğreten Claude Code skill
 keyflip export [dosya|-]      # hesapları dosyaya yedekle (SIR İÇERİR)
 keyflip import <dosya|->      # yedekten hesapları geri yükle (--force üzerine yazar)
 keyflip remove <ad|numara>    # kayıtlı hesabı sil
-keyflip clean [--logout]      # keyflip verisini sıfırla; --logout her yerden çıkış da yapar
+keyflip reset [--all]         # temiz duruma sıfırla, HESAPLARI KORU (--all her şeyi siler)
+keyflip clean [--logout]      # TÜM keyflip verisini sil; --logout her yerden çıkış da yapar
+keyflip uninstall [--purge]   # keyflip'i bu makineden kaldır (--purge veriyi de siler)
 keyflip upgrade               # keyflip'in kendisini güncelle (kurulum yöntemini algılar)
 ```
 
@@ -423,12 +433,28 @@ Her işletim sistemine sahip olmanız gerekmez. İki katman:
 
 ---
 
-## Kaldırma
+## Sıfırlama & kaldırma
 
 ```bash
-./uninstall.sh                       # macOS/Linux: CLI + uygulamayı kaldır, kayıtlı profilleri tut
-./uninstall.sh --purge               # kayıtlı profilleri de sil
-npm uninstall -g @hakkisagdic/keyflip  # npm ile kurulduysa (her OS)
+keyflip reset                # temiz duruma dön, HESAPLARI KORU (kullanım geçmişi,
+                             #   breaker, proxy durumu, cache, log temizlenir; Claude
+                             #   Code aboneliğe geri döner). Uygulama kalır.
+keyflip reset --all          # TÜM keyflip verisini sil (hesaplar dahil) ama kurulu bırak
+keyflip clean --logout       # tüm veriyi sil VE Claude Code + masaüstü uygulamasından çıkış yap
+
+keyflip uninstall            # keyflip'i bu makineden kaldır, kayıtlı veriyi tut
+keyflip uninstall --purge    # ...ve kayıtlı veriyi + Keychain öğelerini de sil
+```
+
+`uninstall`, keyflip'in nasıl kurulduğunu (`install.sh` düzeni ya da npm global)
+otomatik algılar ve doğru şeyleri kaldırır; canlı Claude oturumuna asla dokunmaz
+(çıkış da yapmak istiyorsan önce `keyflip clean --logout` çalıştır) ve bir kaynak
+kopyasını (checkout) silmez. Kabuk betiği de hâlâ çalışır:
+
+```bash
+./uninstall.sh               # macOS/Linux: CLI + uygulamayı kaldır, kayıtlı profilleri tut
+./uninstall.sh --purge       # kayıtlı profilleri de sil
+npm uninstall -g keyflip     # npm ile kurulduysa (her OS)
 ```
 
 ---

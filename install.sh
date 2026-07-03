@@ -117,12 +117,12 @@ info ""
 info "✅ Installed."
 info ""
 info "Next steps:"
-info "  1) In Claude, log in to your first account, then run:   keyflip add"
-info "  2) Claude /login to your other account, then run:        keyflip add"
+info "  1) Save all your accounts the easy way — just run:       keyflip setup"
+info "     (it walks you through logging into each one and captures them for you)"
 if [ "$OS" = "Darwin" ]; then
-  info "  3) Switch anytime — open \"$APP_NAME\" (Launchpad/Spotlight), or run:  keyflip"
+  info "  2) Switch anytime — open \"$APP_NAME\" (Launchpad/Spotlight), or run:  keyflip"
 else
-  info "  3) Switch anytime:  keyflip   (then restart Claude Code to apply)"
+  info "  2) Switch anytime:  keyflip   (then restart Claude Code to apply)"
 fi
 info ""
 info "Open a new terminal (or 'export PATH=\"$BIN_DIR:\$PATH\"') to use 'keyflip' now."
