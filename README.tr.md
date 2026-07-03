@@ -132,7 +132,7 @@ keyflip install-skill         # agent'lara keyflip'i öğreten Claude Code skill
 keyflip export [dosya|-]      # hesapları dosyaya yedekle (SIR İÇERİR)
 keyflip import <dosya|->      # yedekten hesapları geri yükle (--force üzerine yazar)
 keyflip remove <ad|numara>    # kayıtlı hesabı sil
-keyflip reset [--all]         # temiz duruma sıfırla, HESAPLARI KORU (--all her şeyi siler)
+keyflip reset [--soft]        # FABRİKA sıfırlaması: TÜM keyflip verisini SİL (--soft hesapları korur)
 keyflip clean [--logout]      # TÜM keyflip verisini sil; --logout her yerden çıkış da yapar
 keyflip uninstall [--purge]   # keyflip'i bu makineden kaldır (--purge veriyi de siler)
 keyflip upgrade               # keyflip'in kendisini güncelle (kurulum yöntemini algılar)
@@ -438,15 +438,16 @@ Her işletim sistemine sahip olmanız gerekmez. İki katman:
 ## Sıfırlama & kaldırma
 
 ```bash
-keyflip reset                # temiz duruma dön, HESAPLARI KORU (kullanım geçmişi,
-                             #   breaker, proxy durumu, cache, log temizlenir; Claude
-                             #   Code aboneliğe geri döner). Uygulama kalır.
-keyflip reset --logout       # ...ve tüm canlı yüzeylerden ÇIKIŞ yap: CLI + tarayıcı
-                             #   (claude.ai) + masaüstü uygulaması. Kayıtlı hesaplar korunur.
+keyflip reset                # FABRİKA sıfırlaması — TÜM keyflip verisini SİL (hesaplar,
+                             #   provider'lar, yedekler, geçmiş); keyflip kurulu kalır.
+                             #   Canlı Claude oturumuna dokunulmaz; ~/.claude/projects korunur.
+keyflip reset --soft         # hesapları koru; yalnız runtime durumunu temizle (geçmiş, breaker,
+                             #   proxy durumu, cache, log) + Claude Code aboneliğe geri döner
+keyflip reset --logout       # (fabrika ya da --soft) ek olarak tüm canlı yüzeylerden ÇIKIŞ:
+                             #   CLI + tarayıcı (claude.ai) + masaüstü uygulaması
 keyflip reset --logout --no-desktop   # ...ama masaüstü uygulamasını girişli bırak
                              #   (ör. şu an onu kullanıyorsan)
-keyflip reset --all          # TÜM keyflip verisini sil (hesaplar dahil) ama kurulu bırak
-keyflip clean --logout       # tüm veriyi sil VE her yerden çıkış (CLI+tarayıcı+masaüstü)
+keyflip clean --logout       # aynı silme + her yerden çıkış (uyumluluk için korundu)
 
 keyflip uninstall            # keyflip'i bu makineden kaldır, kayıtlı veriyi tut
 keyflip uninstall --purge    # ...ve kayıtlı veriyi + Keychain öğelerini de sil

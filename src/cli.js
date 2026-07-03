@@ -121,9 +121,9 @@ function usage() {
   print('  keyflip mcp [--setup]         MCP server over stdio for agents (--setup shows config)');
   print('  keyflip install-skill         install the Claude Code skill that teaches agents keyflip');
   print('  keyflip upgrade               update keyflip itself (auto-detects install method)');
-  print('  keyflip reset [--all] [--logout [--no-desktop]]   reset to a clean state, KEEP accounts');
-  print('                                 (--all wipes all data; --logout signs out CLI+browser+desktop,');
-  print('                                 --no-desktop leaves the desktop app signed in)');
+  print('  keyflip reset [--soft] [--logout [--no-desktop]]   FACTORY reset: DELETE all keyflip data');
+  print('                                 (--soft keeps accounts, clears only runtime state;');
+  print('                                 --logout signs out CLI+browser+desktop, --no-desktop keeps desktop)');
   print('  keyflip clean [--logout]      delete ALL keyflip data; --logout also signs out of');
   print('                                 Claude Code + the desktop app (asks to confirm)');
   print('  keyflip uninstall [--purge]   remove keyflip from this machine (auto-detects install;');
@@ -1455,54 +1455,75 @@ async function logoutSurfaces(ctx, opts) {
   return out;
 }
 
-// `keyflip reset` — return keyflip to a clean working state but KEEP it installed
-// and KEEP saved accounts. Clears only runtime/derived state, stops a running
-// proxy, and routes Claude Code back to the subscription. `--all` = full wipe.
-// `--logout` also signs OUT of every live surface (CLI + browser + desktop);
-// `--no-desktop` leaves the desktop app alone (e.g. when you're using it now).
+// `keyflip reset` — FACTORY reset: DELETE all keyflip data (saved accounts,
+// providers, backups, history, runtime state) while keeping keyflip installed.
+// `--soft` keeps your accounts and only clears runtime state (proxy/breaker/cache/
+// logs) + routes Claude Code back to the subscription. `--logout [--no-desktop]`
+// also signs OUT of the live surfaces (CLI + browser + desktop).
 async function cmdReset(ctx, rest) {
   logmod.log('reset invoked');
   const force = rest.indexOf('--force') !== -1 || rest.indexOf('-y') !== -1 || rest.indexOf('--yes') !== -1;
   const logout = rest.indexOf('--logout') !== -1 || rest.indexOf('--signout') !== -1;
   const noDesktop = rest.indexOf('--no-desktop') !== -1 || rest.indexOf('--keep-desktop') !== -1;
-  if (rest.indexOf('--all') !== -1 || rest.indexOf('--hard') !== -1) {
-    // Full data wipe (accounts included), still keeping keyflip installed = clean.
-    return cmdClean(ctx, force ? ['--force'] : []);
-  }
+  const soft = rest.indexOf('--soft') !== -1 || rest.indexOf('--keep-accounts') !== -1;
   const names = profiles.list(ctx.configDir);
-  const derived = uninstallmod.derivedStatePaths(ctx).filter(function (d) { return fs.existsSync(d.path); });
   const proxyUp = proxy.isRunning(ctx);
-  const active = provider.readActive(ctx);
-  const provName = active && active.name;
 
-  if (!derived.length && !proxyUp && !provName && !logout) {
-    print('Nothing to reset — keyflip is already at a clean state.');
-    jsonOut({ reset: true, cleared: [], keptAccounts: names.length });
+  if (soft) {
+    // Gentle: KEEP accounts; clear only runtime state + route back to subscription.
+    const derived = uninstallmod.derivedStatePaths(ctx).filter(function (d) { return fs.existsSync(d.path); });
+    const active = provider.readActive(ctx);
+    const provName = active && active.name;
+    if (!derived.length && !proxyUp && !provName && !logout) {
+      print('Nothing to reset — keyflip is already at a clean state.');
+      jsonOut({ reset: 'soft', keptAccounts: names.length }); return;
+    }
+    print('Soft reset — KEEP your ' + names.length + ' account(s); clear only runtime state:');
+    if (derived.length) print('  • clear: ' + derived.map(function (d) { return d.name; }).join(', '));
+    if (proxyUp) print('  • stop the running failover proxy');
+    if (provName) print('  • route Claude Code back to your subscription (was provider ' + provName + ')');
+    if (logout) print('  • sign out of the live session: CLI' + (ctx.platform === 'darwin' ? ' + browser' : '') + (noDesktop ? '' : ' + desktop'));
+    if (!force) {
+      if (!process.stdin.isTTY) return fail('Re-run with --force to confirm the soft reset.');
+      const ok = await confirm('\nProceed? [y/N] '); if (!ok) { print('Cancelled — nothing was changed.'); return; }
+    }
+    if (proxyUp) { try { await proxy.stop(ctx); print('  ✓ stopped the proxy.'); } catch (e) { /* ignore */ } }
+    if (provName) { try { provider.useOfficial(ctx); print('  ✓ routed Claude Code back to your subscription.'); } catch (e) { /* ignore */ } }
+    derived.forEach(function (d) { try { fs.rmSync(d.path, { recursive: true, force: true }); } catch (e) { /* ignore */ } });
+    if (derived.length) print('  ✓ cleared runtime state.');
+    let out = [];
+    if (logout) out = await logoutSurfaces(ctx, { cli: true, browser: true, desktop: !noDesktop, force: force });
+    print(style.ok('✅') + ' Soft reset complete — your ' + names.length + ' account(s) are intact.' + (logout ? ' Signed out of: ' + (out.join(', ') || 'nothing') + '.' : ''));
+    jsonOut({ reset: 'soft', keptAccounts: names.length, loggedOut: out });
     return;
   }
 
-  print('Reset keyflip to a clean state (it stays installed):');
-  if (derived.length) print('  • clear runtime state: ' + derived.map(function (d) { return d.name; }).join(', '));
-  if (proxyUp) print('  • stop the running failover proxy');
-  if (provName) print('  • route Claude Code back to your subscription (was: provider ' + provName + ')');
-  if (logout) print('  • SIGN OUT of the live session: Claude Code (CLI)' + (ctx.platform === 'darwin' ? ' + browser (claude.ai)' : '') + (noDesktop ? '  (leaving the desktop app signed in)' : ' + the desktop app'));
-  print('Kept: ' + names.length + ' saved account(s), providers, backups' + (logout ? ' — you can switch back anytime.' : ', captured desktop logins.'));
-  print('Not touched: ' + (logout ? (noDesktop ? 'the desktop app, ' : '') : 'your Claude login, ') + '~/.claude/projects history.');
+  // DEFAULT = FACTORY reset: delete everything keyflip saved (app stays installed).
+  let appCount = 0, backupCount = 0;
+  try { appCount = fs.readdirSync(path.join(ctx.configDir, 'app')).length; } catch (e) { /* none */ }
+  try { backupCount = fs.readdirSync(path.join(ctx.configDir, 'backups')).length; } catch (e) { /* none */ }
+  if (!names.length && !appCount && !backupCount && !logout) {
+    print('Nothing to reset — keyflip has no saved data.');
+    jsonOut({ reset: 'factory', wiped: false }); return;
+  }
+  print(style.warn('Factory reset') + ' — DELETES all keyflip data (keyflip stays installed):');
+  print('  • accounts: ' + (names.length ? names.join(', ') : 'none') + '  · captured app logins: ' + appCount + '  · backups: ' + backupCount + '  · Keychain keyflip:*');
+  print('  • providers, usage history, proxy/breaker state, caches, logs');
+  if (logout) print('  • SIGN OUT of the live session: CLI' + (ctx.platform === 'darwin' ? ' + browser' : '') + (noDesktop ? '  (leaving the desktop app signed in)' : ' + the desktop app'));
+  print('Not deleted: ~/.claude/projects history' + (logout ? '.' : '; your live Claude login stays (add --logout to sign out).'));
+  print(style.dim('(Keep your accounts and only clear runtime glitches instead:  keyflip reset --soft)'));
 
   if (!force) {
-    if (!process.stdin.isTTY) return fail('Re-run with --force to confirm the reset' + (logout ? ' + sign-out.' : '.'));
-    const ok = await confirm('\nProceed? [y/N] ');
-    if (!ok) { print('Cancelled — nothing was changed.'); return; }
+    if (!process.stdin.isTTY) return fail('Re-run with --force to confirm the factory reset — this DELETES your saved accounts (or use --soft to keep them).');
+    const ok = await confirm('\nDelete all keyflip data? [y/N] '); if (!ok) { print('Cancelled — nothing was changed.'); return; }
   }
-
   if (proxyUp) { try { await proxy.stop(ctx); print('  ✓ stopped the proxy.'); } catch (e) { /* ignore */ } }
-  if (provName) { try { provider.useOfficial(ctx); print('  ✓ routed Claude Code back to your subscription.'); } catch (e) { /* ignore */ } }
-  derived.forEach(function (d) { try { fs.rmSync(d.path, { recursive: true, force: true }); } catch (e) { /* ignore */ } });
-  if (derived.length) print('  ✓ cleared runtime state.');
+  const n = wipeKeyflipData(ctx);
+  print('  ✓ deleted all keyflip data (' + n + ' account(s)).');
   let out = [];
   if (logout) out = await logoutSurfaces(ctx, { cli: true, browser: true, desktop: !noDesktop, force: force });
-  print(style.ok('✅') + ' Reset complete' + (logout ? ' — signed out of: ' + (out.join(', ') || 'nothing') + '.' : ' — your accounts are intact.'));
-  jsonOut({ reset: true, cleared: derived.map(function (d) { return d.name; }), stoppedProxy: proxyUp, revertedProvider: provName || null, loggedOut: out, keptAccounts: names.length });
+  print(style.ok('✅') + ' Factory reset complete.' + (logout ? ' Signed out of: ' + (out.join(', ') || 'nothing') + '.' : ''));
+  jsonOut({ reset: 'factory', wiped: true, accountsDeleted: n, loggedOut: out });
 }
 
 // `keyflip uninstall` — remove keyflip from this machine (npm-global or install.sh

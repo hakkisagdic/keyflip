@@ -132,7 +132,7 @@ keyflip install-skill         # install the Claude Code skill that teaches agent
 keyflip export [file|-]       # back up accounts to a file (CONTAINS SECRETS)
 keyflip import <file|->       # restore accounts from an export (--force overwrites)
 keyflip remove <name|number>  # delete a saved account
-keyflip reset [--all]         # reset to a clean state, KEEP accounts (--all wipes everything)
+keyflip reset [--soft]        # FACTORY reset: DELETE all keyflip data (--soft keeps accounts)
 keyflip clean [--logout]      # delete ALL keyflip data; --logout also signs out everywhere
 keyflip uninstall [--purge]   # remove keyflip from this machine (--purge also deletes data)
 keyflip upgrade               # update keyflip itself (detects how it was installed)
@@ -418,15 +418,16 @@ Add more Node versions or OS images by editing the `matrix` in the workflow.
 ## Reset & uninstall
 
 ```bash
-keyflip reset                # back to a clean state, KEEP accounts (clears usage
-                             #   history, breakers, proxy state, caches, logs; routes
-                             #   Claude Code back to your subscription). App stays.
-keyflip reset --logout       # ...and sign OUT of every live surface: CLI + browser
-                             #   (claude.ai) + desktop app. Saved accounts are kept.
+keyflip reset                # FACTORY reset — DELETE all keyflip data (accounts,
+                             #   providers, backups, history), keeping keyflip installed.
+                             #   Your live Claude login is NOT touched; ~/.claude/projects kept.
+keyflip reset --soft         # keep accounts; clear only runtime state (history, breakers,
+                             #   proxy state, caches, logs) + route Claude Code back to the sub
+keyflip reset --logout       # (factory or --soft) ALSO sign OUT of every live surface:
+                             #   CLI + browser (claude.ai) + desktop app
 keyflip reset --logout --no-desktop   # ...but leave the desktop app signed in (e.g.
                              #   when you're using it right now)
-keyflip reset --all          # wipe ALL keyflip data (accounts too) but keep it installed
-keyflip clean --logout       # wipe all data AND sign out everywhere (CLI+browser+desktop)
+keyflip clean --logout       # same wipe + sign out everywhere (kept for compatibility)
 
 keyflip uninstall            # remove keyflip from this machine, keep saved data
 keyflip uninstall --purge    # ...and delete saved data + Keychain items too

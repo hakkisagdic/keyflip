@@ -191,8 +191,8 @@ live copies of the same account.
 | "keychain locked" errors | ask the user to unlock the login keychain; profile storage falls back to files automatically |
 | switch says an account is in use by live sessions | those PIDs are real running Claudes — ask the user before `--force` |
 | moving to a new machine | `keyflip export -` (SECRETS — pipe through gpg) → `keyflip import` there; desktop logins must be re-captured on the new machine |
-| keyflip is misbehaving but accounts are fine | `keyflip reset` — clears only runtime state (usage history, breakers, proxy state, caches, logs) and routes back to the subscription; **keeps saved accounts**. Confirm first (`--force` to skip). |
-| user wants a full wipe / remove keyflip | `keyflip clean` wipes ALL keyflip data (accounts too, app kept); `keyflip clean --logout` also signs out. `keyflip uninstall` removes the app (add `--purge` to also delete data). All are destructive — get consent, they prompt unless `--force`. |
+| keyflip is misbehaving but accounts are fine | `keyflip reset --soft` — clears only runtime state (usage history, breakers, proxy state, caches, logs) and routes back to the subscription; **keeps saved accounts**. Confirm first (`--force` to skip). |
+| user wants a full wipe / remove keyflip | **`keyflip reset`** is a FACTORY reset — DELETES all keyflip data (accounts, providers, backups), app stays installed. `--logout [--no-desktop]` also signs out the live surfaces. `keyflip clean` is the same wipe (compat). `keyflip uninstall` removes the app (`--purge` also deletes data). All destructive — get consent, they prompt unless `--force`. |
 
 `reset` / `clean` / `uninstall` never touch the live Claude login (only `clean
 --logout` does) or `~/.claude/projects`. `uninstall` won't delete a source checkout.

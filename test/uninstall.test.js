@@ -131,10 +131,23 @@ function seed(home) {
   return cfg;
 }
 
-test('reset --force keeps accounts + providers + backups, clears runtime state', function () {
+test('reset --force is a FACTORY reset: deletes all keyflip data', function () {
   const home = tmp();
   const cfg = seed(home);
   const r = run(home, ['reset', '--force']);
+  assert.strictEqual(r.status, 0, r.stderr);
+  // the whole config dir (accounts, providers, backups, runtime) is gone
+  assert.ok(!fs.existsSync(path.join(cfg, 'work.json')), 'accounts deleted');
+  assert.ok(!fs.existsSync(path.join(cfg, 'home.json')));
+  assert.ok(!fs.existsSync(path.join(cfg, 'providers')));
+  assert.ok(!fs.existsSync(path.join(cfg, 'backups')));
+  assert.match(r.stdout, /[Ff]actory reset/);
+});
+
+test('reset --soft --force KEEPS accounts + providers + backups, clears only runtime', function () {
+  const home = tmp();
+  const cfg = seed(home);
+  const r = run(home, ['reset', '--soft', '--force']);
   assert.strictEqual(r.status, 0, r.stderr);
   // kept
   assert.ok(fs.existsSync(path.join(cfg, 'work.json')));
@@ -145,27 +158,24 @@ test('reset --force keeps accounts + providers + backups, clears runtime state',
   assert.ok(!fs.existsSync(path.join(cfg, 'usage-history.jsonl')));
   assert.ok(!fs.existsSync(path.join(cfg, 'breakers.json')));
   assert.ok(!fs.existsSync(path.join(cfg, 'logs')));
-  // no phantom profile written by the schema migration
   assert.ok(!fs.existsSync(path.join(cfg, 'undefined.json')));
-  assert.match(r.stdout, /2 saved account\(s\)/);
 });
 
-test('reset --json without --force on a non-TTY refuses (does not delete)', function () {
+test('reset without --force on a non-TTY refuses (does not delete)', function () {
   const home = tmp();
   const cfg = seed(home);
   const r = run(home, ['reset']);
   assert.notStrictEqual(r.status, 0);
-  assert.ok(fs.existsSync(path.join(cfg, 'usage-history.jsonl')), 'must not clear without confirmation');
+  assert.ok(fs.existsSync(path.join(cfg, 'work.json')), 'must not delete without confirmation');
 });
 
-test('reset --logout --no-desktop signs out the CLI but keeps saved accounts', function () {
+test('reset --soft --logout --no-desktop signs out the CLI but keeps saved accounts', function () {
   const home = tmp();
   const cfg = seed(home);
-  // a live CLI login for reset --logout to sign out of
   fs.mkdirSync(path.join(home, '.claude'), { recursive: true });
   fs.writeFileSync(path.join(home, '.claude', '.credentials.json'), '{"live":"TOK"}');
   fs.writeFileSync(path.join(home, '.claude.json'), JSON.stringify({ oauthAccount: { emailAddress: 'x@y.com' }, userID: 'u' }));
-  const r = run(home, ['reset', '--logout', '--no-desktop', '--force']);
+  const r = run(home, ['reset', '--soft', '--logout', '--no-desktop', '--force']);
   assert.strictEqual(r.status, 0, r.stderr);
   const claudeCfg = JSON.parse(fs.readFileSync(path.join(home, '.claude.json'), 'utf8'));
   assert.ok(!claudeCfg.oauthAccount, 'the CLI login should be signed out');
