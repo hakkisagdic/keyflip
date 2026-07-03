@@ -1384,13 +1384,17 @@ async function cmdOnboard(ctx, rest) {
       try { core.performSwitch(ctx, res.name); print('  ' + style.ok('✅') + ' CLI now on ' + res.name + '.'); }
       catch (e) { print('  ' + style.warn('⚠') + ' couldn\'t point the CLI at it: ' + e.message); }
 
+      // Desktop (Claude Desktop app): it keeps its OWN login that a browser sign-in
+      // can't mint, so offer a guided capture — the user signs the app in, we snapshot.
       if (ctx.appDataDir) {
-        if (!appctl.isClaudeRunning(ctx.platform)) {
-          switchDesktopLogin(ctx, res.name);   // no-op if no saved desktop login yet
-          consolidateAndReport(ctx);           // sync all chats (needs the app closed)
-        } else {
-          print('  ' + style.dim('· desktop app is open — to also capture it, sign it into ' + (res.email || res.name) + ' then run  keyflip add --app  (chats sync on the next switch)'));
+        const da = await ask('  Capture the Claude Desktop app for this account too? Sign Claude Desktop into ' + style.bold(res.email || res.name) + ', then press Enter  [Enter = capture, s = skip] ');
+        if (!/^\s*s(kip)?\s*$/i.test(da)) {
+          const ar = captureApp(ctx, null); // auto-detect whichever account the app is on now
+          if (ar && ar.ok) print('  ' + style.ok('✅') + ' Claude Desktop captured (' + (ar.email || ar.name) + ').');
+          else print('  ' + style.warn('·') + ' desktop app not captured (' + ((ar && ar.reason) || 'is Claude Desktop signed into ' + (res.email || res.name) + '?') + ') — later: keyflip add --app');
         }
+        // Sync chats across accounts (only possible while the app is closed).
+        if (!appctl.isClaudeRunning(ctx.platform)) consolidateAndReport(ctx);
       }
     }
   } finally { rl.close(); }

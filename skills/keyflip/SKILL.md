@@ -35,9 +35,10 @@ To save accounts, the user must be logged into each one; keyflip reads the live
 login and stores it. Two ways:
 
 - **`keyflip onboard`** — the full guided first-run: per account it drives a browser
-  sign-in, captures it (CLI + browser), points the live CLI at it, syncs all chats,
-  then asks for the next. Superset of `setup`; interactive (TTY) — tell the user to
-  run it themselves, ideally NOT inside the desktop app.
+  sign-in, captures it (CLI + browser), points the live CLI at it, offers to capture
+  the Claude Desktop app too (the user signs the app in, keyflip snapshots it), syncs
+  all chats, then asks for the next. Superset of `setup`; interactive (TTY) — tell the
+  user to run it themselves, ideally NOT inside the desktop app.
 - **`keyflip setup`** — a lighter wizard: it captures the current login, then
   auto-detects each new account as the user signs into it (`/logout`→`/login`, or
   the desktop app) and saves it, until they type `d`. Interactive (TTY).
