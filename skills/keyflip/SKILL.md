@@ -34,11 +34,13 @@ account-independent and always safe.
 To save accounts, the user must be logged into each one; keyflip reads the live
 login and stores it. Two ways:
 
-- **`keyflip setup`** — an interactive wizard: it captures the current login, then
+- **`keyflip onboard`** — the full guided first-run: per account it drives a browser
+  sign-in, captures it (CLI + browser), points the live CLI at it, syncs all chats,
+  then asks for the next. Superset of `setup`; interactive (TTY) — tell the user to
+  run it themselves, ideally NOT inside the desktop app.
+- **`keyflip setup`** — a lighter wizard: it captures the current login, then
   auto-detects each new account as the user signs into it (`/logout`→`/login`, or
-  the desktop app) and saves it, until they type `d`. **Recommend this to the user
-  for first-time / multi-account setup**, but it needs a real terminal (TTY) — do
-  NOT try to drive it non-interactively; tell the user to run it themselves.
+  the desktop app) and saves it, until they type `d`. Interactive (TTY).
 - **`keyflip add [name]`** — captures whatever is logged in right now (one account).
   Scriptable. `--app` = desktop app only. `--token <file|->` imports a raw
   credential (secrets via file/stdin, never argv).
@@ -58,8 +60,10 @@ browser first) so the user can sign in as the right account.
 
 **Via MCP:** these are also tools — `keyflip_login` (add an account by browser
 sign-in), `keyflip_logout` (sign out of cli/browser surfaces), `keyflip_browser_status`
-(read the browser/extension account), `keyflip_browser_logout` (reset it). The
-mutating ones require `confirm: true`; `keyflip_login` opens a browser for the human.
+(read the browser/extension account), `keyflip_browser_logout` (reset it),
+`keyflip_consolidate` (sync all chats across accounts — needs the desktop app
+closed). The mutating ones require `confirm: true`; `keyflip_login` opens a browser
+for the human. The `onboard`/`setup` wizards are TTY-interactive, so they stay CLI-only.
 
 ## Read state (safe, no confirmation needed)
 

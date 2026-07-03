@@ -25,6 +25,8 @@ const proxy = require('./proxy');
 const browser = require('./browser');
 const loginmod = require('./login');
 const exec = require('./exec');
+const appsessions = require('./appsessions');
+const appctl = require('./platform');
 
 // Mutating tools all gate on confirm:true — the agent must ask the user first.
 function needConfirm(args) {
@@ -359,6 +361,17 @@ const TOOLS = [
   },
 
   // ---- browser session (Claude Chrome extension) ----
+  {
+    name: 'keyflip_consolidate', title: 'Sync chats across accounts',
+    description: 'Merge the Claude desktop app\'s session stores so EVERY account sees all conversations (Cowork + Claude Code sessions). Requires the Claude desktop app to be CLOSED (it writes the app\'s store) — returns {ok:false, reason:"Claude still running"} otherwise. Mutating — ask the user, then confirm=true.',
+    inputSchema: { type: 'object', properties: { confirm: confirmProp.confirm }, required: ['confirm'], additionalProperties: false }, annotations: MUT,
+    run: async function (ctx, args) {
+      needConfirm(args);
+      if (appctl.isClaudeRunning(ctx.platform)) return { ok: false, reason: 'Claude still running — close the desktop app first' };
+      const c = appsessions.consolidate(ctx);
+      return { ok: !!c.ok, merged: c.merged || 0, reason: c.reason || null };
+    },
+  },
   {
     name: 'keyflip_browser_status', title: 'Browser claude.ai account (Chrome extension)',
     description: 'macOS only. Which claude.ai account each Chromium browser (Chrome/Brave/Edge/Arc) is signed into, and whether it MATCHES the active CLI/desktop account. The Claude Chrome extension inherits the browser session, so a mismatch means its browser features cannot connect ("user mismatch"). Read-only.',

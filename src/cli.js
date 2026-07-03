@@ -72,8 +72,10 @@ function usage() {
   print('keyflip ' + VERSION + ' — switch between Anthropic / Claude Code accounts (macOS, Linux, Windows)');
   print('');
   print('  keyflip                       interactive menu (↑/↓ + Enter)');
-  print('  keyflip setup                 guided wizard: log into each account, keyflip captures');
-  print('                                 them for you automatically (the easy way to add several)');
+  print('  keyflip onboard [--manual]    full first-run: sign in per account → capture + point CLI');
+  print('                                 + browser at it + sync chats, then ask for the next one');
+  print('  keyflip setup                 lighter wizard: log in in Claude, keyflip auto-detects &');
+  print('                                 captures each account (no browser drive)');
   print('  keyflip login [name] [--email x] [--fresh|--manual]   sign in via the official flow');
   print('                                 and capture it (isolated — current login NOT disturbed;');
   print('                                 --fresh clears the browser session first; --manual lets you');
@@ -1334,6 +1336,69 @@ async function cmdSetup(ctx, rest) {
   jsonOut({ setup: true, saved: total });
 }
 
+// `keyflip onboard` — the full guided first-run. For each account: drive a browser
+// sign-in, capture it (CLI + browser), point the live CLI at it, sync all chats,
+// then ask if you want to add another. A superset of `setup`. NB: the Claude desktop
+// app has its OWN login (a separate token) that a browser sign-in can't mint, so
+// onboard automates CLI + browser + chat-sync and GUIDES the optional desktop step.
+async function cmdOnboard(ctx, rest) {
+  logmod.log('onboard invoked');
+  if (!process.stdin.isTTY) return fail('`keyflip onboard` is an interactive wizard — run it in a terminal (ideally NOT inside the Claude desktop app, so aligning surfaces can\'t interrupt it).');
+  const manual = rest.indexOf('--manual') !== -1 || rest.indexOf('--paste') !== -1;
+
+  print(style.bold('keyflip onboard') + ' — set your accounts up across every surface, one sign-in at a time.');
+  print(style.dim('Per account: sign in once in the browser → keyflip captures it, points the CLI + browser at it, and syncs your chats. Then it asks if you want another.'));
+  print(style.dim('The Claude desktop app keeps its OWN login — to capture that too, sign the app in when prompted.') + '\n');
+
+  const rl = require('readline').createInterface({ input: process.stdin, output: process.stderr });
+  const ask = function (q) { return new Promise(function (r) { rl.question(q, r); }); };
+  const isDone = function (s) { return /^(d|done|q|quit|n|no)$/i.test(String(s || '').trim()); };
+  let count = 0;
+  try {
+    for (;;) {
+      const ans = await ask('\n' + style.bold(count === 0 ? 'Add your first account' : 'Add another account') + '? [Enter = open the sign-in, d = done] ');
+      if (isDone(ans)) { if (count > 0) break; print('Sign in to add at least one account (or Ctrl-C to quit).'); continue; }
+
+      // Fresh browser session so the sign-in is genuinely the account you pick.
+      if (ctx.platform === 'darwin') {
+        try {
+          const browser = require('./browser');
+          browser.installed(ctx.home).forEach(function (b) {
+            const cr = browser.clearClaudeCookies(b, {});
+            if (cr.reason === 'browser-running') print(style.warn('  ⚠️') + ' ' + b.name + ' is open — use "switch account" on the sign-in page (or quit it for a clean slate).');
+          });
+        } catch (e) { /* best-effort */ }
+      }
+
+      let res;
+      try {
+        print('  Opening the browser — sign in as the account you want' + (manual ? ' (paste the code/URL when asked)…' : ' and approve…'));
+        res = manual ? await loginmod.performLoginManual(ctx, {}) : loginmod.performLogin(ctx, { stdio: 'inherit' });
+      } catch (e) {
+        print('  ' + style.err('✗') + ' sign-in didn\'t complete: ' + e.message);
+        continue;
+      }
+      count++;
+      print('  ' + style.ok('✅') + ' captured ' + style.bold(res.name) + ' (' + (res.email || '?') + ') — CLI + browser.');
+
+      try { core.performSwitch(ctx, res.name); print('  ' + style.ok('✅') + ' CLI now on ' + res.name + '.'); }
+      catch (e) { print('  ' + style.warn('⚠') + ' couldn\'t point the CLI at it: ' + e.message); }
+
+      if (ctx.appDataDir) {
+        if (!appctl.isClaudeRunning(ctx.platform)) {
+          switchDesktopLogin(ctx, res.name);   // no-op if no saved desktop login yet
+          consolidateAndReport(ctx);           // sync all chats (needs the app closed)
+        } else {
+          print('  ' + style.dim('· desktop app is open — to also capture it, sign it into ' + (res.email || res.name) + ' then run  keyflip add --app  (chats sync on the next switch)'));
+        }
+      }
+    }
+  } finally { rl.close(); }
+
+  print('\n' + style.ok('✅') + ' Onboarding done — ' + style.bold(String(count)) + ' account(s) set up. Switch anytime: ' + style.bold('keyflip <name>') + '   ·   see all: ' + style.bold('keyflip list'));
+  jsonOut({ onboard: true, added: count });
+}
+
 // `keyflip browser [status|logout]` — Phase 2/3: see and reset the BROWSER's
 // claude.ai session, which the Claude Chrome extension inherits. A mismatch
 // between the browser account and the active CLI/desktop account is exactly why
@@ -1726,8 +1791,9 @@ async function dispatch(ctx, cmd, rest) {
       case 'add':
         return withLock(ctx, function () { return cmdAdd(ctx, rest); });
       case 'setup':
-      case 'onboard':
         return withLock(ctx, function () { return cmdSetup(ctx, rest); });
+      case 'onboard':
+        return withLock(ctx, function () { return cmdOnboard(ctx, rest); });
       case 'login':
         return withLock(ctx, function () { return cmdLogin(ctx, rest); });
       case 'list':

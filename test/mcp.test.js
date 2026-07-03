@@ -103,7 +103,7 @@ test('MCP: login/logout/browser tools are exposed, gated, and structured', async
     { jsonrpc: '2.0', id: 4, method: 'tools/call', params: { name: 'keyflip_logout', arguments: { confirm: false } } },
   ], [1, 2, 3, 4]);
   const names = got[2].result.tools.map(function (t) { return t.name; });
-  ['keyflip_login', 'keyflip_logout', 'keyflip_browser_status', 'keyflip_browser_logout'].forEach(function (n) {
+  ['keyflip_login', 'keyflip_logout', 'keyflip_browser_status', 'keyflip_browser_logout', 'keyflip_consolidate'].forEach(function (n) {
     assert.ok(names.indexOf(n) !== -1, 'missing MCP tool: ' + n);
   });
   // browser_status is read-only and returns structured content (macOS-gated content is fine)

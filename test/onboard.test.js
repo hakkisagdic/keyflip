@@ -47,3 +47,10 @@ test('`keyflip setup` refuses when stdin is not a TTY (points at add)', function
   assert.notStrictEqual(r.status, 0);
   assert.match(r.stderr, /interactive wizard/);
 });
+
+test('`keyflip onboard` refuses when stdin is not a TTY', function () {
+  const BIN = path.join(__dirname, '..', 'bin', 'keyflip.js');
+  const r = require('child_process').spawnSync(process.execPath, [BIN, 'onboard'], { encoding: 'utf8', input: '' });
+  assert.notStrictEqual(r.status, 0);
+  assert.match(r.stderr, /interactive wizard/);
+});
