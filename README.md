@@ -133,6 +133,7 @@ keyflip add <name> --token <file|->   # headless import of a raw credential
 keyflip mcp [--setup]         # MCP server over stdio so agents can drive keyflip
 keyflip panel [--open]         # local web dashboard: accounts+quotas, activity calendar, memory constellation, sessions
 keyflip panel --export <f> [--anon]   # write a share-safe STATIC snapshot (no session content, no secrets)
+keyflip menubar [--install]   # xbar/SwiftBar menu-bar plugin: account+quota at a glance, click-to-switch
 keyflip statusline install    # show active account + quota in the Claude Code prompt
 keyflip install-skill         # install the Claude Code skill that teaches agents keyflip
 keyflip export [file|-]       # back up accounts to a file (CONTAINS SECRETS)
@@ -288,6 +289,7 @@ how to use all of this (rate-limit playbook, sentinels, parallel sessions):
 ```bash
 keyflip panel [--open]         # local web dashboard: accounts+quotas, activity calendar, memory constellation, sessions
 keyflip panel --export <f> [--anon]   # write a share-safe STATIC snapshot (no session content, no secrets)
+keyflip menubar [--install]   # xbar/SwiftBar menu-bar plugin: account+quota at a glance, click-to-switch
 keyflip statusline install    # show active account + quota in the Claude Code prompt
 keyflip install-skill      # copies it to ~/.claude/skills/keyflip
 ```

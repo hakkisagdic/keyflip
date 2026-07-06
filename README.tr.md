@@ -133,6 +133,7 @@ keyflip add <ad> --token <dosya|->   # ham kimlik bilgisini headless içe aktar
 keyflip mcp [--setup]         # agent'lar için stdio üzerinden MCP sunucusu
 keyflip panel [--open]         # yerel web paneli: hesaplar+kotalar, etkinlik takvimi, memory takımyıldızı, oturumlar
 keyflip panel --export <f> [--anon]   # paylaşıma-güvenli STATİK snapshot yaz (oturum içeriği yok, sır yok)
+keyflip menubar [--install]   # xbar/SwiftBar menü-çubuğu eklentisi: hesap+kota tek bakışta, tıkla-geç
 keyflip statusline install    # aktif hesap + kotayı Claude Code promptunda göster
 keyflip install-skill         # agent'lara keyflip'i öğreten Claude Code skill'ini kur
 keyflip export [dosya|-]      # hesapları dosyaya yedekle (SIR İÇERİR)
@@ -286,6 +287,7 @@ oturumlar):
 ```bash
 keyflip panel [--open]         # yerel web paneli: hesaplar+kotalar, etkinlik takvimi, memory takımyıldızı, oturumlar
 keyflip panel --export <f> [--anon]   # paylaşıma-güvenli STATİK snapshot yaz (oturum içeriği yok, sır yok)
+keyflip menubar [--install]   # xbar/SwiftBar menü-çubuğu eklentisi: hesap+kota tek bakışta, tıkla-geç
 keyflip statusline install    # aktif hesap + kotayı Claude Code promptunda göster
 keyflip install-skill      # ~/.claude/skills/keyflip dizinine kopyalar
 ```

@@ -702,10 +702,14 @@ Candidate surfaces (pick + prioritize together):
   tug-of-war / browser-mismatch warnings, renamed-folder → `rebind` prompt, JetBrains, marketplace.
 - **G3 ✅ DONE** — Claude Code status line.** A `keyflip statusline` script showing active account +
   quota right in Claude Code's prompt. Cheapest, native, zero chrome.
-- **G4 — macOS menu-bar / Windows-Linux tray.** The always-glanceable surface: current
-  account, quota %, one-click switch/rotate, "transfer received" notifications. ⚠️ TENSION: a
-  tray app is a resident process — either an explicit opt-in exception to the no-daemon rule,
-  or a poll-on-open shim. Decide before building.
+- **G4 ✅ DONE (via xbar/SwiftBar) — menu-bar surface.** The daemon tension is resolved by NOT
+  writing a resident process: `keyflip menubar` emits xbar/SwiftBar plugin format (title = active
+  account + 5h quota; dropdown = accounts colour-coded by quota with click-to-switch, providers,
+  open-dashboard/consolidate/refresh). xbar/SwiftBar is the resident host; keyflip stays a CLI
+  it re-runs on an interval. `keyflip menubar --install [--dir <folder>] [--interval 30s]` drops a
+  wrapper into the plugin folder (xbar default auto-detected; SwiftBar via `--dir`). Pure render,
+  9 tests (`test/menubar.test.js`) incl. param-injection guard (labels can't inject xbar params).
+  `src/menubar.js`. **Remaining:** native tray for Windows/Linux (device-gated; xbar is macOS).
 - **G5 ◑ (sparklines + calendar + constellation done) — Data-viz inside the panel.**
   ✅ per-account 5h sparklines; ✅ **session-activity calendar heatmap** (GitHub-style, 26 weeks,
   `buildActivity`); ✅ **memory constellation** (keepsakes linked by shared top-terms, `buildMemoryGraph`)

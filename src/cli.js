@@ -131,6 +131,7 @@ function usage() {
   print('  keyflip settings [show | get <k> | set <k> <v>]   view/edit ~/.claude/settings.json (rides `migrate` to other machines)');
   print('  keyflip statusline install     show the active account + quota in the Claude Code prompt (status line)');
   print('  keyflip panel [--open]         open a local web dashboard: accounts, quotas, providers, sessions, keepsakes');
+  print('  keyflip menubar [--install]    xbar/SwiftBar menu-bar plugin: glanceable account+quota, click-to-switch');
   print('  keyflip dream [--older-than 30d] [--archive] [--apply]   consolidate old chats: distill (+ archive) them');
   print('  keyflip dream schedule [--at 03:00] | unschedule | status   run the dream nightly (launchd/cron)');
   print('  keyflip resume <n|id> [--run] [--as <account>]   resume a session (in its dir; --as runs it under another account)');
@@ -1118,6 +1119,31 @@ async function cmdPanel(ctx, rest) {
   }
   logmod.log('panel on ' + h.port);
   await new Promise(function () { /* serve until the process is killed (Ctrl-C) */ });
+}
+
+// G4: emit xbar/SwiftBar plugin output (or install a wrapper into a plugin folder). Plain
+// stdout so the menu-bar host renders it verbatim.
+function cmdMenubar(ctx, rest) {
+  const menubar = require('./menubar');
+  if (rest.indexOf('--install') !== -1) return menubarInstall(ctx, rest);
+  process.stdout.write(menubar.render(ctx, {}) + '\n');
+}
+function menubarInstall(ctx, rest) {
+  const menubar = require('./menubar');
+  const iv = flagVal(rest, '--interval') || '30s';
+  const di = rest.indexOf('--dir'); let dir = di !== -1 ? rest[di + 1] : null;
+  // Default to xbar's plugin folder if present (SwiftBar's is user-configured — pass --dir).
+  const xbar = path.join(ctx.home, 'Library', 'Application Support', 'xbar', 'plugins');
+  if (!dir) { if (fs.existsSync(xbar)) dir = xbar; else return fail('no xbar plugin folder found — pass --dir <your SwiftBar/xbar plugins folder>. (Then it refreshes every ' + iv + '.)'); }
+  const ex = menubar.resolveExec({});
+  const cmd = [ex.exec].concat(ex.pre).map(function (p) { return /\s/.test(p) ? '"' + p + '"' : p; }).join(' ') + ' menubar';
+  const script = '#!/bin/bash\n# keyflip menu-bar plugin (xbar/SwiftBar). Refreshes every ' + iv + '.\nexec ' + cmd + '\n';
+  const file = path.join(dir, 'keyflip.' + iv + '.sh');
+  try { fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(file, script); fs.chmodSync(file, 0o755); }
+  catch (e) { return fail('could not write the plugin: ' + (e && e.message)); }
+  if (JSON_MODE) { jsonOut({ menubarInstall: { path: file, interval: iv } }); return; }
+  print(style.ok('✅') + ' menu-bar plugin installed: ' + style.bold(file));
+  print('   ' + style.dim('Open xbar/SwiftBar (or Refresh all) to see it. It re-runs `keyflip menubar` every ' + iv + '.'));
 }
 
 async function cmdProxy(ctx, rest) {
@@ -3029,7 +3055,7 @@ async function main(argv) {
   // Skip the passive update fetch for machine/interactive/long-lived commands: it
   // would corrupt the MCP stdio stream, delay `run`/`mcp` exit on a slow network,
   // or print a stray line during a destructive/JSON op.
-  const NO_NOTICE = ['menu', 'upgrade', 'reset', 'uninstall', 'setup', 'onboard', 'login', 'mcp', 'run', 'autoswitch', 'install-skill', 'statusline', 'send', 'panel', 'agents'];
+  const NO_NOTICE = ['menu', 'menubar', 'upgrade', 'reset', 'uninstall', 'setup', 'onboard', 'login', 'mcp', 'run', 'autoswitch', 'install-skill', 'statusline', 'send', 'panel', 'agents'];
   const skipNotice = JSON_MODE || cmd === undefined || NO_NOTICE.indexOf(cmd) !== -1;
   if (!skipNotice) { try { await update.maybeNotify(ctx, VERSION); } catch (e) { /* ignore */ } }
 }
@@ -3123,6 +3149,8 @@ async function dispatch(ctx, cmd, rest) {
           : cmdStatusline(ctx, rest);
       case 'panel':
         return cmdPanel(ctx, rest);
+      case 'menubar':
+        return cmdMenubar(ctx, rest);
       case 'sessions':
         return cmdSessions(ctx, rest);
       case 'resume':
