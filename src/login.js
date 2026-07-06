@@ -59,6 +59,16 @@ function cleanIsolatedKeychain(dir, opts) {
   try { opts.run('/usr/bin/security', ['delete-generic-password', '-s', isoKeychainService(dir)], undefined, { timeoutMs: 8000 }); } catch (e) { /* ignore */ }
 }
 
+// Build the `claude auth login` argv from options. Pure — one place both the auto and
+// manual login paths use, so `--sso`/`--console`/`--email` can't silently drift apart.
+function buildLoginArgs(opts) {
+  opts = opts || {};
+  const args = ['auth', 'login', opts.useConsole ? '--console' : '--claudeai'];
+  if (opts.sso) args.push('--sso');
+  if (opts.email) args.push('--email', opts.email);
+  return args;
+}
+
 // Run the OFFICIAL `claude auth login` in an isolated CLAUDE_CONFIG_DIR and save
 // the minted token as a keyflip profile. Pure mechanics (no printing) so both the
 // CLI and the MCP server can use it. opts: { email, name, useConsole, sso, stdio }.
@@ -77,9 +87,7 @@ function performLogin(ctx, opts) {
   const env = Object.assign({}, process.env, { CLAUDE_CONFIG_DIR: isoDir });
   try {
     try { claude.writeConfig(path.join(isoDir, '.claude.json'), { hasCompletedOnboarding: true }); } catch (e) { /* best-effort */ }
-    const args = ['auth', 'login', opts.useConsole ? '--console' : '--claudeai'];
-    if (opts.sso) args.push('--sso');
-    if (opts.email) args.push('--email', opts.email);
+    const args = buildLoginArgs(opts);
     const r = cp.spawnSync('claude', args, { stdio: opts.stdio || 'inherit', env: env });
     if (r.error) { const e = new Error('could not run `claude auth login` (is Claude Code installed and on PATH?): ' + r.error.message); e.code = 'claude-missing'; throw e; }
     if (typeof r.status === 'number' && r.status !== 0) { const e = new Error('the login did not complete (exit ' + r.status + ')'); e.code = 'login-failed'; throw e; }
@@ -139,9 +147,7 @@ function performLoginManual(ctx, opts) {
     const isoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'keyflip-login-'));
     const env = Object.assign({}, process.env, { CLAUDE_CONFIG_DIR: isoDir });
     try { require('./claude').writeConfig(path.join(isoDir, '.claude.json'), { hasCompletedOnboarding: true }); } catch (e) { /* best-effort */ }
-    const args = ['auth', 'login', opts.useConsole ? '--console' : '--claudeai'];
-    if (opts.sso) args.push('--sso');
-    if (opts.email) args.push('--email', opts.email);
+    const args = buildLoginArgs(opts);
 
     let settled = false, rl = null;
     function cleanup() { cleanIsolatedKeychain(isoDir, { platform: ctx.platform, run: exec.run }); try { fs.rmSync(isoDir, { recursive: true, force: true }); } catch (e) { /* ignore */ } }
@@ -178,6 +184,7 @@ function cliLogout(ctx) {
 }
 
 module.exports = {
+  buildLoginArgs: buildLoginArgs,
   isoKeychainService: isoKeychainService,
   validBlob: validBlob,
   readIsolatedCredential: readIsolatedCredential,

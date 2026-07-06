@@ -87,3 +87,79 @@ test('quit issues an osascript "quit" for the browser app', function () {
   assert.strictEqual(called.cmd, '/usr/bin/osascript');
   assert.ok(called.args.join(' ').indexOf('tell application "Google Chrome" to quit') !== -1);
 });
+
+// ---- browser-session snapshot/restore (gap #1: browser sync on switch) ----
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+
+function tmpCookiesFile() {
+  const p = path.join(os.tmpdir(), 'keyflip-test-cookies-' + process.pid + '-' + Math.floor(Math.random() * 1e6));
+  fs.writeFileSync(p, 'sqlite-db-bytes');
+  return p;
+}
+
+test('sessionStorePath keys a saved session by account + browser', function () {
+  const p = browser.sessionStorePath('/cfg', 'work', 'chrome');
+  assert.strictEqual(p, path.join('/cfg', 'browser-sessions', 'work__chrome.sql'));
+});
+
+test('snapshotClaudeCookies returns the INSERT SQL sqlite3 emits', function () {
+  const b = { id: 'chrome', cookies: tmpCookiesFile(), proc: 'Google Chrome' };
+  const sql = browser.snapshotClaudeCookies(b, {
+    run: function (cmd, args) {
+      assert.strictEqual(cmd, 'sqlite3');
+      assert.ok(args.join(' ').indexOf('.mode insert cookies') !== -1);
+      return { code: 0, stdout: "INSERT INTO cookies VALUES('claude.ai','sessionKey',X'deadbeef');\n" };
+    },
+  });
+  assert.ok(sql.indexOf('INSERT INTO cookies') !== -1);
+  fs.rmSync(b.cookies, { force: true });
+});
+
+test('snapshotClaudeCookies returns null when the Cookies DB is missing', function () {
+  const b = { id: 'chrome', cookies: '/no/such/Cookies', proc: 'Google Chrome' };
+  assert.strictEqual(browser.snapshotClaudeCookies(b, { run: function () { return { code: 0 }; } }), null);
+});
+
+test('restoreClaudeCookies refuses while the browser runs (unless force)', function () {
+  const b = { id: 'chrome', cookies: tmpCookiesFile(), proc: 'Google Chrome' };
+  const r = browser.restoreClaudeCookies(b, 'INSERT ...', {
+    run: function (cmd) { return cmd.indexOf('pgrep') !== -1 ? { code: 0, stdout: '99' } : { code: 0 }; },
+  });
+  assert.deepStrictEqual(r, { ok: false, reason: 'browser-running' });
+  fs.rmSync(b.cookies, { force: true });
+});
+
+test('restoreClaudeCookies (force) backs up, then DELETEs + replays the snapshot', function () {
+  const b = { id: 'chrome', cookies: tmpCookiesFile(), proc: 'Google Chrome' };
+  let script = null;
+  const r = browser.restoreClaudeCookies(b, "INSERT INTO cookies VALUES('claude.ai');", {
+    force: true,
+    run: function (cmd, args, input) { script = input; return { code: 0 }; },
+  });
+  assert.strictEqual(r.ok, true);
+  assert.ok(fs.existsSync(r.backup), 'a backup of the Cookies DB is taken first');
+  assert.ok(script.indexOf('DELETE FROM cookies') !== -1);
+  assert.ok(script.indexOf('INSERT INTO cookies') !== -1);
+  fs.rmSync(b.cookies, { force: true });
+  fs.rmSync(r.backup, { force: true });
+});
+
+test('restoreClaudeCookies refuses an empty snapshot', function () {
+  const b = { id: 'chrome', cookies: tmpCookiesFile(), proc: 'Google Chrome' };
+  assert.deepStrictEqual(browser.restoreClaudeCookies(b, '', { force: true }), { ok: false, reason: 'no-snapshot' });
+  fs.rmSync(b.cookies, { force: true });
+});
+
+test('saveSession then loadSession round-trips a snapshot through the store', function () {
+  const cfg = fs.mkdtempSync(path.join(os.tmpdir(), 'keyflip-store-'));
+  const b = { id: 'chrome', cookies: tmpCookiesFile(), proc: 'Google Chrome' };
+  const runner = function () { return { code: 0, stdout: "INSERT INTO cookies VALUES('claude.ai');" }; };
+  assert.strictEqual(browser.saveSession(cfg, 'work', b, { run: runner }), true);
+  const loaded = browser.loadSession(cfg, 'work', b);
+  assert.ok(loaded.indexOf('INSERT INTO cookies') !== -1);
+  assert.strictEqual(browser.loadSession(cfg, 'other', b), null); // unknown account
+  fs.rmSync(b.cookies, { force: true });
+  fs.rmSync(cfg, { recursive: true, force: true });
+});

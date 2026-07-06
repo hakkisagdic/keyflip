@@ -88,6 +88,40 @@ function parseCookieRows(stdout, key) {
   return { cookie: pairs.join('; '), org: org };
 }
 
+// Snapshot this browser's claude.ai cookie ROWS as portable INSERT statements
+// (encrypted_value bytes preserved verbatim — no decrypt, so it works even for
+// app-bound v20 cookies as long as it's the same browser+machine). Returns the SQL
+// string, or null. Used to save an account's browser session for later restore.
+function snapshotClaudeCookies(b, opts) {
+  opts = opts || {};
+  const runner = opts.run || run;
+  const tmp = path.join(os.tmpdir(), 'keyflip-snap-' + process.pid + '-' + b.id + '.db');
+  try { fs.copyFileSync(b.cookies, tmp); } catch (e) { return null; }
+  try {
+    const r = runner('sqlite3', ['-cmd', '.mode insert cookies', 'file:' + tmp + '?mode=ro',
+      "SELECT * FROM cookies WHERE host_key LIKE '%claude.ai';"]);
+    if (!r || r.code !== 0) return null;
+    const sql = String(r.stdout || '').trim();
+    return sql || null;
+  } finally { try { fs.rmSync(tmp, { force: true }); } catch (e) { /* ignore */ } }
+}
+
+// Restore a saved claude.ai session (from snapshotClaudeCookies) into this browser:
+// drop the current claude.ai cookies, re-insert the saved rows. REFUSES while the
+// browser runs (unless force) and backs up the Cookies DB first.
+function restoreClaudeCookies(b, sql, opts) {
+  opts = opts || {};
+  const runner = opts.run || run;
+  if (!sql) return { ok: false, reason: 'no-snapshot' };
+  if (!opts.force && isRunning(b, runner)) return { ok: false, reason: 'browser-running' };
+  let backup;
+  try { backup = b.cookies + '.keyflip-bak'; fs.copyFileSync(b.cookies, backup); } catch (e) { return { ok: false, reason: 'no-cookies-db' }; }
+  const script = "DELETE FROM cookies WHERE host_key LIKE '%claude.ai';\n" + sql + '\n';
+  const r = runner('sqlite3', [b.cookies], script);
+  if (!r || r.code !== 0) return { ok: false, reason: 'sqlite-failed', detail: r && r.stderr, backup: backup };
+  return { ok: true, backup: backup };
+}
+
 // Phase 3 (conservative): clear this browser's claude.ai cookies so the next
 // visit prompts a fresh login as the right account. Backs up the Cookies DB
 // first and REFUSES while the browser is running (unless force). Reversible via
@@ -106,13 +140,38 @@ function clearClaudeCookies(b, opts) {
   return { ok: true, backup: backup };
 }
 
+// Where keyflip stores a saved browser (claude.ai) session per account+browser.
+function sessionStorePath(configDir, name, browserId) {
+  return path.join(configDir, 'browser-sessions', name + '__' + browserId + '.sql');
+}
+// Snapshot the account's current browser session and stash it (best-effort).
+function saveSession(configDir, name, b, opts) {
+  const sql = snapshotClaudeCookies(b, opts);
+  if (!sql) return false;
+  const p = sessionStorePath(configDir, name, b.id);
+  try {
+    fs.mkdirSync(path.dirname(p), { recursive: true });
+    fs.writeFileSync(p, sql, { mode: 0o600 });
+    try { fs.chmodSync(p, 0o600); } catch (e) { /* non-POSIX FS */ } // tighten a pre-existing loose file
+    return true;
+  } catch (e) { return false; }
+}
+function loadSession(configDir, name, b) {
+  try { return fs.readFileSync(sessionStorePath(configDir, name, b.id), 'utf8'); } catch (e) { return null; }
+}
+
 module.exports = {
   catalog: catalog,
   installed: installed,
+  sessionStorePath: sessionStorePath,
+  saveSession: saveSession,
+  loadSession: loadSession,
   safeKey: safeKey,
   isRunning: isRunning,
   quit: quit,
   readClaudeCookies: readClaudeCookies,
   parseCookieRows: parseCookieRows,
   clearClaudeCookies: clearClaudeCookies,
+  snapshotClaudeCookies: snapshotClaudeCookies,
+  restoreClaudeCookies: restoreClaudeCookies,
 };

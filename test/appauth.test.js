@@ -187,8 +187,74 @@ test('detectAppAccount identifies org/account/email from the app\'s own data', f
   assert.strictEqual(det.email, 'y@yahoo.com');
 });
 
-test('detectAppAccount returns null (no Keychain prompt) when the blob is not v10', function () {
-  const s = setup(); // plain 'TOKEN-A-V2' — not a v10 blob
+test('detectAppAccount reports no-token-cache (no Keychain access) when the blob is not v10', function () {
+  const s = setup(); // plain 'TOKEN-A-V2' — not a v10 blob, no allowlist keys
+  s.ctx.safeStoragePassword = null; // if it (wrongly) reached the keychain, this proves it didn't need to
+  const det = appauth.detectAppAccount(s.ctx);
+  assert.strictEqual(det.org, null);
+  assert.strictEqual(det.reason, 'no-token-cache');
+});
+
+test('detectAppAccount FALLS BACK to the allowlist org when the token cannot be decrypted', function () {
+  const s = setup();
+  const ORG = '11111111-2222-3333-4444-555555555555', ACCT = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+  // Non-decryptable token cache, but the config's allowlist still names the active org.
+  const cfg = { 'oauth:tokenCacheV2': 'not-a-v10-blob' };
+  cfg['dxt:allowlistLastUpdated:' + ORG] = '2026-07-05T00:00:00.000Z';
+  fs.writeFileSync(s.cfg, JSON.stringify(cfg));
+  fs.mkdirSync(path.join(s.ctx.appDataDir, 'claude-code-sessions', ACCT, ORG), { recursive: true });
+  const lam = path.join(s.ctx.appDataDir, 'local-agent-mode-sessions', ACCT, ORG);
+  fs.mkdirSync(lam, { recursive: true });
+  fs.writeFileSync(path.join(lam, 'x.json'), JSON.stringify({ oauthAccount: { emailAddress: 'z@x.com' } }));
+  const det = appauth.detectAppAccount(s.ctx);
+  assert.strictEqual(det.org, ORG, 'org recovered from the allowlist');
+  assert.strictEqual(det.account, ACCT, 'account recovered by org->folder match');
+  assert.strictEqual(det.email, 'z@x.com');
+  assert.strictEqual(det.reason, 'no-token-cache');
+});
+
+test('detectAppAccount reports keychain-locked when the token is v10 but the key is unavailable', function () {
+  const s = setup();
+  const ORG = '77777777-8888-9999-0000-111111111111';
+  const cfg2 = { 'oauth:tokenCacheV2': encryptV10('{"org":"' + ORG + '"}', 'realpw') };
+  cfg2['dxt:allowlistLastUpdated:' + ORG] = '2026-07-05T00:00:00.000Z';
+  fs.writeFileSync(s.cfg, JSON.stringify(cfg2));
+  s.ctx.safeStoragePassword = null; // simulate a locked/denied keychain
+  const det = appauth.detectAppAccount(s.ctx);
+  assert.strictEqual(det.org, ORG, 'still names the org from the allowlist');
+  assert.strictEqual(det.reason, 'keychain-locked');
+});
+
+test('detectAppAccount reports no-desktop-config when there is no app data dir', function () {
+  const s = setup();
+  s.ctx.appDataDir = null;
+  const det = appauth.detectAppAccount(s.ctx);
+  assert.strictEqual(det.reason, 'no-desktop-config');
+  assert.strictEqual(det.org, null);
+});
+
+test('detectAppAccount does NOT surface a stale allowlist org when the app is signed OUT', function () {
+  const s = setup();
+  const ORG = '33333333-4444-5555-6666-777777777777';
+  const cfg = { 'oauth:tokenCacheV2': 'not-a-v10-blob' };
+  cfg['dxt:allowlistLastUpdated:' + ORG] = '2026-07-05T00:00:00.000Z';
+  fs.writeFileSync(s.cfg, JSON.stringify(cfg));
+  fs.writeFileSync(s.cookies, 'logged-out-no-session-cookie'); // no sessionKey => signed out
+  const det = appauth.detectAppAccount(s.ctx);
+  assert.strictEqual(det.org, null, 'a signed-out app must not present the stale allowlist org');
+});
+
+test('detectAppAccount returns unresolved-org (not a stale org) when the token names an unlisted account', function () {
+  const s = setup();
+  const STALE = '88888888-8888-8888-8888-888888888888', FRESH = '99999999-9999-9999-9999-999999999999';
+  // The token decrypts to FRESH (brand-new account, not in the allowlist / no folder yet),
+  // while a DIFFERENT account (STALE) holds the most-recent allowlist timestamp.
+  const cfg = { 'oauth:tokenCacheV2': encryptV10('{"org":"' + FRESH + '"}', 'pw123') };
+  cfg['dxt:allowlistLastUpdated:' + STALE] = '2026-07-05T00:00:00.000Z';
+  fs.writeFileSync(s.cfg, JSON.stringify(cfg));
   s.ctx.safeStoragePassword = 'pw123';
-  assert.strictEqual(appauth.detectAppAccount(s.ctx), null);
+  const det = appauth.detectAppAccount(s.ctx);
+  assert.notStrictEqual(det.org, STALE, 'must not confidently claim the stale allowlist org');
+  assert.strictEqual(det.org, null);
+  assert.strictEqual(det.reason, 'unresolved-org');
 });

@@ -30,6 +30,33 @@ function atomicWrite(filePath, data, mode) {
   try { fs.chmodSync(filePath, mode); } catch (e) { /* best effort (e.g. Windows) */ }
 }
 
+// Is `dest` safe to write as a file strictly under `root`, even against symlink escapes
+// that a lexical path check misses? Three checks:
+//   (a) dest is lexically under root (blocks `../` and absolute-path escapes),
+//   (b) the deepest EXISTING ancestor dir realpaths to still-under-root (blocks a
+//       pre-planted symlinked intermediate directory, e.g. projects/x -> /tmp/out),
+//   (c) if dest already exists it is not a symlink (blocks following a planted leaf
+//       symlink, e.g. settings.json -> ~/.bashrc).
+// Returns { ok:true } or { ok:false, reason }. Used by every bundle-merge write so an
+// untrusted bundle can never land a file outside its intended root.
+function deepestExisting(p) {
+  let d = p;
+  while (d !== path.dirname(d) && !fs.existsSync(d)) d = path.dirname(d);
+  return d;
+}
+function safeDestUnder(root, dest) {
+  const lroot = path.resolve(root);
+  const resolved = path.resolve(dest);
+  if (resolved !== lroot && resolved.indexOf(lroot + path.sep) !== 0) return { ok: false, reason: 'escape' };
+  // The trusted real prefix = realpath of root's deepest EXISTING ancestor. Both anchors are
+  // realpath'd, so a symlinked FS root (e.g. macOS /var -> /private/var) doesn't false-positive.
+  let ranchor; try { ranchor = fs.realpathSync(deepestExisting(lroot)); } catch (e) { return { ok: false, reason: 'ancestor' }; }
+  let ranc; try { ranc = fs.realpathSync(deepestExisting(path.dirname(resolved))); } catch (e) { return { ok: false, reason: 'ancestor' }; }
+  if (ranc !== ranchor && ranc.indexOf(ranchor + path.sep) !== 0) return { ok: false, reason: 'symlink-dir' };
+  try { if (fs.lstatSync(resolved).isSymbolicLink()) return { ok: false, reason: 'symlink-leaf' }; } catch (e) { /* absent = fine */ }
+  return { ok: true };
+}
+
 // Recursively sort object keys so identical logical configs serialize to
 // identical bytes (stable diffs, reproducible snapshots).
 function sortKeys(value) {
@@ -59,4 +86,4 @@ function readJsonForWrite(filePath) {
   catch (e) { throw new Error(filePath + ' exists but is not valid JSON — refusing to overwrite it (fix or remove it first)'); }
 }
 
-module.exports = { atomicWrite: atomicWrite, sortKeys: sortKeys, writeJsonStable: writeJsonStable, readJsonForWrite: readJsonForWrite };
+module.exports = { atomicWrite: atomicWrite, sortKeys: sortKeys, writeJsonStable: writeJsonStable, readJsonForWrite: readJsonForWrite, safeDestUnder: safeDestUnder };

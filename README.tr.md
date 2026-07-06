@@ -107,15 +107,16 @@ Claude / Claude Code açıksa keyflip önce **"Geçiş için Claude kapatılacak
 
 ```bash
 keyflip                       # etkileşimli menü (↑/↓ + Enter)
-keyflip onboard [--manual]    # tam ilk-kurulum: hesap başına giriş, CLI+tarayıcıyı hizala,
-                              #   chatleri eşitle, sonra sıradakini sor
+keyflip onboard [--manual] [--sso] [--console]   # tam ilk-kurulum: hesap başına giriş, CLI+tarayıcıyı
+                              #   hizala, chatleri eşitle, sıradakini sor ("p" = API-key provider; --sso = kurumsal)
 keyflip setup                 # hafif: Claude'da giriş yap, keyflip algılayıp yakalar
-keyflip login [ad] [--email x]     # resmi tarayıcı akışıyla giriş yap, izole + yakala
+keyflip login [ad] [--email x] [--sso] [--console]   # resmi tarayıcı akışı, izole + yakala (--sso = kurumsal)
 keyflip add [ad] [--app]      # girişli hesap(lar)ı kaydet — CLI + masaüstü uygulaması
-keyflip browser [status|logout]    # tarayıcı claude.ai hesabını kontrol/sıfırla (Chrome uzantısı)
+keyflip browser [status|logout|sync]   # tarayıcı claude.ai hesabını kontrol/sıfırla/geri yükle (uzantı)
 keyflip <ad|numara>           # o hesaba geç (Claude'u kapatmadan önce sorar)
 keyflip <ad> --restart        # ...sormadan Claude'u kapatıp yeniden açar
 keyflip <ad> --force          # ...Claude'u kapatmadan takas eder (kendiniz yeniden başlatın)
+keyflip <ad> --browser        # ...tarayıcıyı + Chrome uzantısını da bu hesaba hizalar
 keyflip next                  # sıradaki kayıtlı hesaba dön
 keyflip next --strategy best  # ...veya kalan kotaya göre seç (ayrıca: next-available)
 keyflip provider add <ad> --base-url <url> --key-file -   # 3. taraf endpoint kaydet
@@ -130,10 +131,27 @@ keyflip link [ad|--remove]    # bu dizin ağacını `run` için bir hesaba eşle
 keyflip run <ad> [-- argümanlar]  # PARALEL oturum: o hesap YALNIZCA bu terminalde
 keyflip add <ad> --token <dosya|->   # ham kimlik bilgisini headless içe aktar
 keyflip mcp [--setup]         # agent'lar için stdio üzerinden MCP sunucusu
+keyflip panel [--open]         # yerel web paneli: hesaplar+kotalar, etkinlik takvimi, memory takımyıldızı, oturumlar
+keyflip panel --export <f> [--anon]   # paylaşıma-güvenli STATİK snapshot yaz (oturum içeriği yok, sır yok)
+keyflip statusline install    # aktif hesap + kotayı Claude Code promptunda göster
 keyflip install-skill         # agent'lara keyflip'i öğreten Claude Code skill'ini kur
 keyflip export [dosya|-]      # hesapları dosyaya yedekle (SIR İÇERİR)
 keyflip import <dosya|->      # yedekten hesapları geri yükle (--force üzerine yazar)
+keyflip migrate export <dosya> # hesap + provider + transkript + memory + config (MCP + settings) paketle
+                              #   altküme seç: --sessions <id,id> / --search T / --newer-than 7d / --only-sessions
+                              #   --agents (memory) ve/veya --agent-config (MCP/ayarlar, sır-taranıp redakte) ile diğer AI ajanları
+keyflip agents                # diğer ajanların memory + config'ini listele (Cursor/Gemini/Codex; sırlar redakte edilir)
+keyflip settings [show|get <k>|set <k> <v>]   # ~/.claude/settings.json'ı gör/düzenle (`migrate` ile diğer makinelere gider)
+keyflip migrate import <dosya> # bu paketi bu makineyle BİRLEŞTİR (birleşim; --force üzerine yazar)
+keyflip migrate push --url <webdav>   # paketi başka makineye WebDAV üzerinden ilet (şifreli)
+keyflip migrate pull --url <webdav>   # diğer makinede çekip BİRLEŞTİR (--force üzerine yazar)
+keyflip transfer serve [--qr] # LAN: tek-kullanımlık kod (+ taranabilir QR) göster + şifreli paketi eşe akıt
+keyflip transfer pull --code X # LAN: eşi otomatik bul, çek + BİRLEŞTİR (ya da <host:port> ver)
+keyflip transfer serve --receive   # LAN: push edilen paketi ALMAK için BEKLE (ters yön)
+keyflip transfer push <host> --code X   # LAN: paketini dinleyen makineye GÖNDER (E2 filtreleriyle)
+keyflip consolidate [--watch] # her hesabın sohbet dizinini eşitle; her biri TÜM sohbetleri görsün
 keyflip remove <ad|numara>    # kayıtlı hesabı sil
+keyflip history | undo | restore <ref>   # git-versiyonlu config: her değişikliği incele / geri al / geri dön (sırlar asla commit edilmez)
 keyflip reset [--soft]        # FABRİKA sıfırlaması: TÜM keyflip verisini SİL (--soft hesapları korur)
 keyflip uninstall [--purge]   # keyflip'i bu makineden kaldır (--purge veriyi de siler)
 keyflip upgrade               # keyflip'in kendisini güncelle (kurulum yöntemini algılar)
@@ -192,6 +210,15 @@ keyflip sessions --search "oauth"     # tüm Claude Code konuşmalarını ara
 keyflip sessions --here               # yalnız bu dizinde başlayan oturumlar
 keyflip resume 3                       # listedeki 3. öğenin devam komutunu yazdır
 keyflip resume <id> --run             # `claude --resume <id>`'yi kendi dizininde başlat
+keyflip sessions rebind <eski> <yeni> # klasörünü yeniden adlandırdıktan sonra projenin chat geçmişini yeniden bağla
+keyflip sessions assign <id> <hesap>  # bir oturumu başka bir hesap altında sürdür (resume --run) — profil değiştirmeden
+keyflip send <id> "<mesaj>" [--as <hesap>] [--fork]   # bir oturuma mesaj enjekte et (headless yönlendir/sürdür; ör. başka makineden)
+keyflip sessions archive <id|--older-than 30d>   # eski transkriptleri keyflip'e taşı (gzip'li); unarchive geri yükler
+keyflip sessions distill <id>   # bir sohbeti kalıcı hatıraya damıt (`claude -p` ile); `keyflip memory` ile gözat
+keyflip sessions compact <id> [--apply]   # transkripti küçült: hacimli tool çıktısını ele, sohbeti koru (varsayılan dry-run)
+keyflip dream [--older-than 30d] [--archive] [--apply]   # "dreaming": eski sohbetleri tek geçişte damıt (+ arşivle); varsayılan dry-run
+keyflip recall "<sorgu>" [--answer]   # TÜM sohbetlerinde arama (BM25; --semantic=embeddings; --answer = `claude -p` ile atıflı sentez)
+keyflip dream schedule [--at 03:00] | unschedule | status   # dream'i her gece gözetimsiz koştur (launchd/cron)
 keyflip cowork --search "sınav"       # masaüstü Cowork oturumları (tüm hesaplar)
 keyflip chat                          # aktif hesabın claude.ai Chat'i (deneysel)
 keyflip chat get <id>                 # bir bulut konuşmasını oku
@@ -256,6 +283,9 @@ Agent'a tüm bunları ne zaman ve nasıl kullanacağını öğreten paketli bir
 oturumlar):
 
 ```bash
+keyflip panel [--open]         # yerel web paneli: hesaplar+kotalar, etkinlik takvimi, memory takımyıldızı, oturumlar
+keyflip panel --export <f> [--anon]   # paylaşıma-güvenli STATİK snapshot yaz (oturum içeriği yok, sır yok)
+keyflip statusline install    # aktif hesap + kotayı Claude Code promptunda göster
 keyflip install-skill      # ~/.claude/skills/keyflip dizinine kopyalar
 ```
 
@@ -286,8 +316,10 @@ geçmelidir ve mevcut bir hesabın üzerine yazmak her zaman `--force` ister.
 
 VS Code Claude Code eklentisi CLI'ın kimlik deposunu paylaşır; yani her
 keyflip geçişi ona da uygulanır (almak için pencereyi yenileyin).
-[`vscode-keyflip/`](vscode-keyflip/) içindeki ince eklenti, status bar'a
-hesap göstergesi ve QuickPick geçiş ekler — yerel kurulum için README'sine bakın.
+[`vscode-keyflip/`](vscode-keyflip/) içindeki ince eklenti status bar'a hesap
+göstergesi, QuickPick hesap değiştirici (5s/7g kota ile), tek tıkla **Open
+Dashboard** (`keyflip panel`) ve durum görünümü ekler — yerel kurulum için
+[README](vscode-keyflip/README.md) ([TR](vscode-keyflip/README.tr.md)).
 
 ### Geçişten sonra tüm oturumlarınızı görmek (macOS)
 
@@ -335,7 +367,7 @@ giriş yok. `config.json` ve çerez veritabanı önce yedeklenir
 > - **Etkileşimli** (menü veya terminalde `keyflip <ad>`): Claude açıksa
 >   **kapatılmadan önce sorulur** — *hayır* derseniz iptal edilir.
 > - `--restart`: sormadan kapatıp yeniden açar (macOS).
-> - `--force`: kapatmadan geçer — sonrasında Claude'u kendiniz yeniden başlatın.
+> - `--force`: kapatmadan geçer — sonrasında Claude'u kendiniz yeniden başlatın. **Masaüstü uygulaması** başka bir hesapta çalışıyorsa paylaşılan girişi geri yazıp geçişi bozabilir; `--force` bunu tespit edince uyarır ve `--restart` önerir.
 > - Etkileşimsiz (pipe/CI) ve Claude açıkken bayraksız: uygulamanızı beklenmedik
 >   şekilde kapatmak yerine reddeder.
 

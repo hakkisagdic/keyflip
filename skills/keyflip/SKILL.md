@@ -37,8 +37,10 @@ login and stores it. Two ways:
 - **`keyflip onboard`** — the full guided first-run: per account it drives a browser
   sign-in, captures it (CLI + browser), points the live CLI at it, offers to capture
   the Claude Desktop app too (the user signs the app in, keyflip snapshots it), syncs
-  all chats, then asks for the next. Superset of `setup`; interactive (TTY) — tell the
-  user to run it themselves, ideally NOT inside the desktop app.
+  all chats, then asks for the next. At the per-account prompt, choosing **`p`** adds an
+  **API-key provider** endpoint inline (name → base URL → bearer/api-key → hidden key →
+  optionally route to it) instead of an OAuth subscription. Superset of `setup`;
+  interactive (TTY) — tell the user to run it themselves, ideally NOT inside the desktop app.
 - **`keyflip setup`** — a lighter wizard: it captures the current login, then
   auto-detects each new account as the user signs into it (`/logout`→`/login`, or
   the desktop app) and saves it, until they type `d`. Interactive (TTY).
@@ -51,20 +53,29 @@ login and stores it. Two ways:
   OAuth uses the browser's current claude.ai session, so if the browser is signed
   into a different account, keyflip captures THAT and warns (mismatch) — the user
   must sign the browser into the target account first (see `keyflip browser`).
+  For an **enterprise / SSO** account add `--sso` (drives `claude auth login --sso`,
+  handling the org picker); `--console` captures a Console (API) account. Both flags
+  also work on `keyflip onboard` (they apply to every OAuth sign-in in that run).
 
 **Browser / the Claude Chrome extension (macOS):** the extension has no login of
 its own — it inherits the browser's claude.ai session. If that != the active
 CLI/desktop account, the extension's native-messaging bridge refuses to connect
 ("user mismatch"). `keyflip browser status` shows the browser's claude.ai account
 and flags a mismatch; `keyflip browser logout` clears it (reversible, quit the
-browser first) so the user can sign in as the right account.
+browser first) so the user can sign in as the right account. `keyflip browser sync
+[name]` restores a previously-captured session for that account into the browser
+(defaults to the active account) — the same alignment `keyflip <name> --browser` does
+on a switch. Sessions are captured automatically during `onboard`/`login`.
 
-**Via MCP:** these are also tools — `keyflip_login` (add an account by browser
-sign-in), `keyflip_logout` (sign out of cli/browser surfaces), `keyflip_browser_status`
-(read the browser/extension account), `keyflip_browser_logout` (reset it),
-`keyflip_consolidate` (sync all chats across accounts — needs the desktop app
-closed). The mutating ones require `confirm: true`; `keyflip_login` opens a browser
-for the human. The `onboard`/`setup` wizards are TTY-interactive, so they stay CLI-only.
+**Via MCP:** almost everything here is also an MCP tool — `keyflip_login`, `keyflip_logout`,
+`keyflip_browser_status`/`_logout`/`_sync`, `keyflip_consolidate`, `keyflip_switch`/`_next`,
+`keyflip_list`/`_status`, providers, backups; session lifecycle: `keyflip_sessions` (search
+returns content snippets + an `orphan` flag), `keyflip_sessions_rebind` (folder-rename fix),
+`keyflip_sessions_archive`/`_unarchive`/`_archived`; cross-machine: `keyflip_migrate_export`/
+`_import`/`_push`/`_pull` (export takes `agents:true` to also carry other agents' memory) and
+`keyflip_agents` (inspect); git versioning: `keyflip_history`/`_undo`/`_restore`. The mutating
+ones require `confirm: true`; `keyflip_login` opens a browser for the human. Only the
+TTY-interactive wizards (`onboard`/`setup`) and the foreground `transfer serve` stay CLI-only.
 
 ## Read state (safe, no confirmation needed)
 
@@ -85,6 +96,9 @@ proof the account is rate-limited), `error` (network), `no-creds`/`no-token`.
 keyflip <name|number> --force     # swap in place; a running Claude Code picks it
                                    # up on its next request (keychain cache ~30s on macOS)
 keyflip <name> --restart          # also close & reopen the desktop app (full switch)
+keyflip <name> --browser          # also align the browser's claude.ai session (and thus
+                                   # the Claude Chrome extension) to this account, from a
+                                   # saved snapshot — captured during onboard/login
 keyflip next --strategy best            # rotate to the account with most headroom
 keyflip next --strategy next-available  # first account that isn't exhausted
 ```
@@ -92,6 +106,11 @@ keyflip next --strategy next-available  # first account that isn't exhausted
 Inside an active Claude Code conversation, prefer `--force` (in-place): the
 session continues on the new account without closing anything. Use `--restart`
 only when the user also wants the desktop app moved — it closes the app.
+
+**Desktop↔CLI tug-of-war (macOS):** a `--force` swap only moves the CLI credential.
+If the Claude **desktop app** is running on a *different* account, it can rewrite the
+shared login and silently undo the switch — `--force` prints a warning when it detects
+this. To make the switch stick, use `--restart` (moves the app too) or quit the app.
 
 ## When the user hits a rate limit
 
@@ -135,6 +154,67 @@ account; `keyflip provider off` restores it. Never put an API key in argv — us
   '<url>'` previews + confirms. Account links are pointer-only (never the token).
 - `keyflip sync push|pull --url <webdav> --passphrase-file <f>` — encrypted
   cross-device sync. Or point `KEYFLIP_CONFIG_DIR` at a Dropbox/iCloud folder.
+- `keyflip migrate export <file> [--passphrase-file <f>]` — bundle EVERYTHING
+  portable (all accounts + providers + every Claude Code session transcript **+ your
+  `~/.claude` MEMORY**: CLAUDE.md and `projects/*/memory/*`) to carry to a new machine;
+  encrypt with `--passphrase-file`. `keyflip migrate import <file> [--force]
+  [--passphrase-file <f>]` **MERGES** it into the target: accounts, providers,
+  transcripts AND memory are UNIONed — anything already there is kept (never clobbered)
+  unless `--force`. Trim/select what goes in the bundle (also on `migrate push` and `transfer
+  serve`): `--no-memory`/`--no-sessions`/`--no-providers`/`--no-accounts`, or select transcripts
+  with `--sessions <id,id>` / `--search "<term>"` / `--newer-than <7d>` / `--older-than <30d>`,
+  or `--only-sessions` / `--only-memory` / `--only-config` / `--only-agents` for a single-kind bundle. The bundle
+  also carries **portable CONFIG** (J): keyflip's **MCP registry**, Claude Code's `settings.json`,
+  and Claude Desktop's MCP config — so a new machine is ready (`--no-config` to exclude).
+- `keyflip agents` — list which **other AI agents** have MEMORY and/or CONFIG on this machine
+  that keyflip can carry (Cursor `~/.cursor/rules/`+`mcp.json`, Gemini `~/.gemini/GEMINI.md`+`settings.json`,
+  Codex `~/.codex/AGENTS.md`+`memories/`+`config.toml`). Add `--agents` (or `--agents=cursor,gemini`)
+  to carry MEMORY (**markdown ONLY**, no secrets), and/or `--agent-config` to carry CONFIG (MCP
+  servers/settings) — config is **ALWAYS secret-scanned + redacted** (`src/secretscan.js`) so keys
+  NEVER travel; the structure moves and you re-enter keys on the new machine (`${ENV}` refs are kept).
+  Re-redacted again on import (defence in depth). Both off by default; work on `migrate export`/`push`
+  / `transfer`. (MCP: `keyflip_agents` to inspect; `agents:true` / `agent_config:true` on `keyflip_migrate_export`.)
+- `keyflip settings [show | get <key> | set <key> <value> | unset <key>]` — view/edit
+  `~/.claude/settings.json` (dot-paths for nesting, e.g. `set env.ANTHROPIC_MODEL opus`; Claude
+  hot-reloads it). These settings ride `migrate`/`transfer` to other machines. (MCP: `keyflip_settings`.)
+- `keyflip statusline install` — show the active account (+ provider, + cached quota) right in the
+  Claude Code prompt. `keyflip statusline` (no args) emits the line; `uninstall` removes it. Fast,
+  cache-only (no network). (MCP: `keyflip_statusline`.)
+- `keyflip panel [--open]` — a command-activated LOCAL web dashboard (loopback only, read-only, not a
+  daemon): account grid with quota bars + 5h usage sparklines, a **session-activity calendar heatmap**
+  (GitHub-style, 26 weeks) and a **memory constellation** (keepsakes linked by shared terms), providers,
+  recent sessions (folder-gone flagged), keepsakes.
+  Ctrl-C stops it. It's a human UI over the same data the read MCP tools expose, so it stays CLI-only.
+  `keyflip panel --export <file> [--anon]` writes a **share-safe STATIC snapshot** (self-contained
+  HTML, no script/fetch/secrets; accounts+quota+activity+providers ONLY — no session content;
+  `--anon` masks emails/names). For "here's my account/quota picture" without exposing anything private.
+- **VS Code companion** (`vscode-keyflip/`, not an MCP surface): status-bar account indicator, a
+  QuickPick switcher (with 5h/7d quota), Open Dashboard, and a status view — all shelling out to the
+  `keyflip` CLI with `--json`. Local `.vsix` install (no marketplace yet). Bilingual README.
+  Desktop-app/browser logins are machine-bound — re-capture via `onboard`.
+  Via MCP: `keyflip_migrate_export` / `keyflip_migrate_import` (both need `confirm:true`).
+  No-LAN relay: `keyflip migrate push --url <webdav> --passphrase-file <f>` on the
+  source, `keyflip migrate pull --url <same> --passphrase-file <f> [--force]` on the
+  target — same encrypted bundle, moved through a WebDAV server (always encrypted;
+  pull previews + merges).
+- `keyflip transfer serve` (source) ↔ `keyflip transfer pull [<host:port>] --code XXXX`
+  (target) — LIVE device-to-device transfer over the LAN, no file or cloud. `serve`
+  shows a one-time code (add `--qr` for a scannable terminal QR of the `keyflip://transfer?…`
+  pairing URL — zero-dep encoder, decoder-verified) and streams the encrypted bundle only to a
+  peer presenting it (single-shot, auto-expires, rate-limited); `pull` auto-discovers the peer via
+  a UDP beacon when no host is given, then MERGES (same union semantics; `--force` overwrites).
+  **Reverse (push):** `keyflip transfer serve --receive` on the TARGET waits with a code, and
+  `keyflip transfer push <host:port> --code XXXX` on the SOURCE sends (with the E2 filters) to
+  it — for "send my sessions to my other, listening machine". LAN transfer is TTY/foreground so
+  it stays CLI-only; the MCP path for cross-machine is `keyflip_migrate_push`/`_pull` (WebDAV).
+- `keyflip consolidate [--watch]` — sync every account's chat index so each shows
+  ALL conversations. The desktop app's store is locked while it runs, so a one-shot
+  offers to close→sync→reopen the app; `--watch` re-syncs on an interval whenever the
+  app is closed. Also runs automatically on a switch. (MCP: `keyflip_consolidate`.)
+- `keyflip history` / `keyflip undo` / `keyflip restore <ref>` — keyflip's config/state dir
+  is a git repo; every mutation auto-commits (**secrets are git-ignored** — creds/*.cred,
+  browser sessions, tokens stay in the OS store), so any change is inspectable and
+  reversible. `keyflip versioning [on|off]` toggles it (ON by default; needs `git`).
 - `keyflip mcpreg` — manage MCP servers once, project into Claude Code + Desktop.
 - `keyflip gateway use <provider>` — route the Claude **desktop app** through a
   provider gateway (restart the app to apply).
@@ -144,7 +224,21 @@ account; `keyflip provider off` restores it. Never put an API key in argv — us
 Transcripts live in `~/.claude/projects` and are account-independent.
 
 ```bash
-keyflip sessions [--search "oauth"] [--here]   # list/search conversations, all accounts
+keyflip sessions [--search "oauth"] [--here]   # list/search conversations, all accounts;
+                                       #   --search matches transcript CONTENT + shows a snippet; flags
+                                       #   sessions whose folder is gone (⚠) and suggests rebind
+keyflip sessions rebind <old> <new>   # re-link a project's chat history after renaming/moving its folder
+keyflip sessions assign <id> <account>   # continue a session AS another account (resume --run runs it isolated) — NO profile switch
+keyflip resume <id> --as <account>    # ...or one-off: resume this session under another account without switching profiles
+keyflip send <id> "<message>" [--as <account>] [--fork]   # inject a message into a session headlessly (steer/continue it; e.g. from another machine)
+keyflip sessions archive <id|--older-than 30d>   # move old transcripts into keyflip (gzipped), declutter ~/.claude
+keyflip sessions unarchive <id>       # restore an archived transcript (byte-exact); `sessions archived` lists them
+keyflip sessions distill <id> [--to-claude]   # summarize a chat into a durable keepsake (via `claude -p`; spends the active account)
+keyflip sessions compact <id> [--apply]   # shrink a transcript (elide bulky tool output, keep the conversation; dry-run default)
+keyflip memory [show <key>]           # browse keyflip's own distilled keepsakes (independent of ~/.claude memory)
+keyflip recall "<query>" [--semantic] [--answer]  # recall across ALL your chats (BM25 default; --semantic = embeddings via Ollama/hosted; --answer = a CITED synthesis via `claude -p`)
+keyflip dream [--older-than 30d] [--archive] [--apply]   # "dreaming": distill (+ optionally archive) old chats in one pass; DRY-RUN by default
+keyflip dream schedule [--at 03:00] | unschedule | status   # run the dream nightly, unattended (launchd on macOS, cron on Linux)
 keyflip resume <number|id>            # print the resume command for its original dir
 keyflip resume <id> --run             # launch `claude --resume <id>` in that dir
 keyflip cowork [--search T]           # browse Claude desktop Cowork sessions (all accounts)
@@ -195,7 +289,9 @@ live copies of the same account.
 | account shows `[cli — ]` or `[app — ]` in `list` | that surface was never captured: `keyflip add` (CLI and/or app auto-detected) or `keyflip add <name> --app` |
 | "keychain locked" errors | ask the user to unlock the login keychain; profile storage falls back to files automatically |
 | switch says an account is in use by live sessions | those PIDs are real running Claudes — ask the user before `--force` |
-| moving to a new machine | `keyflip export -` (SECRETS — pipe through gpg) → `keyflip import` there; desktop logins must be re-captured on the new machine |
+| moving to a new machine | `keyflip migrate export bundle --passphrase-file f` (accounts + providers + all session transcripts) → `keyflip migrate import bundle --passphrase-file f` there — it MERGES with the sessions already on that machine (`--force` to overwrite). (`export`/`import` move accounts only.) Desktop-app/browser logins are machine-bound — re-capture via `keyflip onboard` |
+| chat history lost after renaming/moving a project folder ("working directory no longer exists") | `keyflip sessions rebind <old-path> <new-path>` — copies the transcripts to the new folder key, rewrites the old cwd inside them, and patches the desktop-app session records (run with Claude closed; restart it after). Old copies are backed up. |
+| also carry my OTHER agents' memory/config to the new machine | `keyflip agents` to see what's present, then `keyflip migrate export bundle --agents` (memory, markdown-only) and/or `--agent-config` (MCP/settings, **secret-scanned + redacted**) → import as usual. Carries Cursor/Gemini/Codex; auth/credential files never travel and config keys are redacted (re-enter on the target). |
 | keyflip is misbehaving but accounts are fine | `keyflip reset --soft` — clears only runtime state (usage history, breakers, proxy state, caches, logs) and routes back to the subscription; **keeps saved accounts**. Confirm first (`--force` to skip). |
 | user wants a full wipe / remove keyflip | **`keyflip reset`** is a FACTORY reset — DELETES all keyflip data (accounts, providers, backups), app stays installed. `--logout [--no-desktop]` also signs out the live surfaces. `keyflip uninstall` removes the app (`--purge` also deletes data). All destructive — get consent, they prompt unless `--force`. |
 

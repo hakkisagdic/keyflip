@@ -518,14 +518,388 @@ Windows/enterprise devices to validate.
 
 | # | Gap | Plan | Effort |
 |---|---|---|---|
-| **1** | **Browser sync on SWITCH.** `keyflip <name>` aligns CLI (+desktop) but leaves the browser/extension on the old account → "user mismatch". | On switch, sync the browser too: snapshot each account's claude.ai cookies at capture, restore the target's on switch (quit → write → reopen); robust fallback = quit+clear so the next claude.ai visit re-logs-in as the active account. Backups + closed-browser guard. | high (fragile: cookie write, app-bound v20) |
-| **2** | **Windows / Linux onboard.** Browser+desktop steps are macOS-only. | Windows: desktop capture works; add DPAPI cookie decrypt for the browser. Linux: browser via libsecret; no desktop app. | high (needs devices) |
-| **3** | **`consolidate` needs the app closed.** Chats don't sync while Claude Desktop is open. | At end of onboard (and on switch), offer to quit the app → consolidate → reopen. | medium |
-| **4** | **Sync isn't continuous.** New chats under B don't appear under A until re-consolidated. | Re-consolidate on every switch; optionally a `keyflip consolidate --watch`. | medium |
-| **5** | **Desktop account "unknown".** captureApp fails when the app's account can't be identified. | Harden detectAppAccount (more signals: config.json, token store, org uuid); clearer errors. | medium |
-| **6** | **Provider (API-key) accounts in onboard.** onboard only does OAuth subs. | Add an onboard branch: "add a provider/API-key account?" → `provider add` inline. | low |
-| **7** | **Enterprise / SSO + 2FA sign-in.** `--sso` exists but untested end-to-end. | Validate the `claude auth login --sso` path through onboard; handle org-picker. | medium (needs an SSO org) |
-| **8** | **macOS desktop↔CLI `~/.claude` tug-of-war.** The running desktop app can rewrite the CLI credential after a switch. | Detect + warn; optionally pause/close the app during a CLI switch; document. | medium |
+| **1 ✅ DONE** | **Browser sync on SWITCH.** `keyflip <name>` aligned CLI (+desktop) but left the browser/extension on the old account → "user mismatch". | Shipped: `snapshotClaudeCookies`/`restoreClaudeCookies` (sqlite `.mode insert`, encrypted bytes verbatim → works for app-bound v20). Sessions captured at onboard/login into `<cfg>/browser-sessions/<name>__<browser>.sql`; restored by `keyflip <name> --browser` (quit → replay → reopen, DB backup + closed-browser guard) or `keyflip browser sync [name]`. Non-`--browser` switch still just warns (now with the auto-sync hint). | high (fragile: cookie write, app-bound v20) |
+| **2 ◑ MAPPED** | **Windows / Linux onboard.** Browser+desktop steps are macOS-only. | Full port map written: **[docs/PORTING.md](docs/PORTING.md)** — support matrix, per-platform cookie decrypt (Win DPAPI+GCM / Linux libsecret), credential-store options, desktop-app DPAPI branch, function-level seams + skeletons + test strategy + suggested order. Switching/providers/migrate/etc already cross-platform; the file credential store already works everywhere. **Remaining: implement per PORTING.md (needs Windows + Linux devices).** | high (needs devices) |
+| **3 ✅ DONE** | **`consolidate` needs the app closed.** Chats didn't sync while Claude Desktop was open. | Shipped `keyflip consolidate`: a one-shot offers to close→sync→reopen the app (TTY/`-y`), else defers with a clear message. | medium |
+| **4 ✅ DONE** | **Sync isn't continuous.** New chats under B didn't appear under A until re-consolidated. | Shipped: every switch re-consolidates (incl. `--force`, deferring if the app is open); `keyflip consolidate --watch [--interval N]` re-syncs on an interval whenever the app is closed. | medium |
+| **5 ✅ DONE** | **Desktop account "unknown".** captureApp failed when the app's account couldn't be identified. | `detectAppAccount` now ALWAYS returns `{org,account,email,reason}` and FALLS BACK to the config's allowlist org when the token can't be decrypted (no cache / keychain locked / decrypt-fail), recovers the account by org→folder match, and searches email in both per-account stores. `status`/`list` show the recovered email (or `<org>… (unsaved)`) instead of "unknown", and mark unsaved accounts in `--json` (`saved:false`). `add --app` prints a `reason`-specific hint (unlock keychain / open the app / not set up). Detection runs once per view (no double Keychain prompt). +6 tests. | medium |
+| **6 ✅ DONE** | **Provider (API-key) accounts in onboard.** onboard only did OAuth subs. | The per-account prompt now offers `p` → inline provider capture (name → base URL → bearer/api-key → HIDDEN key via a reused readline → optional `keyflip use`). Key never on argv. Done-condition + summary count providers. `onboardProvider` extracted + unit-tested (5 tests: api-key, keyless bearer, bad URL, empty name, duplicate). | low |
+| **7 ◑ WIRED** | **Enterprise / SSO + 2FA sign-in.** `--sso` existed on `login` but not onboard, and is untested end-to-end. | `login` already forwards `--sso`/`--console` to `claude auth login`; now `keyflip onboard [--sso] [--console]` does too (applies to every OAuth sign-in in the run). The org-picker/2FA is handled by `claude auth login` itself via `stdio:'inherit'`. Documented (help + SKILL + README EN/TR) + argv wiring locked by a unit test (`login.buildLoginArgs`). Validation checklist: **[docs/ENTERPRISE-SSO.md](docs/ENTERPRISE-SSO.md)**. **Remaining: live end-to-end validation on a real SSO org (device-gated).** | medium (needs an SSO org) |
+| **8 ✅ DONE** | **macOS desktop↔CLI `~/.claude` tug-of-war.** The running desktop app can rewrite the CLI credential after an in-place switch. | New `platform.isDesktopAppRunning()` (app-only, distinct from the CLI). A `--force` swap now calls `desktopTugRisk(ctx, name)` and WARNS when the desktop app is running on a different account (points to `--restart`, which moves the app too). Pure risk helper + 5 tests; documented (SKILL + README EN/TR). | medium |
+| **9 ✅ DONE** | **Move to a NEW machine with everything — and MERGE, not overwrite.** Today `export`/`import` moves accounts (secrets) but not transcripts/sessions; desktop logins must be re-captured; and import replaces rather than merges. The user wants: carry ALL accounts + ALL sessions/chats to the target machine, and on arrival **merge** them with whatever sessions already live there. | A single portable bundle: `keyflip migrate export <file>` = accounts (secrets, gpg-able) + `~/.claude/projects` transcripts + Cowork sessions + browser-session snapshots + provider/config metadata, with a manifest. `keyflip migrate import <file> [--merge]` = **union** by sessionId (never clobber a transcript that already exists; dedupe pointers via the existing consolidate logic), add-or-skip accounts (only overwrite with `--force`), re-run `consolidate` so every account sees the combined set. Desktop logins re-captured on the target (documented). Reuses `share`/`export` secret-handling + `appsessions.consolidate` for the merge. | high |
 
-Order: **#1** (biggest value) → #3/#4 (sync continuity) → #5 → #6 → #2/#7/#8
-(device-gated).
+| **10 ✅ DONE** | **LIVE device-to-device transfer.** #9 moves a FILE by hand. The user also wants to pull accounts + chats **directly from the other computer** — "migrate from machine B" without manually copying a bundle. | Reuse the #9 bundle as the payload, add a transport: (a) **`keyflip transfer serve`** on the source = a short-lived, one-time-code + passphrase-gated localhost/LAN endpoint that streams `migrate.buildBundle`; **`keyflip transfer pull <host> --code`** on the target decrypts + `applyBundle` (merge). (b) Zero-config discovery on the LAN (mDNS/Bonjour) so `pull` finds the peer. (c) Or lean on the existing `sync push/pull` (WebDAV) as the "cloud relay" path — already encrypted; just document it as the no-LAN option. Security: ephemeral pairing code, passphrase-derived key (reuse `sync.encrypt`), never expose secrets on argv, bind to loopback/LAN only, auto-expire the listener. **Decision (2026-07-03): build BOTH.** **(c) WebDAV cloud-relay — ✅ DONE:** `keyflip migrate push/pull --url <webdav> --passphrase-file <f>` moves the full encrypted bundle (accounts+providers+transcripts) through a WebDAV server; pull previews + merges. **(a) LAN-direct — ✅ DONE:** `keyflip transfer serve` shows an 8-char one-time code (40-bit base32) + streams the code-encrypted bundle over HTTP; single-shot, rate-limited (5 bad codes), auto-expires (TTL). `keyflip transfer pull [<host:port>] --code XXXX` auto-discovers the peer via a zero-dep UDP-multicast beacon (advertises host/port/fingerprint, never the code) then MERGES. Live two-process loopback round-trip verified. mDNS/Bonjour interop optional/later. | high |
+
+Order: **#1 ✅** → **#9 ✅** (file carry + merge) → **#3/#4 ✅** (sync continuity)
+→ **#10 ✅** (live device-to-device: LAN + WebDAV relay) → **#5 ✅** (desktop
+detection) → **#6 ✅** (provider in onboard) → **#8 ✅** (desktop↔CLI tug-of-war) → **#7 ◑** (SSO wired; live validation device-gated)
+→ **#2** (Windows/Linux onboard) — device-gated, last.
+
+**Non-device-gated roadmap is COMPLETE.** Remaining work is blocked on hardware/an SSO
+org: #7 live validation (an SSO org) and #2 (Windows + Linux machines for browser/desktop
+capture + DPAPI/libsecret cookie decryption).
+
+### Post-review hardening (2026-07-06, applied)
+
+A max-effort multi-agent adversarial review of the #1/#3/#4/#9/#10 changes ran (7
+review dimensions × 3-skeptic verification). Confirmed findings FIXED:
+
+- **HIGH — flag-value mis-parsed as the positional file/host.** `migrate export/import`
+  and `transfer pull` picked the first non-`--` token, so `--passphrase-file <f>` before
+  the file could **overwrite the passphrase file**, and `transfer pull --code X` treated
+  the code as the host (discovery never ran). Fixed with a shared `positionals()` that
+  skips value-flags + their values.
+- **HIGH — `migrate export` silently wrote an UNENCRYPTED secrets bundle** when
+  `--passphrase-file` was unreadable. Now fails loudly.
+- **HIGH — LAN discovery beacon crash.** The beacon dgram socket had no `'error'`
+  listener → an async socket error crashed foreground `transfer serve`. Handler added
+  (+ `req` error handler on the serve HTTP side).
+- **HIGH — `/ping`+beacon leaked a code-derived fingerprint** (16 bits of the 40-bit
+  code's keyspace). The display fingerprint is now a random per-serve nonce; `/ping` no
+  longer leaks bundle counts.
+- **MEDIUM — `consolidate --watch` died on the first transient error** (lock contention
+  etc.); now try/caught per tick. **`browserSync` force-wrote a still-running browser's
+  Cookies DB** (corruption) and reported success; now skips if the browser won't quit.
+  **`migrate export -`** mixed human notes into the piped bundle on stdout; notes now go
+  to stderr, and export/push/pull emit `--json`. **`migrate/transfer pull` held the
+  mutation lock across the network fetch + confirm prompt**; now locks only the write.
+  **A single invalid account aborted the whole `applyBundle`** (losing providers +
+  transcripts); accounts now import resiliently.
+- **LOW — cheap hardening:** `saveSession` chmods 0600 on a pre-existing file;
+  `isSafeSegment` rejects `:` (Windows drive/ADS).
+
+Deferred (lower-risk, tracked): 40-bit code offline-brute-force margin (mitigated by
+removing the fp leak; could widen to 10 chars); `--code` on argv (single-use, short TTL);
+`login`/`onboard` could stash a mismatched browser session under a new account (needs the
+account-match signal threaded through capture). 308 tests green (0 fail).
+
+### Post-review hardening — round 2 (#5 + #6, applied)
+
+A second adversarial review (3 dims × 2 skeptics) of the #5/#6 changes surfaced 5 real
+defects, all FIXED:
+
+- **HIGH — provider API key echoed in cleartext.** The onboard readline was created
+  without `terminal:true`, so `askHidden()`'s echo-mute never fired when stderr wasn't a
+  TTY (`onboard 2>file`) — the key leaked. Fixed (`terminal:true`, matching `promptHidden`).
+- **MEDIUM — stale-org mislabel (2 manifestations).** `detectAppAccount` used the
+  most-recent allowlist org unconditionally: (a) on a successful decrypt it could
+  confidently name a *different* stale account for a brand-new one — now the allowlist org
+  is used only if the decrypted token corroborates it, else `reason:'unresolved-org'`; and
+  (b) `captureApp` auto-paired on that fallback org and could snapshot the live account's
+  tokens into the WRONG profile — now it auto-identifies ONLY from a confirmed decrypt
+  (`!det.reason`), else requires an explicit name.
+- **LOW — wrong remediation hint.** `fromConfigOnly` masked `keychain-locked`/`decrypt-failed`
+  as `no-token-cache`; now preserves the real reason so the hint is right.
+- **LOW — signed-out app shown as an account.** `signOutApp` leaves the allowlist keys, so
+  the config-only fallback presented a signed-out app as `<org>… (unsaved)`; detection now
+  trusts the allowlist org only when the Cookies DB actually has a live session.
+
+320 tests green (0 fail); +2 appauth unit tests (signed-out, unresolved-org).
+
+### Post-review hardening — round 3 (final pre-commit sweep, applied)
+
+A final comprehensive review (4 dims × 2 skeptics) of the WHOLE changeset returned
+**FIXES-RECOMMENDED** — integration-clean (all callers consume the new detect shape; SSO
+wiring plumbed; dispatch/lock scopes correct), with 2 LOW findings, both FIXED:
+
+- **LOW — spurious tug-of-war warning for a running-but-signed-OUT app.** `desktopTugRisk`
+  used raw `detectActiveOrg` (stale allowlist org) without the cookie corroboration that
+  `detectAppAccount` already applies → a `--force` after sign-out could warn even though the
+  app can't rewrite anything. Now gated on `cookiesLookLoggedIn()` (still no Keychain access).
+  +1 test.
+- **LOW — bilingual docs drift.** `onboard --sso/--console` was in the code + help but not
+  the READMEs; added to README.md + README.tr.md.
+
+327 tests green (0 fail). Changeset cleared for commit.
+
+---
+
+## E7 — Chat/session/memory lifecycle & cross-machine/-account/-service management
+
+**Vision (from the user):** the hardest thing about Claude Desktop and agent apps is
+managing chats across multiple machines and accounts. keyflip becomes the control plane —
+carry, search, repair, archive, distill, and remotely steer sessions + memory across
+machines and accounts (Claude first; other AI services later, all MCP-exposed). Chats are
+valuable; as they age we want to store them elsewhere or keep their *insights* as keepsakes,
+maybe via a scheduled/background "dreaming" pass.
+
+Every item ships an MCP tool too (project rule).
+
+### A — Session portability & repair
+- **A1 ✅ DONE** — `keyflip sessions rebind <old> <new>`: re-link a project's chat history
+  after its folder was renamed/moved (transcripts moved to the new encoded-cwd key + old
+  cwd rewritten inside; macOS desktop-app session records patched; old copies backed up).
+  From the "Chat history folder rename issue" session. 6 tests.
+- **A2 ✅ DONE** — `keyflip sessions assign <id> <account>`: make a session visible/resumable under a
+  DIFFERENT account **without switching profiles** (transcripts are account-independent;
+  this patches the desktop app's per-account index + consolidate). MCP: `keyflip_session_assign`.
+- **A3 ✅ DONE** — Orphan detection: `keyflip sessions` flags sessions whose `cwd` no longer exists
+  and suggests `rebind`; `keyflip sessions doctor` lists all orphans.
+
+### B — Archival, compaction & distillation
+- **B1 ✅ DONE** — `keyflip sessions archive <id | --older-than 30d>`: move transcripts out of
+  `~/.claude/projects` into a keyflip archive store (declutter, keep retrievable);
+  reversible `unarchive`.
+- **B2 ✅ DONE** — Compress archived transcripts (gzip).
+- **B3 ✅ DONE** — `keyflip sessions compact <id>`: shrink a transcript (drop tool-output noise /
+  dedupe) while keeping the conversation.
+- **B4 ✅ DONE** — `keyflip sessions distill <id>` ("keepsake"): summarize a session into key
+  decisions/learnings via headless `claude -p`, save to a memory store — the insight
+  survives even after the raw is archived/deleted.
+
+### C — Background / scheduled ("dreaming mode")
+- **C1 ✅ DONE** — `keyflip dream [--policy …]`: a background pass that archives + compacts +
+  distills old sessions per a policy; on-demand + schedulable.
+- **C2 ✅ DONE** — Schedule it (cron/launchd or the `schedule` skill) to run nightly, unattended.
+
+### D — Unified search & management
+- **D1 ✅ DONE** — Full-text CONTENT search across ALL sessions/accounts (today `sessions --search`
+  matches the preview; extend to grep transcript bodies + rank by relevance/recency).
+- **D2** — Unified session index across accounts + machines, with tags/labels.
+
+### E — Cross-machine session/memory sync & remote control
+- **E1 ✅ DONE** — Carry MEMORY + config in the migrate/transfer bundle (`~/.claude` memory/,
+  CLAUDE.md, skills, settings) — "collect/distribute memory records across machines".
+  Extends `migrate.buildBundle`/`applyBundle` (union-merge, never clobber).
+- **E2 ✅ DONE** — Selective collect/distribute: pull specific sessions/memory FROM another machine
+  or push TO it (not just the full bundle) — filters on the existing transfer transport.
+- **E3 ✅ DONE** — Auto-connect to a machine in "listening" mode: the target runs `keyflip transfer
+  serve` (waiting), and this machine auto-logs-it-in + sends selected sessions/login with no
+  manual copy. Builds on #10's LAN transport.
+- **E4 ✅ DONE** — Remote session control by INJECTING a message: append a prompt to a session from
+  another machine (`claude -p --resume <id>` headless), so you steer/continue a session
+  remotely via keyflip. (Claude's CLI supports headless resume-with-prompt.)
+
+### F — Cross-service (Claude first, adapters later)
+- **F1** — Provider-agnostic session model + read adapters for other services' stores
+  (Copilot, Gemini, Codex).
+- **F2** — Continue a session started elsewhere (e.g. Copilot) with Claude (normalize →
+  Claude-resumable transcript).
+- **F3** — All of the above exposed as MCP tools.
+
+### Suggested order (implementable-now first; no hardware/SSO org needed)
+**A1 ✅** → **E1** (memory in bundle) → **D1** (content search) → **B1/B2** (archive+compress)
+→ **A3** (orphan detect + rebind hint) → **B4/C** (distill + dream — needs a `claude -p`
+seam) → **A2** (assign) → **E4** (remote inject) → **E2/E3** (selective + auto-connect) →
+**F** (cross-service, last).
+
+### G — Visualization & UI surfaces (DRAFT — pending alignment)
+
+**Architectural principle:** keyflip already emits `--json` on every read command and
+ships an MCP server. So EVERY UI is a thin presentation/act layer over ONE contract — build
+the data/act API once, and all surfaces below consume it. No UI gets its own logic.
+
+Candidate surfaces (pick + prioritize together):
+- **G1 ✅ DONE** — `keyflip panel` (local web dashboard).** The hub, command-activated (start/stop,
+  never a daemon), bound to loopback. Account grid with live 5h/7d quota bars; which surface
+  each account is on (CLI/desktop/browser/extension) + mismatch flags; provider + proxy live
+  stats; session browser + content search; migrate/transfer status; distilled-memory browser.
+  Read **and** act (switch/rotate/rebind/archive) via buttons → same CLI/MCP underneath.
+- **G2 ◑ (v0.2 shipped) — VS Code / JetBrains extension.** `vscode-keyflip/`: status bar
+  (active account · click-to-switch), command palette (switch with 5h/7d quota + capture state,
+  open dashboard, show status), 60s network-free refresh. Testable core in `lib.js`
+  (`test/vscode-lib.test.js`), bilingual README. **Remaining:** sessions tree view, inline
+  tug-of-war / browser-mismatch warnings, renamed-folder → `rebind` prompt, JetBrains, marketplace.
+- **G3 ✅ DONE** — Claude Code status line.** A `keyflip statusline` script showing active account +
+  quota right in Claude Code's prompt. Cheapest, native, zero chrome.
+- **G4 — macOS menu-bar / Windows-Linux tray.** The always-glanceable surface: current
+  account, quota %, one-click switch/rotate, "transfer received" notifications. ⚠️ TENSION: a
+  tray app is a resident process — either an explicit opt-in exception to the no-daemon rule,
+  or a poll-on-open shim. Decide before building.
+- **G5 ◑ (sparklines + calendar + constellation done) — Data-viz inside the panel.**
+  ✅ per-account 5h sparklines; ✅ **session-activity calendar heatmap** (GitHub-style, 26 weeks,
+  `buildActivity`); ✅ **memory constellation** (keepsakes linked by shared top-terms, `buildMemoryGraph`)
+  — both browser-verified, tested (`test/panel.test.js`). **Remaining:** headroom heatmap (partly
+  redundant with the quota bars), cross-machine topology map (needs a multi-machine inventory that
+  doesn't exist yet — device-gated). Panel now serves `no-store` HTML + ignores query strings.
+- **G6 ✅ DONE — Visual pairing for LAN transfer (#10).** `keyflip transfer serve --qr` renders a
+  scannable terminal QR of the `keyflip://transfer?host=…&code=…&fp=…` pairing URL. Ships a
+  **zero-dep QR encoder** (`src/qr.js`: GF(256)/Reed-Solomon/BCH/masking, byte mode, versions 1-10,
+  ECC L/M). Verified end-to-end: every primitive pinned to published ISO/IEC 18004 constants +
+  RS-divisibility + format-info readback, AND the rendered QR decoded by the browser's native
+  BarcodeDetector back to the exact payload (`test/qr.test.js`). Also on `serve --receive`.
+- **G7 — Launcher extensions (Raycast/Alfred, macOS).** Fast switch/rotate/"which account"
+  from the launcher.
+- **G8 ✅ DONE — Shareable read-only snapshot.** `keyflip panel --export <file> [--anon]`
+  writes a FULLY STATIC, self-contained HTML (server-side inline SVG — no script, no fetch,
+  works offline): accounts + quota bars + sparklines, the activity calendar, providers.
+  DELIBERATELY excludes all private content (session cwds/previews, keepsakes, the memory
+  constellation); `--anon` also masks emails + account/provider names. Browser-verified;
+  `test/panel.test.js` asserts no session/keepsake content ever leaks into the file.
+- **G9 — TUI** (already in E5): `keyflip ui`, keyboard-only (no mouse), full-screen switcher +
+  usage sparklines + session search.
+
+Recommended core four to start: **G1 (panel)** + **G3 (status line, cheapest)** +
+**G2 (VS Code)** + **G4 (tray, if we accept the daemon exception)**; G5/G6 as enhancers.
+
+---
+
+## H — Cross-cutting infrastructure principles (DECIDED 2026-07-06)
+
+These apply to the WHOLE codebase, not one feature.
+
+### H1 — keyflip owns its memory; Claude feedback is opt-in
+- keyflip maintains its OWN memory store (`<configDir>/memory/`): it manages what it
+  **compacts, archives, and distills** into durable keepsakes — independent of Claude's
+  `~/.claude` memory.
+- Feeding results BACK into Claude's `~/.claude` memory happens ONLY behind an explicit
+  toggle/flag (e.g. `--to-claude` or a config setting). Default: keyflip curates its own
+  layer and does NOT touch Claude's memory.
+
+### H2 — consent flag before destructive / experimental actions
+- Anything destructive (archive-that-deletes, compact-that-drops-raw, dream's auto-cleanup,
+  writing into Claude's memory) is **dry-run / preview by default** and requires an explicit
+  opt-in flag (`--apply` / `--force`) to actually mutate. Safe for experimentation.
+
+### H3 — git-backed versioning everywhere (secrets EXCLUDED)  ·  **FOUNDATION ✅ DONE (2026-07-06)**
+> Shipped `src/vcs.js` + auto-init + auto-commit at the `withLock` funnel (label = command
+> name) + managed secret-excluding `.gitignore` + `keyflip history` / `undo` / `restore` /
+> `versioning [on|off]`. ON by default; `KEYFLIP_VCS=off` disables (used by the test suite);
+> `.noversion` marker = user opt-out. Best-effort (never breaks a mutation), degrades to no-op
+> without `git`. Live-verified: mutations commit, secrets stay untracked, undo reverts. 5 tests.
+> NEXT in H3: (2) migrate `backup`/`reset`/`sync` safety copies onto git (remove ad-hoc dirs);
+> (3) gzip + version compacted/archived transcripts.
+
+- keyflip's config/state/memory dir is a **git repo**; every mutation auto-commits with a
+  descriptive message, so any change is inspectable (`keyflip history`) and reversible
+  (`keyflip undo` / `restore <ref>`). Rollbacks become first-class.
+- **HARD CONSTRAINT — never commit secrets.** A managed `.gitignore` excludes `creds/`,
+  `*.cred`, `browser-sessions/*.sql`, and anything token-shaped. Git tracks only the
+  no-secret set (profile metadata, provider meta, config, breakers, proxy/links, the memory
+  store) — the SAME set `keyflip backup` already snapshots. Secrets stay in the OS store.
+- Single integration point: mutations already funnel through `withLock` / the dispatcher —
+  commit once there (with the command name as the message) rather than sprinkling commits.
+- Composes with (and can subsume) the existing ad-hoc backups (`backups/`, `pre-sync-backups/`,
+  `.keyflip-bak`). Raw `~/.claude/projects` transcripts live OUTSIDE this repo; keyflip's
+  git tracks its own curated memory/metadata, not the raw bulk.
+
+**Forks — DECIDED (2026-07-06):**
+- **Default ON** — a real install auto-inits `configDir` as a git repo and commits every
+  mutation. `keyflip version off` disables. (Tests opt out via `KEYFLIP_VCS=off`.)
+- **Merge the ad-hoc backups INTO git** — end state removes `backups/` / `pre-sync-backups/`
+  / `.keyflip-bak` in favor of git history. Sequencing: ADD git first (both coexist briefly),
+  verify, THEN remove the ad-hoc paths — so we never lose the safety net mid-migration.
+- **Track compacted + archived transcripts too** (not only distilled + metadata) — full,
+  reversible history. Large `.jsonl` are gzipped before commit to bound repo growth. Raw
+  live transcripts still live in `~/.claude/projects` (outside the repo) until archived.
+
+H3(1) ✅ DONE: `src/vcs.js` foundation + auto-init + auto-commit at the `withLock` funnel +
+managed secret-excluding `.gitignore` + `keyflip history`/`undo`/`restore`/`version`; then
+keyflip `history`/`undo`/`restore`/`versioning` shipped; secrets git-ignored; `KEYFLIP_VCS=off` for tests; 5 vcs tests. NEXT: (2) migrate `backup`/`reset`/`sync` safety copies onto git; then (3) the memory/dream layer
+on top (with H1/H2 toggles + git as the undo net).
+
+### I — Semantic recall / RAG over your chats (NEW — user-proposed, ACCEPTED 2026-07-06)
+
+**Idea (user):** put the chat corpus behind a RAG system — search *across* chats
+semantically (not just literal jsonl grep), research the history of a topic, and get
+synthesized answers. A real differentiator: big vendors don't give good cross-conversation
+semantic recall over YOUR local data.
+
+**Design that fits keyflip (zero-dep, local-first, command-activated):**
+- **Index the DISTILLED KEEPSAKES, not raw transcripts.** distill (B4) already condenses
+  each session to a small high-signal summary — a tiny, cheap corpus. This is what makes RAG
+  affordable here, and ties directly into the dreaming layer (dream distills → same pass
+  indexes).
+- **Two-tier retrieval:**
+  - **I1 ✅ DONE** — local lexical (default, zero-dep, offline, private):** BM25 + light query
+    expansion over keepsakes (and optionally transcripts). No embeddings, no network, no cost.
+    Already ~most of the value; the honest "works everywhere" baseline.
+  - **I2 ✅ DONE** — optional embedding layer (opt-in):** embed keepsakes via a USER-CONFIGURED
+    embedding provider — local **Ollama** (private + free) or a hosted key — into a SQLite
+    table (system binary, no dep); brute-force cosine at query time (fine for thousands of
+    vectors). NO bundled model, so zero-dep holds. Off by default.
+  - **I3 ✅ DONE — RAG answer (opt-in):** at query time, re-rank + synthesize an answer over the
+    retrieved chunks via `claude -p` (the seam already exists), with citations back to the
+    source sessions. This is "research the history of X" with a real answer.
+- **`keyflip recall "<query>"`** — the one command: lexical by default, `--semantic` for the
+  embedding layer, `--answer` for the RAG synthesis. Exposed via MCP (`keyflip_recall`).
+- Caveats to hold: true vectors need SOME model (external/local) → semantic is opt-in, not
+  default; never send chat content to a third party without an explicit provider opt-in.
+
+**Order:** I1 (local lexical over keepsakes) first — cheap, private, immediately useful and
+composes with distill; then I2 (opt-in Ollama/hosted embeddings); then I3 (`claude -p` answer).
+
+### J — Portable state: agent memory + MCP config + account settings (NEW — user 2026-07-06)
+
+**Idea (user):** "I have 2 machines but everything for this project is on one, so I can't
+work from the other." Extend the migrate/transfer bundle (E1) beyond Claude memory to carry
+ALL the portable state that makes a machine ready:
+- **J1 — other agent platforms' memory/config dirs**, not just Claude: a registry of known
+  locations (Cursor, Copilot, Codex, Gemini, opencode, Aider…) → collect + union-merge like
+  E1 does for `~/.claude`. Off-by-default per platform; opt-in list.
+  **✅ v1 SHIPPED (2026-07-06):** `src/agents.js` registry (Cursor `~/.cursor/rules/`, Gemini
+  `~/.gemini/GEMINI.md`, Codex `~/.codex/AGENTS.md`+`memories/`), existence-gated, **home-level
+  MARKDOWN memory only — no config/auth/secrets**. Wired into the migrate/transfer bundle behind
+  opt-in `--agents` (or `--agents=cursor,gemini`), union-merge with path-traversal + memory-shape
+  guards. `keyflip agents` inspects; MCP `keyflip_agents` + `agents:true` on `keyflip_migrate_export`.
+  Composes with the E2 bundle filters (`--only-agents`). 12 tests. See `docs/MULTI-AGENT-STATE.md`.
+  **✅ CONFIG-TIER SHIPPED (2026-07-07):** carry other agents' CONFIG files too (Cursor
+  `~/.cursor/mcp.json`, Gemini `~/.gemini/settings.json`, Codex `~/.codex/config.toml`) behind
+  opt-in `--agent-config` (`--only-agent-config`). Built on a new reusable **`src/secretscan.js`**
+  (known token shapes: sk-ant/sk/ghp_/AIza/xoxb/AKIA/Bearer/JWT/private-key + credential-shaped
+  keys) that REDACTS every plaintext secret before it can travel — the structure moves, the keys
+  don't (re-enter on the new machine). Redacted on collect AND re-redacted on merge (defence in
+  depth); env-refs (`${VAR}`) preserved; `*_TOKENS` limits kept. 12 tests incl. an adversarial
+  fuzz + the invariant `scanText(redact(x))===[]`. `keyflip agents` shows config + redaction
+  counts; MCP `agent_config:true` on export. **Residual limitation:** a secret under a benign key
+  name with no known prefix can slip the scanner — so real transfers should still be encrypted.
+  **Deferred:** Copilot/opencode/Aider (paths NEEDS-VERIFICATION on a real install).
+- **J2 — MCP configuration.** Carry the MCP server config across machines: Claude Code's
+  `mcpServers` (`~/.claude.json` / project `.mcp.json`) and Claude Desktop's
+  `claude_desktop_config.json`. keyflip already has `mcpreg` (manage once, project into
+  Code+Desktop) — extend the bundle to include the mcp registry so a new machine gets the
+  same servers. Secrets in MCP env (API keys) handled like other secrets (gitignored / opt-in).
+- **J3 — account settings: template + sync + edit.** "A new account always needs its settings
+  redone." Capture an account's settings (`~/.claude/settings.json` + keyflip's per-account
+  config) as a reusable TEMPLATE; `keyflip settings apply <template>` seeds a new account;
+  `keyflip settings sync` keeps them aligned across machines; `keyflip settings edit/set <k> <v>`
+  to change them. Composes with migrate/transfer (settings ride the bundle) and H3 (versioned).
+
+**Order:** J2 ✅ + J3 ✅ + J1 v1 ✅ + J1 config-tier ✅ (MCP config in bundle + settings edit/carry +
+multi-agent markdown memory + redacted agent config). Remaining: the
+NEEDS-VERIFICATION agents (Copilot/opencode/Aider), plus epic F (cross-service SESSION
+normalization) — all device-gated. See `docs/MULTI-AGENT-STATE.md`.
+
+> NOTE: this sits AFTER epic I (RAG) in priority, per the user — continue the existing list
+> (I1 next), then come back to J.
+
+---
+
+## Security review pass (2026-07-06, ultracode) — 17 confirmed defects fixed
+
+Adversarial multi-agent review of the whole uncommitted session diff (~5000 lines) before the
+bulk commit: 10 dimension finders → 3-lens adversarial verify (only ≥2/3-confirmed survived) →
+synthesis. 22 raised, 19 survived, 17 distinct after de-dup. All fixed + regression-tested
+(410 tests, 409 pass, 1 opt-in skip). Highlights:
+
+**P0 (secret leakage / RCE)**
+- **Secrets leaking into keyflip's own git.** The desktop-app OAuth token cache (`app/*.json`),
+  the claude.ai `sessionKey` cookie DB (`app/*.cookies`), and `pre-sync-backups/*.json` (raw
+  OAuth tokens) matched NO `.gitignore` rule, so `git add -A` in the autoCommit funnel committed
+  them. Root cause: `vcs.js` GITIGNORE and `backup.js` SKIP were hand-maintained and had drifted.
+  Fix: new **`src/secretpaths.js`** — a single source of truth for secret-bearing paths, consumed
+  by both. `ensureRepo` now REFRESHES a stale `.gitignore` every run and `git rm --cached`s any
+  now-ignored file an older keyflip had committed (history not scrubbed — working file untouched).
+  This also closed the same leak in metadata backups (`app/` + `mcp-registry.json`).
+- **Command injection via `older_than_days` → Linux cron `/bin/sh -c`** (MCP path; no server-side
+  schema validation). Fix: `schedule.dreamCommand` coerces `days` to a bounded int at the source.
+
+**P1**
+- `keyflip_settings` show/get returned `env.ANTHROPIC_API_KEY`/`_AUTH_TOKEN` in plaintext over
+  MCP → now redacted (`***redacted***`) via `settings.isCredentialKey`.
+- `cmdSend`/`cmdResume` folded the `--as <account>` value into the message/session arg
+  (`positionals` wasn't told `--as` takes a value) → fixed.
+- Embedding cache (`recall.semanticSearch`) never invalidated on model/endpoint change → cache
+  key + entry now carry the embedding `space` (model+url); `embed.cosine` refuses mismatched dims.
+- **Symlink-following bundle-merge writes.** All four merge fns (transcripts/memory/config/agents)
+  + archive validated only the LEXICAL path, so a pre-planted symlinked dir/leaf escaped root.
+  Fix: new **`fsutil.safeDestUnder(root, dest)`** (realpath deepest-existing-ancestor + lstat
+  leaf) gates every merge write, and writes go through `fsutil.atomicWrite` (rename = leaf-safe).
+  `mergeMemory` also gained an `isMemoryRel` gate (blocks `settings.json`/dotfile injection).
+
+**P2** — `embed` honors OpenAI `index` ordering; `sessionmap`/`memory` writes are now atomic
+(torn write can't wipe all assignments / corrupt a keepsake); MCP `migrate_export` empty-check
+counts memory/config; LAN receive/push summaries report providers+agents; stemmer `-es`
+over-strip fixed (singular/plural converge); + test hardening (maxAttempts brute-force shutdown,
+wire-encryption assertion, every gitignore secret pattern, absolute/nested + symlink traversal,
+archive corrupt/0600). New modules: `src/secretpaths.js`; new helper: `fsutil.safeDestUnder`.

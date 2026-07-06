@@ -45,4 +45,17 @@ function deepMerge(base, patch) {
   return out;
 }
 
-module.exports = { read: read, isCredentialKey: isCredentialKey, stripCredentialEnv: stripCredentialEnv, deepMerge: deepMerge };
+// J3: dot-path get/set for `keyflip settings`. Guards against prototype pollution.
+function getPath(obj, kp) { return String(kp).split('.').reduce(function (o, k) { return (o && typeof o === 'object') ? o[k] : undefined; }, obj); }
+function setPath(obj, kp, val) {
+  const parts = String(kp).split('.'); let o = obj;
+  for (let i = 0; i < parts.length - 1; i++) {
+    const p = parts[i]; if (PROTO_KEYS.indexOf(p) !== -1) return;
+    if (!o[p] || typeof o[p] !== 'object' || Array.isArray(o[p])) o[p] = {};
+    o = o[p];
+  }
+  const last = parts[parts.length - 1]; if (PROTO_KEYS.indexOf(last) !== -1) return;
+  if (val === undefined) delete o[last]; else o[last] = val;
+}
+
+module.exports = { read: read, isCredentialKey: isCredentialKey, stripCredentialEnv: stripCredentialEnv, deepMerge: deepMerge, getPath: getPath, setPath: setPath };

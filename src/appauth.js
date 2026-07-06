@@ -70,7 +70,9 @@ function decryptBlob(b64, password) {
   } catch (e) { return null; }
 }
 function getSafeStoragePassword(ctx) {
-  if (ctx && ctx.safeStoragePassword) return ctx.safeStoragePassword;
+  // An explicitly-set property (even null) is authoritative — lets tests inject a
+  // locked/denied keychain without shelling out to the real `security` binary.
+  if (ctx && Object.prototype.hasOwnProperty.call(ctx, 'safeStoragePassword')) return ctx.safeStoragePassword;
   const r = run('/usr/bin/security', ['find-generic-password', '-s', 'Claude Safe Storage', '-a', 'Claude Key', '-w']);
   return r.code === 0 ? r.stdout.replace(/\r?\n$/, '') : null;
 }
@@ -102,22 +104,60 @@ function findEmailUnder(dir, budget) {
   return walk(dir);
 }
 
+// The account folder (in claude-code-sessions) whose org subfolder matches `org`.
+function accountForOrg(ctx, org) {
+  if (!org || !ctx.appDataDir) return null;
+  const store = path.join(ctx.appDataDir, 'claude-code-sessions');
+  let accts; try { accts = fs.readdirSync(store); } catch (e) { return null; }
+  for (const a of accts) {
+    let orgs; try { orgs = fs.readdirSync(path.join(store, a)); } catch (e) { continue; }
+    if (orgs.indexOf(org) !== -1) return a;
+  }
+  return null;
+}
+
+// Best-effort email for an account uuid — the app scatters it across a couple of
+// per-account stores, so try both.
+function emailForAccount(ctx, account) {
+  if (!account || !ctx.appDataDir) return null;
+  return findEmailUnder(path.join(ctx.appDataDir, 'local-agent-mode-sessions', account), 80) ||
+         findEmailUnder(path.join(ctx.appDataDir, 'claude-code-sessions', account), 80) ||
+         null;
+}
+
 // Identify the account the desktop app is CURRENTLY signed into, independent of
-// the CLI: decrypt the token cache -> org uuid -> account uuid (via the app's own
-// per-account folders) -> email (best-effort from the app's data). Returns
-// { org, account, email } (fields may be null) or null.
+// the CLI. Primary signal: decrypt the token cache -> org uuid -> account -> email.
+// When that's unavailable (no cache yet, keychain locked, decrypt fails) it FALLS
+// BACK to the config's allowlist timestamps, which still name the active org — enough
+// to match a saved profile. ALWAYS returns { org, account, email, reason } (fields may
+// be null); `reason` names why a read is partial: 'no-desktop-config' | 'no-token-cache'
+// | 'keychain-locked' | 'decrypt-failed', or null on a full decrypt.
 function detectAppAccount(ctx) {
+  if (!ctx || !ctx.appDataDir) return { org: null, account: null, email: null, reason: 'no-desktop-config' };
   const cfg = readJSON(configPath(ctx));
-  if (!cfg || !ctx.appDataDir) return null;
+  if (!cfg) return { org: null, account: null, email: null, reason: 'no-desktop-config' };
+
+  const orgFromCfg = detectActiveOrg(ctx); // most-recently-touched allowlist org (no keychain access)
+  function fromConfigOnly(reason) {
+    // The allowlist org is only trustworthy if the app is ACTUALLY signed in — otherwise
+    // it's stale (signOutApp leaves the allowlist keys), which would falsely present a
+    // signed-out app as an account. Keep the caller's `reason` (locked/decrypt/no-cache)
+    // so the hint stays accurate.
+    const org = cookiesLookLoggedIn(cookiesPath(ctx)) ? (orgFromCfg || null) : null;
+    const acct = accountForOrg(ctx, org);
+    return { org: org, account: acct, email: emailForAccount(ctx, acct), reason: reason };
+  }
+
   let blob = null;
   ['oauth:tokenCacheV2', 'oauth:tokenCache'].forEach(function (k) {
     if (!blob && typeof cfg[k] === 'string' && isV10(cfg[k])) blob = cfg[k];
   });
-  if (!blob) return null; // also avoids a Keychain prompt when there's nothing to decrypt
+  if (!blob) return fromConfigOnly('no-token-cache'); // no v10 blob -> config-only (avoids a Keychain prompt)
   const pw = getSafeStoragePassword(ctx);
-  if (!pw) return null;
+  if (!pw) return fromConfigOnly('keychain-locked');
   const text = decryptBlob(blob, pw);
-  if (!text) return null;
+  if (!text) return fromConfigOnly('decrypt-failed');
+
   const uuids = []; let m;
   const re = new RegExp(UUID_RE.source, 'g');
   while ((m = re.exec(text)) !== null) { if (uuids.indexOf(m[0]) === -1) uuids.push(m[0]); }
@@ -132,9 +172,13 @@ function detectAppAccount(ctx) {
       if (org ? o === org : uuids.indexOf(o) !== -1) { org = org || o; if (!account) account = a; }
     });
   });
-  let email = null;
-  if (account) email = findEmailUnder(path.join(ctx.appDataDir, 'local-agent-mode-sessions', account));
-  return { org: org, account: account, email: email };
+  // Fall back to the allowlist org ONLY if the decrypted token corroborates it — using
+  // the most-recent allowlist org unconditionally can confidently mislabel a brand-new
+  // account (whose org isn't in the allowlist yet) as a different, stale one.
+  if (!org && orgFromCfg && uuids.indexOf(orgFromCfg) !== -1) org = orgFromCfg;
+  if (org && !account) account = accountForOrg(ctx, org);
+  // A decrypt that yields no resolvable org is ambiguous — don't present it as confident.
+  return { org: org || null, account: account || null, email: emailForAccount(ctx, account), reason: org ? null : 'unresolved-org' };
 }
 
 // Does a cookie DB (or a snapshot of it) contain the claude.ai login cookie?
@@ -303,6 +347,7 @@ module.exports = {
   hasProfile: hasProfile,
   detectActiveOrg: detectActiveOrg,
   detectAppAccount: detectAppAccount,
+  cookiesLookLoggedIn: cookiesLookLoggedIn,
   decryptBlob: decryptBlob,
   configPath: configPath,
   profilePath: profilePath,

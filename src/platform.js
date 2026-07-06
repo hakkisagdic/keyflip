@@ -31,6 +31,19 @@ function isClaudeRunning(p) {
   return !!(r.stdout || '').trim();
 }
 
+// Is the Claude DESKTOP APP (not the CLI) running? The app — unlike a Claude Code
+// CLI process — can rewrite the shared login after a switch, so callers use this to
+// warn about a desktop↔CLI tug-of-war. macOS only (the only managed desktop app).
+function isDesktopAppRunning(p) {
+  const t = testMode();
+  if (t) return t === 'running' && !_testStopped;
+  p = plat(p);
+  if (p !== 'darwin') return false;
+  const r = run('sh', ['-c',
+    "ps -Axo command | grep -v grep | grep -Ec 'Claude\\.app/Contents/MacOS/Claude|Claude Helper'"]);
+  return (parseInt((r.stdout || '0').trim(), 10) || 0) > 0;
+}
+
 function quitClaude(p) {
   if (testMode()) { _testStopped = true; return true; }
   p = plat(p);
@@ -84,6 +97,7 @@ function canManageApp(p) {
 
 module.exports = {
   isClaudeRunning: isClaudeRunning,
+  isDesktopAppRunning: isDesktopAppRunning,
   quitClaude: quitClaude,
   openClaude: openClaude,
   canManageApp: canManageApp,

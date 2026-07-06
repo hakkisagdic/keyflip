@@ -2,7 +2,7 @@
   "name": "keyflip-vscode",
   "displayName": "keyflip — Keyflip",
   "description": "Shows the active Claude account in the status bar and switches accounts via the keyflip CLI.",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "publisher": "hakkisagdic",
   "license": "MIT",
   "repository": {
@@ -29,6 +29,14 @@
       {
         "command": "keyflip.refresh",
         "title": "keyflip: Refresh Account Status"
+      },
+      {
+        "command": "keyflip.dashboard",
+        "title": "keyflip: Open Dashboard"
+      },
+      {
+        "command": "keyflip.status",
+        "title": "keyflip: Show Account Status"
       }
     ],
     "configuration": {

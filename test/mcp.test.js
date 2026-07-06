@@ -229,3 +229,30 @@ test('install-skill copies the bundled skill into ~/.claude/skills', function ()
   assert.ok(fs.existsSync(dest));
   assert.match(fs.readFileSync(dest, 'utf8'), /^---\r?\nname: keyflip/);
 });
+
+// SECURITY (review P1 #4): keyflip_settings show/get must NOT return provider API keys /
+// auth tokens (which `provider use` writes into env) in plaintext over MCP.
+test('keyflip_settings redacts credential env on show/get (never leaks a key to the agent)', async function () {
+  const mcp = require('../src/mcp');
+  const { makeCtx } = require('./helpers');
+  const ctx = makeCtx();
+  ctx.claudeSettingsPath = path.join(ctx.home, '.claude', 'settings.json');
+  fs.mkdirSync(path.dirname(ctx.claudeSettingsPath), { recursive: true });
+  fs.writeFileSync(ctx.claudeSettingsPath, JSON.stringify({
+    env: { ANTHROPIC_API_KEY: 'sk-SECRET-123', ANTHROPIC_MODEL: 'opus', MAX_OUTPUT_TOKENS: '8000' },
+  }));
+  const tool = mcp.TOOLS.filter(function (t) { return t.name === 'keyflip_settings'; })[0];
+  assert.ok(tool, 'keyflip_settings tool exists');
+
+  const shown = await tool.run(ctx, { action: 'show' });
+  assert.strictEqual(shown.settings.env.ANTHROPIC_API_KEY, '***redacted***', 'the API key is masked on show');
+  assert.strictEqual(shown.settings.env.ANTHROPIC_MODEL, 'opus', 'non-secret settings pass through');
+  assert.strictEqual(shown.settings.env.MAX_OUTPUT_TOKENS, '8000', 'MAX_OUTPUT_TOKENS is not treated as a secret');
+  assert.strictEqual(JSON.stringify(shown).indexOf('sk-SECRET-123'), -1, 'the raw key appears nowhere in the result');
+
+  const got = await tool.run(ctx, { action: 'get', key: 'env.ANTHROPIC_API_KEY' });
+  assert.strictEqual(got.value, '***redacted***');
+  assert.strictEqual(got.redacted, true);
+  const gotOk = await tool.run(ctx, { action: 'get', key: 'env.ANTHROPIC_MODEL' });
+  assert.strictEqual(gotOk.value, 'opus', 'a non-secret get is returned verbatim');
+});

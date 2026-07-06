@@ -103,4 +103,4 @@ function apply(ctx, pulled, opts) {
   return transfer.applyImport(ctx, pulled._bundle, { force: !!(opts && opts.force) });
 }
 
-module.exports = { encrypt: encrypt, decrypt: decrypt, test: test, push: push, pull: pull, apply: apply, VERSION: VERSION };
+module.exports = { encrypt: encrypt, decrypt: decrypt, test: test, push: push, pull: pull, apply: apply, davPut: davPut, davGet: davGet, VERSION: VERSION };

@@ -7,7 +7,7 @@
     "kf": "bin/keyflip.js"
   },
   "scripts": {
-    "test": "node --test",
+    "test": "KEYFLIP_VCS=off node --test",
     "start": "node bin/keyflip.js"
   },
   "engines": {

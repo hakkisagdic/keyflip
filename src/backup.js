@@ -6,13 +6,17 @@
 // mandatory safety snapshot before any restore.
 const fs = require('fs');
 const path = require('path');
+const secretpaths = require('./secretpaths');
 
 const DEFAULT_KEEP = 10;
-const SKIP = ['backups', 'creds', 'logs', 'skill-backups', 'pre-sync-backups']; // dirs never backed up (secrets/volatile)
-// Never copy a credential-shaped FILE, wherever it sits (a stray/legacy
-// .credentials.json, a *.cred token, or a *.cookies session DB), plus volatile
-// caches/locks.
-const SKIP_FILE = /^\.lock|^\.usage-cache\.json$|^\.update-check\.json$|\.cred$|\.cookies$|^\.credentials\.json$|credentials\.json$/i;
+// Dirs never backed up: the shared SECRET set (creds/app/browser-sessions/pre-sync-backups)
+// plus backup's own volatile/self-referential dirs.
+const SKIP = secretpaths.SECRET_DIRS.concat(['backups', 'logs', 'skill-backups']);
+// Never copy a secret-shaped FILE (shared source of truth — *.cred/*.cookies/*.key/*.token/
+// *.pem/*.sql, .credentials.json, mcp-registry.json, stray *credentials.json) or a volatile
+// cache/lock, wherever it sits.
+const VOLATILE_FILE = /^\.lock|^\.usage-cache\.json$|^\.update-check\.json$/i;
+function skipFile(name) { return VOLATILE_FILE.test(name) || secretpaths.isSecretFile(name); }
 
 function backupsDir(ctx) { return path.join(ctx.configDir, 'backups'); }
 
@@ -28,7 +32,7 @@ function copyInto(srcDir, destDir) {
       if (SKIP.indexOf(ent.name) !== -1) return;
       n += copyInto(path.join(srcDir, ent.name), path.join(destDir, ent.name));
     } else if (ent.isFile()) {
-      if (SKIP_FILE.test(ent.name)) return;
+      if (skipFile(ent.name)) return;
       fs.mkdirSync(destDir, { recursive: true });
       fs.copyFileSync(path.join(srcDir, ent.name), path.join(destDir, ent.name));
       n++;

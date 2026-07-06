@@ -107,15 +107,16 @@ If Claude / Claude Code is open, keyflip first asks **“Claude will be closed t
 
 ```bash
 keyflip                       # interactive menu (↑/↓ + Enter)
-keyflip onboard [--manual]    # full first-run: sign in per account, point CLI+browser at it,
-                              #   sync chats, then ask for the next
+keyflip onboard [--manual] [--sso] [--console]   # full first-run: sign in per account, point CLI+browser
+                              #   at it, sync chats, ask for the next ("p" = API-key provider; --sso = enterprise)
 keyflip setup                 # lighter: log in in Claude, keyflip auto-detects & captures
-keyflip login [name] [--email x]   # sign in via the official browser flow, isolated + captured
+keyflip login [name] [--email x] [--sso] [--console]   # official browser flow, isolated + captured (--sso = enterprise)
 keyflip add [name] [--app]    # save the logged-in account(s) — CLI + desktop app
-keyflip browser [status|logout]    # check/reset the browser claude.ai account (Chrome extension)
+keyflip browser [status|logout|sync]   # check/reset/restore the browser claude.ai account (extension)
 keyflip <name|number>         # switch to that account (asks before closing Claude)
 keyflip <name> --restart      # ...close & reopen Claude without asking
 keyflip <name> --force        # ...swap without closing Claude (restart it yourself)
+keyflip <name> --browser      # ...also align the browser + Chrome extension to this account
 keyflip next                  # rotate to the next saved account
 keyflip next --strategy best  # ...or pick by remaining quota (also: next-available)
 keyflip provider add <name> --base-url <url> --key-file -   # save a 3rd-party endpoint
@@ -130,10 +131,27 @@ keyflip link [name|--remove]  # map this directory tree to an account for `run`
 keyflip run <name> [-- args]  # PARALLEL session: that account in THIS terminal only
 keyflip add <name> --token <file|->   # headless import of a raw credential
 keyflip mcp [--setup]         # MCP server over stdio so agents can drive keyflip
+keyflip panel [--open]         # local web dashboard: accounts+quotas, activity calendar, memory constellation, sessions
+keyflip panel --export <f> [--anon]   # write a share-safe STATIC snapshot (no session content, no secrets)
+keyflip statusline install    # show active account + quota in the Claude Code prompt
 keyflip install-skill         # install the Claude Code skill that teaches agents keyflip
 keyflip export [file|-]       # back up accounts to a file (CONTAINS SECRETS)
 keyflip import <file|->       # restore accounts from an export (--force overwrites)
+keyflip migrate export <file> # bundle accounts + providers + transcripts + memory + config (MCP + settings)
+                              #   select a subset: --sessions <id,id> / --search T / --newer-than 7d / --only-sessions
+                              #   add --agents (memory) and/or --agent-config (MCP/settings, secret-scanned+redacted) for other AI agents
+keyflip agents                # list other agents' memory + config keyflip can carry (Cursor/Gemini/Codex; secrets redacted)
+keyflip settings [show|get <k>|set <k> <v>]   # view/edit ~/.claude/settings.json (rides `migrate` to other machines)
+keyflip migrate import <file> # MERGE that bundle into this machine (union; --force overwrites)
+keyflip migrate push --url <webdav>   # relay the bundle to another machine via WebDAV (encrypted)
+keyflip migrate pull --url <webdav>   # pull + MERGE it on the other machine (--force overwrites)
+keyflip transfer serve [--qr] # LAN: show a one-time code (+ scannable QR) + stream the encrypted bundle to a peer
+keyflip transfer pull --code X # LAN: auto-discover the peer, pull + MERGE (or pass <host:port>)
+keyflip transfer serve --receive   # LAN: WAIT to receive a pushed bundle (reverse direction)
+keyflip transfer push <host> --code X   # LAN: SEND your bundle to a listening machine (with E2 filters)
+keyflip consolidate [--watch] # sync every account's chat index so each shows ALL conversations
 keyflip remove <name|number>  # delete a saved account
+keyflip history | undo | restore <ref>   # git-versioned config: inspect / undo / roll back any change (secrets never committed)
 keyflip reset [--soft]        # FACTORY reset: DELETE all keyflip data (--soft keeps accounts)
 keyflip uninstall [--purge]   # remove keyflip from this machine (--purge also deletes data)
 keyflip upgrade               # update keyflip itself (detects how it was installed)
@@ -194,6 +212,15 @@ keyflip sessions --search "oauth"     # search all Claude Code conversations (pr
 keyflip sessions --here               # only sessions started in this directory
 keyflip resume 3                      # print the resume command for list item #3
 keyflip resume <id> --run             # launch `claude --resume <id>` in its dir
+keyflip sessions rebind <old> <new>   # re-link a project's chat history after you renamed/moved its folder
+keyflip sessions assign <id> <account>   # continue a session under another account (resume --run) — without switching profiles
+keyflip send <id> "<message>" [--as <account>] [--fork]   # inject a message into a session (steer/continue it headlessly)
+keyflip sessions archive <id|--older-than 30d>   # move old transcripts into keyflip (gzipped); unarchive restores them
+keyflip sessions distill <id>   # summarize a chat into a durable keepsake (via `claude -p`); browse with `keyflip memory`
+keyflip sessions compact <id> [--apply]   # shrink a transcript: elide bulky tool output, keep the conversation (dry-run default)
+keyflip dream [--older-than 30d] [--archive] [--apply]   # "dreaming": distill (+ archive) old chats in one pass; dry-run by default
+keyflip recall "<query>" [--answer]   # search ALL your chats (BM25; --semantic=embeddings; --answer = a cited synthesis via `claude -p`)
+keyflip dream schedule [--at 03:00] | unschedule | status   # run the dream nightly, unattended (launchd/cron)
 keyflip cowork --search "exam"        # browse Claude desktop Cowork sessions (all accounts)
 keyflip chat                          # list the active account's claude.ai Chat (experimental)
 keyflip chat get <id>                 # read one cloud conversation
@@ -258,6 +285,9 @@ There's also a bundled **Claude Code skill** that teaches the agent when and
 how to use all of this (rate-limit playbook, sentinels, parallel sessions):
 
 ```bash
+keyflip panel [--open]         # local web dashboard: accounts+quotas, activity calendar, memory constellation, sessions
+keyflip panel --export <f> [--anon]   # write a share-safe STATIC snapshot (no session content, no secrets)
+keyflip statusline install    # show active account + quota in the Claude Code prompt
 keyflip install-skill      # copies it to ~/.claude/skills/keyflip
 ```
 
@@ -289,7 +319,9 @@ overwriting an existing account always requires `--force`.
 The VS Code Claude Code extension shares the CLI's credential store, so every
 keyflip switch already applies to it (reload the window to pick it up). A thin
 companion extension in [`vscode-keyflip/`](vscode-keyflip/) adds a status-bar
-account indicator and a QuickPick switcher — see its README for local install.
+account indicator (with 5h/7d quota in the switcher), a QuickPick account switcher,
+a one-click **Open Dashboard** (`keyflip panel`), and a status view — see its
+[README](vscode-keyflip/README.md) ([TR](vscode-keyflip/README.tr.md)) for local install.
 
 
 ### Seeing all your sessions after a switch (macOS)
@@ -335,7 +367,7 @@ account — no manual re-login. `config.json` and the cookie DB are backed up fi
 > Switching should happen while Claude is closed, or Claude may overwrite the change on exit.
 > - **Interactive** (menu, or `keyflip <name>` in a terminal): if Claude is open you're **asked before it's closed** — answer *no* to cancel.
 > - `--restart`: close & reopen Claude without asking (macOS).
-> - `--force`: switch without closing Claude — restart it yourself afterward.
+> - `--force`: switch without closing Claude — restart it yourself afterward. If the **desktop app** is running on another account it can rewrite the shared login and undo the swap; `--force` warns you and suggests `--restart`.
 > - Non-interactive (piped/CI) with Claude open and no flag: refuses rather than closing your app unexpectedly.
 
 ---

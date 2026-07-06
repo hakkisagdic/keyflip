@@ -220,6 +220,20 @@ test('switch --force swaps in place without closing a running Claude', function 
   assert.match(run(home, ['list']).stdout, /Claude Code: alice@example\.com/);
 });
 
+test('statusline emits the active account; install wires it into settings.json (G3)', function () {
+  const home = setupHome();
+  const emit = run(home, ['statusline']);
+  assert.strictEqual(emit.status, 0, emit.stderr);
+  assert.match(emit.stdout, /alice@example\.com/);
+  assert.doesNotMatch(emit.stdout, /\n/, 'the status line is a single line (no trailing newline)');
+  run(home, ['statusline', 'install']);
+  const s = JSON.parse(fs.readFileSync(path.join(home, '.claude', 'settings.json'), 'utf8'));
+  assert.ok(s.statusLine && /statusline/.test(s.statusLine.command), 'settings.statusLine wired');
+  run(home, ['statusline', 'uninstall']);
+  const s2 = JSON.parse(fs.readFileSync(path.join(home, '.claude', 'settings.json'), 'utf8'));
+  assert.strictEqual('statusLine' in s2, false, 'uninstall removes it');
+});
+
 test('menu survives EOF during a sub-prompt (no crash)', function () {
   const home = setupHome();
   const r = require('child_process').spawnSync(process.execPath, [BIN, 'menu'], {
@@ -233,4 +247,51 @@ test('menu survives EOF during a sub-prompt (no crash)', function () {
   });
   assert.strictEqual(r.status, 0, r.stderr);
   assert.doesNotMatch((r.stdout || '') + (r.stderr || ''), /Cannot read properties of null/);
+});
+
+// ---- #5: harden desktop-app account detection (macOS-only paths) ----
+
+// Write a fake Claude desktop app data dir under HOME so the CLI's macOS appDataDir
+// (~/Library/Application Support/Claude) is populated deterministically.
+function seedApp(home, cfg, tree, signedOut) {
+  const ad = path.join(home, 'Library', 'Application Support', 'Claude');
+  fs.mkdirSync(ad, { recursive: true });
+  fs.writeFileSync(path.join(ad, 'config.json'), JSON.stringify(cfg));
+  // A live session cookie means the app is signed in — detection's config-only fallback
+  // trusts the allowlist org only when this is present (a signed-OUT app must not show
+  // a stale account). Omit it (signedOut=true) to represent a signed-out app.
+  if (!signedOut) fs.writeFileSync(path.join(ad, 'Cookies'), 'sessionKey LIVE');
+  (tree || []).forEach(function (t) {
+    fs.mkdirSync(path.join(ad, t.dir), { recursive: true });
+    if (t.file) fs.writeFileSync(path.join(ad, t.dir, t.file), t.content || '');
+  });
+  return ad;
+}
+
+test('status recovers the desktop account from config when the token cannot be decrypted', function (t) {
+  if (process.platform !== 'darwin') return t.skip('the desktop app store is macOS-only');
+  const home = setupHome();
+  const ORG = '11111111-2222-3333-4444-555555555555', ACCT = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+  const cfg = { 'oauth:tokenCacheV2': 'not-a-v10-blob' };
+  cfg['dxt:allowlistLastUpdated:' + ORG] = '2026-07-05T00:00:00.000Z';
+  seedApp(home, cfg, [
+    { dir: path.join('claude-code-sessions', ACCT, ORG) },
+    { dir: path.join('local-agent-mode-sessions', ACCT, ORG), file: 's.json', content: JSON.stringify({ oauthAccount: { emailAddress: 'desktopuser@x.com' } }) },
+  ]);
+  const r = run(home, ['status', '--json']);
+  const app = JSON.parse(r.stdout).app;
+  assert.ok(app, 'app block present');
+  assert.strictEqual(app.email, 'desktopuser@x.com'); // recovered despite no decryptable token
+  assert.strictEqual(app.saved, false);               // marked as an unsaved account
+  // Human output shows the email, not "unknown".
+  assert.match(run(home, ['status']).stdout, /desktopuser@x\.com/);
+});
+
+test('add --app gives a clear, actionable hint when the account cannot be identified', function (t) {
+  if (process.platform !== 'darwin') return t.skip('the desktop app store is macOS-only');
+  const home = setupHome();
+  seedApp(home, { 'oauth:tokenCacheV2': 'not-a-v10-blob' }); // no allowlist -> unidentifiable
+  const r = run(home, ['add', '--app']);
+  assert.notStrictEqual(r.status, 0);
+  assert.match(r.stderr, /Open the Claude desktop app and confirm it is signed in/);
 });

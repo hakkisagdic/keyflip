@@ -11,6 +11,16 @@ const login = require('../src/login');
 
 function tmp() { return fs.mkdtempSync(path.join(os.tmpdir(), 'keyflip-login-')); }
 
+test('buildLoginArgs wires --sso / --console / --email into `claude auth login` (#7)', function () {
+  assert.deepStrictEqual(login.buildLoginArgs({}), ['auth', 'login', '--claudeai']);
+  assert.deepStrictEqual(login.buildLoginArgs({ sso: true }), ['auth', 'login', '--claudeai', '--sso']);
+  assert.deepStrictEqual(login.buildLoginArgs({ useConsole: true }), ['auth', 'login', '--console']);
+  assert.deepStrictEqual(login.buildLoginArgs({ sso: true, useConsole: true, email: 'you@corp.com' }),
+    ['auth', 'login', '--console', '--sso', '--email', 'you@corp.com']);
+  // no --sso unless asked — guards against the flag silently drifting off
+  assert.strictEqual(login.buildLoginArgs({ email: 'a@b.c' }).indexOf('--sso'), -1);
+});
+
 test('isoKeychainService derives "Claude Code-credentials-<8 hex>" and is deterministic', function () {
   const a = login.isoKeychainService('/some/dir');
   assert.match(a, /^Claude Code-credentials-[0-9a-f]{8}$/);
