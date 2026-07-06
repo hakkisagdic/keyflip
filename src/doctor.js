@@ -5,6 +5,7 @@
 //   diagnose(ctx)  — a `keyflip doctor` report over config + providers + creds.
 //   test(provider) — one minimal REAL request to a provider endpoint (auth check).
 const fs = require('fs');
+const path = require('path');
 const provider = require('./provider');
 
 async function probe(url, opts) {
@@ -26,13 +27,21 @@ async function probe(url, opts) {
 async function diagnose(ctx, opts) {
   opts = opts || {};
   const checks = [];
-  const add = function (name, ok, detail) { checks.push({ name: name, ok: ok, detail: detail || '' }); };
+  // ok: true | false (problem) | 'warn' (advisory). fix: optional remediation hint.
+  const add = function (name, ok, detail, fix) { checks.push({ name: name, ok: ok, detail: detail || '', fix: fix || undefined }); };
 
   add('claude config dir', fs.existsSync(ctx.claudeDir), ctx.claudeDir);
   let hasLogin = false;
   try { hasLogin = !!ctx.store.getLive(); } catch (e) { hasLogin = null; }
   add('claude code login', hasLogin === true, hasLogin === null ? 'credential store unreadable (keychain locked?)' : (hasLogin ? 'present' : 'not logged in'));
   if (ctx.appDataDir) add('desktop app data', fs.existsSync(ctx.appDataDir), ctx.appDataDir);
+
+  // --- state-hygiene checks (local, no network) ---
+  secretsInGit(ctx, add);
+  versioningState(ctx, add);
+  orphanSessions(ctx, add);
+  quotaPressure(ctx, add);
+  settingsJson(ctx, add);
 
   const active = provider.readActive(ctx);
   add('active endpoint', true, active ? ('provider "' + active.name + '"') : 'official (subscription)');
@@ -72,6 +81,45 @@ async function testProvider(ctx, name, opts) {
   } catch (e) {
     return { ok: false, ms: clock() - t0, category: 'network', reason: (e && e.message) || 'error' };
   }
+}
+
+// The flagship hygiene check: NO secret-bearing file may be tracked by keyflip's git.
+function secretsInGit(ctx, add) {
+  const vcs = require('./vcs');
+  if (!vcs.isEnabled(ctx) || !vcs.isRepo(ctx)) return; // nothing versioned → no risk to report
+  const secretpaths = require('./secretpaths');
+  const tracked = vcs.tracked(ctx);
+  const leaked = tracked.filter(function (f) {
+    const parts = f.split('/');
+    return secretpaths.isSecretFile(parts[parts.length - 1]) || secretpaths.SECRET_DIRS.indexOf(parts[0]) !== -1;
+  });
+  if (leaked.length) add('secrets in git', false, leaked.length + ' secret file(s) tracked: ' + leaked.slice(0, 3).join(', '), 'git -C "' + ctx.configDir + '" rm --cached ' + leaked[0] + ' (then any keyflip cmd re-commits; scrub history if pushed)');
+  else add('secrets in git', true, 'none tracked (' + tracked.length + ' non-secret file(s) versioned)');
+}
+
+function versioningState(ctx, add) {
+  const vcs = require('./vcs');
+  const on = vcs.isEnabled(ctx) && vcs.isRepo(ctx);
+  add('config versioning', on ? true : 'warn', on ? 'on (undo / history available)' : 'off', on ? undefined : 'keyflip versioning enable  (needs git)');
+}
+
+function orphanSessions(ctx, add) {
+  let rows; try { rows = require('./sessions').list(ctx, { limit: 2000 }); } catch (e) { return; }
+  const n = rows.filter(function (r) { return r.orphan; }).length;
+  if (n) add('orphaned sessions', 'warn', n + ' session(s) point at a moved/renamed folder', 'keyflip sessions rebind <old-path> <new-path>');
+  else if (rows.length) add('orphaned sessions', true, 'none (' + rows.length + ' session(s), folders present)');
+}
+
+function quotaPressure(ctx, add) {
+  let cache; try { cache = JSON.parse(fs.readFileSync(path.join(ctx.configDir, '.usage-cache.json'), 'utf8')) || {}; } catch (e) { return; }
+  const hot = Object.keys(cache).filter(function (n) { const u = cache[n] && cache[n].usage; return u && u.fiveHour && typeof u.fiveHour.pct === 'number' && u.fiveHour.pct >= 95; });
+  if (hot.length) add('quota headroom', 'warn', hot.join(', ') + ' at ≥95% of the 5h limit', 'keyflip next  (rotate to an account with headroom)');
+}
+
+function settingsJson(ctx, add) {
+  const p = ctx.claudeSettingsPath || path.join(ctx.home || '', '.claude', 'settings.json');
+  let raw; try { raw = fs.readFileSync(p, 'utf8'); } catch (e) { return; } // absent is fine
+  try { JSON.parse(raw); } catch (e) { add('settings.json', false, '~/.claude/settings.json is not valid JSON', 'fix or remove it — Claude Code ignores a broken settings file'); }
 }
 
 module.exports = { probe: probe, diagnose: diagnose, testProvider: testProvider };

@@ -121,7 +121,7 @@ keyflip next                  # sıradaki kayıtlı hesaba dön
 keyflip next --strategy best  # ...veya kalan kotaya göre seç (ayrıca: next-available)
 keyflip provider add <ad> --base-url <url> --key-file -   # 3. taraf endpoint kaydet
 keyflip use <ad>              # Claude Code'u bir provider'a yönlendir (geri: keyflip provider off)
-keyflip doctor                # config, giriş ve endpoint erişilebilirliğini tanıla
+keyflip doctor                # sağlık kontrolü: git-e-sır, orphan oturumlar, versiyonlama, config, giriş, endpointler
 keyflip backup now|list|restore <n>   # keyflip metadata anlık görüntüsü (sırsız)
 keyflip usage --history       # hesap-başına kullanım eğilimi + failover olayları
 keyflip status                # her yüzey hangi hesapta (CLI + masaüstü uygulaması)
@@ -191,7 +191,7 @@ keyflip use openrouter          # Claude Code'u ona yönlendir
 keyflip provider off            # aboneliğine geri dön (OAuth)
 keyflip speedtest openrouter    # endpoint'leri ölç, en hızlısını kullan
 keyflip test openrouter         # tek gerçek istek: auth çalışıyor mu?
-keyflip doctor                  # config + giriş + endpoint erişilebilirliği
+keyflip doctor                  # sağlık kontrolü: git-e-sır + orphan + versiyonlama + config + giriş + endpointler
 ```
 
 - **API anahtarı sırdır** → OS kimlik deposunda saklanır, asla metadata dosyasında

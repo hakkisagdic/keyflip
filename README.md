@@ -121,7 +121,7 @@ keyflip next                  # rotate to the next saved account
 keyflip next --strategy best  # ...or pick by remaining quota (also: next-available)
 keyflip provider add <name> --base-url <url> --key-file -   # save a 3rd-party endpoint
 keyflip use <name>            # route Claude Code to a provider (keyflip provider off = back)
-keyflip doctor                # diagnose config, login and endpoint reachability
+keyflip doctor                # health check: secrets-in-git, orphaned sessions, versioning, config, login, endpoints
 keyflip backup now|list|restore <n>   # snapshot keyflip metadata (no secrets)
 keyflip usage --history       # per-account usage trend + failover events
 keyflip status                # which account each surface is on (CLI + desktop app)
@@ -192,7 +192,7 @@ keyflip provider off            # back to your subscription (OAuth)
 keyflip provider list           # what's saved / active
 keyflip speedtest openrouter    # time the endpoints, use the fastest
 keyflip test openrouter         # one real request: is auth working?
-keyflip doctor                  # config + login + endpoint reachability
+keyflip doctor                  # health check: secrets-in-git + orphans + versioning + config + login + endpoints
 ```
 
 - The **API key is a secret** → stored in the OS credential store, never in the

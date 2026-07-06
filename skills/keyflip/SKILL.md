@@ -136,7 +136,7 @@ keyflip provider off          # back to the subscription (OAuth)
 keyflip provider list         # which providers exist / which is active
 keyflip speedtest <name>      # pick the fastest of a provider's endpoints
 keyflip test <name>           # one real request → auth ok? (auth/network/4xx/5xx)
-keyflip doctor                # config + login + endpoint reachability report
+keyflip doctor                # health check: secrets-in-git, orphaned sessions, versioning, config, login, endpoints (MCP: keyflip_doctor)
 ```
 
 `status` shows the active provider. Switching a provider does NOT change the OAuth

@@ -1879,10 +1879,13 @@ async function cmdDoctor(ctx, rest) {
   if (JSON_MODE) { jsonOut({ ok: r.ok, checks: r.checks }); return; }
   print('keyflip doctor:');
   r.checks.forEach(function (c) {
-    print('  ' + (c.ok === false ? style.err('✗') : (c.ok === true ? style.ok('✓') : '•')) + ' ' + c.name + (c.detail ? '  — ' + c.detail : ''));
+    const mark = c.ok === false ? style.err('✗') : c.ok === 'warn' ? style.warn('⚠') : c.ok === true ? style.ok('✓') : style.dim('•');
+    print('  ' + mark + ' ' + c.name + (c.detail ? '  — ' + c.detail : ''));
+    if (c.fix && c.ok !== true) print('      ' + style.dim('↳ ' + c.fix));
   });
+  const warns = r.checks.filter(function (c) { return c.ok === 'warn'; }).length;
   print('');
-  print(r.ok ? style.ok('All good.') : style.warn('Some checks need attention (see ✗ above).'));
+  print(!r.ok ? style.err('Some checks need attention (see ✗ above).') : warns ? style.warn(warns + ' advisory warning(s) (⚠).') : style.ok('All good.'));
 }
 
 async function cmdTest(ctx, rest) {

@@ -98,6 +98,15 @@ function commit(ctx, message) {
   return !!(r && r.code === 0);
 }
 
+// List the files git currently TRACKS (relative to configDir). Used by `keyflip doctor` to
+// verify no secret ever slipped into version control. Empty if not a repo.
+function tracked(ctx) {
+  if (!isRepo(ctx)) return [];
+  const r = git(ctx, ['ls-files']);
+  if (!r || r.code !== 0) return [];
+  return String(r.stdout || '').split('\n').map(function (s) { return s.trim(); }).filter(Boolean);
+}
+
 // Auto-version hook for the mutation funnel: ensure the repo, then commit with a label.
 function autoCommit(ctx, label) {
   try { if (!isEnabled(ctx)) return false; ensureRepo(ctx); return commit(ctx, label); }
@@ -148,6 +157,7 @@ module.exports = {
   commit: commit,
   autoCommit: autoCommit,
   log: log,
+  tracked: tracked,
   undo: undo,
   restore: restore,
   disable: disable,
