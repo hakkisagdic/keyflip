@@ -1760,7 +1760,7 @@ async function cmdFleet(ctx, rest) {
       // Origin authentication: the command MUST carry a signature that verifies against the sender's
       // TOFU-pinned public key. This is what defeats a leaked passphrase — an attacker who can write
       // to the folder still cannot forge a command "from" a machine whose private key they lack.
-      const origin = fleet.checkOrigin(cmd, reconcile);
+      const origin = fleet.checkOrigin(ctx, cmd, reconcile);
       if (!origin.ok) { results.push({ ok: false, applied: cmd && cmd.type, detail: 'rejected: ' + origin.reason }); continue; }
       let allow = { allowSwitch: false, allowSave: false, force: rest.indexOf('--force') !== -1, senderKey: origin.key, requireSignature: true };
       if (cmd.type === 'note') { /* no consent */ }
@@ -1774,7 +1774,7 @@ async function cmdFleet(ctx, rest) {
         allow.allowSwitch = allow.allowSave = ok;
       }
       const r = fleet.applyCommand(ctx, cmd, allow);
-      if (r.ok && cmd.type !== 'note' && cmd.id) fleet.markApplied(ctx, cmd.id);
+      if (r.ok && cmd.id) fleet.markApplied(ctx, cmd.id); // ledger EVERY applied command (incl. notes) so it can't be verbatim-replayed
       results.push(r);
     }
     if (inbox.length) fleet.clearInbox(ctx, b);
@@ -1861,6 +1861,7 @@ async function cmdFleet(ctx, rest) {
     if (pinned === m.pubKey) { if (!JSON_MODE) print(style.dim('Already trusting ' + m.name + "'s current key — nothing to do.")); else jsonOut({ trusted: { machine: m.name, changed: false } }); return; }
     if (pinned && !JSON_MODE && process.stdin.isTTY) {
       print(style.warn('⚠') + ' the pinned key for ' + style.bold(m.name) + ' has CHANGED. Only re-trust if you KNOW it legitimately re-keyed (a new install / reset). If not, this could be a key-substitution attack via the shared folder.');
+      print('   ' + style.dim('new key fingerprint: ') + style.bold(fleet.fingerprint(m.pubKey)) + style.dim('  — verify this out-of-band with ' + m.name + "'s operator before trusting."));
       if (!(await confirm('Re-trust ' + m.name + "'s new key? [y/N] "))) { print('Cancelled — the old key stays pinned; commands from ' + m.name + ' remain rejected.'); return; }
     }
     fleet.trustKey(ctx, m.machineId, m.pubKey);

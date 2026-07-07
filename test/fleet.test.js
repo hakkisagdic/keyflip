@@ -251,7 +251,7 @@ test('origin-auth: a genuine signed command from a pinned peer passes checkOrigi
   const cmd = fleet.queue(A, busOf(A, dir), fleet.identity(B).machineId, { type: 'switch', payload: { account: 'work' } });
   const rec = fleet.reconcileKeys(B, fleet.readFleet(B, busOf(B, dir))); // B pins A's key (first sight)
   assert.ok(rec.firstSeen.indexOf(fleet.identity(A).machineId) !== -1);
-  const origin = fleet.checkOrigin(cmd, rec);
+  const origin = fleet.checkOrigin(B, cmd, rec);
   assert.ok(origin.ok, origin.reason);
   const res = fleet.applyCommand(B, cmd, { allowSwitch: true, senderKey: origin.key, requireSignature: true });
   assert.ok(res.ok && /switched to work/.test(res.detail), res.detail);
@@ -261,15 +261,16 @@ test('origin-auth: a FORGED command (attacker key, claims from=alpha) is REJECTE
   const dir = sharedDir();
   const A = machine('alpha', dir), B = machine('beta', dir), evil = machine('evil', dir);
   fleet.publish(A, busOf(A, dir), {}); // B will pin A's REAL key
-  const forged = { id: 'deadbeef', from: fleet.identity(A).machineId, at: A.now(), type: 'switch', payload: { account: 'work' } };
+  const forged = { id: 'deadbeef', from: fleet.identity(A).machineId, to: fleet.identity(B).machineId, at: A.now(), type: 'switch', payload: { account: 'work' } };
   fleet.signCommand(evil, forged); // attacker has the passphrase + folder write, but only THEIR key
   const rec = fleet.reconcileKeys(B, fleet.readFleet(B, busOf(B, dir)));
-  const origin = fleet.checkOrigin(forged, rec);
+  const origin = fleet.checkOrigin(B, forged, rec);
   assert.ok(!origin.ok && /verify/.test(origin.reason), 'forgery does not verify against alpha\'s pinned key');
 });
 
 test('origin-auth: an UNSIGNED command is rejected', function () {
-  const origin = fleet.checkOrigin({ from: 'alpha-x', type: 'note', payload: {} }, { keys: { 'alpha-x': 'AAA' }, conflicts: [] });
+  const B = machine('beta', sharedDir());
+  const origin = fleet.checkOrigin(B, { from: 'alpha-x', type: 'note', payload: {} }, { keys: { 'alpha-x': 'AAA' }, conflicts: [] });
   assert.ok(!origin.ok && /unsigned/.test(origin.reason));
 });
 
@@ -292,13 +293,46 @@ test('origin-auth: a pinned key that CHANGES is flagged as a conflict and its co
   const cmd = fleet.queue(A, busOf(A, dir), fleet.identity(B).machineId, { type: 'note', payload: { text: 'hi' } });
   rec = fleet.reconcileKeys(B, fleet.readFleet(B, busOf(B, dir)));
   assert.strictEqual(rec.conflicts.length, 1, 'the key change is flagged');
-  assert.ok(!fleet.checkOrigin(cmd, rec).ok, 'commands from a changed-key peer are rejected');
+  assert.ok(!fleet.checkOrigin(B, cmd, rec).ok, 'commands from a changed-key peer are rejected');
   // Explicit re-trust (the only sanctioned way a pinned key changes) restores verification.
   const newKey = fleet.readFleet(B, busOf(B, dir)).find(function (s) { return s.name === 'alpha'; }).pubKey;
   fleet.trustKey(B, aId, newKey);
   const rec2 = fleet.reconcileKeys(B, fleet.readFleet(B, busOf(B, dir)));
   assert.strictEqual(rec2.conflicts.length, 0, 'no conflict after trust');
-  assert.ok(fleet.checkOrigin(cmd, rec2).ok, 'commands verify again once the new key is trusted');
+  assert.ok(fleet.checkOrigin(B, cmd, rec2).ok, 'commands verify again once the new key is trusted');
+});
+
+test('origin-auth: a command signed FOR one machine is REJECTED when replayed into another inbox (recipient binding)', function () {
+  const dir = sharedDir();
+  const A = machine('alpha', dir), B = machine('beta', dir), C = machine('gamma', dir);
+  seedAccount(B, 'work', 'b@x.com', '{"claudeAiOauth":{"accessToken":"BW"}}');
+  seedAccount(C, 'work', 'c@x.com', '{"claudeAiOauth":{"accessToken":"CW"}}');
+  fleet.publish(A, busOf(A, dir), {});
+  // A legitimately queues a switch FOR B; an attacker (has the passphrase) lifts these exact bytes.
+  const cmd = fleet.queue(A, busOf(A, dir), fleet.identity(B).machineId, { type: 'switch', payload: { account: 'work' } });
+  // Replayed verbatim into C's inbox: C pins A's real key, the signature is genuine — but it was
+  // addressed to B, so C must reject it.
+  const recC = fleet.reconcileKeys(C, fleet.readFleet(C, busOf(C, dir)));
+  const onC = fleet.checkOrigin(C, cmd, recC);
+  assert.ok(!onC.ok && /addressed/.test(onC.reason), 'a command signed for B is not valid on C');
+  assert.ok(!fleet.applyCommand(C, cmd, { allowSwitch: true, senderKey: recC.keys[fleet.identity(A).machineId], requireSignature: true }).ok, 'applyCommand also refuses the wrong recipient');
+  // Rewriting cmd.to = C to dodge the recipient check breaks the signature instead.
+  const tampered = Object.assign({}, cmd, { to: fleet.identity(C).machineId });
+  assert.ok(!fleet.checkOrigin(C, tampered, recC).ok, 'rewriting the recipient invalidates the signature');
+  // Sanity: the untouched command IS valid on its intended target B.
+  const recB = fleet.reconcileKeys(B, fleet.readFleet(B, busOf(B, dir)));
+  assert.ok(fleet.checkOrigin(B, cmd, recB).ok, 'the same command is valid on its intended target B');
+});
+
+test('origin-auth hardening: TOFU roster is prototype-pollution safe; fingerprint is stable hex', function () {
+  const A = machine('alpha', sharedDir());
+  const pub = fleet.publicKey(A);
+  const rec = fleet.reconcileKeys(A, [{ machineId: '__proto__', pubKey: pub }, { machineId: 'constructor', pubKey: pub }]);
+  assert.strictEqual(Object.getPrototypeOf(rec.keys), null, 'the known-keys map has a null prototype');
+  assert.strictEqual({}.polluted, undefined, 'Object.prototype is not polluted by a hostile machineId');
+  const fp = fleet.fingerprint(pub);
+  assert.ok(/^[0-9a-f:]+$/.test(fp), 'fingerprint is hex');
+  assert.strictEqual(fp, fleet.fingerprint(pub), 'fingerprint is stable');
 });
 
 test('P1 DNS-rebinding: the fleet panel rejects a non-loopback Host header', async function () {

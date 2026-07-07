@@ -79,7 +79,9 @@ function pubKeyObject(b64) { return crypto.createPublicKey({ key: Buffer.from(b6
 
 // Canonical bytes we sign/verify: the command's meaning, order-stable. payload round-trips through
 // JSON identically on both machines (our own code produces it), so re-serialising here is stable.
-function signable(cmd) { return JSON.stringify({ id: cmd.id, from: cmd.from, at: cmd.at, type: cmd.type, payload: cmd.payload === undefined ? null : cmd.payload }); }
+// `to` (the intended RECIPIENT machine) is signed so a genuine signature can't be replayed into a
+// different machine's inbox — origin auth must prove not just WHO+WHAT but FOR WHOM.
+function signable(cmd) { return JSON.stringify({ id: cmd.id, from: cmd.from, to: cmd.to == null ? null : cmd.to, at: cmd.at, type: cmd.type, payload: cmd.payload === undefined ? null : cmd.payload }); }
 function signCommand(ctx, cmd) {
   const k = machineKeys(ctx);
   const sig = crypto.sign(null, Buffer.from(signable(cmd), 'utf8'), crypto.createPrivateKey(k.privatePem));
@@ -92,10 +94,19 @@ function verifyCommand(cmd, pubB64) {
   try { return crypto.verify(null, Buffer.from(signable(cmd), 'utf8'), pubKeyObject(pubB64), sigBuf); } catch (e) { return false; }
 }
 
-// TOFU key store: machineId -> pinned public key (first one we ever saw for that id).
+// TOFU key store: machineId -> pinned public key (first one we ever saw for that id). The in-memory
+// map is a NULL-PROTOTYPE object so a peer-controlled machineId (e.g. "__proto__"/"constructor") can
+// never pollute a prototype or shadow an inherited property during lookup.
 function knownPath(ctx) { return path.join(ctx.configDir, 'fleet-known.json'); }
-function knownKeys(ctx) { try { const k = JSON.parse(fs.readFileSync(knownPath(ctx), 'utf8')); return (k && typeof k === 'object' && !Array.isArray(k)) ? k : {}; } catch (e) { return {}; } }
+function knownKeys(ctx) {
+  const out = Object.create(null);
+  try { const k = JSON.parse(fs.readFileSync(knownPath(ctx), 'utf8'));
+    if (k && typeof k === 'object' && !Array.isArray(k)) Object.keys(k).forEach(function (id) { if (safeId(id) && isPubB64(k[id])) out[id] = k[id]; });
+  } catch (e) { /* none yet */ }
+  return out;
+}
 function saveKnown(ctx, map) { try { require('./fsutil').atomicWrite(knownPath(ctx), JSON.stringify(map), 0o600); } catch (e) { /* best-effort */ } }
+const MAX_KNOWN = 1000; // cap the TOFU roster (anti-DoS: a passphrase holder flooding distinct ids)
 // Reconcile pinned keys against what peers currently publish. Pins keys on FIRST sight; NEVER
 // overwrites a pinned key — a mismatch is surfaced as a conflict (possible substitution) instead.
 // Returns { keys: {id->pinnedKey}, conflicts: [{machineId,name}], firstSeen: [id] }.
@@ -106,12 +117,17 @@ function reconcileKeys(ctx, statuses) {
   (Array.isArray(statuses) ? statuses : []).forEach(function (s) {
     if (!s || !safeId(s.machineId) || !isPubB64(s.pubKey)) return;
     const cur = known[s.machineId];
-    if (!cur) { known[s.machineId] = s.pubKey; firstSeen.push(s.machineId); changed = true; }
-    else if (cur !== s.pubKey) { conflicts.push({ machineId: s.machineId, name: scrub(s.name, 80) || s.machineId }); }
+    if (!cur) {
+      if (Object.keys(known).length >= MAX_KNOWN) return; // roster full — don't pin new peers
+      known[s.machineId] = s.pubKey; firstSeen.push(s.machineId); changed = true;
+    } else if (cur !== s.pubKey) { conflicts.push({ machineId: s.machineId, name: scrub(s.name, 80) || s.machineId }); }
   });
   if (changed) saveKnown(ctx, known);
   return { keys: known, conflicts: conflicts, firstSeen: firstSeen };
 }
+// Short SHA-256 fingerprint of a public key — shown at trust time so a re-key can be verified
+// out-of-band (compare against the fingerprint the other machine prints).
+function fingerprint(pubB64) { try { return crypto.createHash('sha256').update(Buffer.from(String(pubB64), 'base64')).digest('hex').replace(/(..)/g, '$1:').slice(0, 23); } catch (e) { return '?'; } }
 // Deliberately (re)pin a machine's current published key — used after a LEGITIMATE re-key, only on
 // explicit user consent (the CLI `fleet trust` command). This is the sole way a pinned key changes.
 function trustKey(ctx, machineId, pubB64) {
@@ -122,10 +138,14 @@ function trustKey(ctx, machineId, pubB64) {
   return true;
 }
 // Full origin check for one command against a reconcile() result. The single gate the CLI/MCP use.
-function checkOrigin(cmd, reconcile) {
+// `ctx` identifies the RECEIVING machine so we can reject a genuine signature that was addressed to a
+// DIFFERENT machine (cross-inbox replay/fan-out) — the recipient is part of the signed bytes.
+function checkOrigin(ctx, cmd, reconcile) {
   reconcile = reconcile || { keys: {}, conflicts: [] };
   if (!cmd || typeof cmd.sig !== 'string') return { ok: false, reason: 'unsigned command (rejected)' };
   if (!safeId(cmd.from)) return { ok: false, reason: 'command has no valid sender' };
+  const selfId = identity(ctx).machineId;
+  if (cmd.to !== selfId) return { ok: false, reason: 'command was not addressed to this machine (rejected — possible cross-inbox replay)' };
   if ((reconcile.conflicts || []).some(function (c) { return c.machineId === cmd.from; })) return { ok: false, reason: "sender '" + cmd.from + "' key CHANGED since first seen — possible key substitution (rejected)" };
   const key = (reconcile.keys || {})[cmd.from];
   if (!key) return { ok: false, reason: "no pinned key for sender '" + cmd.from + "' (it must publish `keyflip fleet push` first)" };
@@ -252,6 +272,7 @@ function readFleet(ctx, b) {
 function queue(ctx, b, targetMachineId, command) {
   if (!safeId(targetMachineId)) throw new Error('invalid target machine id');
   const cmd = Object.assign({ id: crypto.randomBytes(8).toString('hex'), from: b.machineId, at: ctx.now() }, command);
+  cmd.to = targetMachineId; // bind the recipient INTO the signature (set after assign so it can't be overridden)
   signCommand(ctx, cmd); // sign with this machine's private key so the target can verify the origin
   const inbox = b.read(inboxName(targetMachineId)) || [];
   inbox.push(cmd);
@@ -294,6 +315,7 @@ function applyCommand(ctx, cmd, opts) {
   // consent prompt): when a sender key is supplied, the signature MUST verify before we mutate.
   if (opts.requireSignature || opts.senderKey) {
     if (!verifyCommand(cmd, opts.senderKey)) return { ok: false, applied: cmd.type, detail: 'unverified origin (rejected)' };
+    if (cmd.to !== identity(ctx).machineId) return { ok: false, applied: cmd.type, detail: 'wrong recipient (rejected)' };
   }
   if (cmd.type === 'note') return { ok: true, applied: 'note', detail: scrub((cmd.payload && cmd.payload.text) || '', 500) };
   if (cmd.type === 'save-account') {
@@ -352,7 +374,7 @@ module.exports = {
   buildStatus: buildStatus, publish: publish, readFleet: readFleet,
   normalizeStatus: normalizeStatus, sanitizeStatus: sanitizeStatus,
   machineKeys: machineKeys, publicKey: publicKey, signCommand: signCommand, verifyCommand: verifyCommand,
-  knownKeys: knownKeys, reconcileKeys: reconcileKeys, checkOrigin: checkOrigin, trustKey: trustKey,
+  knownKeys: knownKeys, reconcileKeys: reconcileKeys, checkOrigin: checkOrigin, trustKey: trustKey, fingerprint: fingerprint,
   queue: queue, readInbox: readInbox, clearInbox: clearInbox, applyCommand: applyCommand,
   wasApplied: wasApplied, markApplied: markApplied, commandFresh: commandFresh,
   accountFrom: accountFrom, newReplies: newReplies, saveSeen: saveSeen,

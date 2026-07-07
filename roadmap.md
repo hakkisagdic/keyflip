@@ -661,6 +661,17 @@ re-trust / end-to-end). MCP: `keyflip_fleet_trust` (MUT + `confirm`). 540 tests,
 ever saw the real machine gets pinned) is documented — after first legitimate sight, substitution is
 detected.
 
+**Origin-auth adversarial review (2026-07-07, 4 dims × 3-lens, 50 agents) — 1 real defect, FIXED.**
+The review confirmed ONE bug (surfaced through all 4 lenses): the signed canonical form omitted the
+**recipient**, so a genuine signature was replayable cross-inbox (an attacker with the passphrase
+could copy A's command "switch → work", signed for B, into C's inbox and C would verify it as
+authentic). FIX: `signable()` now includes `to`; `queue()` binds `cmd.to = target` before signing;
+`checkOrigin(ctx, …)` and `applyCommand` reject unless `cmd.to === this machine's id` — so a signature
+is valid only for the one inbox it was issued to. Also hardened from the watch list: TOFU roster is a
+null-prototype map + `MAX_KNOWN` cap (anti-pollution/DoS), notes are ledgered (no verbatim replay),
+and `fleet trust` prints the new key's SHA-256 fingerprint for out-of-band verification. +2 regression
+tests (cross-inbox replay rejected; prototype-safety/fingerprint). 542 tests, 0 fail.
+
 ---
 
 ## E7 — Chat/session/memory lifecycle & cross-machine/-account/-service management
