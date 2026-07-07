@@ -30,15 +30,16 @@ macOS uses Chromium's **v10** scheme: `AES-128-CBC`, key = `PBKDF2(safeStorageKe
 Keychain (`<Browser> Safe Storage`). `catalog(home)` hard-codes macOS `Application
 Support` paths and Keychain service/account.
 
-**Windows (DPAPI + AES-GCM v10):**
+**Windows (DPAPI + AES-GCM v10):** ✅ CRYPTO SHIPPED — `src/wincrypt.js` (fixture-tested):
+- `masterKey(localState)` reads `os_crypt.encrypted_key`, strips the `DPAPI` prefix, and
+  DPAPI-decrypts it via **PowerShell** `[Security.Cryptography.ProtectedData]::Unprotect(...)`
+  (zero-dep, current-user scope; the shell runner is injectable for tests).
+- `decryptValue(value, key)` handles `v10`/`v11` = `AES-256-GCM` (3-byte prefix + 12-byte nonce +
+  ciphertext + 16-byte tag) — round-trip-verified against Chromium's exact encryption.
+- **Remaining (device-gated):** wire these into `appauth.js` account detection on a real Windows
+  box (the reader now exists; the macOS path is untouched). **v20 (app-bound)** still can't be
+  user-decrypted → the snapshot/restore fallback (copy encrypted rows verbatim) applies.
 - Cookies DB: `%LOCALAPPDATA%\Google\Chrome\User Data\Default\Network\Cookies` (Brave/Edge analogous).
-- Key: `Local State` → `os_crypt.encrypted_key`, base64-decode, strip the `DPAPI` prefix,
-  then **DPAPI-decrypt** (`CryptUnprotectData`, current-user scope). No Node built-in for
-  DPAPI → shell out to PowerShell `[Security.Cryptography.ProtectedData]::Unprotect(...)`
-  (zero-dep, matches keyflip's "shell out" pattern) or a tiny N-API addon (adds a dep — avoid).
-- Values: `v10`/`v20` = `AES-256-GCM` (12-byte nonce, 16-byte tag). **v20 (app-bound)**
-  can't be user-decrypted → the snapshot/restore approach (copy encrypted rows verbatim via
-  `sqlite3 .mode insert`, already used for macOS app-bound) is the portable fallback.
 
 **Linux (libsecret / kwallet, AES-CBC v11 or v10):**
 - Cookies DB: `~/.config/google-chrome/Default/Cookies` (Chromium `~/.config/chromium`, etc.).
