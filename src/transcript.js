@@ -82,8 +82,9 @@ const HTML_STYLE = [
   'main{padding:18px 22px;max-width:820px;margin:0 auto;display:flex;flex-direction:column;gap:12px}',
   '.msg{border:1px solid var(--bar);border-radius:12px;padding:12px 14px}.msg.u{background:var(--u)}.msg.a{background:var(--a)}',
   '.who{font-weight:600;font-size:12px;margin-bottom:6px}.ts{color:var(--dim);font-weight:400}',
-  '.body{white-space:normal;word-wrap:break-word}.tools{margin-top:8px;font-size:12px;color:var(--dim);font-style:italic}',
+  '.body{white-space:normal;word-wrap:break-word;overflow-wrap:anywhere}.tools{margin-top:8px;font-size:12px;color:var(--dim);font-style:italic}',
   '.dim{color:var(--dim)}footer{padding:14px 22px;border-top:1px solid var(--bar);font-size:12px}',
+  '@media(max-width:600px){header{padding:12px 14px}header h1{font-size:15px}main{padding:12px 14px;gap:10px}.msg{padding:10px 12px}footer{padding:12px 14px}}',
 ].join('');
 
 module.exports = { parse: parse, toMarkdown: toMarkdown, toHtml: toHtml };

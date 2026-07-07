@@ -225,6 +225,9 @@ const STYLE = [
   '.callegend{font-size:11px;color:var(--muted);display:flex;align-items:center;gap:4px;justify-content:flex-end;margin-top:6px}',
   '.mg{width:100%;max-width:440px;height:auto;display:block;margin:0 auto}.mg line{stroke:var(--accent);stroke-opacity:.35}.mg circle{fill:var(--accent);stroke:var(--card);stroke-width:1.5}.mg text{fill:var(--muted);font-size:10px}',
   'footer{padding:14px 22px;border-top:1px solid var(--bar);font-size:12px}',
+  // mobile: never scroll the body sideways; wide SVGs scroll inside their own box.
+  'img,svg{max-width:100%}#activity{overflow-x:auto;-webkit-overflow-scrolling:touch}',
+  '@media(max-width:600px){header{padding:11px 14px;flex-wrap:wrap;gap:6px}header h1{font-size:16px}#refresh{margin-left:auto}main{padding:14px}section{margin-bottom:20px}.grid{grid-template-columns:1fr}.callegend{justify-content:flex-start}}',
 ].join('');
 
 const SCRIPT = [
