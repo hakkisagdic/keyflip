@@ -274,7 +274,7 @@ Agents shouldn't have to guess the CLI — keyflip speaks **MCP**:
 claude mcp add keyflip -- keyflip mcp     # or see: keyflip mcp --setup
 ```
 
-**The full CLI surface is exposed as ~20 MCP tools**, so an agent can do
+**The full CLI surface is exposed as 50+ MCP tools**, so an agent can do
 everything without shelling out — accounts (`keyflip_status/list/switch/next`),
 providers (`keyflip_providers`, `keyflip_provider_use/add`, `keyflip_test_provider`),
 sessions (`keyflip_sessions`, `keyflip_resume_command`), diagnostics

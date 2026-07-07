@@ -271,7 +271,7 @@ Agent'lar CLI'ı tahmin etmek zorunda kalmasın — keyflip **MCP** konuşur:
 claude mcp add keyflip -- keyflip mcp     # veya: keyflip mcp --setup
 ```
 
-**Tüm CLI yüzeyi ~20 MCP aracı olarak sunulur** — agent hiçbir şeyi kabuğa
+**Tüm CLI yüzeyi 50+ MCP aracı olarak sunulur** — agent hiçbir şeyi kabuğa
 dökmeden yapabilir: hesaplar (`keyflip_status/list/switch/next`), provider'lar
 (`keyflip_providers`, `keyflip_provider_use/add`, `keyflip_test_provider`),
 oturumlar (`keyflip_sessions`, `keyflip_resume_command`), tanılama
