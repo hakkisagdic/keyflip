@@ -12,7 +12,7 @@ const RESERVED_NAMES = ['__proto__', 'prototype', 'constructor'];
 // keyflip's own top-level state files (<configDir>/*.json) that are NOT account
 // profiles. Without this, list() counts breakers.json/proxy.json/etc. as phantom
 // accounts and the schema migration rewrites them to a bogus `undefined.json`.
-const RESERVED_FILES = ['breakers', 'proxy', 'mcp-registry', 'links', 'installed-skills', 'session-accounts', 'fleet', 'fleet-seen', 'fleet-applied'];
+const RESERVED_FILES = ['breakers', 'proxy', 'mcp-registry', 'links', 'installed-skills', 'session-accounts', 'fleet', 'fleet-seen', 'fleet-applied', 'fleet-key', 'fleet-known'];
 
 function metaPath(dir, name) { return path.join(dir, name + '.json'); }
 

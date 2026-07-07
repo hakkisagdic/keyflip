@@ -1745,7 +1745,10 @@ async function cmdFleet(ctx, rest) {
     const withSecrets = rest.indexOf('--with-secrets') !== -1;
     const autoYes = rest.indexOf('-y') !== -1 || rest.indexOf('--yes') !== -1;
     const status = fleet.publish(ctx, b, { withSecrets: withSecrets });
-    // process my inbox: apply queued commands (mutations gated on consent)
+    // Reconcile peer signing keys (TOFU: pin on first sight, flag any that CHANGED) before we trust
+    // any queued command's origin.
+    const reconcile = fleet.reconcileKeys(ctx, fleet.readFleet(ctx, b));
+    // process my inbox: apply queued commands (origin-authenticated, then gated on consent)
     const inbox = fleet.readInbox(ctx, b);
     const results = [];
     for (let i = 0; i < inbox.length; i++) {
@@ -1754,7 +1757,12 @@ async function cmdFleet(ctx, rest) {
       // ones — the rendezvous is only semi-trusted, so a captured command could be re-injected.
       if (cmd && cmd.id && fleet.wasApplied(ctx, cmd.id)) { results.push({ ok: false, applied: cmd.type, detail: 'skipped (already applied)' }); continue; }
       if (!fleet.commandFresh(ctx, cmd)) { results.push({ ok: false, applied: cmd && cmd.type, detail: 'skipped (expired)' }); continue; }
-      let allow = { allowSwitch: false, allowSave: false, force: rest.indexOf('--force') !== -1 };
+      // Origin authentication: the command MUST carry a signature that verifies against the sender's
+      // TOFU-pinned public key. This is what defeats a leaked passphrase — an attacker who can write
+      // to the folder still cannot forge a command "from" a machine whose private key they lack.
+      const origin = fleet.checkOrigin(cmd, reconcile);
+      if (!origin.ok) { results.push({ ok: false, applied: cmd && cmd.type, detail: 'rejected: ' + origin.reason }); continue; }
+      let allow = { allowSwitch: false, allowSave: false, force: rest.indexOf('--force') !== -1, senderKey: origin.key, requireSignature: true };
       if (cmd.type === 'note') { /* no consent */ }
       else if (autoYes) { allow.allowSwitch = true; allow.allowSave = true; }
       else if (!JSON_MODE && process.stdin.isTTY) {
@@ -1762,7 +1770,7 @@ async function cmdFleet(ctx, rest) {
         const acctLabel = String((cmd.payload && (cmd.type === 'switch' ? cmd.payload.account : cmd.payload.account && cmd.payload.account.name)) || '?').replace(/[^\w@.+-]/g, '').slice(0, 60);
         const desc = cmd.type === 'switch' ? 'switch this machine to account "' + acctLabel + '"'
           : cmd.type === 'save-account' ? 'save account "' + acctLabel + '" (from ' + fromLabel + ')' : String(cmd.type).replace(/[^\w-]/g, '');
-        const ok = await confirm(style.warn('⚠') + ' ' + fromLabel + ' asks to ' + desc + ' — allow? [y/N] ');
+        const ok = await confirm(style.warn('⚠') + ' ' + style.ok('✓ verified') + ' ' + fromLabel + ' asks to ' + desc + ' — allow? [y/N] ');
         allow.allowSwitch = allow.allowSave = ok;
       }
       const r = fleet.applyCommand(ctx, cmd, allow);
@@ -1770,6 +1778,7 @@ async function cmdFleet(ctx, rest) {
       results.push(r);
     }
     if (inbox.length) fleet.clearInbox(ctx, b);
+    if (reconcile.conflicts.length && !JSON_MODE) reconcile.conflicts.forEach(function (c) { print(style.warn('⚠ KEY CHANGED') + ' for ' + style.bold(c.name) + ' (' + c.machineId + ') — commands from it are being REJECTED. If this machine legitimately re-keyed, run `keyflip fleet trust ' + c.machineId + ' --passphrase-file <f>`.'); });
     if (JSON_MODE) { jsonOut({ fleetPush: { machine: b.name, accounts: status.accounts.length, chats: status.chats.length, applied: results } }); return; }
     print(style.ok('📡') + ' published ' + style.bold(b.name) + ': ' + status.accounts.length + ' account(s), ' + status.chats.length + ' chat(s)' + (withSecrets ? style.dim(' (with encrypted creds)') : '') + '.');
     results.forEach(function (r) { print('   ' + (r.ok ? style.ok('✓') : style.dim('•')) + ' inbox: ' + r.applied + ' — ' + r.detail); });
@@ -1804,6 +1813,7 @@ async function cmdFleet(ctx, rest) {
     const m = resolveMachine(fleet.readFleet(ctx, b), machineArg);
     if (m === 'ambiguous') return fail("'" + machineArg + "' matches more than one machine");
     if (!m) return fail("no fleet machine named '" + machineArg + "' (run `keyflip fleet status`)");
+    fleet.publish(ctx, b, {}); // publish our status so the target can TOFU-pin our key and verify us
     const cmd = fleet.queue(ctx, b, m.machineId, { type: 'switch', payload: { account: account } });
     if (JSON_MODE) { jsonOut({ queued: { target: m.name, command: cmd } }); return; }
     print(style.ok('📨') + ' queued a switch → ' + style.bold(m.name) + ' will move to ' + style.bold(account) + ' on its next ' + style.bold('keyflip fleet push') + '.');
@@ -1829,9 +1839,33 @@ async function cmdFleet(ctx, rest) {
       if (!ex) return fail("no local account '" + account + "' (or its credentials are unreadable).");
       acctObj = ex;
     }
+    fleet.publish(ctx, b, {}); // publish our status so the target can TOFU-pin our key and verify us
     const cmd = fleet.queue(ctx, b, to.machineId, { type: 'save-account', payload: { account: acctObj } });
     if (JSON_MODE) { jsonOut({ queued: { target: to.name, account: account, command: { id: cmd.id, type: cmd.type } } }); return; }
     print(style.ok('📨') + ' queued ' + style.bold(account) + (fromArg ? ' (from ' + fromArg + ')' : '') + ' → ' + style.bold(to.name) + ' will save it on its next ' + style.bold('keyflip fleet push') + '.');
+    return;
+  }
+
+  if (sub === 'trust') {
+    // Re-pin a machine's signing key AFTER a legitimate re-key (the only sanctioned way a pinned key
+    // changes). Guarded by consent when the key actually differs from what we pinned before.
+    const pos = positionals(rest.slice(1), ['--passphrase-file']);
+    const machineArg = pos[0];
+    if (!machineArg) return fail('usage: keyflip fleet trust <machine> --passphrase-file <f>');
+    const m = resolveMachine(fleet.readFleet(ctx, b), machineArg);
+    if (m === 'ambiguous') return fail("'" + machineArg + "' matches more than one machine");
+    if (!m) return fail("no fleet machine named '" + machineArg + "' (run `keyflip fleet status`)");
+    if (!m.pubKey) return fail("'" + m.name + "' has not published a signing key yet (it must `keyflip fleet push`).");
+    const known = fleet.knownKeys(ctx);
+    const pinned = known[m.machineId];
+    if (pinned === m.pubKey) { if (!JSON_MODE) print(style.dim('Already trusting ' + m.name + "'s current key — nothing to do.")); else jsonOut({ trusted: { machine: m.name, changed: false } }); return; }
+    if (pinned && !JSON_MODE && process.stdin.isTTY) {
+      print(style.warn('⚠') + ' the pinned key for ' + style.bold(m.name) + ' has CHANGED. Only re-trust if you KNOW it legitimately re-keyed (a new install / reset). If not, this could be a key-substitution attack via the shared folder.');
+      if (!(await confirm('Re-trust ' + m.name + "'s new key? [y/N] "))) { print('Cancelled — the old key stays pinned; commands from ' + m.name + ' remain rejected.'); return; }
+    }
+    fleet.trustKey(ctx, m.machineId, m.pubKey);
+    if (JSON_MODE) { jsonOut({ trusted: { machine: m.name, machineId: m.machineId, changed: !!pinned } }); return; }
+    print(style.ok('✅') + ' now trusting ' + style.bold(m.name) + "'s " + (pinned ? 'NEW ' : '') + 'signing key. Its commands will verify again.');
     return;
   }
 
@@ -1860,7 +1894,7 @@ async function cmdFleet(ctx, rest) {
     return;
   }
 
-  return fail('usage: keyflip fleet <init|push|status|switch|send-account|collect|panel> …  (see `keyflip fleet` help)');
+  return fail('usage: keyflip fleet <init|push|status|switch|send-account|collect|trust|panel> …  (see `keyflip fleet` help)');
 }
 
 // Epic F: normalize ANOTHER agent's session file (JSONL, or an Aider .md) into keyflip's

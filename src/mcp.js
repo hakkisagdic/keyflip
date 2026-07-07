@@ -528,6 +528,7 @@ const TOOLS = [
       const b = fleet.bus(ctx, { passphrase: fs.readFileSync(String(args.passphrase_file), 'utf8').trim() });
       const m = fleet.readFleet(ctx, b).filter(function (s) { return s.name === args.machine || s.machineId === args.machine || s.machineId.indexOf(String(args.machine)) === 0; });
       if (m.length !== 1) throw new Error("no single fleet machine named '" + args.machine + "'");
+      fleet.publish(ctx, b, {}); // publish our status so the target can TOFU-pin our key and verify us
       const cmd = fleet.queue(ctx, b, m[0].machineId, { type: 'switch', payload: { account: String(args.account) } });
       return { queued: { target: m[0].name, account: args.account, id: cmd.id } };
     },
@@ -546,8 +547,25 @@ const TOOLS = [
       let acct;
       if (args.from) { const from = statuses.filter(function (s) { return s.name === args.from || s.machineId === args.from; })[0]; acct = from && fleet.accountFrom(from, String(args.account)); if (!acct) throw new Error("'" + args.from + "' has not published account '" + args.account + "' with credentials"); }
       else { acct = transfer.buildExport(ctx).envelope.accounts.filter(function (a) { return a.name === String(args.account); })[0]; if (!acct) throw new Error("no local account '" + args.account + "'"); }
+      fleet.publish(ctx, b, {}); // publish our status so the target can TOFU-pin our key and verify us
       const cmd = fleet.queue(ctx, b, to.machineId, { type: 'save-account', payload: { account: acct } });
       return { queued: { target: to.name, account: args.account, id: cmd.id } };
+    },
+  },
+  {
+    name: 'keyflip_fleet_trust', title: 'Re-pin a fleet machine\'s signing key after a legitimate re-key',
+    description: 'Origin authentication: each fleet machine signs its commands with an Ed25519 key; a receiver trust-on-first-use PINS each peer\'s public key and REJECTS commands if that key later changes (a possible key-substitution attack via the shared folder). Use this ONLY when a machine legitimately re-keyed (fresh install / reset) and you want to trust its NEW key so its commands verify again. This overrides a security safety flag — confirm with the user that the change is expected. Mutating (updates the local pinned-key store) — confirm=true.',
+    inputSchema: { type: 'object', properties: { machine: { type: 'string', description: 'Machine name or id whose current published key to (re)pin.' }, passphrase_file: { type: 'string' }, confirm: confirmProp.confirm }, required: ['machine', 'passphrase_file', 'confirm'], additionalProperties: false }, annotations: MUT,
+    run: async function (ctx, args) {
+      needConfirm(args);
+      const fleet = require('./fleet');
+      const b = fleet.bus(ctx, { passphrase: fs.readFileSync(String(args.passphrase_file), 'utf8').trim() });
+      const m = fleet.readFleet(ctx, b).filter(function (s) { return s.name === args.machine || s.machineId === args.machine; })[0];
+      if (!m) throw new Error("no fleet machine named '" + args.machine + "'");
+      if (!m.pubKey) throw new Error("'" + args.machine + "' has not published a signing key yet");
+      const pinned = fleet.knownKeys(ctx)[m.machineId];
+      fleet.trustKey(ctx, m.machineId, m.pubKey);
+      return { trusted: { machine: m.name, machineId: m.machineId, changed: !!pinned && pinned !== m.pubKey } };
     },
   },
   {

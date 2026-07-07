@@ -226,8 +226,14 @@ account; `keyflip provider off` restores it. Never put an API key in argv — us
   last check. `keyflip fleet switch <machine> <account>` queues a remote switch; `keyflip fleet
   send-account <acct> --to <machine> [--from <machine>]` distributes an account — so from machine A
   you can hand machine C's account to machine B; `keyflip fleet collect` gathers every published
-  account locally. Everything in the rendezvous is encrypted (nothing plaintext at rest). (MCP:
-  `keyflip_fleet_status` (read), `keyflip_fleet_switch` / `keyflip_fleet_send_account` (need `confirm:true`).)
+  account locally. Everything in the rendezvous is encrypted (nothing plaintext at rest).
+  **Origin authentication:** each machine owns an Ed25519 signing key (private key 0600, local only,
+  never in the shared folder). Commands are signed; a receiver **trust-on-first-use pins** each peer's
+  public key and REJECTS any command whose signature doesn't verify — so even a leaked passphrase can't
+  let a forger command a machine. If a peer's key later CHANGES it's flagged as possible key
+  substitution and its commands are rejected until `keyflip fleet trust <machine>` re-pins the new key
+  (consent-gated). (MCP: `keyflip_fleet_status` (read), `keyflip_fleet_switch` /
+  `keyflip_fleet_send_account` / `keyflip_fleet_trust` (need `confirm:true`).)
 - `keyflip consolidate [--watch]` — sync every account's chat index so each shows
   ALL conversations. The desktop app's store is locked while it runs, so a one-shot
   offers to close→sync→reopen the app; `--watch` re-syncs on an interval whenever the

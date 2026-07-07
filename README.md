@@ -157,6 +157,7 @@ keyflip fleet status | panel   # see EVERY machine on one screen — accounts, q
 keyflip fleet switch <machine> <account>   # switch a REMOTE machine's account (applied on its next push)
 keyflip fleet send-account <acct> --to <machine> [--from <machine>]   # distribute an account (e.g. C's account to B, from A)
 keyflip fleet collect         # gather every account published across the fleet onto this machine
+keyflip fleet trust <machine> # re-pin a machine's signing key AFTER a legitimate re-key (see "origin auth" below)
 keyflip consolidate [--watch] # sync every account's chat index so each shows ALL conversations
 keyflip remove <name|number>  # delete a saved account
 keyflip history | undo | restore <ref>   # git-versioned config: inspect / undo / roll back any change (secrets never committed)

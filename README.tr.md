@@ -157,6 +157,7 @@ keyflip fleet status | panel   # TÜM makineleri tek ekranda gör — hesaplar, 
 keyflip fleet switch <makine> <hesap>   # UZAK makinenin hesabını değiştir (o makine push edince uygulanır)
 keyflip fleet send-account <hesap> --to <makine> [--from <makine>]   # hesabı dağıt (örn. C'nin hesabını B'ye, A'dan)
 keyflip fleet collect         # filoda yayınlanmış tüm hesapları bu makineye topla
+keyflip fleet trust <makine>  # meşru bir yeniden-anahtarlama SONRASI makinenin imza anahtarını yeniden sabitle ("origin auth")
 keyflip consolidate [--watch] # her hesabın sohbet dizinini eşitle; her biri TÜM sohbetleri görsün
 keyflip remove <ad|numara>    # kayıtlı hesabı sil
 keyflip history | undo | restore <ref>   # git-versiyonlu config: her değişikliği incele / geri al / geri dön (sırlar asla commit edilmez)

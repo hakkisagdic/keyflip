@@ -646,11 +646,20 @@ total, 0 fail):
 `--run` path uses `spawnSync(bin, args[])` (argv array, **no shell**); the id is a literal argv, and
 `foreign.resumeCommand` isn't wired to any exec. (b) `isEncBlob` v10→v11 widening — macOS still
 decrypts via `getSafeStoragePassword` (v10 CBC); a v11 blob on macOS just falls back to the allowlist
-org. **Tracked residual (by design, deferred):** the fleet trust boundary IS the shared passphrase —
-anyone holding it + rendezvous write access can *queue* a command. The interactive consent prompt
-(y/N unless `-y`) + RESERVED-name guard + replay ledger + id validation blunt every concrete exploit;
-true per-machine **origin authentication** (TOFU-pinned signing keys so a victim verifies *who* queued
-a command even against a leaked passphrase) is a larger design change, tracked as future work.
+org. **Residual RESOLVED (2026-07-07) — per-machine origin authentication shipped.** The fleet trust
+boundary was the shared passphrase alone. Now each machine owns an **Ed25519 signing key** (private
+key 0600 in configDir, never in the shared folder, never argv); the public key is published in its
+status. `fleet.queue` **signs** every command; a receiver **trust-on-first-use pins** each peer's key
+(`fleet-known.json`) and `fleet.checkOrigin` REJECTS any command whose signature doesn't verify against
+the pinned key — so even a leaked passphrase + folder write can't forge a command *from* a machine
+whose private key the attacker lacks. A pinned key that later CHANGES is flagged as possible key
+substitution and its commands rejected until `keyflip fleet trust <machine>` (consent-gated) re-pins
+the new key. Enforced in the CLI push drain BEFORE the consent prompt, and re-checked in
+`applyCommand` (defence in depth). +7 regression tests (forgery / tamper / unsigned / key-change /
+re-trust / end-to-end). MCP: `keyflip_fleet_trust` (MUT + `confirm`). 540 tests, 0 fail; 56 MCP tools,
+0 invariant violations. TOFU's inherent first-sight limitation (an attacker who publishes *before* you
+ever saw the real machine gets pinned) is documented — after first legitimate sight, substitution is
+detected.
 
 ---
 
