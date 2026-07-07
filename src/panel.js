@@ -295,11 +295,21 @@ const SCRIPT = [
   'document.getElementById("refresh").onclick=load;load();',
 ].join('\n');
 
+// DNS-rebinding guard: the server binds loopback, but a malicious web page can point a hostname it
+// controls at 127.0.0.1 and have the victim's browser reach it — the browser then sends that
+// attacker hostname in the Host header. Accept only loopback host names (or a Host-less request).
+function loopbackOk(req) {
+  const host = String((req.headers && req.headers.host) || '').toLowerCase();
+  const name = host.replace(/:\d+$/, '').replace(/^\[|\]$/g, '');
+  return name === '' || name === '127.0.0.1' || name === 'localhost' || name === '::1';
+}
+
 // Command-activated server — loopback only, read-only. Returns { server, port, url }.
 function serve(ctx, opts) {
   opts = opts || {};
   const host = opts.host || '127.0.0.1';
   const server = http.createServer(function (req, res) {
+    if (!loopbackOk(req)) { res.writeHead(403); res.end('forbidden'); return; }
     if (req.method !== 'GET') { res.writeHead(405); res.end(); return; }
     const urlPath = String(req.url || '').split('?')[0]; // ignore any query string
     if (urlPath === '/api/state') {
@@ -330,12 +340,16 @@ function serveFleet(ctx, opts) {
   opts = opts || {};
   const host = opts.host || '127.0.0.1';
   const server = http.createServer(function (req, res) {
+    if (!loopbackOk(req)) { res.writeHead(403); res.end('forbidden'); return; }
     if (req.method !== 'GET') { res.writeHead(405); res.end(); return; }
     const urlPath = String(req.url || '').split('?')[0];
     if (urlPath === '/api/fleet') {
       res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
       let data = { machines: [], newReplies: [] };
       try { data = opts.getFleet(); } catch (e) { /* serve empty on a transient read error */ }
+      // Defence in depth: even though getFleet already projects out creds, never let a secret field
+      // reach the wire if a caller forgets to sanitize.
+      if (data && Array.isArray(data.machines)) data.machines = data.machines.map(function (m) { if (m && typeof m === 'object' && m.creds) { m = Object.assign({}, m); delete m.creds; } return m; });
       res.end(JSON.stringify(data));
       return;
     }

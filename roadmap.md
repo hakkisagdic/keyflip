@@ -612,6 +612,36 @@ wiring plumbed; dispatch/lock scopes correct), with 2 LOW findings, both FIXED:
 
 327 tests green (0 fail). Changeset cleared for commit.
 
+### Post-review hardening — round 4 (FLEET control plane + Windows app-auth, applied 2026-07-07)
+
+A max-effort adversarial review of the NEW fleet/app-auth batch (6 security dimensions ×
+3-lens verification, 88 agents) returned **23 CONFIRMED findings** (≥2/3 lenses). Deduped to
+7 root causes — all FIXED, each with a regression test (`test/fleet.test.js`, +10 tests → 533
+total, 0 fail):
+
+- **P0 — credential leak to display surfaces.** `readFleet` returns full statuses incl. `.creds`
+  (raw OAuth blobs, present only with `--with-secrets` for the relay). Every DISPLAY path forwarded
+  them: panel `/api/fleet`, MCP `keyflip_fleet_status`, `fleet status --json`. Fix: `fleet.sanitizeStatus()`
+  (creds-free projection) applied at all three boundaries; `readFleet` keeps creds ONLY for the
+  server-side relay (`accountFrom`/collect/send-account); panel defensively strips too.
+- **P1 — path traversal via peer machineId.** `<id>.status.enc`/`<id>.inbox.enc` filenames were
+  built from an unvalidated peer id. Fix: `safeId` (`^[A-Za-z0-9._-]{1,64}$`, no `..`) enforced in
+  `statusName`/`inboxName`/`queue`; `bus` write/read/remove require a plain basename; `readFleet`
+  drops any status with an unsafe id **and** binds the claimed id to the filename stem (anti-spoof).
+- **P1 — DNS-rebinding on the loopback panels.** No `Host` check. Fix: `loopbackOk()` rejects any
+  non-loopback `Host` header on both `serve` and `serveFleet`.
+- **P2 — `save-account` could overwrite keyflip's own state** (`fleet.json` etc.). Fix: `profiles.isValidName`
+  now rejects `RESERVED_FILES`, so an inbound account named `fleet`/`fleet-seen`/`fleet-applied` is refused.
+- **P2 — no replay protection.** A captured inbox command could be re-injected. Fix: a bounded applied-id
+  ledger (`fleet-applied.json`) + a 7-day freshness window (`wasApplied`/`markApplied`/`commandFresh`),
+  enforced in the push drain loop.
+- **P2/P3 — crashes + ANSI injection from hostile peer status.** Fix: `normalizeStatus` type-checks,
+  control-char-strips, and length-caps every peer field; `newReplies` guards non-array/non-object;
+  the `note` detail and the confirm prompt strip control chars; per-file (8 MB) and per-roster (500)
+  read caps blunt a resource-exhaustion peer.
+
+533 tests green (0 fail); 55 MCP tools, 0 confirm-invariant violations. Fleet batch cleared for commit.
+
 ---
 
 ## E7 — Chat/session/memory lifecycle & cross-machine/-account/-service management

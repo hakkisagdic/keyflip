@@ -1750,16 +1750,24 @@ async function cmdFleet(ctx, rest) {
     const results = [];
     for (let i = 0; i < inbox.length; i++) {
       const cmd = inbox[i];
+      // Replay protection: never re-run a command we already applied, and drop stale/far-future
+      // ones — the rendezvous is only semi-trusted, so a captured command could be re-injected.
+      if (cmd && cmd.id && fleet.wasApplied(ctx, cmd.id)) { results.push({ ok: false, applied: cmd.type, detail: 'skipped (already applied)' }); continue; }
+      if (!fleet.commandFresh(ctx, cmd)) { results.push({ ok: false, applied: cmd && cmd.type, detail: 'skipped (expired)' }); continue; }
       let allow = { allowSwitch: false, allowSave: false, force: rest.indexOf('--force') !== -1 };
       if (cmd.type === 'note') { /* no consent */ }
       else if (autoYes) { allow.allowSwitch = true; allow.allowSave = true; }
       else if (!JSON_MODE && process.stdin.isTTY) {
-        const desc = cmd.type === 'switch' ? 'switch this machine to account "' + (cmd.payload && cmd.payload.account) + '"'
-          : cmd.type === 'save-account' ? 'save account "' + (cmd.payload && cmd.payload.account && cmd.payload.account.name) + '" (from ' + cmd.from + ')' : cmd.type;
-        const ok = await confirm(style.warn('⚠') + ' ' + cmd.from + ' asks to ' + desc + ' — allow? [y/N] ');
+        const fromLabel = String(cmd.from || '?').replace(/[^\w.-]/g, '').slice(0, 40);
+        const acctLabel = String((cmd.payload && (cmd.type === 'switch' ? cmd.payload.account : cmd.payload.account && cmd.payload.account.name)) || '?').replace(/[^\w@.+-]/g, '').slice(0, 60);
+        const desc = cmd.type === 'switch' ? 'switch this machine to account "' + acctLabel + '"'
+          : cmd.type === 'save-account' ? 'save account "' + acctLabel + '" (from ' + fromLabel + ')' : String(cmd.type).replace(/[^\w-]/g, '');
+        const ok = await confirm(style.warn('⚠') + ' ' + fromLabel + ' asks to ' + desc + ' — allow? [y/N] ');
         allow.allowSwitch = allow.allowSave = ok;
       }
-      results.push(fleet.applyCommand(ctx, cmd, allow));
+      const r = fleet.applyCommand(ctx, cmd, allow);
+      if (r.ok && cmd.type !== 'note' && cmd.id) fleet.markApplied(ctx, cmd.id);
+      results.push(r);
     }
     if (inbox.length) fleet.clearInbox(ctx, b);
     if (JSON_MODE) { jsonOut({ fleetPush: { machine: b.name, accounts: status.accounts.length, chats: status.chats.length, applied: results } }); return; }
@@ -1771,7 +1779,8 @@ async function cmdFleet(ctx, rest) {
   if (sub === 'status') {
     const statuses = fleet.readFleet(ctx, b);
     const nr = fleet.newReplies(ctx, statuses); fleet.saveSeen(ctx, nr.snapshot);
-    if (JSON_MODE) { jsonOut({ fleet: statuses, newReplies: nr.newReplies }); return; }
+    // --json must never leak credentials: project every status through the creds-free view.
+    if (JSON_MODE) { jsonOut({ fleet: statuses.map(fleet.sanitizeStatus), newReplies: nr.newReplies }); return; }
     if (!statuses.length) { print(style.dim('No machines have checked in yet. Run `keyflip fleet push --passphrase-file <f>` on each.')); return; }
     print(style.bold('Fleet') + ' ' + style.dim('(' + statuses.length + ' machine(s)):'));
     statuses.forEach(function (s) {
@@ -1841,7 +1850,8 @@ async function cmdFleet(ctx, rest) {
   if (sub === 'panel') {
     const panel = require('./panel');
     const pi = rest.indexOf('--port'); const port = pi !== -1 ? (parseInt(rest[pi + 1], 10) || 8898) : 8898;
-    const getFleet = function () { const statuses = fleet.readFleet(ctx, b); const nr = fleet.newReplies(ctx, statuses); return { machines: statuses, newReplies: nr.newReplies }; };
+    // The panel is a display surface — strip credentials from every machine before they cross to HTTP.
+    const getFleet = function () { const statuses = fleet.readFleet(ctx, b); const nr = fleet.newReplies(ctx, statuses); return { machines: statuses.map(fleet.sanitizeStatus), newReplies: nr.newReplies }; };
     let h; try { h = await panel.serveFleet(ctx, { port: port, getFleet: getFleet }); }
     catch (e) { return fail('could not start the fleet panel: ' + (e && e.code === 'EADDRINUSE' ? 'port ' + port + ' in use (try --port N)' : (e && e.message))); }
     print(style.ok('✅') + ' fleet dashboard on ' + style.bold(h.url) + '  ' + style.dim('(read-only, loopback; Ctrl-C to stop)'));

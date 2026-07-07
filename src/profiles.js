@@ -12,7 +12,7 @@ const RESERVED_NAMES = ['__proto__', 'prototype', 'constructor'];
 // keyflip's own top-level state files (<configDir>/*.json) that are NOT account
 // profiles. Without this, list() counts breakers.json/proxy.json/etc. as phantom
 // accounts and the schema migration rewrites them to a bogus `undefined.json`.
-const RESERVED_FILES = ['breakers', 'proxy', 'mcp-registry', 'links', 'installed-skills', 'session-accounts', 'fleet', 'fleet-seen'];
+const RESERVED_FILES = ['breakers', 'proxy', 'mcp-registry', 'links', 'installed-skills', 'session-accounts', 'fleet', 'fleet-seen', 'fleet-applied'];
 
 function metaPath(dir, name) { return path.join(dir, name + '.json'); }
 
@@ -49,7 +49,11 @@ function email(dir, name) {
 }
 
 function isValidName(name) {
-  return typeof name === 'string' && NAME_RE.test(name) && RESERVED_NAMES.indexOf(name) === -1;
+  // Reject RESERVED_FILES too: an inbound/imported account named e.g. 'fleet' would otherwise
+  // overwrite keyflip's own <configDir>/fleet.json state (a hostile fleet save-account vector).
+  return typeof name === 'string' && NAME_RE.test(name)
+    && RESERVED_NAMES.indexOf(name) === -1
+    && RESERVED_FILES.indexOf(name) === -1;
 }
 
 // Turn an email into a safe, human profile name (local-part, lowercased).

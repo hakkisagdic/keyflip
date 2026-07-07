@@ -514,7 +514,8 @@ const TOOLS = [
       const fleet = require('./fleet');
       const b = fleet.bus(ctx, { passphrase: fs.readFileSync(String(args.passphrase_file), 'utf8').trim() });
       const statuses = fleet.readFleet(ctx, b); const nr = fleet.newReplies(ctx, statuses); fleet.saveSeen(ctx, nr.snapshot);
-      return { machines: statuses, newReplies: nr.newReplies };
+      // Read-only status must never surface credentials into the model/transcript — creds-free view.
+      return { machines: statuses.map(fleet.sanitizeStatus), newReplies: nr.newReplies };
     },
   },
   {

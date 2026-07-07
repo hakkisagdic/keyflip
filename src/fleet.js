@@ -28,6 +28,20 @@ function identity(ctx) {
 }
 function safeHost() { try { return String(os.hostname()).split('.')[0].replace(/[^A-Za-z0-9_-]/g, '') || 'machine'; } catch (e) { return 'machine'; } }
 
+// A machine id must be a single SAFE FILENAME SEGMENT — never a path. Peer-supplied ids reach
+// filenames (<id>.status.enc / <id>.inbox.enc), so an unvalidated '../' would let a hostile peer
+// (the rendezvous folder is only semi-trusted — a shared passphrase + shared write access) write
+// or read OUTSIDE the rendezvous dir. Reject anything that isn't a bounded [A-Za-z0-9._-] token.
+const SAFE_ID = /^[A-Za-z0-9._-]{1,64}$/;
+function safeId(x) { return typeof x === 'string' && SAFE_ID.test(x) && x.indexOf('..') === -1; }
+// A bus entry name must be a plain basename (no separators, no traversal) — defence in depth.
+function nameOk(name) { return typeof name === 'string' && name.length > 0 && name.length <= 96 && name.indexOf('/') === -1 && name.indexOf('\\') === -1 && name.indexOf('\0') === -1 && name !== '.' && name !== '..' && path.basename(name) === name; }
+const MAX_ENC_BYTES = 8 * 1024 * 1024; // cap a single peer file (anti-DoS: a hostile huge .enc)
+const MAX_STATUS_FILES = 500;          // cap how many peer statuses we process per read
+// eslint-disable-next-line no-control-regex
+const CTRL = /[\x00-\x1f\x7f]/g; // control chars incl. ANSI ESC — strip from peer strings pre-render
+function scrub(s, max) { return String(s == null ? '' : s).replace(CTRL, ' ').slice(0, max || 200); }
+
 function setConfig(ctx, patch) {
   const id = identity(ctx);
   Object.keys(patch || {}).forEach(function (k) { if (patch[k] != null) id[k] = patch[k]; });
@@ -46,15 +60,15 @@ function bus(ctx, opts) {
   const sync = require('./sync');
   return {
     dir: dir, machineId: id.machineId, name: id.name,
-    write: function (name, obj) { fs.mkdirSync(dir, { recursive: true }); const f = path.join(dir, name); fs.writeFileSync(f, sync.encrypt(JSON.stringify(obj), opts.passphrase), { mode: 0o600 }); try { fs.chmodSync(f, 0o600); } catch (e) { /* non-POSIX */ } },
-    read: function (name) { let raw; try { raw = fs.readFileSync(path.join(dir, name), 'utf8'); } catch (e) { return null; } try { return JSON.parse(sync.decrypt(raw, opts.passphrase)); } catch (e) { return null; } },
-    list: function (suffix) { let ents = []; try { ents = fs.readdirSync(dir); } catch (e) { return []; } return ents.filter(function (n) { return n.slice(-suffix.length) === suffix; }); },
-    remove: function (name) { try { fs.rmSync(path.join(dir, name), { force: true }); } catch (e) { /* ignore */ } },
+    write: function (name, obj) { if (!nameOk(name)) throw new Error('unsafe fleet entry name'); fs.mkdirSync(dir, { recursive: true }); const f = path.join(dir, name); fs.writeFileSync(f, sync.encrypt(JSON.stringify(obj), opts.passphrase), { mode: 0o600 }); try { fs.chmodSync(f, 0o600); } catch (e) { /* non-POSIX */ } },
+    read: function (name) { if (!nameOk(name)) return null; const f = path.join(dir, name); try { if (fs.statSync(f).size > MAX_ENC_BYTES) return null; } catch (e) { return null; } let raw; try { raw = fs.readFileSync(f, 'utf8'); } catch (e) { return null; } try { return JSON.parse(sync.decrypt(raw, opts.passphrase)); } catch (e) { return null; } },
+    list: function (suffix) { let ents = []; try { ents = fs.readdirSync(dir); } catch (e) { return []; } return ents.filter(function (n) { return nameOk(n) && n.slice(-suffix.length) === suffix; }); },
+    remove: function (name) { if (!nameOk(name)) return; try { fs.rmSync(path.join(dir, name), { force: true }); } catch (e) { /* ignore */ } },
   };
 }
 
-function statusName(machineId) { return machineId + '.status.enc'; }
-function inboxName(machineId) { return machineId + '.inbox.enc'; }
+function statusName(machineId) { if (!safeId(machineId)) throw new Error('unsafe machine id'); return machineId + '.status.enc'; }
+function inboxName(machineId) { if (!safeId(machineId)) throw new Error('unsafe machine id'); return machineId + '.inbox.enc'; }
 
 // Build this machine's status: accounts (+cached quota), the active account, and recent chat
 // state (last message role -> replied/waiting). withSecrets also carries the account credentials
@@ -104,27 +118,92 @@ function publish(ctx, b, opts) {
   b.write(statusName(b.machineId), status);
   return status;
 }
+// Coerce a DECRYPTED PEER status into safe shapes — a peer is only semi-trusted, so every field it
+// controls is type-checked, control-chars stripped, and length-capped before it can reach a
+// terminal render, an HTML/JSON surface, or a filename. Drops the whole status (null) if it has no
+// usable machine id. `creds` (only present with --with-secrets) is preserved for the relay paths
+// (accountFrom / collect) but is NEVER a display field — sanitizeStatus() strips it for that.
+function normalizeStatus(s) {
+  if (!s || typeof s !== 'object') return null;
+  const machineId = typeof s.machineId === 'string' ? s.machineId : '';
+  if (!safeId(machineId)) return null;
+  const out = {
+    machineId: machineId,
+    name: scrub(s.name == null ? machineId : s.name, 80) || machineId,
+    at: scrub(s.at, 40),
+    activeEmail: s.activeEmail == null ? null : scrub(s.activeEmail, 200),
+    accounts: (Array.isArray(s.accounts) ? s.accounts : []).filter(function (a) { return a && typeof a === 'object'; }).map(function (a) {
+      return { name: scrub(a.name, 80), email: a.email == null ? null : scrub(a.email, 200), active: !!a.active,
+        fiveHourPct: typeof a.fiveHourPct === 'number' ? a.fiveHourPct : null,
+        sevenDayPct: typeof a.sevenDayPct === 'number' ? a.sevenDayPct : null };
+    }),
+    chats: (Array.isArray(s.chats) ? s.chats : []).filter(function (c) { return c && typeof c === 'object'; }).map(function (c) {
+      return { sessionId: scrub(c.sessionId, 120), cwd: c.cwd == null ? null : scrub(c.cwd, 300),
+        mtime: typeof c.mtime === 'number' ? c.mtime : (typeof c.mtime === 'string' ? scrub(c.mtime, 40) : null),
+        lastRole: c.lastRole == null ? null : String(c.lastRole).replace(/[^\w-]/g, '').slice(0, 20),
+        lastText: c.lastText == null ? null : scrub(c.lastText, 120), replied: !!c.replied };
+    }),
+  };
+  if (s.creds && typeof s.creds === 'object') out.creds = s.creds; // relay only; stripped for display
+  return out;
+}
+// Display-safe projection: normalized AND with credentials removed. Every surface that leaves the
+// process (web panel /api/fleet, MCP fleet_status result, `fleet status --json`) MUST use this.
+function sanitizeStatus(s) { const n = normalizeStatus(s); if (n) delete n.creds; return n; }
+
 function readFleet(ctx, b) {
-  return b.list('.status.enc').map(function (n) { return b.read(n); }).filter(Boolean);
+  return b.list('.status.enc').slice(0, MAX_STATUS_FILES).map(function (n) {
+    const s = normalizeStatus(b.read(n));
+    if (!s) return null;
+    // bind the claimed id to the filename: a status in <id>.status.enc must claim <id> (no spoofing
+    // another machine's identity in the roster, which could misdirect a switch/send-account).
+    let expect; try { expect = statusName(s.machineId); } catch (e) { return null; }
+    return expect === n ? s : null;
+  }).filter(Boolean);
 }
 
 // ---- command queue (per-machine inbox) ----
 function queue(ctx, b, targetMachineId, command) {
-  const cmd = Object.assign({ id: require('crypto').randomBytes(4).toString('hex'), from: b.machineId, at: ctx.now() }, command);
+  if (!safeId(targetMachineId)) throw new Error('invalid target machine id');
+  const cmd = Object.assign({ id: require('crypto').randomBytes(8).toString('hex'), from: b.machineId, at: ctx.now() }, command);
   const inbox = b.read(inboxName(targetMachineId)) || [];
   inbox.push(cmd);
   b.write(inboxName(targetMachineId), inbox);
   return cmd;
 }
-function readInbox(ctx, b) { return b.read(inboxName(b.machineId)) || []; }
+function readInbox(ctx, b) { const inbox = b.read(inboxName(b.machineId)); return Array.isArray(inbox) ? inbox : []; }
 function clearInbox(ctx, b) { b.remove(inboxName(b.machineId)); }
+
+// ---- replay protection ----
+// The rendezvous is only semi-trusted (shared passphrase + write access). Even though the inbox is
+// cleared after processing, a hostile peer can RE-INJECT a captured command. So we (1) reject
+// commands older than a max age and (2) remember applied command ids and never re-run one. The
+// ledger is a bounded, per-machine file — never an account (see profiles.RESERVED_FILES).
+function appliedPath(ctx) { return path.join(ctx.configDir, 'fleet-applied.json'); }
+function loadApplied(ctx) { try { const a = JSON.parse(fs.readFileSync(appliedPath(ctx), 'utf8')); return (a && Array.isArray(a.ids)) ? a.ids : []; } catch (e) { return []; } }
+function wasApplied(ctx, id) { return !!id && loadApplied(ctx).indexOf(id) !== -1; }
+function markApplied(ctx, id) {
+  if (!id) return;
+  let ids = loadApplied(ctx);
+  if (ids.indexOf(id) !== -1) return;
+  ids.push(id);
+  if (ids.length > 1000) ids = ids.slice(-1000); // bounded ledger
+  try { require('./fsutil').atomicWrite(appliedPath(ctx), JSON.stringify({ ids: ids }), 0o600); } catch (e) { /* best-effort */ }
+}
+const CMD_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000; // ignore inbox commands older than a week
+function commandFresh(ctx, cmd) {
+  if (!cmd || !cmd.at) return true; // legacy/undated command — don't block on age
+  const t = Date.parse(cmd.at), now = Date.parse(ctx.now());
+  if (isNaN(t) || isNaN(now)) return true;
+  return (now - t) <= CMD_MAX_AGE_MS && (t - now) <= CMD_MAX_AGE_MS; // reject stale AND far-future
+}
 
 // Apply a single inbound command. Mutations are gated: opts.allowSwitch / opts.allowSave must be
 // true (the caller confirms with the user first). Returns { ok, applied, detail }.
 function applyCommand(ctx, cmd, opts) {
   opts = opts || {};
   if (!cmd || !cmd.type) return { ok: false, detail: 'malformed command' };
-  if (cmd.type === 'note') return { ok: true, applied: 'note', detail: (cmd.payload && cmd.payload.text) || '' };
+  if (cmd.type === 'note') return { ok: true, applied: 'note', detail: scrub((cmd.payload && cmd.payload.text) || '', 500) };
   if (cmd.type === 'save-account') {
     if (!opts.allowSave) return { ok: false, applied: 'save-account', detail: 'skipped (needs consent)' };
     const a = cmd.payload && cmd.payload.account;
@@ -161,12 +240,15 @@ function newReplies(ctx, statuses) {
   let seen = {}; try { seen = JSON.parse(fs.readFileSync(seenPath(ctx), 'utf8')) || {}; } catch (e) { seen = {}; }
   const fresh = {};
   const out = [];
-  statuses.forEach(function (s) {
-    (s.chats || []).forEach(function (c) {
-      const key = s.machineId + '/' + c.sessionId;
-      fresh[key] = c.mtime + '|' + (c.lastRole || '');
+  (Array.isArray(statuses) ? statuses : []).forEach(function (s) {
+    if (!s || typeof s !== 'object') return;
+    const chats = Array.isArray(s.chats) ? s.chats : [];
+    chats.forEach(function (c) {
+      if (!c || typeof c !== 'object') return;
+      const key = String(s.machineId) + '/' + String(c.sessionId);
+      fresh[key] = String(c.mtime) + '|' + (c.lastRole || '');
       const prev = seen[key];
-      if (c.replied && prev && prev !== fresh[key] && prev.split('|')[0] !== c.mtime) out.push({ machine: s.name, sessionId: c.sessionId, cwd: c.cwd, lastText: c.lastText });
+      if (c.replied && prev && prev !== fresh[key] && String(prev).split('|')[0] !== String(c.mtime)) out.push({ machine: s.name, sessionId: c.sessionId, cwd: c.cwd, lastText: c.lastText });
     });
   });
   return { newReplies: out, snapshot: fresh };
@@ -176,7 +258,9 @@ function saveSeen(ctx, snapshot) { try { require('./fsutil').atomicWrite(seenPat
 module.exports = {
   identity: identity, setConfig: setConfig, bus: bus,
   buildStatus: buildStatus, publish: publish, readFleet: readFleet,
+  normalizeStatus: normalizeStatus, sanitizeStatus: sanitizeStatus,
   queue: queue, readInbox: readInbox, clearInbox: clearInbox, applyCommand: applyCommand,
+  wasApplied: wasApplied, markApplied: markApplied, commandFresh: commandFresh,
   accountFrom: accountFrom, newReplies: newReplies, saveSeen: saveSeen,
-  statusName: statusName, inboxName: inboxName,
+  statusName: statusName, inboxName: inboxName, safeId: safeId,
 };
