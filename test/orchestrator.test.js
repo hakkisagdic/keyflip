@@ -6,11 +6,39 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const orch = require('../src/orchestrator');
 const profiles = require('../src/profiles');
 const groups = require('../src/groups');
+const policy = require('../src/policy');
 const { makeCtx } = require('./helpers');
+
+test('runJob is BLOCKED by a policy deny rule for the selected account — nothing spawns', async function () {
+  const ctx = makeCtx();
+  ctx.store.setProfile('work', JSON.stringify({ claudeAiOauth: { accessToken: 'TW', refreshToken: 'RW', expiresAt: 9999999999999 } }));
+  profiles.write(ctx.configDir, { name: 'work', email: 'w@x.com', oauthAccount: { emailAddress: 'w@x.com', organizationUuid: 'o' }, savedAt: ctx.now() });
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'orch-pol-'));
+  policy.addRule(ctx, { match: { cwdPrefix: dir }, deny: { accounts: ['work'] } });
+  const job = orch.enqueue(ctx, { prompt: 'hi', cwd: dir });
+  const rec = [];
+  const done = await orch.runJob(ctx, job, { fetch: async function () { return { ok: true, status: 200, json: async function () { return { five_hour: { utilization: 10 } }; } }; }, run: function (b, a, i, o) { rec.push(o); return { code: 0, stdout: 'x' }; } });
+  assert.strictEqual(done.status, 'error');
+  assert.match(done.error, /policy denied/);
+  assert.strictEqual(rec.length, 0, 'a policy-denied job never spawns claude');
+});
+
+test('runJob runs in the JOB\'s cwd — the runner is invoked with cwd=job.cwd (exec forwards it)', async function () {
+  const ctx = makeCtx();
+  ctx.store.setProfile('work', JSON.stringify({ claudeAiOauth: { accessToken: 'TW', refreshToken: 'RW', expiresAt: 9999999999999 } }));
+  profiles.write(ctx.configDir, { name: 'work', email: 'w@x.com', oauthAccount: { emailAddress: 'w@x.com', organizationUuid: 'o' }, savedAt: ctx.now() });
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'orch-cwd-'));
+  const job = orch.enqueue(ctx, { prompt: 'hi', cwd: dir });
+  const rec = [];
+  await orch.runJob(ctx, job, { fetch: async function () { return { ok: true, status: 200, json: async function () { return { five_hour: { utilization: 10 } }; } }; }, run: function (b, a, i, o) { rec.push(o); return { code: 0, stdout: 'x' }; } });
+  assert.strictEqual(rec.length, 1);
+  assert.strictEqual(rec[0].cwd, dir, 'the job cwd is passed to the runner (not the process cwd)');
+});
 
 // A stored account = a CLI credential blob (with a distinct accessToken) + metadata.
 function seed(ctx, name, email, token) {

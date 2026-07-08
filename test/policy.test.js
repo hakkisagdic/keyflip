@@ -7,10 +7,23 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const policy = require('../src/policy');
 const groups = require('../src/groups');
 const { makeCtx } = require('./helpers');
+
+test('evaluate resolves symlinks — a deny rule on the real path applies to a symlinked cwd (no fail-open)', function () {
+  const ctx = makeCtx();
+  const real = fs.mkdtempSync(path.join(os.tmpdir(), 'pol-real-'));
+  const link = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'pol-link-')), 'ln');
+  fs.symlinkSync(real, link);
+  policy.addRule(ctx, { match: { cwdPrefix: real }, deny: { accounts: ['personal'] } });
+  // Enter via the SYMLINK: lexical path.resolve(link) != real, but physical realpath resolves both to
+  // `real`, so the deny rule must still fire. (macOS /tmp->/private/tmp is exactly this class of bug.)
+  const res = policy.evaluate(ctx, { cwd: link, account: 'personal' });
+  assert.strictEqual(res.allowed, false, 'symlinked cwd resolves to the real path and hits the deny rule');
+});
 
 function ppath(ctx) { return path.join(ctx.configDir, 'policy.json'); }
 // membersOf fake: a fixed group->members map, injected so no groups.json is needed.

@@ -2594,6 +2594,13 @@ async function cmdRun(ctx, rest) {
   if (!name) return fail("no such account: '" + arg + "'");
   const em = profiles.email(ctx.configDir, name) || name;
 
+  // Policy engine: `run` ACTIVATES an account in this directory (isolated session), so it must be
+  // constrained the same as a switch (no-op until rules exist; --force overrides).
+  if (own.indexOf('--force') === -1) {
+    try { require('./policy').enforce(ctx, { cwd: process.cwd(), account: name }); }
+    catch (e) { if (e && e.code === 'POLICY_DENIED') return fail(e.message + '  (override with --force)'); throw e; }
+  }
+
   // Risky: an in-session token refresh rotates this account's refresh token,
   // which can log out OTHER live copies of the same account. Ask first.
   if (!autoYes) {

@@ -18,11 +18,18 @@
 // Group membership is resolved via groups.membersOf (injectable). Everything is pure +
 // validated; every map keyed by a user-supplied name is Object.create(null) so a hostile
 // name (e.g. "__proto__") can never pollute a prototype.
+const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const profiles = require('./profiles');
 const groups = require('./groups');
 const { atomicWrite, readJsonForWrite } = require('./fsutil');
+
+// Compare paths PHYSICALLY (resolve symlinks): on macOS /tmp->/private/tmp etc., so a lexical
+// path.resolve on the rule prefix vs the kernel's physical process.cwd() would make a deny rule
+// silently fail open. realpathSync where the path exists; fall back to lexical for a non-existent
+// path (e.g. a rule prefix for a not-yet-created dir).
+function physical(p) { try { return fs.realpathSync.native(p); } catch (e) { return path.resolve(p); } }
 
 function policyPath(ctx) { return path.join(ctx.configDir, 'policy.json'); }
 
@@ -216,8 +223,8 @@ function caseFold(p, platform) { return (platform === 'win32' || platform === 'd
 // Is `cwd` at or below `prefix`, PATH-SEGMENT aware (so /a/b matches /a/b and /a/b/c but
 // never /a/bc)? Both are resolved; comparison honors the target platform's case rules.
 function underPrefix(cwd, prefix, platform) {
-  const c = caseFold(path.resolve(cwd), platform);
-  const p = caseFold(path.resolve(prefix), platform);
+  const c = caseFold(physical(cwd), platform);
+  const p = caseFold(physical(prefix), platform);
   return c === p || c.indexOf(p + path.sep) === 0;
 }
 

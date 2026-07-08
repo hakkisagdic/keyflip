@@ -96,8 +96,11 @@ function namesFrom(candidates, strip) {
 // duplicate title). NOTE: `/dev/stdin` is POSIX (macOS/Linux); on Windows use
 // bw/vault. The blob never touches argv on any platform.
 function opGet(io, name) {
-  const ref = 'op://' + io.settings.vault + '/' + NS + name + '/' + FIELD;
-  const r = invoke(io, ['read', ref, '--no-newline'], undefined);
+  // Read the field by LOOKING UP THE ITEM BY ITS LITERAL TITLE (which contains a '/'), not via an
+  // `op://…` reference — in op's reference grammar '/' is the path separator, so
+  // `op://vault/keyflip/<name>/credential` mis-parses (item="keyflip", section="<name>") and never
+  // finds the item titled "keyflip/<name>". `op item get <title> --fields …` takes the title literally.
+  const r = invoke(io, ['item', 'get', NS + name, '--vault', io.settings.vault, '--fields', 'label=' + FIELD, '--reveal'], undefined);
   if (r.code === 0) return stripNl(r.stdout);
   const t = errText(r);
   if (io.meta.lockedRe.test(t)) throw lockedError(io.meta, r);

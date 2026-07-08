@@ -57,11 +57,13 @@ function opEmu() {
   return makeRun(function (call) {
     const a = call.args;
     if (a[0] === '--version') return { stdout: '2.30.0\n' };
-    if (a[0] === 'read') {
-      const m = /op:\/\/[^/]+\/keyflip\/([^/]+)\/credential/.exec(a[1]);
-      const name = m && m[1];
+    // Real op resolves an item by its LITERAL title (slash and all) — emulate `op item get <title>
+    // --fields …`, NOT an op:// path parse (that mis-parses the slash; see the vault opGet fix).
+    if (a[0] === 'item' && a[1] === 'get') {
+      const title = a[2]; // 'keyflip/<name>' verbatim
+      const name = title.indexOf('keyflip/') === 0 ? title.slice('keyflip/'.length) : null;
       if (name && Object.prototype.hasOwnProperty.call(store, name)) return { stdout: store[name] };
-      return { code: 1, stderr: '[ERROR] "op://Private/keyflip/' + name + '/credential" isn\'t an item.' };
+      return { code: 1, stderr: '[ERROR] "' + title + '" isn\'t an item.' };
     }
     if (a[0] === 'item' && a[1] === 'create') {
       const tmpl = JSON.parse(call.input); // secret arrives here, on stdin

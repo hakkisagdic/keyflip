@@ -210,6 +210,11 @@ async function runJob(ctx, job, opts) {
   catch (e) { return finish(ctx, job, { status: 'error', error: (e && e.message) || 'account selection failed' }); }
   if (!name) return finish(ctx, job, { status: 'error', error: 'no available account' + (job.group ? " in group '" + job.group + "'" : '') });
 
+  // Policy engine: the job runs headless AS `name` in job.cwd — honor the same directory→account
+  // rules a switch would (a job auto-selects any credentialed account, so it could pick a denied one).
+  const pol = require('./policy').evaluate(ctx, { cwd: job.cwd, account: name });
+  if (!pol.allowed) return finish(ctx, job, { status: 'error', account: name, error: 'policy denied: ' + pol.reason });
+
   applyPatch(ctx, job, { status: 'running', account: name }); // persist RUNNING before we spawn
   let res;
   try { res = runAs(ctx, name, job.prompt, job.cwd, opts); }
@@ -238,6 +243,8 @@ async function fanOut(ctx, prompt, accountNames, opts) {
   for (let i = 0; i < names.length; i++) {
     const name = String(names[i]);
     const entry = { account: name };
+    const pol = require('./policy').evaluate(ctx, { cwd: cwd, account: name });
+    if (!pol.allowed) { entry.error = 'policy denied: ' + pol.reason; out.push(entry); continue; }
     try {
       const res = runAs(ctx, name, prompt, cwd, opts);
       if (!res || res.code !== 0) entry.error = cap(runResultError(res));

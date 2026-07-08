@@ -9,6 +9,7 @@ function run(cmd, args, input, opts) {
     encoding: 'utf8',
     maxBuffer: 16 * 1024 * 1024,
     timeout: opts.timeoutMs,
+    cwd: opts.cwd, // undefined => inherit; orchestrator jobs must run in the job's own cwd
     env: opts.env, // undefined => inherit process.env
   });
   return {

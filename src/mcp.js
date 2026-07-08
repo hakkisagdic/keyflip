@@ -133,6 +133,7 @@ const TOOLS = [
       if (!name) throw new Error("no such account: '" + args.name + "' (use keyflip_list)");
       const em = profiles.email(ctx.configDir, name);
       if (em && em === core.currentEmail(ctx)) return { alreadyActive: { name: name, email: em } };
+      require('./policy').enforce(ctx, { cwd: process.cwd(), account: name }); // org policy: agents can't dodge it
       const l = await lock.acquire(ctx.configDir);
       try {
         const did = core.performSwitch(ctx, name);
@@ -175,6 +176,7 @@ const TOOLS = [
         target = usage.pickByStrategy(candidates, infos, args.strategy);
         if (!target) throw new Error("no account matches strategy '" + args.strategy + "'");
       }
+      require('./policy').enforce(ctx, { cwd: process.cwd(), account: target.name }); // org policy applies to rotation too
       const l = await lock.acquire(ctx.configDir);
       try {
         const did = core.performSwitch(ctx, target.name);

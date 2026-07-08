@@ -340,7 +340,7 @@ function attribute(ctx, opts) {
   let totalCost = 0, totalSessions = 0, totalMessages = 0, anyFallback = false;
   const list = Object.keys(byCwd).map(function (k) {
     const b = byCwd[k];
-    const models = {};
+    const models = Object.create(null); // model id is transcript-supplied -> null-proto (no __proto__ setter)
     let cost = 0;
     Object.keys(b.models).forEach(function (mid) {
       const t = b.models[mid];
