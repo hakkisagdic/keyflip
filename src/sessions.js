@@ -205,8 +205,13 @@ function rebind(ctx, oldCwd, newCwd, opts) {
 function rebindAppRegistry(ctx, oldCwd, newCwd) {
   if (!ctx.appDataDir) return { patched: 0 };
   const store = path.join(ctx.appDataDir, 'claude-code-sessions');
-  let patched = 0;
-  let accts; try { accts = fs.readdirSync(store); } catch (e) { return { patched: 0 }; }
+  // The transcripts now live under the NEW encoded key. When the desktop app lost the folder it
+  // DROPPED the record's cliSessionId (the link to the .jsonl) and set transcriptUnavailable — so
+  // besides rewriting cwd we must RECONNECT that link, else the Code session still won't open.
+  let newSessionIds = [];
+  try { newSessionIds = fs.readdirSync(path.join(projectsDir(ctx), encodeCwd(newCwd))).filter(function (f) { return f.slice(-6) === '.jsonl'; }).map(function (f) { return f.slice(0, -6); }); } catch (e) { newSessionIds = []; }
+  let patched = 0, relinked = 0;
+  let accts; try { accts = fs.readdirSync(store); } catch (e) { return { patched: 0, relinked: 0 }; }
   accts.forEach(function (a) {
     let orgs; try { orgs = fs.readdirSync(path.join(store, a)); } catch (e) { return; }
     orgs.forEach(function (o) {
@@ -220,6 +225,11 @@ function rebindAppRegistry(ctx, oldCwd, newCwd) {
         let obj; try { obj = JSON.parse(txt); } catch (e) { return; }
         const before = JSON.stringify(obj);
         ['cwd', 'originCwd'].forEach(function (k) { if (typeof obj[k] === 'string') obj[k] = obj[k].split(oldCwd).join(newCwd); });
+        // Restore the dropped transcript link: if cliSessionId is missing or points at a .jsonl not
+        // present under the new key, and the new key has exactly one transcript, adopt it.
+        if (newSessionIds.length && (!obj.cliSessionId || newSessionIds.indexOf(obj.cliSessionId) === -1)) {
+          if (newSessionIds.length === 1) { obj.cliSessionId = newSessionIds[0]; relinked++; }
+        }
         if (obj.transcriptUnavailable) delete obj.transcriptUnavailable;
         if (JSON.stringify(obj) !== before) {
           try { fs.writeFileSync(p, JSON.stringify(obj, null, 2)); patched++; } catch (e) { /* ignore */ }
@@ -227,7 +237,7 @@ function rebindAppRegistry(ctx, oldCwd, newCwd) {
       });
     });
   });
-  return { patched: patched };
+  return { patched: patched, relinked: relinked };
 }
 
 // B3: compact a transcript by eliding bulky TOOL OUTPUT (file reads, command output,

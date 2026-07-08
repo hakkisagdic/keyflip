@@ -163,3 +163,26 @@ test('rebindAppRegistry rewrites cwd/originCwd and clears transcriptUnavailable'
   assert.strictEqual(rec.cliSessionId, 'abc', 'the transcript link is preserved');
   assert.strictEqual(JSON.parse(fs.readFileSync(path.join(dir, 'local_2.json'), 'utf8')).cwd, '/unrelated');
 });
+
+// The real desktop-Code failure (from the "Chat history folder rename issue" session): when the
+// folder is renamed the app DROPS cliSessionId and sets transcriptUnavailable. Rewriting cwd alone
+// leaves the Code session unopenable — rebind must RECONNECT the dropped transcript link.
+test('rebindAppRegistry restores a DROPPED cliSessionId from the transcript under the new key', function () {
+  const ctx = makeCtx();
+  ctx.appDataDir = path.join(ctx.home, 'appdata');
+  const OLD = '/Users/x/OpenTraycer', NEW = '/Users/x/Plansmith';
+  // the transcript now lives under the NEW encoded key
+  seedTranscript(ctx, NEW, '79c67835-dc34', '{"cwd":"' + NEW + '","type":"user"}\n');
+  const dir = path.join(ctx.appDataDir, 'claude-code-sessions', 'acct', 'org');
+  fs.mkdirSync(dir, { recursive: true });
+  // the app dropped the link: no cliSessionId, transcriptUnavailable set, cwd still old
+  fs.writeFileSync(path.join(dir, 'local_f338.json'), JSON.stringify({ cwd: OLD, originCwd: OLD, transcriptUnavailable: true }));
+
+  const reg = sessions.rebindAppRegistry(ctx, OLD, NEW);
+  assert.strictEqual(reg.patched, 1);
+  assert.strictEqual(reg.relinked, 1, 'the dropped cliSessionId was restored');
+  const rec = JSON.parse(fs.readFileSync(path.join(dir, 'local_f338.json'), 'utf8'));
+  assert.strictEqual(rec.cwd, NEW);
+  assert.strictEqual(rec.cliSessionId, '79c67835-dc34', 'reconnected to the transcript now under the new key');
+  assert.strictEqual('transcriptUnavailable' in rec, false, 'unavailable flag cleared so the app opens it');
+});
