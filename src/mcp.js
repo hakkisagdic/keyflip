@@ -891,6 +891,49 @@ const TOOLS = [
     inputSchema: { type: 'object', properties: { older_than_ms: { type: 'number' }, confirm: confirmProp.confirm }, required: ['confirm'], additionalProperties: false }, annotations: MUT,
     run: async function (ctx, args) { needConfirm(args); return require('./router').cachePurge(ctx, { olderThanMs: typeof args.older_than_ms === 'number' ? args.older_than_ms : undefined }); },
   },
+  // ---- Wave-3: swarm (own-fleet exec) + config (settings) ----
+  {
+    name: 'keyflip_swarm_run', title: 'Run one command across YOUR OWN enrolled fleet machines',
+    description: 'Queue an exec command onto YOUR OWN fleet machines (the ones you enrolled in your encrypted rendezvous — NOT a tool for reaching third-party targets). The command travels as an ARGV ARRAY (command + args[]) spawned with NO shell (no injection surface). With no `to`, it fans out to every checked-in machine. Nothing runs until each target drains WITH CONSENT (`keyflip swarm drain --allow-exec`, off by default). Collect with keyflip_swarm_results. Mutating (writes signed commands to the shared rendezvous) — ask the user, then confirm=true.',
+    inputSchema: { type: 'object', properties: { command: { type: 'string' }, args: { type: 'array', items: { type: 'string' } }, to: { type: 'string' }, passphrase_file: { type: 'string' }, confirm: confirmProp.confirm }, required: ['command', 'passphrase_file', 'confirm'], additionalProperties: false }, annotations: MUT,
+    run: async function (ctx, args) { needConfirm(args); const fleet = require('./fleet'); const swarm = require('./swarm'); const b = fleet.bus(ctx, { passphrase: fs.readFileSync(String(args.passphrase_file), 'utf8').trim() }); fleet.publish(ctx, b, {}); const q = swarm.queueExec(ctx, b, { command: String(args.command), args: Array.isArray(args.args) ? args.args : [], to: args.to }); return { queued: { group: q.group, command: q.command, args: q.args, targets: q.commands } }; },
+  },
+  {
+    name: 'keyflip_swarm_ping', title: 'Queue a reachability check from YOUR fleet to a URL you control',
+    description: 'Queue a reachability check: each targeted fleet machine curls an http(s) URL YOU control and reports the HTTP status (the URL is a distinct argv token, no shell). Same consent gate as swarm_run — runs only on `keyflip swarm drain --allow-exec`. Mutating — ask the user, then confirm=true.',
+    inputSchema: { type: 'object', properties: { url: { type: 'string' }, to: { type: 'string' }, timeout: { type: 'number' }, passphrase_file: { type: 'string' }, confirm: confirmProp.confirm }, required: ['url', 'passphrase_file', 'confirm'], additionalProperties: false }, annotations: MUT,
+    run: async function (ctx, args) { needConfirm(args); const fleet = require('./fleet'); const swarm = require('./swarm'); const b = fleet.bus(ctx, { passphrase: fs.readFileSync(String(args.passphrase_file), 'utf8').trim() }); fleet.publish(ctx, b, {}); const q = swarm.ping(ctx, b, String(args.url), { to: args.to, timeout: args.timeout }); return { queued: { group: q.group, ping: String(args.url), targets: q.commands } }; },
+  },
+  {
+    name: 'keyflip_swarm_results', title: 'Collect results published by your fleet for a swarm run',
+    description: 'Aggregate the results your fleet machines published for a swarm run/ping, addressed to THIS machine. Each result\'s signed origin is verified against the sender\'s TOFU-pinned key. Output is size-capped + control-char scrubbed. Defaults to the most recent group. Read-only.',
+    inputSchema: { type: 'object', properties: { group: { type: 'string' }, passphrase_file: { type: 'string' } }, required: ['passphrase_file'], additionalProperties: false }, annotations: RO,
+    run: async function (ctx, args) { const fleet = require('./fleet'); const swarm = require('./swarm'); const b = fleet.bus(ctx, { passphrase: fs.readFileSync(String(args.passphrase_file), 'utf8').trim() }); const reconcile = fleet.reconcileKeys(ctx, fleet.readFleet(ctx, b)); const group = args.group || swarm.readState(ctx).lastGroup; return { group: group || null, results: swarm.aggregate(ctx, b, { group: group, reconcile: reconcile }) }; },
+  },
+  {
+    name: 'keyflip_config_list', title: 'List keyflip settings',
+    description: 'All keyflip settings with their effective value (stored override or built-in default) plus the schema (type/default/bounds/help). Read-only. No secrets.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false }, annotations: RO,
+    run: async function (ctx) { const config = require('./config'); return { config: Object.assign({}, config.getAll(ctx)), schema: Object.assign({}, config.describe()) }; },
+  },
+  {
+    name: 'keyflip_config_get', title: 'Read one keyflip setting',
+    description: 'Read a single setting by key (e.g. "ui.theme"); returns its effective value. Unknown keys error. Read-only.',
+    inputSchema: { type: 'object', properties: { key: { type: 'string' } }, required: ['key'], additionalProperties: false }, annotations: RO,
+    run: async function (ctx, args) { const config = require('./config'); return { key: String(args.key), value: config.get(ctx, String(args.key)) }; },
+  },
+  {
+    name: 'keyflip_config_set', title: 'Change a keyflip setting',
+    description: 'Set a setting to a new value (validated + coerced against the schema; unknown key / wrong type / out-of-range are rejected). Changes future keyflip behavior. Ask the user, then confirm=true.',
+    inputSchema: { type: 'object', properties: { key: { type: 'string' }, value: { type: 'string' }, confirm: confirmProp.confirm }, required: ['key', 'value', 'confirm'], additionalProperties: false }, annotations: MUT,
+    run: async function (ctx, args) { needConfirm(args); const config = require('./config'); const value = config.set(ctx, String(args.key), args.value); logmod.log('mcp config set ' + String(args.key)); return { set: { key: String(args.key), value: value } }; },
+  },
+  {
+    name: 'keyflip_config_unset', title: 'Reset a keyflip setting to default',
+    description: 'Remove a stored override so the setting reverts to its built-in default. Ask the user, then confirm=true.',
+    inputSchema: { type: 'object', properties: { key: { type: 'string' }, confirm: confirmProp.confirm }, required: ['key', 'confirm'], additionalProperties: false }, annotations: MUT,
+    run: async function (ctx, args) { needConfirm(args); const config = require('./config'); const had = config.unset(ctx, String(args.key)); logmod.log('mcp config unset ' + String(args.key)); return { unset: String(args.key), wasSet: had, value: config.get(ctx, String(args.key)) }; },
+  },
   {
     name: 'keyflip_agents', title: 'List other agents\' memory + config keyflip can carry',
     description: 'Report which OTHER AI agents have files on THIS machine that keyflip can carry across machines: MEMORY (Cursor `~/.cursor/rules/`, Gemini `~/.gemini/GEMINI.md`, Codex `~/.codex/AGENTS.md`+`memories/` — markdown, no secrets) and CONFIG (`~/.cursor/mcp.json`, `~/.gemini/settings.json`, `~/.codex/config.toml` — carried ONLY secret-scanned + redacted). Read-only; feed into keyflip_migrate_export with agents=true and/or agent_config=true.',
@@ -1225,6 +1268,8 @@ const TOOLS = [
   require('./policy').mcpTools,
   require('./integrations').mcpTools,
   require('./vault').tools,
+  require('./license').mcpTools,
+  require('./surface').mcpTools,
 ].forEach(function (arr) { (Array.isArray(arr) ? arr : []).forEach(function (t) { if (t && t.name) TOOLS.push(t); }); });
 
 // ---- JSON-RPC / MCP plumbing ---------------------------------------------------

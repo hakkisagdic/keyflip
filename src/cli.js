@@ -894,6 +894,179 @@ function cmdCache(ctx, rest) {
   return fail('unknown: keyflip cache ' + sub + ' (use: status | purge [--older-than-ms N])');
 }
 
+// ===== Wave-3: swarm / license / config / ui / surfaces =====
+
+// SWARM: run ONE command across YOUR OWN enrolled fleet machines + reachability checks. Exec is
+// CONSENT-GATED (a target only runs a queued command when its operator drains with --allow-exec);
+// commands travel as an ARGV ARRAY spawned with NO shell — nothing to inject. Origin-authenticated.
+async function cmdSwarm(ctx, rest) {
+  const swarm = require('./swarm');
+  const fleet = require('./fleet');
+  const sub = rest[0];
+  if (sub === 'run') {
+    const to = flagVal(rest, '--to');
+    const pos = positionals(rest.slice(1), ['--passphrase-file', '--to']);
+    const command = pos[0]; const args = pos.slice(1);
+    if (!command) return fail('usage: keyflip swarm run <program> [args...] [--to <machine>] --passphrase-file <f>');
+    const b = fleetBus(ctx, rest); if (!b) return;
+    fleet.publish(ctx, b, {});
+    let q; try { q = swarm.queueExec(ctx, b, { command: command, args: args, to: to }); } catch (e) { return fail(e.message); }
+    if (JSON_MODE) { jsonOut({ swarm: { group: q.group, command: q.command, args: q.args, targets: q.commands } }); return; }
+    print(style.ok('📨') + ' queued ' + style.bold(command + (args.length ? ' ' + args.join(' ') : '')) + ' → ' + style.bold(q.commands.length + ' machine(s)') + ' ' + style.dim('(group ' + q.group + ')'));
+    print('   ' + style.dim('Each target runs it only on `keyflip swarm drain --allow-exec`. Collect with `keyflip swarm results`.'));
+    return;
+  }
+  if (sub === 'ping') {
+    const to = flagVal(rest, '--to'); const ti = rest.indexOf('--timeout');
+    const pos = positionals(rest.slice(1), ['--passphrase-file', '--to', '--timeout']);
+    const url = pos[0];
+    if (!url) return fail('usage: keyflip swarm ping <http(s)-url-you-control> [--to <machine>] [--timeout <s>] --passphrase-file <f>');
+    const b = fleetBus(ctx, rest); if (!b) return;
+    fleet.publish(ctx, b, {});
+    let q; try { q = swarm.ping(ctx, b, url, { to: to, timeout: ti !== -1 ? rest[ti + 1] : undefined }); } catch (e) { return fail(e.message); }
+    if (JSON_MODE) { jsonOut({ swarm: { group: q.group, ping: url, targets: q.commands } }); return; }
+    print(style.ok('📡') + ' queued a reachability check of ' + style.bold(url) + ' → ' + style.bold(q.commands.length + ' machine(s)') + ' ' + style.dim('(group ' + q.group + ')'));
+    return;
+  }
+  if (sub === 'drain') {
+    const allowExec = rest.indexOf('--allow-exec') !== -1;
+    const b = fleetBus(ctx, rest); if (!b) return;
+    fleet.publish(ctx, b, {});
+    let d; try { d = swarm.drainExec(ctx, b, { allowExec: allowExec }); } catch (e) { return fail(e.message); }
+    if (JSON_MODE) { jsonOut({ swarm: { drained: d.results } }); return; }
+    if (!d.results.length) { print(style.dim("No exec commands in this machine's inbox.")); return; }
+    if (!allowExec) print(style.warn('⚠') + ' exec is OFF by default — pass ' + style.bold('--allow-exec') + ' to actually run queued commands (they stay in the inbox until you do).');
+    d.results.forEach(function (r) { print('   ' + (r.ok ? style.ok('✓') : style.dim('•')) + ' ' + r.detail); });
+    return;
+  }
+  if (sub === 'results') {
+    const group = flagVal(rest, '--group'); const prune = rest.indexOf('--prune') !== -1;
+    const b = fleetBus(ctx, rest); if (!b) return;
+    const reconcile = fleet.reconcileKeys(ctx, fleet.readFleet(ctx, b));
+    const st = swarm.readState(ctx); const g = group || st.lastGroup;
+    const results = swarm.aggregate(ctx, b, { group: g, reconcile: reconcile, prune: prune });
+    if (JSON_MODE) { jsonOut({ swarm: { group: g || null, results: results } }); return; }
+    if (!results.length) { print(style.dim('No results yet' + (g ? ' for group ' + g : '') + ' — targets must run `keyflip swarm drain --allow-exec`.')); return; }
+    print(style.bold('Swarm results') + ' ' + style.dim('(' + results.length + '):'));
+    results.forEach(function (r) {
+      const mark = r.verified === false ? style.bad('✗ unverified') : r.ok ? style.ok('✓') : style.bad('✗ exit ' + r.code);
+      print('  ' + mark + ' ' + style.bold(String(r.machine || '?').padEnd(14)) + ' ' + style.dim(r.command));
+      if (r.stdout) print('      ' + r.stdout.replace(/\n/g, '\n      '));
+      if (r.stderr) print('      ' + style.dim(r.stderr.replace(/\n/g, '\n      ')));
+    });
+    return;
+  }
+  return fail('usage: keyflip swarm <run|ping|drain|results> …  (runs on YOUR OWN enrolled fleet machines; exec is CONSENT-GATED — off unless the target drains with --allow-exec; commands are an argv array, never a shell string)');
+}
+
+// LICENSE: offline plan management (Ed25519-signed license, verified locally — no phone-home).
+function cmdLicense(ctx, rest) {
+  const lic = require('./license');
+  const sub = rest[0] || 'status';
+  switch (sub) {
+    case 'status': {
+      const s = lic.status(ctx); const feats = lic.unlockedFeatures(ctx);
+      if (JSON_MODE) { jsonOut({ plan: lic.tier(ctx), tier: s.tier, email: s.email, expiry: s.expiry, valid: s.valid, reason: s.reason, features: feats }); return; }
+      print(style.bold('plan: ') + lic.tier(ctx) + (s.valid ? '' : '  (' + s.reason + ')'));
+      if (s.email) print('email:  ' + s.email);
+      if (s.expiry) print('expiry: ' + s.expiry);
+      print('features: ' + (feats.length ? feats.join(', ') : '(none — free)'));
+      return;
+    }
+    case 'activate': {
+      const file = rest.slice(1).filter(function (a) { return a.indexOf('-') !== 0; })[0];
+      if (!file) return fail('usage: keyflip license activate <file>');
+      let r; try { r = lic.activate(ctx, { file: file }); } catch (e) { return fail(e.message); }
+      if (JSON_MODE) { jsonOut(r); return; }
+      print(style.ok('✅') + ' activated ' + r.tier + ' plan' + (r.email ? ' for ' + r.email : '') + (r.expiry ? ' (expires ' + r.expiry + ')' : ''));
+      return;
+    }
+    case 'deactivate': {
+      const had = lic.deactivate(ctx);
+      if (JSON_MODE) { jsonOut({ deactivated: had }); return; }
+      print(had ? '🗑  license removed — back to free' : 'no license was active.');
+      return;
+    }
+    default:
+      return fail('usage: keyflip license <status|activate <file>|deactivate>');
+  }
+}
+
+// CONFIG (E4): one validated home for scattered toggles (<configDir>/config.json).
+function cmdConfig(ctx, rest) {
+  const config = require('./config');
+  const sub = rest[0] || 'list';
+  const args = rest.slice(1);
+  switch (sub) {
+    case 'list': {
+      const eff = config.getAll(ctx), schema = config.describe();
+      if (JSON_MODE) { jsonOut({ config: Object.assign({}, eff), schema: Object.assign({}, schema) }); return; }
+      Object.keys(schema).sort().forEach(function (key) {
+        const s = schema[key];
+        const meta = s.type + ', default ' + JSON.stringify(s.default) + (s.values ? ', one of: ' + s.values.join('|') : '') + (typeof s.min === 'number' ? ', ' + s.min + '..' + s.max : '');
+        print(style.bold(key) + ' = ' + JSON.stringify(eff[key]) + '  ' + style.dim('(' + meta + ')'));
+        print('    ' + style.dim(s.help));
+      });
+      return;
+    }
+    case 'get': {
+      const key = args[0]; if (!key) return fail('usage: keyflip config get <key>');
+      let val; try { val = config.get(ctx, key); } catch (e) { return fail(e.message); }
+      if (JSON_MODE) { jsonOut({ key: key, value: val }); return; }
+      print(JSON.stringify(val)); return;
+    }
+    case 'set': {
+      const key = args[0]; if (!key || args.length < 2) return fail('usage: keyflip config set <key> <value>');
+      let val; try { val = config.set(ctx, key, args[1]); } catch (e) { return fail(e.message); }
+      if (JSON_MODE) { jsonOut({ set: { key: key, value: val } }); return; }
+      print(style.ok('✅') + ' ' + key + ' = ' + JSON.stringify(val)); return;
+    }
+    case 'unset': {
+      const key = args[0]; if (!key) return fail('usage: keyflip config unset <key>');
+      let had; try { had = config.unset(ctx, key); } catch (e) { return fail(e.message); }
+      const def = config.get(ctx, key);
+      if (JSON_MODE) { jsonOut({ unset: key, wasSet: had, value: def }); return; }
+      print(had ? (style.ok('✅') + ' ' + key + ' reset to default ' + JSON.stringify(def)) : (key + ' is already at its default (' + JSON.stringify(def) + ')'));
+      return;
+    }
+    default:
+      return fail('unknown: keyflip config ' + sub + ' (use: list | get <key> | set <key> <value> | unset <key>)');
+  }
+}
+
+// UI (E5): a self-contained full-screen TUI dashboard.
+async function cmdUi(ctx, rest) {
+  const tui = require('./tui');
+  const usagemod = require('./usage');
+  const view = rest.indexOf('--fleet') !== -1 ? 'fleet' : undefined;
+  const loadUsage = async function (c) {
+    const profs = core.listProfiles(c);
+    const names = profs.map(function (p) { return p.name; });
+    const activeName = (profs.filter(function (p) { return p.active; })[0] || {}).name;
+    try { return await usagemod.usageForProfiles(c, names, { liveFor: activeName }); } catch (e) { return {}; }
+  };
+  return tui.run(ctx, {
+    view: view,
+    onSwitch: function (name) { return withLock(ctx, function () { return core.performSwitch(ctx, name); }); },
+    onRefresh: async function (c, s) { return tui.buildState(c, { usage: await loadUsage(c), view: s.view }); },
+  });
+}
+
+// SURFACES (E1): detect which OTHER AI tools are on this machine (read-only — never reads/moves a secret).
+function cmdSurfaces(ctx, rest) {
+  const surface = require('./surface');
+  const all = surface.detectAll(ctx);
+  if (JSON_MODE) { jsonOut({ surfaces: all }); return; }
+  print(style.bold('Credential surfaces on this machine') + ' ' + style.dim('(detection only — secrets are never read or moved):'));
+  all.forEach(function (s) {
+    const mark = s.present ? style.ok('●') : style.dim('○');
+    const who = s.activeAccount ? style.bold(s.activeAccount) : style.dim(s.present ? 'account in opaque/secret store' : 'not detected');
+    print('  ' + mark + ' ' + s.label.padEnd(16) + ' ' + who + '  ' + style.dim('[' + s.kind + ']'));
+  });
+  print('');
+  print(style.dim('Claude is managed by the other keyflip commands. Switching other tools is not supported yet.'));
+}
+
 // MCP server (stdio) so agents can inspect/switch accounts themselves.
 async function cmdMcp(ctx, rest) {
   if (rest.indexOf('--setup') !== -1) {
@@ -2162,8 +2335,10 @@ async function cmdFleet(ctx, rest) {
     // process my inbox: apply queued commands (origin-authenticated, then gated on consent)
     const inbox = fleet.readInbox(ctx, b);
     const results = [];
+    const kept = []; // 'exec' commands are NOT handled here — they are consent-gated and belong to `keyflip swarm drain --allow-exec`; leave them in the inbox.
     for (let i = 0; i < inbox.length; i++) {
       const cmd = inbox[i];
+      if (cmd && cmd.type === 'exec') { kept.push(cmd); results.push({ ok: false, applied: 'exec', detail: 'deferred → run `keyflip swarm drain --allow-exec`' }); continue; }
       // Replay protection: never re-run a command we already applied, and drop stale/far-future
       // ones — the rendezvous is only semi-trusted, so a captured command could be re-injected.
       if (cmd && cmd.id && fleet.wasApplied(ctx, cmd.id)) { results.push({ ok: false, applied: cmd.type, detail: 'skipped (already applied)' }); continue; }
@@ -2188,7 +2363,9 @@ async function cmdFleet(ctx, rest) {
       if (r.ok && cmd.id) fleet.markApplied(ctx, cmd.id); // ledger EVERY applied command (incl. notes) so it can't be verbatim-replayed
       results.push(r);
     }
-    if (inbox.length) fleet.clearInbox(ctx, b);
+    // Keep exec commands for `swarm drain`; only clear the ones we consumed here.
+    if (kept.length) { try { b.write(fleet.inboxName(b.machineId), kept); } catch (e) { /* leave inbox as-is */ } }
+    else if (inbox.length) { fleet.clearInbox(ctx, b); }
     if (reconcile.conflicts.length && !JSON_MODE) reconcile.conflicts.forEach(function (c) { print(style.warn('⚠ KEY CHANGED') + ' for ' + style.bold(c.name) + ' (' + c.machineId + ') — commands from it are being REJECTED. If this machine legitimately re-keyed, run `keyflip fleet trust ' + c.machineId + ' --passphrase-file <f>`.'); });
     if (JSON_MODE) { jsonOut({ fleetPush: { machine: b.name, accounts: status.accounts.length, chats: status.chats.length, applied: results } }); return; }
     print(style.ok('📡') + ' published ' + style.bold(b.name) + ': ' + status.accounts.length + ' account(s), ' + status.chats.length + ' chat(s)' + (withSecrets ? style.dim(' (with encrypted creds)') : '') + '.');
@@ -3761,7 +3938,7 @@ async function main(argv) {
   // Skip the passive update fetch for machine/interactive/long-lived commands: it
   // would corrupt the MCP stdio stream, delay `run`/`mcp` exit on a slow network,
   // or print a stray line during a destructive/JSON op.
-  const NO_NOTICE = ['menu', 'menubar', 'upgrade', 'reset', 'uninstall', 'setup', 'onboard', 'login', 'mcp', 'run', 'autoswitch', 'install-skill', 'statusline', 'send', 'panel', 'agents', 'foreign', 'fleet'];
+  const NO_NOTICE = ['menu', 'menubar', 'upgrade', 'reset', 'uninstall', 'setup', 'onboard', 'login', 'mcp', 'run', 'autoswitch', 'install-skill', 'statusline', 'send', 'panel', 'agents', 'foreign', 'fleet', 'swarm', 'ui'];
   const skipNotice = JSON_MODE || cmd === undefined || NO_NOTICE.indexOf(cmd) !== -1;
   if (!skipNotice) { try { await update.maybeNotify(ctx, VERSION); } catch (e) { /* ignore */ } }
 }
@@ -3866,6 +4043,16 @@ async function dispatch(ctx, cmd, rest) {
         return (rest[0] === 'set' || rest[0] === 'clear' || rest[0] === 'arbitrage') ? withLock(ctx, function () { return cmdRoute(ctx, rest); }) : cmdRoute(ctx, rest);
       case 'cache':
         return (rest[0] === 'purge') ? withLock(ctx, function () { return cmdCache(ctx, rest); }) : cmdCache(ctx, rest);
+      case 'swarm':
+        return (rest[0] === 'drain') ? withLock(ctx, function () { return cmdSwarm(ctx, rest); }) : cmdSwarm(ctx, rest);
+      case 'license':
+        return (rest[0] === 'activate' || rest[0] === 'deactivate') ? withLock(ctx, function () { return cmdLicense(ctx, rest); }) : cmdLicense(ctx, rest);
+      case 'config':
+        return (rest[0] === 'set' || rest[0] === 'unset') ? withLock(ctx, function () { return cmdConfig(ctx, rest); }, 'config') : cmdConfig(ctx, rest);
+      case 'ui':
+        return cmdUi(ctx, rest);
+      case 'surfaces':
+        return cmdSurfaces(ctx, rest);
       case 'versioning':
         return cmdVersion(ctx, rest);
       case 'history':

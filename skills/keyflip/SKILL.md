@@ -300,6 +300,21 @@ pins); `keyflip_transfer_pull` (pull+merge a bundle from a LAN peer running `tra
   `_cache_status` (read), `_route_set` / `_route_clear` / `_cache_purge` need `confirm`.)
 - **Chat integrations** — `keyflip post --to <webhook> --status` posts a non-secret status to Slack/Discord.
   (MCP: `keyflip_post_status` needs `confirm`.)
+- **Swarm** — `keyflip swarm run "<cmd>" --passphrase-file <f>` queues a command onto YOUR OWN enrolled
+  fleet machines; it runs ONLY when each target's operator drains WITH CONSENT (`keyflip swarm drain
+  --allow-exec`, off by default). Commands are an argv array (no shell), origin-authenticated. This is
+  authorized distributed ops on machines you enrolled — NOT a tool for third-party targets. `keyflip
+  swarm ping <your-url>` = reachability. (MCP: `keyflip_swarm_run`/`_swarm_ping` need `confirm`,
+  `keyflip_swarm_results` (read); the consent-gated exec drain is CLI-only.)
+- **Settings (E4)** — `keyflip config set <key> <value>` is the one validated home for toggles.
+  (MCP: `keyflip_config_list`/`_config_get` (read), `_config_set`/`_config_unset` need `confirm`.)
+- **TUI (E5)** — `keyflip ui` is a full-screen dashboard (accounts/usage/fleet). Interactive, CLI-only.
+- **Surfaces (E1)** — `keyflip surfaces` detects other AI tools (Cursor/Gemini/Codex/Copilot/opencode/
+  Aider) and their active account where readable — DETECTION ONLY, never reads/moves a secret. (MCP:
+  `keyflip_surfaces` (read).)
+- **License** — `keyflip license status|activate <file>` is offline plan management (Ed25519-signed,
+  verified locally, no phone-home). Paywall enforcement is NOT wired yet (ships at productization).
+  (MCP: `keyflip_license_status` (read), `keyflip_license_activate` needs `confirm`.)
 
 ## Finding & resuming past conversations
 

@@ -143,6 +143,11 @@ keyflip policy <list|allow|deny|remove|default|check> [--cwd D --account A --gro
 keyflip vault <status|use op|bw|vault|off>   # kimlik bilgilerini 1Password / Bitwarden / HashiCorp Vault'ta sakla
 keyflip route <list|set <model> <provider>|clear|arbitrage on|off> · keyflip cache <status|purge>   # model yönlendirme/arbitraj + yanıt cache
 keyflip post --to <webhook> [--status]   # durumu/olayları Slack/Discord/genel webhook'a gönder
+keyflip swarm <run "<cmd>"|ping <url>|drain --allow-exec|results>   # KENDİ kayıtlı filo makinelerinde komut çalıştır (exec onay-kapılı; argv-array, shell yok)
+keyflip config <list|get <k>|set <k> <v>|unset <k>>   # ayarlar için tek doğrulanmış ev (E4)
+keyflip ui [--fleet]          # tam ekran TUI panosu (hesaplar, kullanım, filo)
+keyflip surfaces              # bu makinedeki diğer AI araçlarını algıla (Cursor/Gemini/Codex/Copilot/opencode/Aider) — salt-okunur
+keyflip license <status|activate <dosya>|deactivate>   # offline plan (Ed25519-imzalı, phone-home yok)
 keyflip run <ad> [-- argümanlar]  # PARALEL oturum: o hesap YALNIZCA bu terminalde
 keyflip add <ad> --token <dosya|->   # ham kimlik bilgisini headless içe aktar
 keyflip mcp [--setup]         # agent'lar için stdio üzerinden MCP sunucusu
@@ -308,7 +313,7 @@ Agent'lar CLI'ı tahmin etmek zorunda kalmasın — keyflip **MCP** konuşur:
 claude mcp add keyflip -- keyflip mcp     # veya: keyflip mcp --setup
 ```
 
-**Tüm CLI yüzeyi 110+ MCP aracı olarak sunulur** — agent hiçbir şeyi kabuğa
+**Tüm CLI yüzeyi 120+ MCP aracı olarak sunulur** — agent hiçbir şeyi kabuğa
 dökmeden yapabilir: hesaplar (`keyflip_status/list/switch/next/add/account_remove`), provider'lar
 (`keyflip_providers`, `keyflip_provider_use/add/remove`, `keyflip_test_provider`, `keyflip_speedtest`),
 **filo** kontrol düzlemi (`keyflip_fleet_status/switch/send_account/collect/keys/trust`),

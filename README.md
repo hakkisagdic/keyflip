@@ -143,6 +143,11 @@ keyflip policy <list|allow|deny|remove|default|check> [--cwd D --account A --gro
 keyflip vault <status|use op|bw|vault|off>   # store credentials in 1Password / Bitwarden / HashiCorp Vault
 keyflip route <list|set <model> <provider>|clear|arbitrage on|off> · keyflip cache <status|purge>   # model routing/arbitrage + response cache
 keyflip post --to <webhook> [--status]   # post status/events to Slack/Discord/generic webhook
+keyflip swarm <run "<cmd>"|ping <url>|drain --allow-exec|results>   # run a command across YOUR OWN enrolled fleet machines (exec is consent-gated; argv-array, no shell)
+keyflip config <list|get <k>|set <k> <v>|unset <k>>   # one validated home for settings (E4)
+keyflip ui [--fleet]          # full-screen TUI dashboard (accounts, usage, fleet)
+keyflip surfaces              # detect other AI tools on this machine (Cursor/Gemini/Codex/Copilot/opencode/Aider) — read-only
+keyflip license <status|activate <file>|deactivate>   # offline plan (Ed25519-signed, no phone-home)
 keyflip run <name> [-- args]  # PARALLEL session: that account in THIS terminal only
 keyflip add <name> --token <file|->   # headless import of a raw credential
 keyflip mcp [--setup]         # MCP server over stdio so agents can drive keyflip
@@ -311,7 +316,7 @@ Agents shouldn't have to guess the CLI — keyflip speaks **MCP**:
 claude mcp add keyflip -- keyflip mcp     # or see: keyflip mcp --setup
 ```
 
-**The full CLI surface is exposed as 110+ MCP tools**, so an agent can do
+**The full CLI surface is exposed as 120+ MCP tools**, so an agent can do
 everything without shelling out — accounts (`keyflip_status/list/switch/next/add/account_remove`),
 providers (`keyflip_providers`, `keyflip_provider_use/add/remove`, `keyflip_test_provider`,
 `keyflip_speedtest`), the **fleet** control plane (`keyflip_fleet_status/switch/send_account/collect/keys/trust`),
