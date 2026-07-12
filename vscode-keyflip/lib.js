@@ -53,4 +53,27 @@ function accountItems(list) {
   });
 }
 
-module.exports = { parseJson: parseJson, quotaLabel: quotaLabel, statusView: statusView, accountItems: accountItems };
+// Tree-view rows from `keyflip list --json` — one per account, active flagged, quota in the label.
+function accountTreeItems(list) {
+  const accounts = (list && list.accounts) || [];
+  return accounts.map(function (a) {
+    const q = quotaLabel(a.usage, a.usageStatus);
+    return {
+      name: a.name,
+      label: a.email || a.name,
+      active: !!a.activeCli,
+      description: (a.activeCli ? 'active' : '') + (q ? (a.activeCli ? ' · ' : '') + q : ''),
+      tooltip: (a.email || a.name) + '\ncli ' + (a.cliCaptured ? '✓' : '—') + ' · app ' + (a.appCaptured ? '✓' : '—'),
+    };
+  });
+}
+
+// True when the desktop app and the CLI are on DIFFERENT accounts (both known) — the "user mismatch"
+// the status bar should warn about (a switch may not have carried the app/browser along).
+function mismatch(status) {
+  const cli = status && status.cli && status.cli.email;
+  const app = status && status.app && status.app.email;
+  return !!(cli && app && cli !== app);
+}
+
+module.exports = { parseJson: parseJson, quotaLabel: quotaLabel, statusView: statusView, accountItems: accountItems, accountTreeItems: accountTreeItems, mismatch: mismatch };

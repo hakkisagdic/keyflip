@@ -2,7 +2,7 @@
   "name": "keyflip-vscode",
   "displayName": "keyflip — Keyflip",
   "description": "Shows the active Claude account in the status bar and switches accounts via the keyflip CLI.",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "publisher": "hakkisagdic",
   "license": "MIT",
   "repository": {
@@ -37,8 +37,39 @@
       {
         "command": "keyflip.status",
         "title": "keyflip: Show Account Status"
+      },
+      {
+        "command": "keyflip.rebind",
+        "title": "keyflip: Re-link Chat History (moved folder)"
+      },
+      {
+        "command": "keyflip.switchTo",
+        "title": "keyflip: Switch to this account"
       }
     ],
+    "views": {
+      "explorer": [
+        {
+          "id": "keyflipAccounts",
+          "name": "Claude Accounts (keyflip)"
+        }
+      ]
+    },
+    "menus": {
+      "commandPalette": [
+        {
+          "command": "keyflip.switchTo",
+          "when": "false"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "keyflip.refresh",
+          "when": "view == keyflipAccounts",
+          "group": "navigation"
+        }
+      ]
+    },
     "configuration": {
       "title": "keyflip",
       "properties": {

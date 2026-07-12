@@ -63,3 +63,24 @@ test('accountItems: empty list -> []', function () {
   assert.deepStrictEqual(lib.accountItems({ accounts: [] }), []);
   assert.deepStrictEqual(lib.accountItems(null), []);
 });
+
+test('accountTreeItems: one row per account, active flagged, quota in the description', function () {
+  const rows = lib.accountTreeItems({ accounts: [
+    { name: 'work', email: 'w@x.com', activeCli: true, cliCaptured: true, appCaptured: true, usage: { fiveHour: { pct: 40 } } },
+    { name: 'home', email: 'h@x.com', activeCli: false, cliCaptured: true, appCaptured: false },
+  ] });
+  assert.strictEqual(rows.length, 2);
+  assert.strictEqual(rows[0].label, 'w@x.com');
+  assert.strictEqual(rows[0].active, true);
+  assert.ok(/active/.test(rows[0].description));
+  assert.strictEqual(rows[1].active, false);
+  assert.deepStrictEqual(lib.accountTreeItems(null), []);
+});
+
+test('mismatch: true only when app and CLI are on DIFFERENT known accounts', function () {
+  assert.strictEqual(lib.mismatch({ cli: { email: 'a@x.com' }, app: { email: 'b@x.com' } }), true);
+  assert.strictEqual(lib.mismatch({ cli: { email: 'a@x.com' }, app: { email: 'a@x.com' } }), false);
+  assert.strictEqual(lib.mismatch({ cli: { email: 'a@x.com' } }), false, 'no app -> no mismatch');
+  assert.strictEqual(lib.mismatch({ app: { email: 'b@x.com' } }), false, 'no cli -> no mismatch');
+  assert.strictEqual(lib.mismatch(null), false);
+});

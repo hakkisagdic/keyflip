@@ -16,8 +16,16 @@ without leaving the editor.
 
 ## Features
 
+- **Accounts sidebar** (Explorer → *Claude Accounts*): a tree of every saved account with
+  the active one flagged and its quota shown; **click a row to switch** to it. Refresh from
+  the view's title bar.
 - **Status bar**: active account at a glance (hover for CLI + desktop-app + active
-  provider). Refreshes every 60 s; network-free (no quota fetch on the hot path).
+  provider). Refreshes every 60 s; network-free (no quota fetch on the hot path). Turns a
+  **warning colour when the desktop app is on a different account than the CLI** (a mismatch
+  a `--browser`/`--restart` switch would fix).
+- **`keyflip: Re-link Chat History`**: after you move/rename a project folder, re-link its
+  Claude chat history to the new path (runs `keyflip sessions rebind`; defaults the new path
+  to the current workspace folder).
 - **`keyflip: Switch Claude Account`** (also the status-bar click): a QuickPick of
   saved accounts showing capture state (`cli ✓ | app ✓`) and current 5h/7d quota →
   confirm → switch (closes/reopens the desktop app if needed) → offers a window

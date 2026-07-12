@@ -9,6 +9,29 @@ const lib = require('./lib');
 
 let statusItem = null;
 let outChannel = null; // created once, reused (creating one per call would leak channels)
+let accountsProvider = null; // the sidebar tree of accounts
+
+// Sidebar tree: one row per saved account (active flagged), click a row to switch to it.
+function AccountsProvider() {
+  const emitter = new vscode.EventEmitter();
+  return {
+    onDidChangeTreeData: emitter.event,
+    refresh: function () { emitter.fire(); },
+    getTreeItem: function (row) {
+      const item = new vscode.TreeItem(row.label);
+      item.description = row.description;
+      item.tooltip = row.tooltip;
+      item.iconPath = new vscode.ThemeIcon(row.active ? 'pass-filled' : 'account');
+      item.contextValue = 'keyflipAccount';
+      if (!row.active) item.command = { command: 'keyflip.switchTo', title: 'Switch', arguments: [row.name, row.label] };
+      return item;
+    },
+    getChildren: async function () {
+      try { return lib.accountTreeItems(await runJson(['list'])); }
+      catch (e) { return []; }
+    },
+  };
+}
 
 function keyflipBin() {
   return vscode.workspace.getConfiguration('keyflip').get('path') || 'keyflip';
@@ -32,14 +55,25 @@ function runJson(args) {
 async function refreshStatus() {
   if (!statusItem) return;
   try {
-    const view = lib.statusView(await runJson(['status']));
-    statusItem.text = view.text;
-    statusItem.tooltip = view.tooltip;
+    const st = await runJson(['status']);
+    const view = lib.statusView(st);
+    if (lib.mismatch(st)) {
+      // Desktop app is on a DIFFERENT account than the CLI — warn (the switch may not have carried it).
+      statusItem.text = '$(warning) ' + view.text.replace('$(account) ', '');
+      statusItem.tooltip = view.tooltip + '\n\n⚠ The desktop app is on a different account than the CLI. Switch with --browser/--restart to align them.';
+      statusItem.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
+    } else {
+      statusItem.text = view.text;
+      statusItem.tooltip = view.tooltip;
+      statusItem.backgroundColor = undefined;
+    }
   } catch (e) {
     statusItem.text = '$(account) keyflip?';
     statusItem.tooltip = 'keyflip not found or failed — set "keyflip.path" in settings.\n' + (e && e.message ? e.message : '');
+    statusItem.backgroundColor = undefined;
   }
   statusItem.show();
+  if (accountsProvider) accountsProvider.refresh();
 }
 
 async function switchAccount() {
@@ -58,16 +92,21 @@ async function switchAccount() {
   if (!pick || pick.active) return;
 
   const name = pick.label.replace('$(check) ', '');
+  return performSwitch(pick.name, name);
+}
+
+// Switch to a specific account by name (used by the QuickPick and the sidebar tree). Confirms first.
+async function performSwitch(profileName, displayName) {
+  const name = displayName || profileName;
   const choice = await vscode.window.showWarningMessage(
     'Switch Claude account to ' + name + '? If the Claude desktop app is open it will be closed and reopened.',
     { modal: true }, 'Switch');
   if (choice !== 'Switch') return;
-
   await vscode.window.withProgress(
     { location: vscode.ProgressLocation.Notification, title: 'Switching Claude account…' },
     function () {
       return new Promise(function (resolve) {
-        cp.execFile(keyflipBin(), [pick.name, '--restart', '--json'], { timeout: 60000 }, function (err, stdout, stderr) {
+        cp.execFile(keyflipBin(), [profileName, '--restart', '--json'], { timeout: 60000 }, function (err, stdout, stderr) {
           if (err) {
             vscode.window.showErrorMessage('Switch failed: ' + (String(stderr).trim() || err.message));
           } else {
@@ -82,6 +121,28 @@ async function switchAccount() {
         });
       });
     });
+}
+
+// Re-link a project's Claude chat history after its folder was moved/renamed. Defaults the NEW path
+// to the current workspace folder; asks for the OLD absolute path. Runs `keyflip sessions rebind`.
+async function rebindSession() {
+  const folders = vscode.workspace.workspaceFolders || [];
+  const newCwd = folders.length ? folders[0].uri.fsPath : null;
+  const oldCwd = await vscode.window.showInputBox({
+    title: 'keyflip: re-link chat history',
+    prompt: 'OLD absolute path this project used to live at (its chats are keyed by it)',
+    placeHolder: '/Users/you/Documents/OldName',
+    ignoreFocusOut: true,
+  });
+  if (!oldCwd) return;
+  const target = newCwd || (await vscode.window.showInputBox({ title: 'keyflip: re-link chat history', prompt: 'NEW absolute path (this project now)', ignoreFocusOut: true }));
+  if (!target) return;
+  cp.execFile(keyflipBin(), ['sessions', 'rebind', oldCwd, target, '--json'], { timeout: 30000 }, function (err, stdout, stderr) {
+    if (err) { vscode.window.showErrorMessage('Rebind failed: ' + (String(stderr).trim() || err.message)); return; }
+    const r = lib.parseJson(stdout);
+    const moved = r && r.rebind && r.rebind.moved;
+    vscode.window.showInformationMessage('Re-linked ' + (moved != null ? moved + ' transcript(s)' : 'chat history') + ' to ' + target + '. Reopen Claude to see them.');
+  });
 }
 
 // Open keyflip's local dashboard. `keyflip panel` is a foreground loopback server, so it
@@ -110,9 +171,14 @@ function activate(context) {
   statusItem.command = 'keyflip.switch';
   context.subscriptions.push(statusItem);
   context.subscriptions.push(vscode.commands.registerCommand('keyflip.switch', switchAccount));
+  context.subscriptions.push(vscode.commands.registerCommand('keyflip.switchTo', function (name, display) { return performSwitch(name, display); }));
+  context.subscriptions.push(vscode.commands.registerCommand('keyflip.rebind', rebindSession));
   context.subscriptions.push(vscode.commands.registerCommand('keyflip.refresh', refreshStatus));
   context.subscriptions.push(vscode.commands.registerCommand('keyflip.dashboard', openDashboard));
   context.subscriptions.push(vscode.commands.registerCommand('keyflip.status', function () { return showStatus(context); }));
+  // Sidebar tree of accounts (Explorer view).
+  accountsProvider = AccountsProvider();
+  context.subscriptions.push(vscode.window.registerTreeDataProvider('keyflipAccounts', accountsProvider));
   refreshStatus();
   const timer = setInterval(refreshStatus, 60000);
   context.subscriptions.push({ dispose: function () { clearInterval(timer); } });
