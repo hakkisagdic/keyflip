@@ -1,0 +1,22 @@
+{
+  "activeProviders": ["iyzico", "paytr", "lemonsqueezy", "stripe"],
+  "regionRouting": {
+    "TR": "iyzico",
+    "default": "lemonsqueezy"
+  },
+  "products": {
+    "price_1QZexampleStripeProMon00": { "tier": "pro", "months": 1 },
+    "price_1QZexampleStripeProYr000": { "tier": "pro", "months": 12 },
+    "price_1QZexampleStripeTeamYr00": { "tier": "team", "months": 12 },
+    "ls_variant_100001": { "tier": "pro", "months": 1 },
+    "ls_variant_100012": { "tier": "pro", "months": 12 },
+    "ls_variant_200012": { "tier": "team", "months": 12 },
+    "iyz_prod_pro_monthly": { "tier": "pro", "months": 1 },
+    "iyz_prod_pro_yearly": { "tier": "pro", "months": 12 },
+    "iyz_prod_team_yearly": { "tier": "team", "months": 12 },
+    "paytr_pro_1m": { "tier": "pro", "months": 1 },
+    "paytr_pro_12m": { "tier": "pro", "months": 12 },
+    "paytr_team_12m": { "tier": "team", "months": 12 }
+  },
+  "licenseTtlDaysDefault": 400
+}

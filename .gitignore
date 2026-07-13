@@ -11,7 +11,7 @@ coverage/
 .vscode/
 .idea/
 
-# never commit local state / secrets (ccswitch stores nothing here, but be safe)
+# never commit local state / secrets
 *.credentials
 *.credentials.json
 *.cred
@@ -20,3 +20,9 @@ coverage/
 *.pem
 *.key
 secrets*
+
+# license issuer: the Ed25519 PRIVATE key + runtime state (idempotency ledger,
+# issued-license records) must NEVER be committed. Only the source + config +
+# tests are tracked; the public key is pasted into src/license.js by hand.
+issuer/private/
+issuer/state/
