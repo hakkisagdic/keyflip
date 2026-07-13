@@ -1670,6 +1670,55 @@ async function cmdTransfer(ctx, rest) {
     return;
   }
 
+  // Host your OWN relay: a minimal, zero-dep, self-contained blob store so two machines can
+  // transfer over the INTERNET without a Nextcloud/WebDAV account (no Docker, no daemon — it
+  // runs in this terminal). keyflip's WebDAV client (PUT/GET/DELETE) talks to it directly.
+  if (sub === 'relay') {
+    const relayserver = require('./relayserver');
+    const dir = flagVal(rest, '--dir') || path.join(ctx.configDir, 'relay-store');
+    const host = flagVal(rest, '--host') || '127.0.0.1';
+    const port = flagVal(rest, '--port') ? (parseInt(flagVal(rest, '--port'), 10) || 8788) : 8788;
+    const authUser = flagVal(rest, '--auth-user');
+    const auth = authUser ? { user: authUser, pass: readSecretArg(rest, '--auth-pass-file') || '' } : null;
+    const allowOpen = rest.indexOf('--allow-open') !== -1;
+    let h;
+    try { h = await relayserver.start({ dir: dir, host: host, port: port, auth: auth, allowUnauthenticated: allowOpen }); }
+    catch (e) { return fail(e.message); }
+    const shownHost = (host === '0.0.0.0' || host === '::') ? (lan.lanAddresses()[0] || '<this-machine-ip>') : host;
+    print(style.bold('🛰  keyflip relay — hosting a blob rendezvous on this machine.'));
+    print('   URL for both machines: ' + style.bold('http://' + shownHost + ':' + h.port + '/kf') + (auth ? '  ' + style.dim('(Basic auth on)') : ''));
+    print('   Store: ' + style.dim(dir) + '   ·   blobs auto-expire; picked-up blobs are deleted.');
+    if (!auth && host !== '127.0.0.1') print('   ' + style.warn('⚠ open (no --auth-user) and reachable off-host — anyone who can reach it can read/write ciphertext blobs.'));
+    print('   Then: ' + style.bold('keyflip transfer serve --relay http://' + shownHost + ':' + h.port + '/kf') + (auth ? ' --user <u> --pass-file <f>' : ''));
+    print('   ' + style.dim('Ctrl-C to stop.'));
+    logmod.log('relay hosting on ' + host + ':' + h.port);
+    await new Promise(function () {}); // keep the process alive until Ctrl-C
+    return;
+  }
+
+  // Internet RELAY transfer: same one-time-code UX, but the encrypted bundle goes THROUGH a
+  // user-controlled relay (a synced folder path OR a WebDAV/relay URL) instead of a LAN socket.
+  const relayArg = flagVal(rest, '--relay');
+  if (sub === 'serve' && relayArg) {
+    const rt = require('./relaytransfer');
+    const pair = rt.genPairing();
+    const ropts = { relay: relayArg, code: pair.code, user: flagVal(rest, '--user') || undefined, pass: readSecretArg(rest, '--pass-file') || undefined, fetch: (typeof fetch !== 'undefined' ? fetch : undefined) };
+    const ti = rest.indexOf('--ttl'); const ttlS = ti !== -1 ? Math.max(15, parseInt(rest[ti + 1], 10) || 300) : 300;
+    let res;
+    try { res = await rt.push(ctx, Object.assign(bundleFilterOpts(rest), ropts)); } catch (e) { return fail(e.message); }
+    print(style.bold('🔗 keyflip transfer — uploaded an encrypted bundle to the relay.'));
+    print('   Bundle: ' + res.counts.accounts + ' account(s), ' + res.counts.providers + ' provider(s), ' + res.counts.transcripts + ' transcript(s), ' + res.counts.memory + ' memory file(s)' + (res.counts.agents ? ', ' + res.counts.agents + ' agent-memory file(s)' : '') + '.');
+    print('   One-time code: ' + style.bold(pair.code) + '   ' + style.dim('(<rendezvous>-<key>; the relay never sees the key)'));
+    print('   On the OTHER machine: ' + style.bold('keyflip transfer pull --relay ' + relayArg + ' --code ' + pair.code) + (ropts.user ? ' --user ' + ropts.user + ' --pass-file <f>' : ''));
+    if (JSON_MODE) { jsonOut({ relayServe: { slot: res.slot, counts: res.counts } }); }
+    print('   ' + style.dim('Waiting for pickup (up to ' + ttlS + 's); it is deleted on pickup. Ctrl-C to stop waiting.'));
+    let picked = { pickedUp: false };
+    try { const be = rt.resolveBackend(relayArg, ropts); picked = await rt.awaitPickup(be, pair.code, { ttlMs: ttlS * 1000 }); } catch (e) { /* best-effort live signal */ }
+    print(picked.pickedUp ? style.ok('✅') + ' picked up + deleted from the relay.' : style.warn('… not picked up yet') + ' — the blob remains on the relay until it is pulled or expires.');
+    logmod.log('transfer relay-serve (pickedUp=' + picked.pickedUp + ')');
+    return;
+  }
+
   if (sub === 'serve') {
     const ti = rest.indexOf('--ttl'); const ttlS = ti !== -1 ? Math.max(15, parseInt(rest[ti + 1], 10) || 120) : 120;
     let handle;
@@ -1688,6 +1737,34 @@ async function cmdTransfer(ctx, rest) {
     logmod.log('transfer serve on ' + handle.port);
     const r = await handle.wait;
     print(r.reason === 'transferred' ? style.ok('✅') + ' bundle sent — listener closed.' : 'Listener closed (' + r.reason + ').');
+    return;
+  }
+
+  if (sub === 'pull' && relayArg) {
+    const rt = require('./relaytransfer');
+    const code = flagVal(rest, '--code');
+    const force = rest.indexOf('--force') !== -1;
+    if (!code) return fail('pass --code <rendezvous>-<key> (the one-time code shown on the sending machine).');
+    let r;
+    try { r = await rt.pull(ctx, { relay: relayArg, code: code, user: flagVal(rest, '--user') || undefined, pass: readSecretArg(rest, '--pass-file') || undefined, fetch: (typeof fetch !== 'undefined' ? fetch : undefined) }); }
+    catch (e) { return fail(e.message); }
+    if (!r.found) return fail('no transfer at that relay for this code (already picked up, expired, or wrong code).');
+    const b = r.bundle || {};
+    const nAcc = (b.accounts || []).length, nProv = (b.providers || []).length, nTx = (b.transcripts || []).length, nMem = (b.memory || []).length;
+    print('Received bundle: ' + nAcc + ' account(s), ' + nProv + ' provider(s), ' + nTx + ' transcript(s), ' + nMem + ' memory file(s).');
+    if (!force) {
+      if (!process.stdin.isTTY) return fail('merging requires confirmation — re-run with --force');
+      const ok = await confirm('Merge it into this machine? Existing entries are kept unless --force. [y/N] ');
+      if (!ok) { print('Cancelled (the blob stays on the relay).'); return; }
+    }
+    let res;
+    try { res = await withLock(ctx, function () { return require('./migrate').applyBundle(ctx, b, { force: force }); }); } catch (e) { return fail(e.message); }
+    try { await r.cleanup(); } catch (e) { /* one-shot delete is best-effort; the relay TTL sweeps it otherwise */ }
+    const tx = res.transcripts;
+    print(style.ok('✅') + ' merged: accounts +' + res.accounts.imported.length + ' (kept ' + res.accounts.skipped.length + '), providers +' + res.providers.imported.length + ', transcripts +' + tx.added + ' (kept ' + tx.kept + (tx.overwritten ? ', overwrote ' + tx.overwritten : '') + '), memory +' + (res.memory ? res.memory.added : 0) + ' (kept ' + (res.memory ? res.memory.kept : 0) + ')' + (res.agents && res.agents.total ? ', agent-memory +' + res.agents.added + ' (kept ' + res.agents.kept + ')' : '') + '. ' + style.dim('(deleted from the relay)'));
+    if (rest.indexOf('--no-consolidate') === -1) { const cons = consolidateAndReport(ctx); if (cons && cons.reason) print('  ↳ ' + style.dim('desktop chat sync deferred: ' + cons.reason + ' (run `keyflip consolidate` with the app closed).')); }
+    jsonOut({ transferred: { accounts: res.accounts, providers: res.providers, transcripts: tx } });
+    logmod.log('transfer relay-pull: +' + tx.added + ' tx');
     return;
   }
 
@@ -1729,7 +1806,11 @@ async function cmdTransfer(ctx, rest) {
     return;
   }
 
-  return fail('usage: keyflip transfer [serve [--port N] [--ttl S] [--no-discovery] | pull [<host:port>] --code XXXX [--force]] [--no-sessions] [--no-providers]');
+  return fail('usage: keyflip transfer <subcommand>\n'
+    + '  LAN (direct):   serve [--port N] [--ttl S] [--no-discovery]   ·   pull [<host:port>] --code XXXX [--force]\n'
+    + '  Internet relay: serve --relay <dir|url> [--user U --pass-file f]   ·   pull --relay <dir|url> --code <rendezvous>-<key> [--user U --pass-file f] [--force]\n'
+    + '  Host a relay:   relay [--dir D] [--host H] [--port P] [--auth-user U --auth-pass-file f] [--allow-open]\n'
+    + '  Filters: [--no-sessions] [--no-providers]');
 }
 
 // Command-activated failover proxy (never a resident daemon).

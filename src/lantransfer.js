@@ -36,7 +36,10 @@ function b32(buf) {
   if (bits > 0) out += CODE_ALPHABET[(val << (5 - bits)) & 31];
   return out;
 }
-function genCode() { return b32(crypto.randomBytes(5)).slice(0, 8); } // 40 bits -> 8 chars
+// Default 8 chars = 40 bits (a short-lived, rate-limited LAN move). Pass more chars for the
+// internet RELAY path (12 = ~60 bits), where the ciphertext may sit on a server and an offline
+// scrypt guess is the threat model. bytes = ceil(chars*5/8) of entropy, base32-encoded.
+function genCode(chars) { chars = chars || 8; return b32(crypto.randomBytes(Math.ceil(chars * 5 / 8))).slice(0, chars); }
 // Normalize user-typed codes: uppercase, drop spaces/dashes/confusables handling.
 function normCode(s) { return String(s || '').toUpperCase().replace(/[^A-Z2-9]/g, ''); }
 function codeEqual(a, b) {

@@ -171,6 +171,9 @@ keyflip transfer serve [--qr] # LAN: show a one-time code (+ scannable QR) + str
 keyflip transfer pull --code X # LAN: auto-discover the peer, pull + MERGE (or pass <host:port>)
 keyflip transfer serve --receive   # LAN: WAIT to receive a pushed bundle (reverse direction)
 keyflip transfer push <host> --code X   # LAN: SEND your bundle to a listening machine (with E2 filters)
+keyflip transfer serve --relay <dir|url>   # INTERNET: same code UX, bundle goes through a synced folder / WebDAV relay (not the LAN)
+keyflip transfer pull --relay <dir|url> --code <rendezvous>-<key>   # INTERNET: pull + MERGE from the relay (one-shot; deleted on pickup)
+keyflip transfer relay [--dir D --host H --port P --auth-user U --auth-pass-file f]   # host your OWN zero-dep relay (no server needed)
 keyflip fleet init --dir <shared-folder>   # FLEET: link this machine into a control plane (encrypted shared/synced folder)
 keyflip fleet push [--with-secrets]   # publish this machine's status (accounts+quota+chat state) + apply queued commands
 keyflip fleet status | panel   # see EVERY machine on one screen — accounts, quota, "reply arrived?" (panel = web dashboard)
@@ -187,6 +190,20 @@ keyflip reset [--soft]        # FACTORY reset: DELETE all keyflip data (--soft k
 keyflip uninstall [--purge]   # remove keyflip from this machine (--purge also deletes data)
 keyflip upgrade               # update keyflip itself (detects how it was installed)
 ```
+
+### Internet transfer — the relay (zero-knowledge)
+
+`transfer serve`/`pull` also work **across the internet**, keeping the same one-time-code UX. Instead of
+a direct LAN socket the encrypted bundle travels through a **relay you control**, auto-detected from
+`--relay`: a **synced folder** (Dropbox/iCloud/Drive/Nextcloud) or a **WebDAV URL**. The relay is
+**zero-knowledge** — it only ever holds ciphertext. The one-time code is `<rendezvous>-<key>`: the
+`rendezvous` half is a public, random lookup handle (the relay slot); the `key` half is the AES
+passphrase and **never reaches the relay**, a URL, or a log. The bundle is deleted on pickup (one-shot).
+
+No relay of your own? keyflip can **host one for you** — a self-contained, zero-dependency blob store, no
+Docker, no daemon: `keyflip transfer relay --host 0.0.0.0 --auth-user me --auth-pass-file pass.txt` on a
+box both machines can reach, then point `--relay http://<that-host>:8788/kf --user me --pass-file pass.txt`
+at it from each side. (It refuses to bind a public interface without auth unless you pass `--allow-open`.)
 
 ### Fleet — origin authentication
 

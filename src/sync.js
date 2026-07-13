@@ -55,6 +55,15 @@ async function davGet(o) {
   if (!res || res.status >= 300) throw new Error('WebDAV GET failed (http ' + (res && res.status) + ')');
   return await res.text();
 }
+// DELETE a blob (one-shot cleanup after a relay pickup). A 404 is success — the goal
+// state (gone) already holds; any other non-2xx surfaces so the caller can retry/warn.
+async function davDelete(o) {
+  const doFetch = o.fetch || (typeof fetch !== 'undefined' ? fetch : null);
+  if (!doFetch) throw new Error('no fetch available');
+  const res = await doFetch(o.url, { method: 'DELETE', headers: authHeader(o) });
+  if (res && (res.status === 404 || res.status < 300)) return true;
+  throw new Error('WebDAV DELETE failed (http ' + (res && res.status) + ')');
+}
 
 // Reachability check (any 2xx/3xx/401 = server responded).
 async function test(o) {
@@ -103,4 +112,4 @@ function apply(ctx, pulled, opts) {
   return transfer.applyImport(ctx, pulled._bundle, { force: !!(opts && opts.force) });
 }
 
-module.exports = { encrypt: encrypt, decrypt: decrypt, test: test, push: push, pull: pull, apply: apply, davPut: davPut, davGet: davGet, VERSION: VERSION };
+module.exports = { encrypt: encrypt, decrypt: decrypt, test: test, push: push, pull: pull, apply: apply, davPut: davPut, davGet: davGet, davDelete: davDelete, VERSION: VERSION };
