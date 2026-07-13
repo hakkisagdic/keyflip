@@ -2964,6 +2964,84 @@ function cmdSessionsExport(ctx, rest) {
   print(style.ok('📄') + ' exported ' + parsed.counts.messages + ' message(s) to ' + style.bold("'" + file + "'") + ' ' + style.dim('(' + fmt + ', ' + parsed.counts.user + ' you / ' + parsed.counts.assistant + ' Claude)'));
 }
 
+// Resolve a session arg (a 1-based list index or a sessionId / prefix) to its row {sessionId, project}.
+function resolveSessionArg(ctx, arg) {
+  if (!arg) return null;
+  const rows = sessions.list(ctx, { limit: 100000 });
+  if (/^[0-9]{1,4}$/.test(arg)) return rows[parseInt(arg, 10) - 1] || null;
+  return rows.filter(function (r) { return r.sessionId === arg; })[0]
+    || rows.filter(function (r) { return r.sessionId.indexOf(arg) === 0; })[0] || null;
+}
+
+// keyflip sessions delete <id|#> [--hard]   — archive-then-remove (recoverable) by default.
+async function cmdSessionsDelete(ctx, rest) {
+  const row = resolveSessionArg(ctx, rest[0]);
+  if (!row) return fail('no such session (pass a list number or a session id — see `keyflip sessions`).');
+  const hard = rest.indexOf('--hard') !== -1;
+  const force = rest.indexOf('--force') !== -1 || rest.indexOf('-y') !== -1;
+  if (!force) {
+    if (!process.stdin.isTTY) return fail('deleting a session needs confirmation — re-run with --force (or -y)');
+    const q = hard ? 'PERMANENTLY delete session ' + row.sessionId.slice(0, 8) + ' (NOT recoverable)? [y/N] '
+      : 'Delete session ' + row.sessionId.slice(0, 8) + '? It is archived first (recover with `keyflip sessions unarchive`). [y/N] ';
+    if (!(await confirm(q))) { print('Cancelled.'); return; }
+  }
+  const r = require('./sessionedit').deleteSession(ctx, { project: row.project, sessionId: row.sessionId, hard: hard });
+  if (!r.ok) return fail('could not delete: ' + (r.reason || 'unknown'));
+  if (JSON_MODE) { jsonOut({ deleted: r }); return; }
+  print(style.ok('✅') + (r.mode === 'archived'
+    ? ' archived + removed session ' + style.bold(row.sessionId.slice(0, 8)) + ' ' + style.dim('(recover: keyflip sessions unarchive ' + row.sessionId + ')')
+    : ' permanently deleted session ' + style.bold(row.sessionId.slice(0, 8)) + '.'));
+  logmod.log('sessions delete ' + row.sessionId + ' (' + r.mode + ')');
+}
+
+// keyflip sessions scrub <id|#> [--apply] [--categories a,b,c] [--llm-url URL] — redact PII from a transcript.
+async function cmdSessionsScrub(ctx, rest) {
+  const row = resolveSessionArg(ctx, rest[0]);
+  if (!row) return fail('no such session (pass a list number or a session id).');
+  const apply = rest.indexOf('--apply') !== -1;
+  const catArg = flagVal(rest, '--categories');
+  const pii = require('./pii');
+  const opts = {
+    project: row.project, sessionId: row.sessionId, apply: apply,
+    categories: catArg ? catArg.split(',').map(function (s) { return s.trim(); }).filter(Boolean) : undefined,
+    custom: pii.loadCustom(ctx),
+  };
+  const url = flagVal(rest, '--llm-url');
+  if (url) opts.llm = { url: url, model: flagVal(rest, '--llm-model') || undefined };
+  const r = require('./sessionedit').scrubSession(ctx, opts);
+  if (!r.ok) return fail('could not scrub: ' + (r.reason || 'unknown'));
+  if (JSON_MODE) { jsonOut({ scrub: r }); return; }
+  const total = Object.keys(r.redactions || {}).reduce(function (n, k) { return n + r.redactions[k]; }, 0);
+  const bykind = Object.keys(r.redactions || {}).map(function (k) { return k + ':' + r.redactions[k]; }).join('  ') || '(none)';
+  if (!apply) {
+    print(style.bold('Dry run') + ' — ' + total + ' PII match(es) in ' + r.messagesScanned + ' message(s): ' + style.dim(bykind));
+    print('Apply the redaction (backs up first): ' + style.bold('keyflip sessions scrub ' + rest[0] + ' --apply'));
+    return;
+  }
+  print(style.ok('🧹') + ' redacted ' + total + ' PII match(es) ' + style.dim(bykind) + ' — backup: ' + style.bold(r.backup || '(none)'));
+  logmod.log('sessions scrub ' + row.sessionId + ' applied (' + total + ')');
+}
+
+// keyflip sessions edit <id|#> <delete-message|redact-message|truncate-after> <index> [--apply]
+async function cmdSessionsEdit(ctx, rest) {
+  const row = resolveSessionArg(ctx, rest[0]);
+  if (!row) return fail('no such session (pass a list number or a session id).');
+  const type = rest[1];
+  const index = parseInt(rest[2], 10);
+  if (['delete-message', 'redact-message', 'truncate-after'].indexOf(type) === -1 || isNaN(index)) {
+    return fail('usage: keyflip sessions edit <id|#> <delete-message|redact-message|truncate-after> <index> [--apply] [--replacement <text>]');
+  }
+  const apply = rest.indexOf('--apply') !== -1;
+  const op = { type: type, index: index, apply: apply };
+  const rep = flagVal(rest, '--replacement'); if (rep) op.replacement = rep;
+  const r = require('./sessionedit').editSession(ctx, { project: row.project, sessionId: row.sessionId, op: op });
+  if (!r.ok) return fail('could not edit: ' + (r.reason || 'unknown'));
+  if (JSON_MODE) { jsonOut({ edit: r }); return; }
+  if (!apply) { print(style.bold('Dry run') + ' — ' + type + ' @ ' + index + ': ' + r.before + ' → ' + r.after + ' event line(s). Add --apply (backs up first).'); return; }
+  print(style.ok('✅') + ' ' + type + ' @ ' + index + ' applied' + (r.backup ? ' — backup: ' + style.bold(r.backup) : '') + '.');
+  logmod.log('sessions edit ' + row.sessionId + ' ' + type + '@' + index);
+}
+
 async function cmdSessions(ctx, rest) {
   if (rest[0] === 'rebind') return cmdSessionsRebind(ctx, rest.slice(1));
   if (rest[0] === 'archive') return cmdSessionsArchive(ctx, rest.slice(1));
@@ -2974,6 +3052,9 @@ async function cmdSessions(ctx, rest) {
   if (rest[0] === 'assign') return withLock(ctx, function () { return cmdSessionsAssign(ctx, rest.slice(1)); });
   if (rest[0] === 'unassign') return withLock(ctx, function () { return cmdSessionsUnassign(ctx, rest.slice(1)); });
   if (rest[0] === 'export') return cmdSessionsExport(ctx, rest.slice(1));
+  if (rest[0] === 'delete' || rest[0] === 'rm') return withLock(ctx, function () { return cmdSessionsDelete(ctx, rest.slice(1)); });
+  if (rest[0] === 'scrub') return withLock(ctx, function () { return cmdSessionsScrub(ctx, rest.slice(1)); });
+  if (rest[0] === 'edit') return withLock(ctx, function () { return cmdSessionsEdit(ctx, rest.slice(1)); });
   const opts = {
     search: flagVal(rest, '--search'),
     cwd: rest.indexOf('--cwd') !== -1 ? (flagVal(rest, '--cwd') === undefined ? '.' : flagVal(rest, '--cwd')) : null,

@@ -1011,6 +1011,65 @@ const TOOLS = [
     },
   },
   {
+    name: 'keyflip_session_delete', title: 'Delete a conversation',
+    description: 'Delete a Claude Code transcript. DEFAULT is archive-then-remove (recoverable via keyflip_sessions_unarchive); hard=true PERMANENTLY unlinks it (NOT recoverable). Ask the user first, then confirm=true.',
+    inputSchema: { type: 'object', properties: { session_id: { type: 'string' }, hard: { type: 'boolean', description: 'true = permanent unlink (irreversible); default archives first.' }, confirm: confirmProp.confirm }, required: ['session_id', 'confirm'], additionalProperties: false }, annotations: MUT,
+    run: async function (ctx, args) {
+      needConfirm(args);
+      const row = sessions.find(ctx, String(args.session_id));
+      if (!row) throw new Error("no live session matches '" + args.session_id + "'");
+      const l = await lock.acquire(ctx.configDir);
+      try { const r = require('./sessionedit').deleteSession(ctx, { project: row.project, sessionId: row.sessionId, hard: !!args.hard }); if (!r.ok) throw new Error('delete failed: ' + (r.reason || 'unknown')); return { deleted: r }; }
+      finally { l.release(); }
+    },
+  },
+  {
+    name: 'keyflip_session_scrub', title: 'Redact PII from a conversation',
+    description: 'Redact PII (email, phone incl. TR, TCKN, credit card [Luhn], IBAN, IP, secrets, custom patterns) from a transcript\'s human-visible text — including assistant THINKING blocks. confirm=false PREVIEWS (dry-run counts, writes nothing); confirm=true APPLIES the redaction after backing the file up. Ask the user before applying.',
+    inputSchema: { type: 'object', properties: { session_id: { type: 'string' }, categories: { type: 'array', items: { type: 'string' }, description: 'Subset of PII categories (default: all but address).' }, llm_url: { type: 'string', description: 'Optional local PII-LLM endpoint (opt-in).' }, confirm: confirmProp.confirm }, required: ['session_id', 'confirm'], additionalProperties: false }, annotations: MUT,
+    run: async function (ctx, args) {
+      const row = sessions.find(ctx, String(args.session_id));
+      if (!row) throw new Error("no live session matches '" + args.session_id + "'");
+      const pii = require('./pii');
+      const opts = { project: row.project, sessionId: row.sessionId, apply: args.confirm === true, categories: Array.isArray(args.categories) ? args.categories : undefined, custom: pii.loadCustom(ctx) };
+      if (args.llm_url) opts.llm = { url: String(args.llm_url) };
+      const doIt = function () { return require('./sessionedit').scrubSession(ctx, opts); };
+      let r;
+      if (args.confirm === true) { const l = await lock.acquire(ctx.configDir); try { r = doIt(); } finally { l.release(); } }
+      else { r = doIt(); }
+      if (!r.ok) throw new Error('scrub failed: ' + (r.reason || 'unknown'));
+      return { applied: r.applied, redactions: r.redactions, messagesScanned: r.messagesScanned, backup: r.backup || null, preview: r.applied ? undefined : 'dry-run — call with confirm=true to apply' };
+    },
+  },
+  {
+    name: 'keyflip_session_edit', title: 'Surgically edit a conversation',
+    description: 'Edit a transcript at the JSONL level, keeping it valid: op="delete-message" drops event N, "redact-message" replaces event N\'s visible text, "truncate-after" drops everything after event N. confirm=false PREVIEWS; confirm=true APPLIES after backing up. Ask the user before applying.',
+    inputSchema: { type: 'object', properties: { session_id: { type: 'string' }, op: { type: 'string', enum: ['delete-message', 'redact-message', 'truncate-after'] }, index: { type: 'integer' }, replacement: { type: 'string' }, confirm: confirmProp.confirm }, required: ['session_id', 'op', 'index', 'confirm'], additionalProperties: false }, annotations: MUT,
+    run: async function (ctx, args) {
+      const row = sessions.find(ctx, String(args.session_id));
+      if (!row) throw new Error("no live session matches '" + args.session_id + "'");
+      const op = { type: String(args.op), index: args.index | 0, apply: args.confirm === true };
+      if (args.replacement != null) op.replacement = String(args.replacement);
+      const doIt = function () { return require('./sessionedit').editSession(ctx, { project: row.project, sessionId: row.sessionId, op: op }); };
+      let r;
+      if (args.confirm === true) { const l = await lock.acquire(ctx.configDir); try { r = doIt(); } finally { l.release(); } }
+      else { r = doIt(); }
+      if (!r.ok) throw new Error('edit failed: ' + (r.reason || 'unknown'));
+      return r;
+    },
+  },
+  {
+    name: 'keyflip_pii_scrub_text', title: 'Redact PII from a string',
+    description: 'Redact PII from an arbitrary text string (not a file) and return the cleaned text + per-category counts. Categories: email, phone (incl. TR), tckn, passport, creditCard (Luhn), iban, ipv4/ipv6, secret; address is opt-in. Read-only — transforms the given text, touches nothing on disk.',
+    inputSchema: { type: 'object', properties: { text: { type: 'string' }, categories: { type: 'array', items: { type: 'string' } } }, required: ['text'], additionalProperties: false }, annotations: RO,
+    run: async function (ctx, args) {
+      const pii = require('./pii');
+      const opts = { custom: pii.loadCustom(ctx) };
+      if (Array.isArray(args.categories)) opts.categories = args.categories;
+      return pii.scrub(String(args.text == null ? '' : args.text), opts);
+    },
+  },
+  {
     name: 'keyflip_sessions_unarchive', title: 'Restore an archived transcript',
     description: 'Restore a gzipped archived transcript back into ~/.claude/projects (byte-exact). Mutating — ask the user, then confirm=true.',
     inputSchema: { type: 'object', properties: { session_id: { type: 'string' }, confirm: confirmProp.confirm }, required: ['session_id', 'confirm'], additionalProperties: false }, annotations: MUT,

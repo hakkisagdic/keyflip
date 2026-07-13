@@ -279,6 +279,9 @@ keyflip send <id> "<message>" [--as <account>] [--fork]   # inject a message int
 keyflip sessions archive <id|--older-than 30d>   # move old transcripts into keyflip (gzipped); unarchive restores them
 keyflip sessions distill <id>   # summarize a chat into a durable keepsake (via `claude -p`); browse with `keyflip memory`
 keyflip sessions compact <id> [--apply]   # shrink a transcript: elide bulky tool output, keep the conversation (dry-run default)
+keyflip sessions scrub <id> [--apply] [--categories …] [--llm-url URL]   # redact PII (email/phone/TCKN/card/IBAN/IP/secrets + custom + optional local LLM) — dry-run default, backs up on --apply
+keyflip sessions delete <id> [--hard]   # delete a conversation — archives first (recoverable) by default; --hard is a permanent unlink
+keyflip sessions edit <id> <delete-message|redact-message|truncate-after> <n> [--apply]   # surgical JSONL edits (backs up; keeps the file valid)
 keyflip sessions export <id> [--format md|html|json]   # export a chat as a clean, shareable doc (offline review / archive)
 keyflip foreign <session-file> [--format md|html|json]   # normalize ANOTHER agent's session (JSONL / Cursor SQLite / opencode+generic JSON / Copilot YAML / Aider MD) into the same view
 keyflip handoff [--to claude|cursor|kiro|opencode|windsurf|generic] [--out CONTINUE.md]   # emit a CONTINUE-PROMPT so a NEW AI tool resumes THIS project from .keyflip/ (context, tasks, decisions, rules, last checkpoint) without re-reading everything

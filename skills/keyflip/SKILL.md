@@ -349,6 +349,9 @@ keyflip sessions archive <id|--older-than 30d>   # move old transcripts into key
 keyflip sessions unarchive <id>       # restore an archived transcript (byte-exact); `sessions archived` lists them
 keyflip sessions distill <id> [--to-claude]   # summarize a chat into a durable keepsake (via `claude -p`; spends the active account)
 keyflip sessions compact <id> [--apply]   # shrink a transcript (elide bulky tool output, keep the conversation; dry-run default)
+keyflip sessions scrub <id> [--apply] [--categories a,b] [--llm-url URL]   # redact PII from a transcript (incl. assistant THINKING blocks); dry-run default, backs up on --apply
+keyflip sessions delete <id> [--hard]   # delete a conversation: archives first (recoverable) by default; --hard = permanent unlink
+keyflip sessions edit <id> <delete-message|redact-message|truncate-after> <n> [--apply]   # surgical JSONL edits (backs up; keeps the file valid)
 keyflip memory [show <key>]           # browse keyflip's own distilled keepsakes (independent of ~/.claude memory)
 keyflip recall "<query>" [--semantic] [--answer]  # recall across ALL your chats (BM25 default; --semantic = embeddings via Ollama/hosted; --answer = a CITED synthesis via `claude -p`)
 keyflip dream [--older-than 30d] [--archive] [--apply]   # "dreaming": distill (+ optionally archive) old chats in one pass; DRY-RUN by default

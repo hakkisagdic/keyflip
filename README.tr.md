@@ -279,6 +279,9 @@ keyflip send <id> "<mesaj>" [--as <hesap>] [--fork]   # bir oturuma mesaj enjekt
 keyflip sessions archive <id|--older-than 30d>   # eski transkriptleri keyflip'e taşı (gzip'li); unarchive geri yükler
 keyflip sessions distill <id>   # bir sohbeti kalıcı hatıraya damıt (`claude -p` ile); `keyflip memory` ile gözat
 keyflip sessions compact <id> [--apply]   # transkripti küçült: hacimli tool çıktısını ele, sohbeti koru (varsayılan dry-run)
+keyflip sessions scrub <id> [--apply] [--categories …] [--llm-url URL]   # PII redakte et (e-posta/telefon/TCKN/kart/IBAN/IP/sırlar + özel + opsiyonel yerel LLM) — varsayılan dry-run, --apply'da yedekler
+keyflip sessions delete <id> [--hard]   # bir sohbeti sil — varsayılan önce arşivler (geri alınabilir); --hard kalıcı siler
+keyflip sessions edit <id> <delete-message|redact-message|truncate-after> <n> [--apply]   # cerrahi JSONL düzenleme (yedekler; dosyayı geçerli tutar)
 keyflip sessions export <id> [--format md|html|json]   # bir sohbeti temiz, paylaşılabilir belgeye çıkar (offline inceleme / arşiv)
 keyflip foreign <oturum-dosyası> [--format md|html|json]   # BAŞKA bir ajanın oturumunu (JSONL / Cursor SQLite / opencode+genel JSON / Copilot YAML / Aider MD) aynı görünüme normalize et
 keyflip handoff [--to claude|cursor|kiro|opencode|windsurf|generic] [--out CONTINUE.md]   # YENİ bir yapay zeka aracının bu projeyi .keyflip/ üzerinden (bağlam, görevler, kararlar, kurallar, son checkpoint) her şeyi yeniden okumadan sürdürmesi için bir DEVAM-İSTEMİ üretir
