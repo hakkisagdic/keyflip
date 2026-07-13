@@ -1165,3 +1165,68 @@ CLI: `keyflip context <init|status|pack|export --to <tool>|decision|task|checkpo
 MVP order (per the proposal): MVP1 Claude project-context + tasks + session summary + secret-filtered export;
 MVP2 Cursor adapter + rules transform + continue-prompt + git checkpoints; MVP3 Kiro/opencode/Windsurf +
 cloud sync + conflict + team/policy. Positioning: "AI coding tools change. Your project memory should not."
+
+---
+
+## Session 2026-07-13 — SHIPPED (control plane + monitoring + lifecycle + brain)
+
+All items below are built, adversarially-reviewed, fixed, tested (full suite ~1275 pass / 0 fail; 145 MCP
+tools, 0 readOnlyHint/confirm invariant violations), and committed to `main` (NOT pushed — awaiting the
+owner's explicit "push"). Each was: build (often a fan-out Workflow) → adversarial review (secret-leak /
+path / crypto / injection / MCP-invariant lenses) → fix confirmed findings → regression tests → bilingual
+docs (README.md + README.tr.md + skills/keyflip/SKILL.md) in lockstep.
+
+**The control-plane architecture (the core reframe).** The real UX deadlock: the human is simultaneously the
+Claude-user AND the keyflip-operator on one machine, and the desktop app is a third party fighting over the
+one credential slot — so "close Claude to operate + memorize commands." Dissolved in three layers, owner-
+approved ("Hepsi, fazlı" + Brain autonomy = "suggest+approve"):
+- **Phase 1 — Pilot** (`e8a0dd8`): `src/autoswitchservice.js` + `keyflip autoswitch install|status|uninstall`
+  + `--once`. An UNATTENDED background service (launchd StartInterval / cron */N) runs a single autoswitch
+  tick on an interval, so rotation happens on its own (the fix for "autoswitch never switches" — it was a
+  foreground loop). MCP `keyflip_autoswitch_service`. Interval clamped 60s..6h; strategy/group whitelisted.
+- **Phase 2 — Face** (`054cea7`): `src/commands.js` (an 83-command searchable catalog) drives a TUI **command
+  palette** (`keyflip ui` → `p`) so nothing is memorized; a **provider-usage view** (`u`); and the CodexBar
+  bridge. Safe read-only no-arg commands run on Enter; the rest print ready-to-paste.
+- **Phase 3 — Brain** (`97428bf`): `src/brain.js` + `keyflip brain "<intent>"` — plain-language intent → a
+  PROPOSED plan of keyflip commands (Gemini, zero-dep REST via fetch) the human approves step-by-step. OFF
+  unless `KEYFLIP_BRAIN=1` + `GEMINI_API_KEY`. Propose-ONLY (no dispatch/spawn/tool.run); outbound context
+  secret-scrubbed; the plan is validated against the catalog (only real commands, args ⇒ mutating). MCP
+  `keyflip_brain_propose` (RO). Autonomy stays "suggest+approve" — never acts alone.
+
+**Monitoring — the CodexBar capability, ported (no external dep).**
+- `src/provusage.js` (`3edc7ce`): a zero-dep multi-provider usage/limit reader (Codex/Gemini/Cursor/Copilot/
+  opencode/OpenRouter + Claude via usage.js), normalized to usage.js's shape. Approach adapted from CodexBar
+  (github.com/steipete/CodexBar, MIT) — reimplemented, credited in CREDITS.md. Secret-safe (env NAMES only;
+  fetch defaults null = fail-closed). NEEDS-VERIFICATION on a live install: the exact gemini/openrouter/
+  cursor/copilot/opencode endpoints + shapes (codex is the verified real path).
+- First-class surface (`64ac271`): `keyflip usage --providers` + MCP `keyflip_provider_usage` (was TUI-only).
+- `src/codexbar.js` (`054cea7`): `keyflip codexbar` + MCP `keyflip_codexbar` — detect a locally-installed
+  CodexBar and align its tracked providers with keyflip's. Reads only the non-secret provider list.
+
+**Internet relay for `transfer` (`2e8c924`, MCP `33a562e`).** `keyflip transfer serve/pull --relay <dir|url>`
+works across the internet with the same one-time-code UX: the encrypted bundle travels through a user-
+controlled relay (a synced folder OR a WebDAV URL) — no keyflip server, no NAT traversal. ZERO-KNOWLEDGE:
+the pairing is `<rendezvous>-<key>`; rendezvous is a public random slot handle, key is the AES passphrase
+that never reaches the relay. `keyflip transfer relay` self-hosts a zero-dep blob relay (`src/relayserver.js`).
+MCP `keyflip_transfer_relay_pull` (one-shot). Review fixed 2 HIGH: an unsalted-sha256 slot oracle (→ random
+handle) and a leading-dot disk-exhaustion bypass.
+
+**Session lifecycle — delete / PII scrub / edit (`c75d223`).** `src/sessionedit.js` + `src/pii.js`:
+`keyflip sessions delete` (archive-then-remove by default, `--hard` permanent), `sessions scrub` (redact PII
+— email/phone incl. TR, TCKN-checksum, Luhn card, IBAN mod-97, IP, secrets; incl. assistant THINKING blocks;
+user-extensible `pii-patterns.json` + opt-in local-PII-LLM hook), `sessions edit` (delete/redact/truncate
+message; valid JSONL). MCP `keyflip_session_delete|_scrub|_edit` + `keyflip_pii_scrub_text`. Review fixed 3
+(2 HIGH PII leaks: card-next-to-IP over-match, thinking-block skip; + custom-pattern ReDoS).
+
+**Context Layer (Wave 4) — see the SHIPPED note above (`cbfa0bd`, `f5338b4`).**
+**Productization infra:** license env-gating (`d58897c`, OFF unless `KEYFLIP_LICENSING=1`) + the multi-
+provider issuer skeleton (`ad88039`: Ed25519 signer matching license.js + Stripe/LemonSqueezy/iyzico/PayTR
+webhook adapters + node:http relay). NOT built: the website + admin panel. Activation (real keypair →
+PUBKEY_B64, PSP signup, product IDs) is an owner/business step.
+**Half-wired cleanup:** wired autoswitch.threshold/strategy/group + notify emission + ui.color +
+usage.cacheTtl (`f4885e9`, `5f43af0`, `4ae944f`); removed 3 inert settings (ui.theme, security.relockMinutes,
+surface-snapshot) owner-approved (`1ba2000`).
+**Extensions / device-gated (build-done, hardware-validation pending):** VS Code (prior) + JetBrains plugin
+(`33e1cc7`); Linux app-auth + Linux tray (Argos/kargos) (`21e08f2`, `ea26faf`); SSO org-login wiring. All
+need real hardware/accounts to validate (Linux/Win app-auth, `./gradlew test`/`runIde`, live SSO, live
+Gemini brain round-trip, Windsurf/Kiro session-import formats).
