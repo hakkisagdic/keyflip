@@ -125,6 +125,7 @@ keyflip use <name>            # route Claude Code to a provider (keyflip provide
 keyflip doctor                # health check: secrets-in-git, orphaned sessions, versioning, config, login, endpoints
 keyflip backup now|list|restore <n>   # snapshot keyflip metadata (no secrets)
 keyflip usage --history       # per-account usage trend + failover events
+keyflip usage --providers     # usage/limits across OTHER AI tools on this machine (Codex/Gemini/Cursor/Copilot/OpenRouter + Claude) — the CodexBar-style monitor
 keyflip status                # which account each surface is on (CLI + desktop app)
 keyflip list [--usage]        # accounts; --usage adds each one's 5h/7d utilization
 keyflip autoswitch            # watch usage; auto-swap the CLI account at a threshold

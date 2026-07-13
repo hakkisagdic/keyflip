@@ -109,6 +109,7 @@ function usage() {
   print('  keyflip doctor                 diagnose config, login and endpoint reachability');
   print('  keyflip test <provider>        fire one real request to check a provider\'s auth');
   print('  keyflip usage --history        per-account usage trend + autoswitch/failover events');
+  print('  keyflip usage --providers      usage/limits across OTHER AI tools (Codex/Gemini/Cursor/Copilot/OpenRouter…) — the multi-provider monitor');
   print('  keyflip backup [now|list|restore <n>|prune]   snapshot keyflip metadata (no secrets)');
   print('  keyflip history | undo | restore <ref>   git-versioned config: see/undo/roll back changes');
   print('  keyflip versioning [on|off]   toggle auto-versioning (ON by default; secrets never committed)');
@@ -1392,6 +1393,21 @@ async function cmdSpeedtest(ctx, rest) {
 
 // #12 usage trend + failover event history
 async function cmdUsage(ctx, rest) {
+  // --providers: usage/limits across the OTHER AI tools on this machine (Codex/Gemini/Cursor/…),
+  // from provusage — the CodexBar-style multi-provider monitor (same data the TUI's `u` view shows).
+  if (rest.indexOf('--providers') !== -1) {
+    let list = [];
+    try { list = await require('./provusage').readAll(ctx, { fetch: (typeof fetch !== 'undefined' ? fetch : undefined) }); } catch (e) { list = []; }
+    if (JSON_MODE) { jsonOut({ providerUsage: list }); return; }
+    if (!list.length) { print('No other AI providers detected on this machine.'); return; }
+    print(style.bold('Provider usage') + ' ' + style.dim('(other AI tools on this machine):'));
+    list.forEach(function (p) {
+      const w = (p.windows || [])[0];
+      const pct = w && typeof w.usedPct === 'number' ? Math.round(w.usedPct) + '%' : (p.status || '?');
+      print('  ' + (p.label || p.id).padEnd(14) + ' ' + pct + (w && w.name ? '  ' + w.name : '') + (w && w.human ? '  ' + w.human : '') + (p.status && p.status !== 'ok' ? '  ' + style.dim(p.status) : ''));
+    });
+    return;
+  }
   if (rest.indexOf('--history') === -1) {
     // no --history: behave like `list --usage`
     return cmdList(ctx, ['--usage'].concat(rest));

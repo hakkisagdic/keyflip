@@ -157,6 +157,9 @@ account; `keyflip provider off` restores it. Never put an API key in argv — us
   need confirm). This is the fix when a user says "autoswitch never switches" —
   they were running the foreground loop only in a terminal that wasn't open.
 - `keyflip usage --history` — per-account 5h/7d trend + failover events.
+- `keyflip usage --providers` — usage/limits across the OTHER AI tools on this machine (Codex/Gemini/
+  Cursor/Copilot/opencode/OpenRouter + Claude), from provusage (the CodexBar-style monitor). MCP:
+  `keyflip_provider_usage` (read-only; reads only usage numbers + reset times, never a token value).
 - `keyflip backup now|list|restore <n>` — snapshots keyflip metadata (no secrets);
   restore takes a safety backup first.
 - `keyflip share <provider> [--no-secrets]` → a `keyflip://` link; `keyflip import

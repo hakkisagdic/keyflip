@@ -125,6 +125,7 @@ keyflip use <ad>              # Claude Code'u bir provider'a yönlendir (geri: k
 keyflip doctor                # sağlık kontrolü: git-e-sır, orphan oturumlar, versiyonlama, config, giriş, endpointler
 keyflip backup now|list|restore <n>   # keyflip metadata anlık görüntüsü (sırsız)
 keyflip usage --history       # hesap-başına kullanım eğilimi + failover olayları
+keyflip usage --providers     # bu makinedeki DİĞER AI araçlarında kullanım/limit (Codex/Gemini/Cursor/Copilot/OpenRouter + Claude) — CodexBar tarzı monitör
 keyflip status                # her yüzey hangi hesapta (CLI + masaüstü uygulaması)
 keyflip list [--usage]        # hesaplar; --usage her hesabın 5s/7g kullanımını ekler
 keyflip autoswitch            # kullanımı izle; eşikte CLI hesabını otomatik değiştir

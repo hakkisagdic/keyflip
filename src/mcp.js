@@ -950,6 +950,12 @@ const TOOLS = [
     run: async function (ctx) { const cb = require('./codexbar'); return { detected: cb.detect(ctx), align: cb.align(ctx) }; },
   },
   {
+    name: 'keyflip_provider_usage', title: 'Usage/limits across other AI providers',
+    description: 'Read usage + limit windows across the OTHER AI coding tools on this machine (Codex, Gemini, Cursor, Copilot, opencode, OpenRouter, …) plus Claude — a CodexBar-style multi-provider monitor. Each provider is normalized to { status, windows:[{name,usedPct,resetsAt,human}] }. Reads only usage numbers/reset times (any API key is referenced by env NAME only, never its value). Absent providers are skipped. Read-only.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false }, annotations: RO,
+    run: async function (ctx) { return { providers: await require('./provusage').readAll(ctx, { fetch: (typeof fetch !== 'undefined' ? fetch : undefined) }) }; },
+  },
+  {
     name: 'keyflip_brain_propose', title: 'Propose a plan of keyflip steps (opt-in)',
     description: 'Turn a plain-language intent into a PROPOSED plan of keyflip commands (via Gemini). PROPOSE-ONLY — it never executes anything; it returns validated steps (each tagged safe/mutating) for the human to approve and run. OFF unless KEYFLIP_BRAIN=1 and GEMINI_API_KEY are set (returns enabled:false otherwise). All outbound context is secret-scrubbed; the API key is never returned. Read-only.',
     inputSchema: { type: 'object', properties: { intent: { type: 'string' } }, required: ['intent'], additionalProperties: false }, annotations: RO,
