@@ -226,7 +226,9 @@ account; `keyflip provider off` restores it. Never put an API key in argv — us
   **Reverse (push):** `keyflip transfer serve --receive` on the TARGET waits with a code, and
   `keyflip transfer push <host:port> --code XXXX` on the SOURCE sends (with the E2 filters) to
   it — for "send my sessions to my other, listening machine". LAN transfer is TTY/foreground so
-  it stays CLI-only; the MCP path for cross-machine is `keyflip_migrate_push`/`_pull` (WebDAV).
+  it stays CLI-only; the MCP path for cross-machine is `keyflip_migrate_push`/`_pull` (WebDAV) and
+  `keyflip_transfer_relay_pull` (one-shot pull of a `serve --relay` bundle via a synced folder / WebDAV
+  URL, using the "<rendezvous>-<key>" code; mutating, confirm-gated, deletes the blob on pickup).
   **INTERNET (relay):** `keyflip transfer serve --relay <dir|url>` ↔ `keyflip transfer pull --relay
   <dir|url> --code <rendezvous>-<key>` keeps the same one-time-code UX but routes the encrypted bundle
   through a **user-controlled, zero-knowledge relay** (a synced folder OR a WebDAV URL, auto-detected).

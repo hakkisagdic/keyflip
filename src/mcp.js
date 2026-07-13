@@ -727,6 +727,21 @@ const TOOLS = [
     run: async function (ctx, args) { needConfirm(args); const bundle = await require('./lantransfer').pull({ host: String(args.host), code: String(args.code) }); const l = await lock.acquire(ctx.configDir); let res; try { res = require('./migrate').applyBundle(ctx, bundle, { force: !!args.force }); } finally { l.release(); } return { merged: { accounts: res.accounts, providers: res.providers, transcripts: res.transcripts } }; },
   },
   {
+    name: 'keyflip_transfer_relay_pull', title: 'Pull + merge a bundle via the internet relay',
+    description: 'One-shot pull of a bundle a peer uploaded with `keyflip transfer serve --relay`, THROUGH a user-controlled relay (a synced-folder path OR a WebDAV URL — no LAN needed), using the one-time code shown on the sending machine ("<rendezvous>-<key>"). Decrypts with the code, MERGES it (existing entries kept unless force=true), then deletes the blob from the relay (one-shot). The relay is zero-knowledge — the key half never reaches it. Mutating — ask the user, then confirm=true.',
+    inputSchema: { type: 'object', properties: { relay: { type: 'string', description: 'A synced-folder path or a WebDAV URL.' }, code: { type: 'string', description: 'The "<rendezvous>-<key>" one-time code shown on the sender.' }, user: { type: 'string', description: 'WebDAV username (URL relay).' }, pass_file: { type: 'string', description: 'File holding the WebDAV password (URL relay) — never the literal secret.' }, force: { type: 'boolean' }, confirm: confirmProp.confirm }, required: ['relay', 'code', 'confirm'], additionalProperties: false }, annotations: MUT,
+    run: async function (ctx, args) {
+      needConfirm(args);
+      const rt = require('./relaytransfer');
+      const r = await rt.pull(ctx, { relay: String(args.relay), code: String(args.code), user: args.user, pass: args.pass_file ? fs.readFileSync(String(args.pass_file), 'utf8').trim() : undefined, fetch: (typeof fetch !== 'undefined' ? fetch : undefined) });
+      if (!r.found) throw new Error('no transfer at that relay for this code (already picked up, expired, or wrong code)');
+      const l = await lock.acquire(ctx.configDir);
+      let res; try { res = require('./migrate').applyBundle(ctx, r.bundle, { force: !!args.force }); } finally { l.release(); }
+      try { await r.cleanup(); } catch (e) { /* one-shot delete is best-effort; the relay TTL sweeps it otherwise */ }
+      return { merged: { accounts: res.accounts, providers: res.providers, transcripts: res.transcripts } };
+    },
+  },
+  {
     name: 'keyflip_autoswitch_tick', title: 'Evaluate usage once and auto-switch if over threshold',
     description: 'Run ONE autoswitch evaluation: check the active account\'s usage headroom and, if it is at/over the threshold, switch the CLI to the next available account. Returns the decision (state / headroom / switchedTo). Mutating (MAY switch the active account) — ask the user, then confirm=true.',
     inputSchema: { type: 'object', properties: { threshold: { type: 'number', description: 'Utilization % at which to switch (default 90).' }, confirm: confirmProp.confirm }, required: ['confirm'], additionalProperties: false }, annotations: MUT,
