@@ -343,6 +343,7 @@ keyflip resume <number|id>            # print the resume command for its origina
 keyflip resume <id> --run             # launch `claude --resume <id>` in that dir
 keyflip cowork [--search T]           # browse Claude desktop Cowork sessions (all accounts)
 keyflip chat [get <id>]               # read the active account's claude.ai Chat (EXPERIMENTAL)
+keyflip handoff [--to claude|cursor|kiro|opencode|windsurf|generic] [--out CONTINUE.md]   # emit a CONTINUE-PROMPT so a NEW AI tool resumes this project from .keyflip/ without re-reading everything
 ```
 
 `cowork` and Claude Code `sessions` are LOCAL and reliable. `chat` reads
@@ -350,6 +351,36 @@ claude.ai's cloud history via the desktop app's session cookie — it's
 experimental: it needs a fresh Cloudflare cookie (works right after the app was
 used) and only sees the account the desktop app is signed into; if it 403s, tell
 the user to open the Claude app once and retry.
+
+## Context Layer — portable project memory (`.keyflip/`)
+
+Tool-independent project memory kept in a `.keyflip/` folder in the PROJECT dir (not the config
+dir), so it moves with the repo across AI tools/accounts/machines. **Secret-safe:** every text field
+is redacted before write/pack, and only env-var NAMES are carried (never values). Files are `0600`.
+
+**Project context** — read it at the START of a session to inherit prior decisions/tasks:
+- `keyflip context init` — create `.keyflip/` (project.json, context.md, decisions.json, tasks.json)
+- `keyflip context status` / `keyflip context show [--json]` — summary / full secret-redacted package
+- `keyflip context decision add "<title>" [--rationale] [--alt] [--do-not] [--status decided|rejected|superseded]` — record a durable choice (add a `--do-not` so future sessions don't re-try a rejected approach)
+- `keyflip context task add "<title>"` / `keyflip context task set <id> <todo|in_progress|blocked|done>`
+- MCP: `keyflip_context_read` (RO), `keyflip_context_task_set`, `keyflip_context_decision_add` (mutating — ask, then `confirm: true`).
+
+**Unify AI rule files** — normalize this project's rule files into one model, re-emit per tool:
+- `keyflip rules show` — detect CLAUDE.md / .cursorrules / .cursor/rules/* / AGENTS.md / GEMINI.md / copilot-instructions.md and preview the normalized model
+- `keyflip rules import` — cache the model at `.keyflip/rules.json`
+- `keyflip rules emit --to claude|cursor|agents|gemini|generic [--write]` — build one tool's file (stdout without `--write`; `--write` saves it — ask first)
+- MCP: `keyflip_rules_show` (RO), `keyflip_rules_emit` (returns content; writes only with `confirm=true`). Secrets always redacted; only `${VAR}` references survive.
+
+**Checkpoints** (git-bound session snapshots, chained by `parent` in `.keyflip/checkpoints/`):
+- `keyflip checkpoint create --summary "<what you did>"` (optionally `--tasks-file tasks.json`) at a session boundary
+- `keyflip checkpoint list` / `latest` / `show <id>`
+- MCP: `keyflip_checkpoint_list` / `_latest` (RO); `keyflip_checkpoint_create` (mutating, `confirm: true`). Secrets redacted from every field; `show`/restore is READ-ONLY — keyflip never runs git or edits the tree, you read `git.branch`/`git.commit`/`git.dirty` and act yourself. Each has a `contentHash` for cross-machine conflict detection.
+
+**Hand-off** — when the user moves a project to a different AI tool (or a fresh session that shouldn't re-read the repo), run `keyflip handoff --to <tool>` (or the `keyflip_handoff` MCP tool, RO). It reads `.keyflip/` and produces a self-contained CONTINUE-PROMPT (tool trail, files to read, active task, locked decisions, closing instruction); paste/pipe it into the new tool. Never emits secrets — only env-var names.
+
+**Context-sync privacy** — `keyflip context sync <status|mode|export|check>` sets a project's `.keyflip/` sharing mode (`local`/`git`/`encrypted`/`company`); every field is secret-scanned before export, env-var values never leave the machine, and conflict detection flags divergent edits. Agents: `keyflip_ctxsync_status` (read) / `keyflip_ctxsync_mode` (change, needs `confirm`).
+
+Never paste secrets into any field; use the `.env` mechanism so only the variable NAME travels.
 
 ## Installing skills & the failover proxy
 

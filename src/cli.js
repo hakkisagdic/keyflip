@@ -176,6 +176,12 @@ function usage() {
   print('  keyflip swarm <run|ping|drain --allow-exec|results|trust <machine>>   run a command across YOUR OWN enrolled fleet machines');
   print('  keyflip config <get <key>|set <key> <val>|list|unset <key>>   centralized settings');
   print('  keyflip surfaces [list]   detect which AI tools (Cursor/Gemini/Codex/Copilot/opencode/Aider) are present + their active account');
+  print(style.dim('  — context layer (portable project memory in .keyflip/) —'));
+  print('  keyflip context <init|status|show|decision add|task add|task set <id> <status>>   tool-independent project memory that travels with the repo');
+  print('  keyflip context sync <status|mode <local|git|encrypted|company>|export|check>   what MAY leave the machine for a shared .keyflip/ package');
+  print('  keyflip rules <show|import|emit --to claude|cursor|agents|gemini [--write]>   normalize this project\'s AI rule files into one model, re-emit per tool');
+  print('  keyflip checkpoint <list|create --summary "…"|latest|show <id>>   git-bound session-boundary snapshots');
+  print('  keyflip handoff [--to <claude|cursor|kiro|opencode|windsurf|generic>]   print a CONTINUE-PROMPT so a NEW tool can resume this project');
   print('  keyflip ui                    full-screen TUI dashboard (accounts + usage + fleet)');
   print('  keyflip license <status|activate <file>>   offline license (open-core; paid tiers)');
   print('  keyflip run <name> [-- args]  PARALLEL session: run Claude as that account in THIS');
@@ -2570,6 +2576,222 @@ function cmdForeign(ctx, rest) {
   print(style.ok('📄') + ' normalized a ' + style.bold(norm.tool) + ' session (' + norm.counts.messages + ' messages) → ' + style.bold("'" + dest + "'") + ' ' + style.dim('(' + fmt + ')'));
 }
 
+// ===================== Wave 4: Context Layer (.keyflip/ portable project memory) =====================
+
+// keyflip context <init | status | show | decision add | task add | task set <id> <status>>
+//   plus  keyflip context sync <status|mode <m>|export|check>   (privacy-gated cross-machine sync)
+// `.keyflip/` lives in the CURRENT project dir (not configDir) so it travels with the repo.
+function cmdContext(ctx, rest) {
+  const sub = rest[0];
+
+  // ---- context sync … → ctxsync privacy layer ----
+  if (sub === 'sync') {
+    const ctxsync = require('./ctxsync');
+    const args = rest.slice(1);
+    const opts = {
+      projectPath: process.cwd(),
+      now: ctx.now,
+      run: require('./exec').run,
+      passphrase: readSecretArg(args, '--passphrase-file'), // export in encrypted mode
+      against: readSecretArg(args, '--against'),            // check: a remote payload file to compare
+    };
+    const r = ctxsync.cli(args, opts);
+    if (r.stdout != null) process.stdout.write(r.stdout + '\n'); // the export payload → real stdout
+    (r.lines || []).forEach(print);
+    if (r.code) process.exitCode = 1;
+    return;
+  }
+
+  // ---- everything else → projctx store ----
+  const projctx = require('./projctx');
+  const pp = process.cwd();
+  const opts = { now: ctx.now };
+  const fv = function (n) { const i = rest.indexOf(n); return i !== -1 ? rest[i + 1] : undefined; };
+  const arg = rest.slice(1);
+
+  if (sub === undefined || sub === 'status' || sub === 'show') {
+    if (!projctx.exists(pp)) return fail('no project context here — run: keyflip context init');
+    if (JSON_MODE) { jsonOut(sub === 'show' ? projctx.pack(pp, opts) : projctx.read(pp, opts)); return; }
+    print(projctx.summary(pp, opts));
+    if (sub === 'show') { print(''); print(projctx.read(pp, opts).context || '(no context.md)'); }
+    return;
+  }
+  if (sub === 'init') {
+    const c = projctx.init(pp, opts);
+    if (JSON_MODE) { jsonOut(c); return; }
+    print(style.ok('✅') + ' initialized .keyflip/ for ' + c.project.name);
+    return;
+  }
+  if (sub === 'decision') {
+    if (arg[0] !== 'add') return fail('usage: keyflip context decision add "<title>" [--rationale <r>] [--alt <a>] [--do-not <d>] [--status decided|rejected|superseded]');
+    const title = arg.slice(1).filter(function (a) { return a.indexOf('-') !== 0; })[0];
+    if (!title) return fail('usage: keyflip context decision add "<title>" [...]');
+    if (!projctx.exists(pp)) projctx.init(pp, opts);
+    let d; try {
+      d = projctx.addDecision(pp, { title: title, rationale: fv('--rationale'),
+        alternatives: fv('--alt') ? [fv('--alt')] : [], doNot: fv('--do-not') ? [fv('--do-not')] : [],
+        status: fv('--status') }, opts);
+    } catch (e) { return fail(e.message); }
+    if (JSON_MODE) { jsonOut(d); return; }
+    print(style.ok('✅') + ' decision ' + d.id + ': ' + d.title);
+    return;
+  }
+  if (sub === 'task') {
+    if (arg[0] === 'add') {
+      const title = arg.slice(1).filter(function (a) { return a.indexOf('-') !== 0; })[0];
+      if (!title) return fail('usage: keyflip context task add "<title>"');
+      if (!projctx.exists(pp)) projctx.init(pp, opts);
+      const t = projctx.addTask(pp, { title: title }, opts);
+      if (JSON_MODE) { jsonOut(t); return; }
+      print(style.ok('✅') + ' task ' + t.id + ': ' + t.title + ' [' + t.status + ']');
+      return;
+    }
+    if (arg[0] === 'set') {
+      const id = arg[1], status = arg[2];
+      if (!id || !status) return fail('usage: keyflip context task set <id> <todo|in_progress|blocked|done>');
+      let t; try { t = projctx.updateTask(pp, id, { status: status }, opts); } catch (e) { return fail(e.message); }
+      if (!t) return fail("no such task: '" + id + "'");
+      if (JSON_MODE) { jsonOut(t); return; }
+      print(style.ok('✅') + ' ' + t.id + ' → ' + t.status);
+      return;
+    }
+    return fail('usage: keyflip context task <add "<title>" | set <id> <status>>');
+  }
+  return fail('unknown: keyflip context ' + sub + ' (use: init | status | show | decision add | task add | task set <id> <status> | sync)');
+}
+
+// keyflip rules <show | import | emit --to claude|cursor|agents|gemini|generic [--write]>
+// Normalize this project's AI rule files into one model and re-emit per tool.
+function cmdRules(ctx, rest) {
+  const rules = require('./rulesmodel');
+  const sub = rest[0];
+  const projectPath = flagVal(rest, '--project') || process.cwd();
+  const nowOpt = { now: ctx.now };
+  if (!sub || sub === 'show') {
+    const detected = rules.detectRuleFiles(projectPath);
+    const model = rules.importRules(projectPath, nowOpt);
+    if (JSON_MODE) { jsonOut({ rules: { detected: detected, model: model } }); return; }
+    if (!detected.length) { print(style.dim('No AI rule files in ' + projectPath + ' (CLAUDE.md, .cursorrules, .cursor/rules/*, AGENTS.md, GEMINI.md, copilot-instructions.md).')); return; }
+    print(style.bold('AI rule files in this project:'));
+    detected.forEach(function (d) { print('  ' + style.ok('●') + ' ' + d.label.padEnd(16) + ' ' + style.dim(d.files.join(', '))); });
+    const byKind = {}; model.sections.forEach(function (s) { byKind[s.kind] = (byKind[s.kind] || 0) + 1; });
+    print(''); print(style.bold('Normalized model: ') + model.sections.length + ' section(s)  ' + style.dim(Object.keys(byKind).map(function (k) { return k + ':' + byKind[k]; }).join('  ')));
+    const red = model.sources.reduce(function (n, s) { return n + s.redactions; }, 0);
+    if (red) print(style.warn('⚠ ') + red + ' secret(s) redacted.');
+    print(style.dim('Emit for one tool:  ') + style.bold('keyflip rules emit --to claude|cursor|agents|gemini [--write]'));
+    return;
+  }
+  if (sub === 'import') {
+    const model = rules.importRules(projectPath, nowOpt);
+    const dest = rules.saveModel(projectPath, model);
+    if (JSON_MODE) { jsonOut({ rules: { saved: dest, sections: model.sections.length, sources: model.sources } }); return; }
+    print(style.ok('✓') + ' normalized ' + style.bold(String(model.sources.length)) + ' rule file(s) into ' + style.bold(model.sections.length + ' section(s)') + ' → ' + style.bold(dest));
+    return;
+  }
+  if (sub === 'emit') {
+    const to = flagVal(rest, '--to');
+    if (!to || !rules.EMIT_TARGETS[to]) return fail('usage: keyflip rules emit --to claude|cursor|agents|gemini|generic [--write] [--out <file|->]');
+    const model = rules.loadModel(projectPath) || rules.importRules(projectPath, nowOpt);
+    const content = rules.emit(model, to);
+    if (rest.indexOf('--write') !== -1) {
+      const res = rules.writeTarget(projectPath, to, content);
+      if (JSON_MODE) { jsonOut({ rules: { emitted: to, path: res.path, bytes: res.bytes } }); return; }
+      print(style.ok('📄') + ' wrote the ' + style.bold(to) + ' rule file → ' + style.bold(res.path)); return;
+    }
+    const outArg = flagVal(rest, '--out');
+    if (outArg && outArg !== '-') { fs.writeFileSync(outArg, content); print(style.ok('📄') + ' wrote ' + style.bold(outArg)); return; }
+    process.stdout.write(content.slice(-1) === '\n' ? content : content + '\n');
+    return;
+  }
+  return fail('usage: keyflip rules <show | import | emit --to claude|cursor|agents|gemini [--write]>');
+}
+
+// keyflip checkpoint <list | create --summary "…" | latest | show <id>>
+// Git-bound session-boundary snapshots stored in .keyflip/checkpoints/.
+async function cmdCheckpoint(ctx, rest) {
+  const checkpoint = require('./checkpoint');
+  const projectPath = process.cwd();
+  const sub = rest[0];
+
+  function fmt(c) {
+    const g = c.git || {};
+    const lines = [
+      style.bold(c.id) + '   ' + String(c.at || '').replace('T', ' ').replace(/\.\d+Z$/, 'Z'),
+      '  git:      ' + (g.branch || '-') + (g.commit ? ' @ ' + g.commit : '') + (g.dirty && g.dirty.length ? '  (' + g.dirty.length + ' dirty)' : ''),
+      '  provider: ' + (c.provider || '-'),
+      '  parent:   ' + (c.parent || '(root)'),
+      '  summary:  ' + (c.summary || ''),
+    ];
+    if (g.dirty && g.dirty.length) lines.push('  changed:  ' + g.dirty.slice(0, 20).join(', ') + (g.dirty.length > 20 ? ' …' : ''));
+    return lines.join('\n');
+  }
+
+  if (sub === 'create' || sub === 'save') {
+    const si = rest.indexOf('--summary');
+    const summary = si !== -1 ? (rest[si + 1] || '') : positionals(rest.slice(1), []).join(' ');
+    let tasksSnapshot;
+    const tf = rest.indexOf('--tasks-file');
+    if (tf !== -1 && rest[tf + 1]) {
+      try { tasksSnapshot = JSON.parse(fs.readFileSync(rest[tf + 1], 'utf8')); }
+      catch (e) { return fail('cannot read --tasks-file: ' + (e && e.message)); }
+    }
+    let provider = null;
+    try { const a = require('./provider').readActive(ctx); provider = a ? a.name : 'official'; } catch (e) { /* best-effort */ }
+    const cp = checkpoint.create(projectPath, { summary: summary, tasksSnapshot: tasksSnapshot, provider: provider }, { now: ctx.now });
+    if (JSON_MODE) return jsonOut({ checkpoint: cp });
+    print(style.ok('✅') + ' checkpoint ' + style.bold(cp.id) + ' saved'
+      + (cp.git.branch ? ' @ ' + cp.git.branch + (cp.git.commit ? ' (' + cp.git.commit + ')' : '') : '') + '.');
+    if (cp.git.dirty.length) print(style.dim('  ' + cp.git.dirty.length + ' uncommitted file(s)'));
+    if (cp.parent) print(style.dim('  parent: ' + cp.parent));
+    return;
+  }
+  if (sub === 'latest') {
+    const cp = checkpoint.latest(projectPath);
+    if (JSON_MODE) return jsonOut({ checkpoint: cp });
+    if (!cp) return print('No checkpoints yet — create one: keyflip checkpoint create --summary "…"');
+    return print(fmt(cp));
+  }
+  if (sub === 'show' || sub === 'get') {
+    const cp = checkpoint.get(projectPath, rest[1] || '');
+    if (JSON_MODE) return jsonOut({ checkpoint: cp });
+    if (!cp) return fail("no checkpoint '" + (rest[1] || '') + "' (see: keyflip checkpoint list).");
+    return print(fmt(cp));
+  }
+  // default: list
+  const rows = checkpoint.list(projectPath);
+  if (JSON_MODE) return jsonOut({ checkpoints: rows });
+  if (!rows.length) return print('No checkpoints yet. Create one: keyflip checkpoint create --summary "…"');
+  rows.forEach(function (c, i) {
+    const g = c.git || {};
+    print('  [' + (i + 1) + '] ' + style.bold(c.id) + '  ' + String(c.at || '').slice(0, 16).replace('T', ' ')
+      + '  ' + (g.branch || '-') + (g.commit ? '@' + g.commit : '')
+      + (c.summary ? '  ' + style.dim(c.summary.slice(0, 60)) : ''));
+  });
+  print('\nShow one: keyflip checkpoint show <id>   ·   latest: keyflip checkpoint latest');
+}
+
+// keyflip handoff [--to <tool>] [--path <dir>] [--out <file|->]
+// Print a target-aware CONTINUE-PROMPT so a NEW AI tool can resume this project from .keyflip/.
+function cmdHandoff(ctx, rest) {
+  const handoffmod = require('./handoff');
+  if (rest.indexOf('--help') !== -1 || rest.indexOf('-h') !== -1) {
+    return print('usage: keyflip handoff [--to <claude|cursor|kiro|opencode|windsurf|generic>] [--path <dir>] [--out <file|->]\n'
+      + '  Prints a CONTINUE-PROMPT (markdown) so a NEW AI tool can resume THIS project from .keyflip/\n'
+      + '  (context.md, tasks.json, decisions.json, rules/, checkpoints/latest.json) without re-reading everything.');
+  }
+  const to = flagVal(rest, '--to') || flagVal(rest, '--target');
+  const projectPath = flagVal(rest, '--path') || '.';
+  let r; try { r = handoffmod.handoff(projectPath, { target: to, now: ctx.now }); } catch (e) { return fail(e.message); }
+  if (JSON_MODE) { jsonOut({ handoff: { target: r.target, providers: r.providers, files: r.files, project: r.project, prompt: r.text } }); return; }
+  const outArg = flagVal(rest, '--out');
+  if (outArg && outArg !== '-') {
+    try { fs.writeFileSync(outArg, r.text); } catch (e) { return fail('could not write ' + outArg + ': ' + (e && e.message)); }
+    print(style.ok('📄') + ' wrote a ' + style.bold(r.target) + ' continue-prompt → ' + style.bold("'" + outArg + "'"));
+    return;
+  }
+  process.stdout.write(r.text); // to stdout so it can be piped straight into the next tool
+}
+
 // Export a session transcript as a clean, shareable markdown / HTML / json document.
 function cmdSessionsExport(ctx, rest) {
   const transcript = require('./transcript');
@@ -4127,6 +4349,21 @@ async function dispatch(ctx, cmd, rest) {
         return cmdMenubar(ctx, rest);
       case 'foreign':
         return cmdForeign(ctx, rest);
+      // ---- Wave 4: Context Layer (portable project memory in .keyflip/) ----
+      case 'context': case 'ctx':
+        // `.keyflip/` is project-dir state (not configDir). `context sync mode` is the one
+        // mutation that touches configDir-independent files; cmdContext takes no configDir lock.
+        return cmdContext(ctx, rest);
+      case 'rules':
+        return (rest[0] === 'import' || (rest[0] === 'emit' && rest.indexOf('--write') !== -1))
+          ? withLock(ctx, function () { return cmdRules(ctx, rest); })
+          : cmdRules(ctx, rest);
+      case 'checkpoint': case 'checkpoints':
+        return (rest[0] === 'create' || rest[0] === 'save')
+          ? withLock(ctx, function () { return cmdCheckpoint(ctx, rest); })
+          : cmdCheckpoint(ctx, rest);
+      case 'handoff':
+        return cmdHandoff(ctx, rest);
       case 'fleet':
         return (rest[0] === 'push' || rest[0] === 'collect')
           ? withLock(ctx, function () { return cmdFleet(ctx, rest); })

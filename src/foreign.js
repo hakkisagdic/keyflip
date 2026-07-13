@@ -29,6 +29,14 @@ const SESSION_SOURCES = [
   { tool: 'opencode', dirs: [{ base: '.local/share/opencode', match: /\.jsonl?$/ }] },
   { tool: 'gemini', dirs: [{ base: '.gemini/antigravity-cli', match: /transcript\.jsonl$/ }] },
   { tool: 'copilot', dirs: [{ base: '.copilot/session-state', match: /workspace\.ya?ml$/ }] },
+  // Windsurf (Codeium) + Kiro (AWS) are VS Code forks; their Cascade/chat transcripts live in an
+  // app-specific globalStorage SQLite (NOT the `cursorDiskKV` schema parseCursor reads) whose table
+  // layout is undocumented. Listing them here without a verified parser would surface files
+  // discover() can't normalize, so they are deferred until the on-disk format is confirmed on
+  // real hardware. Their portable MEMORY/config IS already carried (agents.js) and they are
+  // EXPORT (handoff continue-prompt) targets. NEEDS-VERIFICATION — likely locations:
+  //   windsurf: ~/Library/Application Support/Windsurf/User/{globalStorage,workspaceStorage}/**/state.vscdb
+  //   kiro:     ~/Library/Application Support/Kiro/User/{globalStorage,workspaceStorage}/**/state.vscdb
 ];
 function walkFind(dir, matchRe, budget, out) {
   if (budget.left <= 0) return;

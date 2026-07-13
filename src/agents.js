@@ -18,6 +18,12 @@ const REGISTRY = [
   { id: 'copilot', label: 'GitHub Copilot', roots: [] },
   { id: 'opencode', label: 'opencode', roots: [] },   // home-level memory NEEDS-VERIFICATION; config below
   { id: 'aider', label: 'Aider', roots: [] },          // memory is project CONVENTIONS.md (travels w/ git)
+  // Windsurf (Codeium): global rules + memories live under ~/.codeium/windsurf/memories/
+  // (global_rules.md + per-workspace memory .md files). Project rules (.windsurf/rules) travel w/ git.
+  { id: 'windsurf', label: 'Windsurf', roots: ['.codeium/windsurf/memories'] },
+  // Kiro (AWS): steering docs are project-level (.kiro/steering/*.md, travels w/ git); no standard
+  // home-level memory. Home MCP config below.
+  { id: 'kiro', label: 'Kiro', roots: [] },
 ];
 // J1 config-tier: per-agent CONFIG files (MCP servers, settings). These CAN hold secrets, so
 // they are ALWAYS run through the secret scanner + redacted before carrying — the structure
@@ -29,6 +35,8 @@ const CONFIG_REGISTRY = [
   { id: 'copilot', files: ['.copilot/config.json', '.copilot/mcp-config.json'] },
   { id: 'opencode', files: ['.config/opencode/opencode.json'] },
   { id: 'aider', files: ['.aider.conf.yml'] }, // YAML/env → secretscan uses line-based redaction
+  { id: 'windsurf', files: ['.codeium/windsurf/mcp_config.json'] },
+  { id: 'kiro', files: ['.kiro/settings/mcp.json'] }, // user-level MCP servers
 ];
 const MEM_EXT = ['.md', '.mdc', '.txt'];
 

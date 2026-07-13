@@ -262,6 +262,7 @@ keyflip sessions distill <id>   # bir sohbeti kalıcı hatıraya damıt (`claude
 keyflip sessions compact <id> [--apply]   # transkripti küçült: hacimli tool çıktısını ele, sohbeti koru (varsayılan dry-run)
 keyflip sessions export <id> [--format md|html|json]   # bir sohbeti temiz, paylaşılabilir belgeye çıkar (offline inceleme / arşiv)
 keyflip foreign <oturum-dosyası> [--format md|html|json]   # BAŞKA bir ajanın oturumunu (JSONL / Cursor SQLite / opencode+genel JSON / Copilot YAML / Aider MD) aynı görünüme normalize et
+keyflip handoff [--to claude|cursor|kiro|opencode|windsurf|generic] [--out CONTINUE.md]   # YENİ bir yapay zeka aracının bu projeyi .keyflip/ üzerinden (bağlam, görevler, kararlar, kurallar, son checkpoint) her şeyi yeniden okumadan sürdürmesi için bir DEVAM-İSTEMİ üretir
 keyflip dream [--older-than 30d] [--archive] [--apply]   # "dreaming": eski sohbetleri tek geçişte damıt (+ arşivle); varsayılan dry-run
 keyflip recall "<sorgu>" [--answer]   # TÜM sohbetlerinde arama (BM25; --semantic=embeddings; --answer = `claude -p` ile atıflı sentez)
 keyflip dream schedule [--at 03:00] | unschedule | status   # dream'i her gece gözetimsiz koştur (launchd/cron)
@@ -278,6 +279,99 @@ birleştirir; her hesap hepsini görür. **claude.ai Chat** ise bulutta;
 yeni kullanıldıysa çalışır, aksi halde 403 dönebilir. Yalnız masaüstünün o an
 girişli olduğu hesabı görür. (Uygulama tercihleri, `design/`, worktree'ler
 global/boş — orada taşınacak hesap-bazlı veri yok.)
+
+## Bağlam Katmanı — taşınabilir proje hafızası (`.keyflip/`)
+
+Yapay zeka araçları değişir; proje hafızanız değişmemeli. Bağlam Katmanı, projenizin dizininde
+araçtan bağımsız küçük bir **`.keyflip/`** klasörü tutar; bu klasör depo ile birlikte araçlar,
+hesaplar ve makineler arasında taşınır. **Sır'lar asla içine girmez** — her metin alanı, yazılmadan
+veya paketlenmeden önce keyflip'in gizli-bilgi tarayıcısından geçirilir ve yalnızca ortam değişkeni
+**adları** taşınır, değerleri asla. Dosyalar `0600` izinleriyle yazılır.
+
+### Proje bağlamı (`keyflip context`)
+
+- `project.json` — kimlik, ad, açıklama, teknoloji yığını, depolar, aktif görev, son sağlayıcı
+- `context.md` — bir sonraki YZ oturumu için serbest biçimli proje özeti
+- `decisions.json` — mimari/ürün kararları (gerekçe, alternatifler ve açık "YAPMA" notlarıyla)
+- `tasks.json` — durum, ilgili dosyalar, tamamlanan/kalan adımlar, kabul kriterleri ve bilinen sorunlarla görevler
+
+```bash
+keyflip context init                              # .keyflip/ oluştur
+keyflip context status                            # kısa özet
+keyflip context decision add "Postgres kullan" --rationale "ACID + ekip aşinalığı" --do-not "Üretimde SQLite"
+keyflip context task add "Ödeme webhook'unu bağla"
+keyflip context task set <id> in_progress         # todo | in_progress | blocked | done
+keyflip context show --json                       # sır'lardan arındırılmış tam bağlam paketi
+```
+
+MCP: `keyflip_context_read` (salt-okunur), ayrıca `keyflip_context_task_set` ve `keyflip_context_decision_add` (değiştirici — `confirm: true` gerektirir).
+
+### Yapay zeka kural dosyalarını birleştir (`keyflip rules`)
+
+Her yapay zeka aracı yönergelerini farklı bir dosyada ister — `CLAUDE.md`, `.cursorrules`, `.cursor/rules/*`,
+`AGENTS.md`, `GEMINI.md`, `.github/copilot-instructions.md`. `keyflip rules` mevcut dosyaları okur, hepsini
+tek bir ortak modele **normalleştirir** (her bölüm coding / architecture / security / workflow / general
+olarak sınıflandırılır, kaynağı korunur) ve bu modeli herhangi bir aracın beklediği dosya olarak
+**yeniden üretir**.
+
+```bash
+keyflip rules show                     # kural dosyalarını algıla + normalleştirilmiş modeli önizle
+keyflip rules import                   # modeli .keyflip/rules.json içine önbelleğe al
+keyflip rules emit --to claude         # tüm araçların kurallarından üretilen CLAUDE.md içeriğini yazdır
+keyflip rules emit --to cursor --write # projeye .cursorrules dosyasını yaz
+```
+
+Hedefler: `claude` (CLAUDE.md), `cursor` (.cursorrules), `agents` (AGENTS.md), `gemini` (GEMINI.md), `generic` (RULES.md). İçe/dışa aktarılan her satır gizli-bilgi tarayıcısından geçer; bir kural dosyasına yanlışlıkla yapıştırılan bir anahtar, paylaşılan modele veya üretilen dosyaya girmeden önce **maskelenir**. MCP: `keyflip_rules_show` (salt-okunur), `keyflip_rules_emit` (içeriği döndürür; dosyayı yalnızca `confirm=true` ile yazar).
+
+### Kontrol Noktaları (Checkpoints) — git'e bağlı oturum anlık görüntüleri
+
+Bir projeyi oturum sınırında yakalayın; böylece siz (ya da sıradaki ajan) tam kaldığınız yerden devam
+edebilirsiniz. Bir kontrol noktası; git dalını, kısa commit'i ve değişmiş (commit edilmemiş) dosyaları,
+ayrıca okunabilir bir özeti, isteğe bağlı bir görev anlık görüntüsünü ve aktif sağlayıcıyı kaydeder —
+`parent` ile bir geçmişe zincirlenir ve `.keyflip/checkpoints/` altında saklanır, depo ile birlikte taşınır.
+
+```bash
+keyflip checkpoint create --summary "auth yeniden düzenlemesi bitti; testler yeşil"
+keyflip checkpoint list             # en yeniden eskiye
+keyflip checkpoint latest           # en son kontrol noktası
+keyflip checkpoint show <id>        # bir kontrol noktasının tüm ayrıntıları
+```
+
+- **Sır güvenli:** her metin alanı (özet, sağlayıcı, git yolları ve görev anlık görüntüsündeki her değer) yazılmadan veya hash'lenmeden önce taranır ve maskelenir — API anahtarları ve token'lar bir kontrol noktasına asla girmez.
+- **Salt-okunur:** `checkpoint show` ve MCP `keyflip_checkpoint_*` araçları bir kontrol noktasını yalnızca *okur*. keyflip sizin yerinize git çalıştırmaz veya çalışma ağacınızı değiştirmez.
+- **İçerik hash'i:** her kontrol noktası, makineler arası çakışma tespiti için bir `contentHash` (kanonik gövdesinin sha256'sı) taşır.
+
+MCP: `keyflip_checkpoint_list`, `keyflip_checkpoint_latest` (salt-okunur), `keyflip_checkpoint_create` (değiştirici — onay gerektirir).
+
+### Devir (Handoff) — sıradaki araç için bir devam-istemi
+
+Bir proje yapay zeka aracı değiştirdiğinde (Kiro → Cursor → Claude Code → opencode → Windsurf),
+`keyflip handoff --to <araç>` taşınabilir `.keyflip/` hafızasını tek bir markdown isteme dönüştürür:
+projenin hangi araçlar arasında dolaştığı, okunacak dosyalar, aktif görev (biten / kalan / bilinen
+sorunlar), yeni aracın açıklama yapmadan DEĞİŞTİRMEMESİ gereken kararlar ve araca uygun bir kapanış
+talimatı. Sır-güvenlidir — her alan yeniden taranır, yalnızca ortam değişkeni **adları** taşınır. Salt-okunur MCP aracı `keyflip_handoff` olarak da mevcuttur.
+
+### Bağlam eşitleme gizlilik modları
+
+Bağlam Katmanı bir proje için paylaşılabilir bir `.keyflip/` paketi oluşturabilir. Bir gizlilik **modu**
+neyin makineden çıkabileceğini belirler ve **her metin alanı paketlenmeden önce — her modda — gizli-tarama'dan
+geçirilir** (derinlemesine savunma): bir jeton veya anahtar asla paylaşılan bağlama giremez.
+
+| Mod | Ne gönderilir |
+| --- | --- |
+| `local` | Hiçbir şey — makineden asla çıkmaz (varsayılan). |
+| `git` | Depoda düz metin (`.keyflip/` depoyla taşınır). |
+| `encrypted` | Bulut/WebDAV için parola ile mühürlü (AES-256-GCM). |
+| `company` | Ham konuşmalar + kaynak parçacıkları çıkarılır; yalnızca onaylı sağlayıcılar paylaşılır. |
+
+```bash
+keyflip context sync status                              # geçerli mod + politika + kontrol noktası
+keyflip context sync mode company                        # gizlilik modunu değiştir
+keyflip context sync export --passphrase-file pass.txt   # eşitleme yükünü üret (stdout)
+keyflip context sync check --against incoming.json       # deneme: ne gönderilir, temizlenen sırlar, çakışmalar
+```
+
+Ortam değişkeni **değerleri asla taşınmaz** — yalnızca değişken adı ve bir açıklama gider. Çakışma tespiti bir içerik özetini üst kontrol noktasıyla karşılaştırır: iki makine aynı tabanı düzenlediyse `check` bir çakışma bildirir ve `use-new` / `use-old` / `merge` / `two-branches` seçeneklerini sunar. Ajanlar modu `keyflip_ctxsync_status` ile okur ve (onay ile) `keyflip_ctxsync_mode` ile değiştirir.
 
 ### Skill kur ve failover proxy
 
@@ -313,7 +407,7 @@ Agent'lar CLI'ı tahmin etmek zorunda kalmasın — keyflip **MCP** konuşur:
 claude mcp add keyflip -- keyflip mcp     # veya: keyflip mcp --setup
 ```
 
-**Tüm CLI yüzeyi 120+ MCP aracı olarak sunulur** — agent hiçbir şeyi kabuğa
+**Tüm CLI yüzeyi 130+ MCP aracı olarak sunulur** — agent hiçbir şeyi kabuğa
 dökmeden yapabilir: hesaplar (`keyflip_status/list/switch/next/add/account_remove`), provider'lar
 (`keyflip_providers`, `keyflip_provider_use/add/remove`, `keyflip_test_provider`, `keyflip_speedtest`),
 **filo** kontrol düzlemi (`keyflip_fleet_status/switch/send_account/collect/keys/trust`),

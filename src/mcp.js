@@ -1265,6 +1265,124 @@ const TOOLS = [
     inputSchema: { type: 'object', properties: { ref: { type: 'string' }, confirm: confirmProp.confirm }, required: ['ref', 'confirm'], additionalProperties: false }, annotations: MUT,
     run: async function (ctx, args) { needConfirm(args); const r = vcs.restore(ctx, String(args.ref)); if (!r.ok) throw new Error('restore failed: ' + (r.reason || 'unknown')); return { restored: args.ref }; },
   },
+
+  // ==================== Wave 4: Context Layer (portable project memory in .keyflip/) ====================
+  {
+    name: 'keyflip_context_read', title: 'Read the project context',
+    description: 'Read the portable project memory (.keyflip/) for a project directory — project facts, freeform context.md, decisions, tasks, and the NAMES of required environment variables (never their values). `path` defaults to the server cwd. Every text field is secret-redacted. Read-only.',
+    inputSchema: { type: 'object', properties: { path: { type: 'string', description: 'Project directory (default: cwd).' } }, additionalProperties: false }, annotations: RO,
+    run: async function (ctx, args) {
+      const projctx = require('./projctx');
+      const pp = (args && args.path) || process.cwd();
+      return projctx.pack(pp, { now: ctx.now });
+    },
+  },
+  {
+    name: 'keyflip_context_task_set', title: 'Set a project task status',
+    description: 'Update a task\'s status in the project context (.keyflip/tasks.json). status ∈ todo|in_progress|blocked|done. Ask the user first, then set confirm=true.',
+    inputSchema: { type: 'object', properties: { path: { type: 'string', description: 'Project directory (default: cwd).' }, id: { type: 'string' }, status: { type: 'string', enum: ['todo', 'in_progress', 'blocked', 'done'] }, confirm: confirmProp.confirm }, required: ['id', 'status', 'confirm'], additionalProperties: false }, annotations: MUT,
+    run: async function (ctx, args) {
+      needConfirm(args);
+      const projctx = require('./projctx');
+      const pp = (args && args.path) || process.cwd();
+      const t = projctx.updateTask(pp, String(args.id), { status: String(args.status) }, { now: ctx.now });
+      if (!t) throw new Error("no such task: '" + args.id + "'");
+      return { updated: { id: t.id, title: t.title, status: t.status } };
+    },
+  },
+  {
+    name: 'keyflip_context_decision_add', title: 'Record a project decision',
+    description: 'Append an architectural/product decision to the project context (.keyflip/decisions.json) so future AI sessions in ANY tool inherit it. All text is secret-redacted before it is stored. Ask the user first, then set confirm=true.',
+    inputSchema: { type: 'object', properties: { path: { type: 'string', description: 'Project directory (default: cwd).' }, title: { type: 'string' }, rationale: { type: 'string' }, alternatives: { type: 'array', items: { type: 'string' } }, do_not: { type: 'array', items: { type: 'string' } }, status: { type: 'string', enum: ['decided', 'rejected', 'superseded'] }, confirm: confirmProp.confirm }, required: ['title', 'confirm'], additionalProperties: false }, annotations: MUT,
+    run: async function (ctx, args) {
+      needConfirm(args);
+      const projctx = require('./projctx');
+      const pp = (args && args.path) || process.cwd();
+      const d = projctx.addDecision(pp, { title: args.title, rationale: args.rationale, alternatives: args.alternatives, doNot: args.do_not, status: args.status }, { now: ctx.now });
+      return { added: { id: d.id, title: d.title, status: d.status } };
+    },
+  },
+  {
+    name: 'keyflip_rules_show', title: 'Show normalized project AI rules',
+    description: 'Detect this project\'s AI rule/instruction files (CLAUDE.md, .cursorrules, .cursor/rules/*, AGENTS.md, GEMINI.md, .github/copilot-instructions.md) and normalize them into ONE common model — sections tagged coding/architecture/security/workflow/general, provenance kept. Secrets are redacted. Read-only.',
+    inputSchema: { type: 'object', properties: { path: { type: 'string', description: 'Project directory (default: current working directory).' } }, additionalProperties: false }, annotations: RO,
+    run: async function (ctx, args) {
+      const rules = require('./rulesmodel');
+      const base = (args && args.path) || process.cwd();
+      const model = rules.importRules(base, { now: ctx.now });
+      return { detected: rules.detectRuleFiles(base), schemaVersion: model.schemaVersion, sources: model.sources, sections: model.sections };
+    },
+  },
+  {
+    name: 'keyflip_rules_emit', title: 'Emit project AI rules for one tool',
+    description: 'Render the normalized rule model as the file content ONE tool expects (to=claude→CLAUDE.md, cursor→.cursorrules, agents→AGENTS.md, gemini→GEMINI.md, generic→RULES.md). ALWAYS returns the content (secrets redacted). Pass confirm=false to PREVIEW only; pass confirm=true to WRITE the file into the project — ask the user before writing.',
+    inputSchema: { type: 'object', properties: { to: { type: 'string', enum: ['claude', 'cursor', 'agents', 'gemini', 'generic'] }, path: { type: 'string', description: 'Project directory (default: cwd).' }, confirm: confirmProp.confirm }, required: ['to', 'confirm'], additionalProperties: false }, annotations: MUT,
+    run: async function (ctx, args) {
+      const rules = require('./rulesmodel');
+      const base = (args && args.path) || process.cwd();
+      const model = rules.loadModel(base) || rules.importRules(base, { now: ctx.now });
+      const content = rules.emit(model, args.to);
+      if (args.confirm !== true) return { target: args.to, wrote: false, preview: true, content: content, note: 'preview only — call again with confirm=true to write ' + rules.EMIT_TARGETS[args.to].filename + ' into the project' };
+      const res = rules.writeTarget(base, args.to, content);
+      return { target: args.to, wrote: true, path: res.path, bytes: res.bytes, content: content };
+    },
+  },
+  {
+    name: 'keyflip_checkpoint_list', title: 'List project checkpoints',
+    description: 'List git-bound checkpoints for a project (newest first). Each is a session-boundary snapshot: git branch/short-commit/dirty files, a summary, an optional task snapshot, and the active provider, chained by parent id. `path` defaults to the current directory. Read-only, local.',
+    inputSchema: { type: 'object', properties: { path: { type: 'string', description: 'Project directory (defaults to cwd).' } }, additionalProperties: false }, annotations: RO,
+    run: async function (ctx, args) { return { checkpoints: require('./checkpoint').list((args && args.path) || process.cwd()) }; },
+  },
+  {
+    name: 'keyflip_checkpoint_latest', title: 'Latest project checkpoint',
+    description: 'The most recent git-bound checkpoint for a project (or null if none). `path` defaults to the current directory. Read-only, local.',
+    inputSchema: { type: 'object', properties: { path: { type: 'string', description: 'Project directory (defaults to cwd).' } }, additionalProperties: false }, annotations: RO,
+    run: async function (ctx, args) { return { checkpoint: require('./checkpoint').latest((args && args.path) || process.cwd()) }; },
+  },
+  {
+    name: 'keyflip_checkpoint_create', title: 'Create a project checkpoint',
+    description: 'Snapshot project state at a session boundary: reads git (branch / short commit / dirty files), records a summary + optional task snapshot + active provider, and chains it to the previous checkpoint. Secrets are REDACTED before anything is written (summary prose, provider, git paths, and every field of tasks_snapshot). Writes .keyflip/checkpoints/<id>.json + latest.json in the project tree. Ask the user first, then set confirm=true.',
+    inputSchema: { type: 'object', properties: {
+      path: { type: 'string', description: 'Project directory (defaults to cwd).' },
+      summary: { type: 'string', description: 'Human summary of the session (secrets are masked).' },
+      provider: { type: 'string', description: 'Active provider/account name.' },
+      tasks_snapshot: { description: 'Arbitrary JSON snapshot of the agent tasks (secrets are redacted; credential-keyed values dropped).' },
+      confirm: confirmProp.confirm,
+    }, required: ['confirm'], additionalProperties: false }, annotations: MUT,
+    run: async function (ctx, args) {
+      needConfirm(args);
+      const out = require('./checkpoint').create((args && args.path) || process.cwd(),
+        { summary: args.summary, provider: args.provider, tasksSnapshot: args.tasks_snapshot },
+        { now: ctx.now });
+      return { checkpoint: out };
+    },
+  },
+  {
+    name: 'keyflip_ctxsync_status', title: 'Context-sync privacy mode',
+    description: 'The project\'s context-sync privacy mode (local|git|encrypted|company) and policy — what MAY leave the machine for the shared .keyflip/ context package — plus the current checkpoint. Read-only.',
+    inputSchema: { type: 'object', properties: { projectPath: { type: 'string', description: 'Project root (default: server working dir).' } }, additionalProperties: false }, annotations: RO,
+    run: async function (ctx, args) {
+      return require('./ctxsync').status((args && args.projectPath) || process.cwd(), { now: ctx.now });
+    },
+  },
+  {
+    name: 'keyflip_ctxsync_mode', title: 'Set context-sync privacy mode',
+    description: 'Change the project\'s context-sync privacy mode. "local" never leaves the machine; "git" ships plain in the repo; "encrypted" is passphrase-sealed; "company" strips raw conversations + source snippets and shares only approved providers. This changes what context may leave the machine — ask the user first, then set confirm=true.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        mode: { type: 'string', enum: ['local', 'git', 'encrypted', 'company'], description: 'The privacy mode to set.' },
+        projectPath: { type: 'string', description: 'Project root (default: server working dir).' },
+        confirm: confirmProp.confirm,
+      },
+      required: ['mode', 'confirm'], additionalProperties: false,
+    }, annotations: MUT,
+    run: async function (ctx, args) {
+      needConfirm(args);
+      const m = require('./ctxsync').setMode((args && args.projectPath) || process.cwd(), String(args.mode), { now: ctx.now });
+      return { mode: m.mode, policy: m.policy, checkpoint: { contentHash: m.contentHash, parent: m.parent, updatedAt: m.updatedAt } };
+    },
+  },
 ];
 
 // Wave-2 modules that ship their own self-contained MCP tool objects (annotations + confirm-gating
@@ -1276,6 +1394,7 @@ const TOOLS = [
   require('./vault').tools,
   require('./license').mcpTools,
   require('./surface').mcpTools,
+  require('./handoff').mcpTools,   // Wave 4: keyflip_handoff (RO continue-prompt)
 ].forEach(function (arr) { (Array.isArray(arr) ? arr : []).forEach(function (t) { if (t && t.name) TOOLS.push(t); }); });
 
 // ---- JSON-RPC / MCP plumbing ---------------------------------------------------

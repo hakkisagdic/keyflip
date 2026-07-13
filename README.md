@@ -264,6 +264,7 @@ keyflip sessions distill <id>   # summarize a chat into a durable keepsake (via 
 keyflip sessions compact <id> [--apply]   # shrink a transcript: elide bulky tool output, keep the conversation (dry-run default)
 keyflip sessions export <id> [--format md|html|json]   # export a chat as a clean, shareable doc (offline review / archive)
 keyflip foreign <session-file> [--format md|html|json]   # normalize ANOTHER agent's session (JSONL / Cursor SQLite / opencode+generic JSON / Copilot YAML / Aider MD) into the same view
+keyflip handoff [--to claude|cursor|kiro|opencode|windsurf|generic] [--out CONTINUE.md]   # emit a CONTINUE-PROMPT so a NEW AI tool resumes THIS project from .keyflip/ (context, tasks, decisions, rules, last checkpoint) without re-reading everything
 keyflip dream [--older-than 30d] [--archive] [--apply]   # "dreaming": distill (+ archive) old chats in one pass; dry-run by default
 keyflip recall "<query>" [--answer]   # search ALL your chats (BM25; --semantic=embeddings; --answer = a cited synthesis via `claude -p`)
 keyflip dream schedule [--at 03:00] | unschedule | status   # run the dream nightly, unattended (launchd/cron)
@@ -280,6 +281,99 @@ this is **experimental** (undocumented API) and needs a fresh Cloudflare cookie,
 so it works right after using the app and may otherwise return a 403. It only
 sees whichever account the desktop app is currently signed into. (App preferences,
 `design/`, worktrees etc. are global/empty — nothing per-account to migrate there.)
+
+## Context Layer — portable project memory (`.keyflip/`)
+
+AI coding tools change; your project memory shouldn't. The Context Layer keeps a small,
+tool-independent **`.keyflip/`** folder in your project directory that travels with the repo
+across tools, accounts and machines. **Secrets never enter it** — every text field passes
+through keyflip's secret scanner before it is written or packaged, and only environment-variable
+**names** are carried, never their values. Files are written `0600`.
+
+### Project context (`keyflip context`)
+
+- `project.json` — id, name, description, stack, repositories, active task, last provider
+- `context.md` — a freeform project summary for the next AI session
+- `decisions.json` — architectural/product decisions (with rationale, alternatives, explicit "do NOT" notes)
+- `tasks.json` — tasks with status, related files, done/remaining steps, acceptance criteria, known issues
+
+```bash
+keyflip context init                              # create .keyflip/
+keyflip context status                            # quick summary
+keyflip context decision add "Use Postgres" --rationale "ACID + team familiarity" --do-not "SQLite in prod"
+keyflip context task add "Wire the payments webhook"
+keyflip context task set <id> in_progress         # todo | in_progress | blocked | done
+keyflip context show --json                       # the full, secret-redacted context package
+```
+
+MCP: `keyflip_context_read` (read-only), plus `keyflip_context_task_set` and `keyflip_context_decision_add` (mutating — require `confirm: true`).
+
+### Unify AI rule files (`keyflip rules`)
+
+Every AI tool wants its instructions in a different file — `CLAUDE.md`, `.cursorrules`, `.cursor/rules/*`,
+`AGENTS.md`, `GEMINI.md`, `.github/copilot-instructions.md`. `keyflip rules` reads whatever is present,
+**normalizes** them into one common model (each section classified coding / architecture / security /
+workflow / general, provenance kept), and **re-emits** that model as the file any single tool expects.
+
+```bash
+keyflip rules show                     # detect rule files + preview the normalized model
+keyflip rules import                   # cache the model at .keyflip/rules.json
+keyflip rules emit --to claude         # print CLAUDE.md content built from every tool's rules
+keyflip rules emit --to cursor --write # write .cursorrules into the project
+```
+
+Targets: `claude` (CLAUDE.md), `cursor` (.cursorrules), `agents` (AGENTS.md), `gemini` (GEMINI.md), `generic` (RULES.md). Every imported and emitted line passes through the secret scanner — a key pasted into a rule file is **redacted** before it enters the shared model or any generated file. MCP: `keyflip_rules_show` (read-only), `keyflip_rules_emit` (returns the content; writes the file only with `confirm=true`).
+
+### Checkpoints — git-bound session snapshots
+
+Capture a project at a session boundary so you (or the next agent) can pick up exactly where you left off.
+A checkpoint records the git branch, short commit, and dirty (uncommitted) files, plus a human summary,
+an optional task snapshot, and the active provider — chained (`parent`) into a history under
+`.keyflip/checkpoints/`, so it travels with the repo.
+
+```bash
+keyflip checkpoint create --summary "finished auth refactor; tests green"
+keyflip checkpoint list             # newest first
+keyflip checkpoint latest           # the most recent one
+keyflip checkpoint show <id>        # full detail for one checkpoint
+```
+
+- **Secret-safe:** every text field (summary, provider, git paths, and every value inside the task snapshot) is scanned and redacted before it is hashed or written — API keys and tokens never enter a checkpoint.
+- **Read-only:** `checkpoint show` and the MCP `keyflip_checkpoint_*` tools only *read* a checkpoint. keyflip never runs git or changes your working tree — you decide what to do with the recorded state.
+- **Content hash:** each checkpoint carries a `contentHash` (sha256 of its canonical body) for later conflict detection across machines.
+
+MCP: `keyflip_checkpoint_list`, `keyflip_checkpoint_latest` (read-only), `keyflip_checkpoint_create` (mutating — requires confirmation).
+
+### Handoff — a continue-prompt for the next tool
+
+When a project changes AI tool (Kiro → Cursor → Claude Code → opencode → Windsurf),
+`keyflip handoff --to <tool>` turns the portable `.keyflip/` memory into a single markdown prompt:
+which tools the project moved across, the files to read, the active task (done / remaining / known
+issues), the decisions the new tool must NOT change without explaining, and a target-appropriate
+closing instruction. Secret-safe — every field is re-scanned, only env-var **names** travel. Also the
+read-only MCP tool `keyflip_handoff`.
+
+### Context-sync privacy modes
+
+The Context Layer can build a shareable `.keyflip/` package for a project. A privacy **mode** decides
+what may leave the machine, and **every text field is secret-scanned before it is packed — in every mode**
+(defence in depth): a token or key can never enter the shared context.
+
+| Mode | What ships |
+| --- | --- |
+| `local` | Nothing — never leaves the machine (default). |
+| `git` | Plain in the repo (the repo carries `.keyflip/`). |
+| `encrypted` | Passphrase-sealed (AES-256-GCM) for cloud/WebDAV. |
+| `company` | Raw conversations + source snippets stripped; only approved providers shared. |
+
+```bash
+keyflip context sync status                              # current mode + policy + checkpoint
+keyflip context sync mode company                        # switch privacy mode
+keyflip context sync export --passphrase-file pass.txt   # emit the sync payload (stdout)
+keyflip context sync check --against incoming.json       # dry-run: what ships, secrets scrubbed, conflicts
+```
+
+Env-var **values are never carried** — only the variable name and a description. Conflict detection compares a content hash against a parent checkpoint: if two machines edited the same base, `check` flags a conflict and offers `use-new` / `use-old` / `merge` / `two-branches`. Agents read the mode via `keyflip_ctxsync_status` and change it (with confirmation) via `keyflip_ctxsync_mode`.
 
 ### Install skills, and the failover proxy
 
@@ -316,7 +410,7 @@ Agents shouldn't have to guess the CLI — keyflip speaks **MCP**:
 claude mcp add keyflip -- keyflip mcp     # or see: keyflip mcp --setup
 ```
 
-**The full CLI surface is exposed as 120+ MCP tools**, so an agent can do
+**The full CLI surface is exposed as 130+ MCP tools**, so an agent can do
 everything without shelling out — accounts (`keyflip_status/list/switch/next/add/account_remove`),
 providers (`keyflip_providers`, `keyflip_provider_use/add/remove`, `keyflip_test_provider`,
 `keyflip_speedtest`), the **fleet** control plane (`keyflip_fleet_status/switch/send_account/collect/keys/trust`),
