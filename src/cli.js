@@ -140,7 +140,7 @@ function usage() {
   print('  keyflip settings [show | get <k> | set <k> <v>]   view/edit ~/.claude/settings.json (rides `migrate` to other machines)');
   print('  keyflip statusline install     show the active account + quota in the Claude Code prompt (status line)');
   print('  keyflip panel [--open]         open a local web dashboard: accounts, quotas, providers, sessions, keepsakes');
-  print('  keyflip menubar [--install]    xbar/SwiftBar menu-bar plugin: glanceable account+quota, click-to-switch');
+  print('  keyflip menubar [--install]    menu-bar/tray plugin (macOS xbar/SwiftBar · Linux GNOME Argos/KDE kargos): glanceable account+quota, click-to-switch');
   print('  keyflip dream [--older-than 30d] [--archive] [--apply]   consolidate old chats: distill (+ archive) them');
   print('  keyflip dream schedule [--at 03:00] | unschedule | status   run the dream nightly (launchd/cron)');
   print('  keyflip resume <n|id> [--run] [--as <account>]   resume a session (in its dir; --as runs it under another account)');
@@ -1773,18 +1773,26 @@ function menubarInstall(ctx, rest) {
   const menubar = require('./menubar');
   const iv = flagVal(rest, '--interval') || '30s';
   const di = rest.indexOf('--dir'); let dir = di !== -1 ? rest[di + 1] : null;
-  // Default to xbar's plugin folder if present (SwiftBar's is user-configured — pass --dir).
-  const xbar = path.join(ctx.home, 'Library', 'Application Support', 'xbar', 'plugins');
-  if (!dir) { if (fs.existsSync(xbar)) dir = xbar; else return fail('no xbar plugin folder found — pass --dir <your SwiftBar/xbar plugins folder>. (Then it refreshes every ' + iv + '.)'); }
+  // The plugin format (a script whose stdout is the menu, filename `keyflip.<interval>.sh`) is shared
+  // by macOS xbar/SwiftBar AND Linux GNOME Argos / KDE kargos — the same render + script installs on
+  // both; only the host + folder differ (resolved by the pure menubar.pluginTarget).
+  let host = 'xbar/SwiftBar';
+  if (!dir) {
+    const tgt = menubar.pluginTarget(ctx.platform, ctx.home, process.env.XDG_CONFIG_HOME);
+    if (!tgt) return fail('no built-in menu-bar host on ' + ctx.platform + ' — pass --dir <a folder your tray tool watches>. `keyflip menubar` emits the xbar/Argos plugin format any compatible host can render.');
+    host = tgt.host;
+    if (tgt.mustExist && !fs.existsSync(tgt.dir)) return fail('no ' + host + ' plugin folder found — pass --dir <your SwiftBar/xbar plugins folder>. (Then it refreshes every ' + iv + '.)');
+    dir = tgt.dir;
+  }
   const ex = menubar.resolveExec({});
   const cmd = [ex.exec].concat(ex.pre).map(function (p) { return /\s/.test(p) ? '"' + p + '"' : p; }).join(' ') + ' menubar';
-  const script = '#!/bin/bash\n# keyflip menu-bar plugin (xbar/SwiftBar). Refreshes every ' + iv + '.\nexec ' + cmd + '\n';
+  const script = '#!/bin/bash\n# keyflip menu-bar plugin (' + host + '). Refreshes every ' + iv + '.\nexec ' + cmd + '\n';
   const file = path.join(dir, 'keyflip.' + iv + '.sh');
   try { fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(file, script); fs.chmodSync(file, 0o755); }
   catch (e) { return fail('could not write the plugin: ' + (e && e.message)); }
-  if (JSON_MODE) { jsonOut({ menubarInstall: { path: file, interval: iv } }); return; }
+  if (JSON_MODE) { jsonOut({ menubarInstall: { path: file, interval: iv, host: host } }); return; }
   print(style.ok('✅') + ' menu-bar plugin installed: ' + style.bold(file));
-  print('   ' + style.dim('Open xbar/SwiftBar (or Refresh all) to see it. It re-runs `keyflip menubar` every ' + iv + '.'));
+  print('   ' + style.dim('Open ' + host + ' (or Refresh all) to see it. It re-runs `keyflip menubar` every ' + iv + '.'));
 }
 
 async function cmdProxy(ctx, rest) {

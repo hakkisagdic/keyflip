@@ -78,4 +78,14 @@ function render(ctx, opts) {
   return lines.join('\n');
 }
 
-module.exports = { render: render, resolveExec: resolveExec };
+// Resolve the menu-bar host + its plugin folder for a platform. The plugin format (a script whose
+// stdout is the menu, filename `keyflip.<interval>.sh`) is shared by macOS xbar/SwiftBar and Linux
+// GNOME Argos / KDE kargos, so one render installs on both. Returns { host, dir, mustExist } or null
+// when the platform has no built-in host (caller should ask for an explicit --dir).
+function pluginTarget(platform, home, xdgConfigHome) {
+  if (platform === 'darwin') return { host: 'xbar/SwiftBar', dir: path.join(home, 'Library', 'Application Support', 'xbar', 'plugins'), mustExist: true };
+  if (platform === 'linux') return { host: 'Argos/kargos', dir: path.join(xdgConfigHome || path.join(home, '.config'), 'argos'), mustExist: false };
+  return null; // win32 / others: no built-in host — the user points --dir at their tray tool
+}
+
+module.exports = { render: render, resolveExec: resolveExec, pluginTarget: pluginTarget };

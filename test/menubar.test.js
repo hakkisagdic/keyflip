@@ -78,3 +78,21 @@ test('resolveExec: a .js checkout runs via node; an installed binary runs direct
   assert.strictEqual(asBin.exec, '/usr/local/bin/keyflip');
   assert.deepStrictEqual(asBin.pre, []);
 });
+
+const path = require('path');
+test('pluginTarget resolves the menu-bar host + folder per platform (xbar / Argos / none)', function () {
+  const mac = menubar.pluginTarget('darwin', '/Users/me', undefined);
+  assert.strictEqual(mac.host, 'xbar/SwiftBar');
+  assert.strictEqual(mac.dir, path.join('/Users/me', 'Library', 'Application Support', 'xbar', 'plugins'));
+  assert.strictEqual(mac.mustExist, true, 'macOS requires an existing xbar/SwiftBar folder');
+
+  const lin = menubar.pluginTarget('linux', '/home/me', undefined);
+  assert.strictEqual(lin.host, 'Argos/kargos');
+  assert.strictEqual(lin.dir, path.join('/home/me', '.config', 'argos'), 'Linux → ~/.config/argos (created if absent)');
+  assert.strictEqual(lin.mustExist, false);
+
+  const linXdg = menubar.pluginTarget('linux', '/home/me', '/custom/xdg');
+  assert.strictEqual(linXdg.dir, path.join('/custom/xdg', 'argos'), 'Linux honors $XDG_CONFIG_HOME');
+
+  assert.strictEqual(menubar.pluginTarget('win32', 'C:\\Users\\me', undefined), null, 'no built-in host on Windows');
+});
