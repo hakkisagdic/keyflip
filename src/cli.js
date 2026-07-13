@@ -309,6 +309,9 @@ async function cmdSwitch(ctx, rest) {
       appSwitched: !!(appl && appl.ok),
       sessionsShared: (cons && cons.merged) || 0,
     });
+    // Opt-in switch notification — a no-op unless the user configured notify for the 'switch'
+    // event (and a sink). Guarded + secret-stripped inside send(); never block a switch on it.
+    try { await require('./notify').send(ctx, 'switch', { to: name, cli: !!(did && did.cli), app: !!(appl && appl.ok) }); } catch (e) { /* notify must never affect the switch */ }
   }
 
   // --force: swap in place without closing the app.
@@ -476,7 +479,10 @@ async function cmdImport(ctx, rest) {
 // closed; Claude Code picks the new credential up on its next request.
 async function cmdAutoswitch(ctx, rest) {
   function numFlag(flag, dflt) { const i = rest.indexOf(flag); const v = i !== -1 ? parseInt(rest[i + 1], 10) : NaN; return isNaN(v) ? dflt : v; }
-  const threshold = Math.min(100, Math.max(50, numFlag('--threshold', 90)));
+  // Default the threshold from the stored config (`keyflip config set autoswitch.threshold N`)
+  // when --threshold isn't given, so the setting isn't advertised-but-inert. The 50 floor stays.
+  const cfgThreshold = require('./config').get(ctx, 'autoswitch.threshold');
+  const threshold = Math.min(100, Math.max(50, numFlag('--threshold', cfgThreshold)));
   const interval = Math.max(30, numFlag('--interval', 60));
   const si = rest.indexOf('--strategy');
   const strategy = si !== -1 ? rest[si + 1] : 'next-available';
@@ -503,10 +509,15 @@ async function cmdAutoswitch(ctx, rest) {
     if (r.state === 'switched') {
       print('[' + at + '] ' + style.ok('⇄ switched: ') + (r.active.email || r.active.name) + ' → ' + (r.switchedTo.email || r.switchedTo.name) + ' (usage crossed ' + threshold + '%)');
       logmod.log('autoswitch: ' + r.active.name + ' -> ' + r.switchedTo.name);
+      // Emit the switch (opt-in; a no-op unless the user configured notify for 'switch'). The
+      // long-running loop stays alive, so fire-and-forget is safe — never let it break the loop.
+      require('./notify').send(ctx, 'switch', { from: r.active.name, to: r.switchedTo.name, reason: 'autoswitch', threshold: threshold }).catch(function () {});
     } else if (r.state === 'below') {
       print('[' + at + '] ' + (r.active.email || r.active.name) + ': ' + Math.round(100 - r.headroom) + '% used — ok');
     } else if (r.state === 'no-candidate') {
       print('[' + at + '] ' + style.warn('threshold crossed but no other account is available'));
+      // Threshold crossed but stuck on the same account — the alert-worthy quota event.
+      require('./notify').send(ctx, 'quota', { account: (r.active && r.active.name) || null, threshold: threshold, state: 'no-candidate' }).catch(function () {});
     } else if (r.state === 'unknown') {
       print('[' + at + '] usage unknown (endpoint throttled or offline) — waiting');
     } else if (r.state === 'no-active') {
@@ -2432,6 +2443,9 @@ async function cmdFleet(ctx, rest) {
       print('');
       print(style.ok('✨ New replies since last check:'));
       nr.newReplies.forEach(function (r) { print('   ' + style.bold(r.machine) + ' ' + style.dim(r.sessionId.slice(0, 8)) + '  “' + (r.lastText || '') + '”'); });
+      // Opt-in fleet-reply notification (no-op unless configured). send() strips secrets from the
+      // payload; carry only machine names + count, never the reply text.
+      try { await require('./notify').send(ctx, 'fleet-reply', { count: nr.newReplies.length, machines: nr.newReplies.map(function (r) { return r.machine; }) }); } catch (e) { /* never block fleet status on notify */ }
     }
     return;
   }
