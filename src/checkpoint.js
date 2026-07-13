@@ -50,7 +50,11 @@ function redactText(s) {
 // values are token-masked, and rebuilt objects are prototype-pollution-safe (Object.create(null),
 // since the keys come from an untrusted snapshot).
 function deepRedact(val, key) {
-  if (Array.isArray(val)) return val.map(function (x) { return deepRedact(x, null); });
+  // Keep the key context when recursing into arrays: a secret stored as an array element under a
+  // credential-shaped key (e.g. { password: ['hunter2'] }) must still hit the credential-key drop,
+  // not just token-shaped masking. Matches secretscan.redactValue. Losing the key here (deepRedact(x,
+  // null)) would write arbitrary plaintext secrets verbatim into the checkpoint + its contentHash.
+  if (Array.isArray(val)) return val.map(function (x) { return deepRedact(x, key); });
   if (val && typeof val === 'object') {
     const out = Object.create(null);
     Object.keys(val).forEach(function (k) { out[k] = deepRedact(val[k], k); });

@@ -1091,7 +1091,21 @@ infra (payment/issuer/site — needs the business decisions in PRODUCTIZATION.md
 
 ---
 
-## Wave 4 — Context Layer (AI Development Context Platform) — PLANNED (owner-approved 2026-07)
+## Wave 4 — Context Layer (AI Development Context Platform) — SHIPPED (2026-07, commit cbfa0bd)
+
+**Delivered:** all 5 modules built (zero-dep, secret-scanned), fully wired, +76 tests (full suite 1021 pass / 0 fail):
+- `projctx.js` (context.js was taken by the env-ctx factory) — `.keyflip/` store + NormalizedProjectContext; env-var NAMES only.
+- `rulesmodel.js` — normalize CLAUDE.md/.cursorrules/.cursor/rules/AGENTS.md/GEMINI.md/copilot into one model, re-emit per tool.
+- `checkpoint.js` — git-bound snapshots (branch/commit/dirty + summary + tasks + provider), chained by parent, `contentHash`.
+- `handoff.js` — target-tailored CONTINUE-PROMPT (RO MCP tool `keyflip_handoff`).
+- `ctxsync.js` — privacy modes local/git/encrypted/company + conflict detection; secret-scan in EVERY mode.
+- CLI: `context <init|status|show|decision add|task add|task set>` + `context sync <status|mode|export|check>`, `rules`, `checkpoint`, `handoff`.
+- MCP: 11 new tools (136 total, 0 readOnlyHint/confirm invariant violations). Registries: Windsurf + Kiro added to agents.js (memory+config); foreign.js session-import for both documented NEEDS-VERIFICATION (VS Code-fork globalStorage format unconfirmed — deferred rather than shipping broken discovery).
+- Adversarial review: run wf_76aba2c1 (secret-leak / path / crypto / injection / MCP-invariant lenses).
+
+Original plan below (for reference):
+
+### (planned) Wave 4 — Context Layer
 
 Reframe: the real problem isn't switching Claude accounts, it's PROJECT MEMORY lost when the developer
 changes AI TOOL (Kiro→Cursor→Claude Code→opencode), account, or machine. keyflip becomes a tool-agnostic

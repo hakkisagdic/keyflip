@@ -176,6 +176,24 @@ test('secret leakage: a secret in a git dirty path is redacted too', function ()
   assert.strictEqual(JSON.stringify(cp.git.dirty).indexOf(ANTHROPIC), -1, 'secret in a filename is masked');
 });
 
+test('secret leakage: credential-keyed ARRAY values are redacted, not just string leaves', function () {
+  // Regression (Wave-4 review): deepRedact must keep the key context when recursing into arrays,
+  // else a plaintext secret stored as an array element under a credential-shaped key slips through
+  // (it is not token-SHAPED, so only the credential-KEY rule can catch it).
+  const proj = tmpProject();
+  const cp = checkpoint.create(proj, {
+    summary: 'x',
+    tasksSnapshot: { password: ['hunter2'], api_key: ['AKIA-plaintext'], nested: { access_token: ['tok-plain'], secret: ['sk-plain'] } },
+  }, { run: fakeGit(), now: clockAt('2026-07-12T10:00:00.000Z') });
+
+  const j = JSON.stringify(cp.tasksSnapshot);
+  ['hunter2', 'AKIA-plaintext', 'tok-plain', 'sk-plain'].forEach(function (leak) {
+    assert.strictEqual(j.indexOf(leak), -1, 'plaintext under a credential key must not survive: ' + leak);
+  });
+  assert.strictEqual(cp.tasksSnapshot.password[0], secretscan.REDACTED, 'array element redacted');
+  assert.strictEqual(cp.tasksSnapshot.nested.access_token[0], secretscan.REDACTED, 'nested array element redacted');
+});
+
 test('prototype-pollution: a __proto__ key in tasksSnapshot cannot pollute Object.prototype', function () {
   const proj = tmpProject();
   const hostile = JSON.parse('{"tasks":[{"__proto__":{"polluted":true},"title":"ok"}]}');

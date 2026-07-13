@@ -2624,7 +2624,9 @@ function cmdContext(ctx, rest) {
   }
   if (sub === 'decision') {
     if (arg[0] !== 'add') return fail('usage: keyflip context decision add "<title>" [--rationale <r>] [--alt <a>] [--do-not <d>] [--status decided|rejected|superseded]');
-    const title = arg.slice(1).filter(function (a) { return a.indexOf('-') !== 0; })[0];
+    // Skip value-taking flags AND the values they consume, so e.g. `--status rejected "My decision"`
+    // takes "My decision" as the title (not "rejected", the flag's value).
+    const title = positionals(arg.slice(1), ['--rationale', '--alt', '--do-not', '--status'])[0];
     if (!title) return fail('usage: keyflip context decision add "<title>" [...]');
     if (!projctx.exists(pp)) projctx.init(pp, opts);
     let d; try {
@@ -2638,7 +2640,7 @@ function cmdContext(ctx, rest) {
   }
   if (sub === 'task') {
     if (arg[0] === 'add') {
-      const title = arg.slice(1).filter(function (a) { return a.indexOf('-') !== 0; })[0];
+      const title = positionals(arg.slice(1), [])[0];
       if (!title) return fail('usage: keyflip context task add "<title>"');
       if (!projctx.exists(pp)) projctx.init(pp, opts);
       const t = projctx.addTask(pp, { title: title }, opts);
@@ -2728,7 +2730,9 @@ async function cmdCheckpoint(ctx, rest) {
 
   if (sub === 'create' || sub === 'save') {
     const si = rest.indexOf('--summary');
-    const summary = si !== -1 ? (rest[si + 1] || '') : positionals(rest.slice(1), []).join(' ');
+    // Exclude --tasks-file (and its value) from the positional summary fallback, else
+    // `checkpoint create --tasks-file foo.json` would record "foo.json" as the summary.
+    const summary = si !== -1 ? (rest[si + 1] || '') : positionals(rest.slice(1), ['--tasks-file']).join(' ');
     let tasksSnapshot;
     const tf = rest.indexOf('--tasks-file');
     if (tf !== -1 && rest[tf + 1]) {
