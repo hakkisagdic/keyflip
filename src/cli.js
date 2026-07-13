@@ -479,29 +479,31 @@ async function cmdImport(ctx, rest) {
 // closed; Claude Code picks the new credential up on its next request.
 async function cmdAutoswitch(ctx, rest) {
   function numFlag(flag, dflt) { const i = rest.indexOf(flag); const v = i !== -1 ? parseInt(rest[i + 1], 10) : NaN; return isNaN(v) ? dflt : v; }
-  // Default the threshold from the stored config (`keyflip config set autoswitch.threshold N`)
-  // when --threshold isn't given, so the setting isn't advertised-but-inert. The 50 floor stays.
-  const cfgThreshold = require('./config').get(ctx, 'autoswitch.threshold');
-  const threshold = Math.min(100, Math.max(50, numFlag('--threshold', cfgThreshold)));
+  // Defaults come from the stored config when a flag isn't given, so these settings aren't
+  // advertised-but-inert: `keyflip config set autoswitch.<threshold|strategy|group> …`.
+  const cfg = require('./config');
+  const threshold = Math.min(100, Math.max(50, numFlag('--threshold', cfg.get(ctx, 'autoswitch.threshold'))));
   const interval = Math.max(30, numFlag('--interval', 60));
   const si = rest.indexOf('--strategy');
-  const strategy = si !== -1 ? rest[si + 1] : 'next-available';
+  const strategy = si !== -1 ? rest[si + 1] : (cfg.get(ctx, 'autoswitch.strategy') || 'next-available');
   if (strategy !== 'best' && strategy !== 'next-available') return fail('unknown strategy — use: best | next-available');
+  const gi = rest.indexOf('--group');
+  const group = (gi !== -1 && rest[gi + 1]) ? rest[gi + 1] : (cfg.get(ctx, 'autoswitch.group') || '');
   const autoYes = rest.indexOf('-y') !== -1 || rest.indexOf('--yes') !== -1;
   if (!autoYes) {
     if (!process.stdin.isTTY) return fail('autoswitch swaps accounts WITHOUT asking each time — re-run with -y to confirm.');
     print('Autoswitch will monitor the active account every ' + interval + 's and, at ' + threshold + '% usage,');
-    print(style.warn('swap the CLI credential automatically WITHOUT asking') + ' (strategy: ' + strategy + ').');
+    print(style.warn('swap the CLI credential automatically WITHOUT asking') + ' (strategy: ' + strategy + (group ? ', group: ' + group : '') + ').');
     print('The desktop app is never closed. Stop anytime with Ctrl-C.');
     const ok = await confirm('Start? [y/N] ');
     if (!ok) { print('Cancelled.'); return; }
   }
-  logmod.log('autoswitch started (threshold=' + threshold + ', strategy=' + strategy + ')');
+  logmod.log('autoswitch started (threshold=' + threshold + ', strategy=' + strategy + (group ? ', group=' + group : '') + ')');
   for (;;) {
     let r;
     try {
       r = await autosw.tick(ctx, {
-        threshold: threshold, strategy: strategy,
+        threshold: threshold, strategy: strategy, group: group || undefined,
         performSwitch: function (name) { return withLock(ctx, function () { return core.performSwitch(ctx, name); }); },
       });
     } catch (e) { r = { state: 'error', error: (e && e.message) || String(e) }; }

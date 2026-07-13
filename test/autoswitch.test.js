@@ -26,6 +26,13 @@ function usageFetch(pctByToken) {
     return { ok: true, status: 200, json: async function () { return { five_hour: { utilization: pct } }; } };
   };
 }
+function threeAccounts() {
+  const ctx = makeCtx();
+  login(ctx, 'a@x.com', 'u1', 'TA'); core.addCurrent(ctx);
+  login(ctx, 'b@x.com', 'u2', 'TB'); core.addCurrent(ctx);
+  login(ctx, 'c@x.com', 'u3', 'TC'); core.addCurrent(ctx); // c active
+  return ctx;
+}
 
 test('autoswitch tick stays put below the threshold', async function () {
   const ctx = twoAccounts();
@@ -48,6 +55,23 @@ test('autoswitch tick reports no-candidate when every alternative is exhausted',
   // candidate 'a' returns 401 -> unknown -> 'best' finds nothing
   assert.strictEqual(r.state, 'no-candidate');
   assert.strictEqual(core.currentEmail(ctx), 'b@x.com');
+});
+
+test('autoswitch tick with a group scopes rotation to the tagged pool (overrides strategy)', async function () {
+  const ctx = threeAccounts();
+  require('../src/groups').addTag(ctx, 'a', 'work'); // only 'a' is in group 'work'
+  // 'best' alone would prefer b (5% used, most headroom), but group 'work' restricts the pool to a.
+  const r = await autosw.tick(ctx, { threshold: 90, strategy: 'best', group: 'work', fetch: usageFetch({ TC: 95, TA: 40, TB: 5 }), nowMs: 1, cacheTtlMs: 0 });
+  assert.strictEqual(r.state, 'switched');
+  assert.strictEqual(r.switchedTo.name, 'a', 'switched to the in-group account, not the higher-headroom out-of-group one');
+  assert.strictEqual(core.currentEmail(ctx), 'a@x.com');
+});
+
+test('autoswitch tick with an empty/unknown group reports no-candidate (nothing switched)', async function () {
+  const ctx = threeAccounts();
+  const r = await autosw.tick(ctx, { threshold: 90, group: 'nobody', fetch: usageFetch({ TC: 95, TA: 10, TB: 10 }), nowMs: 1, cacheTtlMs: 0 });
+  assert.strictEqual(r.state, 'no-candidate');
+  assert.strictEqual(core.currentEmail(ctx), 'c@x.com'); // unchanged
 });
 
 test('autoswitch tick treats throttled/unknown usage as unknown (never switches blind)', async function () {

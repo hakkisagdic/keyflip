@@ -33,7 +33,7 @@ async function tick(ctx, opts) {
   // Threshold crossed — pick a target in rotation order. Only accounts with a
   // captured CLI credential are candidates: switching to an app-only profile
   // wouldn't change the live login, so every tick would re-pick it forever.
-  const candidates = [];
+  let candidates = [];
   for (let k = 1; k <= list.length; k++) {
     const e = list[(activeIdx + k) % list.length];
     if (e.active) continue;
@@ -41,6 +41,9 @@ async function tick(ctx, opts) {
     try { hasCli = !!ctx.store.getProfile(e.name); } catch (err) { hasCli = false; }
     if (hasCli) candidates.push(e);
   }
+  // Optional group scoping (config autoswitch.group / --group): rotate only within a tagged pool.
+  // Applied BEFORE the usage fetch so out-of-group accounts aren't queried. Preserves rotation order.
+  if (opts.group) candidates = require('./groups').filterProfiles(ctx, candidates, opts.group);
   if (!candidates.length) return { state: 'no-candidate', active: active, headroom: h, switchedTo: null };
 
   const cinfos = await usage.usageForProfiles(ctx, candidates.map(function (e) { return e.name; }), {
