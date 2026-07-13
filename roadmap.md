@@ -1103,6 +1103,27 @@ infra (payment/issuer/site — needs the business decisions in PRODUCTIZATION.md
 - MCP: 11 new tools (136 total, 0 readOnlyHint/confirm invariant violations). Registries: Windsurf + Kiro added to agents.js (memory+config); foreign.js session-import for both documented NEEDS-VERIFICATION (VS Code-fork globalStorage format unconfirmed — deferred rather than shipping broken discovery).
 - Adversarial review: run wf_76aba2c1 (secret-leak / path / crypto / injection / MCP-invariant lenses).
 
+### Post-Wave-4 session (2026-07) — SHIPPED
+
+- **Payment issuer skeleton** (commit ad88039, `issuer/`) — Ed25519 license signer (byte-for-byte
+  matched to src/license.js, round-trip proven), node:http webhook router (raw-body → verify → mint,
+  idempotent), 4 PSP adapters (Stripe/Lemon Squeezy/iyzico/PayTR, timingSafeEqual, fail-closed),
+  central config (region→provider, product→tier, secret ENV NAMES). 6-lens adversarial review: 0 real
+  defects. Private key + state gitignored. +86 tests.
+- **Half-wired cleanup**:
+  - WIRED (f4885e9): `autoswitch.threshold` from config; notify emission on switch/quota/fleet-reply
+    (the notify system was built but nothing ever called send()). +3 e2e tests.
+  - WIRED (5f43af0): `autoswitch.strategy` + `autoswitch.group` from config — group scopes rotation to
+    a tagged pool (new capability). +2 tests.
+  - REMOVED (1ba2000, owner-approved): inert `ui.theme`, `security.relockMinutes` (un-implementable in
+    a stateless CLI), and the dead `surface.js` snapshot cache. Config tests migrated to keep coverage.
+- **STILL half-wired (flagged, awaiting wire-or-remove decision):** `ui.color` (style.js only honors
+  NO_COLOR/TTY — redundant), `usage.cacheTtlSeconds` (usage.js uses a hardcoded TTL).
+
+### Remaining approved (build-now, test-on-hardware-later)
+- Device-gated: Windows/Linux app-auth wiring, native tray (Win/Linux), SSO live.
+- JetBrains extension (new artifact; VS Code extension already shipped as vscode-keyflip v0.3.0).
+
 Original plan below (for reference):
 
 ### (planned) Wave 4 — Context Layer
