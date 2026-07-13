@@ -149,7 +149,13 @@ account; `keyflip provider off` restores it. Never put an API key in argv — us
 ## Reliability, history, backup, sharing, sync
 
 - `keyflip autoswitch --threshold 90 -y` skips accounts whose circuit breaker is
-  open (repeatedly failing) and logs every failover.
+  open (repeatedly failing) and logs every failover. It is a FOREGROUND loop —
+  for real unattended rotation (no terminal to keep open) install it as a service:
+  `keyflip autoswitch install [--interval 300]` (launchd/cron runs `--once` on a
+  timer), `keyflip autoswitch status|uninstall`. Defaults come from `keyflip config`.
+  MCP: `keyflip_autoswitch_service` (action=status|install|remove; install/remove
+  need confirm). This is the fix when a user says "autoswitch never switches" —
+  they were running the foreground loop only in a terminal that wasn't open.
 - `keyflip usage --history` — per-account 5h/7d trend + failover events.
 - `keyflip backup now|list|restore <n>` — snapshots keyflip metadata (no secrets);
   restore takes a safety backup first.

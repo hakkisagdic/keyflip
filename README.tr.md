@@ -418,6 +418,14 @@ scriptlenebilir) ve masaüstü uygulamasına asla dokunmaz. `keyflip link <ad>`
 ile dizinleri hesaplara sabitleyin: adsız `keyflip run`, en yakın bağlı üst
 dizini kullanır.
 
+**Gözetimsiz çalıştır** — bir terminal açık tutman gerekmesin (ve sen Claude'da
+çalışırken rotasyon gerçekten olsun): `keyflip autoswitch install` bir arka plan
+servisi kaydeder (macOS'ta launchd `StartInterval`, Linux'ta cron `*/N`) ve
+aralıkla tek bir `keyflip autoswitch --once` kontrolü çalıştırır. `keyflip
+autoswitch status` aktif mi gösterir; `keyflip autoswitch uninstall` durdurur.
+Varsayılanlar (threshold/strategy/group/interval), flag verilmezse `keyflip
+config`'ten gelir. MCP: `keyflip_autoswitch_service` (`action=status|install|remove`).
+
 ### Agent'lar için: MCP sunucusu ve skill
 
 Agent'lar CLI'ı tahmin etmek zorunda kalmasın — keyflip **MCP** konuşur:

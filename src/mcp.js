@@ -738,6 +738,21 @@ const TOOLS = [
       return await require('./autoswitch').tick(ctx, opts);
     },
   },
+  {
+    name: 'keyflip_autoswitch_service', title: 'Run autoswitch unattended (background service)',
+    description: 'Install/remove/inspect the UNATTENDED autoswitch service (launchd on macOS, cron on Linux) that runs `keyflip autoswitch --once` on an interval — so account rotation happens on its own without a terminal open (the fix for "autoswitch never runs"). action="status" (read) | "install" | "remove". install schedules automatic account switching at the threshold — for install/remove, ask the user, then confirm=true.',
+    inputSchema: { type: 'object', properties: { action: { type: 'string', enum: ['status', 'install', 'remove'] }, interval: { type: 'integer', description: 'Seconds between checks (default 300, clamped 60..21600).' }, threshold: { type: 'integer', description: 'Utilization % to switch at.' }, strategy: { type: 'string', enum: ['best', 'next-available'] }, group: { type: 'string' }, confirm: confirmProp.confirm }, required: ['action', 'confirm'], additionalProperties: false },
+    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    run: async function (ctx, args) {
+      const svc = require('./autoswitchservice');
+      if (args.action === 'status') return { autoswitchService: svc.status(ctx, { home: ctx.home }) };
+      needConfirm(args);
+      if (args.action === 'remove') return { removed: svc.uninstall(ctx, { home: ctx.home }) };
+      const r = svc.install(ctx, { home: ctx.home, interval: args.interval, threshold: args.threshold, strategy: args.strategy, group: args.group });
+      if (!r.ok) throw new Error('could not install the autoswitch service: ' + (r.reason || r.detail || 'unknown'));
+      return { installed: r };
+    },
+  },
 
   // ---- Wave-1 features (2026-07-07): groups / budget / import-env / shell-init / audit-log / notify ----
   {

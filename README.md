@@ -419,6 +419,14 @@ request). It confirms once at start (`-y` for scripts) and never touches the
 desktop app. Pair with `keyflip link <name>` to pin directories to accounts:
 `keyflip run` with no name uses the nearest linked ancestor directory.
 
+**Run it unattended** so you don't have to keep a terminal open (and so rotation
+actually happens while you work in Claude): `keyflip autoswitch install` registers
+a background service (launchd `StartInterval` on macOS, cron `*/N` on Linux) that
+runs a single `keyflip autoswitch --once` check on an interval. `keyflip autoswitch
+status` shows whether it's active; `keyflip autoswitch uninstall` stops it.
+Defaults (threshold/strategy/group/interval) come from `keyflip config` if flags
+aren't given. MCP: `keyflip_autoswitch_service` (`action=status|install|remove`).
+
 ### For agents: MCP server & skill
 
 Agents shouldn't have to guess the CLI — keyflip speaks **MCP**:

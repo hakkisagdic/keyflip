@@ -157,6 +157,8 @@ function usage() {
   print('  keyflip remove <name|number>  delete a saved account');
   print('  keyflip autoswitch            watch usage; auto-swap the CLI account at a threshold');
   print('                                 (--threshold 90 --interval 60 --strategy next-available)');
+  print('  keyflip autoswitch install [--interval 300]   run it UNATTENDED (launchd/cron) — no terminal to keep open');
+  print('                                 keyflip autoswitch <status|uninstall|--once>   check/stop the service; --once = one tick');
   print('  keyflip link [name|--remove]  map this directory to an account for `run`');
   print('  keyflip shell-init <bash|zsh|fish>   print a shell hook so `cd` auto-activates the pinned account (eval "$(keyflip shell-init zsh)")');
   print('  keyflip group [list|members <g>|tag <acct> <g…>|untag <acct> <g>]   tag accounts into pools; `next --group <g>` rotates within one');
@@ -489,6 +491,70 @@ async function cmdAutoswitch(ctx, rest) {
   if (strategy !== 'best' && strategy !== 'next-available') return fail('unknown strategy — use: best | next-available');
   const gi = rest.indexOf('--group');
   const group = (gi !== -1 && rest[gi + 1]) ? rest[gi + 1] : (cfg.get(ctx, 'autoswitch.group') || '');
+
+  // One tick's print + opt-in notify, shared by the foreground loop and the scheduled `--once` run.
+  function reportTick(r) {
+    const at = new Date().toTimeString().slice(0, 8);
+    if (r.state === 'switched') {
+      print('[' + at + '] ' + style.ok('⇄ switched: ') + (r.active.email || r.active.name) + ' → ' + (r.switchedTo.email || r.switchedTo.name) + ' (usage crossed ' + threshold + '%)');
+      logmod.log('autoswitch: ' + r.active.name + ' -> ' + r.switchedTo.name);
+      require('./notify').send(ctx, 'switch', { from: r.active.name, to: r.switchedTo.name, reason: 'autoswitch', threshold: threshold }).catch(function () {});
+    } else if (r.state === 'below') {
+      print('[' + at + '] ' + (r.active.email || r.active.name) + ': ' + Math.round(100 - r.headroom) + '% used — ok');
+    } else if (r.state === 'no-candidate') {
+      print('[' + at + '] ' + style.warn('threshold crossed but no other account is available'));
+      require('./notify').send(ctx, 'quota', { account: (r.active && r.active.name) || null, threshold: threshold, state: 'no-candidate' }).catch(function () {});
+    } else if (r.state === 'unknown') {
+      print('[' + at + '] usage unknown (endpoint throttled or offline) — waiting');
+    } else if (r.state === 'no-active') {
+      print('[' + at + '] no active CLI account — waiting');
+    } else if (r.state === 'error') {
+      print('[' + at + '] ' + style.warn('tick failed: ' + r.error));
+    }
+  }
+  function oneTick() {
+    return autosw.tick(ctx, {
+      threshold: threshold, strategy: strategy, group: group || undefined,
+      performSwitch: function (name) { return withLock(ctx, function () { return core.performSwitch(ctx, name); }); },
+    }).catch(function (e) { return { state: 'error', error: (e && e.message) || String(e) }; });
+  }
+
+  // ---- unattended background SERVICE (launchd StartInterval / cron */N) ----
+  const svcSub = rest[0];
+  if (svcSub === 'install' || svcSub === 'uninstall' || svcSub === 'status') {
+    const svc = require('./autoswitchservice');
+    if (svcSub === 'status') {
+      const st = svc.status(ctx, { home: ctx.home });
+      if (JSON_MODE) { jsonOut({ autoswitchService: st }); return; }
+      print('Autoswitch service: ' + (st.installed ? style.ok('installed') + ' (' + st.kind + (st.path ? ', ' + st.path : '') + ')' : style.warn('not installed')));
+      if (!st.installed) print(style.dim('  Install: keyflip autoswitch install [--interval 300] [--threshold N] [--strategy best|next-available] [--group G]'));
+      return;
+    }
+    if (svcSub === 'uninstall') {
+      const r = svc.uninstall(ctx, { home: ctx.home });
+      if (JSON_MODE) { jsonOut({ autoswitchService: r }); return; }
+      if (r.kind === 'unsupported') return fail('the autoswitch service is macOS/Linux-only for now');
+      print(style.ok('✅') + ' autoswitch service ' + (r.existed === false ? 'was not installed.' : 'uninstalled.'));
+      return;
+    }
+    // install
+    const svcInterval = Math.min(21600, Math.max(60, numFlag('--interval', 300)));
+    const r = svc.install(ctx, { home: ctx.home, interval: svcInterval, threshold: threshold, strategy: strategy, group: group || undefined });
+    if (JSON_MODE) { jsonOut({ autoswitchService: r }); return; }
+    if (r.kind === 'unsupported') return fail('the autoswitch service is macOS/Linux-only for now');
+    if (!r.ok) return fail('could not install the autoswitch service' + (r.detail ? ': ' + r.detail : ''));
+    print(style.ok('✅') + ' autoswitch runs unattended now — every ' + (r.intervalSec || svcInterval) + 's it checks the active account and, at ' + threshold + '% usage, rotates to the next (' + strategy + (group ? ', group ' + group : '') + ').');
+    print(style.dim('  It never closes Claude; the swap is picked up on the next request. Stop it: keyflip autoswitch uninstall.'));
+    logmod.log('autoswitch service installed (interval=' + (r.intervalSec || svcInterval) + ', threshold=' + threshold + ')');
+    return;
+  }
+
+  // ---- one-shot tick (what the scheduled service runs): check once, act, exit ----
+  if (rest.indexOf('--once') !== -1) {
+    reportTick(await oneTick());
+    return;
+  }
+
   const autoYes = rest.indexOf('-y') !== -1 || rest.indexOf('--yes') !== -1;
   if (!autoYes) {
     if (!process.stdin.isTTY) return fail('autoswitch swaps accounts WITHOUT asking each time — re-run with -y to confirm.');
@@ -499,34 +565,9 @@ async function cmdAutoswitch(ctx, rest) {
     if (!ok) { print('Cancelled.'); return; }
   }
   logmod.log('autoswitch started (threshold=' + threshold + ', strategy=' + strategy + (group ? ', group=' + group : '') + ')');
+  print(style.dim('  Tip: run it unattended instead — ' + style.bold('keyflip autoswitch install') + ' (launchd/cron, no terminal needed).'));
   for (;;) {
-    let r;
-    try {
-      r = await autosw.tick(ctx, {
-        threshold: threshold, strategy: strategy, group: group || undefined,
-        performSwitch: function (name) { return withLock(ctx, function () { return core.performSwitch(ctx, name); }); },
-      });
-    } catch (e) { r = { state: 'error', error: (e && e.message) || String(e) }; }
-    const at = new Date().toTimeString().slice(0, 8);
-    if (r.state === 'switched') {
-      print('[' + at + '] ' + style.ok('⇄ switched: ') + (r.active.email || r.active.name) + ' → ' + (r.switchedTo.email || r.switchedTo.name) + ' (usage crossed ' + threshold + '%)');
-      logmod.log('autoswitch: ' + r.active.name + ' -> ' + r.switchedTo.name);
-      // Emit the switch (opt-in; a no-op unless the user configured notify for 'switch'). The
-      // long-running loop stays alive, so fire-and-forget is safe — never let it break the loop.
-      require('./notify').send(ctx, 'switch', { from: r.active.name, to: r.switchedTo.name, reason: 'autoswitch', threshold: threshold }).catch(function () {});
-    } else if (r.state === 'below') {
-      print('[' + at + '] ' + (r.active.email || r.active.name) + ': ' + Math.round(100 - r.headroom) + '% used — ok');
-    } else if (r.state === 'no-candidate') {
-      print('[' + at + '] ' + style.warn('threshold crossed but no other account is available'));
-      // Threshold crossed but stuck on the same account — the alert-worthy quota event.
-      require('./notify').send(ctx, 'quota', { account: (r.active && r.active.name) || null, threshold: threshold, state: 'no-candidate' }).catch(function () {});
-    } else if (r.state === 'unknown') {
-      print('[' + at + '] usage unknown (endpoint throttled or offline) — waiting');
-    } else if (r.state === 'no-active') {
-      print('[' + at + '] no active CLI account — waiting');
-    } else if (r.state === 'error') {
-      print('[' + at + '] ' + style.warn('tick failed: ' + r.error));
-    }
+    reportTick(await oneTick());
     await sleep(interval * 1000);
   }
 }
