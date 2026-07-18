@@ -20,6 +20,7 @@ coverage/
 *.pem
 *.key
 secrets*
+!/src/secretscan.js
 
 # license issuer: the Ed25519 PRIVATE key + runtime state (idempotency ledger,
 # issued-license records) must NEVER be committed. Only the source + config +

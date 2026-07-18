@@ -1,6 +1,6 @@
 {
   "name": "keyflip",
-  "version": "1.5.1",
+  "version": "1.5.2",
   "description": "Flip between multiple AI CLI accounts (Anthropic / Claude Code today) — CLI, desktop app and VS Code logins together.",
   "bin": {
     "keyflip": "bin/keyflip.js",
