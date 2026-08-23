@@ -8,6 +8,11 @@ Hesaplarınıza bir kez giriş yapın, sonra tekrar tekrar çıkış/giriş yapm
 **Çok platformlu:** macOS, Linux ve Windows. Saf Node.js, sıfır çalışma zamanı bağımlılığı.
 
 [![CI](https://github.com/hakkisagdic/keyflip/actions/workflows/ci.yml/badge.svg)](https://github.com/hakkisagdic/keyflip/actions/workflows/ci.yml)
+[![npm version](https://img.shields.io/npm/v/keyflip)](https://www.npmjs.com/package/keyflip)
+[![Node.js](https://img.shields.io/node/v/keyflip)](https://nodejs.org)
+[![License: MIT](https://img.shields.io/github/license/hakkisagdic/keyflip)](https://github.com/hakkisagdic/keyflip/blob/main/LICENSE)
+[![dependencies](https://img.shields.io/badge/dependencies-0-brightgreen)](https://github.com/hakkisagdic/keyflip)
+[![GitHub stars](https://img.shields.io/github/stars/hakkisagdic/keyflip)](https://github.com/hakkisagdic/keyflip/stargazers)
 
 > **Platform kapsamı.** Çekirdek — hesap değiştirme, provider'lar, oturumlar,
 > failover proxy, skill'ler, MCP — **çapraz-platformdur** (macOS/Linux/Windows,
