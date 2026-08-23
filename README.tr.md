@@ -710,7 +710,7 @@ sonra ayarlanabilir):
 
 ## Web Sitesi
 
-`/website` dizini, Astro ile olusturulmus projenin pazarlama ve dokumantasyon sitesini icerir. Kendi `package.json` dosyasina sahip bagimsiz bir alt projedir. Gelistirme ve dagitim talimatlari icin [`website/README.md`](website/README.md) dosyasina bakiniz.
+`/website` dizini, Astro ile oluşturulmuş projenin pazarlama ve dokümantasyon sitesini içerir. Kendi `package.json` dosyasına sahip bağımsız bir alt projedir. Geliştirme ve dağıtım talimatları için [`website/README.md`](website/README.md) dosyasına bakınız.
 
 ---
 

@@ -37,7 +37,7 @@ const alternateLocale = locale === 'en' ? 'tr' : 'en';
     <meta property="og:type" content="website" />
     <meta property="og:locale" content={locale === 'en' ? 'en_US' : 'tr_TR'} />
     <meta property="og:site_name" content="keyflip" />
-    <meta property="og:image" content={new URL('/og-image.svg', Astro.site).href} />
+    <!-- TODO: add a 1200x630 PNG og-image before deployment (SVG is not supported by social platforms) -->
 
     <!-- Alternate language -->
     <link rel="alternate" hreflang={alternateLocale} href={new URL(alternatePath, Astro.site).href} />
