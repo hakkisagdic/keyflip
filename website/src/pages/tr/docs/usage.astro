@@ -4,55 +4,55 @@ import PageHeader from '../../../components/PageHeader.astro';
 import CodeBlock from '../../../components/CodeBlock.astro';
 ---
 
-<BaseLayout title="Kullanim" locale="tr" currentPath="/tr/docs/usage">
-  <PageHeader title="Kullanim" subtitle="Claude hesaplarinizi yonetmek icin gunluk is akislari" />
+<BaseLayout title="Kullanım" locale="tr" currentPath="/tr/docs/usage">
+  <PageHeader title="Kullanım" subtitle="Claude hesaplarınızı yönetmek için günlük iş akışları" />
 
   <section class="py-16">
     <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
 
-      <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-4">Interaktif Menu</h2>
-      <p class="text-surface-700 dark:text-surface-300 mb-4">Interaktif hesap seciciyi acmak icin argumansiz <code>keyflip</code> calistirin:</p>
+      <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-4">İnteraktif Menü</h2>
+      <p class="text-surface-700 dark:text-surface-300 mb-4">İnteraktif hesap seçiciyi açmak için argümansız <code>keyflip</code> çalıştırın:</p>
       <CodeBlock code={`        Keyflip (keyflip)
   Aktif: alice@example.com
 
   → [1] alice@example.com
     [2] bob@example.org
 
-  [numara] degistir   [a] kaydet   [d] sil   [r] yenile   [q] cik`} lang="text" />
+  [numara] değiştir   [a] kaydet   [d] sil   [r] yenile   [q] çık`} lang="text" />
 
-      <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-4 mt-10">Hizli Gecis</h2>
-      <p class="text-surface-700 dark:text-surface-300 mb-4">Dogrudan isim veya numarayla gecis yapin:</p>
-      <CodeBlock code={`keyflip work              # "work" hesabina gec
-keyflip 2                 # 2 numarali hesaba gec
-keyflip work --restart    # Claude'u sormadan kapat ve ac
-keyflip work --force      # Claude'u kapatmadan degistir
-keyflip work --browser    # tarayici + Chrome uzantisini da hizala`} />
+      <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-4 mt-10">Hızlı Geçiş</h2>
+      <p class="text-surface-700 dark:text-surface-300 mb-4">Doğrudan isim veya numarayla geçiş yapın:</p>
+      <CodeBlock code={`keyflip work              # "work" hesabına geç
+keyflip 2                 # 2 numaralı hesaba geç
+keyflip work --restart    # Claude'u sormadan kapat ve aç
+keyflip work --force      # Claude'u kapatmadan değiştir
+keyflip work --browser    # tarayıcı + Chrome uzantısını da hizala`} />
 
       <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-4 mt-10">Rotasyon</h2>
-      <p class="text-surface-700 dark:text-surface-300 mb-4">Otomatik olarak sonraki hesaba veya en cok kotasi olana gec:</p>
-      <CodeBlock code={`keyflip next                  # sonraki kayitli hesaba don
-keyflip next --strategy best  # kalan kotaya gore sec`} />
+      <p class="text-surface-700 dark:text-surface-300 mb-4">Otomatik olarak sonraki hesaba veya en çok kotası olana geç:</p>
+      <CodeBlock code={`keyflip next                  # sonraki kayıtlı hesaba dön
+keyflip next --strategy best  # kalan kotaya göre seç`} />
 
-      <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-4 mt-10">Otomatik Gecis</h2>
-      <p class="text-surface-700 dark:text-surface-300 mb-4">Kullanimi izleyin ve kota neredeyse tukenmek uzereyken otomatik degistirin:</p>
+      <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-4 mt-10">Otomatik Geçiş</h2>
+      <p class="text-surface-700 dark:text-surface-300 mb-4">Kullanımı izleyin ve kota neredeyse tükenmek üzereyken otomatik değiştirin:</p>
       <CodeBlock code={`keyflip autoswitch --threshold 90 --interval 60 --strategy next-available
 keyflip autoswitch install    # arka plan servisi olarak kaydet
 keyflip autoswitch status     # aktif mi kontrol et
 keyflip autoswitch uninstall  # durdur`} />
 
       <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-4 mt-10">Durum ve Bilgi</h2>
-      <CodeBlock code={`keyflip status            # her yuzeyde hangi hesap aktif
-keyflip list --usage      # hesaplar + 5s/7g kullanim
-keyflip doctor            # saglik kontrolu: git'te sirlar, yapilandirma, ucnoktalar`} />
+      <CodeBlock code={`keyflip status            # her yüzeyde hangi hesap aktif
+keyflip list --usage      # hesaplar + 5s/7g kullanım
+keyflip doctor            # sağlık kontrolü: git'te sırlar, yapılandırma, uç noktalar`} />
 
       <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-4 mt-10">Paralel Oturumlar</h2>
-      <p class="text-surface-700 dark:text-surface-300 mb-4">Farkli terminallerde farkli hesaplari ayni anda calistirin:</p>
-      <CodeBlock code={`keyflip run work          # sadece bu terminal; digerleri mevcut hesabi tutar
-keyflip run work -- --resume   # argumanlari claude'a ilet`} />
+      <p class="text-surface-700 dark:text-surface-300 mb-4">Farklı terminallerde farklı hesapları aynı anda çalıştırın:</p>
+      <CodeBlock code={`keyflip run work          # sadece bu terminal; diğerleri mevcut hesabı tutar
+keyflip run work -- --resume   # argümanları claude'a ilet`} />
 
       <div class="mt-8 flex gap-4">
         <a href="/tr/docs/cli-reference" class="px-6 py-2 bg-primary-600 text-white font-medium rounded-lg hover:bg-primary-700 transition-colors">
-          Sonraki: CLI Referansi &rarr;
+          Sonraki: CLI Referansı &rarr;
         </a>
       </div>
     </div>

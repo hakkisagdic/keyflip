@@ -5,30 +5,30 @@ import CodeBlock from '../../../components/CodeBlock.astro';
 ---
 
 <BaseLayout title="Kurulum" locale="tr" currentPath="/tr/docs/installation">
-  <PageHeader title="Kurulum" subtitle="keyflip'i makinenize bir dakikadan kisa surede kurun" />
+  <PageHeader title="Kurulum" subtitle="keyflip'i makinenize bir dakikadan kısa sürede kurun" />
 
   <section class="py-16">
     <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
 
       <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-4">Gereksinimler</h2>
       <ul class="list-disc pl-6 text-surface-700 dark:text-surface-300 space-y-2 mb-8">
-        <li><strong>Node.js 18 veya uzeri</strong> (Claude Code zaten Node gerektirir)</li>
-        <li>Claude uygulamasi veya Claude Code, kaydetmek istediginiz hesap(lar)a giris yapilmis</li>
+        <li><strong>Node.js 18 veya üzeri</strong> (Claude Code zaten Node gerektirir)</li>
+        <li>Claude uygulaması veya Claude Code, kaydetmek istediğiniz hesap(lar)a giriş yapılmış</li>
         <li>macOS, Linux veya Windows</li>
       </ul>
 
       <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-4">macOS / Linux</h2>
-      <p class="text-surface-700 dark:text-surface-300 mb-4">Tek satir, npm yok, sudo yok:</p>
+      <p class="text-surface-700 dark:text-surface-300 mb-4">Tek satır, npm yok, sudo yok:</p>
       <CodeBlock code='curl -fsSL https://raw.githubusercontent.com/hakkisagdic/keyflip/main/install.sh | bash' title="Shell" />
 
       <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-4 mt-8">Windows</h2>
-      <p class="text-surface-700 dark:text-surface-300 mb-4">PowerShell tek satirligi (Baslat Menusu / Masaustu kisayolu olusturur):</p>
+      <p class="text-surface-700 dark:text-surface-300 mb-4">PowerShell tek satırlığı (Başlat Menüsü / Masaüstü kısayolu oluşturur):</p>
       <CodeBlock code='irm https://raw.githubusercontent.com/hakkisagdic/keyflip/main/install.ps1 | iex' title="PowerShell" />
 
-      <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-4 mt-8">npm ile (tum platformlar)</h2>
+      <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-4 mt-8">npm ile (tüm platformlar)</h2>
       <CodeBlock code={`npm install --global @hakkisagdic/keyflip
 
-# veya dogrudan git'ten (kayit defteri gerekmez):
+# veya doğrudan git'ten (kayıt defteri gerekmez):
 npm install --global git+https://github.com/hakkisagdic/keyflip.git`} title="npm" />
 
       <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-4 mt-8">Kaynaktan</h2>
@@ -36,20 +36,20 @@ npm install --global git+https://github.com/hakkisagdic/keyflip.git`} title="npm
 
       <div class="mt-8 p-4 bg-primary-50 dark:bg-primary-950/50 border border-primary-200 dark:border-primary-800 rounded-lg">
         <p class="text-sm text-surface-700 dark:text-surface-300">
-          Yukleyici kodu <code>~/.local/share/keyflip</code>'e yerlestirir, <code>keyflip</code>'i <code>~/.local/bin</code>'e baglar ve <code>PATH</code>'inize ekler. <code>./uninstall.sh</code> ile kaldirilir (veya <code>npm uninstall -g keyflip</code>).
+          Yükleyici kodu <code>~/.local/share/keyflip</code>'e yerleştirir, <code>keyflip</code>'i <code>~/.local/bin</code>'e bağlar ve <code>PATH</code>'inize ekler. <code>./uninstall.sh</code> ile kaldırılır (veya <code>npm uninstall -g keyflip</code>).
         </p>
       </div>
 
-      <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-4 mt-8">Ilk kurulum</h2>
-      <p class="text-surface-700 dark:text-surface-300 mb-4">Tum hesaplarinizi yakalamak icin rehberli sihirbazi calistirin:</p>
-      <CodeBlock code='keyflip setup' title="Kurulum sihirbazi" />
+      <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-4 mt-8">İlk kurulum</h2>
+      <p class="text-surface-700 dark:text-surface-300 mb-4">Tüm hesaplarınızı yakalamak için rehberli sihirbazı çalıştırın:</p>
+      <CodeBlock code='keyflip setup' title="Kurulum sihirbazı" />
       <p class="text-surface-700 dark:text-surface-300">
-        Su anda ne giris yapmissaniz onu kaydeder, sonra dongu yapar: bir sonraki hesabiniza giris/cikis yapin ve keyflip yeni girisi otomatik algilar. Bittiginizde <code>d</code> yazin.
+        Şu anda ne giriş yapmışsanız onu kaydeder, sonra döngü yapar: bir sonraki hesabınıza giriş/çıkış yapın ve keyflip yeni girişi otomatik algılar. Bittiğinizde <code>d</code> yazın.
       </p>
 
       <div class="mt-8 flex gap-4">
         <a href="/tr/docs/usage" class="px-6 py-2 bg-primary-600 text-white font-medium rounded-lg hover:bg-primary-700 transition-colors">
-          Sonraki: Kullanim &rarr;
+          Sonraki: Kullanım &rarr;
         </a>
       </div>
     </div>

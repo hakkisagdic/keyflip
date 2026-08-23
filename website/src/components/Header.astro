@@ -85,6 +85,7 @@ const alternateLabel = locale === 'en' ? 'TR' : 'EN';
           id="mobile-menu-btn"
           class="lg:hidden p-2 text-surface-700 dark:text-surface-300 hover:text-primary-600 transition-colors"
           aria-label={trans.nav.menu}
+          aria-expanded="false"
         >
           <svg class="w-6 h-6" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
             <path d="M4 6h16M4 12h16M4 18h16" />
@@ -124,5 +125,6 @@ const alternateLabel = locale === 'en' ? 'TR' : 'EN';
   const menu = document.getElementById('mobile-menu');
   btn?.addEventListener('click', () => {
     menu?.classList.toggle('hidden');
+    btn?.setAttribute('aria-expanded', String(!menu?.classList.contains('hidden')));
   });
 </script>

@@ -8,48 +8,48 @@ const trans = t(locale);
 
 const faqs = [
   {
-    q: 'keyflip guvenli mi?',
-    a: 'Evet. OAuth tokenlariniz isletim sistemi kimlik deposunda kalir (macOS Keychain veya Linux/Windows\'ta sifrelenmis dosyalar). keyflip tokenlari yuvalar arasinda kopyalar ama yeni duz metin token dosyasi eklemez. Gecisler basarisizlikta otomatik geri alma ile islemseldir.'
+    q: 'keyflip güvenli mi?',
+    a: 'Evet. OAuth tokenlarınız işletim sistemi kimlik deposunda kalır (macOS Keychain veya Linux/Windows\'ta şifrelenmiş dosyalar). keyflip tokenları yuvalar arasında kopyalar ama yeni düz metin token dosyası eklemez. Geçişler başarısızlıkta otomatik geri alma ile işlemseldir.'
   },
   {
-    q: 'Gecis yaptigimda sohbet gecmisimi kaybeder miyim?',
-    a: 'Hayir. ~/.claude/projects\'teki oturum gecmisi hesaptan bagimsizdir. Hangi hesap aktifse onun altinda gorulur. keyflip ayrica masaustu uygulama dizinini de birlestirebilir.'
+    q: 'Geçiş yaptığımda sohbet geçmişimi kaybeder miyim?',
+    a: 'Hayır. ~/.claude/projects\'teki oturum geçmişi hesaptan bağımsızdır. Hangi hesap aktifse onun altında görülür. keyflip ayrıca masaüstü uygulaması dizinini de birleştirebilir.'
   },
   {
-    q: 'keyflip Claude Code, masaustu uygulama ve tarayici ile calisir mi?',
-    a: 'Evet. keyflip CLI\'yi, masaustu uygulama girisini ve tarayici/uzantiyi degistirebilir. Her yuzey bagimsizdir ama keyflip onlari senkronize edebilir.'
+    q: 'keyflip Claude Code, masaüstü uygulaması ve tarayıcı ile çalışır mı?',
+    a: 'Evet. keyflip CLI\'yı, masaüstü uygulaması girişini ve tarayıcı/uzantıyı değiştirebilir. Her yüzey bağımsızdır ama keyflip onları senkronize edebilir.'
   },
   {
     q: 'Sistem gereksinimleri nelerdir?',
-    a: 'Node.js 18 veya uzeri (Claude Code zaten Node gerektirir) ve kaydetmek istediginiz hesap(lar)a giris yapilmis Claude uygulamasi/Claude Code. macOS, Linux ve Windows\'ta calisir.'
+    a: 'Node.js 18 veya üzeri (Claude Code zaten Node gerektirir) ve kaydetmek istediğiniz hesap(lar)a giriş yapılmış Claude uygulaması/Claude Code. macOS, Linux ve Windows\'ta çalışır.'
   },
   {
-    q: 'Herhangi bir calisma zamani bagimliligi var mi?',
-    a: 'Sifir. keyflip saf Node.js\'tir, yerli modul ve calisma zamani bagimliligi yoktur. Sadece Node dahili modulleri kullanir.'
+    q: 'Herhangi bir çalışma zamanı bağımlılığı var mı?',
+    a: 'Sıfır. keyflip saf Node.js\'tir, yerli modül ve çalışma zamanı bağımlılığı yoktur. Sadece Node dahili modülleri kullanır.'
   },
   {
-    q: 'Gecis yaptigimda Claude aciksa ne olur?',
-    a: 'Interaktif modda keyflip Claude\'u kapatmadan once sorar. "Hayir" derseniz iptal eder. Sormadan kapatip acmak icin --restart, kapatmadan degistirmek icin --force kullanin.'
+    q: 'Geçiş yaptığımda Claude açıksa ne olur?',
+    a: 'İnteraktif modda keyflip Claude\'u kapatmadan önce sorar. "Hayır" derseniz iptal eder. Sormadan kapatıp açmak için --restart, kapatmadan değiştirmek için --force kullanın.'
   },
   {
-    q: 'Farkli terminallerde farkli hesaplari kullanabilir miyim?',
-    a: 'Evet! "keyflip run <isim>" Claude Code\'u o hesapla sadece mevcut terminalde baslatir. Diger terminaller, masaustu uygulamasi ve VS Code mevcut hesaplarini tutar.'
+    q: 'Farklı terminallerde farklı hesapları kullanabilir miyim?',
+    a: 'Evet! "keyflip run <isim>" Claude Code\'u o hesapla sadece mevcut terminalde başlatır. Diğer terminaller, masaüstü uygulaması ve VS Code mevcut hesaplarını tutar.'
   },
   {
-    q: 'Hesaplari yeni makineye nasil aktaririm?',
-    a: 'Eski makinede "keyflip transfer serve --qr" ve yeni makinede "keyflip transfer pull --code X" kullanin. Transfer tek kullanimlik kodla uctan uca sifrelenmistir.'
+    q: 'Hesapları yeni makineye nasıl aktarırım?',
+    a: 'Eski makinede "keyflip transfer serve --qr" ve yeni makinede "keyflip transfer pull --code X" kullanın. Transfer tek kullanımlık kodla uçtan uca şifrelenmiştir.'
   },
   {
     q: 'Yedekleme proxy\'si nedir?',
-    a: 'API isteklerini aktif hesabiniza yonlendiren bir localhost proxy. 429 veya 5xx durumunda, Claude Code\'a hata ulasmadan once sonraki saglikli hesapta otomatik yeniden dener.'
+    a: 'API isteklerini aktif hesabınıza yönlendiren bir localhost proxy. 429 veya 5xx durumunda, Claude Code\'a hata ulaşmadan önce sonraki sağlıklı hesapta otomatik yeniden dener.'
   },
   {
-    q: 'Ucretsiz mi?',
-    a: 'Cekirdek ucretsiz ve acik kaynaktir (MIT). Tek makinede hesap degistirme, saglayicilar, proxy, oturumlar, yedekleme ve temel MCP yuzeyi sonsuza kadar ucretsizdir. Ucretli katmanlar (yakinda) filo, orkestrasyon, takim havuzlari ve gelismis otomasyonu acar.'
+    q: 'Ücretsiz mi?',
+    a: 'Çekirdek ücretsiz ve açık kaynaktır (MIT). Tek makinede hesap değiştirme, sağlayıcılar, proxy, oturumlar, yedekleme ve temel MCP yüzeyi sonsuza kadar ücretsizdir. Ücretli katmanlar (yakında) filo, orkestrasyon, takım havuzları ve gelişmiş otomasyonu açar.'
   },
   {
-    q: 'keyflip\'i tamamen nasil kaldiririm?',
-    a: '"keyflip uninstall --purge" ile keyflip ve tum kayitli verileri kaldirin. Veya once "keyflip reset" ile verileri temizleyin, sonra kaldirin. Acikca --logout kullanmadikca canli Claude girisinize asla dokunulmaz.'
+    q: 'keyflip\'i tamamen nasıl kaldırırım?',
+    a: '"keyflip uninstall --purge" ile keyflip ve tüm kayıtlı verileri kaldırın. Veya önce "keyflip reset" ile verileri temizleyin, sonra kaldırın. Açıkça --logout kullanmadıkça canlı Claude girişinize asla dokunulmaz.'
   },
 ];
 ---

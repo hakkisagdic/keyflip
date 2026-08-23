@@ -5,36 +5,36 @@ import CodeBlock from '../../../components/CodeBlock.astro';
 ---
 
 <BaseLayout title="Oturumlar" locale="tr" currentPath="/tr/docs/sessions">
-  <PageHeader title="Oturumlar ve Hatirlama" subtitle="Konusmalarinizi arayin, devam ettirin, arsivleyin, ozetleyin ve hatirlayin" />
+  <PageHeader title="Oturumlar ve Hatırlama" subtitle="Konuşmalarınızı arayın, devam ettirin, arşivleyin, özetleyin ve hatırlayın" />
 
   <section class="py-16">
     <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
 
-      <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-4">Genel Bakis</h2>
+      <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-4">Genel Bakış</h2>
       <p class="text-surface-700 dark:text-surface-300 mb-6">
-        Claude Code transkriptleri (<code>~/.claude/projects</code>) hesaptan bagimsizdir. keyflip hepsini tek yerden gozatabilir, arayabilir ve herhangi birini orijinal dizininde devam ettirebilir.
+        Claude Code transkriptleri (<code>~/.claude/projects</code>) hesaptan bağımsızdır. keyflip hepsini tek yerden göz atabilir, arayabilir ve herhangi birini orijinal dizininde devam ettirebilir.
       </p>
 
       <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-4 mt-10">Arama ve Devam</h2>
-      <CodeBlock code={`keyflip sessions --search "oauth"     # tum konusmalari ara
+      <CodeBlock code={`keyflip sessions --search "oauth"     # tüm konuşmaları ara
 keyflip sessions --here               # sadece bu dizindeki oturumlar
-keyflip resume 3                      # 3. oge icin devam komutu
-keyflip resume <id> --run             # claude --resume dizininde baslat
-keyflip sessions rebind <eski> <yeni> # klasor yeniden adlandirmadan sonra yeniden bagla
-keyflip sessions assign <id> <hesap>  # baska hesap altinda devam et`} />
+keyflip resume 3                      # 3. öğe için devam komutu
+keyflip resume <id> --run             # claude --resume dizininde başlat
+keyflip sessions rebind <eski> <yeni> # klasör yeniden adlandırmadan sonra yeniden bağla
+keyflip sessions assign <id> <hesap>  # başka hesap altında devam et`} />
 
-      <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-4 mt-10">Arsiv ve Ozet</h2>
+      <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-4 mt-10">Arşiv ve Özet</h2>
       <CodeBlock code={`keyflip sessions archive <id|--older-than 30d>   # eski transkriptleri gziple
-keyflip sessions distill <id>          # claude -p ile ozetle
-keyflip dream [--older-than 30d]       # tek geciste ozetle + arsivle
-keyflip dream schedule [--at 03:00]    # gece otomatik calistir (launchd/cron)`} />
+keyflip sessions distill <id>          # claude -p ile özetle
+keyflip dream [--older-than 30d]       # tek geçişte özetle + arşivle
+keyflip dream schedule [--at 03:00]    # gece otomatik çalıştır (launchd/cron)`} />
 
-      <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-4 mt-10">Hatirlama Motoru</h2>
+      <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-4 mt-10">Hatırlama Motoru</h2>
       <p class="text-surface-700 dark:text-surface-300 mb-4">
-        BM25 veya anlamsal (gomme) aramayla tum sohbetlerinizde arama yapin. Kaynakli sentez yanitlari alin.
+        BM25 veya anlamsal (gömme) aramayla tüm sohbetlerinizde arama yapın. Kaynaklı sentez yanıtları alın.
       </p>
-      <CodeBlock code={`keyflip recall "kimlik dogrulamayi nasil yapilardik?"
-keyflip recall "dagitim hatti" --answer   # claude -p ile kaynakli sentez`} />
+      <CodeBlock code={`keyflip recall "kimlik doğrulamayı nasıl yapılardık?"
+keyflip recall "dağıtım hattı" --answer   # claude -p ile kaynaklı sentez`} />
     </div>
   </section>
 </BaseLayout>

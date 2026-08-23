@@ -28,15 +28,19 @@ const alternateLocale = locale === 'en' ? 'tr' : 'en';
     <meta name="description" content={siteDescription} />
     <meta name="generator" content={Astro.generator} />
 
+    <!-- Favicon -->
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+
     <!-- Open Graph -->
     <meta property="og:title" content={siteTitle} />
     <meta property="og:description" content={siteDescription} />
     <meta property="og:type" content="website" />
     <meta property="og:locale" content={locale === 'en' ? 'en_US' : 'tr_TR'} />
     <meta property="og:site_name" content="keyflip" />
+    <meta property="og:image" content={new URL('/og-image.svg', Astro.site).href} />
 
     <!-- Alternate language -->
-    <link rel="alternate" hreflang={alternateLocale} href={alternatePath} />
+    <link rel="alternate" hreflang={alternateLocale} href={new URL(alternatePath, Astro.site).href} />
 
     <!-- Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />

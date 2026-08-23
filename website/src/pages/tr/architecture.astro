@@ -5,28 +5,28 @@ import CodeBlock from '../../components/CodeBlock.astro';
 ---
 
 <BaseLayout title="Mimari" locale="tr" currentPath="/tr/architecture">
-  <PageHeader title="Mimari" subtitle="Ic mimari, modul organizasyonu, veri akisi ve guvenlik modeli" />
+  <PageHeader title="Mimari" subtitle="İç mimari, modül organizasyonu, veri akışı ve güvenlik modeli" />
 
   <section class="py-16">
     <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
 
-      <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-4">Dizin Yapisi</h2>
+      <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-4">Dizin Yapısı</h2>
       <CodeBlock code={`keyflip/
-├── bin/               CLI giris noktasi (keyflip.js)
-├── src/               Kaynak modulleri (100+ dosya)
+├── bin/               CLI giriş noktası (keyflip.js)
+├── src/               Kaynak modülleri (100+ dosya)
 ├── test/              Test paketi (node:test, 1200+ test)
-├── docs/              Ek dokumantasyon
-├── skills/            Claude Code beceri tanimlari
-├── issuer/            Lisans duzenleme iskelesi
-├── .github/workflows/ CI ve yayinlama
-└── package.json       Sifir calisma zamani bagimliligi`} lang="text" />
+├── docs/              Ek dokümantasyon
+├── skills/            Claude Code beceri tanımları
+├── issuer/            Lisans düzenleme iskelesi
+├── .github/workflows/ CI ve yayınlama
+└── package.json       Sıfır çalışma zamanı bağımlılığı`} lang="text" />
 
-      <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-4 mt-10">Modul Kategorileri</h2>
+      <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-4 mt-10">Modül Kategorileri</h2>
 
       <div class="space-y-6">
         <div class="p-6 bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-800 rounded-xl">
-          <h3 class="text-lg font-semibold text-surface-900 dark:text-surface-100 mb-3">Temel Hesap Yonetimi</h3>
-          <p class="text-sm text-surface-700 dark:text-surface-300">Merkezi orkestrasyon, profil aktivasyonu ve gecis mantigi.</p>
+          <h3 class="text-lg font-semibold text-surface-900 dark:text-surface-100 mb-3">Temel Hesap Yönetimi</h3>
+          <p class="text-sm text-surface-700 dark:text-surface-300">Merkezi orkestrasyon, profil aktivasyonu ve geçiş mantığı.</p>
           <div class="mt-3 grid grid-cols-3 gap-2 text-xs font-mono text-surface-700 dark:text-surface-300">
             <span>core.js</span><span>profiles.js</span><span>cli.js</span>
             <span>commands.js</span><span>config.js</span><span>menu.js</span>
@@ -34,8 +34,8 @@ import CodeBlock from '../../components/CodeBlock.astro';
         </div>
 
         <div class="p-6 bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-800 rounded-xl">
-          <h3 class="text-lg font-semibold text-surface-900 dark:text-surface-100 mb-3">Saglayicilar</h3>
-          <p class="text-sm text-surface-700 dark:text-surface-300">Coklu saglayici destegi ve yonlendirme mantigi.</p>
+          <h3 class="text-lg font-semibold text-surface-900 dark:text-surface-100 mb-3">Sağlayıcılar</h3>
+          <p class="text-sm text-surface-700 dark:text-surface-300">Çoklu sağlayıcı desteği ve yönlendirme mantığı.</p>
           <div class="mt-3 grid grid-cols-3 gap-2 text-xs font-mono text-surface-700 dark:text-surface-300">
             <span>provider.js</span><span>provusage.js</span><span>proxy.js</span>
             <span>router.js</span><span>breaker.js</span>
@@ -44,7 +44,7 @@ import CodeBlock from '../../components/CodeBlock.astro';
 
         <div class="p-6 bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-800 rounded-xl">
           <h3 class="text-lg font-semibold text-surface-900 dark:text-surface-100 mb-3">Oturumlar</h3>
-          <p class="text-sm text-surface-700 dark:text-surface-300">Oturum yasam dongusu, transkript isleme ve hatirlama.</p>
+          <p class="text-sm text-surface-700 dark:text-surface-300">Oturum yaşam döngüsü, transkript işleme ve hatırlama.</p>
           <div class="mt-3 grid grid-cols-3 gap-2 text-xs font-mono text-surface-700 dark:text-surface-300">
             <span>session.js</span><span>sessions.js</span><span>sessionmap.js</span>
             <span>transcript.js</span><span>recall.js</span>
@@ -53,7 +53,7 @@ import CodeBlock from '../../components/CodeBlock.astro';
 
         <div class="p-6 bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-800 rounded-xl">
           <h3 class="text-lg font-semibold text-surface-900 dark:text-surface-100 mb-3">Filo ve Transfer</h3>
-          <p class="text-sm text-surface-700 dark:text-surface-300">Coklu cihaz senkronizasyonu ve veri transferi.</p>
+          <p class="text-sm text-surface-700 dark:text-surface-300">Çoklu cihaz senkronizasyonu ve veri transferi.</p>
           <div class="mt-3 grid grid-cols-3 gap-2 text-xs font-mono text-surface-700 dark:text-surface-300">
             <span>fleet.js</span><span>transfer.js</span><span>migrate.js</span>
             <span>relay.js</span><span>swarm.js</span>
@@ -61,8 +61,8 @@ import CodeBlock from '../../components/CodeBlock.astro';
         </div>
 
         <div class="p-6 bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-800 rounded-xl">
-          <h3 class="text-lg font-semibold text-surface-900 dark:text-surface-100 mb-3">Guvenlik ve Kimlik Bilgileri</h3>
-          <p class="text-sm text-surface-700 dark:text-surface-300">Kimlik deposu soyutlamasi, sifreleme ve politika.</p>
+          <h3 class="text-lg font-semibold text-surface-900 dark:text-surface-100 mb-3">Güvenlik ve Kimlik Bilgileri</h3>
+          <p class="text-sm text-surface-700 dark:text-surface-300">Kimlik deposu soyutlaması, şifreleme ve politika.</p>
           <div class="mt-3 grid grid-cols-3 gap-2 text-xs font-mono text-surface-700 dark:text-surface-300">
             <span>keychain.js</span><span>creds.js</span><span>vault.js</span>
             <span>policy.js</span><span>license.js</span><span>secret-scan.js</span>
@@ -70,31 +70,31 @@ import CodeBlock from '../../components/CodeBlock.astro';
         </div>
       </div>
 
-      <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-4 mt-10">Veri Akisi: Hesap Degistirme</h2>
-      <CodeBlock code={`1. Kullanici calistirir: keyflip <isim>
-2. Surecler arasi kilit alinir
-3. Mevcut hesabin tokeni yeniden kaydedilir (yenilemeleri yakalar)
-4. Hedef hesabin tokeni isletim sistemi kimlik deposundan yuklenir
-5. Token canli kimlik yuvasina yazilir
-6. oauthAccount + userID ~/.claude.json'da yamalanir (atomik yaz)
-7. Masaustu ise: uygulama kapat → yapilan yama → uygulama yeniden ac
-8. Kilit serbest birakilir
-9. Adim 5-6'da basarisizlik: onceki duruma geri al`} lang="text" />
+      <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-4 mt-10">Veri Akışı: Hesap Değiştirme</h2>
+      <CodeBlock code={`1. Kullanıcı çalıştırır: keyflip <isim>
+2. Süreçler arası kilit alınır
+3. Mevcut hesabın tokeni yeniden kaydedilir (yenilemeleri yakalar)
+4. Hedef hesabın tokeni işletim sistemi kimlik deposundan yüklenir
+5. Token canlı kimlik yuvasına yazılır
+6. oauthAccount + userID ~/.claude.json'da yamalanır (atomik yaz)
+7. Masaüstü ise: uygulama kapat → yapılan yama → uygulama yeniden aç
+8. Kilit serbest bırakılır
+9. Adım 5-6'da başarısızlık: önceki duruma geri al`} lang="text" />
 
-      <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-4 mt-10">Coklu Platform Stratejisi</h2>
+      <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-4 mt-10">Çoklu Platform Stratejisi</h2>
       <div class="overflow-x-auto">
         <table class="w-full text-sm border border-surface-200 dark:border-surface-800 rounded-lg overflow-hidden">
           <thead class="bg-surface-100 dark:bg-surface-800">
             <tr>
-              <th class="px-4 py-3 text-left font-semibold">Parca</th>
+              <th class="px-4 py-3 text-left font-semibold">Parça</th>
               <th class="px-4 py-3 text-left font-semibold">macOS</th>
               <th class="px-4 py-3 text-left font-semibold">Linux / Windows</th>
             </tr>
           </thead>
           <tbody class="divide-y divide-surface-200 dark:divide-surface-800">
-            <tr><td class="px-4 py-2">Canli giris tokeni</td><td class="px-4 py-2 font-mono text-xs">Keychain</td><td class="px-4 py-2 font-mono text-xs">~/.claude/.credentials.json</td></tr>
-            <tr><td class="px-4 py-2">Kayitli profiller</td><td class="px-4 py-2 font-mono text-xs">Keychain ogeleri</td><td class="px-4 py-2 font-mono text-xs">~/.config/keyflip/creds/ (0600)</td></tr>
-            <tr><td class="px-4 py-2">Hesap kimligi</td><td class="px-4 py-2 font-mono text-xs" colspan="2">oauthAccount + userID ~/.claude.json icinde</td></tr>
+            <tr><td class="px-4 py-2">Canlı giriş tokeni</td><td class="px-4 py-2 font-mono text-xs">Keychain</td><td class="px-4 py-2 font-mono text-xs">~/.claude/.credentials.json</td></tr>
+            <tr><td class="px-4 py-2">Kayıtlı profiller</td><td class="px-4 py-2 font-mono text-xs">Keychain öğeleri</td><td class="px-4 py-2 font-mono text-xs">~/.config/keyflip/creds/ (0600)</td></tr>
+            <tr><td class="px-4 py-2">Hesap kimliği</td><td class="px-4 py-2 font-mono text-xs" colspan="2">oauthAccount + userID ~/.claude.json içinde</td></tr>
           </tbody>
         </table>
       </div>

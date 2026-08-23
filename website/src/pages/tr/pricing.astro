@@ -8,19 +8,19 @@ const trans = t(locale);
 
 const tiers = [
   {
-    name: 'Ucretsiz',
+    name: 'Ücretsiz',
     price: '$0',
     period: 'sonsuza kadar',
-    description: 'Acik kaynak, temel ozellikler sinirsiiz.',
+    description: 'Açık kaynak, temel özellikler sınırsız.',
     features: [
-      'Hesap degistirme (sinirsiz)',
-      'Saglayici yonlendirme',
+      'Hesap değiştirme (sınırsız)',
+      'Sağlayıcı yönlendirme',
       'Yedekleme proxy\'si',
       'Oturum arama ve devam',
-      'Yedekleme ve goc',
-      'Yabanci oturum aktarimi',
-      'Temel MCP yuzeyi',
-      'CLI + interaktif menu',
+      'Yedekleme ve göç',
+      'Yabancı oturum aktarımı',
+      'Temel MCP yüzeyi',
+      'CLI + interaktif menü',
     ],
     highlighted: false,
     badge: null,
@@ -29,57 +29,57 @@ const tiers = [
     name: 'Pro',
     price: '$8-12',
     period: '/ay',
-    description: 'Guclu kullanicilar icin olcek, otomasyon ve zeka.',
+    description: 'Güçlü kullanıcılar için ölçek, otomasyon ve zeka.',
     features: [
-      'Ucretsiz\'deki her sey',
-      'Filo yonetimi',
-      'Orkestrator / isler / dagilim',
-      'Maliyet zekasi ve tahmin',
-      'Butceler ve uyarilar',
-      'Otomatik gecis (arka plan servisi)',
-      'Yonlendirici + onbellek',
-      'Oncelikli destek',
+      'Ücretsiz\'deki her şey',
+      'Filo yönetimi',
+      'Orkestratör / işler / dağılım',
+      'Maliyet zekası ve tahmin',
+      'Bütçeler ve uyarılar',
+      'Otomatik geçiş (arka plan servisi)',
+      'Yönlendirici + önbellek',
+      'Öncelikli destek',
     ],
     highlighted: true,
-    badge: 'Yakinda',
+    badge: 'Yakında',
   },
   {
-    name: 'Takim',
+    name: 'Takım',
     price: '$6-10',
-    period: '/kisi/ay',
-    description: 'Takimlar ve organizasyonlar icin guvenli isbirligi.',
+    period: '/kişi/ay',
+    description: 'Takımlar ve organizasyonlar için güvenli iş birliği.',
     features: [
-      'Pro\'daki her sey',
-      'Sifrelenmis takim havuzu (RBAC)',
+      'Pro\'daki her şey',
+      'Şifrelenmiş takım havuzu (RBAC)',
       'Politika motoru',
-      'Vault arka uclari (1Password/Bitwarden/HashiCorp)',
-      'Swarm (kendi filo yurut)',
-      'Denetim disari aktarimi',
-      'SSO destegi',
+      'Vault arka uçları (1Password/Bitwarden/HashiCorp)',
+      'Swarm (kendi filo yürüt)',
+      'Denetim dışa aktarımı',
+      'SSO desteği',
     ],
     highlighted: false,
-    badge: 'Yakinda',
+    badge: 'Yakında',
   },
   {
     name: 'Kurumsal',
-    price: 'Ozel',
+    price: 'Özel',
     period: '',
-    description: 'Kendi barindirma, ozel politika ve adanmis destek.',
+    description: 'Kendi barındırma, özel politika ve adanmış destek.',
     features: [
-      'Takim\'daki her sey',
-      'Kendi barindirma lisans duzenleyici',
-      'Ozel politika kurallari',
-      'Oncelikli destek + SLA',
-      'Tedarik ve faturalandirma',
-      'Adanmis baslatma',
+      'Takım\'daki her şey',
+      'Kendi barındırma lisans düzenleyici',
+      'Özel politika kuralları',
+      'Öncelikli destek + SLA',
+      'Tedarik ve faturalandırma',
+      'Adanmış başlatma',
     ],
     highlighted: false,
-    badge: 'Yakinda',
+    badge: 'Yakında',
   },
 ];
 ---
 
-<BaseLayout title="Fiyatlandirma" locale={locale} currentPath="/tr/pricing">
+<BaseLayout title="Fiyatlandırma" locale={locale} currentPath="/tr/pricing">
   <PageHeader title={trans.pricing.title} subtitle={trans.pricing.subtitle} />
 
   <section class="py-16">
@@ -109,13 +109,13 @@ const tiers = [
               ))}
             </ul>
             <div class="mt-6">
-              {tier.name === 'Ucretsiz' ? (
+              {tier.name === 'Ücretsiz' ? (
                 <a href="/tr/docs/installation" class="block w-full text-center px-4 py-2 text-sm font-semibold text-primary-600 dark:text-primary-400 border border-primary-600 dark:border-primary-400 rounded-lg hover:bg-primary-50 dark:hover:bg-primary-950 transition-colors">
-                  Simdi Kurun
+                  Şimdi Kurun
                 </a>
               ) : (
                 <button disabled class="block w-full text-center px-4 py-2 text-sm font-semibold text-surface-400 dark:text-surface-600 border border-surface-200 dark:border-surface-700 rounded-lg cursor-not-allowed">
-                  Yakinda
+                  Yakında
                 </button>
               )}
             </div>
@@ -126,10 +126,10 @@ const tiers = [
       <div class="mt-16 max-w-3xl mx-auto">
         <h2 class="text-2xl font-bold text-center text-surface-900 dark:text-surface-50 mb-6">Lisanslama Felsefesi</h2>
         <div class="p-6 bg-surface-100 dark:bg-surface-800 rounded-xl space-y-4 text-surface-700 dark:text-surface-300">
-          <p><strong>Eve telefon yok:</strong> Lisans dogrulamasi cevrimdisi (Ed25519 imza). Hava bosluklu calisir.</p>
-          <p><strong>Ucretsiz katman gercekten faydali:</strong> Temel gecis/yonetim is akisi ucretsiz ve acik kaynak (MIT) kalir.</p>
-          <p><strong>Varsayilan olarak sifir telemetri:</strong> Acikca secmediginiz surece veri toplama yok.</p>
-          <p><strong>Sifir calisma zamani bagimliligi korunur:</strong> Lisanslama ilkeli sadece <code>node:crypto</code> kullanir.</p>
+          <p><strong>Eve telefon yok:</strong> Lisans doğrulaması çevrimdışı (Ed25519 imza). Hava boşluklu çalışır.</p>
+          <p><strong>Ücretsiz katman gerçekten faydalı:</strong> Temel geçiş/yönetim iş akışı ücretsiz ve açık kaynak (MIT) kalır.</p>
+          <p><strong>Varsayılan olarak sıfır telemetri:</strong> Açıkça seçmediğiniz sürece veri toplama yok.</p>
+          <p><strong>Sıfır çalışma zamanı bağımlılığı korunur:</strong> Lisanslama ilkeli sadece <code>node:crypto</code> kullanır.</p>
         </div>
       </div>
     </div>

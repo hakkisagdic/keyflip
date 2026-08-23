@@ -23,56 +23,56 @@ const trans = t(locale);
   <section class="py-16 bg-white dark:bg-surface-900">
     <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
       <h2 class="text-2xl sm:text-3xl font-bold text-center text-surface-900 dark:text-surface-50 mb-8">
-        Saniyeler icinde kurun
+        Saniyeler içinde kurun
       </h2>
       <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
         <CodeBlock title="macOS / Linux" code='curl -fsSL https://raw.githubusercontent.com/hakkisagdic/keyflip/main/install.sh | bash' />
         <CodeBlock title="Windows (PowerShell)" code='irm https://raw.githubusercontent.com/hakkisagdic/keyflip/main/install.ps1 | iex' />
-        <CodeBlock title="npm (tum platformlar)" code='npm install --global @hakkisagdic/keyflip' />
+        <CodeBlock title="npm (tüm platformlar)" code='npm install --global @hakkisagdic/keyflip' />
         <CodeBlock title="Kaynaktan" code='git clone https://github.com/hakkisagdic/keyflip.git && cd keyflip && ./install.sh' />
       </div>
     </div>
   </section>
 
-  <!-- Ozellikler -->
+  <!-- Özellikler -->
   <section class="py-16">
     <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
       <h2 class="text-2xl sm:text-3xl font-bold text-center text-surface-900 dark:text-surface-50 mb-4">
         Neden keyflip?
       </h2>
       <p class="text-center text-surface-700 dark:text-surface-300 max-w-2xl mx-auto mb-12">
-        Tum Claude hesaplarinizi, saglayicilarinizi, oturumlarinizi ve cihazlarinizi yonetmek icin tek arac.
+        Tüm Claude hesaplarınızı, sağlayıcılarınızı, oturumlarınızı ve cihazlarınızı yönetmek için tek araç.
       </p>
       <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
         <FeatureCard
           icon="0"
-          title="Sifir Bagimlilik"
-          description="Saf Node.js, yerli modul yok. Node calistiran her yerde calisir."
+          title="Sıfır Bağımlılık"
+          description="Saf Node.js, yerli modül yok. Node çalıştıran her yerde çalışır."
         />
         <FeatureCard
           icon="&#x1f310;"
-          title="Coklu Platform"
-          description="macOS, Linux ve Windows. Uc platformda da CI ile test edilmis."
+          title="Çoklu Platform"
+          description="macOS, Linux ve Windows. Üç platformda da CI ile test edilmiş."
         />
         <FeatureCard
           icon="&#x1f4bb;"
           title="130+ Komut"
-          description="Basit hesap degistirmeden filo yonetimine, is orkestrasyon ve AI destekli oturum aramaya."
+          description="Basit hesap değiştirmeden filo yönetimine, iş orkestrasyon ve AI destekli oturum aramaya."
         />
         <FeatureCard
           icon="&#x1f50c;"
           title="MCP Yerel"
-          description="130+ MCP araci ile tam MCP sunucusu. AI ajanlari keyflip'i kabuk komutu olmadan kullanabilir."
+          description="130+ MCP aracı ile tam MCP sunucusu. AI ajanları keyflip'i kabuk komutu olmadan kullanabilir."
         />
         <FeatureCard
           icon="&#x1f6e1;"
-          title="Guvenlik Oncelikli"
-          description="OAuth tokenlari isletim sistemi kimlik deposunda. Geri alinabilir islemsel gecisler."
+          title="Güvenlik Öncelikli"
+          description="OAuth tokenları işletim sistemi kimlik deposunda. Geri alınabilir işlemsel geçişler."
         />
         <FeatureCard
           icon="&#x1f680;"
-          title="Filo Yonetimi"
-          description="Sifrelenmis paylasimli klasor uzerinden birden fazla makineyi koordine edin."
+          title="Filo Yönetimi"
+          description="Şifrelenmiş paylaşımlı klasör üzerinden birden fazla makineyi koordine edin."
         />
       </div>
     </div>
@@ -82,15 +82,15 @@ const trans = t(locale);
   <section class="py-16 bg-white dark:bg-surface-900">
     <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
       <h2 class="text-2xl sm:text-3xl font-bold text-center text-surface-900 dark:text-surface-50 mb-8">
-        Nasil calisir
+        Nasıl çalışır
       </h2>
-      <CodeBlock title="Interaktif Menu" code={`        Keyflip (keyflip)
+      <CodeBlock title="İnteraktif Menü" code={`        Keyflip (keyflip)
   Aktif: alice@example.com
 
   → [1] alice@example.com
     [2] bob@example.org
 
-  [numara] degistir   [a] kaydet   [d] sil   [r] yenile   [q] cik`} lang="text" />
+  [numara] değiştir   [a] kaydet   [d] sil   [r] yenile   [q] çık`} lang="text" />
     </div>
   </section>
 
@@ -98,10 +98,10 @@ const trans = t(locale);
   <section class="py-20 bg-gradient-to-r from-primary-600 to-primary-800 dark:from-primary-800 dark:to-primary-950">
     <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
       <h2 class="text-2xl sm:text-3xl font-bold text-white mb-4">
-        AI is akisinizi basitlestirmeye hazir misiniz?
+        AI iş akışınızı basitleştirmeye hazır mısınız?
       </h2>
       <p class="text-primary-100 mb-8">
-        Bir dakikadan kisa surede baslayin. Kayit gerekmez.
+        Bir dakikadan kısa sürede başlayın. Kayıt gerekmez.
       </p>
       <a href="/tr/docs/installation" class="inline-block px-8 py-3 bg-white text-primary-700 font-semibold rounded-lg hover:bg-primary-50 transition-colors shadow-lg">
         keyflip'i kurun

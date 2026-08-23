@@ -1,0 +1,22 @@
+---
+import BaseLayout from '../../layouts/BaseLayout.astro';
+---
+
+<BaseLayout title="404 - Sayfa Bulunamadı" locale="tr" currentPath="/tr/404">
+  <section class="py-32">
+    <div class="max-w-2xl mx-auto px-4 text-center">
+      <h1 class="text-6xl font-extrabold text-primary-600 dark:text-primary-400 mb-4">404</h1>
+      <p class="text-xl text-surface-700 dark:text-surface-300 mb-8">
+        Sayfa bulunamadı. Taşınmış veya silinmiş olabilir.
+      </p>
+      <div class="flex items-center justify-center gap-4">
+        <a href="/tr/" class="px-6 py-2 bg-primary-600 text-white font-medium rounded-lg hover:bg-primary-700 transition-colors">
+          Ana Sayfaya Dön
+        </a>
+        <a href="/tr/docs" class="px-6 py-2 border border-primary-600 text-primary-600 dark:text-primary-400 dark:border-primary-400 font-medium rounded-lg hover:bg-primary-50 dark:hover:bg-primary-950 transition-colors">
+          Dokümantasyonu Oku
+        </a>
+      </div>
+    </div>
+  </section>
+</BaseLayout>

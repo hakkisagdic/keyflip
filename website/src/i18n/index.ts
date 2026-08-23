@@ -32,21 +32,21 @@ export function getNavigation(locale: Locale): NavItem[] {
   if (locale === 'tr') {
     return [
       { label: 'Ana Sayfa', href: `${prefix}/` },
-      { label: 'Ozellikler', href: `${prefix}/features` },
+      { label: 'Özellikler', href: `${prefix}/features` },
       {
-        label: 'Dokumantasyon', href: `${prefix}/docs`, children: [
+        label: 'Dokümantasyon', href: `${prefix}/docs`, children: [
           { label: 'Kurulum', href: `${prefix}/docs/installation` },
-          { label: 'Kullanim', href: `${prefix}/docs/usage` },
-          { label: 'CLI Referansi', href: `${prefix}/docs/cli-reference` },
-          { label: 'Saglayicilar', href: `${prefix}/docs/providers` },
+          { label: 'Kullanım', href: `${prefix}/docs/usage` },
+          { label: 'CLI Referansı', href: `${prefix}/docs/cli-reference` },
+          { label: 'Sağlayıcılar', href: `${prefix}/docs/providers` },
           { label: 'Oturumlar', href: `${prefix}/docs/sessions` },
           { label: 'Filo', href: `${prefix}/docs/fleet` },
           { label: 'MCP', href: `${prefix}/docs/mcp` },
         ]
       },
       { label: 'Mimari', href: `${prefix}/architecture` },
-      { label: 'Kullanim Senaryolari', href: `${prefix}/use-cases` },
-      { label: 'Fiyatlandirma', href: `${prefix}/pricing` },
+      { label: 'Kullanım Senaryoları', href: `${prefix}/use-cases` },
+      { label: 'Fiyatlandırma', href: `${prefix}/pricing` },
       { label: 'SSS', href: `${prefix}/faq` },
     ];
   }
@@ -161,41 +161,41 @@ export const translations: Record<Locale, Translations> = {
   tr: {
     site: {
       title: 'keyflip',
-      description: 'Claude Code ve AI araclari icin coklu hesap degistirici. Sifir bagimlilik, coklu platform, 130+ komut.',
-      tagline: 'Claude Code ve AI araclari icin coklu hesap degistirici',
+      description: 'Claude Code ve AI araçları için çoklu hesap değiştirici. Sıfır bağımlılık, çoklu platform, 130+ komut.',
+      tagline: 'Claude Code ve AI araçları için çoklu hesap değiştirici',
     },
     hero: {
-      title: 'Claude hesaplarini tek komutla degistir',
-      subtitle: 'Birden fazla Anthropic hesabina bir kez giris yapin, ardindan tekrar tekrar giris/cikis yapmadan aralarinda gecis yapin. Sifir bagimlilik, coklu platform, 130+ CLI komutu.',
-      cta: 'Baslayin',
-      ctaDocs: 'Dokumantasyon',
+      title: 'Claude hesaplarını tek komutla değiştir',
+      subtitle: 'Birden fazla Anthropic hesabına bir kez giriş yapın, ardından tekrar tekrar giriş/çıkış yapmadan aralarında geçiş yapın. Sıfır bağımlılık, çoklu platform, 130+ CLI komutu.',
+      cta: 'Başlayın',
+      ctaDocs: 'Dokümantasyon',
     },
     features: {
-      title: 'Ozellikler',
-      subtitle: 'Tek makinede birden fazla AI hesabini yonetmek icin ihtiyaciniz olan her sey',
+      title: 'Özellikler',
+      subtitle: 'Tek makinede birden fazla AI hesabını yönetmek için ihtiyacınız olan her şey',
     },
     docs: {
-      title: 'Dokumantasyon',
-      subtitle: "keyflip'i nasil kuracaginizi, yapilandiracaginizi ve ustaca kullanacaginizi ogrenin",
+      title: 'Dokümantasyon',
+      subtitle: "keyflip'i nasıl kuracağınızı, yapılandıracağınızı ve ustaca kullanacağınızı öğrenin",
     },
     pricing: {
-      title: 'Fiyatlandirma',
-      subtitle: 'Acik cekirdek, sonsuza kadar ucretsiz. Olcek, takimlar ve otomasyon icin ucretli katmanlar.',
+      title: 'Fiyatlandırma',
+      subtitle: 'Açık çekirdek, sonsuza kadar ücretsiz. Ölçek, takımlar ve otomasyon için ücretli katmanlar.',
     },
     faq: {
-      title: 'Sikca Sorulan Sorular',
-      subtitle: 'keyflip hakkinda sik sorulan sorular',
+      title: 'Sıkça Sorulan Sorular',
+      subtitle: 'keyflip hakkında sık sorulan sorular',
     },
     footer: {
-      license: 'MIT Lisansi',
-      madeBy: 'Yapimci',
-      notAffiliated: 'Anthropic ile bagli degildir. "Claude" ve "Claude Code", Anthropic\'in ticari markalaridir.',
+      license: 'MIT Lisansı',
+      madeBy: 'Yapımcı',
+      notAffiliated: 'Anthropic ile bağlı değildir. "Claude" ve "Claude Code", Anthropic\'in ticari markalarıdır.',
     },
     nav: {
-      darkMode: 'Karanlik mod',
-      lightMode: 'Aydinlik mod',
+      darkMode: 'Karanlık mod',
+      lightMode: 'Aydınlık mod',
       language: 'Dil',
-      menu: 'Menu',
+      menu: 'Menü',
     },
   },
 };
