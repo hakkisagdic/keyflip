@@ -13,6 +13,7 @@
     "lint:fix": "eslint --fix src/ test/ bin/",
     "format": "prettier --write \"src/**/*.js\" \"test/**/*.js\" \"bin/**/*.js\"",
     "format:check": "prettier --check \"src/**/*.js\" \"test/**/*.js\" \"bin/**/*.js\"",
+    "type-check": "tsc --noEmit",
     "start": "node bin/keyflip.js",
     "prepare": "husky"
   },
@@ -58,11 +59,13 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@types/node": "^26.2.0",
     "eslint": "^10.9.0",
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-prettier": "^5.5.6",
     "husky": "^9.1.7",
     "lint-staged": "^17.3.0",
-    "prettier": "^3.9.6"
+    "prettier": "^3.9.6",
+    "typescript": "^7.0.2"
   }
 }

@@ -1,3 +1,4 @@
+// @ts-check
 // Non-secret profile metadata stored as <configDir>/<name>.json (0600).
 import fs from 'fs';
 import path from 'path';
@@ -11,26 +12,89 @@ const RESERVED_NAMES = ['__proto__', 'prototype', 'constructor'];
 // keyflip's own top-level state files (<configDir>/*.json) that are NOT account
 // profiles. Without this, list() counts breakers.json/proxy.json/etc. as phantom
 // accounts and the schema migration rewrites them to a bogus `undefined.json`.
-const RESERVED_FILES = ['breakers', 'proxy', 'mcp-registry', 'links', 'installed-skills', 'session-accounts', 'fleet', 'fleet-seen', 'fleet-applied', 'fleet-key', 'fleet-known', 'groups', 'budget', 'notify', 'jobs', 'teampool', 'policy', 'vault', 'integrations', 'router', 'swarm', 'config', 'license', 'embeddings', 'pii-patterns'];
+const RESERVED_FILES = [
+  'breakers',
+  'proxy',
+  'mcp-registry',
+  'links',
+  'installed-skills',
+  'session-accounts',
+  'fleet',
+  'fleet-seen',
+  'fleet-applied',
+  'fleet-key',
+  'fleet-known',
+  'groups',
+  'budget',
+  'notify',
+  'jobs',
+  'teampool',
+  'policy',
+  'vault',
+  'integrations',
+  'router',
+  'swarm',
+  'config',
+  'license',
+  'embeddings',
+  'pii-patterns',
+];
 
-function metaPath(dir, name) { return path.join(dir, name + '.json'); }
+function metaPath(dir, name) {
+  return path.join(dir, name + '.json');
+}
 
+/**
+ * List all profile names in the config directory.
+ * @param {string} dir - Config directory path.
+ * @returns {string[]} Sorted array of profile names.
+ */
 function list(dir) {
   let files;
-  try { files = fs.readdirSync(dir); } catch (e) { return []; }
+  try {
+    files = fs.readdirSync(dir);
+  } catch (e) {
+    return [];
+  }
   return files
-    .filter(function (f) { return f.length > 5 && f.slice(-5) === '.json' && f[0] !== '.'; })
-    .map(function (f) { return f.slice(0, -5); })
-    .filter(function (n) { return RESERVED_FILES.indexOf(n) === -1; })
+    .filter(function (f) {
+      return f.length > 5 && f.slice(-5) === '.json' && f[0] !== '.';
+    })
+    .map(function (f) {
+      return f.slice(0, -5);
+    })
+    .filter(function (n) {
+      return RESERVED_FILES.indexOf(n) === -1;
+    })
     .sort();
 }
 
+/**
+ * Read profile metadata from disk.
+ * @param {string} dir - Config directory path.
+ * @param {string} name - Profile name.
+ * @returns {{ email?: string, name?: string, userID?: string, oauthAccount?: object, savedAt?: string, schemaVersion?: number } | null} Parsed metadata object or null if not found.
+ */
 function read(dir, name) {
-  try { return JSON.parse(fs.readFileSync(metaPath(dir, name), 'utf8')); } catch (e) { return null; }
+  try {
+    return JSON.parse(fs.readFileSync(metaPath(dir, name), 'utf8'));
+  } catch (e) {
+    return null;
+  }
 }
 
+/**
+ * Check whether a profile exists on disk.
+ * @param {string} dir - Config directory path.
+ * @param {string} name - Profile name.
+ * @returns {boolean} True if the profile metadata file exists.
+ */
 function exists(dir, name) {
-  try { return fs.existsSync(metaPath(dir, name)); } catch (e) { return false; }
+  try {
+    return fs.existsSync(metaPath(dir, name));
+  } catch (e) {
+    return false;
+  }
 }
 
 function write(dir, meta) {
@@ -39,7 +103,11 @@ function write(dir, meta) {
 }
 
 function remove(dir, name) {
-  try { fs.unlinkSync(metaPath(dir, name)); } catch (e) { /* ignore */ }
+  try {
+    fs.unlinkSync(metaPath(dir, name));
+  } catch (e) {
+    /* ignore */
+  }
 }
 
 function email(dir, name) {
@@ -47,15 +115,27 @@ function email(dir, name) {
   return (m && m.email) || '';
 }
 
+/**
+ * Validate a profile name against naming rules.
+ * @param {string} name - Name to validate.
+ * @returns {boolean} True if the name is valid for use as a profile name.
+ */
 function isValidName(name) {
   // Reject RESERVED_FILES too: an inbound/imported account named e.g. 'fleet' would otherwise
   // overwrite keyflip's own <configDir>/fleet.json state (a hostile fleet save-account vector).
-  return typeof name === 'string' && NAME_RE.test(name)
-    && RESERVED_NAMES.indexOf(name) === -1
-    && RESERVED_FILES.indexOf(name) === -1;
+  return (
+    typeof name === 'string' &&
+    NAME_RE.test(name) &&
+    RESERVED_NAMES.indexOf(name) === -1 &&
+    RESERVED_FILES.indexOf(name) === -1
+  );
 }
 
-// Turn an email into a safe, human profile name (local-part, lowercased).
+/**
+ * Turn an email into a safe, human-readable profile name (local-part, lowercased).
+ * @param {string} emailAddr - Email address to derive the name from.
+ * @returns {string} A sanitized profile name.
+ */
 function sanitizeName(emailAddr) {
   const local = String(emailAddr || '').split('@')[0] || '';
   const base = local

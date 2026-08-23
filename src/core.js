@@ -1,15 +1,26 @@
+// @ts-check
 // Account-switching logic. Pure with respect to `ctx` (see context.js): every
 // side effect goes through ctx.store / ctx paths, so tests inject fakes.
 import * as claude from './claude.js';
 import * as profiles from './profiles.js';
 import * as _stores from './stores/index.js';
 
+/**
+ * Get the email of the currently logged-in Claude account.
+ * @param {import('./context.js').KeyflipContext} ctx - Application context.
+ * @returns {string} The current account email, or empty string if none.
+ */
 function currentEmail(ctx) {
   const acc = claude.currentAccount(claude.readConfig(ctx.claudeConfigPath));
   return acc ? acc.email : '';
 }
 
-// Save the live (currently-logged-in) account into profile <name>.
+/**
+ * Save the live (currently-logged-in) account into a named profile.
+ * @param {import('./context.js').KeyflipContext} ctx - Application context.
+ * @param {string} name - Profile name to save as.
+ * @returns {string} The profile name that was saved.
+ */
 function saveAs(ctx, name) {
   if (!profiles.isValidName(name)) {
     throw new Error("invalid profile name: '" + name + "' (allowed: A-Z a-z 0-9 . _ -)");
@@ -73,8 +84,13 @@ function addCurrent(ctx, nameOverride) {
       throw new Error("invalid profile name: '" + nameOverride + "' (allowed: A-Z a-z 0-9 . _ -)");
     }
     if (profiles.exists(ctx.configDir, nameOverride) && profiles.email(ctx.configDir, nameOverride) !== email) {
-      throw new Error("profile '" + nameOverride + "' already exists for " +
-        profiles.email(ctx.configDir, nameOverride) + '; choose another name.');
+      throw new Error(
+        "profile '" +
+          nameOverride +
+          "' already exists for " +
+          profiles.email(ctx.configDir, nameOverride) +
+          '; choose another name.',
+      );
     }
     name = nameOverride;
   } else {
@@ -92,8 +108,14 @@ function validateBlob(name, blob) {
   }
   const t = blob.trim();
   if (t[0] === '{' || t[0] === '[') {
-    try { JSON.parse(t); } catch (e) {
-      throw new Error("profile '" + name + "' credential data is unreadable (corrupt/truncated) — remove it and run 'keyflip add' again");
+    try {
+      JSON.parse(t);
+    } catch (e) {
+      throw new Error(
+        "profile '" +
+          name +
+          "' credential data is unreadable (corrupt/truncated) — remove it and run 'keyflip add' again",
+      );
     }
   }
 }
@@ -113,33 +135,51 @@ function applyProfile(ctx, name) {
   const blob = ctx.store.getProfile(name);
   if (!blob) throw new Error("profile '" + name + "' has no stored credentials");
   validateBlob(name, blob);
-  const cfg = claude.loadForWrite(ctx.claudeConfigPath); // {} if missing, throws if corrupt
+  const cfg = /** @type {any} */ (claude.loadForWrite(ctx.claudeConfigPath)); // {} if missing, throws if corrupt
   // Point ~/.claude.json at the target account. An empty {} oauthAccount (e.g. a
   // --token import with no identity) is NOT a valid pointer — clear the stale keys
   // so we never leave a mixed identity (new account's token + old account's userID).
   const hasOauth = meta.oauthAccount && Object.keys(meta.oauthAccount).length > 0;
-  if (hasOauth) cfg.oauthAccount = meta.oauthAccount; else delete cfg.oauthAccount;
-  if (meta.userID) cfg.userID = meta.userID; else delete cfg.userID;
+  if (hasOauth) cfg.oauthAccount = meta.oauthAccount;
+  else delete cfg.oauthAccount;
+  if (meta.userID) cfg.userID = meta.userID;
+  else delete cfg.userID;
 
   let prevBlob;
-  try { prevBlob = ctx.store.getLive(); } // captured for rollback if the pointer write fails
-  catch (e) { prevBlob = undefined; }     // can't read previous (locked keychain) — no rollback possible
+  try {
+    prevBlob = ctx.store.getLive();
+  } catch (e) {
+    // captured for rollback if the pointer write fails
+    prevBlob = undefined;
+  } // can't read previous (locked keychain) — no rollback possible
 
   ctx.store.setLive(blob); // credential first (Claude's real login)
   try {
     claude.writeConfig(ctx.claudeConfigPath, cfg);
   } catch (e) {
     if (prevBlob !== undefined && prevBlob !== null) {
-      try { ctx.store.setLive(prevBlob); } catch (e2) { /* best effort */ }
+      try {
+        ctx.store.setLive(prevBlob);
+      } catch (e2) {
+        /* best effort */
+      }
     }
-    const err = new Error('switch failed while writing the account pointer (credential rolled back): ' +
-      ((e && e.message) || e));
-    err.code = (e && e.code) || 'ESWITCH';
+    const err = /** @type {any} */ (
+      new Error(
+        'switch failed while writing the account pointer (credential rolled back): ' +
+          ((e && /** @type {any} */ (e).message) || e),
+      )
+    );
+    err.code = (e && /** @type {any} */ (e).code) || 'ESWITCH';
     throw err;
   }
   // Claude Code reads the Keychain before the credentials file — after a file
   // write, clear any stale Keychain copy so it can't resurrect the old account.
-  try { _stores.reconcileStaleKeychain(ctx); } catch (e) { /* best effort */ }
+  try {
+    _stores.reconcileStaleKeychain(ctx);
+  } catch (e) {
+    /* best effort */
+  }
 }
 
 // Before switching away, preserve the live account's (possibly rotated) token:
@@ -152,13 +192,21 @@ function refreshCurrent(ctx, targetName) {
   for (let i = 0; i < names.length; i++) {
     if (profiles.email(ctx.configDir, names[i]) === cur) {
       if (names[i] !== targetName) {
-        try { saveAs(ctx, names[i]); } catch (e) { /* non-fatal */ }
+        try {
+          saveAs(ctx, names[i]);
+        } catch (e) {
+          /* non-fatal */
+        }
       }
       return;
     }
   }
   // Current account isn't saved yet — capture it so its token survives the switch.
-  try { addCurrent(ctx); } catch (e) { /* non-fatal */ }
+  try {
+    addCurrent(ctx);
+  } catch (e) {
+    /* non-fatal */
+  }
 }
 
 function doSwitch(ctx, name) {
@@ -166,9 +214,12 @@ function doSwitch(ctx, name) {
   applyProfile(ctx, name);
 }
 
-// Switch as far as the profile allows: swap the CLI creds when they were captured
-// for this profile; otherwise leave the CLI alone (app-only profile). Returns
-// { cli: <whether the CLI login was switched> }.
+/**
+ * Switch to a named profile, preserving the current account first.
+ * @param {import('./context.js').KeyflipContext} ctx - Application context.
+ * @param {string} name - Profile name to switch to.
+ * @returns {{ cli: boolean }} Whether the CLI login was switched.
+ */
 function performSwitch(ctx, name) {
   const hasCli = !!ctx.store.getProfile(name);
   if (hasCli) doSwitch(ctx, name);
@@ -176,6 +227,11 @@ function performSwitch(ctx, name) {
   return { cli: hasCli };
 }
 
+/**
+ * List all saved profiles with their index, name, email, and active status.
+ * @param {import('./context.js').KeyflipContext} ctx - Application context.
+ * @returns {{ index: number, name: string, email: string, active: boolean }[]} Profile list.
+ */
 function listProfiles(ctx) {
   const cur = currentEmail(ctx);
   return profiles.list(ctx.configDir).map(function (name, i) {
@@ -193,14 +249,32 @@ function resolveProfile(ctx, arg) {
   const names = profiles.list(ctx.configDir);
   if (/^[0-9]+$/.test(arg)) {
     const i = parseInt(arg, 10);
-    return (i >= 1 && i <= names.length) ? names[i - 1] : null;
+    return i >= 1 && i <= names.length ? names[i - 1] : null;
   }
   return names.indexOf(arg) !== -1 ? arg : null;
 }
 
+/**
+ * Remove a profile (credentials and metadata).
+ * @param {import('./context.js').KeyflipContext} ctx - Application context.
+ * @param {string} name - Profile name to remove.
+ */
 function removeProfile(ctx, name) {
   ctx.store.delProfile(name);
   profiles.remove(ctx.configDir, name);
 }
 
-export { currentEmail, saveAs, uniqueName, autoName, addCurrent, applyProfile, refreshCurrent, doSwitch, performSwitch, listProfiles, resolveProfile, removeProfile };
+export {
+  currentEmail,
+  saveAs,
+  uniqueName,
+  autoName,
+  addCurrent,
+  applyProfile,
+  refreshCurrent,
+  doSwitch,
+  performSwitch,
+  listProfiles,
+  resolveProfile,
+  removeProfile,
+};
