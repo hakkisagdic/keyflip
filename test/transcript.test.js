@@ -1,9 +1,8 @@
-'use strict';
 // Tests for session export (src/transcript.js): parse the Claude Code JSONL into a clean
 // conversation, render markdown/HTML. Tool noise is summarized, not dumped.
-const test = require('node:test');
-const assert = require('node:assert');
-const transcript = require('../src/transcript');
+import test from 'node:test';
+import assert from 'node:assert';
+import * as transcript from '../src/transcript.js';
 
 const JSONL = [
   '{"type":"user","cwd":"/Users/me/proj","timestamp":"2026-07-07T09:00:00Z","message":{"role":"user","content":"Fix the login bug"}}',

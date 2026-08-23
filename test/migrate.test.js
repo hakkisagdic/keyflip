@@ -1,17 +1,16 @@
-'use strict';
 // Tests for cross-machine migration (src/migrate.js): bundle ALL accounts +
 // providers + session transcripts, then MERGE (union) them into another machine
 // without clobbering what's already there. Uses the hermetic makeCtx (temp home,
 // in-memory store) with claudeDir pinned so transcripts land in a temp projects/.
-const test = require('node:test');
-const assert = require('node:assert');
-const fs = require('fs');
-const path = require('path');
+import test from 'node:test';
+import assert from 'node:assert';
+import fs from 'fs';
+import path from 'path';
 
-const migrate = require('../src/migrate');
-const profiles = require('../src/profiles');
-const provider = require('../src/provider');
-const { makeCtx } = require('./helpers');
+import * as migrate from '../src/migrate.js';
+import * as profiles from '../src/profiles.js';
+import * as provider from '../src/provider.js';
+import { makeCtx } from './helpers.js';
 
 function ctxWithClaude() {
   const ctx = makeCtx();
@@ -312,7 +311,7 @@ test('a sessions-only bundle (no accounts) still merges transcripts', function (
 });
 
 // SECURITY (review P1 #7): the merge writes must not FOLLOW a pre-planted symlink out of root.
-const os = require('os');
+import os from 'os';
 test('mergeTranscripts refuses a symlinked project directory (no escape via symlinked dir)', function () {
   const dst = ctxWithClaude();
   const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'kf-escape-'));

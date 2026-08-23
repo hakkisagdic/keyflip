@@ -1,15 +1,16 @@
-'use strict';
 // Regression tests for the 8 confirmed review findings (data-loss class).
-const test = require('node:test');
-const assert = require('node:assert');
-const fs = require('fs');
-const path = require('path');
-const provider = require('../src/provider');
-const mcpreg = require('../src/mcpreg');
-const desktopgw = require('../src/desktopgw');
-const backup = require('../src/backup');
-const settings = require('../src/settings');
-const { makeCtx, writeClaude } = require('./helpers');
+import test from 'node:test';
+import assert from 'node:assert';
+import fs from 'fs';
+import path from 'path';
+import * as provider from '../src/provider.js';
+import * as mcpreg from '../src/mcpreg.js';
+import * as desktopgw from '../src/desktopgw.js';
+import * as backup from '../src/backup.js';
+import * as settings from '../src/settings.js';
+import { makeCtx, writeClaude } from './helpers.js';
+import * as _sync from '../src/sync.js';
+import * as _core from '../src/core.js';
 
 function withSettings(ctx) { ctx.claudeSettingsPath = path.join(ctx.home, '.claude', 'settings.json'); return ctx; }
 function writeCorrupt(p) { fs.mkdirSync(path.dirname(p), { recursive: true }); fs.writeFileSync(p, '{ "theme":"dark", }'); } // trailing comma
@@ -91,8 +92,8 @@ test('two backups within the same second get distinct dirs', function () {
 
 // #4 sync — apply writes a credential-capturing safety export before overwriting
 test('sync.apply snapshots credentials (not just metadata) before overwriting', function () {
-  const sync = require('../src/sync');
-  const core = require('../src/core');
+  const sync = _sync;
+  const core = _core;
   const ctx = makeCtx();
   writeClaude(ctx, { oauthAccount: { emailAddress: 'a@x.com' }, userID: 'u' });
   ctx.store.setLive('{"claudeAiOauth":{"accessToken":"OLD-TOKEN"}}');

@@ -1,11 +1,10 @@
-'use strict';
 // File-based credential store for Linux / Windows (and any machine where Claude
 // stores credentials in ~/.claude/.credentials.json instead of a system keyring).
 // The live blob is the whole credentials file; profile blobs are 0600 files under
 // <configDir>/creds/<name>.cred.
-const fs = require('fs');
-const path = require('path');
-const { atomicWrite } = require('../fsutil');
+import fs from 'fs';
+import path from 'path';
+import { atomicWrite } from '../fsutil.js';
 
 class FileStore {
   constructor(opts) {
@@ -32,4 +31,4 @@ class FileStore {
   delProfile(name) { try { fs.unlinkSync(this._profPath(name)); } catch (e) { /* ignore */ } }
 }
 
-module.exports = FileStore;
+export default FileStore;

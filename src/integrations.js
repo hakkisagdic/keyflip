@@ -1,4 +1,3 @@
-'use strict';
 // CHAT INTEGRATIONS (Slack / Discord): push keyflip status + events to where people
 // already work, richly formatted per platform. Inbound bots need hosting (out of
 // scope), so this is OUTBOUND-only: given a webhook URL we detect the platform from
@@ -14,13 +13,16 @@
 // logs a secret; the on-disk delivery log records only platform/event/status — never
 // the URL and never the payload. All IO/time is injectable (opts.fetch, opts.clock)
 // so tests need no network.
-const fs = require('fs');
-const path = require('path');
-const { atomicWrite, readJsonForWrite } = require('./fsutil');
-const notify = require('./notify'); // reuse stripSecrets + sanitizeWebhook (same discipline)
+import fs from 'fs';
+import path from 'path';
+import { atomicWrite, readJsonForWrite } from './fsutil.js';
+import * as _notify from './notify.js';
+import * as _core from './core.js';
+import * as _usage from './usage.js';
+const notify = _notify; // reuse stripSecrets + sanitizeWebhook (same discipline)
 
 let VERSION = '0.0.0';
-try { VERSION = require('../package.json').version; } catch (e) { /* ignore */ }
+try { VERSION = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version; } catch (e) { /* ignore */ }
 
 // eslint-disable-next-line no-control-regex
 const CTRL = /[\x00-\x1f\x7f]/g; // strip control chars (newlines / ANSI ESC) from any rendered text
@@ -213,8 +215,8 @@ async function post(ctx, spec, opts) {
 // saved, and the active account's remaining quota headroom (read from the local
 // usage cache — no network here). Includes `at` so the formatters can stamp it.
 function statusMessage(ctx) {
-  const core = require('./core');
-  const usage = require('./usage');
+  const core = _core;
+  const usage = _usage;
   const list = safeCall(function () { return core.listProfiles(ctx); }, []);
   const active = list.filter(function (p) { return p.active; })[0] || null;
   let cache = {};
@@ -299,15 +301,4 @@ const mcpTools = [
   },
 ];
 
-module.exports = {
-  detect: detect,
-  formatSlack: formatSlack,
-  formatDiscord: formatDiscord,
-  post: post,
-  statusMessage: statusMessage,
-  cli: cli,
-  history: history,
-  statePath: statePath,
-  mcpTools: mcpTools,
-  EVENTS: EVENTS,
-};
+export { detect, formatSlack, formatDiscord, post, statusMessage, cli, history, statePath, mcpTools, EVENTS };

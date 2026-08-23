@@ -1,13 +1,16 @@
-'use strict';
 // Parallel session mode (`keyflip run`) + headless token import (`add --token`).
-const test = require('node:test');
-const assert = require('node:assert');
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
-const session = require('../src/session');
-const core = require('../src/core');
-const { makeCtx, writeClaude, tmpdir } = require('./helpers');
+import test from 'node:test';
+import assert from 'node:assert';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+import * as session from '../src/session.js';
+import * as core from '../src/core.js';
+import { makeCtx, writeClaude, tmpdir } from './helpers.js';
+import _child_process from 'child_process';
+import { fileURLToPath } from 'url';
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const BLOB = JSON.stringify({ claudeAiOauth: { accessToken: 'AT', refreshToken: 'RT', expiresAt: 9999999999999 } });
 
@@ -90,7 +93,7 @@ function mkhome() {
   return home;
 }
 function run(home, args, extraEnv, input) {
-  return require('child_process').spawnSync(process.execPath, [BIN].concat(args), {
+  return _child_process.spawnSync(process.execPath, [BIN].concat(args), {
     encoding: 'utf8', input: input,
     env: Object.assign({}, process.env, {
       HOME: home, USERPROFILE: home,

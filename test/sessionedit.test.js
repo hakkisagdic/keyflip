@@ -1,17 +1,16 @@
-'use strict';
 // Tests for session (transcript) lifecycle mutations (src/sessionedit.js): recoverable + hard
 // delete, PII scrub (dry-run vs apply), and surgical edits (delete / redact / truncate). Every
 // mutating op must keep the .jsonl valid JSONL, back up before writing, and refuse path traversal.
 // pii.js is built in parallel, so we inject a hermetic fake via ctx.pii that honours its contract
 // (scrub(text,opts) -> {text,counts}).
-const test = require('node:test');
-const assert = require('node:assert');
-const fs = require('fs');
-const path = require('path');
-const zlib = require('zlib');
-const sessionedit = require('../src/sessionedit');
-const archive = require('../src/archive');
-const { makeCtx } = require('./helpers');
+import test from 'node:test';
+import assert from 'node:assert';
+import fs from 'fs';
+import path from 'path';
+import zlib from 'zlib';
+import * as sessionedit from '../src/sessionedit.js';
+import * as archive from '../src/archive.js';
+import { makeCtx } from './helpers.js';
 
 // A stand-in for pii.js honouring the { text, counts } contract: redacts emails + phones.
 const fakePii = {

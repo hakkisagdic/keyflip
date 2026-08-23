@@ -1,10 +1,11 @@
-'use strict';
-const test = require('node:test');
-const assert = require('node:assert');
-const fs = require('fs');
-const path = require('path');
-const skillstore = require('../src/skillstore');
-const { makeCtx } = require('./helpers');
+import test from 'node:test';
+import assert from 'node:assert';
+import fs from 'fs';
+import path from 'path';
+import * as skillstore from '../src/skillstore.js';
+import { makeCtx } from './helpers.js';
+import _os from 'os';
+import _child_process from 'child_process';
 
 function makeSkillDir(base, name, body) {
   const d = path.join(base, name);
@@ -66,11 +67,11 @@ test('add refuses to clobber a pre-existing non-keyflip skill without --force', 
 test('add from a GitHub tarball (mocked fetch) installs the skill', async function () {
   const ctx = makeCtx();
   // build a real .tar.gz that codeload-style wraps in repo-ref/
-  const staging = fs.mkdtempSync(path.join(require('os').tmpdir(), 'kf-stage-'));
+  const staging = fs.mkdtempSync(path.join(_os.tmpdir(), 'kf-stage-'));
   const inner = path.join(staging, 'skills-main');
   makeSkillDir(inner, 'fromgh');
   const tgz = path.join(staging, 'repo.tar.gz');
-  require('child_process').execFileSync('tar', ['-czf', tgz, '-C', staging, 'skills-main']);
+  _child_process.execFileSync('tar', ['-czf', tgz, '-C', staging, 'skills-main']);
   const bytes = fs.readFileSync(tgz);
   const fetchMock = async function (url) {
     assert.match(url, /codeload\.github\.com\/owner\/skills\/tar\.gz\/HEAD/);
@@ -83,10 +84,10 @@ test('add from a GitHub tarball (mocked fetch) installs the skill', async functi
 
 test('a GitHub subdir with ../ is rejected (path traversal)', async function () {
   const ctx = makeCtx();
-  const staging = fs.mkdtempSync(path.join(require('os').tmpdir(), 'kf-trav-'));
+  const staging = fs.mkdtempSync(path.join(_os.tmpdir(), 'kf-trav-'));
   const inner = path.join(staging, 'repo-main'); fs.mkdirSync(inner, { recursive: true });
   const tgz = path.join(staging, 'r.tar.gz');
-  require('child_process').execFileSync('tar', ['-czf', tgz, '-C', staging, 'repo-main']);
+  _child_process.execFileSync('tar', ['-czf', tgz, '-C', staging, 'repo-main']);
   const bytes = fs.readFileSync(tgz);
   const fetchMock = async function () { return { ok: true, status: 200, arrayBuffer: async function () { return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength); } }; };
   await assert.rejects(function () { return skillstore.add(ctx, 'owner/repo/../../../../etc', { fetch: fetchMock }); }, /traversal/);

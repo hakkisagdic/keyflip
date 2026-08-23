@@ -1,9 +1,8 @@
-'use strict';
 // Session manager: browse/search/resume local Claude Code conversations across
 // ALL accounts (transcripts in ~/.claude/projects/<encoded-cwd>/<sessionId>.jsonl
 // are account-independent). Read-only; nothing is uploaded.
-const fs = require('fs');
-const path = require('path');
+import fs from 'fs';
+import path from 'path';
 
 function projectsDir(ctx) { return path.join(ctx.claudeDir || path.join(ctx.home, '.claude'), 'projects'); }
 
@@ -336,4 +335,4 @@ function compactTranscript(content, opts) {
   return { compacted: out, before: before, after: Buffer.byteLength(out), elided: elided };
 }
 
-module.exports = { projectsDir: projectsDir, list: list, find: find, summarize: summarize, resumeCommand: resumeCommand, sendCommand: sendCommand, decodeProjectDir: decodeProjectDir, encodeCwd: encodeCwd, rebind: rebind, rebindAppRegistry: rebindAppRegistry, rebindConfigPaths: rebindConfigPaths, searchRow: searchRow, findMatch: findMatch, matchesSearch: matchesSearch, compactTranscript: compactTranscript };
+export { projectsDir, list, find, summarize, resumeCommand, sendCommand, decodeProjectDir, encodeCwd, rebind, rebindAppRegistry, rebindConfigPaths, searchRow, findMatch, matchesSearch, compactTranscript };

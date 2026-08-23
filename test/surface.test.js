@@ -1,10 +1,9 @@
-'use strict';
-const test = require('node:test');
-const assert = require('node:assert');
-const fs = require('fs');
-const path = require('path');
-const surface = require('../src/surface');
-const { makeCtx } = require('./helpers');
+import test from 'node:test';
+import assert from 'node:assert';
+import fs from 'fs';
+import path from 'path';
+import * as surface from '../src/surface.js';
+import { makeCtx } from './helpers.js';
 
 function write(ctx, rel, data) {
   const abs = path.join(ctx.home, rel);

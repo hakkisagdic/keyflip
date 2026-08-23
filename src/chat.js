@@ -1,4 +1,3 @@
-'use strict';
 // EXPERIMENTAL: read claude.ai "Chat" conversations for the account the desktop
 // app is currently signed into. Chat history is SERVER-SIDE, so this calls the
 // (undocumented) claude.ai web API using the app's own session cookie, decrypted
@@ -8,11 +7,11 @@
 // FRESH Cloudflare clearance cookie (cf_clearance/__cf_bm) — it works reliably
 // right after using the desktop app, and may return 403 when those are stale;
 // read-only; only sees whichever account the live cookie belongs to.
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
-const crypto = require('crypto');
-const { run } = require('./exec');
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+import crypto from 'crypto';
+import { run } from './exec.js';
 
 // The Electron safeStorage password (login Keychain), used to decrypt cookies.
 function safeStoragePassword(ctx) {
@@ -115,4 +114,4 @@ async function get(ctx, id, opts) {
   return conv;
 }
 
-module.exports = { list: list, get: get, cookieHeader: cookieHeader, decryptCookie: decryptCookie, activeOrg: activeOrg, headers: headers };
+export { list, get, cookieHeader, decryptCookie, activeOrg, headers };

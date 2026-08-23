@@ -1,14 +1,13 @@
-'use strict';
 // Tests for B1/B2: archive + gzip Claude Code transcripts (src/archive.js). Archiving
 // moves a transcript out of ~/.claude/projects into keyflip's gzipped archive store;
 // unarchive restores it. Round-trip must be byte-exact.
-const test = require('node:test');
-const assert = require('node:assert');
-const fs = require('fs');
-const path = require('path');
-const zlib = require('zlib');
-const archive = require('../src/archive');
-const { makeCtx } = require('./helpers');
+import test from 'node:test';
+import assert from 'node:assert';
+import fs from 'fs';
+import path from 'path';
+import zlib from 'zlib';
+import * as archive from '../src/archive.js';
+import { makeCtx } from './helpers.js';
 
 function ctxWithClaude() {
   const ctx = makeCtx();

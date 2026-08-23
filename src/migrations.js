@@ -1,11 +1,10 @@
-'use strict';
 // Versioned state + one-time migrations. Applied migration ids are recorded in
 // <configDir>/.migrations.json; each migration is idempotent and self-guarded so
 // a failure never bricks startup (it just retries next run).
-const fs = require('fs');
-const path = require('path');
-const profiles = require('./profiles');
-const { atomicWrite } = require('./fsutil');
+import fs from 'fs';
+import path from 'path';
+import * as profiles from './profiles.js';
+import { atomicWrite } from './fsutil.js';
 
 const CURRENT_SCHEMA = 1;
 
@@ -54,4 +53,4 @@ function runMigrations(ctx) {
   return ranNow;
 }
 
-module.exports = { runMigrations: runMigrations, CURRENT_SCHEMA: CURRENT_SCHEMA, _MIGRATIONS: MIGRATIONS };
+export { runMigrations, CURRENT_SCHEMA, MIGRATIONS as _MIGRATIONS };

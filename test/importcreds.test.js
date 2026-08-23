@@ -1,17 +1,17 @@
-'use strict';
 // IMPORT credentials from a .env file / environment. parseEnv + detect are pure;
 // apply integrates with the real provider module over a hermetic makeCtx (temp
 // configDir + in-memory store). The load-bearing invariant across all of it: a
 // real key is NEVER present in any summary/returned value, only on the candidate
 // object handed to provider.add.
-const test = require('node:test');
-const assert = require('node:assert');
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
-const imp = require('../src/importcreds');
-const provider = require('../src/provider');
-const { makeCtx } = require('./helpers');
+import test from 'node:test';
+import assert from 'node:assert';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+import * as imp from '../src/importcreds.js';
+import * as provider from '../src/provider.js';
+import { makeCtx } from './helpers.js';
+import * as _profiles from '../src/profiles.js';
 
 // ---- parseEnv ---------------------------------------------------------------
 
@@ -148,7 +148,7 @@ test('detect: unparseable base URL falls back to a valid name', function () {
   const c = imp.detect({ ANTHROPIC_BASE_URL: 'not a url', ANTHROPIC_AUTH_TOKEN: 'A' });
   assert.strictEqual(c.length, 1);
   assert.strictEqual(c[0].name, 'anthropic');
-  const profiles = require('../src/profiles');
+  const profiles = _profiles;
   assert.ok(profiles.isValidName(c[0].name));
 });
 

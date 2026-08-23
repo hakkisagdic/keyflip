@@ -1,4 +1,3 @@
-'use strict';
 // JOB QUEUE / capacity scheduler: "run a prompt on the best available account,
 // headless". A prompt is enqueued into <configDir>/jobs.json; running it picks the
 // account with the most quota HEADROOM (reusing usage.usageForProfiles +
@@ -15,14 +14,15 @@
 // runJob runs the job on THIS machine. To dispatch remotely, a caller would queue a
 // fleet command (see fleet.queue / a future { type: 'run-job' }) instead of calling
 // runJob locally, and the target machine would drain it. Left unbuilt on purpose.
-const path = require('path');
-const crypto = require('crypto');
-const core = require('./core');
-const usage = require('./usage');
-const groups = require('./groups');
-const session = require('./session');
-const { atomicWrite, readJsonForWrite } = require('./fsutil');
-const { run: execRun } = require('./exec');
+import path from 'path';
+import crypto from 'crypto';
+import * as core from './core.js';
+import * as usage from './usage.js';
+import * as groups from './groups.js';
+import * as session from './session.js';
+import { atomicWrite, readJsonForWrite } from './fsutil.js';
+import { run as execRun } from './exec.js';
+import * as _policy from './policy.js';
 
 const STATUSES = ['queued', 'running', 'done', 'error'];
 const MAX_JOBS = 500;          // bounded list — keep the most recent N jobs
@@ -212,7 +212,7 @@ async function runJob(ctx, job, opts) {
 
   // Policy engine: the job runs headless AS `name` in job.cwd — honor the same directory→account
   // rules a switch would (a job auto-selects any credentialed account, so it could pick a denied one).
-  const pol = require('./policy').evaluate(ctx, { cwd: job.cwd, account: name });
+  const pol = _policy.evaluate(ctx, { cwd: job.cwd, account: name });
   if (!pol.allowed) return finish(ctx, job, { status: 'error', account: name, error: 'policy denied: ' + pol.reason });
 
   applyPatch(ctx, job, { status: 'running', account: name }); // persist RUNNING before we spawn
@@ -243,7 +243,7 @@ async function fanOut(ctx, prompt, accountNames, opts) {
   for (let i = 0; i < names.length; i++) {
     const name = String(names[i]);
     const entry = { account: name };
-    const pol = require('./policy').evaluate(ctx, { cwd: cwd, account: name });
+    const pol = _policy.evaluate(ctx, { cwd: cwd, account: name });
     if (!pol.allowed) { entry.error = 'policy denied: ' + pol.reason; out.push(entry); continue; }
     try {
       const res = runAs(ctx, name, prompt, cwd, opts);
@@ -364,17 +364,4 @@ const mcpTools = [
   },
 ];
 
-module.exports = {
-  enqueue: enqueue,
-  list: list,
-  get: get,
-  clear: clear,
-  selectAccount: selectAccount,
-  runNext: runNext,
-  runJob: runJob,
-  fanOut: fanOut,
-  jobsPath: jobsPath,
-  mcpTools: mcpTools,
-  STATUSES: STATUSES,
-  MAX_JOBS: MAX_JOBS,
-};
+export { enqueue, list, get, clear, selectAccount, runNext, runJob, fanOut, jobsPath, mcpTools, STATUSES, MAX_JOBS };

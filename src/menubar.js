@@ -1,17 +1,21 @@
-'use strict';
 // G4: the always-glanceable surface WITHOUT keyflip becoming a daemon. `keyflip menubar`
 // emits xbar/SwiftBar plugin format (https://xbarapp.com, https://swiftbar.app): the active
 // account + 5h quota in the title, a dropdown of accounts with click-to-switch, providers,
 // and quick actions. xbar/SwiftBar is the resident host that re-runs this on an interval —
 // keyflip stays a plain CLI. Zero-dep; the render is pure + unit-tested.
-const path = require('path');
+import path from 'path';
+import * as _panel from './panel.js';
+import * as _exec from './exec.js';
+import { fileURLToPath } from 'url';
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 // Resolve how to invoke keyflip from a menu-bar action (xbar runs from its own cwd, so we
 // need an absolute exec). Injectable runner keeps tests hermetic.
 function resolveExec(opts) {
   opts = opts || {};
   if (opts.exec) return opts.exec; // test/override
-  const runner = opts.run || require('./exec').run;
+  const runner = opts.run || _exec.run;
   let bin = null;
   try { const w = runner('which', ['keyflip']); if (w && w.code === 0 && String(w.stdout).trim()) bin = String(w.stdout).trim(); } catch (e) { /* ignore */ }
   if (!bin) bin = path.join(__dirname, '..', 'bin', 'keyflip.js');
@@ -34,7 +38,7 @@ function clean(s) { return String(s == null ? '' : s).replace(/[|\n\r]/g, ' ').t
 // Render the plugin output for the given dashboard state (from panel.buildState).
 function render(ctx, opts) {
   opts = opts || {};
-  const panel = require('./panel');
+  const panel = _panel;
   const s = opts.state || panel.buildState(ctx);
   const ex = resolveExec(opts);
   const accounts = s.accounts || [];
@@ -88,4 +92,4 @@ function pluginTarget(platform, home, xdgConfigHome) {
   return null; // win32 / others: no built-in host — the user points --dir at their tray tool
 }
 
-module.exports = { render: render, resolveExec: resolveExec, pluginTarget: pluginTarget };
+export { render, resolveExec, pluginTarget };

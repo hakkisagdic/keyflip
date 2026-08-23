@@ -1,15 +1,14 @@
-'use strict';
 // FLEET: multi-machine control plane over an encrypted shared rendezvous dir. Two machines are
 // two makeCtx contexts (separate config dirs, separate credential stores) sharing one fleet dir
 // + passphrase — exactly the real topology, just local.
-const test = require('node:test');
-const assert = require('node:assert');
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
-const fleet = require('../src/fleet');
-const profiles = require('../src/profiles');
-const { makeCtx } = require('./helpers');
+import test from 'node:test';
+import assert from 'node:assert';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+import * as fleet from '../src/fleet.js';
+import * as profiles from '../src/profiles.js';
+import { makeCtx } from './helpers.js';
 
 const PASS = 'fleet-secret-passphrase';
 function sharedDir() { return fs.mkdtempSync(path.join(os.tmpdir(), 'kf-fleet-')); }
@@ -125,7 +124,7 @@ test('fleet.json does not pollute the account list (RESERVED)', function () {
   ctx.store.setProfile('real', '{"token":"x"}');
   fleet.setConfig(ctx, { name: 'thismachine', dir: '/tmp/x' });
   fleet.saveSeen(ctx, { k: 'v' });
-  const names = require('../src/core').listProfiles(ctx).map(function (p) { return p.name; });
+  const names = _core.listProfiles(ctx).map(function (p) { return p.name; });
   assert.ok(names.indexOf('fleet') === -1 && names.indexOf('fleet-seen') === -1, 'fleet.json/fleet-seen.json are not accounts');
   assert.ok(names.indexOf('real') !== -1);
 });
@@ -134,7 +133,10 @@ test('fleet.json does not pollute the account list (RESERVED)', function () {
 // Post-review hardening (2026-07-07) — regression tests. Each guards a CONFIRMED
 // finding from the fleet adversarial review (23 findings, 3-lens verified).
 // ============================================================================
-const sync = require('../src/sync');
+import * as sync from '../src/sync.js';
+import _http from 'http';
+import * as _panel from '../src/panel.js';
+import * as _core from '../src/core.js';
 function writeRaw(dir, name, obj) { fs.writeFileSync(path.join(dir, name), sync.encrypt(JSON.stringify(obj), PASS), { mode: 0o600 }); }
 
 test('P0 cred leak: readFleet keeps creds for relay, sanitizeStatus strips them for display', function () {
@@ -352,9 +354,9 @@ test('origin-auth hardening: TOFU roster is prototype-pollution safe; fingerprin
 });
 
 test('P1 DNS-rebinding: the fleet panel rejects a non-loopback Host header', async function () {
-  const http = require('http');
+  const http = _http;
   const A = machine('alpha', sharedDir());
-  const panel = require('../src/panel');
+  const panel = _panel;
   const h = await panel.serveFleet(A, { port: 0, getFleet: function () { return { machines: [], newReplies: [] }; } });
   function get(hostHeader) {
     return new Promise(function (resolve) {

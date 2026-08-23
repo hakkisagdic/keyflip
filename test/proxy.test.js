@@ -1,12 +1,12 @@
-'use strict';
-const test = require('node:test');
-const assert = require('node:assert');
-const fs = require('fs');
-const path = require('path');
-const proxy = require('../src/proxy');
-const breaker = require('../src/breaker');
-const core = require('../src/core');
-const { makeCtx, writeClaude } = require('./helpers');
+import test from 'node:test';
+import assert from 'node:assert';
+import fs from 'fs';
+import path from 'path';
+import * as proxy from '../src/proxy.js';
+import * as breaker from '../src/breaker.js';
+import * as core from '../src/core.js';
+import { makeCtx, writeClaude } from './helpers.js';
+import _http from 'http';
 
 function twoAccounts() {
   const ctx = makeCtx();
@@ -114,7 +114,7 @@ test('a real server starts on localhost and forwards via injected forward', asyn
   const forward = async function () { return { status: 200, headers: { 'content-type': 'application/json' }, body: Buffer.from('{"ok":true}') }; };
   const s = await proxy.serve(ctx, { port: 0, forward: forward });
   try {
-    const http = require('http');
+    const http = _http;
     const body = await new Promise(function (resolve, reject) {
       const req = http.request({ hostname: '127.0.0.1', port: s.port, path: '/v1/messages', method: 'POST' }, function (res) {
         let d = ''; res.on('data', function (c) { d += c; }); res.on('end', function () { resolve(d); });

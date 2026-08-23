@@ -1,0 +1,63 @@
+---
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import PageHeader from '../../components/PageHeader.astro';
+import CodeBlock from '../../components/CodeBlock.astro';
+---
+
+<BaseLayout title="MCP" locale="en" currentPath="/docs/mcp">
+  <PageHeader title="MCP (Model Context Protocol)" subtitle="Full MCP server with 130+ tools for AI agents" />
+
+  <section class="py-16">
+    <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
+
+      <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-4">Overview</h2>
+      <p class="text-surface-700 dark:text-surface-300 mb-6">
+        Agents should not have to guess the CLI -- keyflip speaks MCP. The full CLI surface is exposed as 130+ MCP tools, so an agent can do everything without shelling out.
+      </p>
+
+      <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-4 mt-10">Setup</h2>
+      <CodeBlock code={`claude mcp add keyflip -- keyflip mcp
+# or see the full setup:
+keyflip mcp --setup`} />
+
+      <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-4 mt-10">Tool Categories</h2>
+      <div class="space-y-4 mb-8">
+        <div class="p-4 bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-800 rounded-lg">
+          <h3 class="font-semibold text-surface-900 dark:text-surface-100">Accounts</h3>
+          <p class="text-sm text-surface-700 dark:text-surface-300 mt-1"><code>keyflip_status</code>, <code>keyflip_list</code>, <code>keyflip_switch</code>, <code>keyflip_next</code>, <code>keyflip_add</code>, <code>keyflip_account_remove</code></p>
+        </div>
+        <div class="p-4 bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-800 rounded-lg">
+          <h3 class="font-semibold text-surface-900 dark:text-surface-100">Providers</h3>
+          <p class="text-sm text-surface-700 dark:text-surface-300 mt-1"><code>keyflip_providers</code>, <code>keyflip_provider_use</code>, <code>keyflip_provider_add</code>, <code>keyflip_provider_remove</code>, <code>keyflip_test_provider</code>, <code>keyflip_speedtest</code></p>
+        </div>
+        <div class="p-4 bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-800 rounded-lg">
+          <h3 class="font-semibold text-surface-900 dark:text-surface-100">Fleet</h3>
+          <p class="text-sm text-surface-700 dark:text-surface-300 mt-1"><code>keyflip_fleet_status</code>, <code>keyflip_fleet_switch</code>, <code>keyflip_fleet_send_account</code>, <code>keyflip_fleet_collect</code>, <code>keyflip_fleet_keys</code>, <code>keyflip_fleet_trust</code></p>
+        </div>
+        <div class="p-4 bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-800 rounded-lg">
+          <h3 class="font-semibold text-surface-900 dark:text-surface-100">Sessions</h3>
+          <p class="text-sm text-surface-700 dark:text-surface-300 mt-1"><code>keyflip_sessions</code>, <code>keyflip_resume_command</code>, archive, distill, compact</p>
+        </div>
+        <div class="p-4 bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-800 rounded-lg">
+          <h3 class="font-semibold text-surface-900 dark:text-surface-100">Context Layer</h3>
+          <p class="text-sm text-surface-700 dark:text-surface-300 mt-1"><code>keyflip_context_read</code>, <code>keyflip_context_task_set</code>, <code>keyflip_context_decision_add</code>, <code>keyflip_checkpoint_*</code>, <code>keyflip_handoff</code></p>
+        </div>
+        <div class="p-4 bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-800 rounded-lg">
+          <h3 class="font-semibold text-surface-900 dark:text-surface-100">More</h3>
+          <p class="text-sm text-surface-700 dark:text-surface-300 mt-1">Migrate/LAN, WebDAV sync, <code>keyflip://</code> links, desktop gateway, MCP-server registry, directory pins, diagnostics, backups, skills, failover proxy</p>
+        </div>
+      </div>
+
+      <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-4 mt-10">Safety Model</h2>
+      <ul class="list-disc pl-6 text-surface-700 dark:text-surface-300 space-y-2 mb-8">
+        <li>Every tool has a proper JSON Schema and read-only/destructive annotations</li>
+        <li><strong>Mutating tools require <code>confirm: true</code></strong> -- descriptions tell agents to ask the user first</li>
+        <li>Secrets are never accepted through MCP (e.g., adding a provider key is deferred to <code>--key-file</code> on CLI)</li>
+      </ul>
+
+      <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-4 mt-10">Claude Code Skill</h2>
+      <p class="text-surface-700 dark:text-surface-300 mb-4">A bundled skill teaches the agent when and how to use keyflip (rate-limit playbook, sentinels, parallel sessions):</p>
+      <CodeBlock code={`keyflip install-skill   # copies to ~/.claude/skills/keyflip`} />
+    </div>
+  </section>
+</BaseLayout>

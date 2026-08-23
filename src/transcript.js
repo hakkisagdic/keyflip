@@ -1,4 +1,3 @@
-'use strict';
 // Turn a Claude Code session transcript (JSONL of message events) into a clean, shareable
 // document — markdown or a self-contained HTML chat view — for offline review, archiving, or
 // sharing. Zero-dep; tool noise is summarized ("used Read, Bash"), not dumped.
@@ -89,4 +88,4 @@ const HTML_STYLE = [
   '@media(max-width:600px){header{padding:12px 14px}header h1{font-size:15px}main{padding:12px 14px;gap:10px}.msg{padding:10px 12px}footer{padding:12px 14px}}',
 ].join('');
 
-module.exports = { parse: parse, toMarkdown: toMarkdown, toHtml: toHtml };
+export { parse, toMarkdown, toHtml };

@@ -1,13 +1,12 @@
-'use strict';
 // Tests for A2's session→account mapping (src/sessionmap.js) + that profiles.list does NOT
 // count the map file as a phantom account.
-const test = require('node:test');
-const assert = require('node:assert');
-const fs = require('fs');
-const path = require('path');
-const sessionmap = require('../src/sessionmap');
-const profiles = require('../src/profiles');
-const { makeCtx } = require('./helpers');
+import test from 'node:test';
+import assert from 'node:assert';
+import fs from 'fs';
+import path from 'path';
+import * as sessionmap from '../src/sessionmap.js';
+import * as profiles from '../src/profiles.js';
+import { makeCtx } from './helpers.js';
 
 test('set/get/unset round-trip a session→account assignment', function () {
   const ctx = makeCtx();

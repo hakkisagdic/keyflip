@@ -1,14 +1,13 @@
-'use strict';
 // Tests for the onboard wizard's inline provider (API-key endpoint) capture (#6).
 // The full wizard is TTY-interactive, but `onboardProvider(ctx, ask, rl)` is pure
 // enough to drive with a scripted answer queue (shared by the visible `ask` and the
 // hidden key read via rl.question).
-const test = require('node:test');
-const assert = require('node:assert');
-const path = require('path');
-const cli = require('../src/cli');
-const provider = require('../src/provider');
-const { makeCtx } = require('./helpers');
+import test from 'node:test';
+import assert from 'node:assert';
+import path from 'path';
+import * as cli from '../src/cli.js';
+import * as provider from '../src/provider.js';
+import { makeCtx } from './helpers.js';
 
 // Drive onboardProvider with a queue of answers consumed in prompt order:
 // name, baseUrl, authScheme, key(hidden), route-now.

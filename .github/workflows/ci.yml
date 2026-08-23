@@ -6,6 +6,36 @@ on:
   pull_request:
 
 jobs:
+  lint:
+    name: lint & format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install devDependencies
+        run: npm install
+      - name: Lint
+        run: npm run lint
+      - name: Format check
+        run: npm run format:check
+      - name: Type check
+        run: npm run type-check
+
+  audit:
+    name: security audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install dependencies
+        run: npm install
+      - name: Run npm audit
+        run: npm audit --audit-level=high
+
   test:
     name: test (${{ matrix.os }}, node ${{ matrix.node }})
     runs-on: ${{ matrix.os }}
@@ -21,11 +51,13 @@ jobs:
           node-version: ${{ matrix.node }}
       - name: Versions
         run: node --version
-      # No dependencies to install — the tool is pure Node stdlib.
       - name: Run tests
         run: npm test
       - name: CLI smoke test
         run: node bin/keyflip.js version
+      - name: Test with coverage
+        if: matrix.os == 'ubuntu-latest' && matrix.node == 22
+        run: npm run test:coverage
 
   # Real-keychain end-to-end: exercises /usr/bin/security against a throwaway
   # keychain (never the runner's login keychain). Hard timeout so a stuck

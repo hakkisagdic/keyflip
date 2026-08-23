@@ -1,0 +1,46 @@
+---
+interface Props {
+  title: string;
+  subtitle: string;
+  cta?: string;
+  ctaHref?: string;
+  ctaSecondary?: string;
+  ctaSecondaryHref?: string;
+}
+
+const { title, subtitle, cta, ctaHref, ctaSecondary, ctaSecondaryHref } = Astro.props;
+---
+
+<section class="relative overflow-hidden py-20 sm:py-32">
+  <!-- Background gradient -->
+  <div class="absolute inset-0 bg-gradient-to-br from-primary-50 via-surface-50 to-accent-400/5 dark:from-primary-950/50 dark:via-surface-950 dark:to-accent-500/5"></div>
+
+  <div class="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
+    <h1 class="text-4xl sm:text-5xl lg:text-6xl font-extrabold text-surface-900 dark:text-surface-50 leading-tight">
+      {title}
+    </h1>
+    <p class="mt-6 max-w-3xl mx-auto text-lg sm:text-xl text-surface-700 dark:text-surface-300 leading-relaxed">
+      {subtitle}
+    </p>
+    {(cta || ctaSecondary) && (
+      <div class="mt-10 flex flex-col sm:flex-row items-center justify-center gap-4">
+        {cta && ctaHref && (
+          <a
+            href={ctaHref}
+            class="px-8 py-3 text-base font-semibold text-white bg-primary-600 hover:bg-primary-700 rounded-lg shadow-lg hover:shadow-xl transition-all duration-200"
+          >
+            {cta}
+          </a>
+        )}
+        {ctaSecondary && ctaSecondaryHref && (
+          <a
+            href={ctaSecondaryHref}
+            class="px-8 py-3 text-base font-semibold text-primary-600 dark:text-primary-400 border-2 border-primary-600 dark:border-primary-400 hover:bg-primary-50 dark:hover:bg-primary-950 rounded-lg transition-all duration-200"
+          >
+            {ctaSecondary}
+          </a>
+        )}
+      </div>
+    )}
+  </div>
+</section>

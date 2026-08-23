@@ -1,22 +1,22 @@
-'use strict';
 // Session (transcript) lifecycle MUTATIONS for Claude Code conversations. Where sessions.js
 // only BROWSES ~/.claude/projects/<project>/<sessionId>.jsonl, this file DELETES, SCRUBS (PII),
 // and surgically EDITS a transcript — every op reversible-by-default or backed up, every write
 // atomic + 0600, and the file always left as valid JSONL (one JSON object per line). It leans on
 // archive.js (recoverable delete), pii.js (redaction), and fsutil.js (atomicWrite/safeDestUnder),
 // and never follows a path outside projectsDir.
-const fs = require('fs');
-const path = require('path');
-const fsutil = require('./fsutil');
-const sessions = require('./sessions');
-const archive = require('./archive');
+import fs from 'fs';
+import path from 'path';
+import * as fsutil from './fsutil.js';
+import * as sessions from './sessions.js';
+import * as archive from './archive.js';
+import * as _pii from './pii.js';
 
 // pii.js is a sibling built in parallel: pii.scrub(text, opts) -> { text, counts }, pii.CATEGORIES.
 // Lazy-require so this module still loads if pii.js isn't present yet, and allow a ctx.pii override
 // (dependency injection for tests / alternate engines) that falls back to the real module.
 function getPii(ctx) {
   if (ctx && ctx.pii && typeof ctx.pii.scrub === 'function') return ctx.pii;
-  return require('./pii');
+  return _pii;
 }
 
 // --- validation ------------------------------------------------------------
@@ -204,11 +204,4 @@ function editSession(ctx, opts) {
   return summary;
 }
 
-module.exports = {
-  deleteSession: deleteSession,
-  scrubSession: scrubSession,
-  editSession: editSession,
-  // exported for reuse/tests
-  scrubVisible: scrubVisible,
-  replaceVisible: replaceVisible,
-};
+export { deleteSession, scrubSession, editSession, scrubVisible, replaceVisible };

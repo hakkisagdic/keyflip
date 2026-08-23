@@ -1,4 +1,3 @@
-'use strict';
 // IMPORT credentials from a .env file or the process ENVIRONMENT into keyflip
 // provider profiles (env-import). Two pure steps, then glue:
 //   parseEnv(text)  -> a null-prototype { KEY: VALUE } map (dotenv-ish: quotes,
@@ -10,9 +9,10 @@
 // Security: this module writes NOTHING itself and NEVER echoes a key. Every summary
 // REDACTS the key; the real key lives ONLY on the candidate object the caller hands
 // to provider.add (which routes it into ctx.store, not onto disk/argv/logs).
-const fs = require('fs');
-const path = require('path');
-const profiles = require('./profiles');
+import fs from 'fs';
+import path from 'path';
+import * as profiles from './profiles.js';
+import * as _provider from './provider.js';
 
 const ANTHROPIC_DEFAULT_BASE = 'https://api.anthropic.com';
 const OPENAI_DEFAULT_BASE = 'https://api.openai.com/v1';
@@ -189,7 +189,7 @@ function fromEnv(ctx, env) {
 // Returns REDACTED summaries; the raw key never leaves this function.
 function apply(ctx, candidates, opts) {
   opts = opts || {};
-  const add = opts.add || require('./provider').add;
+  const add = opts.add || _provider.add;
   const imported = [];
   (Array.isArray(candidates) ? candidates : []).forEach(function (c) {
     if (!c || c.kind !== 'provider' || !c.name || !c.baseUrl) return;
@@ -199,14 +199,4 @@ function apply(ctx, candidates, opts) {
   return { imported: imported };
 }
 
-module.exports = {
-  parseEnv: parseEnv,
-  detect: detect,
-  fromFile: fromFile,
-  fromEnv: fromEnv,
-  apply: apply,
-  summarize: summarize,
-  redactKey: redactKey,
-  ANTHROPIC_DEFAULT_BASE: ANTHROPIC_DEFAULT_BASE,
-  OPENAI_DEFAULT_BASE: OPENAI_DEFAULT_BASE,
-};
+export { parseEnv, detect, fromFile, fromEnv, apply, summarize, redactKey, ANTHROPIC_DEFAULT_BASE, OPENAI_DEFAULT_BASE };

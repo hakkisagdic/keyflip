@@ -1,15 +1,16 @@
-'use strict';
 // Tests for LAN device-to-device transfer (src/lantransfer.js). The code helpers are
 // pure; the serve→pull path is exercised over real loopback HTTP (bind 127.0.0.1, no
 // multicast beacon) so we cover the actual wire format + code gate.
-const test = require('node:test');
-const assert = require('node:assert');
-const fs = require('fs');
-const path = require('path');
+import test from 'node:test';
+import assert from 'node:assert';
+import fs from 'fs';
+import path from 'path';
 
-const lan = require('../src/lantransfer');
-const profiles = require('../src/profiles');
-const { makeCtx } = require('./helpers');
+import * as lan from '../src/lantransfer.js';
+import * as profiles from '../src/profiles.js';
+import { makeCtx } from './helpers.js';
+import * as _sync from '../src/sync.js';
+import _http from 'http';
 
 function ctxWithClaude() {
   const ctx = makeCtx();
@@ -152,8 +153,8 @@ test('serve shuts down after maxAttempts bad codes (blunts online code guessing)
 // SECURITY (review reinstated): nothing sensitive crosses the wire in the clear — the served
 // body is the encrypted envelope, and only the code decrypts it back to the secret.
 test('the served bundle is encrypted on the wire (raw body never contains the plaintext secret)', async function () {
-  const sync = require('../src/sync');
-  const http = require('http');
+  const sync = _sync;
+  const http = _http;
   const src = ctxWithClaude();
   seedAccount(src, 'work', 'a@x.com', '{"token":"SUPERSECRET-OAUTH"}');
   const h = lan.serve(src, { host: '127.0.0.1', port: 0, discovery: false, ttlMs: 10000 });

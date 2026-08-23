@@ -1,9 +1,8 @@
-'use strict';
 // Contract tests for KeychainStore using an injected runner — asserts the exact
 // security invocations (argv/stdin) without touching a real keychain.
-const test = require('node:test');
-const assert = require('node:assert');
-const KeychainStore = require('../src/stores/keychain');
+import test from 'node:test';
+import assert from 'node:assert';
+import KeychainStore from '../src/stores/keychain.js';
 
 function fakeRunner(script) {
   const calls = [];

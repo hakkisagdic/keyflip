@@ -1,4 +1,3 @@
-'use strict';
 // SETTINGS store (E4): one validated home for the toggles that were scattered
 // across modules. State lives in <configDir>/config.json as a FLAT, namespaced
 // key/value map (e.g. 'autoswitch.threshold'=90, 'notify.desktop'=true). A SCHEMA
@@ -9,8 +8,8 @@
 // single seam. A tampered/hand-edited file can never inject an unknown key, a
 // dangerous type, or a prototype-polluting key: every map is Object.create(null)
 // and every stored value is re-validated against the SCHEMA on read.
-const path = require('path');
-const { atomicWrite, readJsonForWrite } = require('./fsutil');
+import path from 'path';
+import { atomicWrite, readJsonForWrite } from './fsutil.js';
 
 const NAME = 'config'; // <configDir>/config.json — also profiles.RESERVED_FILES
 const MAX_STRING = 1024; // cap a string value (anti-DoS / anti-garbage)
@@ -166,15 +165,4 @@ function describe() {
   return out;
 }
 
-module.exports = {
-  NAME: NAME,
-  configPath: configPath,
-  hasKey: hasKey,
-  coerce: coerce,
-  get: get,
-  getAll: getAll,
-  set: set,
-  unset: unset,
-  describe: describe,
-  readAll: readAll,
-};
+export { NAME, configPath, hasKey, coerce, get, getAll, set, unset, describe, readAll };

@@ -1,4 +1,3 @@
-'use strict';
 // Adversarial tests for the PII detector/redactor (src/pii.js). The bar mirrors secretscan's:
 // every category has a POSITIVE that redacts AND a NEGATIVE that must survive — with special
 // emphasis on the checksum-validated categories (a wrong-checksum TCKN, a non-Luhn 16-digit
@@ -6,12 +5,12 @@
 // configDir, overlap resolution (no double-redact), counts, and the opt-in LLM hook with an
 // INJECTED fake fetch (applies spans; no-op when url is unset or the fetch throws). No network,
 // no clock — deterministic.
-const test = require('node:test');
-const assert = require('node:assert');
-const fs = require('fs');
-const path = require('path');
-const os = require('os');
-const pii = require('../src/pii');
+import test from 'node:test';
+import assert from 'node:assert';
+import fs from 'fs';
+import path from 'path';
+import os from 'os';
+import * as pii from '../src/pii.js';
 
 function tmpCtx() {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'keyflip-pii-'));

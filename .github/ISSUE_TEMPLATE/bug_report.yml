@@ -1,0 +1,91 @@
+name: "Bug Report / Hata Bildirimi"
+description: "Report a bug to help us improve keyflip (Bir hata bildirerek keyflip'i gelistirmemize yardimci olun)"
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## Bug Report / Hata Bildirimi
+
+        Thank you for reporting a bug! Please fill out the form below.
+        Hata bildirdiginiz icin tesekkurler! Lutfen asagidaki formu doldurun.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: "Description / Aciklama"
+      description: "A clear and concise description of the bug (Hatanin acik ve kisa bir tanimi)"
+      placeholder: "Describe the bug... / Hatayi aciklayin..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: "Steps to Reproduce / Yeniden Uretme Adimlari"
+      description: "Steps to reproduce the behavior (Davranisi yeniden uretmek icin adimlar)"
+      placeholder: |
+        1. Run `keyflip ...`
+        2. Select '...'
+        3. See error
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: "Expected Behavior / Beklenen Davranis"
+      description: "What you expected to happen (Ne olmasini bekliyordunuz)"
+      placeholder: "What should have happened... / Ne olmasi gerekiyordu..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: "Actual Behavior / Gerceklesen Davranis"
+      description: "What actually happened (Gercekte ne oldu)"
+      placeholder: "What actually happened... / Gercekte ne oldu..."
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: "Operating System / Isletim Sistemi"
+      description: "Which OS are you using? (Hangi isletim sistemini kullaniyorsunuz?)"
+      options:
+        - macOS
+        - Linux
+        - Windows
+        - Other / Diger
+    validations:
+      required: true
+
+  - type: input
+    id: node-version
+    attributes:
+      label: "Node.js Version / Node.js Surumu"
+      description: "Run `node --version` to get this (Bunu ogrenmek icin `node --version` calistirin)"
+      placeholder: "e.g., v20.11.0"
+    validations:
+      required: true
+
+  - type: input
+    id: keyflip-version
+    attributes:
+      label: "keyflip Version / keyflip Surumu"
+      description: "Run `keyflip --version` or check package.json (Kontrol icin `keyflip --version` calistirin)"
+      placeholder: "e.g., 1.5.2"
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: "Logs / Screenshots (Loglar / Ekran Goruntuleri)"
+      description: "Add any relevant logs or screenshots (Ilgili log veya ekran goruntuleri ekleyin)"
+      placeholder: "Paste logs or attach screenshots... / Loglari yapisitirin veya ekran goruntuleri ekleyin..."
+    validations:
+      required: false

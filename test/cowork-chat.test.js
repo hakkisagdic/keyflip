@@ -1,12 +1,12 @@
-'use strict';
-const test = require('node:test');
-const assert = require('node:assert');
-const fs = require('fs');
-const path = require('path');
-const crypto = require('crypto');
-const cowork = require('../src/cowork');
-const chat = require('../src/chat');
-const { makeCtx } = require('./helpers');
+import test from 'node:test';
+import assert from 'node:assert';
+import fs from 'fs';
+import path from 'path';
+import crypto from 'crypto';
+import * as cowork from '../src/cowork.js';
+import * as chat from '../src/chat.js';
+import { makeCtx } from './helpers.js';
+import * as _appsessions from '../src/appsessions.js';
 
 function ctxApp() { const ctx = makeCtx(); ctx.appDataDir = path.join(ctx.home, 'Library', 'Application Support', 'Claude'); return ctx; }
 
@@ -74,7 +74,7 @@ test('chat surfaces a clear 403 (stale Cloudflare cookie) message', async functi
 });
 
 test('consolidate merges Cowork sessions across accounts too', function () {
-  const appsessions = require('../src/appsessions');
+  const appsessions = _appsessions;
   const ctx = ctxApp();
   // account A has a cowork session; B has none -> after consolidate B should gain it
   seedCowork(ctx, 'A', 'OA', 'cw1', { sessionId: 'cw1', cliSessionId: 'cli-1', title: 't' });

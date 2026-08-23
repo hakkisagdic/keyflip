@@ -1,4 +1,3 @@
-'use strict';
 // commands.js — a machine-readable CATALOG of the keyflip CLI surface.
 //
 // One entry per user-facing command, derived from src/cli.js: the printed help
@@ -359,4 +358,4 @@ function byGroup() {
   return out;
 }
 
-module.exports = { CATALOG: CATALOG, GROUPS: GROUPS, search: search, byGroup: byGroup, get: get };
+export { CATALOG, GROUPS, search, byGroup, get };

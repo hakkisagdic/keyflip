@@ -1,0 +1,115 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import Hero from '../components/Hero.astro';
+import FeatureCard from '../components/FeatureCard.astro';
+import CodeBlock from '../components/CodeBlock.astro';
+import { t } from '../i18n';
+
+const locale = 'en';
+const trans = t(locale);
+---
+
+<BaseLayout title="Home" locale={locale} currentPath="/">
+  <Hero
+    title={trans.hero.title}
+    subtitle={trans.hero.subtitle}
+    cta={trans.hero.cta}
+    ctaHref="/docs/installation"
+    ctaSecondary={trans.hero.ctaDocs}
+    ctaSecondaryHref="/docs"
+  />
+
+  <!-- Install section -->
+  <section class="py-16 bg-white dark:bg-surface-900">
+    <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
+      <h2 class="text-2xl sm:text-3xl font-bold text-center text-surface-900 dark:text-surface-50 mb-8">
+        Install in seconds
+      </h2>
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <CodeBlock title="macOS / Linux" code='curl -fsSL https://raw.githubusercontent.com/hakkisagdic/keyflip/main/install.sh | bash' />
+        <CodeBlock title="Windows (PowerShell)" code='irm https://raw.githubusercontent.com/hakkisagdic/keyflip/main/install.ps1 | iex' />
+        <CodeBlock title="npm (any OS)" code='npm install --global @hakkisagdic/keyflip' />
+        <CodeBlock title="From source" code='git clone https://github.com/hakkisagdic/keyflip.git && cd keyflip && ./install.sh' />
+      </div>
+    </div>
+  </section>
+
+  <!-- Key features -->
+  <section class="py-16">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+      <h2 class="text-2xl sm:text-3xl font-bold text-center text-surface-900 dark:text-surface-50 mb-4">
+        Why keyflip?
+      </h2>
+      <p class="text-center text-surface-700 dark:text-surface-300 max-w-2xl mx-auto mb-12">
+        One tool to rule all your Claude accounts, providers, sessions, and devices.
+      </p>
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+        <FeatureCard
+          icon="0"
+          title="Zero Dependencies"
+          description="Pure Node.js, no native modules. Works anywhere Node runs - no compilation, no binary downloads."
+        />
+        <FeatureCard
+          icon="&#x1f310;"
+          title="Cross-Platform"
+          description="macOS, Linux, and Windows. CI-tested on all three. Same commands, same behavior everywhere."
+        />
+        <FeatureCard
+          icon="&#x1f4bb;"
+          title="130+ Commands"
+          description="From simple account switching to fleet management, job orchestration, and AI-powered session recall."
+        />
+        <FeatureCard
+          icon="&#x1f50c;"
+          title="MCP Native"
+          description="Full MCP server with 130+ tools. AI agents can drive keyflip without shelling out."
+        />
+        <FeatureCard
+          icon="&#x1f6e1;"
+          title="Security First"
+          description="OAuth tokens in OS credential store. Transactional switches with rollback. Cross-process locking."
+        />
+        <FeatureCard
+          icon="&#x1f680;"
+          title="Fleet Management"
+          description="Coordinate multiple machines through an encrypted shared folder. Remote switch, account transfer, status dashboard."
+        />
+      </div>
+    </div>
+  </section>
+
+  <!-- Quick demo -->
+  <section class="py-16 bg-white dark:bg-surface-900">
+    <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
+      <h2 class="text-2xl sm:text-3xl font-bold text-center text-surface-900 dark:text-surface-50 mb-8">
+        How it works
+      </h2>
+      <CodeBlock title="Interactive Menu" code={`        Keyflip (keyflip)
+  Active: alice@example.com
+
+  → [1] alice@example.com
+    [2] bob@example.org
+
+  [number] switch   [a] save current   [d] delete   [r] refresh   [q] quit`} lang="text" />
+      <div class="mt-6 grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <CodeBlock title="Switch by name" code="keyflip work" />
+        <CodeBlock title="Rotate to next" code="keyflip next --strategy best" />
+      </div>
+    </div>
+  </section>
+
+  <!-- CTA -->
+  <section class="py-20 bg-gradient-to-r from-primary-600 to-primary-800 dark:from-primary-800 dark:to-primary-950">
+    <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
+      <h2 class="text-2xl sm:text-3xl font-bold text-white mb-4">
+        Ready to simplify your AI workflow?
+      </h2>
+      <p class="text-primary-100 mb-8">
+        Get started in under a minute. No signup required.
+      </p>
+      <a href="/docs/installation" class="inline-block px-8 py-3 bg-white text-primary-700 font-semibold rounded-lg hover:bg-primary-50 transition-colors shadow-lg">
+        Install keyflip
+      </a>
+    </div>
+  </section>
+</BaseLayout>

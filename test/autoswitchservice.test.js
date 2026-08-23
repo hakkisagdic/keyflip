@@ -1,12 +1,11 @@
-'use strict';
 // The unattended autoswitch service (launchd StartInterval / cron */N). Runner + home are
 // injected so NO test ever touches the real launchctl/crontab or writes into ~/Library.
-const test = require('node:test');
-const assert = require('node:assert');
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
-const svc = require('../src/autoswitchservice');
+import test from 'node:test';
+import assert from 'node:assert';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+import * as svc from '../src/autoswitchservice.js';
 
 function tmpHome() { return fs.mkdtempSync(path.join(os.tmpdir(), 'kf-autosvc-')); }
 // A fake command runner that records calls and returns success for launchctl/crontab.

@@ -1,4 +1,3 @@
-'use strict';
 // LICENSE: offline, phone-home-free license verification + tier gating for the
 // open-core paywall. A license is a signed TOKEN carrying { tier, email, expiry,
 // issued }. It is signed with the maintainer's Ed25519 PRIVATE key at release
@@ -9,10 +8,10 @@
 // 'free' whenever there is no license, the signature is bad, or it has expired,
 // so a paid feature is enabled ONLY by a genuine, unexpired, sufficiently-tiered
 // license. Pure w.r.t. ctx (paths + injectable now) so tests need no real time.
-const fs = require('fs');
-const path = require('path');
-const crypto = require('crypto');
-const { atomicWrite, readJsonForWrite } = require('./fsutil');
+import fs from 'fs';
+import path from 'path';
+import crypto from 'crypto';
+import { atomicWrite, readJsonForWrite } from './fsutil.js';
 
 // The release PUBLIC key (single-line base64 of an Ed25519 SPKI DER, exactly the
 // shape src/fleet.js publishes). This placeholder is NOT a valid key, so a build
@@ -324,30 +323,6 @@ const mcpTools = [
   },
 ];
 
-module.exports = {
-  // verification / minting
-  verify: verify,
-  makeLicense: makeLicense,
-  signCommandForTest: makeLicense, // alias — mint a license in tests
-  canonicalPayload: canonicalPayload,
-  setPublicKey: setPublicKey,
-  getPublicKeyB64: getPublicKeyB64,
-  PUBKEY_B64: PUBKEY_B64,
-  // state
-  activate: activate,
-  deactivate: deactivate,
-  status: status,
-  tier: tier,
-  licensePath: licensePath,
-  // gating
-  gate: gate,
-  requireTier: requireTier,
-  enforcementEnabled: enforcementEnabled,
-  featureFor: featureFor,
-  requireForName: function (ctx, name) { return requireTier(ctx, featureFor(name)); },
-  unlockedFeatures: unlockedFeatures,
-  FEATURES: FEATURES,
-  TIER_ORDER: TIER_ORDER,
-  // wiring
-  mcpTools: mcpTools,
-};
+function requireForName(ctx, name) { return requireTier(ctx, featureFor(name)); }
+
+export { makeLicense, makeLicense as signCommandForTest, setPublicKey, getPublicKeyB64, PUBKEY_B64, deactivate, status, tier, licensePath, requireTier, enforcementEnabled, featureFor, unlockedFeatures, FEATURES, TIER_ORDER, requireForName, verify, canonicalPayload, activate, gate, mcpTools };

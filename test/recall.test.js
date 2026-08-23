@@ -1,10 +1,10 @@
-'use strict';
 // Tests for I1: local BM25 recall over distilled keepsakes (src/recall.js).
-const test = require('node:test');
-const assert = require('node:assert');
-const recall = require('../src/recall');
-const memory = require('../src/memory');
-const { makeCtx } = require('./helpers');
+import test from 'node:test';
+import assert from 'node:assert';
+import * as recall from '../src/recall.js';
+import * as memory from '../src/memory.js';
+import { makeCtx } from './helpers.js';
+import * as _embed from '../src/embed.js';
 
 test('tokenize lowercases, splits, drops stopwords + 1-char tokens', function () {
   assert.deepStrictEqual(recall.tokenize('The OAuth Token-Refresh bug!'), ['oauth', 'token', 'refresh', 'bug']);
@@ -72,7 +72,7 @@ test('rank is a pure BM25 over supplied docs (idf favors the rarer term)', funct
 // ---- I2: semantic search via the embedding seam (mock endpoint) ----
 
 test('embed.cosine ranks the nearest vector; parses Ollama/OpenAI shapes', function () {
-  const embed = require('../src/embed');
+  const embed = _embed;
   assert.ok(embed.cosine([1, 0], [1, 0]) > embed.cosine([1, 0], [0, 1]));
   assert.strictEqual(embed.cosine([0, 0], [1, 1]), 0);
 });
@@ -88,12 +88,12 @@ test('semanticSearch embeds query+keepsakes, cosine-ranks, caches vectors', asyn
     const vecs = body.input.map(function (t) { return [/oauth|token|retr/.test(t) ? 1 : 0, /css|grid|dashboard/.test(t) ? 1 : 0]; });
     return Promise.resolve({ embeddings: vecs });
   };
-  const r1 = await require('../src/recall').semanticSearch(ctx, 'how did i handle token refresh', { post: post });
+  const r1 = await recall.semanticSearch(ctx, 'how did i handle token refresh', { post: post });
   assert.strictEqual(r1.ok, true);
   assert.strictEqual(r1.hits[0].session, 'aaaa1111', 'the oauth keepsake ranks first semantically');
   const firstCalls = calls;
   // Second query: keepsake vectors are cached, so only the query is embedded (1 call, not re-embedding docs).
-  const r2 = await require('../src/recall').semanticSearch(ctx, 'css dashboard layout', { post: post });
+  const r2 = await recall.semanticSearch(ctx, 'css dashboard layout', { post: post });
   assert.strictEqual(r2.hits[0].session, 'bbbb2222');
   assert.strictEqual(calls - firstCalls, 1, 'keepsake embeddings were cached (only the query re-embedded)');
 });
@@ -102,7 +102,7 @@ test('semanticSearch reports a clean reason when the endpoint is unreachable', a
   const ctx = makeCtx();
   memory.save(ctx, 's', 'about widgets', {});
   const post = function () { return Promise.reject(new Error('ECONNREFUSED')); };
-  const r = await require('../src/recall').semanticSearch(ctx, 'widgets', { post: post });
+  const r = await recall.semanticSearch(ctx, 'widgets', { post: post });
   assert.strictEqual(r.ok, false);
   assert.ok(/ECONNREFUSED/.test(r.reason));
 });

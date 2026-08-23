@@ -1,4 +1,3 @@
-'use strict';
 // MCP (Model Context Protocol) server over stdio, so agents can operate keyflip
 // themselves. Implements the spec's base protocol: JSON-RPC 2.0, newline-delimited
 // messages, initialize/initialized lifecycle, ping, tools/list + tools/call with
@@ -9,32 +8,82 @@
 // descriptions instruct the agent to ask the human first. Switching never closes
 // the desktop app from under the user (swap-in-place semantics; Claude Code picks
 // the new credential up on its next request).
-const readline = require('readline');
-const core = require('./core');
-const profiles = require('./profiles');
-const appauth = require('./appauth');
-const usage = require('./usage');
-const lock = require('./lock');
-const logmod = require('./log');
-const provider = require('./provider');
-const sessions = require('./sessions');
-const doctor = require('./doctor');
-const backup = require('./backup');
-const history = require('./history');
-const proxy = require('./proxy');
-const browser = require('./browser');
-const loginmod = require('./login');
-const exec = require('./exec');
-const appsessions = require('./appsessions');
-const appctl = require('./platform');
-const migrate = require('./migrate');
-const sync = require('./sync');
-const archive = require('./archive');
-const vcs = require('./vcs');
-const memorymod = require('./memory');
-const llm = require('./llm');
-const auditview = require('./auditview');
-const fs = require('fs');
+import readline from 'readline';
+import * as core from './core.js';
+import * as profiles from './profiles.js';
+import * as appauth from './appauth.js';
+import * as usage from './usage.js';
+import * as lock from './lock.js';
+import * as logmod from './log.js';
+import * as provider from './provider.js';
+import * as sessions from './sessions.js';
+import * as doctor from './doctor.js';
+import * as backup from './backup.js';
+import * as history from './history.js';
+import * as proxy from './proxy.js';
+import * as browser from './browser.js';
+import * as loginmod from './login.js';
+import * as exec from './exec.js';
+import * as appsessions from './appsessions.js';
+import * as appctl from './platform.js';
+import * as migrate from './migrate.js';
+import * as sync from './sync.js';
+import * as archive from './archive.js';
+import * as vcs from './vcs.js';
+import * as memorymod from './memory.js';
+import * as llm from './llm.js';
+import * as auditview from './auditview.js';
+import fs from 'fs';
+import * as _transcript from './transcript.js';
+import * as _foreign from './foreign.js';
+import * as _chat from './chat.js';
+import * as _fleet from './fleet.js';
+import * as _rt from './relaytransfer.js';
+import * as _svc from './autoswitchservice.js';
+import * as _agents from './agents.js';
+import _path from 'path';
+import * as _pii from './pii.js';
+import * as _session from './session.js';
+import * as _sessionmap from './sessionmap.js';
+import * as _schedule from './schedule.js';
+import * as _settings from './settings.js';
+import * as _recall from './recall.js';
+import * as _projctx from './projctx.js';
+import * as _rules from './rulesmodel.js';
+import * as _policy from './policy.js';
+import * as _cowork from './cowork.js';
+import * as _skillstore from './skillstore.js';
+import * as _desktopgw from './desktopgw.js';
+import * as _mcpreg from './mcpreg.js';
+import * as _share from './share.js';
+import * as _links from './links.js';
+import * as _lantransfer from './lantransfer.js';
+import * as _autoswitch from './autoswitch.js';
+import * as _budget from './budget.js';
+import * as _notify from './notify.js';
+import * as _cost from './cost.js';
+import * as _router from './router.js';
+import * as _provusage from './provusage.js';
+import * as _brain from './brain.js';
+import * as _sessionedit from './sessionedit.js';
+import _child_process from 'child_process';
+import * as _checkpoint from './checkpoint.js';
+import * as _ctxsync from './ctxsync.js';
+import * as _orchestrator from './orchestrator.js';
+import * as _integrations from './integrations.js';
+import * as _vault from './vault.js';
+import * as _license from './license.js';
+import * as _surface from './surface.js';
+import * as _handoff from './handoff.js';
+import * as _transfer from './transfer.js';
+import * as _groups from './groups.js';
+import * as _importcreds from './importcreds.js';
+import * as _shellhook from './shellhook.js';
+import * as _teampool from './teampool.js';
+import * as _swarm from './swarm.js';
+import * as _config from './config.js';
+import * as _codexbar from './codexbar.js';
+import * as _fsutil from './fsutil.js';
 
 // Mutating tools all gate on confirm:true — the agent must ask the user first.
 function needConfirm(args) {
@@ -49,7 +98,7 @@ const PROTOCOL_VERSION = '2025-06-18';
 const SUPPORTED_VERSIONS = ['2025-06-18', '2025-03-26', '2024-11-05'];
 
 let VERSION = '0.0.0';
-try { VERSION = require('../package.json').version; } catch (e) { /* ignore */ }
+try { VERSION = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version; } catch (e) { /* ignore */ }
 
 // ---- tool implementations ----------------------------------------------------
 
@@ -133,7 +182,7 @@ const TOOLS = [
       if (!name) throw new Error("no such account: '" + args.name + "' (use keyflip_list)");
       const em = profiles.email(ctx.configDir, name);
       if (em && em === core.currentEmail(ctx)) return { alreadyActive: { name: name, email: em } };
-      require('./policy').enforce(ctx, { cwd: process.cwd(), account: name }); // org policy: agents can't dodge it
+      _policy.enforce(ctx, { cwd: process.cwd(), account: name }); // org policy: agents can't dodge it
       const l = await lock.acquire(ctx.configDir);
       try {
         const did = core.performSwitch(ctx, name);
@@ -176,7 +225,7 @@ const TOOLS = [
         target = usage.pickByStrategy(candidates, infos, args.strategy);
         if (!target) throw new Error("no account matches strategy '" + args.strategy + "'");
       }
-      require('./policy').enforce(ctx, { cwd: process.cwd(), account: target.name }); // org policy applies to rotation too
+      _policy.enforce(ctx, { cwd: process.cwd(), account: target.name }); // org policy applies to rotation too
       const l = await lock.acquire(ctx.configDir);
       try {
         const did = core.performSwitch(ctx, target.name);
@@ -248,7 +297,7 @@ const TOOLS = [
     description: 'Render a past Claude Code conversation into a clean, shareable document — markdown (default), a self-contained HTML chat view, or normalized json. Tool output is summarized ("used Read, Grep"), not dumped. Read-only: returns the rendered content (does not write a file).',
     inputSchema: { type: 'object', properties: { id: { type: 'string', description: 'Session id or unique prefix.' }, format: { type: 'string', enum: ['md', 'html', 'json'] } }, required: ['id'], additionalProperties: false }, annotations: RO,
     run: async function (ctx, args) {
-      const transcript = require('./transcript');
+      const transcript = _transcript;
       const row = sessions.find(ctx, String(args.id)); if (!row) throw new Error('no such session: ' + args.id);
       let raw; try { raw = fs.readFileSync(row.file, 'utf8'); } catch (e) { throw new Error('cannot read the transcript: ' + (e && e.message)); }
       const parsed = transcript.parse(raw);
@@ -262,7 +311,7 @@ const TOOLS = [
     description: 'Read another AI agent\'s session log FILE at `path` (message-event JSONL, generic JSON, a Cursor SQLite store, or an Aider .aider.chat.history.md) and normalize it into keyflip\'s unified conversation shape, then render it as markdown/HTML/json — the same view as Claude Code sessions. Read-only. (Copilot YAML is not yet supported; the Cursor/JSON/Aider mappings are best-effort — confirm against a real install.)',
     inputSchema: { type: 'object', properties: { path: { type: 'string' }, format: { type: 'string', enum: ['md', 'html', 'json'] } }, required: ['path'], additionalProperties: false }, annotations: RO,
     run: async function (ctx, args) {
-      const foreign = require('./foreign'); const transcript = require('./transcript');
+      const foreign = _foreign; const transcript = _transcript;
       let raw; try { raw = fs.readFileSync(String(args.path)); } catch (e) { throw new Error('cannot read ' + args.path + ': ' + (e && e.message)); } // Buffer (Cursor is binary)
       const norm = foreign.normalize(String(args.path), raw); // throws on unrecognized format
       const fmt = args.format === 'html' ? 'html' : args.format === 'json' ? 'json' : 'md';
@@ -277,7 +326,7 @@ const TOOLS = [
     inputSchema: { type: 'object', properties: { search: { type: 'string' }, limit: { type: 'integer' } }, additionalProperties: false }, annotations: RO,
     run: async function (ctx, args) {
       if (!ctx.appDataDir) return { cowork: [], note: 'desktop app not present (macOS only)' };
-      const rows = require('./cowork').list(ctx, { search: args && args.search, limit: (args && args.limit) || 40 });
+      const rows = _cowork.list(ctx, { search: args && args.search, limit: (args && args.limit) || 40 });
       return { cowork: rows.map(function (r) { return { sessionId: r.sessionId, title: r.title, account: r.account, cwd: r.cwd, lastActivityAt: r.lastActivityAt, cliSessionId: r.cliSessionId }; }) };
     },
   },
@@ -287,7 +336,7 @@ const TOOLS = [
     inputSchema: { type: 'object', properties: { id: { type: 'string', description: 'Omit to list; set to fetch one conversation.' }, limit: { type: 'integer' } }, additionalProperties: false }, annotations: RO_NET,
     run: async function (ctx, args) {
       if (!ctx.appDataDir) throw new Error('reading claude.ai Chat needs the desktop app (macOS)');
-      const chat = require('./chat');
+      const chat = _chat;
       return (args && args.id) ? { conversation: await chat.get(ctx, args.id) } : await chat.list(ctx, { limit: (args && args.limit) || 30 });
     },
   },
@@ -331,19 +380,19 @@ const TOOLS = [
     name: 'keyflip_skills', title: 'List installed skills',
     description: 'Skills keyflip installed into ~/.claude/skills. Read-only.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false }, annotations: RO,
-    run: async function (ctx) { return { skills: require('./skillstore').list(ctx) }; },
+    run: async function (ctx) { return { skills: _skillstore.list(ctx) }; },
   },
   {
     name: 'keyflip_skill_add', title: 'Install a skill',
     description: 'Install a skill from a GitHub repo (owner/repo[@ref][/subdir]), a local directory, or a .tar.gz/.zip. Installs code the agent will run — ask the user first, then confirm=true.',
     inputSchema: { type: 'object', properties: { source: { type: 'string' }, confirm: confirmProp.confirm }, required: ['source', 'confirm'], additionalProperties: false }, annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: true },
-    run: async function (ctx, args) { needConfirm(args); return { installed: await require('./skillstore').add(ctx, String(args.source), {}) }; },
+    run: async function (ctx, args) { needConfirm(args); return { installed: await _skillstore.add(ctx, String(args.source), {}) }; },
   },
   {
     name: 'keyflip_skill_remove', title: 'Remove an installed skill',
     description: 'Remove a keyflip-installed skill (never the user\'s own). Ask the user first, then confirm=true.',
     inputSchema: { type: 'object', properties: { name: { type: 'string' }, confirm: confirmProp.confirm }, required: ['name', 'confirm'], additionalProperties: false }, annotations: MUT,
-    run: async function (ctx, args) { needConfirm(args); require('./skillstore').remove(ctx, args.name); return { removed: args.name }; },
+    run: async function (ctx, args) { needConfirm(args); _skillstore.remove(ctx, args.name); return { removed: args.name }; },
   },
 
   // ---- failover proxy ----
@@ -514,7 +563,7 @@ const TOOLS = [
     description: 'Read the FLEET: every associated keyflip machine that has checked in to the shared encrypted rendezvous — its accounts (+cached quota), active account, and recent chats with reply status (assistant = replied, user = waiting). Also flags chats that got a NEW reply since the last check. Read-only. Requires the fleet passphrase_file.',
     inputSchema: { type: 'object', properties: { passphrase_file: { type: 'string' } }, required: ['passphrase_file'], additionalProperties: false }, annotations: RO,
     run: async function (ctx, args) {
-      const fleet = require('./fleet');
+      const fleet = _fleet;
       const b = fleet.bus(ctx, { passphrase: fs.readFileSync(String(args.passphrase_file), 'utf8').trim() });
       const statuses = fleet.readFleet(ctx, b); const nr = fleet.newReplies(ctx, statuses); fleet.saveSeen(ctx, nr.snapshot);
       // Read-only status must never surface credentials into the model/transcript — creds-free view.
@@ -527,7 +576,7 @@ const TOOLS = [
     inputSchema: { type: 'object', properties: { machine: { type: 'string', description: 'Target machine name or id.' }, account: { type: 'string' }, passphrase_file: { type: 'string' }, confirm: confirmProp.confirm }, required: ['machine', 'account', 'passphrase_file', 'confirm'], additionalProperties: false }, annotations: MUT,
     run: async function (ctx, args) {
       needConfirm(args);
-      const fleet = require('./fleet');
+      const fleet = _fleet;
       const b = fleet.bus(ctx, { passphrase: fs.readFileSync(String(args.passphrase_file), 'utf8').trim() });
       const m = fleet.readFleet(ctx, b).filter(function (s) { return s.name === args.machine || s.machineId === args.machine || s.machineId.indexOf(String(args.machine)) === 0; });
       if (m.length !== 1) throw new Error("no single fleet machine named '" + args.machine + "'");
@@ -542,7 +591,7 @@ const TOOLS = [
     inputSchema: { type: 'object', properties: { account: { type: 'string' }, to: { type: 'string' }, from: { type: 'string', description: 'Relay: pull the account from this machine\'s published creds instead of your own.' }, passphrase_file: { type: 'string' }, confirm: confirmProp.confirm }, required: ['account', 'to', 'passphrase_file', 'confirm'], additionalProperties: false }, annotations: MUT,
     run: async function (ctx, args) {
       needConfirm(args);
-      const fleet = require('./fleet'); const transfer = require('./transfer');
+      const fleet = _fleet; const transfer = _transfer;
       const b = fleet.bus(ctx, { passphrase: fs.readFileSync(String(args.passphrase_file), 'utf8').trim() });
       const statuses = fleet.readFleet(ctx, b);
       const to = statuses.filter(function (s) { return s.name === args.to || s.machineId === args.to; })[0];
@@ -561,7 +610,7 @@ const TOOLS = [
     inputSchema: { type: 'object', properties: { machine: { type: 'string', description: 'Machine name or id whose current published key to (re)pin.' }, passphrase_file: { type: 'string' }, confirm: confirmProp.confirm }, required: ['machine', 'passphrase_file', 'confirm'], additionalProperties: false }, annotations: MUT,
     run: async function (ctx, args) {
       needConfirm(args);
-      const fleet = require('./fleet');
+      const fleet = _fleet;
       const b = fleet.bus(ctx, { passphrase: fs.readFileSync(String(args.passphrase_file), 'utf8').trim() });
       const m = fleet.readFleet(ctx, b).filter(function (s) { return s.name === args.machine || s.machineId === args.machine; })[0];
       if (!m) throw new Error("no fleet machine named '" + args.machine + "'");
@@ -576,7 +625,7 @@ const TOOLS = [
     description: 'List every fleet machine\'s TOFU-pinned Ed25519 signing-key fingerprint and whether the machine\'s currently-published key still MATCHES the pin (status: ok / CHANGED = possible key substitution / unpinned / offline). Read-only — use to audit the origin-auth trust store before trusting or acting on a machine.',
     inputSchema: { type: 'object', properties: { passphrase_file: { type: 'string' } }, required: ['passphrase_file'], additionalProperties: false }, annotations: RO,
     run: async function (ctx, args) {
-      const fleet = require('./fleet');
+      const fleet = _fleet;
       const b = fleet.bus(ctx, { passphrase: fs.readFileSync(String(args.passphrase_file), 'utf8').trim() });
       return { keys: fleet.keyReport(ctx, fleet.readFleet(ctx, b)) };
     },
@@ -587,7 +636,7 @@ const TOOLS = [
     inputSchema: { type: 'object', properties: { passphrase_file: { type: 'string' }, force: { type: 'boolean' }, confirm: confirmProp.confirm }, required: ['passphrase_file', 'confirm'], additionalProperties: false }, annotations: MUT,
     run: async function (ctx, args) {
       needConfirm(args);
-      const fleet = require('./fleet'); const transfer = require('./transfer');
+      const fleet = _fleet; const transfer = _transfer;
       const b = fleet.bus(ctx, { passphrase: fs.readFileSync(String(args.passphrase_file), 'utf8').trim() });
       const seen = Object.create(null); const toImport = [];
       fleet.readFleet(ctx, b).forEach(function (s) { Object.keys((s.creds) || {}).forEach(function (name) { if (seen[name]) return; seen[name] = 1; const a = fleet.accountFrom(s, name); if (a) toImport.push(a); }); });
@@ -621,7 +670,7 @@ const TOOLS = [
     inputSchema: { type: 'object', properties: { name: { type: 'string', description: 'Provider name (from keyflip_providers).' }, confirm: confirmProp.confirm }, required: ['name', 'confirm'], additionalProperties: false }, annotations: MUT,
     run: async function (ctx, args) {
       needConfirm(args);
-      const provider = require('./provider');
+
       if (!provider.exists(ctx, String(args.name))) throw new Error("no such provider: '" + args.name + "' (use keyflip_providers)");
       const l = await lock.acquire(ctx.configDir);
       try { provider.remove(ctx, String(args.name)); } finally { l.release(); }
@@ -634,43 +683,43 @@ const TOOLS = [
     name: 'keyflip_gateway_status', title: 'Is the Claude DESKTOP app routed through a provider?',
     description: 'Report whether the Claude DESKTOP app is currently pointed at a third-party gateway/provider vs first-party Anthropic. Read-only.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false }, annotations: RO,
-    run: async function (ctx) { const g = require('./desktopgw').active(ctx); return { gateway: g ? g.provider : null, firstParty: !g }; },
+    run: async function (ctx) { const g = _desktopgw.active(ctx); return { gateway: g ? g.provider : null, firstParty: !g }; },
   },
   {
     name: 'keyflip_gateway_use', title: 'Route the Claude desktop app through a provider',
     description: 'Point the Claude DESKTOP app at a saved provider (gateway); takes effect after the app restarts. Mutating (rewrites the desktop app config) — ask the user, then confirm=true.',
     inputSchema: { type: 'object', properties: { provider: { type: 'string' }, confirm: confirmProp.confirm }, required: ['provider', 'confirm'], additionalProperties: false }, annotations: MUT,
-    run: async function (ctx, args) { needConfirm(args); if (!provider.exists(ctx, String(args.provider))) throw new Error("no such provider: '" + args.provider + "'"); const l = await lock.acquire(ctx.configDir); let r; try { r = require('./desktopgw').use(ctx, String(args.provider)); } finally { l.release(); } return { gateway: String(args.provider), dirs: r.dirs, note: 'restart the desktop app to apply' }; },
+    run: async function (ctx, args) { needConfirm(args); if (!provider.exists(ctx, String(args.provider))) throw new Error("no such provider: '" + args.provider + "'"); const l = await lock.acquire(ctx.configDir); let r; try { r = _desktopgw.use(ctx, String(args.provider)); } finally { l.release(); } return { gateway: String(args.provider), dirs: r.dirs, note: 'restart the desktop app to apply' }; },
   },
   {
     name: 'keyflip_gateway_off', title: 'Restore the Claude desktop app to first-party',
     description: 'Restore the Claude DESKTOP app to first-party (Anthropic), undoing a gateway; takes effect after the app restarts. Mutating — ask the user, then confirm=true.',
     inputSchema: { type: 'object', properties: { confirm: confirmProp.confirm }, required: ['confirm'], additionalProperties: false }, annotations: MUT,
-    run: async function (ctx, args) { needConfirm(args); const l = await lock.acquire(ctx.configDir); try { require('./desktopgw').restore(ctx); } finally { l.release(); } return { restored: true, note: 'restart the desktop app to apply' }; },
+    run: async function (ctx, args) { needConfirm(args); const l = await lock.acquire(ctx.configDir); try { _desktopgw.restore(ctx); } finally { l.release(); } return { restored: true, note: 'restart the desktop app to apply' }; },
   },
   {
     name: 'keyflip_mcpreg_list', title: 'List registered third-party MCP servers',
     description: 'List the MCP servers keyflip has registered (that it can enable/disable in Claude Code / Desktop configs). Read-only.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false }, annotations: RO,
-    run: async function (ctx) { return { servers: require('./mcpreg').list(ctx) }; },
+    run: async function (ctx) { return { servers: _mcpreg.list(ctx) }; },
   },
   {
     name: 'keyflip_mcpreg_set', title: 'Register/update a third-party MCP server',
     description: 'Register (or update) a named MCP server definition (command + args + env) in keyflip\'s registry so it can be enabled on Claude Code / Desktop. Mutating — ask the user, then confirm=true.',
     inputSchema: { type: 'object', properties: { name: { type: 'string' }, command: { type: 'string' }, args: { type: 'array', items: { type: 'string' } }, env: { type: 'object', additionalProperties: { type: 'string' } }, confirm: confirmProp.confirm }, required: ['name', 'command', 'confirm'], additionalProperties: false }, annotations: MUT,
-    run: async function (ctx, args) { needConfirm(args); const l = await lock.acquire(ctx.configDir); let e; try { e = require('./mcpreg').add(ctx, String(args.name), { command: String(args.command), args: args.args || [], env: args.env || {} }); } finally { l.release(); } return { registered: String(args.name), entry: e }; },
+    run: async function (ctx, args) { needConfirm(args); const l = await lock.acquire(ctx.configDir); let e; try { e = _mcpreg.add(ctx, String(args.name), { command: String(args.command), args: args.args || [], env: args.env || {} }); } finally { l.release(); } return { registered: String(args.name), entry: e }; },
   },
   {
     name: 'keyflip_mcpreg_enable', title: 'Enable/disable a registered MCP server on a surface',
     description: 'Enable or disable a registered MCP server on a surface — "claude-code" or "claude-desktop". Mutating (writes the target app config) — ask the user, then confirm=true.',
     inputSchema: { type: 'object', properties: { name: { type: 'string' }, surface: { type: 'string', enum: ['claude-code', 'claude-desktop'] }, enabled: { type: 'boolean' }, confirm: confirmProp.confirm }, required: ['name', 'surface', 'enabled', 'confirm'], additionalProperties: false }, annotations: MUT,
-    run: async function (ctx, args) { needConfirm(args); const l = await lock.acquire(ctx.configDir); let r; try { r = require('./mcpreg').setEnabled(ctx, String(args.name), String(args.surface), !!args.enabled); } finally { l.release(); } return { name: String(args.name), surface: String(args.surface), enabled: !!args.enabled, result: r }; },
+    run: async function (ctx, args) { needConfirm(args); const l = await lock.acquire(ctx.configDir); let r; try { r = _mcpreg.setEnabled(ctx, String(args.name), String(args.surface), !!args.enabled); } finally { l.release(); } return { name: String(args.name), surface: String(args.surface), enabled: !!args.enabled, result: r }; },
   },
   {
     name: 'keyflip_mcpreg_remove', title: 'Remove a registered MCP server',
     description: 'Remove a registered MCP server from keyflip\'s registry and unhook it from both surfaces. Mutating — ask the user, then confirm=true.',
     inputSchema: { type: 'object', properties: { name: { type: 'string' }, confirm: confirmProp.confirm }, required: ['name', 'confirm'], additionalProperties: false }, annotations: MUT,
-    run: async function (ctx, args) { needConfirm(args); const l = await lock.acquire(ctx.configDir); try { require('./mcpreg').remove(ctx, String(args.name)); } finally { l.release(); } return { removed: String(args.name) }; },
+    run: async function (ctx, args) { needConfirm(args); const l = await lock.acquire(ctx.configDir); try { _mcpreg.remove(ctx, String(args.name)); } finally { l.release(); } return { removed: String(args.name) }; },
   },
   {
     name: 'keyflip_speedtest', title: 'Rank a provider\'s endpoints by latency (read-only)',
@@ -682,13 +731,13 @@ const TOOLS = [
     name: 'keyflip_share', title: 'Build a keyflip:// share link',
     description: 'Build a keyflip:// import link for a saved provider or account. For a provider, no_secrets=true omits the API key (pointer only); account links are ALWAYS pointer-only (never carry the OAuth token). Read-only (builds a string).',
     inputSchema: { type: 'object', properties: { resource: { type: 'string', enum: ['provider', 'account'] }, name: { type: 'string' }, no_secrets: { type: 'boolean' } }, required: ['resource', 'name'], additionalProperties: false }, annotations: RO,
-    run: async function (ctx, args) { return { url: require('./share').build(ctx, String(args.resource), String(args.name), { noSecrets: !!args.no_secrets }) }; },
+    run: async function (ctx, args) { return { url: _share.build(ctx, String(args.resource), String(args.name), { noSecrets: !!args.no_secrets }) }; },
   },
   {
     name: 'keyflip_share_apply', title: 'Import from a keyflip:// share link',
     description: 'Parse and APPLY a keyflip:// import link (saves the provider, or creates a pointer-only account). Mutating — ask the user, then confirm=true.',
     inputSchema: { type: 'object', properties: { url: { type: 'string' }, confirm: confirmProp.confirm }, required: ['url', 'confirm'], additionalProperties: false }, annotations: MUT,
-    run: async function (ctx, args) { needConfirm(args); const share = require('./share'); const parsed = share.parse(String(args.url)); const l = await lock.acquire(ctx.configDir); let r; try { r = share.apply(ctx, parsed); } finally { l.release(); } return { imported: r }; },
+    run: async function (ctx, args) { needConfirm(args); const share = _share; const parsed = share.parse(String(args.url)); const l = await lock.acquire(ctx.configDir); let r; try { r = share.apply(ctx, parsed); } finally { l.release(); } return { imported: r }; },
   },
   {
     name: 'keyflip_sync_test', title: 'Test a WebDAV sync endpoint',
@@ -712,19 +761,19 @@ const TOOLS = [
     name: 'keyflip_links', title: 'List directory→account pins',
     description: 'List the directory→account pins (used by `keyflip run` to auto-select an account per directory). Read-only.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false }, annotations: RO,
-    run: async function (ctx) { return { links: require('./links').readAll(ctx) }; },
+    run: async function (ctx) { return { links: _links.readAll(ctx) }; },
   },
   {
     name: 'keyflip_link', title: 'Pin a directory to an account',
     description: 'Pin a directory (absolute path) to a saved account so `keyflip run` there uses it. Set remove=true to unpin (account not needed then). Mutating — ask the user, then confirm=true.',
     inputSchema: { type: 'object', properties: { dir: { type: 'string' }, account: { type: 'string' }, remove: { type: 'boolean' }, confirm: confirmProp.confirm }, required: ['dir', 'confirm'], additionalProperties: false }, annotations: MUT,
-    run: async function (ctx, args) { needConfirm(args); const links = require('./links'); const dir = String(args.dir); const l = await lock.acquire(ctx.configDir); try { if (args.remove) { return { unlinked: links.remove(ctx, dir) ? dir : null }; } const name = core.resolveProfile(ctx, String(args.account || '')); if (!name) throw new Error("no such account: '" + args.account + "'"); links.set(ctx, dir, name); return { linked: { dir: dir, account: name } }; } finally { l.release(); } },
+    run: async function (ctx, args) { needConfirm(args); const links = _links; const dir = String(args.dir); const l = await lock.acquire(ctx.configDir); try { if (args.remove) { return { unlinked: links.remove(ctx, dir) ? dir : null }; } const name = core.resolveProfile(ctx, String(args.account || '')); if (!name) throw new Error("no such account: '" + args.account + "'"); links.set(ctx, dir, name); return { linked: { dir: dir, account: name } }; } finally { l.release(); } },
   },
   {
     name: 'keyflip_transfer_pull', title: 'Pull + merge a bundle from a LAN peer',
     description: 'Pull the full bundle (accounts + providers + transcripts + memory) from a machine running `keyflip transfer serve`, using its one-time code, and MERGE it (existing entries kept unless force=true). host is "<host:port>" shown on the serving machine. Mutating — ask the user, then confirm=true.',
     inputSchema: { type: 'object', properties: { host: { type: 'string' }, code: { type: 'string' }, force: { type: 'boolean' }, confirm: confirmProp.confirm }, required: ['host', 'code', 'confirm'], additionalProperties: false }, annotations: MUT,
-    run: async function (ctx, args) { needConfirm(args); const bundle = await require('./lantransfer').pull({ host: String(args.host), code: String(args.code) }); const l = await lock.acquire(ctx.configDir); let res; try { res = require('./migrate').applyBundle(ctx, bundle, { force: !!args.force }); } finally { l.release(); } return { merged: { accounts: res.accounts, providers: res.providers, transcripts: res.transcripts } }; },
+    run: async function (ctx, args) { needConfirm(args); const bundle = await _lantransfer.pull({ host: String(args.host), code: String(args.code) }); const l = await lock.acquire(ctx.configDir); let res; try { res = migrate.applyBundle(ctx, bundle, { force: !!args.force }); } finally { l.release(); } return { merged: { accounts: res.accounts, providers: res.providers, transcripts: res.transcripts } }; },
   },
   {
     name: 'keyflip_transfer_relay_pull', title: 'Pull + merge a bundle via the internet relay',
@@ -732,11 +781,11 @@ const TOOLS = [
     inputSchema: { type: 'object', properties: { relay: { type: 'string', description: 'A synced-folder path or a WebDAV URL.' }, code: { type: 'string', description: 'The "<rendezvous>-<key>" one-time code shown on the sender.' }, user: { type: 'string', description: 'WebDAV username (URL relay).' }, pass_file: { type: 'string', description: 'File holding the WebDAV password (URL relay) — never the literal secret.' }, force: { type: 'boolean' }, confirm: confirmProp.confirm }, required: ['relay', 'code', 'confirm'], additionalProperties: false }, annotations: MUT,
     run: async function (ctx, args) {
       needConfirm(args);
-      const rt = require('./relaytransfer');
+      const rt = _rt;
       const r = await rt.pull(ctx, { relay: String(args.relay), code: String(args.code), user: args.user, pass: args.pass_file ? fs.readFileSync(String(args.pass_file), 'utf8').trim() : undefined, fetch: (typeof fetch !== 'undefined' ? fetch : undefined) });
       if (!r.found) throw new Error('no transfer at that relay for this code (already picked up, expired, or wrong code)');
       const l = await lock.acquire(ctx.configDir);
-      let res; try { res = require('./migrate').applyBundle(ctx, r.bundle, { force: !!args.force }); } finally { l.release(); }
+      let res; try { res = migrate.applyBundle(ctx, r.bundle, { force: !!args.force }); } finally { l.release(); }
       try { await r.cleanup(); } catch (e) { /* one-shot delete is best-effort; the relay TTL sweeps it otherwise */ }
       return { merged: { accounts: res.accounts, providers: res.providers, transcripts: res.transcripts } };
     },
@@ -750,7 +799,7 @@ const TOOLS = [
       // Mirror the CLI: lock ONLY the switch, not the (network) usage evaluation.
       const opts = { performSwitch: function (name) { return (async function () { const l = await lock.acquire(ctx.configDir); try { return core.performSwitch(ctx, name); } finally { l.release(); } })(); } };
       if (args.threshold !== undefined) opts.threshold = args.threshold;
-      return await require('./autoswitch').tick(ctx, opts);
+      return await _autoswitch.tick(ctx, opts);
     },
   },
   {
@@ -759,7 +808,7 @@ const TOOLS = [
     inputSchema: { type: 'object', properties: { action: { type: 'string', enum: ['status', 'install', 'remove'] }, interval: { type: 'integer', description: 'Seconds between checks (default 300, clamped 60..21600).' }, threshold: { type: 'integer', description: 'Utilization % to switch at.' }, strategy: { type: 'string', enum: ['best', 'next-available'] }, group: { type: 'string' }, confirm: confirmProp.confirm }, required: ['action', 'confirm'], additionalProperties: false },
     annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
     run: async function (ctx, args) {
-      const svc = require('./autoswitchservice');
+      const svc = _svc;
       if (args.action === 'status') return { autoswitchService: svc.status(ctx, { home: ctx.home }) };
       needConfirm(args);
       if (args.action === 'remove') return { removed: svc.uninstall(ctx, { home: ctx.home }) };
@@ -774,49 +823,49 @@ const TOOLS = [
     name: 'keyflip_groups', title: 'List account groups/tags',
     description: 'Account groups (tags) used to SCOPE rotation and failover to a pool. With no args returns { groups: {group->members}, tags: {account->tags} }; with group="<g>" returns that group\'s members. Read-only.',
     inputSchema: { type: 'object', properties: { group: { type: 'string' } }, additionalProperties: false }, annotations: RO,
-    run: async function (ctx, args) { const groups = require('./groups'); if (args && args.group) return { group: String(args.group), members: groups.membersOf(ctx, String(args.group)) }; return { groups: groups.listGroups(ctx), tags: groups.readAll(ctx) }; },
+    run: async function (ctx, args) { const groups = _groups; if (args && args.group) return { group: String(args.group), members: groups.membersOf(ctx, String(args.group)) }; return { groups: groups.listGroups(ctx), tags: groups.readAll(ctx) }; },
   },
   {
     name: 'keyflip_group_tag', title: 'Tag an account into a group',
     description: 'Add one or more group tags to an account so group-scoped rotation (`keyflip next --group <g>`) and failover can target it. Mutating — ask the user first, then confirm=true.',
     inputSchema: { type: 'object', properties: { account: { type: 'string' }, groups: { type: 'array', items: { type: 'string' } }, confirm: confirmProp.confirm }, required: ['account', 'groups', 'confirm'], additionalProperties: false }, annotations: MUT,
-    run: async function (ctx, args) { needConfirm(args); const g = require('./groups'); const name = core.resolveProfile(ctx, String(args.account)); if (!name) throw new Error("no such account: '" + args.account + "'"); const tags = Array.isArray(args.groups) ? args.groups : []; if (!tags.length) throw new Error('provide at least one group'); const l = await lock.acquire(ctx.configDir); try { let cur = g.tagsFor(ctx, name); tags.forEach(function (t) { cur = g.addTag(ctx, name, String(t)); }); return { account: name, tags: cur }; } finally { l.release(); } },
+    run: async function (ctx, args) { needConfirm(args); const g = _groups; const name = core.resolveProfile(ctx, String(args.account)); if (!name) throw new Error("no such account: '" + args.account + "'"); const tags = Array.isArray(args.groups) ? args.groups : []; if (!tags.length) throw new Error('provide at least one group'); const l = await lock.acquire(ctx.configDir); try { let cur = g.tagsFor(ctx, name); tags.forEach(function (t) { cur = g.addTag(ctx, name, String(t)); }); return { account: name, tags: cur }; } finally { l.release(); } },
   },
   {
     name: 'keyflip_group_untag', title: 'Remove an account from a group',
     description: 'Remove a group tag from an account. Mutating — ask the user first, then confirm=true.',
     inputSchema: { type: 'object', properties: { account: { type: 'string' }, group: { type: 'string' }, confirm: confirmProp.confirm }, required: ['account', 'group', 'confirm'], additionalProperties: false }, annotations: MUT,
-    run: async function (ctx, args) { needConfirm(args); const g = require('./groups'); const name = core.resolveProfile(ctx, String(args.account)); if (!name) throw new Error("no such account: '" + args.account + "'"); const l = await lock.acquire(ctx.configDir); try { return { account: name, tags: g.removeTag(ctx, name, String(args.group)) }; } finally { l.release(); } },
+    run: async function (ctx, args) { needConfirm(args); const g = _groups; const name = core.resolveProfile(ctx, String(args.account)); if (!name) throw new Error("no such account: '" + args.account + "'"); const l = await lock.acquire(ctx.configDir); try { return { account: name, tags: g.removeTag(ctx, name, String(args.group)) }; } finally { l.release(); } },
   },
   {
     name: 'keyflip_budget_status', title: 'Usage budgets + breach alerts',
     description: 'Report per-account usage BUDGETS (5-hour / 7-day % ceilings, per account or a "*" default that covers every account) alongside current cached usage, flagging every account/window at/over its ceiling ("breach") or within 10% ("warn"). Reads keyflip\'s usage cache — does NOT fetch (run keyflip_usage_history first to refresh). Read-only.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false }, annotations: RO,
-    run: async function (ctx) { return require('./budget').status(ctx); },
+    run: async function (ctx) { return _budget.status(ctx); },
   },
   {
     name: 'keyflip_budget_set', title: 'Set a usage-budget ceiling',
     description: 'Set/merge a usage-budget ceiling for an account: five_hour_pct and/or seven_day_pct (0-100). Use account "*" for the default covering every account. Pass null for a window to remove just that ceiling; omit to leave unchanged. Mutating — ask the user, then confirm=true.',
     inputSchema: { type: 'object', properties: { account: { type: 'string' }, five_hour_pct: { type: ['number', 'null'] }, seven_day_pct: { type: ['number', 'null'] }, confirm: confirmProp.confirm }, required: ['account', 'confirm'], additionalProperties: false }, annotations: MUT,
-    run: async function (ctx, args) { needConfirm(args); const budget = require('./budget'); const raw = String(args.account); const name = (raw === '*' || raw === 'default' || raw === 'defaults') ? '*' : (core.resolveProfile(ctx, raw) || raw); const limits = {}; if (args.five_hour_pct !== undefined) limits.fiveHourPct = args.five_hour_pct; if (args.seven_day_pct !== undefined) limits.sevenDayPct = args.seven_day_pct; const l = await lock.acquire(ctx.configDir); try { return { set: { account: name, limits: budget.setLimit(ctx, name, limits) } }; } finally { l.release(); } },
+    run: async function (ctx, args) { needConfirm(args); const budget = _budget; const raw = String(args.account); const name = (raw === '*' || raw === 'default' || raw === 'defaults') ? '*' : (core.resolveProfile(ctx, raw) || raw); const limits = {}; if (args.five_hour_pct !== undefined) limits.fiveHourPct = args.five_hour_pct; if (args.seven_day_pct !== undefined) limits.sevenDayPct = args.seven_day_pct; const l = await lock.acquire(ctx.configDir); try { return { set: { account: name, limits: budget.setLimit(ctx, name, limits) } }; } finally { l.release(); } },
   },
   {
     name: 'keyflip_budget_clear', title: 'Clear an account\'s usage budget',
     description: 'Remove ALL usage-budget ceilings for an account (or the "*" defaults). Mutating — ask the user, then confirm=true.',
     inputSchema: { type: 'object', properties: { account: { type: 'string' }, confirm: confirmProp.confirm }, required: ['account', 'confirm'], additionalProperties: false }, annotations: MUT,
-    run: async function (ctx, args) { needConfirm(args); const budget = require('./budget'); const raw = String(args.account); const name = (raw === '*' || raw === 'default' || raw === 'defaults') ? '*' : (core.resolveProfile(ctx, raw) || raw); const l = await lock.acquire(ctx.configDir); try { return { cleared: budget.clear(ctx, name) ? name : null }; } finally { l.release(); } },
+    run: async function (ctx, args) { needConfirm(args); const budget = _budget; const raw = String(args.account); const name = (raw === '*' || raw === 'default' || raw === 'defaults') ? '*' : (core.resolveProfile(ctx, raw) || raw); const l = await lock.acquire(ctx.configDir); try { return { cleared: budget.clear(ctx, name) ? name : null }; } finally { l.release(); } },
   },
   {
     name: 'keyflip_import_env', title: 'Import providers from a .env / environment',
     description: 'Detect Anthropic/OpenAI credentials in a .env file (pass `path`) or the current process environment (omit `path`) and save each as a keyflip provider endpoint. Returns what was imported with every key REDACTED — keys are never echoed back. Mutating — ask the user first, then confirm=true.',
     inputSchema: { type: 'object', properties: { path: { type: 'string', description: 'Path to a .env file. Omit to import from the current environment.' }, confirm: confirmProp.confirm }, required: ['confirm'], additionalProperties: false }, annotations: MUT,
-    run: async function (ctx, args) { needConfirm(args); const importcreds = require('./importcreds'); const res = args.path ? importcreds.fromFile(ctx, String(args.path)) : importcreds.fromEnv(ctx, process.env); const l = await lock.acquire(ctx.configDir); try { return importcreds.apply(ctx, res.candidates); } finally { l.release(); } },
+    run: async function (ctx, args) { needConfirm(args); const importcreds = _importcreds; const res = args.path ? importcreds.fromFile(ctx, String(args.path)) : importcreds.fromEnv(ctx, process.env); const l = await lock.acquire(ctx.configDir); try { return importcreds.apply(ctx, res.candidates); } finally { l.release(); } },
   },
   {
     name: 'keyflip_shell_init', title: 'Shell auto-activation hook',
     description: 'Return the shell snippet (bash/zsh/fish) for direnv-style account auto-activation: once added to the shell rc file, cd-ing into a directory pinned with `keyflip link` auto-switches the CLI to that account. Install: `eval "$(keyflip shell-init zsh)"` (fish: `keyflip shell-init fish | source`). Read-only — returns text only.',
     inputSchema: { type: 'object', properties: { shell: { type: 'string', enum: ['bash', 'zsh', 'fish'] } }, required: ['shell'], additionalProperties: false }, annotations: RO,
-    run: async function (ctx, args) { const shellhook = require('./shellhook'); return { shell: String(args.shell), snippet: shellhook.hook(String(args.shell)) }; },
+    run: async function (ctx, args) { const shellhook = _shellhook; return { shell: String(args.shell), snippet: shellhook.hook(String(args.shell)) }; },
   },
   {
     name: 'keyflip_audit_log', title: 'Action / audit log',
@@ -828,172 +877,172 @@ const TOOLS = [
     name: 'keyflip_notify_status', title: 'Notification settings',
     description: 'Show keyflip\'s outbound notification config: webhook URL (if any), enabled events (quota/switch/fleet-reply/…), and whether macOS desktop banners are on. Read-only.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false }, annotations: RO,
-    run: async function (ctx) { const c = require('./notify').getConfig(ctx); return { webhook: c.webhook, events: c.events, desktop: c.desktop }; },
+    run: async function (ctx) { const c = _notify.getConfig(ctx); return { webhook: c.webhook, events: c.events, desktop: c.desktop }; },
   },
   {
     name: 'keyflip_notify_set', title: 'Configure notifications',
     description: 'Set the notification webhook (http(s) only), the enabled event list, and/or the macOS desktop-banner toggle. keyflip POSTs a NON-SECRET summary { event, payload, at } on each enabled event. Pass webhook:null to clear it. Mutating — ask the user, then confirm=true.',
     inputSchema: { type: 'object', properties: { webhook: { type: ['string', 'null'] }, events: { type: 'array', items: { type: 'string' } }, desktop: { type: 'boolean' }, confirm: confirmProp.confirm }, required: ['confirm'], additionalProperties: false }, annotations: MUT,
-    run: async function (ctx, args) { needConfirm(args); const patch = {}; if ('webhook' in args) patch.webhook = args.webhook == null ? null : String(args.webhook); if (Array.isArray(args.events)) patch.events = args.events; if (typeof args.desktop === 'boolean') patch.desktop = args.desktop; const l = await lock.acquire(ctx.configDir); try { return { notify: require('./notify').setConfig(ctx, patch) }; } finally { l.release(); } },
+    run: async function (ctx, args) { needConfirm(args); const patch = {}; if ('webhook' in args) patch.webhook = args.webhook == null ? null : String(args.webhook); if (Array.isArray(args.events)) patch.events = args.events; if (typeof args.desktop === 'boolean') patch.desktop = args.desktop; const l = await lock.acquire(ctx.configDir); try { return { notify: _notify.setConfig(ctx, patch) }; } finally { l.release(); } },
   },
   {
     name: 'keyflip_notify_test', title: 'Send a test notification',
     description: 'Fire a synthetic "test" event through the configured sinks (webhook POST and/or macOS banner) so the user can verify wiring. Outbound side effect — ask the user first, then confirm=true.',
     inputSchema: { type: 'object', properties: { confirm: confirmProp.confirm }, required: ['confirm'], additionalProperties: false }, annotations: MUT,
-    run: async function (ctx, args) { needConfirm(args); return await require('./notify').test(ctx); },
+    run: async function (ctx, args) { needConfirm(args); return await _notify.test(ctx); },
   },
   // ---- Wave-2 (strategic): cost / team pool / router+cache (orchestrator/policy/integrations/vault appended after the array) ----
   {
     name: 'keyflip_cost_status', title: 'Aggregate account spend / utilization',
     description: 'Aggregate cost/utilization across all saved accounts from keyflip\'s usage cache. Reports 5h/7d rate-limit utilization for every account; reports per-token spend (costUSD) ONLY when the cache carries token totals — the OAuth usage API is percentage-based, so a dollar figure is never inferred from a percentage. Read-only.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false }, annotations: RO,
-    run: async function (ctx) { return require('./cost').unified(ctx); },
+    run: async function (ctx) { return _cost.unified(ctx); },
   },
   {
     name: 'keyflip_cost_predict', title: 'Project time-to-limit for an account',
     description: 'From the recorded usage trend, project time-to-limit for the 5h and 7d rate windows of one account: current pct, rate-per-hour, and ETA minutes (null when unknown — never fabricated). Read-only.',
     inputSchema: { type: 'object', properties: { account: { type: 'string' } }, required: ['account'], additionalProperties: false }, annotations: RO,
-    run: async function (ctx, args) { const name = core.resolveProfile(ctx, String(args.account)); if (!name) throw new Error("no such account: '" + args.account + "'"); return require('./cost').predict(ctx, name); },
+    run: async function (ctx, args) { const name = core.resolveProfile(ctx, String(args.account)); if (!name) throw new Error("no such account: '" + args.account + "'"); return _cost.predict(ctx, name); },
   },
   {
     name: 'keyflip_cost_by_project', title: 'Per-project token + cost attribution',
     description: 'Scan local ~/.claude/projects transcripts and attribute token usage + estimated cost per working directory / repo. Token counts are MEASURED; costUSD is an ESTIMATE from a dated static pricing snapshot. Work is capped. Read-only.',
     inputSchema: { type: 'object', properties: { limit: { type: 'number' } }, additionalProperties: false }, annotations: RO,
-    run: async function (ctx, args) { return require('./cost').attribute(ctx, { maxSessions: args && args.limit }); },
+    run: async function (ctx, args) { return _cost.attribute(ctx, { maxSessions: args && args.limit }); },
   },
   {
     name: 'keyflip_team_members', title: 'List team-pool members and account visibility',
     description: 'Read a shared, encrypted TEAM credential pool: its MEMBERS (id + role) and a CREDS-FREE summary of which accounts it holds + the minimum role each requires. Read-only. Requires the pool passphrase_file.',
     inputSchema: { type: 'object', properties: { dir: { type: 'string' }, pool: { type: 'string' }, passphrase_file: { type: 'string' } }, required: ['dir', 'pool', 'passphrase_file'], additionalProperties: false }, annotations: RO,
-    run: async function (ctx, args) { const teampool = require('./teampool'); const view = teampool.read(ctx, { dir: String(args.dir), pool: String(args.pool), passphrase: fs.readFileSync(String(args.passphrase_file), 'utf8').trim() }); if (!view) throw new Error("no such pool '" + args.pool + "'"); return { pool: view.pool, members: view.members, accounts: view.accounts, at: view.at }; },
+    run: async function (ctx, args) { const teampool = _teampool; const view = teampool.read(ctx, { dir: String(args.dir), pool: String(args.pool), passphrase: fs.readFileSync(String(args.passphrase_file), 'utf8').trim() }); if (!view) throw new Error("no such pool '" + args.pool + "'"); return { pool: view.pool, members: view.members, accounts: view.accounts, at: view.at }; },
   },
   {
     name: 'keyflip_team_publish', title: 'Publish accounts to a shared team pool',
     description: 'Build an ENCRYPTED team credential pool from THIS machine\'s saved accounts into a shared folder, tagging each account with the minimum role allowed to pull it. `accounts` optionally selects names + per-account roles; omit to publish every local account as "member". Mutating (writes encrypted login secrets to a shared folder) — ask the user, then confirm=true.',
     inputSchema: { type: 'object', properties: { dir: { type: 'string' }, pool: { type: 'string' }, passphrase_file: { type: 'string' }, accounts: { type: 'object', additionalProperties: { type: 'string', enum: ['owner', 'member'] } }, owner: { type: 'string' }, confirm: confirmProp.confirm }, required: ['dir', 'pool', 'passphrase_file', 'confirm'], additionalProperties: false }, annotations: MUT,
-    run: async function (ctx, args) { needConfirm(args); const teampool = require('./teampool'); return { published: teampool.publish(ctx, { dir: String(args.dir), pool: String(args.pool), passphrase: fs.readFileSync(String(args.passphrase_file), 'utf8').trim(), accounts: args.accounts || undefined, owner: args.owner ? String(args.owner) : undefined }) }; },
+    run: async function (ctx, args) { needConfirm(args); const teampool = _teampool; return { published: teampool.publish(ctx, { dir: String(args.dir), pool: String(args.pool), passphrase: fs.readFileSync(String(args.passphrase_file), 'utf8').trim(), accounts: args.accounts || undefined, owner: args.owner ? String(args.owner) : undefined }) }; },
   },
   {
     name: 'keyflip_team_pull', title: 'Pull role-visible accounts from a team pool',
     description: 'Import from a shared encrypted team pool ONLY the accounts your role (as: owner|member, default member) may see. Existing accounts skipped unless force=true. Mutating — ask the user, then confirm=true.',
     inputSchema: { type: 'object', properties: { dir: { type: 'string' }, pool: { type: 'string' }, passphrase_file: { type: 'string' }, as: { type: 'string', enum: ['owner', 'member'] }, force: { type: 'boolean' }, confirm: confirmProp.confirm }, required: ['dir', 'pool', 'passphrase_file', 'confirm'], additionalProperties: false }, annotations: MUT,
-    run: async function (ctx, args) { needConfirm(args); const teampool = require('./teampool'); return { pulled: teampool.pull(ctx, { dir: String(args.dir), pool: String(args.pool), passphrase: fs.readFileSync(String(args.passphrase_file), 'utf8').trim(), asRole: args.as ? String(args.as) : 'member', force: !!args.force }) }; },
+    run: async function (ctx, args) { needConfirm(args); const teampool = _teampool; return { pulled: teampool.pull(ctx, { dir: String(args.dir), pool: String(args.pool), passphrase: fs.readFileSync(String(args.passphrase_file), 'utf8').trim(), asRole: args.as ? String(args.as) : 'member', force: !!args.force }) }; },
   },
   {
     name: 'keyflip_team_member_add', title: 'Add or update a team-pool member',
     description: 'Add a member (or change role: owner|member) in a shared encrypted team pool. Mutating (rewrites the encrypted pool) — ask the user, then confirm=true.',
     inputSchema: { type: 'object', properties: { dir: { type: 'string' }, pool: { type: 'string' }, passphrase_file: { type: 'string' }, id: { type: 'string' }, role: { type: 'string', enum: ['owner', 'member'] }, confirm: confirmProp.confirm }, required: ['dir', 'pool', 'passphrase_file', 'id', 'confirm'], additionalProperties: false }, annotations: MUT,
-    run: async function (ctx, args) { needConfirm(args); const teampool = require('./teampool'); return { members: teampool.addMember(ctx, { dir: String(args.dir), pool: String(args.pool), passphrase: fs.readFileSync(String(args.passphrase_file), 'utf8').trim(), id: String(args.id), role: args.role ? String(args.role) : 'member' }) }; },
+    run: async function (ctx, args) { needConfirm(args); const teampool = _teampool; return { members: teampool.addMember(ctx, { dir: String(args.dir), pool: String(args.pool), passphrase: fs.readFileSync(String(args.passphrase_file), 'utf8').trim(), id: String(args.id), role: args.role ? String(args.role) : 'member' }) }; },
   },
   {
     name: 'keyflip_team_member_remove', title: 'Remove a team-pool member',
     description: 'Remove a member from a shared encrypted team pool (last owner cannot be removed). Mutating — ask the user, then confirm=true.',
     inputSchema: { type: 'object', properties: { dir: { type: 'string' }, pool: { type: 'string' }, passphrase_file: { type: 'string' }, id: { type: 'string' }, confirm: confirmProp.confirm }, required: ['dir', 'pool', 'passphrase_file', 'id', 'confirm'], additionalProperties: false }, annotations: MUT,
-    run: async function (ctx, args) { needConfirm(args); const teampool = require('./teampool'); return { members: teampool.removeMember(ctx, { dir: String(args.dir), pool: String(args.pool), passphrase: fs.readFileSync(String(args.passphrase_file), 'utf8').trim(), id: String(args.id) }) }; },
+    run: async function (ctx, args) { needConfirm(args); const teampool = _teampool; return { members: teampool.removeMember(ctx, { dir: String(args.dir), pool: String(args.pool), passphrase: fs.readFileSync(String(args.passphrase_file), 'utf8').trim(), id: String(args.id) }) }; },
   },
   {
     name: 'keyflip_route_list', title: 'List model routes',
     description: 'Model→provider routing pins and whether arbitrage (always-cheapest) mode is on. Read-only.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false }, annotations: RO,
-    run: async function (ctx) { return require('./router').get(ctx); },
+    run: async function (ctx) { return _router.get(ctx); },
   },
   {
     name: 'keyflip_cache_status', title: 'Response cache status',
     description: 'Response-cache stats: entry count, cap, total bytes and oldest/newest timestamps. Read-only.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false }, annotations: RO,
-    run: async function (ctx) { return require('./router').cacheStatus(ctx); },
+    run: async function (ctx) { return _router.cacheStatus(ctx); },
   },
   {
     name: 'keyflip_route_set', title: 'Pin a model to a provider',
     description: 'Pin a model onto a configured provider (overrides cheapest-provider selection unless arbitrage is on). Ask the user, then confirm=true.',
     inputSchema: { type: 'object', properties: { model: { type: 'string' }, provider: { type: 'string' }, confirm: confirmProp.confirm }, required: ['model', 'provider', 'confirm'], additionalProperties: false }, annotations: MUT,
-    run: async function (ctx, args) { needConfirm(args); return require('./router').setRoute(ctx, String(args.model), String(args.provider)); },
+    run: async function (ctx, args) { needConfirm(args); return _router.setRoute(ctx, String(args.model), String(args.provider)); },
   },
   {
     name: 'keyflip_route_clear', title: 'Clear a model route',
     description: 'Remove the routing pin for a model (falls back to cheapest). Ask the user, then confirm=true.',
     inputSchema: { type: 'object', properties: { model: { type: 'string' }, confirm: confirmProp.confirm }, required: ['model', 'confirm'], additionalProperties: false }, annotations: MUT,
-    run: async function (ctx, args) { needConfirm(args); return { cleared: require('./router').clearRoute(ctx, String(args.model)) }; },
+    run: async function (ctx, args) { needConfirm(args); return { cleared: _router.clearRoute(ctx, String(args.model)) }; },
   },
   {
     name: 'keyflip_route_arbitrage', title: 'Toggle always-cheapest routing',
     description: 'Turn model-cost ARBITRAGE on/off — when on, routing always picks the cheapest configured provider that serves a model (overriding pins). Ask the user, then confirm=true.',
     inputSchema: { type: 'object', properties: { on: { type: 'boolean' }, confirm: confirmProp.confirm }, required: ['on', 'confirm'], additionalProperties: false }, annotations: MUT,
-    run: async function (ctx, args) { needConfirm(args); return { arbitrage: require('./router').setArbitrage(ctx, !!args.on) }; },
+    run: async function (ctx, args) { needConfirm(args); return { arbitrage: _router.setArbitrage(ctx, !!args.on) }; },
   },
   {
     name: 'keyflip_cache_purge', title: 'Purge the response cache',
     description: 'Delete cached responses — all, or only those older than older_than_ms. Ask the user, then confirm=true.',
     inputSchema: { type: 'object', properties: { older_than_ms: { type: 'number' }, confirm: confirmProp.confirm }, required: ['confirm'], additionalProperties: false }, annotations: MUT,
-    run: async function (ctx, args) { needConfirm(args); return require('./router').cachePurge(ctx, { olderThanMs: typeof args.older_than_ms === 'number' ? args.older_than_ms : undefined }); },
+    run: async function (ctx, args) { needConfirm(args); return _router.cachePurge(ctx, { olderThanMs: typeof args.older_than_ms === 'number' ? args.older_than_ms : undefined }); },
   },
   // ---- Wave-3: swarm (own-fleet exec) + config (settings) ----
   {
     name: 'keyflip_swarm_run', title: 'Run one command across YOUR OWN enrolled fleet machines',
     description: 'Queue an exec command onto YOUR OWN fleet machines (the ones you enrolled in your encrypted rendezvous — NOT a tool for reaching third-party targets). The command travels as an ARGV ARRAY (command + args[]) spawned with NO shell (no injection surface). With no `to`, it fans out to every checked-in machine. Nothing runs until each target drains WITH CONSENT (`keyflip swarm drain --allow-exec`, off by default). Collect with keyflip_swarm_results. Mutating (writes signed commands to the shared rendezvous) — ask the user, then confirm=true.',
     inputSchema: { type: 'object', properties: { command: { type: 'string' }, args: { type: 'array', items: { type: 'string' } }, to: { type: 'string' }, passphrase_file: { type: 'string' }, confirm: confirmProp.confirm }, required: ['command', 'passphrase_file', 'confirm'], additionalProperties: false }, annotations: MUT,
-    run: async function (ctx, args) { needConfirm(args); const fleet = require('./fleet'); const swarm = require('./swarm'); const b = fleet.bus(ctx, { passphrase: fs.readFileSync(String(args.passphrase_file), 'utf8').trim() }); fleet.publish(ctx, b, {}); const q = swarm.queueExec(ctx, b, { command: String(args.command), args: Array.isArray(args.args) ? args.args : [], to: args.to }); return { queued: { group: q.group, command: q.command, args: q.args, targets: q.commands } }; },
+    run: async function (ctx, args) { needConfirm(args); const fleet = _fleet; const swarm = _swarm; const b = fleet.bus(ctx, { passphrase: fs.readFileSync(String(args.passphrase_file), 'utf8').trim() }); fleet.publish(ctx, b, {}); const q = swarm.queueExec(ctx, b, { command: String(args.command), args: Array.isArray(args.args) ? args.args : [], to: args.to }); return { queued: { group: q.group, command: q.command, args: q.args, targets: q.commands } }; },
   },
   {
     name: 'keyflip_swarm_ping', title: 'Queue a reachability check from YOUR fleet to a URL you control',
     description: 'Queue a reachability check: each targeted fleet machine curls an http(s) URL YOU control and reports the HTTP status (the URL is a distinct argv token, no shell). Same consent gate as swarm_run — runs only on `keyflip swarm drain --allow-exec`. Mutating — ask the user, then confirm=true.',
     inputSchema: { type: 'object', properties: { url: { type: 'string' }, to: { type: 'string' }, timeout: { type: 'number' }, passphrase_file: { type: 'string' }, confirm: confirmProp.confirm }, required: ['url', 'passphrase_file', 'confirm'], additionalProperties: false }, annotations: MUT,
-    run: async function (ctx, args) { needConfirm(args); const fleet = require('./fleet'); const swarm = require('./swarm'); const b = fleet.bus(ctx, { passphrase: fs.readFileSync(String(args.passphrase_file), 'utf8').trim() }); fleet.publish(ctx, b, {}); const q = swarm.ping(ctx, b, String(args.url), { to: args.to, timeout: args.timeout }); return { queued: { group: q.group, ping: String(args.url), targets: q.commands } }; },
+    run: async function (ctx, args) { needConfirm(args); const fleet = _fleet; const swarm = _swarm; const b = fleet.bus(ctx, { passphrase: fs.readFileSync(String(args.passphrase_file), 'utf8').trim() }); fleet.publish(ctx, b, {}); const q = swarm.ping(ctx, b, String(args.url), { to: args.to, timeout: args.timeout }); return { queued: { group: q.group, ping: String(args.url), targets: q.commands } }; },
   },
   {
     name: 'keyflip_swarm_results', title: 'Collect results published by your fleet for a swarm run',
     description: 'Aggregate the results your fleet machines published for a swarm run/ping, addressed to THIS machine. Each result\'s signed origin is verified against the sender\'s TOFU-pinned key. Output is size-capped + control-char scrubbed. Defaults to the most recent group. Read-only.',
     inputSchema: { type: 'object', properties: { group: { type: 'string' }, passphrase_file: { type: 'string' } }, required: ['passphrase_file'], additionalProperties: false }, annotations: RO,
-    run: async function (ctx, args) { const fleet = require('./fleet'); const swarm = require('./swarm'); const b = fleet.bus(ctx, { passphrase: fs.readFileSync(String(args.passphrase_file), 'utf8').trim() }); const reconcile = fleet.reconcileKeys(ctx, fleet.readFleet(ctx, b)); const group = args.group || swarm.readState(ctx).lastGroup; return { group: group || null, results: swarm.aggregate(ctx, b, { group: group, reconcile: reconcile }) }; },
+    run: async function (ctx, args) { const fleet = _fleet; const swarm = _swarm; const b = fleet.bus(ctx, { passphrase: fs.readFileSync(String(args.passphrase_file), 'utf8').trim() }); const reconcile = fleet.reconcileKeys(ctx, fleet.readFleet(ctx, b)); const group = args.group || swarm.readState(ctx).lastGroup; return { group: group || null, results: swarm.aggregate(ctx, b, { group: group, reconcile: reconcile }) }; },
   },
   {
     name: 'keyflip_config_list', title: 'List keyflip settings',
     description: 'All keyflip settings with their effective value (stored override or built-in default) plus the schema (type/default/bounds/help). Read-only. No secrets.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false }, annotations: RO,
-    run: async function (ctx) { const config = require('./config'); return { config: Object.assign({}, config.getAll(ctx)), schema: Object.assign({}, config.describe()) }; },
+    run: async function (ctx) { const config = _config; return { config: Object.assign({}, config.getAll(ctx)), schema: Object.assign({}, config.describe()) }; },
   },
   {
     name: 'keyflip_config_get', title: 'Read one keyflip setting',
     description: 'Read a single setting by key (e.g. "autoswitch.threshold"); returns its effective value. Unknown keys error. Read-only.',
     inputSchema: { type: 'object', properties: { key: { type: 'string' } }, required: ['key'], additionalProperties: false }, annotations: RO,
-    run: async function (ctx, args) { const config = require('./config'); return { key: String(args.key), value: config.get(ctx, String(args.key)) }; },
+    run: async function (ctx, args) { const config = _config; return { key: String(args.key), value: config.get(ctx, String(args.key)) }; },
   },
   {
     name: 'keyflip_codexbar', title: 'CodexBar bridge (provider alignment)',
     description: 'Detect a locally-installed CodexBar (the menu-bar AI-usage monitor) and align its tracked providers with what keyflip can read. Complementary: CodexBar monitors usage, keyflip manages accounts. Reads only CodexBar\'s non-secret provider list — never its stored tokens. Read-only.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false }, annotations: RO,
-    run: async function (ctx) { const cb = require('./codexbar'); return { detected: cb.detect(ctx), align: cb.align(ctx) }; },
+    run: async function (ctx) { const cb = _codexbar; return { detected: cb.detect(ctx), align: cb.align(ctx) }; },
   },
   {
     name: 'keyflip_provider_usage', title: 'Usage/limits across other AI providers',
     description: 'Read usage + limit windows across the OTHER AI coding tools on this machine (Codex, Gemini, Cursor, Copilot, opencode, OpenRouter, …) plus Claude — a CodexBar-style multi-provider monitor. Each provider is normalized to { status, windows:[{name,usedPct,resetsAt,human}] }. Reads only usage numbers/reset times (any API key is referenced by env NAME only, never its value). Absent providers are skipped. Read-only.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false }, annotations: RO,
-    run: async function (ctx) { return { providers: await require('./provusage').readAll(ctx, { fetch: (typeof fetch !== 'undefined' ? fetch : undefined) }) }; },
+    run: async function (ctx) { return { providers: await _provusage.readAll(ctx, { fetch: (typeof fetch !== 'undefined' ? fetch : undefined) }) }; },
   },
   {
     name: 'keyflip_brain_propose', title: 'Propose a plan of keyflip steps (opt-in)',
     description: 'Turn a plain-language intent into a PROPOSED plan of keyflip commands (via Gemini). PROPOSE-ONLY — it never executes anything; it returns validated steps (each tagged safe/mutating) for the human to approve and run. OFF unless KEYFLIP_BRAIN=1 and GEMINI_API_KEY are set (returns enabled:false otherwise). All outbound context is secret-scrubbed; the API key is never returned. Read-only.',
     inputSchema: { type: 'object', properties: { intent: { type: 'string' } }, required: ['intent'], additionalProperties: false }, annotations: RO,
-    run: async function (ctx, args) { return require('./brain').propose(ctx, String(args.intent == null ? '' : args.intent), {}); },
+    run: async function (ctx, args) { return _brain.propose(ctx, String(args.intent == null ? '' : args.intent), {}); },
   },
   {
     name: 'keyflip_config_set', title: 'Change a keyflip setting',
     description: 'Set a setting to a new value (validated + coerced against the schema; unknown key / wrong type / out-of-range are rejected). Changes future keyflip behavior. Ask the user, then confirm=true.',
     inputSchema: { type: 'object', properties: { key: { type: 'string' }, value: { type: 'string' }, confirm: confirmProp.confirm }, required: ['key', 'value', 'confirm'], additionalProperties: false }, annotations: MUT,
-    run: async function (ctx, args) { needConfirm(args); const config = require('./config'); const value = config.set(ctx, String(args.key), args.value); logmod.log('mcp config set ' + String(args.key)); return { set: { key: String(args.key), value: value } }; },
+    run: async function (ctx, args) { needConfirm(args); const config = _config; const value = config.set(ctx, String(args.key), args.value); logmod.log('mcp config set ' + String(args.key)); return { set: { key: String(args.key), value: value } }; },
   },
   {
     name: 'keyflip_config_unset', title: 'Reset a keyflip setting to default',
     description: 'Remove a stored override so the setting reverts to its built-in default. Ask the user, then confirm=true.',
     inputSchema: { type: 'object', properties: { key: { type: 'string' }, confirm: confirmProp.confirm }, required: ['key', 'confirm'], additionalProperties: false }, annotations: MUT,
-    run: async function (ctx, args) { needConfirm(args); const config = require('./config'); const had = config.unset(ctx, String(args.key)); logmod.log('mcp config unset ' + String(args.key)); return { unset: String(args.key), wasSet: had, value: config.get(ctx, String(args.key)) }; },
+    run: async function (ctx, args) { needConfirm(args); const config = _config; const had = config.unset(ctx, String(args.key)); logmod.log('mcp config unset ' + String(args.key)); return { unset: String(args.key), wasSet: had, value: config.get(ctx, String(args.key)) }; },
   },
   {
     name: 'keyflip_agents', title: 'List other agents\' memory + config keyflip can carry',
     description: 'Report which OTHER AI agents have files on THIS machine that keyflip can carry across machines: MEMORY (Cursor `~/.cursor/rules/`, Gemini `~/.gemini/GEMINI.md`, Codex `~/.codex/AGENTS.md`+`memories/` — markdown, no secrets) and CONFIG (`~/.cursor/mcp.json`, `~/.gemini/settings.json`, `~/.codex/config.toml` — carried ONLY secret-scanned + redacted). Read-only; feed into keyflip_migrate_export with agents=true and/or agent_config=true.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false }, annotations: RO,
     run: async function (ctx) {
-      const agents = require('./agents');
+      const agents = _agents;
       const present = agents.presentAgents(ctx);
       const cfgPresent = agents.presentAgentConfig(ctx);
       const rows = agents.REGISTRY.map(function (a) {
@@ -1013,7 +1062,7 @@ const TOOLS = [
     inputSchema: { type: 'object', properties: { old_path: { type: 'string' }, new_path: { type: 'string' }, purge_old: { type: 'boolean' }, force: { type: 'boolean' }, skip_configs: { type: 'boolean', description: 'Only rebind transcripts + app registry; leave config files untouched.' }, extra_files: { type: 'array', items: { type: 'string' }, description: 'Additional config files to rewrite oldPath->newPath in (absolute paths).' }, confirm: confirmProp.confirm }, required: ['old_path', 'new_path', 'confirm'], additionalProperties: false }, annotations: MUT,
     run: async function (ctx, args) {
       needConfirm(args);
-      const path = require('path');
+      const path = _path;
       const oldAbs = path.resolve(String(args.old_path)), newAbs = path.resolve(String(args.new_path));
       const r = sessions.rebind(ctx, oldAbs, newAbs, { purgeOld: !!args.purge_old, force: !!args.force });
       if (!r.ok) throw new Error('rebind did not run: ' + (r.reason || 'unknown'));
@@ -1054,7 +1103,7 @@ const TOOLS = [
       const row = sessions.find(ctx, String(args.session_id));
       if (!row) throw new Error("no live session matches '" + args.session_id + "'");
       const l = await lock.acquire(ctx.configDir);
-      try { const r = require('./sessionedit').deleteSession(ctx, { project: row.project, sessionId: row.sessionId, hard: !!args.hard }); if (!r.ok) throw new Error('delete failed: ' + (r.reason || 'unknown')); return { deleted: r }; }
+      try { const r = _sessionedit.deleteSession(ctx, { project: row.project, sessionId: row.sessionId, hard: !!args.hard }); if (!r.ok) throw new Error('delete failed: ' + (r.reason || 'unknown')); return { deleted: r }; }
       finally { l.release(); }
     },
   },
@@ -1065,10 +1114,10 @@ const TOOLS = [
     run: async function (ctx, args) {
       const row = sessions.find(ctx, String(args.session_id));
       if (!row) throw new Error("no live session matches '" + args.session_id + "'");
-      const pii = require('./pii');
+      const pii = _pii;
       const opts = { project: row.project, sessionId: row.sessionId, apply: args.confirm === true, categories: Array.isArray(args.categories) ? args.categories : undefined, custom: pii.loadCustom(ctx) };
       if (args.llm_url) opts.llm = { url: String(args.llm_url) };
-      const doIt = function () { return require('./sessionedit').scrubSession(ctx, opts); };
+      const doIt = function () { return _sessionedit.scrubSession(ctx, opts); };
       let r;
       if (args.confirm === true) { const l = await lock.acquire(ctx.configDir); try { r = doIt(); } finally { l.release(); } }
       else { r = doIt(); }
@@ -1085,7 +1134,7 @@ const TOOLS = [
       if (!row) throw new Error("no live session matches '" + args.session_id + "'");
       const op = { type: String(args.op), index: args.index | 0, apply: args.confirm === true };
       if (args.replacement != null) op.replacement = String(args.replacement);
-      const doIt = function () { return require('./sessionedit').editSession(ctx, { project: row.project, sessionId: row.sessionId, op: op }); };
+      const doIt = function () { return _sessionedit.editSession(ctx, { project: row.project, sessionId: row.sessionId, op: op }); };
       let r;
       if (args.confirm === true) { const l = await lock.acquire(ctx.configDir); try { r = doIt(); } finally { l.release(); } }
       else { r = doIt(); }
@@ -1098,7 +1147,7 @@ const TOOLS = [
     description: 'Redact PII from an arbitrary text string (not a file) and return the cleaned text + per-category counts. Categories: email, phone (incl. TR), tckn, passport, creditCard (Luhn), iban, ipv4/ipv6, secret; address is opt-in. Read-only — transforms the given text, touches nothing on disk.',
     inputSchema: { type: 'object', properties: { text: { type: 'string' }, categories: { type: 'array', items: { type: 'string' } } }, required: ['text'], additionalProperties: false }, annotations: RO,
     run: async function (ctx, args) {
-      const pii = require('./pii');
+      const pii = _pii;
       const opts = { custom: pii.loadCustom(ctx) };
       if (Array.isArray(args.categories)) opts.categories = args.categories;
       return pii.scrub(String(args.text == null ? '' : args.text), opts);
@@ -1133,13 +1182,13 @@ const TOOLS = [
       if (args.account) {
         resolved = core.resolveProfile(ctx, String(args.account));
         if (!resolved) throw new Error("no such account: '" + args.account + "'");
-        const session = require('./session');
+        const session = _session;
         const l = await lock.acquire(ctx.configDir);
         let dir; try { dir = session.prepareSession(ctx, resolved, { share: true, shareHistory: true }); } finally { l.release(); }
         env = session.sessionEnv(ctx, dir).env;
       }
-      const r = require('child_process').spawnSync(process.env.KEYFLIP_CLAUDE_BIN || 'claude', sc.args, { cwd: cwd, env: env, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 });
-      if (resolved) { const l2 = await lock.acquire(ctx.configDir); try { require('./session').syncBack(ctx, resolved); } catch (e) { /* best-effort */ } finally { l2.release(); } }
+      const r = _child_process.spawnSync(process.env.KEYFLIP_CLAUDE_BIN || 'claude', sc.args, { cwd: cwd, env: env, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 });
+      if (resolved) { const l2 = await lock.acquire(ctx.configDir); try { _session.syncBack(ctx, resolved); } catch (e) { /* best-effort */ } finally { l2.release(); } }
       if (r.status !== 0) throw new Error('claude exited ' + r.status + (r.stderr ? ': ' + String(r.stderr).trim().slice(0, 200) : ''));
       return { session: row.sessionId, as: resolved || null, reply: String(r.stdout || '').trim() };
     },
@@ -1150,7 +1199,7 @@ const TOOLS = [
     inputSchema: { type: 'object', properties: { session_id: { type: 'string' }, account: { type: 'string' }, confirm: confirmProp.confirm }, required: ['session_id', 'confirm'], additionalProperties: false }, annotations: MUT,
     run: async function (ctx, args) {
       needConfirm(args);
-      const sessionmap = require('./sessionmap');
+      const sessionmap = _sessionmap;
       const row = sessions.find(ctx, String(args.session_id));
       if (!row) throw new Error("no session matches '" + args.session_id + "'");
       const l = await lock.acquire(ctx.configDir);
@@ -1203,7 +1252,7 @@ const TOOLS = [
     inputSchema: { type: 'object', properties: { session_id: { type: 'string' }, to_claude: { type: 'boolean' }, model: { type: 'string' }, confirm: confirmProp.confirm }, required: ['session_id', 'confirm'], additionalProperties: false }, annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
     run: async function (ctx, args) {
       needConfirm(args);
-      const path = require('path');
+      const path = _path;
       const row = sessions.find(ctx, String(args.session_id));
       if (!row) throw new Error("no session matches '" + args.session_id + "'");
       if (!llm.available()) throw new Error('distill needs Claude Code on PATH (summarizes via `claude -p`)');
@@ -1265,7 +1314,7 @@ const TOOLS = [
     inputSchema: { type: 'object', properties: { action: { type: 'string', enum: ['status', 'install', 'remove'] }, at: { type: 'string', description: 'HH:MM, default 03:00' }, older_than_days: { type: 'integer' }, archive: { type: 'boolean' }, confirm: confirmProp.confirm }, required: ['action', 'confirm'], additionalProperties: false },
     annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
     run: async function (ctx, args) {
-      const schedule = require('./schedule');
+      const schedule = _schedule;
       if (args.action === 'status') return { schedule: schedule.status(ctx) };
       needConfirm(args);
       if (args.action === 'remove') return { removed: schedule.uninstall(ctx) };
@@ -1279,7 +1328,7 @@ const TOOLS = [
     description: 'Install/remove/inspect the keyflip status line in Claude Code — it shows the active account, provider, and cached quota in the prompt. action="status"|"install"|"remove". install/remove edit settings.json — ask the user, then confirm=true.',
     inputSchema: { type: 'object', properties: { action: { type: 'string', enum: ['status', 'install', 'remove'] }, confirm: confirmProp.confirm }, required: ['action', 'confirm'], additionalProperties: false }, annotations: MUT,
     run: async function (ctx, args) {
-      const settings = require('./settings'); const fsutil = require('./fsutil');
+      const settings = _settings; const fsutil = _fsutil;
       const file = ctx.claudeSettingsPath;
       let cur; try { cur = settings.read(file); } catch (e) { throw new Error('~/.claude/settings.json is corrupt'); }
       const installed = !!(cur.statusLine && /statusline/.test(String((cur.statusLine && cur.statusLine.command) || '')));
@@ -1300,7 +1349,7 @@ const TOOLS = [
     description: 'Read or change ~/.claude/settings.json (the file Claude Code hot-reloads — no restart). action="show"/"get" read; "set"/"unset" write. key is a dot-path (e.g. "env.ANTHROPIC_MODEL"); value is parsed as a JSON literal if valid, else a string. These settings ride `keyflip migrate` to other machines. set/unset are mutating — ask the user, then confirm=true.',
     inputSchema: { type: 'object', properties: { action: { type: 'string', enum: ['show', 'get', 'set', 'unset'] }, key: { type: 'string' }, value: { type: 'string' }, confirm: confirmProp.confirm }, required: ['action', 'confirm'], additionalProperties: false }, annotations: MUT,
     run: async function (ctx, args) {
-      const settings = require('./settings'); const fsutil = require('./fsutil');
+      const settings = _settings; const fsutil = _fsutil;
       const file = ctx.claudeSettingsPath;
       let cur; try { cur = settings.read(file); } catch (e) { throw new Error('~/.claude/settings.json is corrupt'); }
       // NEVER return provider API keys / auth tokens (which `keyflip provider use` writes
@@ -1334,7 +1383,7 @@ const TOOLS = [
     description: 'Search your distilled keepsakes for a topic across ALL past chats — "where did I discuss X". Default is local BM25 (offline); set semantic=true to use an embedding endpoint (Ollama/hosted) for true vector search (falls back to lexical if none). Returns ranked keepsakes with a snippet + source session. Read-only.',
     inputSchema: { type: 'object', properties: { query: { type: 'string' }, limit: { type: 'integer' }, semantic: { type: 'boolean' } }, required: ['query'], additionalProperties: false }, annotations: RO,
     run: async function (ctx, args) {
-      const recall = require('./recall');
+      const recall = _recall;
       const limit = (args && args.limit) || 10;
       if (args && args.semantic) {
         const sem = await recall.semanticSearch(ctx, String(args.query), { limit: limit });
@@ -1381,7 +1430,7 @@ const TOOLS = [
     description: 'Read the portable project memory (.keyflip/) for a project directory — project facts, freeform context.md, decisions, tasks, and the NAMES of required environment variables (never their values). `path` defaults to the server cwd. Every text field is secret-redacted. Read-only.',
     inputSchema: { type: 'object', properties: { path: { type: 'string', description: 'Project directory (default: cwd).' } }, additionalProperties: false }, annotations: RO,
     run: async function (ctx, args) {
-      const projctx = require('./projctx');
+      const projctx = _projctx;
       const pp = (args && args.path) || process.cwd();
       return projctx.pack(pp, { now: ctx.now });
     },
@@ -1392,7 +1441,7 @@ const TOOLS = [
     inputSchema: { type: 'object', properties: { path: { type: 'string', description: 'Project directory (default: cwd).' }, id: { type: 'string' }, status: { type: 'string', enum: ['todo', 'in_progress', 'blocked', 'done'] }, confirm: confirmProp.confirm }, required: ['id', 'status', 'confirm'], additionalProperties: false }, annotations: MUT,
     run: async function (ctx, args) {
       needConfirm(args);
-      const projctx = require('./projctx');
+      const projctx = _projctx;
       const pp = (args && args.path) || process.cwd();
       const t = projctx.updateTask(pp, String(args.id), { status: String(args.status) }, { now: ctx.now });
       if (!t) throw new Error("no such task: '" + args.id + "'");
@@ -1405,7 +1454,7 @@ const TOOLS = [
     inputSchema: { type: 'object', properties: { path: { type: 'string', description: 'Project directory (default: cwd).' }, title: { type: 'string' }, rationale: { type: 'string' }, alternatives: { type: 'array', items: { type: 'string' } }, do_not: { type: 'array', items: { type: 'string' } }, status: { type: 'string', enum: ['decided', 'rejected', 'superseded'] }, confirm: confirmProp.confirm }, required: ['title', 'confirm'], additionalProperties: false }, annotations: MUT,
     run: async function (ctx, args) {
       needConfirm(args);
-      const projctx = require('./projctx');
+      const projctx = _projctx;
       const pp = (args && args.path) || process.cwd();
       const d = projctx.addDecision(pp, { title: args.title, rationale: args.rationale, alternatives: args.alternatives, doNot: args.do_not, status: args.status }, { now: ctx.now });
       return { added: { id: d.id, title: d.title, status: d.status } };
@@ -1416,7 +1465,7 @@ const TOOLS = [
     description: 'Detect this project\'s AI rule/instruction files (CLAUDE.md, .cursorrules, .cursor/rules/*, AGENTS.md, GEMINI.md, .github/copilot-instructions.md) and normalize them into ONE common model — sections tagged coding/architecture/security/workflow/general, provenance kept. Secrets are redacted. Read-only.',
     inputSchema: { type: 'object', properties: { path: { type: 'string', description: 'Project directory (default: current working directory).' } }, additionalProperties: false }, annotations: RO,
     run: async function (ctx, args) {
-      const rules = require('./rulesmodel');
+      const rules = _rules;
       const base = (args && args.path) || process.cwd();
       const model = rules.importRules(base, { now: ctx.now });
       return { detected: rules.detectRuleFiles(base), schemaVersion: model.schemaVersion, sources: model.sources, sections: model.sections };
@@ -1427,7 +1476,7 @@ const TOOLS = [
     description: 'Render the normalized rule model as the file content ONE tool expects (to=claude→CLAUDE.md, cursor→.cursorrules, agents→AGENTS.md, gemini→GEMINI.md, generic→RULES.md). ALWAYS returns the content (secrets redacted). Pass confirm=false to PREVIEW only; pass confirm=true to WRITE the file into the project — ask the user before writing.',
     inputSchema: { type: 'object', properties: { to: { type: 'string', enum: ['claude', 'cursor', 'agents', 'gemini', 'generic'] }, path: { type: 'string', description: 'Project directory (default: cwd).' }, confirm: confirmProp.confirm }, required: ['to', 'confirm'], additionalProperties: false }, annotations: MUT,
     run: async function (ctx, args) {
-      const rules = require('./rulesmodel');
+      const rules = _rules;
       const base = (args && args.path) || process.cwd();
       const model = rules.loadModel(base) || rules.importRules(base, { now: ctx.now });
       const content = rules.emit(model, args.to);
@@ -1440,13 +1489,13 @@ const TOOLS = [
     name: 'keyflip_checkpoint_list', title: 'List project checkpoints',
     description: 'List git-bound checkpoints for a project (newest first). Each is a session-boundary snapshot: git branch/short-commit/dirty files, a summary, an optional task snapshot, and the active provider, chained by parent id. `path` defaults to the current directory. Read-only, local.',
     inputSchema: { type: 'object', properties: { path: { type: 'string', description: 'Project directory (defaults to cwd).' } }, additionalProperties: false }, annotations: RO,
-    run: async function (ctx, args) { return { checkpoints: require('./checkpoint').list((args && args.path) || process.cwd()) }; },
+    run: async function (ctx, args) { return { checkpoints: _checkpoint.list((args && args.path) || process.cwd()) }; },
   },
   {
     name: 'keyflip_checkpoint_latest', title: 'Latest project checkpoint',
     description: 'The most recent git-bound checkpoint for a project (or null if none). `path` defaults to the current directory. Read-only, local.',
     inputSchema: { type: 'object', properties: { path: { type: 'string', description: 'Project directory (defaults to cwd).' } }, additionalProperties: false }, annotations: RO,
-    run: async function (ctx, args) { return { checkpoint: require('./checkpoint').latest((args && args.path) || process.cwd()) }; },
+    run: async function (ctx, args) { return { checkpoint: _checkpoint.latest((args && args.path) || process.cwd()) }; },
   },
   {
     name: 'keyflip_checkpoint_create', title: 'Create a project checkpoint',
@@ -1460,7 +1509,7 @@ const TOOLS = [
     }, required: ['confirm'], additionalProperties: false }, annotations: MUT,
     run: async function (ctx, args) {
       needConfirm(args);
-      const out = require('./checkpoint').create((args && args.path) || process.cwd(),
+      const out = _checkpoint.create((args && args.path) || process.cwd(),
         { summary: args.summary, provider: args.provider, tasksSnapshot: args.tasks_snapshot },
         { now: ctx.now });
       return { checkpoint: out };
@@ -1471,7 +1520,7 @@ const TOOLS = [
     description: 'The project\'s context-sync privacy mode (local|git|encrypted|company) and policy — what MAY leave the machine for the shared .keyflip/ context package — plus the current checkpoint. Read-only.',
     inputSchema: { type: 'object', properties: { projectPath: { type: 'string', description: 'Project root (default: server working dir).' } }, additionalProperties: false }, annotations: RO,
     run: async function (ctx, args) {
-      return require('./ctxsync').status((args && args.projectPath) || process.cwd(), { now: ctx.now });
+      return _ctxsync.status((args && args.projectPath) || process.cwd(), { now: ctx.now });
     },
   },
   {
@@ -1488,7 +1537,7 @@ const TOOLS = [
     }, annotations: MUT,
     run: async function (ctx, args) {
       needConfirm(args);
-      const m = require('./ctxsync').setMode((args && args.projectPath) || process.cwd(), String(args.mode), { now: ctx.now });
+      const m = _ctxsync.setMode((args && args.projectPath) || process.cwd(), String(args.mode), { now: ctx.now });
       return { mode: m.mode, policy: m.policy, checkpoint: { contentHash: m.contentHash, parent: m.parent, updatedAt: m.updatedAt } };
     },
   },
@@ -1497,13 +1546,13 @@ const TOOLS = [
 // Wave-2 modules that ship their own self-contained MCP tool objects (annotations + confirm-gating
 // inlined). Appended here so each module owns its tool definitions. Order is display-only.
 [
-  require('./orchestrator').mcpTools,
-  require('./policy').mcpTools,
-  require('./integrations').mcpTools,
-  require('./vault').tools,
-  require('./license').mcpTools,
-  require('./surface').mcpTools,
-  require('./handoff').mcpTools,   // Wave 4: keyflip_handoff (RO continue-prompt)
+  _orchestrator.mcpTools,
+  _policy.mcpTools,
+  _integrations.mcpTools,
+  _vault.tools,
+  _license.mcpTools,
+  _surface.mcpTools,
+  _handoff.mcpTools,   // Wave 4: keyflip_handoff (RO continue-prompt)
 ].forEach(function (arr) { (Array.isArray(arr) ? arr : []).forEach(function (t) { if (t && t.name) TOOLS.push(t); }); });
 
 // ---- JSON-RPC / MCP plumbing ---------------------------------------------------
@@ -1548,7 +1597,7 @@ async function handle(ctx, msg) {
       if (!tool) return rpcError(-32602, 'unknown tool: ' + params.name);
       try {
         // Paywall gate (NO-OP unless KEYFLIP_LICENSING is enabled): map the tool to its tier + block if insufficient.
-        require('./license').requireForName(ctx, tool.name);
+        _license.requireForName(ctx, tool.name);
         const result = await tool.run(ctx, params.arguments || {});
         return respond({
           content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
@@ -1613,4 +1662,4 @@ function serve(ctx, io) {
   return new Promise(function (resolve) { rl.on('close', function () { chain.then(resolve, resolve); }); });
 }
 
-module.exports = { serve: serve, handle: handle, TOOLS: TOOLS, PROTOCOL_VERSION: PROTOCOL_VERSION };
+export { serve, handle, TOOLS, PROTOCOL_VERSION };

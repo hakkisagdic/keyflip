@@ -1,11 +1,10 @@
-'use strict';
 // Pure helpers for the guided account-capture wizard (`keyflip setup`). The
 // interactive loop lives in cli.js; these compute "what's logged in now" vs
 // "what's already saved", so the wizard can auto-detect a freshly logged-in
 // account and capture it. No side effects, no prompting.
-const core = require('./core');
-const profiles = require('./profiles');
-const appauth = require('./appauth');
+import * as core from './core.js';
+import * as profiles from './profiles.js';
+import * as appauth from './appauth.js';
 
 // Emails of every account already saved (CLI or app), lowercased, blanks dropped.
 function capturedEmails(ctx) {
@@ -38,8 +37,4 @@ function firstNewLogin(ctx, captured) {
   return null;
 }
 
-module.exports = {
-  capturedEmails: capturedEmails,
-  snapshotLogins: snapshotLogins,
-  firstNewLogin: firstNewLogin,
-};
+export { capturedEmails, snapshotLogins, firstNewLogin };

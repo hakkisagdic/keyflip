@@ -1,13 +1,16 @@
-'use strict';
 // Tests for the guided-capture wizard's detection helpers (src/onboard.js) and
 // that `keyflip setup` refuses non-interactively. The interactive loop itself is
 // keyboard/poll driven and covered by exercising its building blocks here.
-const test = require('node:test');
-const assert = require('node:assert');
-const path = require('path');
-const { makeCtx, writeClaude } = require('./helpers');
-const onboard = require('../src/onboard');
-const profiles = require('../src/profiles');
+import test from 'node:test';
+import assert from 'node:assert';
+import path from 'path';
+import { makeCtx, writeClaude } from './helpers.js';
+import * as onboard from '../src/onboard.js';
+import * as profiles from '../src/profiles.js';
+import _child_process from 'child_process';
+import { fileURLToPath } from 'url';
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 test('capturedEmails collects saved profile emails, lowercased', function () {
   const ctx = makeCtx();
@@ -43,14 +46,14 @@ test('firstNewLogin returns null when signed out', function () {
 
 test('`keyflip setup` refuses when stdin is not a TTY (points at add)', function () {
   const BIN = path.join(__dirname, '..', 'bin', 'keyflip.js');
-  const r = require('child_process').spawnSync(process.execPath, [BIN, 'setup'], { encoding: 'utf8', input: '' });
+  const r = _child_process.spawnSync(process.execPath, [BIN, 'setup'], { encoding: 'utf8', input: '' });
   assert.notStrictEqual(r.status, 0);
   assert.match(r.stderr, /interactive wizard/);
 });
 
 test('`keyflip onboard` refuses when stdin is not a TTY', function () {
   const BIN = path.join(__dirname, '..', 'bin', 'keyflip.js');
-  const r = require('child_process').spawnSync(process.execPath, [BIN, 'onboard'], { encoding: 'utf8', input: '' });
+  const r = _child_process.spawnSync(process.execPath, [BIN, 'onboard'], { encoding: 'utf8', input: '' });
   assert.notStrictEqual(r.status, 0);
   assert.match(r.stderr, /interactive wizard/);
 });

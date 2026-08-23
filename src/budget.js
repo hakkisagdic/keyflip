@@ -1,4 +1,3 @@
-'use strict';
 // SPEND/QUOTA BUDGETS: per-account usage ceilings with breach / near-breach alerts.
 // You set a % ceiling on the 5-hour and/or 7-day rate-limit windows — per account,
 // or a '*' default that covers every account — and evaluate() reads keyflip's usage
@@ -6,10 +5,10 @@
 // list --usage`; this module NEVER fetches) and flags any account+window at/over
 // its ceiling ('breach') or within WARN_MARGIN of it ('warn'). No network, no
 // secrets: ceilings are plain numbers in <configDir>/budget.json (0600).
-const fs = require('fs');
-const path = require('path');
-const profiles = require('./profiles');
-const { atomicWrite, readJsonForWrite } = require('./fsutil');
+import fs from 'fs';
+import path from 'path';
+import * as profiles from './profiles.js';
+import { atomicWrite, readJsonForWrite } from './fsutil.js';
 
 const WARN_MARGIN = 10;    // pct below the ceiling at which we raise a 'warn'
 const DEFAULT_KEY = '*';   // the catch-all defaults entry (applies to every account)
@@ -216,14 +215,4 @@ function status(ctx) {
   };
 }
 
-module.exports = {
-  get: get,
-  setLimit: setLimit,
-  clear: clear,
-  evaluate: evaluate,
-  status: status,
-  limitsFor: limitsFor,
-  budgetPath: budgetPath,
-  WARN_MARGIN: WARN_MARGIN,
-  DEFAULT_KEY: DEFAULT_KEY,
-};
+export { get, setLimit, clear, evaluate, status, limitsFor, budgetPath, WARN_MARGIN, DEFAULT_KEY };

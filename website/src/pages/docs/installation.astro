@@ -1,0 +1,57 @@
+---
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import PageHeader from '../../components/PageHeader.astro';
+import CodeBlock from '../../components/CodeBlock.astro';
+---
+
+<BaseLayout title="Installation" locale="en" currentPath="/docs/installation">
+  <PageHeader title="Installation" subtitle="Get keyflip running on your machine in under a minute" />
+
+  <section class="py-16">
+    <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 prose dark:prose-invert max-w-none">
+
+      <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-4">Requirements</h2>
+      <ul class="list-disc pl-6 text-surface-700 dark:text-surface-300 space-y-2 mb-8">
+        <li><strong>Node.js 18 or later</strong> (Claude Code already needs Node)</li>
+        <li>The Claude app or Claude Code, logged in to the account(s) you want to save</li>
+        <li>macOS, Linux, or Windows</li>
+      </ul>
+
+      <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-4">macOS / Linux</h2>
+      <p class="text-surface-700 dark:text-surface-300 mb-4">One line, no npm, no sudo. Fetches the sources and, on macOS, builds a launcher app:</p>
+      <CodeBlock code='curl -fsSL https://raw.githubusercontent.com/hakkisagdic/keyflip/main/install.sh | bash' title="Shell" />
+
+      <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-4 mt-8">Windows</h2>
+      <p class="text-surface-700 dark:text-surface-300 mb-4">PowerShell one-liner that also creates a Start Menu / Desktop shortcut:</p>
+      <CodeBlock code='irm https://raw.githubusercontent.com/hakkisagdic/keyflip/main/install.ps1 | iex' title="PowerShell" />
+
+      <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-4 mt-8">Via npm (any OS)</h2>
+      <CodeBlock code={`npm install --global @hakkisagdic/keyflip
+
+# or straight from git (no registry needed):
+npm install --global git+https://github.com/hakkisagdic/keyflip.git`} title="npm" />
+
+      <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-4 mt-8">From a clone</h2>
+      <CodeBlock code='git clone https://github.com/hakkisagdic/keyflip.git && cd keyflip && ./install.sh' title="Git clone" />
+
+      <div class="mt-8 p-4 bg-primary-50 dark:bg-primary-950/50 border border-primary-200 dark:border-primary-800 rounded-lg">
+        <p class="text-sm text-surface-700 dark:text-surface-300">
+          The installer places the code in <code>~/.local/share/keyflip</code>, links <code>keyflip</code> into <code>~/.local/bin</code>, and adds it to your <code>PATH</code>. Uninstall with <code>./uninstall.sh</code> (or <code>npm uninstall -g keyflip</code>).
+        </p>
+      </div>
+
+      <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-4 mt-8">First-time setup</h2>
+      <p class="text-surface-700 dark:text-surface-300 mb-4">Run the guided wizard to capture all your accounts:</p>
+      <CodeBlock code='keyflip setup' title="Setup wizard" />
+      <p class="text-surface-700 dark:text-surface-300">
+        It saves whatever you are logged in to right now, then loops: sign out and into your next account and keyflip detects the new login automatically. Type <code>d</code> when done.
+      </p>
+
+      <div class="mt-8 flex gap-4">
+        <a href="/docs/usage" class="px-6 py-2 bg-primary-600 text-white font-medium rounded-lg hover:bg-primary-700 transition-colors">
+          Next: Usage &rarr;
+        </a>
+      </div>
+    </div>
+  </section>
+</BaseLayout>

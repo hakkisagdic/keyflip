@@ -1,11 +1,10 @@
-'use strict';
 // READER for the action/audit log that src/log.js appends to
 // <configDir>/logs/keyflip.log (each line: "<ISO-ts> <message>"). log.js only
 // writes; this module only reads. Strictly read-only: it never creates the file
 // or its directory, so a query on a machine that has never logged leaves no trace.
 // Guards against an unbounded log by reading only the trailing MAX_BYTES.
-const fs = require('fs');
-const path = require('path');
+import fs from 'fs';
+import path from 'path';
 
 const MAX_BYTES = 256 * 1024; // only ever process the tail of the file (anti-OOM)
 
@@ -84,8 +83,4 @@ function tail(ctx, opts) {
   return out.slice(-limit); // keep the newest `limit`, newest last
 }
 
-module.exports = {
-  path: logPath,
-  tail: tail,
-  MAX_BYTES: MAX_BYTES,
-};
+export { logPath as path, tail, MAX_BYTES };

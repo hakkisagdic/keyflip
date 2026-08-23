@@ -1,10 +1,9 @@
-'use strict';
 // Passive update notice + self-upgrade. The check fetches the repo's package.json
 // version at most once per 24h (cached in <configDir>/.update-check.json), is
 // timeout-boxed, and can never block or fail a command.
-const fs = require('fs');
-const path = require('path');
-const { atomicWrite } = require('./fsutil');
+import fs from 'fs';
+import path from 'path';
+import { atomicWrite } from './fsutil.js';
 
 const RAW_PKG_URL = 'https://raw.githubusercontent.com/hakkisagdic/keyflip/main/package.json';
 const CHECK_EVERY_MS = 24 * 60 * 60 * 1000;
@@ -93,12 +92,4 @@ function upgradeSpawn(method, platform) {
   return null;
 }
 
-module.exports = {
-  latestVersion: latestVersion,
-  maybeNotify: maybeNotify,
-  cmpVersions: cmpVersions,
-  detectInstallMethod: detectInstallMethod,
-  upgradeCommand: upgradeCommand,
-  upgradeSpawn: upgradeSpawn,
-  RAW_PKG_URL: RAW_PKG_URL,
-};
+export { latestVersion, maybeNotify, cmpVersions, detectInstallMethod, upgradeCommand, upgradeSpawn, RAW_PKG_URL };

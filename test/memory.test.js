@@ -1,12 +1,11 @@
-'use strict';
 // Tests for keyflip's own memory store (src/memory.js) + the claude -p seam (src/llm.js).
-const test = require('node:test');
-const assert = require('node:assert');
-const fs = require('fs');
-const path = require('path');
-const memory = require('../src/memory');
-const llm = require('../src/llm');
-const { makeCtx } = require('./helpers');
+import test from 'node:test';
+import assert from 'node:assert';
+import fs from 'fs';
+import path from 'path';
+import * as memory from '../src/memory.js';
+import * as llm from '../src/llm.js';
+import { makeCtx } from './helpers.js';
 
 test('memory.save writes a keepsake with frontmatter; read/has/list/remove work', function () {
   const ctx = makeCtx();

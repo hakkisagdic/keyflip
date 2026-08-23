@@ -1,14 +1,17 @@
-'use strict';
 // Wave-4/cleanup: the notify system was fully built but NOTHING emitted events — `notify.send`
 // was only reachable via `notify test`. These tests prove the real wiring: a configured webhook
 // actually receives a 'switch' event when the user switches accounts (and nothing is sent when
 // the event isn't subscribed). End-to-end through the spawned CLI + a live loopback HTTP sink.
-const test = require('node:test');
-const assert = require('node:assert');
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
-const http = require('http');
+import test from 'node:test';
+import assert from 'node:assert';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+import http from 'http';
+import _child_process from 'child_process';
+import { fileURLToPath } from 'url';
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const BIN = path.join(__dirname, '..', 'bin', 'keyflip.js');
 
@@ -33,14 +36,14 @@ function childEnv(home) {
   });
 }
 function run(home, args) {
-  return require('child_process').spawnSync(process.execPath, [BIN].concat(args), { encoding: 'utf8', env: childEnv(home) });
+  return _child_process.spawnSync(process.execPath, [BIN].concat(args), { encoding: 'utf8', env: childEnv(home) });
 }
 // Async spawn — REQUIRED for any CLI call whose webhook posts back to the in-process sink:
 // spawnSync would block this process's event loop, so the loopback HTTP server could never
 // accept the child's POST (the child's fetch would just time out). spawn keeps the loop free.
 function runAsync(home, args) {
   return new Promise(function (resolve) {
-    const cp = require('child_process').spawn(process.execPath, [BIN].concat(args), { env: childEnv(home) });
+    const cp = _child_process.spawn(process.execPath, [BIN].concat(args), { env: childEnv(home) });
     let out = '', err = '';
     cp.stdout.on('data', function (d) { out += d; });
     cp.stderr.on('data', function (d) { err += d; });

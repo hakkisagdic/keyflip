@@ -1,13 +1,12 @@
-'use strict';
 // Account GROUPS/TAGS: label accounts (e.g. "work", "personal", "clientX") so
 // rotation and failover can be SCOPED to a pool — `keyflip next --group work`
 // only cycles the work accounts. State lives in <configDir>/groups.json as
 // { accountName: [tag, ...] }; the inverse view (group -> [members]) is derived
 // on read. Every map keyed by a user-supplied name is Object.create(null) so a
 // hostile account/tag name (e.g. "__proto__") can never pollute a prototype.
-const path = require('path');
-const profiles = require('./profiles');
-const { atomicWrite, readJsonForWrite } = require('./fsutil');
+import path from 'path';
+import * as profiles from './profiles.js';
+import { atomicWrite, readJsonForWrite } from './fsutil.js';
 
 // A tag/group name must start alphanumeric and use only safe chars (mirrors
 // profiles' NAME_RE). Bounded length. Reserved object keys are rejected so a tag
@@ -126,15 +125,4 @@ function filterProfiles(ctx, profs, group) {
   });
 }
 
-module.exports = {
-  groupsPath: groupsPath,
-  isValidTag: isValidTag,
-  readAll: readAll,
-  tagsFor: tagsFor,
-  setTags: setTags,
-  addTag: addTag,
-  removeTag: removeTag,
-  listGroups: listGroups,
-  membersOf: membersOf,
-  filterProfiles: filterProfiles,
-};
+export { groupsPath, isValidTag, readAll, tagsFor, setTags, addTag, removeTag, listGroups, membersOf, filterProfiles };

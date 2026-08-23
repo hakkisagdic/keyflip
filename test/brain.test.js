@@ -1,13 +1,17 @@
-'use strict';
 // brain.test.js — the OPT-IN suggest+approve planner. Everything runs OFFLINE:
 // fetch is injected, and the env gate is toggled around each test. The brain must
 // PROPOSE ONLY (never execute), NEVER leak the API key, and defensively validate
 // UNTRUSTED model output against the real command CATALOG.
 
-const { test } = require('node:test');
-const assert = require('node:assert');
-const brain = require('../src/brain');
-const secretscan = require('../src/secretscan');
+import { test } from 'node:test';
+import assert from 'node:assert';
+import * as brain from '../src/brain.js';
+import * as secretscan from '../src/secretscan.js';
+import _fs from 'fs';
+import _path from 'path';
+import { fileURLToPath } from 'url';
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = _path.dirname(__filename);
 
 const API_KEY = 'AIzaSyTEST_gemini_key_000000000000000000000';
 
@@ -383,7 +387,7 @@ test('extractFirstJsonObject returns null when there is no object', function () 
 // ---- module surface: no execution seam --------------------------------------
 
 test('brain.js does not import or expose any execution path', function () {
-  const src = require('fs').readFileSync(require('path').join(__dirname, '..', 'src', 'brain.js'), 'utf8');
+  const src = _fs.readFileSync(_path.join(__dirname, '..', 'src', 'brain.js'), 'utf8');
   assert.strictEqual(/require\(['"]\.\/cli['"]\)/.test(src), false, 'does not require cli.js');
   assert.strictEqual(/require\(['"]\.\/mcp['"]\)/.test(src), false, 'does not require mcp.js');
   assert.strictEqual(/child_process/.test(src), false, 'does not require child_process');

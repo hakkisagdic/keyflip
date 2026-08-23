@@ -1,11 +1,18 @@
-'use strict';
 // MCP server: spec lifecycle + tools over real stdio (spawned `keyflip mcp`).
-const test = require('node:test');
-const assert = require('node:assert');
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
-const { spawn } = require('child_process');
+import test from 'node:test';
+import assert from 'node:assert';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+import { spawn } from 'child_process';
+import * as _child_process from 'child_process';
+import { makeCtx } from './helpers.js';
+import * as _mcp from '../src/mcp.js';
+import * as _profiles from '../src/profiles.js';
+import * as _provider from '../src/provider.js';
+import { fileURLToPath } from 'url';
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const BIN = path.join(__dirname, '..', 'bin', 'keyflip.js');
 
@@ -17,7 +24,7 @@ function mkhome() {
   return home;
 }
 function cliRun(home, args, input) {
-  return require('child_process').spawnSync(process.execPath, [BIN].concat(args), {
+  return _child_process.spawnSync(process.execPath, [BIN].concat(args), {
     encoding: 'utf8', input: input,
     env: Object.assign({}, process.env, {
       HOME: home, USERPROFILE: home,
@@ -182,7 +189,7 @@ test('MCP: unknown method -> -32601, unknown tool -> -32602, parse error -> -327
 });
 
 test('notifications get NO response; id:null is rejected; a batch returns an array', async function () {
-  const mcp = require('../src/mcp');
+  const mcp = _mcp;
   const ctx = { configDir: '/tmp/nope', appDataDir: null, home: '/tmp', store: { getProfile: function () { return null; }, getLive: function () { return null; } } };
 
   // notification (no id) -> null (no reply)
@@ -233,8 +240,7 @@ test('install-skill copies the bundled skill into ~/.claude/skills', function ()
 // SECURITY (review P1 #4): keyflip_settings show/get must NOT return provider API keys /
 // auth tokens (which `provider use` writes into env) in plaintext over MCP.
 test('keyflip_settings redacts credential env on show/get (never leaks a key to the agent)', async function () {
-  const mcp = require('../src/mcp');
-  const { makeCtx } = require('./helpers');
+  const mcp = _mcp;
   const ctx = makeCtx();
   ctx.claudeSettingsPath = path.join(ctx.home, '.claude', 'settings.json');
   fs.mkdirSync(path.dirname(ctx.claudeSettingsPath), { recursive: true });
@@ -258,8 +264,7 @@ test('keyflip_settings redacts credential env on show/get (never leaks a key to 
 });
 
 // ---- 2026-07-07 CLI<->MCP parity tools ----
-const { makeCtx } = require('./helpers');
-function toolByName(n) { return require('../src/mcp').TOOLS.find(function (t) { return t.name === n; }); }
+function toolByName(n) { return _mcp.TOOLS.find(function (t) { return t.name === n; }); }
 
 test('parity MCP: gateway_status reports first-party when no gateway is set', async function () {
   const r = await toolByName('keyflip_gateway_status').run(makeCtx());
@@ -278,7 +283,7 @@ test('parity MCP: mcpreg set/list/remove round-trips (and gates on confirm)', as
 
 test('parity MCP: link/links pin and list a directory→account', async function () {
   const ctx = makeCtx();
-  const profiles = require('../src/profiles');
+  const profiles = _profiles;
   ctx.store.setProfile('work', '{"t":1}');
   profiles.write(ctx.configDir, { name: 'work', email: 'w@x.com', oauthAccount: {}, savedAt: ctx.now() });
   await assert.rejects(function () { return toolByName('keyflip_link').run(ctx, { dir: '/tmp/proj', account: 'work' }); }, /confirmation required/);
@@ -288,7 +293,7 @@ test('parity MCP: link/links pin and list a directory→account', async function
 });
 
 test('parity MCP: share builds a pointer link and share_apply imports the provider', async function () {
-  const provider = require('../src/provider');
+  const provider = _provider;
   const ctxA = makeCtx();
   provider.add(ctxA, 'relay', { baseUrl: 'https://api.example.com', authScheme: 'bearer', models: {}, endpointCandidates: [] });
   const built = await toolByName('keyflip_share').run(ctxA, { resource: 'provider', name: 'relay', no_secrets: true });

@@ -1,4 +1,3 @@
-'use strict';
 // H3: git-backed versioning of keyflip's OWN config/state/memory dir, so every mutation
 // is inspectable (`keyflip history`) and reversible (`keyflip undo`/`restore`). Uses the
 // system `git` binary (zero runtime dep) and DEGRADES TO A NO-OP if git is absent, the dir
@@ -8,10 +7,10 @@
 // SECRETS ARE NEVER COMMITTED. A managed .gitignore excludes creds/, *.cred, browser
 // sessions, and token-shaped files; secrets stay in the OS credential store. Git tracks
 // only the no-secret set (the same metadata `keyflip backup` already snapshots).
-const fs = require('fs');
-const path = require('path');
-const { run } = require('./exec');
-const secretpaths = require('./secretpaths');
+import fs from 'fs';
+import path from 'path';
+import { run } from './exec.js';
+import * as secretpaths from './secretpaths.js';
 
 // The secret set comes from the SHARED source of truth (src/secretpaths.js) so vcs and
 // backup can never drift; the rest is non-secret but not worth versioning.
@@ -148,18 +147,4 @@ function restore(ctx, ref) {
 function disable(ctx) { try { fs.mkdirSync(ctx.configDir, { recursive: true }); fs.writeFileSync(path.join(ctx.configDir, '.noversion'), ''); return true; } catch (e) { return false; } }
 function enable(ctx) { try { fs.rmSync(path.join(ctx.configDir, '.noversion'), { force: true }); } catch (e) { /* ignore */ } return ensureRepo(ctx); }
 
-module.exports = {
-  GITIGNORE: GITIGNORE,
-  gitAvailable: gitAvailable,
-  isEnabled: isEnabled,
-  isRepo: isRepo,
-  ensureRepo: ensureRepo,
-  commit: commit,
-  autoCommit: autoCommit,
-  log: log,
-  tracked: tracked,
-  undo: undo,
-  restore: restore,
-  disable: disable,
-  enable: enable,
-};
+export { GITIGNORE, gitAvailable, isEnabled, isRepo, ensureRepo, commit, autoCommit, log, tracked, undo, restore, disable, enable };

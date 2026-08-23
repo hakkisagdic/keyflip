@@ -1,14 +1,13 @@
-'use strict';
 // Tests for the PROJECT-CONTEXT store (src/projctx.js). Happy paths + hostile secret-leakage:
 // a secret placed in ANY text field (project/context/decision/task) or an .env value MUST NOT
 // reach the stored files or the packed package. Fully hermetic — injected clock + runner, no
 // network / subprocess / real git. Run: KEYFLIP_VCS=off node --test test/projctx.test.js
-const test = require('node:test');
-const assert = require('node:assert');
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
-const ctxstore = require('../src/projctx');
+import test from 'node:test';
+import assert from 'node:assert';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+import * as ctxstore from '../src/projctx.js';
 
 function tmpProject() { return fs.mkdtempSync(path.join(os.tmpdir(), 'keyflip-projctx-')); }
 const CLOCK = '2026-07-12T00:00:00.000Z';

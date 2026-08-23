@@ -1,9 +1,8 @@
-'use strict';
 // Minimal styler + the config ui.color=false hard-disable (make(stream, {color:false})).
 // Env (NO_COLOR/FORCE_COLOR/TERM) is neutralized so the assertions are deterministic in any CI.
-const test = require('node:test');
-const assert = require('node:assert');
-const style = require('../src/style');
+import test from 'node:test';
+import assert from 'node:assert';
+import * as style from '../src/style.js';
 
 function withCleanEnv(fn) {
   const saved = { NO_COLOR: process.env.NO_COLOR, FORCE_COLOR: process.env.FORCE_COLOR, TERM: process.env.TERM };

@@ -1,0 +1,50 @@
+---
+import BaseLayout from '../../../layouts/BaseLayout.astro';
+import PageHeader from '../../../components/PageHeader.astro';
+import CodeBlock from '../../../components/CodeBlock.astro';
+---
+
+<BaseLayout title="Filo ve Transfer" locale="tr" currentPath="/tr/docs/fleet">
+  <PageHeader title="Filo ve Transfer" subtitle="Birden fazla makineyi koordine edin ve cihazlar arası hesap aktarın" />
+
+  <section class="py-16">
+    <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
+
+      <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-4">Filo Kontrolü</h2>
+      <p class="text-surface-700 dark:text-surface-300 mb-4">
+        Filo, makineleri şifrelenmiş paylaşımlı klasör üzerinden koordine eder. Her makine köken doğrulaması için bir Ed25519 imzalama anahtarına sahiptir.
+      </p>
+      <CodeBlock code={`keyflip fleet init --dir <paylaşımlı-klasör>   # kontrol düzlemine bağla
+keyflip fleet push [--with-secrets]            # durumu yayınla + komutları uygula
+keyflip fleet status                           # her makineyi gör
+keyflip fleet switch <makine> <hesap>          # uzak makine hesabını değiştir
+keyflip fleet send-account <hesap> --to <m>    # bir hesabı dağıt
+keyflip fleet collect                          # filodan tüm hesapları topla
+keyflip fleet keys                             # imzalama anahtarı parmak izlerini denetle
+keyflip fleet trust <makine>                   # yeniden anahtarlamadan sonra yeniden sabitle`} />
+
+      <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-4 mt-10">LAN Transferi</h2>
+      <p class="text-surface-700 dark:text-surface-300 mb-4">Tek kullanımlık kod + isteğe bağlı QR, eşler arası şifrelenmiş akış:</p>
+      <CodeBlock code={`# Makine A (gönderen):
+keyflip transfer serve [--qr]
+
+# Makine B (alan):
+keyflip transfer pull --code X
+
+# Ters yön:
+keyflip transfer serve --receive     # B bekler
+keyflip transfer push <host> --code X  # A gönderir`} />
+
+      <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-4 mt-10">İnternet Rölesyonu (Sıfır Bilgi)</h2>
+      <p class="text-surface-700 dark:text-surface-300 mb-4">
+        İnternet üzerinden aynı kod deneyimi. Röle sadece şifrelenmiş metin tutar. Kodun anahtar yarısı asla röleye ulaşmaz. Tek kullanımlık: paket alındığında silinir.
+      </p>
+      <CodeBlock code={`# Senkron klasör üzerinden (Dropbox/iCloud/Drive):
+keyflip transfer serve --relay ~/Dropbox/kf
+keyflip transfer pull --relay ~/Dropbox/kf --code <randevu>-<anahtar>
+
+# Kendi rölenizi barındırın:
+keyflip transfer relay --host 0.0.0.0 --auth-user ben --auth-pass-file sifre.txt`} />
+    </div>
+  </section>
+</BaseLayout>

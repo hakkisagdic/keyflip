@@ -1,0 +1,31 @@
+---
+interface Command {
+  cmd: string;
+  desc: string;
+}
+
+interface Props {
+  title: string;
+  commands: Command[];
+}
+
+const { title, commands } = Astro.props;
+---
+
+<div class="mb-8">
+  <h3 class="text-xl font-bold text-surface-900 dark:text-surface-100 mb-4 pb-2 border-b border-surface-200 dark:border-surface-800">
+    {title}
+  </h3>
+  <div class="space-y-2">
+    {commands.map((cmd) => (
+      <div class="flex flex-col sm:flex-row sm:items-start gap-1 sm:gap-4 py-2 px-3 rounded-md hover:bg-surface-100 dark:hover:bg-surface-800/50 transition-colors">
+        <code class="text-sm font-mono text-primary-600 dark:text-primary-400 shrink-0 whitespace-nowrap">
+          {cmd.cmd}
+        </code>
+        <span class="text-sm text-surface-700 dark:text-surface-300">
+          {cmd.desc}
+        </span>
+      </div>
+    ))}
+  </div>
+</div>

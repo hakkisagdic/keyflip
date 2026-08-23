@@ -1,12 +1,14 @@
-'use strict';
 // #10 Bundled-skill install/freshness. The package's skills/keyflip dir is the
 // single source of truth; install symlinks it into ~/.claude/skills (copy
 // fallback for Windows/permission issues) so upgrades propagate. Drift is
 // detected by a SHA-256 fingerprint over sorted "relpath\0content\0" of the
 // non-hidden files. The old install is backed up before overwrite/removal.
-const fs = require('fs');
-const path = require('path');
-const crypto = require('crypto');
+import fs from 'fs';
+import path from 'path';
+import crypto from 'crypto';
+import { fileURLToPath } from 'url';
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 function sourceDir() { return path.join(__dirname, '..', 'skills', 'keyflip'); }
 function installDir(ctx) { return path.join(ctx.home, '.claude', 'skills', 'keyflip'); }
@@ -73,4 +75,4 @@ function install(ctx) {
   return { dest: dest, mode: mode };
 }
 
-module.exports = { sourceDir: sourceDir, installDir: installDir, fingerprint: fingerprint, status: status, install: install, isInstalled: isInstalled };
+export { sourceDir, installDir, fingerprint, status, install, isInstalled };

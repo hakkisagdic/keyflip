@@ -1,0 +1,129 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import PageHeader from '../components/PageHeader.astro';
+import CodeBlock from '../components/CodeBlock.astro';
+---
+
+<BaseLayout title="Use Cases" locale="en" currentPath="/use-cases">
+  <PageHeader title="Use Cases" subtitle="Real-world scenarios and workflows for keyflip" />
+
+  <section class="py-16">
+    <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 space-y-12">
+
+      <!-- Mental model -->
+      <div class="p-6 bg-primary-50 dark:bg-primary-950/30 border border-primary-200 dark:border-primary-800 rounded-xl">
+        <h2 class="text-xl font-bold text-surface-900 dark:text-surface-100 mb-3">The Mental Model</h2>
+        <p class="text-surface-700 dark:text-surface-300 mb-4">Hold four ideas in your head:</p>
+        <ul class="list-disc pl-6 text-surface-700 dark:text-surface-300 space-y-2">
+          <li><strong>Four login surfaces:</strong> CLI (Claude Code), Desktop app, Browser (claude.ai), Extension bridge</li>
+          <li><strong>Accounts vs. Providers:</strong> Account = who is billed (OAuth); Provider = where requests go (API endpoint)</li>
+          <li><strong>Sessions are account-independent:</strong> Transcripts belong to no account -- always safe to keep/move/merge</li>
+          <li><strong>Safety rules:</strong> Never switches without consent; secrets only in OS store; mutations serialized and transactional</li>
+        </ul>
+      </div>
+
+      <!-- Use case cards -->
+      <div>
+        <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-6">First Run: Capturing Accounts</h2>
+        <div class="space-y-4">
+          <div class="p-5 bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-800 rounded-xl">
+            <h3 class="font-semibold text-surface-900 dark:text-surface-100">Full Guided Onboarding</h3>
+            <p class="text-sm text-surface-700 dark:text-surface-300 mt-2">Set up several accounts from scratch, hands-off.</p>
+            <CodeBlock code="keyflip onboard" />
+          </div>
+          <div class="p-5 bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-800 rounded-xl">
+            <h3 class="font-semibold text-surface-900 dark:text-surface-100">Lighter Wizard</h3>
+            <p class="text-sm text-surface-700 dark:text-surface-300 mt-2">Capture current login, then auto-detect each new one.</p>
+            <CodeBlock code="keyflip setup" />
+          </div>
+          <div class="p-5 bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-800 rounded-xl">
+            <h3 class="font-semibold text-surface-900 dark:text-surface-100">One-Shot Capture</h3>
+            <p class="text-sm text-surface-700 dark:text-surface-300 mt-2">Scriptable capture of the current login.</p>
+            <CodeBlock code={`keyflip add              # save current login
+keyflip add work         # name it "work"
+keyflip add work --app   # desktop app only`} />
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-6">Everyday Switching</h2>
+        <div class="space-y-4">
+          <div class="p-5 bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-800 rounded-xl">
+            <h3 class="font-semibold text-surface-900 dark:text-surface-100">Personal + Work accounts</h3>
+            <p class="text-sm text-surface-700 dark:text-surface-300 mt-2">Switch between personal Pro and company Team accounts throughout the day.</p>
+            <CodeBlock code={`keyflip work      # morning: switch to work
+keyflip personal  # evening: back to personal`} />
+          </div>
+          <div class="p-5 bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-800 rounded-xl">
+            <h3 class="font-semibold text-surface-900 dark:text-surface-100">Quota Rotation</h3>
+            <p class="text-sm text-surface-700 dark:text-surface-300 mt-2">Hit the rate limit? Rotate to the next account with quota.</p>
+            <CodeBlock code="keyflip next --strategy best" />
+          </div>
+          <div class="p-5 bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-800 rounded-xl">
+            <h3 class="font-semibold text-surface-900 dark:text-surface-100">Parallel Work</h3>
+            <p class="text-sm text-surface-700 dark:text-surface-300 mt-2">Run different accounts in different terminals simultaneously.</p>
+            <CodeBlock code={`# Terminal 1: work account
+keyflip run work
+
+# Terminal 2: personal account (default)
+claude`} />
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-6">Team Workflows</h2>
+        <div class="space-y-4">
+          <div class="p-5 bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-800 rounded-xl">
+            <h3 class="font-semibold text-surface-900 dark:text-surface-100">Encrypted Team Pool</h3>
+            <p class="text-sm text-surface-700 dark:text-surface-300 mt-2">Share accounts securely within a team with role-based access.</p>
+            <CodeBlock code={`keyflip team publish --dir ./shared --pool 5 --passphrase-file key.txt
+keyflip team pull --dir ./shared --passphrase-file key.txt
+keyflip team members`} />
+          </div>
+          <div class="p-5 bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-800 rounded-xl">
+            <h3 class="font-semibold text-surface-900 dark:text-surface-100">Fleet Coordination</h3>
+            <p class="text-sm text-surface-700 dark:text-surface-300 mt-2">Manage accounts across multiple machines from a single control plane.</p>
+            <CodeBlock code={`keyflip fleet init --dir ~/Dropbox/fleet
+keyflip fleet status
+keyflip fleet switch laptop work`} />
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-6">Automation</h2>
+        <div class="space-y-4">
+          <div class="p-5 bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-800 rounded-xl">
+            <h3 class="font-semibold text-surface-900 dark:text-surface-100">Unattended Auto-Switch</h3>
+            <p class="text-sm text-surface-700 dark:text-surface-300 mt-2">Never hit rate limits again. Auto-rotate when quota is nearly exhausted.</p>
+            <CodeBlock code={`keyflip autoswitch --threshold 90 --strategy next-available
+keyflip autoswitch install   # background service`} />
+          </div>
+          <div class="p-5 bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-800 rounded-xl">
+            <h3 class="font-semibold text-surface-900 dark:text-surface-100">Job Orchestration</h3>
+            <p class="text-sm text-surface-700 dark:text-surface-300 mt-2">Run prompts headless on the best-headroom account.</p>
+            <CodeBlock code={`keyflip run-job "refactor auth module" --strategy best
+keyflip fanout "run tests" --accounts a,b,c`} />
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-6">Device Transfer</h2>
+        <div class="space-y-4">
+          <div class="p-5 bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-800 rounded-xl">
+            <h3 class="font-semibold text-surface-900 dark:text-surface-100">New Machine Setup</h3>
+            <p class="text-sm text-surface-700 dark:text-surface-300 mt-2">Transfer all accounts and settings to a new device in seconds.</p>
+            <CodeBlock code={`# Old machine:
+keyflip transfer serve --qr
+
+# New machine (scan QR or type code):
+keyflip transfer pull --code ABC123`} />
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+</BaseLayout>

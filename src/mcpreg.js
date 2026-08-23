@@ -1,15 +1,15 @@
-'use strict';
 // #15 Central MCP-server registry, projected into Claude Code (~/.claude.json)
 // and the Claude Desktop app (claude_desktop_config.json). Define a server once,
 // then enable/disable it per surface. Enable = upsert the entry (preserving all
 // other keys); disable = delete it. A surface is only touched when its config
 // exists. On Windows, stdio npx/node commands are wrapped as `cmd /c …` (except
 // under WSL UNC paths). Anthropic surfaces only.
-const fs = require('fs');
-const path = require('path');
-const { writeJsonStable } = require('./fsutil');
-const claude = require('./claude');
-const profiles = require('./profiles');
+import fs from 'fs';
+import path from 'path';
+import { writeJsonStable, readJsonForWrite } from './fsutil.js';
+import * as claude from './claude.js';
+import * as profiles from './profiles.js';
+import * as _wsl from './wsl.js';
 
 function regFile(ctx) { return path.join(ctx.configDir, 'mcp-registry.json'); }
 function desktopConfigPath(ctx) { return ctx.appDataDir ? path.join(ctx.appDataDir, 'claude_desktop_config.json') : null; }
@@ -46,7 +46,7 @@ function remove(ctx, name) {
 // The server entry as a target app expects it, applying the Windows cmd-wrap.
 function entryFor(ctx, def) {
   const isWin = ctx.platform === 'win32';
-  const underWsl = require('./wsl').isWslPath(ctx.claudeDir || '');
+  const underWsl = _wsl.isWslPath(ctx.claudeDir || '');
   if (isWin && !underWsl && /^(npx|node|npm)$/.test(def.command)) {
     return { command: 'cmd', args: ['/c', def.command].concat(def.args || []), env: def.env || {} };
   }
@@ -72,7 +72,7 @@ function setEnabled(ctx, name, surface, enabled) {
     if (enabled && !fs.existsSync(p)) return 'skipped-no-config'; // only sync when the app config exists
     // Symmetric with the claude-code branch: a corrupt-but-existing desktop
     // config must NOT be treated as empty and overwritten — abort instead.
-    const cfg = require('./fsutil').readJsonForWrite(p) || {};
+    const cfg = readJsonForWrite(p) || {};
     cfg.mcpServers = cfg.mcpServers || {};
     if (enabled) cfg.mcpServers[name] = entryFor(ctx, def); else delete cfg.mcpServers[name];
     writeJsonStable(p, cfg, 0o600);
@@ -98,4 +98,4 @@ function importLive(ctx) {
   return imported;
 }
 
-module.exports = { list: list, add: add, remove: remove, setEnabled: setEnabled, importLive: importLive, readReg: readReg, entryFor: entryFor, desktopConfigPath: desktopConfigPath };
+export { list, add, remove, setEnabled, importLive, readReg, entryFor, desktopConfigPath };

@@ -1,4 +1,3 @@
-'use strict';
 // Roadmap: self-hostable ZERO-KNOWLEDGE blob relay for the internet RELAY transfer
 // path. A keyflip user who has no Nextcloud/WebDAV host can run THIS on one machine or
 // a VPS and point keyflip's WebDAV client (sync.davPut/davGet/davDelete) at it. It is a
@@ -20,10 +19,10 @@
 //     we REFUSE to bind a non-loopback host with no auth unless the caller passes an
 //     explicit allowUnauthenticated:true and owns that choice.
 //   * QUIET: never logs blob contents, auth values, or slot->content.
-const http = require('http');
-const fs = require('fs');
-const path = require('path');
-const crypto = require('crypto');
+import http from 'http';
+import fs from 'fs';
+import path from 'path';
+import crypto from 'crypto';
 
 const DEFAULT_PREFIX = '/kf';
 const SLOT_RE = /^[A-Za-z0-9._-]{1,128}$/;
@@ -276,13 +275,4 @@ function start(opts) {
   });
 }
 
-module.exports = {
-  DEFAULT_PREFIX: DEFAULT_PREFIX,
-  SLOT_RE: SLOT_RE,
-  createHandler: createHandler,
-  createRelayServer: createRelayServer,
-  start: start,
-  isLoopbackHost: isLoopbackHost,
-  _sweep: sweep,
-  _countBlobs: countBlobs
-};
+export { DEFAULT_PREFIX, SLOT_RE, createHandler, createRelayServer, start, isLoopbackHost, sweep as _sweep, countBlobs as _countBlobs };

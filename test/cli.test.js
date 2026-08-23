@@ -1,12 +1,15 @@
-'use strict';
 // Integration tests for the CLI: spawn `node bin/keyflip.js` against a temp HOME.
 // A ~/.claude/.credentials.json is created so the file backend is used on every
 // OS (no Keychain, no prompts). Runs identically on macOS/Linux/Windows CI.
-const test = require('node:test');
-const assert = require('node:assert');
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
+import test from 'node:test';
+import assert from 'node:assert';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+import _child_process from 'child_process';
+import { fileURLToPath } from 'url';
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const BIN = path.join(__dirname, '..', 'bin', 'keyflip.js');
 
@@ -26,7 +29,7 @@ function loginAs(home, email, userID, token) {
 }
 
 function run(home, args, extraEnv) {
-  return require('child_process').spawnSync(process.execPath, [BIN].concat(args), {
+  return _child_process.spawnSync(process.execPath, [BIN].concat(args), {
     encoding: 'utf8',
     env: Object.assign({}, process.env, {
       HOME: home,
@@ -236,7 +239,7 @@ test('statusline emits the active account; install wires it into settings.json (
 
 test('menu survives EOF during a sub-prompt (no crash)', function () {
   const home = setupHome();
-  const r = require('child_process').spawnSync(process.execPath, [BIN, 'menu'], {
+  const r = _child_process.spawnSync(process.execPath, [BIN, 'menu'], {
     encoding: 'utf8',
     input: 'a\n', // enter "save current", then stdin closes mid sub-prompt
     env: Object.assign({}, process.env, {

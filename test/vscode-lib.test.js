@@ -1,10 +1,9 @@
-'use strict';
 // Tests for the VS Code extension's pure core (vscode-keyflip/lib.js) — parsing + view-model
 // shaping. The vscode glue in extension.js is not unit-tested (needs the extension host), so
 // keeping the real logic here means it IS covered by `node --test`.
-const test = require('node:test');
-const assert = require('node:assert');
-const lib = require('../vscode-keyflip/lib');
+import test from 'node:test';
+import assert from 'node:assert';
+import lib from '../vscode-keyflip/lib.js';
 
 test('parseJson: reads a clean single-object body', function () {
   assert.deepStrictEqual(lib.parseJson('{"cli":{"email":"a@x.com"}}\n'), { cli: { email: 'a@x.com' } });

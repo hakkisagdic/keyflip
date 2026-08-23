@@ -1,0 +1,54 @@
+---
+import BaseLayout from '../../../layouts/BaseLayout.astro';
+import PageHeader from '../../../components/PageHeader.astro';
+import CodeBlock from '../../../components/CodeBlock.astro';
+---
+
+<BaseLayout title="Sağlayıcılar" locale="tr" currentPath="/tr/docs/providers">
+  <PageHeader title="Sağlayıcılar" subtitle="Claude Code'u üçüncü taraf uç noktalara, geçitlere ve rölelere yönlendirin" />
+
+  <section class="py-16">
+    <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
+
+      <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-4">Sağlayıcılar Nedir?</h2>
+      <p class="text-surface-700 dark:text-surface-300 mb-6">
+        Hesaplar Anthropic <strong>aboneliklerinizdir</strong> (OAuth). Sağlayıcılar Claude Code'u farklı bir API uç noktasına yönlendirir -- bir röle, kurumsal geçit, AWS Bedrock, OpenRouter, Anthropic uyumlu herhangi bir şey -- <code>~/.claude/settings.json</code>'daki <code>env</code> bloğunu yamalayarak. Claude Code bunu anında yeniden yükler (yeniden başlatma gerekmez).
+      </p>
+
+      <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-4 mt-10">Hızlı Başlangıç</h2>
+      <CodeBlock code={`# Sağlayıcı ekle (anahtar stdin'den okunur - asla komut satırında değil)
+keyflip provider add openrouter --base-url https://openrouter.ai/api/v1 --key-file -
+
+# Claude Code'u ona yönlendir
+keyflip use openrouter
+
+# Aboneliğe geri dön (OAuth)
+keyflip provider off
+
+# Kayıtlı/aktif sağlayıcıları listele
+keyflip provider list
+
+# Gecikme testi
+keyflip speedtest openrouter
+
+# Kimlik doğrulaması çalışıyor mu doğrula
+keyflip test openrouter`} />
+
+      <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-4 mt-10">Nasıl Çalışır</h2>
+      <ul class="list-disc pl-6 text-surface-700 dark:text-surface-300 space-y-3 mb-8">
+        <li>API anahtarı işletim sistemi kimlik deposunda saklanır, asla meta veri dosyasında ve asla komut satırında değil</li>
+        <li>Geçiş sadece keyflip'in yönettiği anahtarlara dokunur; kendi settings.json'unuz korunur</li>
+        <li><code>provider off</code> tam olarak ne enjekte edildiyse onu kaldırır</li>
+        <li><code>keyflip gateway use &lt;sağlayıcı&gt;</code> aynı şeyi Claude masaüstü uygulaması için yapar</li>
+      </ul>
+
+      <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-4 mt-10">Yedekleme Proxy'si</h2>
+      <p class="text-surface-700 dark:text-surface-300 mb-4">
+        Proxy komutla başlatılır (asla sürekli çalışan bir daemon değil). Çalışmakta iken her API isteğini aktif hesabınıza yönlendirir ve 429/5xx durumunda istemciye hata ulaşmadan önce bir sonraki sağlıklı hesapta otomatik yeniden dener.
+      </p>
+      <CodeBlock code={`keyflip proxy start --wire    # başlat + Claude'a bağla
+keyflip proxy status          # sağlık kontrol
+keyflip proxy stop            # durdur + bağlantısını kes`} />
+    </div>
+  </section>
+</BaseLayout>

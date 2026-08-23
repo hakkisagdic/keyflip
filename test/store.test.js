@@ -1,10 +1,9 @@
-'use strict';
-const test = require('node:test');
-const assert = require('node:assert');
-const fs = require('fs');
-const path = require('path');
-const { createStore, MemoryStore, FileStore, KeychainStore } = require('../src/stores');
-const { tmpdir } = require('./helpers');
+import test from 'node:test';
+import assert from 'node:assert';
+import fs from 'fs';
+import path from 'path';
+import { createStore, MemoryStore, FileStore, KeychainStore } from '../src/stores/index.js';
+import { tmpdir } from './helpers.js';
 
 test('FileStore round-trips live and profile credentials', function () {
   const home = tmpdir();

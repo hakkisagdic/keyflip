@@ -1,17 +1,16 @@
-'use strict';
 // POLICY ENGINE: constrain which account a directory/repo may use. A hermetic makeCtx()
 // gives each test a fresh temp configDir; policy.json is the only state. Group membership,
 // repo resolution and subprocess are all INJECTED, so tests need no network/git/real time.
 // Covers the happy path plus hostile input (prototype pollution, corrupt file, bad names,
 // path-segment escapes) and the deny-beats-allow / longest-cwdPrefix decision model.
-const test = require('node:test');
-const assert = require('node:assert');
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
-const policy = require('../src/policy');
-const groups = require('../src/groups');
-const { makeCtx } = require('./helpers');
+import test from 'node:test';
+import assert from 'node:assert';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+import * as policy from '../src/policy.js';
+import * as groups from '../src/groups.js';
+import { makeCtx } from './helpers.js';
 
 test('evaluate resolves symlinks — a deny rule on the real path applies to a symlinked cwd (no fail-open)', function () {
   const ctx = makeCtx();

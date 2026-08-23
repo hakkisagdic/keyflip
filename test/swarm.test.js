@@ -1,16 +1,15 @@
-'use strict';
 // SWARM: run one command across YOUR OWN enrolled fleet machines, over the same encrypted
 // rendezvous the fleet uses. Each machine is a separate makeCtx (its own config dir + credential
 // store) sharing one fleet dir + passphrase — the real topology, run locally. All IO/time/subprocess
 // is injected: the fake `run` means NO real command ever executes and there is no network or clock.
-const test = require('node:test');
-const assert = require('node:assert');
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
-const fleet = require('../src/fleet');
-const swarm = require('../src/swarm');
-const { makeCtx } = require('./helpers');
+import test from 'node:test';
+import assert from 'node:assert';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+import * as fleet from '../src/fleet.js';
+import * as swarm from '../src/swarm.js';
+import { makeCtx } from './helpers.js';
 
 const PASS = 'swarm-secret-passphrase';
 function sharedDir() { return fs.mkdtempSync(path.join(os.tmpdir(), 'kf-swarm-')); }

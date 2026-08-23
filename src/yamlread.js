@@ -1,4 +1,3 @@
-'use strict';
 // A minimal, zero-dependency YAML SUBSET reader — enough for config/session files (block
 // mappings + sequences, indentation nesting, plain/quoted scalars, `[..]`/`{..}` flow, comments,
 // scalar coercion). NOT a full YAML engine: no anchors/aliases, tags, multi-doc, or block
@@ -123,4 +122,4 @@ function flowMap(v) {
   return obj;
 }
 
-module.exports = { parse: parse };
+export { parse };

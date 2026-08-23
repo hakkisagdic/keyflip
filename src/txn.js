@@ -1,9 +1,8 @@
-'use strict';
 // Multi-file transaction: snapshot a set of files' bytes (or note absence)
 // before a grouped edit, and restore ALL of them if anything throws — so a
 // half-applied change (e.g. new credential written but pointer write failed,
 // or a desktop config+cookie swap that died midway) never survives.
-const fs = require('fs');
+import fs from 'fs';
 
 function snapshot(files) {
   return files.map(function (f) {
@@ -44,4 +43,4 @@ async function withRollbackAsync(files, fn) {
   }
 }
 
-module.exports = { snapshot: snapshot, restore: restore, withRollback: withRollback, withRollbackAsync: withRollbackAsync };
+export { snapshot, restore, withRollback, withRollbackAsync };

@@ -1,4 +1,3 @@
-'use strict';
 // SHELL AUTO-ACTIVATION for directory→account pins (a direnv for keyflip): emit a
 // tiny shell snippet the user pastes into their rc file. On each prompt / directory
 // change the snippet asks `keyflip link` for the account pinned to the CWD (see
@@ -135,10 +134,4 @@ function hook(shell, opts) {
   return header(shell, bin) + body;
 }
 
-module.exports = {
-  hook: hook,
-  supported: supported,
-  isSupported: isSupported,
-  installLine: installLine,
-  MARKER: MARKER,
-};
+export { hook, supported, isSupported, installLine, MARKER };

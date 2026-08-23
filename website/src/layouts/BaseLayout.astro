@@ -1,0 +1,66 @@
+---
+import Header from '../components/Header.astro';
+import Footer from '../components/Footer.astro';
+import type { Locale } from '../i18n';
+import { t, getAlternateLocalePath } from '../i18n';
+import '../styles/global.css';
+
+interface Props {
+  title: string;
+  description?: string;
+  locale: Locale;
+  currentPath: string;
+}
+
+const { title, description, locale, currentPath } = Astro.props;
+const trans = t(locale);
+const siteTitle = `${title} | ${trans.site.title}`;
+const siteDescription = description || trans.site.description;
+const alternatePath = getAlternateLocalePath(currentPath, locale);
+const alternateLocale = locale === 'en' ? 'tr' : 'en';
+---
+
+<!doctype html>
+<html lang={locale} class="scroll-smooth">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content={siteDescription} />
+    <meta name="generator" content={Astro.generator} />
+
+    <!-- Favicon -->
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+
+    <!-- Open Graph -->
+    <meta property="og:title" content={siteTitle} />
+    <meta property="og:description" content={siteDescription} />
+    <meta property="og:type" content="website" />
+    <meta property="og:locale" content={locale === 'en' ? 'en_US' : 'tr_TR'} />
+    <meta property="og:site_name" content="keyflip" />
+    <!-- TODO: add a 1200x630 PNG og-image before deployment (SVG is not supported by social platforms) -->
+
+    <!-- Alternate language -->
+    <link rel="alternate" hreflang={alternateLocale} href={new URL(alternatePath, Astro.site).href} />
+
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+
+    <title>{siteTitle}</title>
+
+    <!-- Dark mode initialization -->
+    <script is:inline>
+      if (localStorage.getItem('theme') === 'dark' || (!localStorage.getItem('theme') && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+        document.documentElement.classList.add('dark');
+      }
+    </script>
+  </head>
+  <body class="min-h-screen flex flex-col">
+    <Header locale={locale} currentPath={currentPath} />
+    <main class="flex-1">
+      <slot />
+    </main>
+    <Footer locale={locale} />
+  </body>
+</html>

@@ -1,4 +1,3 @@
-'use strict';
 // PII detector/redactor. keyflip already refuses to carry SECRETS (secretscan.js); this
 // widens the net to PERSONAL data — emails, phones, national IDs, cards, IBANs, IPs — so a
 // transcript or config can be scrubbed before it leaves the machine. The design bias is
@@ -8,9 +7,9 @@
 // with a single, explicit exception: scrubViaLLM(), which only reaches out when the caller
 // hands it a URL and an injected fetch. Secret/token detection is delegated to secretscan —
 // this module does NOT reinvent it.
-const fs = require('fs');
-const path = require('path');
-const secretscan = require('./secretscan');
+import fs from 'fs';
+import path from 'path';
+import * as secretscan from './secretscan.js';
 
 // ---- Built-in patterns (kept NON-global; collect() clones them with the /g flag) ----------
 
@@ -340,16 +339,4 @@ function scrubViaLLM(text, opts) {
   })();
 }
 
-module.exports = {
-  CATEGORIES: CATEGORIES,
-  DEFAULT_CATEGORIES: DEFAULT_CATEGORIES,
-  detect: detect,
-  scrub: scrub,
-  redactString: redactString,
-  loadCustom: loadCustom,
-  scrubViaLLM: scrubViaLLM,
-  // validators (exposed for reuse/testing)
-  validateTckn: validateTckn,
-  luhnValid: luhnValid,
-  validateIban: validateIban,
-};
+export { CATEGORIES, DEFAULT_CATEGORIES, detect, scrub, redactString, loadCustom, scrubViaLLM, validateTckn, luhnValid, validateIban };

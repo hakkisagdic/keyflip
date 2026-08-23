@@ -1,0 +1,23 @@
+---
+interface Props {
+  title: string;
+  description: string;
+  icon?: string;
+}
+
+const { title, description, icon } = Astro.props;
+---
+
+<div class="group p-6 bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-800 rounded-xl hover:border-primary-300 dark:hover:border-primary-700 hover:shadow-lg transition-all duration-200">
+  {icon && (
+    <div class="w-10 h-10 flex items-center justify-center rounded-lg bg-primary-100 dark:bg-primary-900/50 text-primary-600 dark:text-primary-400 mb-4 text-lg">
+      {icon}
+    </div>
+  )}
+  <h3 class="text-lg font-semibold text-surface-900 dark:text-surface-100 group-hover:text-primary-600 dark:group-hover:text-primary-400 transition-colors">
+    {title}
+  </h3>
+  <p class="mt-2 text-sm text-surface-700 dark:text-surface-300 leading-relaxed">
+    {description}
+  </p>
+</div>

@@ -8,6 +8,11 @@ Log in to several accounts once, then hop between them without repeatedly loggin
 **Cross-platform:** macOS, Linux, and Windows. Pure Node.js, zero runtime dependencies.
 
 [![CI](https://github.com/hakkisagdic/keyflip/actions/workflows/ci.yml/badge.svg)](https://github.com/hakkisagdic/keyflip/actions/workflows/ci.yml)
+[![npm version](https://img.shields.io/npm/v/keyflip)](https://www.npmjs.com/package/keyflip)
+[![Node.js](https://img.shields.io/node/v/keyflip)](https://nodejs.org)
+[![License: MIT](https://img.shields.io/github/license/hakkisagdic/keyflip)](https://github.com/hakkisagdic/keyflip/blob/main/LICENSE)
+[![dependencies](https://img.shields.io/badge/dependencies-0-brightgreen)](https://github.com/hakkisagdic/keyflip)
+[![GitHub stars](https://img.shields.io/github/stars/hakkisagdic/keyflip)](https://github.com/hakkisagdic/keyflip/stargazers)
 
 > **Platform scope.** The core — account switch, providers, sessions, the
 > failover proxy, skills, MCP — is **cross-platform** (macOS/Linux/Windows,
@@ -678,6 +683,12 @@ configured):
    ```
    `release.yml` verifies the tag, tests, and cuts a GitHub Release; publishing
    that Release fires `publish.yml`, which publishes to npm over OIDC.
+
+---
+
+## Website
+
+The `/website` directory contains the project's marketing and documentation site, built with Astro. It is a standalone sub-project with its own `package.json`. See [`website/README.md`](website/README.md) for development and deployment instructions.
 
 ---
 

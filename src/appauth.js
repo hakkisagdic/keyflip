@@ -1,4 +1,3 @@
-'use strict';
 // Switch the Claude *desktop app*'s own login (separate from the CLI creds).
 //
 // The app keeps its OAuth login as encrypted blobs in
@@ -13,12 +12,13 @@
 // side is file-copy of the opaque blobs + cookies, so it is platform-agnostic given
 // ctx.appDataDir (set per-platform in context.js). Detection of WHICH account differs
 // only in how the safeStorage key is obtained (getSafeStoragePassword / decryptAppBlobWin).
-const fs = require('fs');
-const path = require('path');
-const crypto = require('crypto');
-const { atomicWrite } = require('./fsutil');
-const { run } = require('./exec');
-const profiles = require('./profiles');
+import fs from 'fs';
+import path from 'path';
+import crypto from 'crypto';
+import { atomicWrite } from './fsutil.js';
+import { run } from './exec.js';
+import * as profiles from './profiles.js';
+import * as _win from './wincrypt.js';
 
 const KEYS = ['oauth:tokenCache', 'oauth:tokenCacheV2'];
 
@@ -72,7 +72,7 @@ function isEncBlob(b64) {
 // Windows: decrypt the app's AES-256-GCM token cache using the DPAPI-protected master key from
 // the Electron "Local State" file. Isolated + gated to win32; ctx.dpapi is injectable for tests.
 function decryptAppBlobWin(ctx, b64) {
-  const win = require('./wincrypt');
+  const win = _win;
   const lsPath = ctx.localStatePath || (ctx.appDataDir ? path.join(ctx.appDataDir, 'Local State') : null);
   if (!lsPath) return null;
   let ls; try { ls = fs.readFileSync(lsPath, 'utf8'); } catch (e) { return null; }
@@ -375,21 +375,4 @@ function activeProfileName(ctx) {
   return null;
 }
 
-module.exports = {
-  snapshotToProfile: snapshotToProfile,
-  applyFromProfile: applyFromProfile,
-  signOutApp: signOutApp,
-  activeProfileName: activeProfileName,
-  hasProfile: hasProfile,
-  detectActiveOrg: detectActiveOrg,
-  detectAppAccount: detectAppAccount,
-  cookiesLookLoggedIn: cookiesLookLoggedIn,
-  decryptBlob: decryptBlob,
-  decryptAppBlobWin: decryptAppBlobWin,
-  isEncBlob: isEncBlob,
-  configPath: configPath,
-  profilePath: profilePath,
-  cookiesPath: cookiesPath,
-  profileCookiesPath: profileCookiesPath,
-  KEYS: KEYS,
-};
+export { snapshotToProfile, applyFromProfile, signOutApp, activeProfileName, hasProfile, detectActiveOrg, detectAppAccount, cookiesLookLoggedIn, decryptBlob, decryptAppBlobWin, isEncBlob, configPath, profilePath, cookiesPath, profileCookiesPath, KEYS };

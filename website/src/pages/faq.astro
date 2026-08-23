@@ -1,0 +1,89 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import PageHeader from '../components/PageHeader.astro';
+import { t } from '../i18n';
+
+const locale = 'en';
+const trans = t(locale);
+
+const faqs = [
+  {
+    q: 'Is keyflip safe to use?',
+    a: 'Yes. Your OAuth tokens stay in the OS credential store (macOS Keychain or encrypted files on Linux/Windows). keyflip copies tokens between slots but adds no new plaintext token file. Switches are transactional with automatic rollback on failure.'
+  },
+  {
+    q: 'Will I lose my chat history when switching?',
+    a: 'No. Session history in ~/.claude/projects is account-independent. It shows up under whichever account is active. keyflip can also consolidate the desktop app index so all accounts see all sessions.'
+  },
+  {
+    q: 'Does keyflip work with Claude Code, the desktop app, and the browser?',
+    a: 'Yes. keyflip can switch the CLI, the desktop app login, and align the browser/extension. Each surface is independent but keyflip can sync them.'
+  },
+  {
+    q: 'What are the system requirements?',
+    a: 'Node.js 18 or later (Claude Code already needs Node), and the Claude app/Claude Code logged in to the accounts you want to save. Works on macOS, Linux, and Windows.'
+  },
+  {
+    q: 'Does it have any runtime dependencies?',
+    a: 'Zero. keyflip is pure Node.js with no native modules and no runtime dependencies. It uses only Node built-in modules.'
+  },
+  {
+    q: 'What happens if Claude is open when I switch?',
+    a: 'In interactive mode, keyflip asks before closing Claude. On "no" it cancels. Use --restart to close and reopen without asking, or --force to swap without closing (restart yourself afterward).'
+  },
+  {
+    q: 'Can I use different accounts in different terminals?',
+    a: 'Yes! "keyflip run <name>" launches Claude Code as that account in the current terminal only. Other terminals, the desktop app, and VS Code keep their current account.'
+  },
+  {
+    q: 'How do I transfer accounts to a new machine?',
+    a: 'Use "keyflip transfer serve --qr" on the old machine and "keyflip transfer pull --code X" on the new one. The transfer is encrypted end-to-end with a one-time code.'
+  },
+  {
+    q: 'What is the failover proxy?',
+    a: 'A localhost proxy that routes API requests to your active account. On 429 or 5xx, it automatically retries on the next healthy account before any error reaches Claude Code.'
+  },
+  {
+    q: 'Can AI agents use keyflip?',
+    a: 'Yes. keyflip includes a full MCP server with 130+ tools. Agents can switch accounts, manage providers, search sessions, and more without shelling out. Mutating tools require explicit confirmation.'
+  },
+  {
+    q: 'Is it free?',
+    a: 'The core is free and open source (MIT). Single-machine account switching, providers, proxy, sessions, backup, and the base MCP surface are free forever. Paid tiers (coming soon) unlock fleet, orchestration, team pools, and advanced automation.'
+  },
+  {
+    q: 'How do I troubleshoot corporate proxy issues?',
+    a: 'Set NODE_EXTRA_CA_CERTS=/path/to/corp-ca.pem for TLS interception. Run "keyflip doctor" for a full health check including endpoint reachability.'
+  },
+  {
+    q: 'What does [throttled] mean in list --usage?',
+    a: 'The usage endpoint throttled that token. It does NOT mean the account is rate-limited. Try again later.'
+  },
+  {
+    q: 'How do I completely remove keyflip?',
+    a: 'Run "keyflip uninstall --purge" to remove keyflip and all saved data. Or "keyflip reset" first to clear data, then uninstall. Your live Claude login is never touched unless you explicitly use --logout.'
+  },
+];
+---
+
+<BaseLayout title="FAQ" locale={locale} currentPath="/faq">
+  <PageHeader title={trans.faq.title} subtitle={trans.faq.subtitle} />
+
+  <section class="py-16">
+    <div class="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8">
+      <div class="space-y-6">
+        {faqs.map((faq) => (
+          <details class="group p-6 bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-800 rounded-xl">
+            <summary class="flex items-center justify-between cursor-pointer list-none">
+              <h3 class="text-base font-semibold text-surface-900 dark:text-surface-100 pr-4">{faq.q}</h3>
+              <svg class="w-5 h-5 text-surface-400 shrink-0 transition-transform group-open:rotate-180" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                <path d="M19 9l-7 7-7-7" />
+              </svg>
+            </summary>
+            <p class="mt-4 text-sm text-surface-700 dark:text-surface-300 leading-relaxed">{faq.a}</p>
+          </details>
+        ))}
+      </div>
+    </div>
+  </section>
+</BaseLayout>

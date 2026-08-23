@@ -1,4 +1,3 @@
-'use strict';
 // CodexBar bridge (ALIGN, don't depend). CodexBar (github.com/steipete/CodexBar, MIT) is a macOS
 // menu-bar usage monitor with a JSON config at ~/.config/codexbar/config.json. keyflip does NOT
 // require, spawn, or link against it — this module only READS the config that CodexBar left on disk
@@ -6,16 +5,18 @@
 // CodexBar *monitors* usage, keyflip *manages* accounts. Everything here is best-effort and
 // hermetic (home/env/readers injected via ctx) and NEVER surfaces a secret value: we scrub any
 // api-key/token-shaped field before returning, and only ever expose provider IDs + non-secret bits.
-const fs = require('fs');
-const path = require('path');
-const os = require('os');
+import fs from 'fs';
+import path from 'path';
+import os from 'os';
 
 // A key name that looks like it holds a credential. We drop these wholesale rather than trust
 // CodexBar's schema — better to lose a harmless field than to leak a token.
 // Credential-shaped field NAMES — note the bare canonical names (key/value/pin/pwd), the single
 // most common way a per-provider token is stored, which a substring list would miss.
 const SECRET_KEY_RE = /(api[-_ ]?key|secret|token|password|passwd|bearer|credential|auth|cookie|session[-_ ]?id|private[-_ ]?key|access[-_ ]?key|^key$|^val(?:ue)?$|^pin$|^pwd$)/i;
-const secretscan = require('./secretscan');
+import * as secretscan from './secretscan.js';
+import * as _provusage from './provusage.js';
+import * as _surface from './surface.js';
 // Refuse absurdly large configs (defends against reading a mis-pointed file into memory).
 const MAX_BYTES = 1024 * 1024; // 1 MiB
 
@@ -178,8 +179,8 @@ function registryIds(mod, listKey) {
 // injectable via deps for tests). This is purely to show which providers each tool knows about.
 function align(ctx, deps) {
   deps = deps || {};
-  const provusage = deps.provusage || require('./provusage');
-  const surface = deps.surface || require('./surface');
+  const provusage = deps.provusage || _provusage;
+  const surface = deps.surface || _surface;
 
   const cbList = trackedProviders(ctx);
   const kfSet = Object.create(null);
@@ -206,10 +207,4 @@ function align(ctx, deps) {
   };
 }
 
-module.exports = {
-  configPath: configPath,
-  detect: detect,
-  readConfig: readConfig,
-  trackedProviders: trackedProviders,
-  align: align,
-};
+export { configPath, detect, readConfig, trackedProviders, align };

@@ -1,13 +1,16 @@
-'use strict';
 // Tests for the `keyflip login` helpers (src/login.js) — the browser OAuth itself
 // can't be unit-tested, so we cover credential-reading, the macOS Keychain service
 // derivation, status parsing, and the non-interactive refusal.
-const test = require('node:test');
-const assert = require('node:assert');
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
-const login = require('../src/login');
+import test from 'node:test';
+import assert from 'node:assert';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+import * as login from '../src/login.js';
+import _child_process from 'child_process';
+import { fileURLToPath } from 'url';
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 function tmp() { return fs.mkdtempSync(path.join(os.tmpdir(), 'keyflip-login-')); }
 
@@ -65,7 +68,7 @@ test('parseAuthStatus extracts identity fields', function () {
 
 test('`keyflip login` refuses in --json mode (interactive/browser)', function () {
   const BIN = path.join(__dirname, '..', 'bin', 'keyflip.js');
-  const r = require('child_process').spawnSync(process.execPath, [BIN, '--json', 'login'], { encoding: 'utf8', input: '' });
+  const r = _child_process.spawnSync(process.execPath, [BIN, '--json', 'login'], { encoding: 'utf8', input: '' });
   assert.notStrictEqual(r.status, 0);
   assert.match(r.stdout + r.stderr, /interactive|browser/);
 });

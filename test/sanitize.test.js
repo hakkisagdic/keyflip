@@ -1,7 +1,6 @@
-'use strict';
-const test = require('node:test');
-const assert = require('node:assert');
-const profiles = require('../src/profiles');
+import test from 'node:test';
+import assert from 'node:assert';
+import * as profiles from '../src/profiles.js';
 
 test('sanitizeName derives a safe name from the email local-part', function () {
   assert.strictEqual(profiles.sanitizeName('alice@example.com'), 'alice');

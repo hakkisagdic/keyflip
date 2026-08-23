@@ -1,12 +1,18 @@
-'use strict';
 // Helpers for `keyflip login` — capture the credential minted by an isolated,
 // OFFICIAL `claude auth login` (run with CLAUDE_CONFIG_DIR=<temp>). Claude writes
 // the token to <temp>/.credentials.json; on macOS it may migrate to a Keychain
 // item named "Claude Code-credentials-<sha256(dir)[:8]>". We read whichever
 // exists, so the user's real login is never touched.
-const fs = require('fs');
-const path = require('path');
-const crypto = require('crypto');
+import fs from 'fs';
+import path from 'path';
+import crypto from 'crypto';
+import _cp from 'child_process';
+import * as _exec from './exec.js';
+import * as _claude from './claude.js';
+import * as _profiles from './profiles.js';
+import * as _core from './core.js';
+import _os from 'os';
+import _readline from 'readline';
 
 // macOS Keychain service name Claude derives for a non-default CLAUDE_CONFIG_DIR.
 function isoKeychainService(dir) {
@@ -76,12 +82,12 @@ function buildLoginArgs(opts) {
 // `.code` ('claude-missing'|'login-failed'|'no-cred'|'mismatch'|'name-taken').
 function performLogin(ctx, opts) {
   opts = opts || {};
-  const fs = require('fs'); const path = require('path'); const os = require('os');
-  const cp = require('child_process');
-  const exec = require('./exec');
-  const claude = require('./claude');
-  const profiles = require('./profiles');
-  const core = require('./core');
+  const os = _os;
+  const cp = _cp;
+  const exec = _exec;
+  const claude = _claude;
+  const profiles = _profiles;
+  const core = _core;
 
   const isoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'keyflip-login-'));
   const env = Object.assign({}, process.env, { CLAUDE_CONFIG_DIR: isoDir });
@@ -103,9 +109,9 @@ function performLogin(ctx, opts) {
 // Throws Error with `.code` on failure. Shared by the auto and manual login paths.
 function captureFromIso(ctx, isoDir, env, opts) {
   opts = opts || {};
-  const exec = require('./exec');
-  const profiles = require('./profiles');
-  const core = require('./core');
+  const exec = _exec;
+  const profiles = _profiles;
+  const core = _core;
   const blob = readIsolatedCredential(isoDir, { platform: ctx.platform, run: exec.run });
   if (!blob) { const e = new Error('login completed but the new credential could not be read from the isolated store'); e.code = 'no-cred'; throw e; }
   let em = null, org = null;
@@ -141,12 +147,12 @@ function extractCode(line) {
 function performLoginManual(ctx, opts) {
   opts = opts || {};
   return new Promise(function (resolve, reject) {
-    const fs = require('fs'); const path = require('path'); const os = require('os');
-    const cp = require('child_process'); const readline = require('readline');
-    const exec = require('./exec');
+    const os = _os;
+    const cp = _cp; const readline = _readline;
+    const exec = _exec;
     const isoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'keyflip-login-'));
     const env = Object.assign({}, process.env, { CLAUDE_CONFIG_DIR: isoDir });
-    try { require('./claude').writeConfig(path.join(isoDir, '.claude.json'), { hasCompletedOnboarding: true }); } catch (e) { /* best-effort */ }
+    try { _claude.writeConfig(path.join(isoDir, '.claude.json'), { hasCompletedOnboarding: true }); } catch (e) { /* best-effort */ }
     const args = buildLoginArgs(opts);
 
     let settled = false, rl = null;
@@ -172,8 +178,8 @@ function performLoginManual(ctx, opts) {
 // Sign the Claude Code CLI out (official logout + clear the live credential +
 // strip the account from ~/.claude.json). Never touches saved keyflip profiles.
 function cliLogout(ctx) {
-  const exec = require('./exec');
-  const claude = require('./claude');
+  const exec = _exec;
+  const claude = _claude;
   try { exec.run('claude', ['auth', 'logout'], undefined, { timeoutMs: 8000 }); } catch (e) { /* best-effort */ }
   try { ctx.store.delLive(); } catch (e) { /* already gone */ }
   try {
@@ -183,16 +189,4 @@ function cliLogout(ctx) {
   return true;
 }
 
-module.exports = {
-  buildLoginArgs: buildLoginArgs,
-  isoKeychainService: isoKeychainService,
-  validBlob: validBlob,
-  readIsolatedCredential: readIsolatedCredential,
-  parseAuthStatus: parseAuthStatus,
-  cleanIsolatedKeychain: cleanIsolatedKeychain,
-  performLogin: performLogin,
-  performLoginManual: performLoginManual,
-  captureFromIso: captureFromIso,
-  extractCode: extractCode,
-  cliLogout: cliLogout,
-};
+export { buildLoginArgs, isoKeychainService, validBlob, readIsolatedCredential, parseAuthStatus, cleanIsolatedKeychain, performLogin, performLoginManual, captureFromIso, extractCode, cliLogout };

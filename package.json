@@ -8,7 +8,14 @@
   },
   "scripts": {
     "test": "KEYFLIP_VCS=off node --test",
-    "start": "node bin/keyflip.js"
+    "test:coverage": "KEYFLIP_VCS=off node --test --experimental-test-coverage",
+    "lint": "eslint src/ test/ bin/",
+    "lint:fix": "eslint --fix src/ test/ bin/",
+    "format": "prettier --write \"src/**/*.js\" \"test/**/*.js\" \"bin/**/*.js\"",
+    "format:check": "prettier --check \"src/**/*.js\" \"test/**/*.js\" \"bin/**/*.js\"",
+    "type-check": "tsc --noEmit",
+    "start": "node bin/keyflip.js",
+    "prepare": "husky"
   },
   "engines": {
     "node": ">=18"
@@ -29,6 +36,7 @@
     "cli"
   ],
   "author": "Hakkı Sağdıç",
+  "type": "module",
   "license": "MIT",
   "homepage": "https://github.com/hakkisagdic/keyflip#readme",
   "bugs": {
@@ -42,5 +50,22 @@
     "darwin",
     "linux",
     "win32"
-  ]
+  ],
+  "lint-staged": {
+    "*.js": [
+      "eslint --fix",
+      "prettier --write"
+    ]
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^26.2.0",
+    "eslint": "^10.9.0",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-prettier": "^5.5.6",
+    "husky": "^9.1.7",
+    "lint-staged": "^17.3.0",
+    "prettier": "^3.9.6",
+    "typescript": "^7.0.2"
+  }
 }

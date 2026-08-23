@@ -1,4 +1,3 @@
-'use strict';
 // Parallel session mode (ported from claude-swap's session.py): run Claude Code
 // as a stored account in THIS terminal only, by pointing CLAUDE_CONFIG_DIR at a
 // per-account profile under <configDir>/sessions/<name>/. The default ~/.claude
@@ -15,11 +14,11 @@
 // re-synced each launch). A manifest records what keyflip created so cleanup
 // never touches user data. Account-scoped things (projects/, sessions/,
 // .claude.json, .credentials.json) are deliberately NOT shared.
-const fs = require('fs');
-const path = require('path');
-const profiles = require('./profiles');
-const claudeCfg = require('./claude');
-const { atomicWrite } = require('./fsutil');
+import fs from 'fs';
+import path from 'path';
+import * as profiles from './profiles.js';
+import * as claudeCfg from './claude.js';
+import { atomicWrite } from './fsutil.js';
 
 const SHARED_ITEMS = ['settings.json', 'keybindings.json', 'CLAUDE.md', 'skills', 'commands', 'agents'];
 const SHARE_MANIFEST = '.keyflip-shared.json';
@@ -132,12 +131,4 @@ function syncBack(ctx, name) {
   try { ctx.store.setProfile(name, blob); return true; } catch (e) { return false; }
 }
 
-module.exports = {
-  prepareSession: prepareSession,
-  sessionEnv: sessionEnv,
-  syncBack: syncBack,
-  sessionDir: sessionDir,
-  syncShared: syncShared,
-  SHARED_ITEMS: SHARED_ITEMS,
-  AUTH_OVERRIDE_ENV_VARS: AUTH_OVERRIDE_ENV_VARS,
-};
+export { prepareSession, sessionEnv, syncBack, sessionDir, syncShared, SHARED_ITEMS, AUTH_OVERRIDE_ENV_VARS };

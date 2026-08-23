@@ -1,0 +1,230 @@
+---
+import BaseLayout from '../../../layouts/BaseLayout.astro';
+import PageHeader from '../../../components/PageHeader.astro';
+import CommandReference from '../../../components/CommandReference.astro';
+---
+
+<BaseLayout title="CLI Referansı" locale="tr" currentPath="/tr/docs/cli-reference">
+  <PageHeader title="CLI Referansı" subtitle="Kategoriye göre düzenlenmiş tüm 130+ keyflip komutu" />
+
+  <section class="py-16">
+    <div class="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8">
+
+      <nav class="mb-12 p-6 bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-800 rounded-xl">
+        <h2 class="text-lg font-semibold text-surface-900 dark:text-surface-100 mb-3">Kategoriler</h2>
+        <div class="grid grid-cols-2 sm:grid-cols-3 gap-2 text-sm">
+          <a href="#core" class="text-primary-600 dark:text-primary-400 hover:underline">Temel ve Kurulum</a>
+          <a href="#switching" class="text-primary-600 dark:text-primary-400 hover:underline">Geçiş</a>
+          <a href="#providers" class="text-primary-600 dark:text-primary-400 hover:underline">Sağlayıcılar</a>
+          <a href="#sessions" class="text-primary-600 dark:text-primary-400 hover:underline">Oturumlar ve Hatırlama</a>
+          <a href="#fleet" class="text-primary-600 dark:text-primary-400 hover:underline">Filo ve Transfer</a>
+          <a href="#context" class="text-primary-600 dark:text-primary-400 hover:underline">Bağlam Katmanı</a>
+          <a href="#automation" class="text-primary-600 dark:text-primary-400 hover:underline">Otomasyon ve İşler</a>
+          <a href="#security" class="text-primary-600 dark:text-primary-400 hover:underline">Güvenlik ve Politika</a>
+          <a href="#desktop" class="text-primary-600 dark:text-primary-400 hover:underline">Masaüstü ve Tarayıcı</a>
+          <a href="#mcp" class="text-primary-600 dark:text-primary-400 hover:underline">MCP ve Beceriler</a>
+          <a href="#tui" class="text-primary-600 dark:text-primary-400 hover:underline">TUI ve Panel</a>
+          <a href="#maintenance" class="text-primary-600 dark:text-primary-400 hover:underline">Bakım</a>
+        </div>
+      </nav>
+
+      <div id="core">
+        <CommandReference title="Temel ve Kurulum" commands={[
+          { cmd: 'keyflip', desc: 'İnteraktif menü (numarayla seçin)' },
+          { cmd: 'keyflip onboard [--manual] [--sso] [--console]', desc: 'Tam ilk çalıştırma: hesap başına giriş, CLI+tarayıcıyı yönlendir, sohbetleri senkronize et' },
+          { cmd: 'keyflip setup', desc: 'Hafif sihirbaz: giriş yap, yeni girişleri otomatik algıla ve yakala' },
+          { cmd: 'keyflip login [isim] [--email x] [--sso] [--console]', desc: 'Resmi tarayıcı akışı, izole + yakalanmış' },
+          { cmd: 'keyflip add [isim] [--app]', desc: 'Şu anda giriş yapılmış hesabı kaydet (CLI + masaüstü uygulaması)' },
+          { cmd: 'keyflip add <isim> --token <dosya|->', desc: 'Ham kimlik bilgisini başlıksız içeri aktar (CI/sağlamacılık)' },
+          { cmd: 'keyflip status', desc: 'Her yüzeyde hangi hesap aktif (CLI + masaüstü uygulaması)' },
+          { cmd: 'keyflip list [--usage]', desc: 'Hesapları listele; --usage 5s/7g kullanımını gösterir' },
+          { cmd: 'keyflip doctor', desc: 'Sağlık kontrolü: git\'te sırlar, yetim oturumlar, yapılandırma, uç noktalar' },
+          { cmd: 'keyflip config <list|get|set|unset>', desc: 'Doğrulanmış ayarlar evi' },
+        ]} />
+      </div>
+
+      <div id="switching">
+        <CommandReference title="Geçiş" commands={[
+          { cmd: 'keyflip <isim|numara>', desc: 'O hesaba geç (Claude kapatmadan önce sorar)' },
+          { cmd: 'keyflip <isim> --restart', desc: 'Claude\'u kapat ve sormadan yeniden aç' },
+          { cmd: 'keyflip <isim> --force', desc: 'Claude kapatmadan değiştir (kendin yeniden başlat)' },
+          { cmd: 'keyflip <isim> --browser', desc: 'Tarayıcı + Chrome uzantısını da hizala' },
+          { cmd: 'keyflip next', desc: 'Sonraki kayıtlı hesaba dön' },
+          { cmd: 'keyflip next --strategy best', desc: 'Kalan kotaya göre seç' },
+          { cmd: 'keyflip link [isim|--remove]', desc: 'Bu dizini bir hesapla eşle' },
+          { cmd: 'keyflip shell-init <bash|zsh|fish>', desc: 'cd sabitlenmiş hesabı otomatik aktive etsin diye kabuk kancası' },
+          { cmd: 'keyflip run <isim> [-- args]', desc: 'Paralel oturum: o hesap sadece bu terminalde' },
+          { cmd: 'keyflip group list|tag|untag|members', desc: 'Rotasyon için hesapları havuzlara etiketle' },
+        ]} />
+      </div>
+
+      <div id="providers">
+        <CommandReference title="Sağlayıcılar" commands={[
+          { cmd: 'keyflip provider add <isim> --base-url <url> --key-file -', desc: 'Üçüncü taraf uç nokta kaydet (anahtar stdin\'den)' },
+          { cmd: 'keyflip use <isim>', desc: 'Claude Code\'u bir sağlayıcıya yönlendir' },
+          { cmd: 'keyflip provider off', desc: 'Aboneliğe geri dön (OAuth)' },
+          { cmd: 'keyflip provider list', desc: 'Kayıtlı/aktif sağlayıcıları listele' },
+          { cmd: 'keyflip speedtest <isim>', desc: 'Uç noktaları zamanla, en hızlısını kullan' },
+          { cmd: 'keyflip test <isim>', desc: 'Tek gerçek istek: kimlik doğrulama çalışıyor mu?' },
+          { cmd: 'keyflip import-env [dosya] [--dry-run] [--env]', desc: '.env dosyasından sağlayıcı uç noktalarını içe aktar' },
+          { cmd: 'keyflip route list|set|clear|arbitrage', desc: 'Model yönlendirme ve arbitraj modu' },
+          { cmd: 'keyflip cache status|purge', desc: 'Yanıt önbellek yönetimi' },
+          { cmd: 'keyflip proxy start --wire', desc: 'Localhost yedekleme proxy\'si başlat + Claude\'a bağla' },
+          { cmd: 'keyflip proxy status', desc: 'Proxy sağlığı ve istatistikleri' },
+          { cmd: 'keyflip proxy stop', desc: 'Proxy\'yi durdur ve bağlantıyı kes' },
+          { cmd: 'keyflip gateway use|off <sağlayıcı>', desc: 'Masaüstü uygulamasını bir sağlayıcıya yönlendir' },
+        ]} />
+      </div>
+
+      <div id="sessions">
+        <CommandReference title="Oturumlar ve Hatırlama" commands={[
+          { cmd: 'keyflip sessions --search "sorgu"', desc: 'Tüm Claude Code konuşmalarını ara' },
+          { cmd: 'keyflip sessions --here', desc: 'Sadece bu dizinde başlayan oturumlar' },
+          { cmd: 'keyflip resume <n>', desc: 'Liste öğesi için devam komutunu yazdır' },
+          { cmd: 'keyflip resume <id> --run', desc: 'claude --resume dizininde başlat' },
+          { cmd: 'keyflip sessions rebind <eski> <yeni>', desc: 'Klasör yeniden adlandırma sonrası sohbet geçmişini yeniden bağla' },
+          { cmd: 'keyflip sessions assign <id> <hesap>', desc: 'Oturumu başka bir hesap altında devam ettir' },
+          { cmd: 'keyflip send <id> "<msg>" [--as <hsb>] [--fork]', desc: 'Bir oturuma mesaj enjekte et' },
+          { cmd: 'keyflip sessions archive <id|--older-than 30d>', desc: 'Eski transkriptleri arşivle (gzip)' },
+          { cmd: 'keyflip sessions distill <id>', desc: 'Sohbeti kalıcı hatıraya özetle' },
+          { cmd: 'keyflip sessions compact <id> [--apply]', desc: 'Transkripti kısalt: araç çıktısını ele' },
+          { cmd: 'keyflip sessions scrub <id> [--apply]', desc: 'Kişisel verileri sansürle (e-posta/telefon/TCKN/kart/IBAN/IP/sırlar)' },
+          { cmd: 'keyflip sessions delete <id> [--hard]', desc: 'Bir konuşmayı sil (varsayılan olarak önce arşivler)' },
+          { cmd: 'keyflip sessions edit <id> <eylem> <n>', desc: 'Cerrahi JSONL düzenlemeleri (sil/sansürle/kes)' },
+          { cmd: 'keyflip sessions export <id> [--format md|html|json]', desc: 'Sohbeti paylaşılabilir belge olarak dışa aktar' },
+          { cmd: 'keyflip foreign <dosya> [--format ...]', desc: 'Başka bir ajan oturumunu normalize et (Cursor/Copilot/vb)' },
+          { cmd: 'keyflip recall "<sorgu>" [--answer]', desc: 'Tüm sohbetlerde BM25/anlamsal arama + kaynaklı sentez' },
+          { cmd: 'keyflip dream [--older-than 30d] [--apply]', desc: 'Eski sohbetleri tek geçişte özetle + arşivle' },
+          { cmd: 'keyflip dream schedule|unschedule|status', desc: 'Rüya modunu geceleri gözetimsiz çalıştır' },
+          { cmd: 'keyflip cowork --search "sınav"', desc: 'Claude masaüstü Cowork oturumlarını göz at' },
+          { cmd: 'keyflip chat', desc: 'Aktif hesabın claude.ai sohbetlerini listele (deneysel)' },
+          { cmd: 'keyflip chat get <id>', desc: 'Bir bulut konuşmasını oku' },
+        ]} />
+      </div>
+
+      <div id="fleet">
+        <CommandReference title="Filo ve Transfer" commands={[
+          { cmd: 'keyflip fleet init --dir <klasör>', desc: 'Bu makineyi şifrelenmiş filoya bağla' },
+          { cmd: 'keyflip fleet push [--with-secrets]', desc: 'Durum yayınla + sıralı komutları uygula' },
+          { cmd: 'keyflip fleet status | panel', desc: 'Her makineyi gör: hesaplar, kota, durum' },
+          { cmd: 'keyflip fleet switch <makine> <hesap>', desc: 'Uzak makine hesabını değiştir' },
+          { cmd: 'keyflip fleet send-account <hesap> --to <makine>', desc: 'Bir hesabı başka makineye dağıt' },
+          { cmd: 'keyflip fleet collect', desc: 'Filodan tüm hesapları bu makineye topla' },
+          { cmd: 'keyflip fleet keys', desc: 'İmzalama anahtarı parmak izlerini denetle' },
+          { cmd: 'keyflip fleet trust <makine>', desc: 'Meşru yeniden anahtarlama sonrası makine anahtarını yeniden sabitle' },
+          { cmd: 'keyflip transfer serve [--qr]', desc: 'LAN: tek kullanımlık kod + şifrelenmiş paket akışı' },
+          { cmd: 'keyflip transfer pull --code X', desc: 'LAN: eşi otomatik bul, çek + birleştir' },
+          { cmd: 'keyflip transfer serve --receive', desc: 'LAN: gönderilen paketi almak için bekle' },
+          { cmd: 'keyflip transfer push <host> --code X', desc: 'LAN: dinleyen makineye paket gönder' },
+          { cmd: 'keyflip transfer serve --relay <dir|url>', desc: 'İnternet: senkronize klasör/WebDAV röle ile kod UX' },
+          { cmd: 'keyflip transfer pull --relay <dir|url> --code <kod>', desc: 'İnternet: röleden çek + birleştir' },
+          { cmd: 'keyflip transfer relay [--dir --host --port --auth...]', desc: 'Kendi sıfır bağımlılık röleni barındır' },
+          { cmd: 'keyflip swarm run|ping|drain|results', desc: 'Filo makinelerinde komut çalıştır (onay gerekli)' },
+          { cmd: 'keyflip migrate export <dosya>', desc: 'Hesaplar + sağlayıcılar + transkriptler + bellek + yapılandırmayı paketle' },
+          { cmd: 'keyflip migrate import <dosya>', desc: 'Paketi bu makineye birleştir' },
+          { cmd: 'keyflip migrate push --url <webdav>', desc: 'Paketi WebDAV ile röle et (şifreli)' },
+          { cmd: 'keyflip migrate pull --url <webdav>', desc: 'WebDAV\'dan çek + birleştir' },
+        ]} />
+      </div>
+
+      <div id="context">
+        <CommandReference title="Bağlam Katmanı" commands={[
+          { cmd: 'keyflip context init', desc: '.keyflip/ proje belleği oluştur' },
+          { cmd: 'keyflip context status', desc: 'Proje bağlamı hızlı özeti' },
+          { cmd: 'keyflip context decision add "..." --rationale "..."', desc: 'Mimari karar kaydet' },
+          { cmd: 'keyflip context task add "..."', desc: 'Proje görevi ekle' },
+          { cmd: 'keyflip context task set <id> <durum>', desc: 'Görev durumunu güncelle (todo/in_progress/blocked/done)' },
+          { cmd: 'keyflip context show --json', desc: 'Tam sır sansürlü bağlam paketi' },
+          { cmd: 'keyflip context sync status', desc: 'Mevcut gizlilik modu + politika' },
+          { cmd: 'keyflip context sync mode <mod>', desc: 'Gizlilik modunu değiştir (yerel/git/şifreli/şirket)' },
+          { cmd: 'keyflip context sync export --passphrase-file f', desc: 'Senkronizasyon yükünü yayınla' },
+          { cmd: 'keyflip context sync check --against <dosya>', desc: 'Kuru çalıştırma: ne gönderilir, çakışmalar?' },
+          { cmd: 'keyflip rules show', desc: 'Kural dosyalarını algıla + normalize edilmiş modeli önizle' },
+          { cmd: 'keyflip rules import', desc: 'Modeli .keyflip/rules.json\'a önbellekle' },
+          { cmd: 'keyflip rules emit --to <araç> [--write]', desc: 'Belirli bir araç için kuralları yayınla' },
+          { cmd: 'keyflip checkpoint create --summary "..."', desc: 'Git bağlı oturum anlığı oluştur' },
+          { cmd: 'keyflip checkpoint list|latest|show <id>', desc: 'Kontrol noktalarını incele' },
+          { cmd: 'keyflip handoff [--to <araç>] [--out CONTINUE.md]', desc: 'Sonraki araç için devam istemi oluştur' },
+        ]} />
+      </div>
+
+      <div id="automation">
+        <CommandReference title="Otomasyon ve İşler" commands={[
+          { cmd: 'keyflip autoswitch --threshold N --interval N', desc: 'Kullanımı izle, eşik değerinde otomatik değiştir' },
+          { cmd: 'keyflip autoswitch install|status|uninstall', desc: 'Gözetimsiz rotasyon için arka plan servisi' },
+          { cmd: 'keyflip run-job "<istem>" [--group g] [--strategy best]', desc: 'En iyi kotalı hesapta başlıksız istem çalıştır' },
+          { cmd: 'keyflip jobs list|run|clear', desc: 'İş kuyruğu yönetimi' },
+          { cmd: 'keyflip fanout "<istem>" --accounts a,b,c', desc: 'Aynı istemi N hesapta çalıştır' },
+          { cmd: 'keyflip budget status|set|clear', desc: 'Kullanım-% tavanları + ihlal uyarıları' },
+          { cmd: 'keyflip notify set|test|off --webhook URL', desc: 'Kota/geçiş/filo olaylarında push uyarıları' },
+          { cmd: 'keyflip cost status|predict|by-project', desc: 'Harcama/kullanım ve limite kalan süre tahmini' },
+          { cmd: 'keyflip usage --history', desc: 'Hesap başına kullanım trendi + yedekleme olayları' },
+          { cmd: 'keyflip usage --providers', desc: 'Diğer AI araçları genelinde kullanım/limitler (CodexBar monitörü)' },
+          { cmd: 'keyflip post --to <webhook> [--status]', desc: 'Slack/Discord/webhook\'a olay gönder' },
+        ]} />
+      </div>
+
+      <div id="security">
+        <CommandReference title="Güvenlik ve Politika" commands={[
+          { cmd: 'keyflip policy list|allow|deny|remove|default|check', desc: 'Dizin-hesap kısıtlamaları' },
+          { cmd: 'keyflip vault status|use <op|bw|vault|off>', desc: '1Password/Bitwarden/HashiCorp Vault kullan' },
+          { cmd: 'keyflip team publish|pull|members|add-member|remove-member', desc: 'RBAC ile şifrelenmiş takım havuzu' },
+          { cmd: 'keyflip license status|activate|deactivate', desc: 'Çevrimdışı Ed25519 imzalı lisans yönetimi' },
+          { cmd: 'keyflip export [dosya|-]', desc: 'Hesapları yedekle (GİZLİ BİLGİ İÇERİR)' },
+          { cmd: 'keyflip import <dosya|->', desc: 'Yedekten hesapları geri yükle' },
+          { cmd: 'keyflip backup now|list|restore <n>', desc: 'keyflip meta veri anlığı (sır yok)' },
+          { cmd: 'keyflip log [--tail N] [--grep S] [--since ISO]', desc: 'Eylem/denetim günlüğünü görüntüle' },
+          { cmd: 'keyflip history|undo|restore <ref>', desc: 'Git sürümlü yapılandırma: incele/geri al/geri sar' },
+        ]} />
+      </div>
+
+      <div id="desktop">
+        <CommandReference title="Masaüstü ve Tarayıcı" commands={[
+          { cmd: 'keyflip browser status|logout|sync', desc: 'Tarayıcı claude.ai hesabını kontrol et/sıfırla/geri yükle' },
+          { cmd: 'keyflip consolidate [--watch]', desc: 'Her hesap sohbet dizinini senkronize et' },
+          { cmd: 'keyflip agents', desc: 'Diğer ajanların bellek + yapılandırmasını listele' },
+          { cmd: 'keyflip settings show|get|set', desc: '~/.claude/settings.json dosyasını görüntüle/düzenle' },
+          { cmd: 'keyflip surfaces', desc: 'Bu makinedeki diğer AI araçlarını algıla' },
+          { cmd: 'keyflip codexbar', desc: 'CodexBar kullanım monitörüne köprü' },
+        ]} />
+      </div>
+
+      <div id="mcp">
+        <CommandReference title="MCP ve Beceriler" commands={[
+          { cmd: 'keyflip mcp [--setup]', desc: 'Ajanlar için stdio üzerinden MCP sunucusu' },
+          { cmd: 'keyflip install-skill', desc: 'Claude Code becerisini kur (~/.claude/skills/keyflip)' },
+          { cmd: 'keyflip skill add <repo|dir|tgz>', desc: 'GitHub/dizin/dosyadan beceri kur' },
+          { cmd: 'keyflip skill list|remove <isim>', desc: 'Kurulu becerileri yönet' },
+          { cmd: 'keyflip brain "<niyet>"', desc: 'Düz dilden önerilen keyflip adımlarına (isteğe bağlı)' },
+        ]} />
+      </div>
+
+      <div id="tui">
+        <CommandReference title="TUI ve Panel" commands={[
+          { cmd: 'keyflip ui [--fleet]', desc: 'Tam ekran TUI: hesaplar, kullanım, filo, komut paleti' },
+          { cmd: 'keyflip panel [--open]', desc: 'Yerel web paneli: hesaplar, kotalar, takvim, oturumlar' },
+          { cmd: 'keyflip panel --export <d> [--anon]', desc: 'Paylaşıma güvenli statik anlık görüntü yaz' },
+          { cmd: 'keyflip menubar [--install]', desc: 'Menü çubuğu/tepsi eklentisi (macOS xbar, Linux Argos)' },
+          { cmd: 'keyflip statusline install', desc: 'Claude Code isteminde aktif hesap + kota göster' },
+        ]} />
+      </div>
+
+      <div id="maintenance">
+        <CommandReference title="Bakım" commands={[
+          { cmd: 'keyflip remove <isim|numara>', desc: 'Kayıtlı hesabı sil (önce onay ister)' },
+          { cmd: 'keyflip logout [--browser] [--desktop]', desc: 'Canlı oturumlardan çıkış yap (kayıtlı hesaplar kalır)' },
+          { cmd: 'keyflip reset [--soft]', desc: 'Fabrika sıfırlama: tüm keyflip verisini sil (--soft hesapları tutar)' },
+          { cmd: 'keyflip reset --logout', desc: 'Ayrıca her canlı yüzeyden çıkış yap + kapat' },
+          { cmd: 'keyflip uninstall [--purge]', desc: 'keyflip\'i kaldır (--purge kayıtlı veriyi de siler)' },
+          { cmd: 'keyflip upgrade', desc: 'keyflip\'in kendisini güncelle (kurulum yöntemini algılar)' },
+        ]} />
+      </div>
+
+      <div class="mt-12 p-4 bg-surface-100 dark:bg-surface-800 rounded-lg">
+        <p class="text-sm text-surface-700 dark:text-surface-300">
+          <strong>Global bayraklar:</strong> <code>--json</code> (makine okunabilir stdout, insan metni stderr'e) ve <code>--debug</code> (ayrıntılı günlük). <code>ccs</code> kısa takma ad olarak çalışır.
+        </p>
+      </div>
+    </div>
+  </section>
+</BaseLayout>

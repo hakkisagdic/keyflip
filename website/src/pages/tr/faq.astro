@@ -1,0 +1,77 @@
+---
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import PageHeader from '../../components/PageHeader.astro';
+import { t } from '../../i18n';
+
+const locale = 'tr';
+const trans = t(locale);
+
+const faqs = [
+  {
+    q: 'keyflip güvenli mi?',
+    a: 'Evet. OAuth tokenlarınız işletim sistemi kimlik deposunda kalır (macOS Keychain veya Linux/Windows\'ta şifrelenmiş dosyalar). keyflip tokenları yuvalar arasında kopyalar ama yeni düz metin token dosyası eklemez. Geçişler başarısızlıkta otomatik geri alma ile işlemseldir.'
+  },
+  {
+    q: 'Geçiş yaptığımda sohbet geçmişimi kaybeder miyim?',
+    a: 'Hayır. ~/.claude/projects\'teki oturum geçmişi hesaptan bağımsızdır. Hangi hesap aktifse onun altında görülür. keyflip ayrıca masaüstü uygulaması dizinini de birleştirebilir.'
+  },
+  {
+    q: 'keyflip Claude Code, masaüstü uygulaması ve tarayıcı ile çalışır mı?',
+    a: 'Evet. keyflip CLI\'yı, masaüstü uygulaması girişini ve tarayıcı/uzantıyı değiştirebilir. Her yüzey bağımsızdır ama keyflip onları senkronize edebilir.'
+  },
+  {
+    q: 'Sistem gereksinimleri nelerdir?',
+    a: 'Node.js 18 veya üzeri (Claude Code zaten Node gerektirir) ve kaydetmek istediğiniz hesap(lar)a giriş yapılmış Claude uygulaması/Claude Code. macOS, Linux ve Windows\'ta çalışır.'
+  },
+  {
+    q: 'Herhangi bir çalışma zamanı bağımlılığı var mı?',
+    a: 'Sıfır. keyflip saf Node.js\'tir, yerli modül ve çalışma zamanı bağımlılığı yoktur. Sadece Node dahili modülleri kullanır.'
+  },
+  {
+    q: 'Geçiş yaptığımda Claude açıksa ne olur?',
+    a: 'İnteraktif modda keyflip Claude\'u kapatmadan önce sorar. "Hayır" derseniz iptal eder. Sormadan kapatıp açmak için --restart, kapatmadan değiştirmek için --force kullanın.'
+  },
+  {
+    q: 'Farklı terminallerde farklı hesapları kullanabilir miyim?',
+    a: 'Evet! "keyflip run <isim>" Claude Code\'u o hesapla sadece mevcut terminalde başlatır. Diğer terminaller, masaüstü uygulaması ve VS Code mevcut hesaplarını tutar.'
+  },
+  {
+    q: 'Hesapları yeni makineye nasıl aktarırım?',
+    a: 'Eski makinede "keyflip transfer serve --qr" ve yeni makinede "keyflip transfer pull --code X" kullanın. Transfer tek kullanımlık kodla uçtan uca şifrelenmiştir.'
+  },
+  {
+    q: 'Yedekleme proxy\'si nedir?',
+    a: 'API isteklerini aktif hesabınıza yönlendiren bir localhost proxy. 429 veya 5xx durumunda, Claude Code\'a hata ulaşmadan önce sonraki sağlıklı hesapta otomatik yeniden dener.'
+  },
+  {
+    q: 'Ücretsiz mi?',
+    a: 'Çekirdek ücretsiz ve açık kaynaktır (MIT). Tek makinede hesap değiştirme, sağlayıcılar, proxy, oturumlar, yedekleme ve temel MCP yüzeyi sonsuza kadar ücretsizdir. Ücretli katmanlar (yakında) filo, orkestrasyon, takım havuzları ve gelişmiş otomasyonu açar.'
+  },
+  {
+    q: 'keyflip\'i tamamen nasıl kaldırırım?',
+    a: '"keyflip uninstall --purge" ile keyflip ve tüm kayıtlı verileri kaldırın. Veya önce "keyflip reset" ile verileri temizleyin, sonra kaldırın. Açıkça --logout kullanmadıkça canlı Claude girişinize asla dokunulmaz.'
+  },
+];
+---
+
+<BaseLayout title="SSS" locale={locale} currentPath="/tr/faq">
+  <PageHeader title={trans.faq.title} subtitle={trans.faq.subtitle} />
+
+  <section class="py-16">
+    <div class="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8">
+      <div class="space-y-6">
+        {faqs.map((faq) => (
+          <details class="group p-6 bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-800 rounded-xl">
+            <summary class="flex items-center justify-between cursor-pointer list-none">
+              <h3 class="text-base font-semibold text-surface-900 dark:text-surface-100 pr-4">{faq.q}</h3>
+              <svg class="w-5 h-5 text-surface-400 shrink-0 transition-transform group-open:rotate-180" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                <path d="M19 9l-7 7-7-7" />
+              </svg>
+            </summary>
+            <p class="mt-4 text-sm text-surface-700 dark:text-surface-300 leading-relaxed">{faq.a}</p>
+          </details>
+        ))}
+      </div>
+    </div>
+  </section>
+</BaseLayout>

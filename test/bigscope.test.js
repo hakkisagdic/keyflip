@@ -1,15 +1,15 @@
-'use strict';
 // Batch E: MCP registry (#15), desktop gateway (#17), WSL helpers (#16), sync (#18).
-const test = require('node:test');
-const assert = require('node:assert');
-const fs = require('fs');
-const path = require('path');
-const mcpreg = require('../src/mcpreg');
-const desktopgw = require('../src/desktopgw');
-const wsl = require('../src/wsl');
-const sync = require('../src/sync');
-const provider = require('../src/provider');
-const { makeCtx } = require('./helpers');
+import test from 'node:test';
+import assert from 'node:assert';
+import fs from 'fs';
+import path from 'path';
+import * as mcpreg from '../src/mcpreg.js';
+import * as desktopgw from '../src/desktopgw.js';
+import * as wsl from '../src/wsl.js';
+import * as sync from '../src/sync.js';
+import * as provider from '../src/provider.js';
+import { makeCtx, writeClaude } from './helpers.js';
+import * as _core from '../src/core.js';
 
 function ctxDesktop() {
   const ctx = makeCtx();
@@ -88,8 +88,7 @@ test('encrypt/decrypt round-trips; wrong passphrase fails', function () {
 });
 
 test('sync push encrypts the bundle to WebDAV; pull decrypts + previews', async function () {
-  const core = require('../src/core');
-  const { writeClaude } = require('./helpers');
+  const core = _core;
   const ctx = makeCtx();
   writeClaude(ctx, { oauthAccount: { emailAddress: 'a@x.com' }, userID: 'u' });
   ctx.store.setLive('{"claudeAiOauth":{"accessToken":"SECRET"}}');

@@ -1,4 +1,3 @@
-'use strict';
 // provusage — a ZERO-DEPENDENCY multi-provider usage / limit reader for keyflip.
 //
 // Approach adapted from CodexBar (github.com/steipete/CodexBar), MIT License —
@@ -24,10 +23,11 @@
 //    providers reference their key by ENV VAR NAME only (deps.env[NAME]); the
 //    value is used to build one Authorization header and is never logged/raw'd.
 
-const fs = require('fs');
-const path = require('path');
-const os = require('os');
-const child_process = require('child_process');
+import fs from 'fs';
+import path from 'path';
+import os from 'os';
+import child_process from 'child_process';
+import * as _usage from './usage.js';
 
 // ---------------------------------------------------------------------------
 // Injectable dependency defaults. Tests override any of these.
@@ -62,7 +62,7 @@ function resolveDeps(deps) {
     env: deps.env || process.env,
     // Lets the claude provider delegate to keyflip's existing usage.js without
     // duplicating Claude logic — and lets tests inject a stub.
-    requireUsage: deps.requireUsage || function () { return require('./usage'); },
+    requireUsage: deps.requireUsage || function () { return _usage; },
   };
 }
 
@@ -572,19 +572,4 @@ async function readAll(ctx, deps) {
   return out;
 }
 
-module.exports = {
-  PROVIDERS: PROVIDERS,
-  get: get,
-  detectOne: detectOne,
-  readOne: readOne,
-  readAll: readAll,
-  // helpers exported for reuse + tests
-  resetWindow: resetWindow,
-  windowNameForMinutes: windowNameForMinutes,
-  humanizeUntil: humanizeUntil,
-  makeWindow: makeWindow,
-  normalizeRead: normalizeRead,
-  // parsers exported so tests can exercise them directly
-  codexParseSnapshot: codexParseSnapshot,
-  geminiParse: geminiParse,
-};
+export { PROVIDERS, get, detectOne, readOne, readAll, resetWindow, windowNameForMinutes, humanizeUntil, makeWindow, normalizeRead, codexParseSnapshot, geminiParse };

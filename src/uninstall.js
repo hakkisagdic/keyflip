@@ -1,8 +1,7 @@
-'use strict';
 // Planning helpers for `keyflip reset` and `keyflip uninstall`. Pure functions —
 // they compute WHAT to remove; the CLI does the confirmation and the actual I/O
 // (mirrors how the reset/wipe path keeps its side effects in cli.js).
-const path = require('path');
+import path from 'path';
 
 // Runtime/derived state under configDir that `reset --soft` clears. It all
 // regenerates on next use, so wiping it returns keyflip to a clean working state
@@ -78,10 +77,4 @@ function classifyInstall(realBinPath, platform) {
   return 'dev';
 }
 
-module.exports = {
-  DERIVED: DERIVED,
-  derivedStatePaths: derivedStatePaths,
-  installerArtifacts: installerArtifacts,
-  planUninstall: planUninstall,
-  classifyInstall: classifyInstall,
-};
+export { DERIVED, derivedStatePaths, installerArtifacts, planUninstall, classifyInstall };

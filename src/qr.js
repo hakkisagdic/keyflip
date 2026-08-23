@@ -1,4 +1,3 @@
-'use strict';
 // G6: a zero-dependency QR-code encoder, just enough to render the LAN-transfer pairing
 // info (`keyflip://transfer?...`) so the other machine can scan instead of typing the code.
 // Byte mode; ECC levels L/M; versions 1-10 (payloads are short). Follows ISO/IEC 18004.
@@ -317,10 +316,4 @@ function toText(qr, opts) {
   return lines.join('\n');
 }
 
-module.exports = {
-  encode: encode, toText: toText,
-  // exposed for tests:
-  gfMul: gfMul, rsGenerator: rsGenerator, rsEncode: rsEncode,
-  formatInfo: formatInfo, versionInfo: versionInfo, pickVersion: pickVersion,
-  dataCapacity: dataCapacity, buildCodewords: buildCodewords, penalty: penalty,
-};
+export { encode, toText, gfMul, rsGenerator, rsEncode, formatInfo, versionInfo, pickVersion, dataCapacity, buildCodewords, penalty };

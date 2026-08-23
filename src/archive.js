@@ -1,12 +1,11 @@
-'use strict';
 // B1/B2: archive + compress old Claude Code transcripts. Archiving MOVES a transcript out
 // of ~/.claude/projects (declutters the live history) into keyflip's archive store,
 // gzipped (zlib — zero dep). The store lives under configDir, so H3 git-versions it and
 // migrate/backup carry it. Fully reversible: `unarchive` gunzips it back into projects.
-const fs = require('fs');
-const path = require('path');
-const zlib = require('zlib');
-const fsutil = require('./fsutil');
+import fs from 'fs';
+import path from 'path';
+import zlib from 'zlib';
+import * as fsutil from './fsutil.js';
 
 function store(ctx) { return path.join(ctx.configDir, 'archive'); }
 function projectsDir(ctx) { return path.join(ctx.claudeDir || path.join(ctx.home, '.claude'), 'projects'); }
@@ -64,10 +63,4 @@ function findArchived(ctx, idOrPrefix) {
   return pre.length === 1 ? pre[0] : null;
 }
 
-module.exports = {
-  store: store,
-  archiveSession: archiveSession,
-  unarchiveSession: unarchiveSession,
-  listArchived: listArchived,
-  findArchived: findArchived,
-};
+export { store, archiveSession, unarchiveSession, listArchived, findArchived };

@@ -1,15 +1,14 @@
-'use strict';
 // Reader for the action/audit log (<configDir>/logs/keyflip.log). Covers the
 // happy path plus hostile/edge input: missing file, huge file (tail-only read),
 // blank/malformed lines, filters, and the strict read-only ("never create")
 // contract. The log's writer is src/log.js.
-const test = require('node:test');
-const assert = require('node:assert');
-const fs = require('fs');
-const path = require('path');
-const auditview = require('../src/auditview');
-const logmod = require('../src/log');
-const { makeCtx } = require('./helpers');
+import test from 'node:test';
+import assert from 'node:assert';
+import fs from 'fs';
+import path from 'path';
+import * as auditview from '../src/auditview.js';
+import * as logmod from '../src/log.js';
+import { makeCtx } from './helpers.js';
 
 function logDir(ctx) { return path.join(ctx.configDir, 'logs'); }
 

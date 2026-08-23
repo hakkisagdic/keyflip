@@ -1,11 +1,10 @@
-'use strict';
 // Tests for the Windows app-auth crypto primitives (src/wincrypt.js). The DPAPI call is
 // injected (no Windows needed); the AES-256-GCM value decryption is round-tripped against a
 // value we encrypt here exactly the way Electron/Chromium does on Windows.
-const test = require('node:test');
-const assert = require('node:assert');
-const crypto = require('crypto');
-const win = require('../src/wincrypt');
+import test from 'node:test';
+import assert from 'node:assert';
+import crypto from 'crypto';
+import * as win from '../src/wincrypt.js';
 
 // Encrypt like Chromium/Electron: "v10" + 12-byte nonce + AES-256-GCM ciphertext + 16-byte tag.
 function encryptValue(plaintext, key, prefix) {

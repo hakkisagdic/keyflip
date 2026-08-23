@@ -1,4 +1,3 @@
-'use strict';
 // Cross-machine migration. Bundle EVERYTHING portable — saved accounts (secrets),
 // providers (with keys), and every Claude Code session transcript — into one file,
 // and MERGE it into another machine. The merge is a UNION: it never clobbers a
@@ -9,11 +8,14 @@
 // NOT portable (machine-bound, re-captured on the target — we say so): the
 // desktop-app login (safeStorage key) and browser cookie snapshots (browser Safe
 // Storage key). Accounts + transcripts + providers are what actually move.
-const fs = require('fs');
-const path = require('path');
-const transfer = require('./transfer');
-const provider = require('./provider');
-const fsutil = require('./fsutil');
+import fs from 'fs';
+import path from 'path';
+import * as transfer from './transfer.js';
+import * as provider from './provider.js';
+import * as fsutil from './fsutil.js';
+import * as _sessions from './sessions.js';
+import * as _sync from './sync.js';
+import * as _agents from './agents.js';
 
 const FORMAT = 'keyflip-migrate';
 
@@ -70,7 +72,7 @@ function collectTranscriptsFiltered(ctx, opts) {
   const ids = (opts.sessions && opts.sessions.length) ? opts.sessions : null;
   const hasFilter = ids || opts.search || opts.newerThanDays || opts.olderThanDays;
   if (!hasFilter) return collectTranscripts(ctx);
-  const sessions = require('./sessions');
+  const sessions = _sessions;
   const now = opts.now || Date.now();
   const rows = sessions.list(ctx, { search: opts.search, limit: 100000 }).filter(function (r) {
     if (ids && !ids.some(function (p) { return r.sessionId === p || r.sessionId.indexOf(p) === 0; })) return false;
@@ -204,8 +206,8 @@ function buildBundle(ctx, opts) {
   const providers = opts.noProviders ? [] : collectProviders(ctx);
   const memory = opts.noMemory ? [] : collectMemory(ctx);
   const config = opts.noConfig ? {} : collectConfig(ctx);
-  const agents = opts.agents ? require('./agents').collectAgentMemory(ctx, { only: opts.agentIds }) : []; // J1: opt-in
-  const agentConfig = opts.agentConfig ? require('./agents').collectAgentConfig(ctx, { only: opts.agentIds, redact: !opts.agentConfigSecrets }) : []; // J1 config-tier (redacted unless opted in)
+  const agents = opts.agents ? _agents.collectAgentMemory(ctx, { only: opts.agentIds }) : []; // J1: opt-in
+  const agentConfig = opts.agentConfig ? _agents.collectAgentConfig(ctx, { only: opts.agentIds, redact: !opts.agentConfigSecrets }) : []; // J1 config-tier (redacted unless opted in)
   const bundle = {
     format: FORMAT,
     version: VERSION,
@@ -300,11 +302,11 @@ function applyBundle(ctx, bundle, opts) {
   const config = mergeConfig(ctx, bundle.config, opts);
   // J1: other agents' home-level memory (only if the bundle carried any).
   const agents = (bundle.agents && bundle.agents.length)
-    ? require('./agents').mergeAgentMemory(ctx, bundle.agents, opts)
+    ? _agents.mergeAgentMemory(ctx, bundle.agents, opts)
     : { added: 0, kept: 0, overwritten: 0, skipped: 0, total: 0 };
   // J1 config-tier: other agents' redacted config (re-redacted on the way in).
   const agentConfig = (bundle.agentConfig && bundle.agentConfig.length)
-    ? require('./agents').mergeAgentConfig(ctx, bundle.agentConfig, opts)
+    ? _agents.mergeAgentConfig(ctx, bundle.agentConfig, opts)
     : { added: 0, kept: 0, overwritten: 0, skipped: 0, total: 0 };
 
   return { accounts: accounts, providers: providers, transcripts: transcripts, memory: memory, config: config, agents: agents, agentConfig: agentConfig };
@@ -315,7 +317,7 @@ function applyBundle(ctx, bundle, opts) {
 async function pushBundle(ctx, o) {
   o = o || {};
   if (!o.passphrase) throw new Error('a passphrase is required (the bundle carries login secrets)');
-  const sync = require('./sync');
+  const sync = _sync;
   const built = buildBundle(ctx, o);
   if (!built.counts.accounts && !built.counts.transcripts && !built.counts.providers && !built.counts.memory && !built.counts.config && !built.counts.agents && !built.counts.agentConfig) throw new Error('nothing to migrate (no accounts, providers, transcripts, or memory found)');
   await sync.davPut(o, sync.encrypt(JSON.stringify(built.bundle), o.passphrase));
@@ -324,7 +326,7 @@ async function pushBundle(ctx, o) {
 async function pullBundle(ctx, o) {
   o = o || {};
   if (!o.passphrase) throw new Error('a passphrase is required');
-  const sync = require('./sync');
+  const sync = _sync;
   const raw = await sync.davGet(o);
   if (raw == null) return { found: false };
   let bundle;
@@ -332,20 +334,4 @@ async function pullBundle(ctx, o) {
   return { found: true, bundle: bundle };
 }
 
-module.exports = {
-  FORMAT: FORMAT,
-  VERSION: VERSION,
-  buildBundle: buildBundle,
-  applyBundle: applyBundle,
-  pushBundle: pushBundle,
-  pullBundle: pullBundle,
-  mergeTranscripts: mergeTranscripts,
-  collectTranscripts: collectTranscripts,
-  collectTranscriptsFiltered: collectTranscriptsFiltered,
-  collectProviders: collectProviders,
-  collectMemory: collectMemory,
-  mergeMemory: mergeMemory,
-  collectConfig: collectConfig,
-  mergeConfig: mergeConfig,
-  isSafeSegment: isSafeSegment,
-};
+export { FORMAT, VERSION, buildBundle, applyBundle, pushBundle, pullBundle, mergeTranscripts, collectTranscripts, collectTranscriptsFiltered, collectProviders, collectMemory, mergeMemory, collectConfig, mergeConfig, isSafeSegment };

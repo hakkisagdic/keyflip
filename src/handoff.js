@@ -1,4 +1,3 @@
-'use strict';
 // Wave 4 (Context Layer): target-tool-aware CONTINUE-PROMPT generator. When a project moves to a NEW
 // AI tool (Kiro → Cursor → Claude Code → opencode → Windsurf), the new tool starts blind. This turns
 // the portable `.keyflip/` project memory (context.md + tasks.json + decisions.json + rules/ +
@@ -13,8 +12,9 @@
 // this layer builds a shared, syncable artifact, so a leaked token here would travel to another
 // machine/tool. Only env-var NAMES + descriptions are carried, never values. readProject()/handoff()
 // do the filesystem read for the CLI + MCP; they alone touch disk.
-const fs = require('fs');
-const path = require('path');
+import fs from 'fs';
+import path from 'path';
+import * as _secretscan from './secretscan.js';
 
 // ---- known tools -------------------------------------------------------------------------------
 // Prototype-pollution safe: these maps are keyed by tool/provider ids that can originate from a
@@ -92,7 +92,7 @@ function lineOf(item) {
 // Two passes: line-based (KEY=secret / key: value config lines) then a token-shape sweep anywhere in
 // the text. `scan` is injectable so tests can assert against the real module. NEVER logs the input.
 function redactText(s, scan) {
-  scan = scan || require('./secretscan');
+  scan = scan || _secretscan;
   let out = str(s);
   if (!out) return '';
   try { out = scan.redactLines(out).text; } catch (e) { /* line pass is best-effort */ }
@@ -208,13 +208,13 @@ function collectEnv(pkg) {
  * @param {object} [opts.checkpoint]  latest checkpoint from checkpoint.latest.
  * @param {('claude'|'cursor'|'kiro'|'opencode'|'windsurf'|'generic')} [opts.target='generic']
  * @param {function} [opts.now]  injected ISO clock () => string (for a deterministic timestamp).
- * @param {object} [opts.secretscan]  injected redactor (defaults to require('./secretscan')).
+ * @param {object} [opts.secretscan]  injected redactor (defaults to _secretscan).
  * @returns {string} markdown prompt (no IO, no secrets).
  */
 function continuePrompt(pkg, opts) {
   opts = opts || {};
   pkg = pkg || {};
-  const scan = opts.secretscan || require('./secretscan');
+  const scan = opts.secretscan || _secretscan;
   const v = VARIANTS[normalizeTarget(opts.target)];
   const cp = opts.checkpoint || null;
   const name = projectName(pkg, scan);
@@ -417,19 +417,4 @@ const mcpTools = [
   },
 ];
 
-module.exports = {
-  continuePrompt: continuePrompt,
-  targetVariants: targetVariants,
-  providerTrail: providerTrail,
-  activeTask: activeTask,
-  collectDecisions: collectDecisions,
-  collectEnv: collectEnv,
-  redactText: redactText,
-  normalizeTarget: normalizeTarget,
-  readProject: readProject,
-  handoff: handoff,
-  mcpTools: mcpTools,
-  TARGETS: TARGETS,
-  DEFAULT_FILES: DEFAULT_FILES,
-  PROVIDER_LABELS: PROVIDER_LABELS,
-};
+export { continuePrompt, targetVariants, providerTrail, activeTask, collectDecisions, collectEnv, redactText, normalizeTarget, readProject, handoff, mcpTools, TARGETS, DEFAULT_FILES, PROVIDER_LABELS };

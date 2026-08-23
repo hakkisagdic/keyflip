@@ -1,4 +1,3 @@
-'use strict';
 // POLICY ENGINE: let an org constrain WHICH account a directory/repo may use
 // ("client code only on the work account"). State lives in <configDir>/policy.json
 // as { rules:[ {id, match:{cwdPrefix?,repo?}, allow?:{accounts?,groups?},
@@ -18,12 +17,13 @@
 // Group membership is resolved via groups.membersOf (injectable). Everything is pure +
 // validated; every map keyed by a user-supplied name is Object.create(null) so a hostile
 // name (e.g. "__proto__") can never pollute a prototype.
-const fs = require('fs');
-const path = require('path');
-const crypto = require('crypto');
-const profiles = require('./profiles');
-const groups = require('./groups');
-const { atomicWrite, readJsonForWrite } = require('./fsutil');
+import fs from 'fs';
+import path from 'path';
+import crypto from 'crypto';
+import * as profiles from './profiles.js';
+import * as groups from './groups.js';
+import { atomicWrite, readJsonForWrite } from './fsutil.js';
+import * as _exec from './exec.js';
 
 // Compare paths PHYSICALLY (resolve symlinks): on macOS /tmp->/private/tmp etc., so a lexical
 // path.resolve on the rule prefix vs the kernel's physical process.cwd() would make a deny rule
@@ -206,7 +206,7 @@ function resolveRepo(cwd, opts) {
   opts = opts || {};
   if (typeof opts.repoOf === 'function') { try { return normalizeRepo(opts.repoOf(cwd)); } catch (e) { return null; } }
   if (!cwd) return null;
-  const run = opts.run || require('./exec').run;
+  const run = opts.run || _exec.run;
   try {
     const r = run('git', ['-C', cwd, 'config', '--get', 'remote.origin.url']);
     if (r && r.code === 0 && r.stdout && r.stdout.trim()) return normalizeRepo(r.stdout.trim());
@@ -406,16 +406,4 @@ const mcpTools = [
   },
 ];
 
-module.exports = {
-  policyPath: policyPath,
-  get: get,
-  addRule: addRule,
-  removeRule: removeRule,
-  setDefault: setDefault,
-  evaluate: evaluate,
-  enforce: enforce,
-  normalizeRepo: normalizeRepo,
-  resolveRepo: resolveRepo,
-  isValidId: isValidId,
-  mcpTools: mcpTools,
-};
+export { policyPath, get, addRule, removeRule, setDefault, evaluate, enforce, normalizeRepo, resolveRepo, isValidId, mcpTools };

@@ -1,4 +1,3 @@
-'use strict';
 // TEAM POOL: a shared, ENCRYPTED credential pool with roles. Where `fleet` is a
 // per-machine control plane, a team pool is a single encrypted bundle in a shared
 // folder (<sharedDir>/<pool>.pool.enc) that several people/roles pull from: an OWNER
@@ -8,12 +7,12 @@
 // credentials never touch the shared disk. (Today keyflip sharing is single-user; this
 // is the multi-user shape — role tags are advisory visibility, enforced by who holds
 // the pool passphrase, exactly like the fleet's shared-secret rendezvous.)
-const fs = require('fs');
-const path = require('path');
-const profiles = require('./profiles');
-const transfer = require('./transfer');
-const sync = require('./sync');
-const { atomicWrite, readJsonForWrite } = require('./fsutil');
+import fs from 'fs';
+import path from 'path';
+import * as profiles from './profiles.js';
+import * as transfer from './transfer.js';
+import * as sync from './sync.js';
+import { atomicWrite, readJsonForWrite } from './fsutil.js';
 
 const POOL_FORMAT = 'keyflip-pool';
 const POOL_VERSION = 1;
@@ -325,24 +324,4 @@ function list(ctx) {
   return Object.keys(known).sort().map(function (k) { return { pool: k, dir: known[k].dir, role: known[k].role, at: known[k].at }; });
 }
 
-module.exports = {
-  publish: publish,
-  read: read,
-  pull: pull,
-  members: members,
-  addMember: addMember,
-  removeMember: removeMember,
-  list: list,
-  // helpers exposed for reuse / tests
-  isValidPool: isValidPool,
-  isValidMember: isValidMember,
-  isValidRole: isValidRole,
-  canSee: canSee,
-  poolFile: poolFile,
-  sanitize: sanitize,
-  knownPools: knownPools,
-  statePath: statePath,
-  POOL_FORMAT: POOL_FORMAT,
-  POOL_VERSION: POOL_VERSION,
-  ROLES: ROLES,
-};
+export { publish, read, pull, members, addMember, removeMember, list, isValidPool, isValidMember, isValidRole, canSee, poolFile, sanitize, knownPools, statePath, POOL_FORMAT, POOL_VERSION, ROLES };

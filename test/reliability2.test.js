@@ -1,16 +1,15 @@
-'use strict';
 // Batch C: circuit breaker (#7), usage history + events (#12), doctor/test (#13).
-const test = require('node:test');
-const assert = require('node:assert');
-const fs = require('fs');
-const path = require('path');
-const breaker = require('../src/breaker');
-const history = require('../src/history');
-const doctor = require('../src/doctor');
-const provider = require('../src/provider');
-const autosw = require('../src/autoswitch');
-const core = require('../src/core');
-const { makeCtx, writeClaude } = require('./helpers');
+import test from 'node:test';
+import assert from 'node:assert';
+import fs from 'fs';
+import path from 'path';
+import * as breaker from '../src/breaker.js';
+import * as history from '../src/history.js';
+import * as doctor from '../src/doctor.js';
+import * as provider from '../src/provider.js';
+import * as autosw from '../src/autoswitch.js';
+import * as core from '../src/core.js';
+import { makeCtx, writeClaude } from './helpers.js';
 
 // ---- #7 breaker ----
 test('breaker opens after N failures, recovers to half-open, closes on successes', function () {

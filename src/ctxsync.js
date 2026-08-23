@@ -1,4 +1,3 @@
-'use strict';
 // Context-sync PRIVACY MODES + CONFLICT DETECTION for the project-local `.keyflip/` context
 // package. keyflip's Context Layer builds a SHARED, SYNCABLE bundle of project context (agent
 // rule files, conversation summaries, code snippets, env-var NAMES) — so a secret must NEVER
@@ -13,12 +12,15 @@
 // comments, and runtime shape validation. State lives in the PROJECT dir (`.keyflip/`), NOT
 // ctx.configDir. All IO/time/subprocess is injectable (opts.now / opts.clock / opts.run /
 // opts.fetch / opts.passphrase) so tests need no network, subprocess, real clock, or real git.
-const fs = require('fs');
-const path = require('path');
-const crypto = require('crypto');
-const fsutil = require('./fsutil');
-const secretscan = require('./secretscan');
-const agents = require('./agents');
+import fs from 'fs';
+import path from 'path';
+import crypto from 'crypto';
+import * as fsutil from './fsutil.js';
+import * as secretscan from './secretscan.js';
+import * as agents from './agents.js';
+import * as _foreign from './foreign.js';
+import * as _exec from './exec.js';
+import * as _sync from './sync.js';
 
 const SCHEMA_VERSION = 1;
 const MAGIC = 'keyflip-ctxsync';
@@ -175,7 +177,7 @@ function buildPackage(projectPath, opts) {
   asArray(opts.sessionFiles).forEach(function (f) {
     const raw = readFileSafe(f);
     if (raw == null) return;
-    let n; try { n = require('./foreign').normalize(f, raw); } catch (e) { return; }
+    let n; try { n = _foreign.normalize(f, raw); } catch (e) { return; }
     pkg.conversations.push({
       id: path.basename(f), tool: n.tool || 'unknown', summary: null,
       messages: (n.messages || []).map(function (m) { return { role: m.role, text: m.text }; }),
@@ -263,7 +265,7 @@ function contentHash(pkg) {
 // Best-effort current git commit of the project (informational checkpoint annotation). Only runs
 // when a runner is injected/available; never throws. Kept out of the hermetic code paths.
 function gitHead(projectPath, opts) {
-  const run = (opts && opts.run) || require('./exec').run;
+  const run = (opts && opts.run) || _exec.run;
   if (typeof run !== 'function') return null;
   try { const r = run('git', ['-C', projectPath || process.cwd(), 'rev-parse', 'HEAD']); if (r && r.code === 0) return String(r.stdout || '').trim() || null; } catch (e) { /* no git / not a repo */ }
   return null;
@@ -282,7 +284,7 @@ function recordCheckpoint(projectPath, hash, opts) {
 // Produce the sync payload for the project's current (or opts.mode-overridden) mode:
 //   local     -> throws (nothing ever syncs)
 //   git       -> plain JSON (the repo carries `.keyflip/`)
-//   encrypted -> require('./sync').encrypt(JSON, passphrase)  (passphrase-sealed for the cloud)
+//   encrypted -> _sync.encrypt(JSON, passphrase)  (passphrase-sealed for the cloud)
 //   company   -> plain JSON, pre-filtered to allowedProviders
 // Returns { mode, encrypted, contentHash, redactions, payload } where payload is the string to
 // write/transmit. The embedded meta (contentHash/parent/updatedAt) lets the receiver detect a
@@ -312,7 +314,7 @@ function exportPackage(projectPath, opts) {
 
   if (mode === 'encrypted') {
     if (!opts.passphrase) throw new Error('encrypted mode requires a passphrase (--passphrase-file)');
-    return { mode: mode, encrypted: true, contentHash: hash, redactions: counter.n, payload: require('./sync').encrypt(json, opts.passphrase) };
+    return { mode: mode, encrypted: true, contentHash: hash, redactions: counter.n, payload: _sync.encrypt(json, opts.passphrase) };
   }
   return { mode: mode, encrypted: false, contentHash: hash, redactions: counter.n, payload: json };
 }
@@ -338,7 +340,7 @@ function importPackage(payload, opts) {
     envelope = outer;
   } else if (outer && outer.magic === SYNC_MAGIC) {
     if (!opts.passphrase) throw new Error('this payload is encrypted — a passphrase is required to import it');
-    const inner = require('./sync').decrypt(String(payload), opts.passphrase); // throws on wrong passphrase
+    const inner = _sync.decrypt(String(payload), opts.passphrase); // throws on wrong passphrase
     try { envelope = JSON.parse(inner); } catch (e) { throw new Error('decrypted payload is not valid JSON'); }
   } else {
     throw new Error('not a keyflip context-sync payload');
@@ -489,30 +491,4 @@ function cli(rest, opts) {
   return { code: 1, lines: lines };
 }
 
-module.exports = {
-  SCHEMA_VERSION: SCHEMA_VERSION,
-  MAGIC: MAGIC,
-  MODES: MODES,
-  DEFAULT_POLICIES: DEFAULT_POLICIES,
-  keyflipDir: keyflipDir,
-  metaPath: metaPath,
-  contextDir: contextDir,
-  validateMode: validateMode,
-  normalizePolicy: normalizePolicy,
-  scrub: scrub,
-  normalizeInputPkg: normalizeInputPkg,
-  buildPackage: buildPackage,
-  getMode: getMode,
-  setMode: setMode,
-  recordCheckpoint: recordCheckpoint,
-  filterForSync: filterForSync,
-  filterByProviders: filterByProviders,
-  contentHash: contentHash,
-  exportPackage: exportPackage,
-  importPackage: importPackage,
-  detectConflict: detectConflict,
-  resolutions: resolutions,
-  status: status,
-  inspect: inspect,
-  cli: cli,
-};
+export { SCHEMA_VERSION, MAGIC, MODES, DEFAULT_POLICIES, keyflipDir, metaPath, contextDir, validateMode, normalizePolicy, scrub, normalizeInputPkg, buildPackage, getMode, setMode, recordCheckpoint, filterForSync, filterByProviders, contentHash, exportPackage, importPackage, detectConflict, resolutions, status, inspect, cli };

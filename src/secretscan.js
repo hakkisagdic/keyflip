@@ -1,4 +1,4 @@
-'use strict';
+// @ts-check
 // Secret SCANNER / REDACTOR — the "never carry a secret" net that every outbound
 // or versioned surface runs text through (router prompts, checkpoints, rules,
 // project context, brain/Gemini payloads, agent config carry, ctx sync, codexbar).
@@ -13,84 +13,143 @@
 // Redaction always errs BROAD: a false-positive redaction is harmless, a missed
 // secret is a leak. Paths to secret FILES live in secretpaths.js — different concern.
 
-const REDACTED = '«REDACTED»';
+/**
+ * @typedef {{ re: RegExp }} SecretPattern
+ */
+
+/**
+ * @typedef {{ text: string, count: number }} RedactResult
+ */
+
+const REDACTED = '«keyflip_redacted»';
 
 // Known secret SHAPES. Each entry is { re }, consumed as new RegExp(re.source, 'g').
 const SECRET_PATTERNS = [
   { re: /-----BEGIN (?:[A-Z0-9 ]+ )?PRIVATE KEY-----[\s\S]*?-----END (?:[A-Z0-9 ]+ )?PRIVATE KEY-----/ }, // PEM private key block
-  { re: /sk-ant-[A-Za-z0-9_-]{16,}/ },                 // Anthropic API key (incl. sk-ant-api03-…, admin)
-  { re: /sk-(?:proj|live|test)?-?[A-Za-z0-9]{20,}/ },  // OpenAI / Stripe-ish sk- keys
-  { re: /rk_(?:live|test)_[A-Za-z0-9]{16,}/ },         // Stripe restricted key
-  { re: /AKIA[0-9A-Z]{16}/ },                          // AWS access key id
-  { re: /ASIA[0-9A-Z]{16}/ },                          // AWS temp access key id
-  { re: /gh[pousr]_[A-Za-z0-9]{30,}/ },                // GitHub token (ghp_/gho_/ghu_/ghs_/ghr_)
-  { re: /github_pat_[A-Za-z0-9_]{40,}/ },              // GitHub fine-grained PAT
-  { re: /glpat-[A-Za-z0-9_-]{18,}/ },                  // GitLab PAT
-  { re: /AIza[0-9A-Za-z_-]{35}/ },                     // Google API key
-  { re: /ya29\.[0-9A-Za-z_-]{20,}/ },                  // Google OAuth access token
-  { re: /xox[baprs]-[0-9A-Za-z-]{10,}/ },              // Slack token
-  { re: /npm_[A-Za-z0-9]{36}/ },                       // npm token
-  { re: /dop_v1_[a-f0-9]{64}/ },                       // DigitalOcean token
+  { re: /sk-ant-[A-Za-z0-9_-]{16,}/ }, // Anthropic API key (incl. sk-ant-api03-…, admin)
+  { re: /sk-(?:proj|live|test)?-?[A-Za-z0-9]{20,}/ }, // OpenAI / Stripe-ish sk- keys
+  { re: /rk_(?:live|test)_[A-Za-z0-9]{16,}/ }, // Stripe restricted key
+  { re: /AKIA[0-9A-Z]{16}/ }, // AWS access key id
+  { re: /ASIA[0-9A-Z]{16}/ }, // AWS temp access key id
+  { re: /gh[pousr]_[A-Za-z0-9]{30,}/ }, // GitHub token (ghp_/gho_/ghu_/ghs_/ghr_)
+  { re: /github_pat_[A-Za-z0-9_]{40,}/ }, // GitHub fine-grained PAT
+  { re: /glpat-[A-Za-z0-9_-]{18,}/ }, // GitLab PAT
+  { re: /AIza[0-9A-Za-z_-]{35}/ }, // Google API key
+  { re: /ya29\.[0-9A-Za-z_-]{20,}/ }, // Google OAuth access token
+  { re: /xox[baprs]-[0-9A-Za-z-]{10,}/ }, // Slack token
+  { re: /npm_[A-Za-z0-9]{36}/ }, // npm token
+  { re: /dop_v1_[a-f0-9]{64}/ }, // DigitalOcean token
   { re: /eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/ }, // JWT (header.payload.sig)
-  { re: /\b[Bb]earer\s+[A-Za-z0-9._~+/-]{20,}=*/ },    // Authorization: Bearer <token>
-  { re: /\b[0-9a-fA-F]{40,}\b/ },                      // long hex secret (sha/hmac/hex token)
+  { re: /\b[Bb]earer\s+[A-Za-z0-9._~+/-]{20,}=*/ }, // Authorization: Bearer <token>
+  { re: /\b[0-9a-fA-F]{40,}\b/ }, // long hex secret (sha/hmac/hex token)
 ];
 
-const CRED_KEY = /(pass(word|wd|phrase)?|pwd|secret|token|api[_-]?key|access[_-]?key|auth(oriz\w*)?|bearer|credential|priv(ate)?[_-]?key|client[_-]?secret|refresh[_-]?token|session[_-]?(key|token|id)|cookie|otp|mfa|signing[_-]?key)/i;
+const CRED_KEY =
+  /(pass(word|wd|phrase)?|pwd|secret|token|api[_-]?key|access[_-]?key|auth(oriz\w*)?|bearer|credential|priv(ate)?[_-]?key|client[_-]?secret|refresh[_-]?token|session[_-]?(key|token|id)|cookie|otp|mfa|signing[_-]?key)/i;
 // Names that LOOK credential-ish but are safe (public material / identifiers).
-const CRED_KEY_ALLOW = /^(public[_-]?key|pub[_-]?key|key[_-]?id|token[_-]?type|token[_-]?url|auth[_-]?url|secret[_-]?name|key[_-]?name)$/i;
+const CRED_KEY_ALLOW =
+  /^(public[_-]?key|pub[_-]?key|key[_-]?id|token[_-]?type|token[_-]?url|auth[_-]?url|secret[_-]?name|key[_-]?name)$/i;
 
+/**
+ * Determine whether a key name looks like a credential field (password, token, secret, etc.).
+ * @param {string | null | undefined} key - The key name to check.
+ * @returns {boolean} True if the key name matches credential patterns.
+ */
 function isCredentialKey(key) {
   if (key == null) return false;
-  const k = String(key).trim().replace(/^["'\[]+|["'\]]+$/g, '');
+  const k = String(key)
+    .trim()
+    .replace(/^["'\[]+|["'\]]+$/g, '');
   if (CRED_KEY_ALLOW.test(k)) return false;
   return CRED_KEY.test(k);
 }
 
-// A value that is empty, a placeholder, or an env-var reference — NOT a real secret.
+/**
+ * Check whether a value is empty, a placeholder, or an env-var reference (not a real secret).
+ * @param {string | null | undefined} val - The value to check.
+ * @returns {boolean} True if the value is a placeholder/env-ref/empty.
+ */
 function isEnvRefOrEmpty(val) {
   if (val == null) return true;
-  const v = String(val).trim().replace(/^["']|["']$/g, '').trim();
+  const v = String(val)
+    .trim()
+    .replace(/^["']|["']$/g, '')
+    .trim();
   if (v === '') return true;
   if (v === REDACTED) return true;
-  if (/^\$\{?[A-Za-z_][A-Za-z0-9_]*\}?$/.test(v)) return true;   // $FOO / ${FOO}
-  if (/^%[A-Za-z0-9_]+%$/.test(v)) return true;                    // %FOO% (windows)
+  if (/^\$\{?[A-Za-z_][A-Za-z0-9_]*\}?$/.test(v)) return true; // $FOO / ${FOO}
+  if (/^%[A-Za-z0-9_]+%$/.test(v)) return true; // %FOO% (windows)
   if (/^process\.env\.[A-Za-z_][A-Za-z0-9_]*$/.test(v)) return true;
-  if (/^<[^>]*>$/.test(v)) return true;                            // <your-key-here>
+  if (/^<[^>]*>$/.test(v)) return true; // <your-key-here>
   if (/^(null|undefined|none|changeme|todo|x{3,}|\*{3,}|\.{3,})$/i.test(v)) return true;
   return false;
 }
 
-// Does a raw VALUE look like a secret? (shape match, or a long high-entropy token)
+/**
+ * Check whether a raw string value looks like a secret by shape or entropy.
+ * @param {*} val - The value to inspect.
+ * @returns {boolean} True if the value appears to be a secret.
+ */
 function looksSecret(val) {
   if (typeof val !== 'string') return false;
   const v = val.trim();
   if (v.length < 12) return false;
   if (isEnvRefOrEmpty(v)) return false;
-  for (const p of SECRET_PATTERNS) { if (new RegExp(p.re.source).test(v)) return true; }
+  for (const p of SECRET_PATTERNS) {
+    if (new RegExp(p.re.source).test(v)) return true;
+  }
   // entropy heuristic: one unbroken token, long, mixed classes or clearly base64/hex.
   if (/\s/.test(v)) return false;
   if (/^[A-Za-z0-9_\-+/=.]{24,}$/.test(v)) {
-    const classes = [/[a-z]/, /[A-Z]/, /[0-9]/, /[_\-+/=.]/].filter(function (r) { return r.test(v); }).length;
+    const classes = [/[a-z]/, /[A-Z]/, /[0-9]/, /[_\-+/=.]/].filter(function (r) {
+      return r.test(v);
+    }).length;
     if (classes >= 3) return true;
-    if (/^[A-Fa-f0-9]{32,}$/.test(v)) return true;          // pure hex
-    if (/^[A-Za-z0-9+/]{32,}={0,2}$/.test(v)) return true;  // pure base64
+    if (/^[A-Fa-f0-9]{32,}$/.test(v)) return true; // pure hex
+    if (/^[A-Za-z0-9+/]{32,}={0,2}$/.test(v)) return true; // pure base64
   }
   return false;
 }
 
-// Replace every known secret SHAPE in a string. Returns { text, count }.
+/**
+ * Replace every known secret shape in a string with the REDACTED marker.
+ * @param {string | null | undefined} s - Input text.
+ * @returns {RedactResult} The redacted text and count of replacements.
+ */
 function redactShapes(s) {
   let out = String(s == null ? '' : s);
   let count = 0;
   for (const p of SECRET_PATTERNS) {
-    out = out.replace(new RegExp(p.re.source, 'g'), function () { count++; return REDACTED; });
+    out = out.replace(new RegExp(p.re.source, 'g'), function () {
+      count++;
+      return REDACTED;
+    });
   }
   return { text: out, count: count };
 }
 
-// Line-oriented KEY redaction: `key: value` / `key = value` where the key is
-// credential-shaped and the value is a real (non-placeholder) secret.
+/**
+ * Scan text for known secret shapes and return all matches.
+ * @param {string | null | undefined} text - The text to scan.
+ * @returns {string[]} Array of matched secret strings (empty means clean).
+ */
+function scanText(text) {
+  const s = String(text == null ? '' : text);
+  const matches = [];
+  for (const p of SECRET_PATTERNS) {
+    let m;
+    const re = new RegExp(p.re.source, 'g');
+    while ((m = re.exec(s)) !== null) matches.push(m[0]);
+  }
+  return matches;
+}
+
+/**
+ * Line-oriented key redaction: redacts values for credential-shaped keys in
+ * `key: value` or `key = value` lines.
+ * @param {string | null | undefined} s - The text to redact line-by-line.
+ * @returns {RedactResult} The redacted text and count of replacements.
+ */
 function redactLines(s) {
   const src = String(s == null ? '' : s);
   let count = 0;
@@ -109,7 +168,12 @@ function redactLines(s) {
   return { text: lines.join('\n'), count: count };
 }
 
-// Redact a single value in the context of its (optional) key.
+/**
+ * Redact a single value in the context of its (optional) key.
+ * @param {string | null | undefined} key - The key name (used to detect credential keys).
+ * @param {*} val - The value to redact.
+ * @returns {*} The redacted value, or the original if no redaction was needed.
+ */
 function redactValue(key, val) {
   if (typeof val !== 'string') return val;
   if (key != null && isCredentialKey(key) && !isEnvRefOrEmpty(val)) return REDACTED;
@@ -119,31 +183,53 @@ function redactValue(key, val) {
 
 // Deep-redact a parsed JS value; mutates counter.n. Returns the redacted COPY.
 function deepRedact(value, key, counter) {
-  if (Array.isArray(value)) return value.map(function (v) { return deepRedact(v, null, counter); });
+  if (Array.isArray(value))
+    return value.map(function (v) {
+      return deepRedact(v, null, counter);
+    });
   if (value && typeof value === 'object') {
     const out = {};
     for (const k of Object.keys(value)) out[k] = deepRedact(value[k], k, counter);
     return out;
   }
   if (typeof value === 'string') {
-    if (key != null && isCredentialKey(key) && !isEnvRefOrEmpty(value)) { counter.n++; return REDACTED; }
-    if (looksSecret(value)) { counter.n++; return REDACTED; }
-    const r = redactShapes(value); counter.n += r.count; return r.text;
+    if (key != null && isCredentialKey(key) && !isEnvRefOrEmpty(value)) {
+      counter.n++;
+      return REDACTED;
+    }
+    if (looksSecret(value)) {
+      counter.n++;
+      return REDACTED;
+    }
+    const r = redactShapes(value);
+    counter.n += r.count;
+    return r.text;
   }
   return value;
 }
 
-// Redact a JSON STRING. Returns { text, count } or null if not parseable JSON.
+/**
+ * Redact a JSON string. Returns redacted JSON and count, or null if not parseable.
+ * @param {string} text - A JSON string to parse and redact.
+ * @returns {RedactResult | null} The redacted JSON string and count, or null if not valid JSON.
+ */
 function redactJson(text) {
   let parsed;
-  try { parsed = JSON.parse(text); } catch (e) { return null; }
+  try {
+    parsed = JSON.parse(text);
+  } catch (e) {
+    return null;
+  }
   const counter = { n: 0 };
   const red = deepRedact(parsed, null, counter);
   return { text: JSON.stringify(red, null, 2), count: counter.n };
 }
 
-// Redact arbitrary config TEXT: JSON if it parses, else `key=value`/`key: value`
-// lines plus a shape sweep. Returns { text, count }.
+/**
+ * Redact arbitrary config text: JSON if it parses, else key=value lines plus a shape sweep.
+ * @param {string | null | undefined} text - Config text to redact.
+ * @returns {RedactResult} The redacted text and count of replacements.
+ */
 function redactConfig(text) {
   const s = String(text == null ? '' : text);
   const trimmed = s.trim();
@@ -156,14 +242,15 @@ function redactConfig(text) {
   return { text: shaped.text, count: lined.count + shaped.count };
 }
 
-module.exports = {
-  REDACTED: REDACTED,
-  SECRET_PATTERNS: SECRET_PATTERNS,
-  isCredentialKey: isCredentialKey,
-  isEnvRefOrEmpty: isEnvRefOrEmpty,
-  looksSecret: looksSecret,
-  redactValue: redactValue,
-  redactLines: redactLines,
-  redactJson: redactJson,
-  redactConfig: redactConfig,
+export {
+  REDACTED,
+  SECRET_PATTERNS,
+  isCredentialKey,
+  isEnvRefOrEmpty,
+  looksSecret,
+  scanText,
+  redactValue,
+  redactLines,
+  redactJson,
+  redactConfig,
 };

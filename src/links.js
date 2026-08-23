@@ -1,10 +1,9 @@
-'use strict';
 // Directory -> account mapping (adopted from claude-swap PR #71): link a repo
 // directory to an account once, then `keyflip run` (no name) in that tree
 // launches the right account automatically. Stored in <configDir>/links.json.
-const fs = require('fs');
-const path = require('path');
-const { atomicWrite } = require('./fsutil');
+import fs from 'fs';
+import path from 'path';
+import { atomicWrite } from './fsutil.js';
 
 function linksPath(ctx) { return path.join(ctx.configDir, 'links.json'); }
 
@@ -40,4 +39,4 @@ function lookup(ctx, dir) {
   }
 }
 
-module.exports = { set: set, remove: remove, lookup: lookup, readAll: readAll };
+export { set, remove, lookup, readAll };

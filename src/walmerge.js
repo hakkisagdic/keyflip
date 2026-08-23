@@ -1,4 +1,3 @@
-'use strict';
 // Zero-dep SQLite WAL (-wal) replayer. src/sqliteread.js only walks the committed B-tree pages of
 // the main DB file, so writes still parked in the write-ahead log are invisible to it — and Cursor
 // keeps its chat DB in WAL mode, so the NEWEST conversations routinely live only in the -wal file.
@@ -107,4 +106,4 @@ function applyOverlay(dbBuf, walBuf) {
   } catch (e) { return dbBuf; }
 }
 
-module.exports = { overlay: overlay, applyOverlay: applyOverlay };
+export { overlay, applyOverlay };

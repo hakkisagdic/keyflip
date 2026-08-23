@@ -1,4 +1,3 @@
-'use strict';
 // Minimal TTY-aware styling: enabled only on a TTY, disabled by NO_COLOR or
 // TERM=dumb, forced by FORCE_COLOR. Piped/--json output stays plain.
 function colorEnabled(stream) {
@@ -27,4 +26,4 @@ function make(stream, opts) {
   };
 }
 
-module.exports = { make: make, colorEnabled: colorEnabled };
+export { make, colorEnabled };

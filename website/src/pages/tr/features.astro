@@ -1,0 +1,129 @@
+---
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import PageHeader from '../../components/PageHeader.astro';
+import FeatureCard from '../../components/FeatureCard.astro';
+import { t } from '../../i18n';
+
+const locale = 'tr';
+const trans = t(locale);
+---
+
+<BaseLayout title="Özellikler" locale={locale} currentPath="/tr/features">
+  <PageHeader title={trans.features.title} subtitle={trans.features.subtitle} />
+
+  <section class="py-16">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-16">
+
+      <div>
+        <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-6">Temel Hesap Yönetimi</h2>
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+          <FeatureCard title="Tek Komutla Geçiş" description="Tek bir komutla hesaplar arası geçiş yapın. İnteraktif menü veya doğrudan isim/numara seçimi." />
+          <FeatureCard title="Otomatik Algılama" description="Kurulum sihirbazı yeni girişleri otomatik algılar. Profiller e-postanızdan otomatik adlandırılır." />
+          <FeatureCard title="İşlemsel Güvenlik" description="Her geçiş geri alınabildiği işlemseldir. Süreçler arası kilitleme aralanmayı önler." />
+          <FeatureCard title="Token Yenileme" description="Süresi dolan OAuth tokenları geçişte otomatik yenilenir. Asla kilitli kalmazsınız." />
+          <FeatureCard title="Başlıksız Aktarım" description="CI/sağlamacılık için dosyalardan veya stdin'den kimlik bilgisi aktarın. Şifreler asla argv'de değil." />
+          <FeatureCard title="Yedekleme ve Geri Yükleme" description="Tüm keyflip meta verilerinin anlık görüntüsü. Geri alma/geri sarma ile git sürümlü yapılandırma." />
+        </div>
+      </div>
+
+      <div>
+        <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-6">Sağlayıcılar</h2>
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+          <FeatureCard title="Üçüncü Taraf Uç Noktalar" description="Claude Code'u herhangi bir Anthropic uyumlu API'ye yönlendirin: OpenRouter, AWS Bedrock, kurumsal geçitler." />
+          <FeatureCard title="Anında Yükleme" description="Claude Code ayarları anında yeniden yükler. Sağlayıcı değiştirirken yeniden başlatma gerekmez." />
+          <FeatureCard title="Hız Testi" description="Sağlayıcı gecikmesini ölçün. En hızlı uç noktayı otomatik kullanın." />
+          <FeatureCard title="Model Yönlendirme" description="Belirli modelleri belirli sağlayıcılara yönlendirin. Maliyet optimizasyonu için arbitraj modu." />
+          <FeatureCard title="Yanıt Önbelleği" description="Tekrarlanan sorgular için API yanıtlarını önbellekleyin. Maliyet ve gecikmeyi azaltın." />
+          <FeatureCard title="Yedekleme Proxy'si" description="İstek düzeyinde yedekleme ile localhost proxy. 429/5xx sonraki hesapta otomatik yeniden deneme tetikler." />
+        </div>
+      </div>
+
+      <div>
+        <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-6">Oturumlar ve Hatırlama</h2>
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+          <FeatureCard title="Oturum Arama" description="Tüm Claude Code konuşmalarını tam metin aramayla arayın. Dizin, tarih, hesaba göre filtreleyin." />
+          <FeatureCard title="Her Yerden Devam" description="Herhangi bir oturumu orijinal dizininde devam ettirin. Oturumları farklı hesaplara atayın." />
+          <FeatureCard title="Arşivle ve Özet Çıkar" description="Eski sohbetleri arşivleyin (gzip). claude -p ile kalıcı özetler çıkartın." />
+          <FeatureCard title="Hatırlama Motoru" description="Tüm sohbetlerde BM25 + anlamsal arama. Kaynaklı sentez yanıtları alın." />
+          <FeatureCard title="Rüya Modu" description="Eski oturumların otomatik özet + arşivlemesi. Geceleri launchd/cron ile zamanlayın." />
+          <FeatureCard title="Oturum Düzenleme" description="Cerrahi JSONL düzenlemeleri: mesaj silme, kişisel veri sansürü, kesme, araç çıktısını sıkıştırma." />
+        </div>
+      </div>
+
+      <div>
+        <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-6">Filo ve Transfer</h2>
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+          <FeatureCard title="Filo Kontrolü" description="Şifrelenmiş paylaşımlı klasör üzerinden birden fazla makineyi koordine edin. Her makinenin durumunu görün." />
+          <FeatureCard title="Uzak Geçiş" description="Uzak makinelerdeki hesapları değiştirin. Sonraki filo push'unda uygulanır." />
+          <FeatureCard title="Hesap Dağıtımı" description="Filo makineleri arasında hesapları dağıtın. Yayınlanan tüm hesapları toplayın." />
+          <FeatureCard title="LAN Transferi" description="Tek kullanımlık kod + QR. Ağınızda eşler arası şifrelenmiş akış." />
+          <FeatureCard title="İnternet Rölesyon" description="Senkronize klasör veya WebDAV üzerinden sıfır bilgi rölesyonu. Kendi barındırmanız, Docker gerekmez." />
+          <FeatureCard title="Köken Doğrulaması" description="Makine başına Ed25519 imzalama anahtarları. İlk kullanım güven sabitleme. Tahrifata dayanıklı komutlar." />
+        </div>
+      </div>
+
+      <div>
+        <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-6">Bağlam Katmanı</h2>
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+          <FeatureCard title="Proje Belleği" description="Taşınabilir .keyflip/ klasörü: proje bağlamı, kararlar, görevler, kontrol noktaları. Araç bağımsız." />
+          <FeatureCard title="Kural Birleştirme" description="CLAUDE.md, .cursorrules, AGENTS.md, GEMINI.md dosyalarını tek modele normalize edin. Herhangi bir araç için yayın." />
+          <FeatureCard title="Kontrol Noktaları" description="Dal, commit, özet ve görev durumu ile git bağlamlı oturum anlıkları." />
+          <FeatureCard title="Devir Teslim" description="Sonraki AI aracı için devam istemleri oluşturun. Araç geçişlerinde bağlamı koruyun." />
+          <FeatureCard title="Yabancı Oturumlar" description="Cursor, opencode, Copilot, Aider oturumlarını birleşik görüntülemeye aktarın." />
+          <FeatureCard title="Gizlilik Modları" description="Yerel, git, şifrelenmiş veya şirket modu. Paketlenmeden önce şifreler taranır." />
+        </div>
+      </div>
+
+      <!-- Güvenlik -->
+      <div>
+        <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-6">Güvenlik</h2>
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+          <FeatureCard title="İşletim Sistemi Kimlik Deposu" description="Tokenlar macOS Keychain veya şifrelenmiş dosyalarda. Asla düz metin, asla git'te değil." />
+          <FeatureCard title="Gizli Tarayıcı" description="Tüm metin alanları yazmadan önce taranır. API anahtarları, tokenlar otomatik sansürlenir." />
+          <FeatureCard title="Atomik Yazma" description="Yapılandırma yazımları atomiktir ve dosya modunu korur. Geçersiz JSON reddedilir." />
+          <FeatureCard title="Kasa Arka Uçları" description="Kimlik bilgilerini 1Password, Bitwarden veya HashiCorp Vault'ta saklayın." />
+          <FeatureCard title="Politika Motoru" description="Bir dizinin hangi hesabı kullanabileceğini kısıtlayın. Gruplarla izin ver/reddet kuralları." />
+          <FeatureCard title="Çevrimdışı Lisanslama" description="Yerel olarak doğrulanan Ed25519 imzalı lisanslar. Telefon etme yok, hava boşluklu çalışır." />
+        </div>
+      </div>
+
+      <!-- Masaüstü ve Tarayıcı Entegrasyonu -->
+      <div>
+        <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-6">Masaüstü ve Tarayıcı Entegrasyonu</h2>
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+          <FeatureCard title="Masaüstü Uygulama Değişimi" description="Claude masaüstü uygulaması girişini de değiştirin. Token + oturum çerezi, her iki yüzey hizalı." />
+          <FeatureCard title="Tarayıcı Senkronizasyonu" description="Uzantı köprüsü ile tarayıcı claude.ai hesabını kontrol edin, sıfırlayın ve geri yükleyin." />
+          <FeatureCard title="VS Code Uzantısı" description="Durum çubuğu göstergesi, QuickPick değiştirici, panel erişimi. CLI kimlik deposunu paylaşır." />
+          <FeatureCard title="Menü Çubuğu Eklentisi" description="macOS xbar/SwiftBar, Linux Argos/KDE kargos. Hesap + kota bir bakışta." />
+          <FeatureCard title="Oturum Birleştirme" description="Her hesabın sohbet dizinini senkronize ederek her birinin tüm konuşmaları göstermesini sağlayın." />
+          <FeatureCard title="Cowork Oturumları" description="Tüm hesaplardaki Claude masaüstü Cowork oturumlarını göz atın." />
+        </div>
+      </div>
+
+      <div>
+        <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-6">MCP (Model Bağlam Protokolü)</h2>
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+          <FeatureCard title="Tam MCP Yüzeyi" description="Tüm CLI'yı açığa çıkaran 130+ MCP aracı. Ajanlar kabuk komutu olmadan keyflip'i kullanabilir." />
+          <FeatureCard title="JSON Şeması" description="Her aracın uygun JSON Şeması var. Salt okunur ve yıkıcı açıklamalar." />
+          <FeatureCard title="Onay Kapıları" description="Değiştirici araçlar confirm: true gerektirir. Tanımlar ajanlara önce sormalarını söyler." />
+          <FeatureCard title="Bağlam Araçları" description="MCP üzerinden proje bağlamı, kararlar, görevler, kontrol noktalarını oku/yaz." />
+          <FeatureCard title="Dahili Beceri" description="Ajanlara keyflip'i ne zaman ve nasıl kullanacaklarını öğreten Claude Code becerisi." />
+          <FeatureCard title="MCP Üzerinden Sıfır Gizli" description="API anahtarları asla MCP üzerinden kabul edilmez. CLI'da --key-file'a ertelenir." />
+        </div>
+      </div>
+
+      <!-- TUI ve Panel -->
+      <div>
+        <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-6">TUI ve Panel</h2>
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+          <FeatureCard title="Tam Ekran TUI" description="Hesaplar, sağlayıcı kullanımı, filo görünümü ve aranabilir komut paleti." />
+          <FeatureCard title="Web Paneli" description="Yerel web paneli: hesaplar, kotalar, aktivite takvimi, bellek takımyıldızı, oturumlar." />
+          <FeatureCard title="Statik Dışa Aktarım" description="Paylaşıma güvenli anlık görüntü dışa aktarın. Oturum içeriği yok, gizli bilgi yok." />
+          <FeatureCard title="Durum Satırı" description="Claude Code isteminde aktif hesap + kotayı gösterin." />
+          <FeatureCard title="Beyin Modu" description="Düz dilden keyflip adımlarına. Bir plan önerir, asla kendi başına çalıştırmaz." />
+          <FeatureCard title="Yüzey Algılama" description="Bu makinedeki diğer AI araçlarını algılayın (Cursor, Gemini, Codex, Copilot, vb)." />
+        </div>
+      </div>
+    </div>
+  </section>
+</BaseLayout>

@@ -1,4 +1,3 @@
-'use strict';
 // Proactive OAuth refresh for stored profiles (ported from claude-swap's oauth.py).
 // The credentials blob is JSON: { claudeAiOauth: { accessToken, refreshToken,
 // expiresAt (ms), scopes } }. Anthropic ROTATES the refresh token on every
@@ -9,7 +8,7 @@ const OAUTH_CLIENT_ID = '9d1c250a-e61b-44d9-88ed-5944d1962f5e'; // Claude Code's
 const EXPIRY_BUFFER_MS = 5 * 60 * 1000;
 
 let VERSION = '0.0.0';
-try { VERSION = require('../package.json').version; } catch (e) { /* ignore */ }
+try { VERSION = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version; } catch (e) { /* ignore */ }
 
 function parse(blob) {
   try {
@@ -75,10 +74,4 @@ async function maybeRefreshProfile(ctx, name, opts) {
   return { status: 'refreshed' };
 }
 
-module.exports = {
-  isExpiring: isExpiring,
-  refreshBlob: refreshBlob,
-  maybeRefreshProfile: maybeRefreshProfile,
-  OAUTH_TOKEN_URL: OAUTH_TOKEN_URL,
-  OAUTH_CLIENT_ID: OAUTH_CLIENT_ID,
-};
+export { isExpiring, refreshBlob, maybeRefreshProfile, OAUTH_TOKEN_URL, OAUTH_CLIENT_ID };

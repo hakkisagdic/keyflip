@@ -1,0 +1,135 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import PageHeader from '../components/PageHeader.astro';
+import FeatureCard from '../components/FeatureCard.astro';
+import { t } from '../i18n';
+
+const locale = 'en';
+const trans = t(locale);
+---
+
+<BaseLayout title="Features" locale={locale} currentPath="/features">
+  <PageHeader title={trans.features.title} subtitle={trans.features.subtitle} />
+
+  <section class="py-16">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-16">
+
+      <!-- Core Account Management -->
+      <div>
+        <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-6">Core Account Management</h2>
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+          <FeatureCard title="One-Command Switch" description="Switch between accounts with a single command. Interactive menu or direct name/number selection." />
+          <FeatureCard title="Auto-Detection" description="Setup wizard auto-detects new logins. Profiles named from your email automatically." />
+          <FeatureCard title="Transactional Safety" description="Every switch is transactional with rollback. Cross-process locking prevents interleaving." />
+          <FeatureCard title="Token Refresh" description="Expiring OAuth tokens refreshed automatically on switch. Never get locked out." />
+          <FeatureCard title="Headless Import" description="Import credentials from files or stdin for CI/provisioning. Secrets never on argv." />
+          <FeatureCard title="Backup & Restore" description="Snapshot all keyflip metadata. Git-versioned config with undo/rollback." />
+        </div>
+      </div>
+
+      <!-- Providers -->
+      <div>
+        <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-6">Providers</h2>
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+          <FeatureCard title="Third-Party Endpoints" description="Route Claude Code to any Anthropic-compatible API: OpenRouter, AWS Bedrock, corporate gateways." />
+          <FeatureCard title="Hot-Reload" description="Claude Code hot-reloads settings. No restart needed when switching providers." />
+          <FeatureCard title="Speed Test" description="Benchmark provider latency. Automatically use the fastest endpoint." />
+          <FeatureCard title="Model Routing" description="Route specific models to specific providers. Arbitrage mode for cost optimization." />
+          <FeatureCard title="Response Cache" description="Cache API responses to reduce costs and latency for repeated queries." />
+          <FeatureCard title="Failover Proxy" description="Localhost proxy with request-level failover. 429/5xx triggers automatic retry on next account." />
+        </div>
+      </div>
+
+      <!-- Sessions & Recall -->
+      <div>
+        <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-6">Sessions & Recall</h2>
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+          <FeatureCard title="Session Search" description="Search all Claude Code conversations with full-text search. Filter by directory, date, account." />
+          <FeatureCard title="Resume Anywhere" description="Resume any session in its original directory. Assign sessions to different accounts." />
+          <FeatureCard title="Archive & Distill" description="Archive old chats (gzipped). Distill into durable summaries via claude -p." />
+          <FeatureCard title="Recall Engine" description="BM25 + semantic search across all chats. Get cited synthesis answers." />
+          <FeatureCard title="Dream Mode" description="Automated distill + archive of old sessions. Schedule nightly via launchd/cron." />
+          <FeatureCard title="Session Editing" description="Surgical JSONL edits: delete messages, redact PII, truncate, compact tool output." />
+        </div>
+      </div>
+
+      <!-- Fleet & Transfer -->
+      <div>
+        <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-6">Fleet & Transfer</h2>
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+          <FeatureCard title="Fleet Control" description="Coordinate multiple machines through an encrypted shared folder. See every machine's status." />
+          <FeatureCard title="Remote Switch" description="Switch accounts on remote machines. Applied on next fleet push." />
+          <FeatureCard title="Account Distribution" description="Distribute accounts across fleet machines. Collect all published accounts." />
+          <FeatureCard title="LAN Transfer" description="One-time code + QR. Encrypted stream between peers on your network." />
+          <FeatureCard title="Internet Relay" description="Zero-knowledge relay via synced folder or WebDAV. Self-hostable, no Docker needed." />
+          <FeatureCard title="Origin Authentication" description="Ed25519 signing keys per machine. Trust-on-first-use pinning. Tamper-proof commands." />
+        </div>
+      </div>
+
+      <!-- Context Layer -->
+      <div>
+        <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-6">Context Layer</h2>
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+          <FeatureCard title="Project Memory" description="Portable .keyflip/ folder: project context, decisions, tasks, checkpoints. Tool-independent." />
+          <FeatureCard title="Rules Unification" description="Normalize CLAUDE.md, .cursorrules, AGENTS.md, GEMINI.md into one model. Emit for any tool." />
+          <FeatureCard title="Checkpoints" description="Git-bound session snapshots with branch, commit, summary, and task state." />
+          <FeatureCard title="Handoff" description="Generate continue-prompts for the next AI tool. Preserve context across tool switches." />
+          <FeatureCard title="Foreign Sessions" description="Import sessions from Cursor, opencode, Copilot, Aider into a unified view." />
+          <FeatureCard title="Privacy Modes" description="Local, git, encrypted, or company mode. Secret-scanned before packing." />
+        </div>
+      </div>
+
+      <!-- Security -->
+      <div>
+        <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-6">Security</h2>
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+          <FeatureCard title="OS Credential Store" description="Tokens in macOS Keychain or encrypted files. Never plaintext, never in git." />
+          <FeatureCard title="Secret Scanner" description="All text fields scanned before write. API keys, tokens redacted automatically." />
+          <FeatureCard title="Atomic Writes" description="Config writes are atomic and preserve file mode. Invalid JSON is refused." />
+          <FeatureCard title="Vault Backends" description="Store credentials in 1Password, Bitwarden, or HashiCorp Vault." />
+          <FeatureCard title="Policy Engine" description="Constrain which account a directory may use. Allow/deny rules with groups." />
+          <FeatureCard title="Offline Licensing" description="Ed25519-signed licenses verified locally. No phone-home, works air-gapped." />
+        </div>
+      </div>
+
+      <!-- Desktop & Browser -->
+      <div>
+        <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-6">Desktop & Browser Integration</h2>
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+          <FeatureCard title="Desktop App Swap" description="Switch the Claude desktop app login too. Token + session cookie, both surfaces aligned." />
+          <FeatureCard title="Browser Sync" description="Check, reset, and restore the browser claude.ai account via extension bridge." />
+          <FeatureCard title="VS Code Extension" description="Status-bar indicator, QuickPick switcher, dashboard access. Shares CLI credential store." />
+          <FeatureCard title="Menu Bar Plugin" description="macOS xbar/SwiftBar, Linux Argos/KDE kargos. Account + quota at a glance." />
+          <FeatureCard title="Session Consolidation" description="Sync every account's chat index so each shows all conversations." />
+          <FeatureCard title="Cowork Sessions" description="Browse Claude desktop Cowork sessions across all accounts." />
+        </div>
+      </div>
+
+      <!-- MCP -->
+      <div>
+        <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-6">MCP (Model Context Protocol)</h2>
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+          <FeatureCard title="Full MCP Surface" description="130+ MCP tools exposing the entire CLI. Agents drive keyflip without shelling out." />
+          <FeatureCard title="JSON Schema" description="Every tool has proper JSON Schema. Read-only and destructive annotations." />
+          <FeatureCard title="Confirmation Gates" description="Mutating tools require confirm: true. Descriptions instruct agents to ask first." />
+          <FeatureCard title="Context Tools" description="Read/write project context, decisions, tasks, checkpoints via MCP." />
+          <FeatureCard title="Bundled Skill" description="Claude Code skill that teaches agents when and how to use keyflip." />
+          <FeatureCard title="No Secrets via MCP" description="API keys never accepted through MCP. Deferred to --key-file on CLI." />
+        </div>
+      </div>
+
+      <!-- TUI / Panel -->
+      <div>
+        <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-6">TUI & Panel</h2>
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+          <FeatureCard title="Full-Screen TUI" description="Accounts, provider usage, fleet view, and a searchable command palette." />
+          <FeatureCard title="Web Dashboard" description="Local web panel: accounts, quotas, activity calendar, memory constellation, sessions." />
+          <FeatureCard title="Static Export" description="Export a share-safe snapshot. No session content, no secrets." />
+          <FeatureCard title="Statusline" description="Show active account + quota in the Claude Code prompt." />
+          <FeatureCard title="Brain Mode" description="Plain language to keyflip steps. Proposes a plan, never runs on its own." />
+          <FeatureCard title="Surfaces Detection" description="Detect other AI tools on this machine (Cursor, Gemini, Codex, Copilot, etc)." />
+        </div>
+      </div>
+    </div>
+  </section>
+</BaseLayout>

@@ -1,0 +1,66 @@
+---
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import PageHeader from '../../components/PageHeader.astro';
+import CodeBlock from '../../components/CodeBlock.astro';
+---
+
+<BaseLayout title="Fleet & Transfer" locale="en" currentPath="/docs/fleet">
+  <PageHeader title="Fleet & Transfer" subtitle="Coordinate multiple machines and transfer accounts across devices" />
+
+  <section class="py-16">
+    <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
+
+      <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-4">Fleet Control</h2>
+      <p class="text-surface-700 dark:text-surface-300 mb-4">
+        The fleet coordinates machines through an encrypted shared folder. Each machine owns an Ed25519 signing key for origin authentication.
+      </p>
+      <CodeBlock code={`keyflip fleet init --dir <shared-folder>    # link into control plane
+keyflip fleet push [--with-secrets]         # publish status + apply commands
+keyflip fleet status                        # see every machine
+keyflip fleet panel                         # web dashboard view
+keyflip fleet switch <machine> <account>    # switch a remote machine
+keyflip fleet send-account <acct> --to <m>  # distribute an account
+keyflip fleet collect                       # gather all accounts from fleet
+keyflip fleet keys                          # audit signing-key fingerprints
+keyflip fleet trust <machine>               # re-pin after re-key`} />
+
+      <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-4 mt-10">Origin Authentication</h2>
+      <p class="text-surface-700 dark:text-surface-300 mb-6">
+        Each machine owns an Ed25519 signing key (never leaves the machine). Public keys are published in status. Every queued command is signed and bound to its recipient. Trust-on-first-use pinning rejects commands from changed keys (possible key-substitution attack). Even a leaked passphrase cannot let a forger command a machine.
+      </p>
+
+      <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-4 mt-10">LAN Transfer</h2>
+      <p class="text-surface-700 dark:text-surface-300 mb-4">One-time code + optional QR, encrypted stream between peers:</p>
+      <CodeBlock code={`# Machine A (sender):
+keyflip transfer serve [--qr]
+
+# Machine B (receiver):
+keyflip transfer pull --code X
+
+# Reverse direction:
+keyflip transfer serve --receive     # B waits
+keyflip transfer push <host> --code X  # A sends`} />
+
+      <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-4 mt-10">Internet Relay (Zero-Knowledge)</h2>
+      <p class="text-surface-700 dark:text-surface-300 mb-4">
+        Same code UX across the internet. The relay only ever holds ciphertext. The key half of the code never reaches the relay. One-shot: bundle deleted on pickup.
+      </p>
+      <CodeBlock code={`# Via synced folder (Dropbox/iCloud/Drive):
+keyflip transfer serve --relay ~/Dropbox/kf
+keyflip transfer pull --relay ~/Dropbox/kf --code <rendezvous>-<key>
+
+# Via WebDAV:
+keyflip transfer serve --relay https://my-server/kf
+keyflip transfer pull --relay https://my-server/kf --code <code>
+
+# Self-host a relay:
+keyflip transfer relay --host 0.0.0.0 --auth-user me --auth-pass-file pass.txt`} />
+
+      <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-4 mt-10">Migrate (Full Bundle)</h2>
+      <CodeBlock code={`keyflip migrate export bundle.enc    # accounts + providers + transcripts + memory
+keyflip migrate import bundle.enc    # merge into this machine
+keyflip migrate push --url <webdav>  # relay via WebDAV (encrypted)
+keyflip migrate pull --url <webdav>  # pull + merge`} />
+    </div>
+  </section>
+</BaseLayout>

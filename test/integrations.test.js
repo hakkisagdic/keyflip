@@ -1,14 +1,14 @@
-'use strict';
 // CHAT INTEGRATIONS (Slack / Discord): outbound, per-platform formatting + posting.
 // All IO/time is injected (opts.fetch / ctx.fetch / opts.clock) so nothing here
 // touches the network. Covers happy paths (format + route + status) and hostile
 // paths (secret leakage, prototype-pollution event names, bad webhooks, corrupt log).
-const test = require('node:test');
-const assert = require('node:assert');
-const fs = require('fs');
-const integrations = require('../src/integrations');
-const core = require('../src/core');
-const { makeCtx, writeClaude } = require('./helpers');
+import test from 'node:test';
+import assert from 'node:assert';
+import fs from 'fs';
+import * as integrations from '../src/integrations.js';
+import * as core from '../src/core.js';
+import { makeCtx, writeClaude } from './helpers.js';
+import _path from 'path';
 
 // A fetch double that records every call and returns a canned response.
 function fetchRecorder(response) {
@@ -214,7 +214,7 @@ test('statusMessage summarizes the active account, count, and headroom (non-secr
   addAccount(ctx, 'alice@example.com', 'u-a', 'LIVE-A');
   addAccount(ctx, 'bob@example.com', 'u-b', 'LIVE-B'); // bob now active
   // Seed the usage cache the way usage.js writes it.
-  fs.writeFileSync(require('path').join(ctx.configDir, '.usage-cache.json'), JSON.stringify({
+  fs.writeFileSync(_path.join(ctx.configDir, '.usage-cache.json'), JSON.stringify({
     bob: { at: Date.now(), status: 'ok', usage: { fiveHour: { pct: 30 }, sevenDay: { pct: 10 } } },
   }));
   const s = integrations.statusMessage(ctx);

@@ -1,14 +1,13 @@
-'use strict';
 // shellhook: PURE shell-source generation for direnv-style account auto-activation.
 // Pure-string tests always run; the shell tests (syntax-check + a real behavioral
 // drive of the emitted hook under bash/zsh) run only when that shell is installed.
-const test = require('node:test');
-const assert = require('node:assert');
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
-const cp = require('child_process');
-const shellhook = require('../src/shellhook');
+import test from 'node:test';
+import assert from 'node:assert';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+import cp from 'child_process';
+import * as shellhook from '../src/shellhook.js';
 
 function tmp() { return fs.mkdtempSync(path.join(os.tmpdir(), 'kf-shellhook-')); }
 function have(bin, args) {

@@ -1,10 +1,9 @@
-'use strict';
-const test = require('node:test');
-const assert = require('node:assert');
-const fs = require('fs');
-const path = require('path');
-const profiles = require('../src/profiles');
-const { tmpdir } = require('./helpers');
+import test from 'node:test';
+import assert from 'node:assert';
+import fs from 'fs';
+import path from 'path';
+import * as profiles from '../src/profiles.js';
+import { tmpdir } from './helpers.js';
 
 test('write/read/exists/email round-trip', function () {
   const dir = tmpdir();
@@ -46,7 +45,7 @@ test('metadata files are written with 0600 permissions (non-Windows)', function 
 });
 
 test('isValidName rejects reserved, traversal, and flag-like names', function () {
-  const profiles = require('../src/profiles');
+
   ['alice', 'a.b_c-1', 'Bob2'].forEach(function (n) { assert.strictEqual(profiles.isValidName(n), true, n); });
   ['__proto__', 'prototype', 'constructor', '..', '.hidden', '-y', '--force', '', 'a/b', 'a b'].forEach(function (n) {
     assert.strictEqual(profiles.isValidName(n), false, n);

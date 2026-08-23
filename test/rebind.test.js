@@ -1,13 +1,12 @@
-'use strict';
 // Tests for `keyflip sessions rebind` (src/sessions.js): re-link a project's chat
 // history after its folder was renamed/moved. Claude keys transcripts by the encoded
 // cwd and refuses a session whose cwd is gone, so a rename orphans the history.
-const test = require('node:test');
-const assert = require('node:assert');
-const fs = require('fs');
-const path = require('path');
-const sessions = require('../src/sessions');
-const { makeCtx } = require('./helpers');
+import test from 'node:test';
+import assert from 'node:assert';
+import fs from 'fs';
+import path from 'path';
+import * as sessions from '../src/sessions.js';
+import { makeCtx } from './helpers.js';
 
 function seedTranscript(ctx, cwd, id, content) {
   const dir = path.join(sessions.projectsDir(ctx), sessions.encodeCwd(cwd));
@@ -107,7 +106,7 @@ test('list flags a session whose cwd no longer exists (orphan)', function () {
 // ---- E4: send (inject a message into a session) ----
 
 test('sendCommand builds `claude -p <message> --resume <id>` (+ --fork-session)', function () {
-  const s = require('../src/sessions');
+  const s = sessions;
   const row = { sessionId: 'abc12345', cwd: '/proj' };
   const sc = s.sendCommand(row, 'please add a test');
   assert.strictEqual(sc.command, 'claude');
@@ -126,7 +125,7 @@ test('compactTranscript elides long tool output but keeps message text + valid J
     JSON.stringify({ type: 'tool_result', tool_use_id: 't1', content: bigOutput }),
     JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: longMessage } }),
   ].join('\n');
-  const r = require('../src/sessions').compactTranscript(lines, {});
+  const r = sessions.compactTranscript(lines, {});
   assert.ok(r.elided >= 1, 'at least the tool output is elided');
   assert.ok(r.after < r.before, 'smaller after');
   const out = r.compacted.split('\n');
@@ -138,7 +137,7 @@ test('compactTranscript elides long tool output but keeps message text + valid J
 });
 
 test('compactTranscript is a no-op with nothing bulky, and keeps unparseable lines', function () {
-  const s = require('../src/sessions');
+  const s = sessions;
   const clean = JSON.stringify({ type: 'user', message: { content: 'hi' } }) + '\nnot-json-line\n';
   const r = s.compactTranscript(clean, {});
   assert.strictEqual(r.elided, 0);

@@ -1,4 +1,3 @@
-'use strict';
 // Context-Layer: NORMALIZE the many AI rule/instruction files (CLAUDE.md, .cursorrules,
 // .cursor/rules/*, AGENTS.md, GEMINI.md, .github/copilot-instructions.md, opencode/aider) into
 // ONE common model { schemaVersion, sections:[{kind, text, from}] }, then RE-EMIT that model as
@@ -16,11 +15,12 @@
 //   kind ∈ 'coding'|'architecture'|'security'|'workflow'|'general'
 // @typedef {Object} RulesModel   { schemaVersion, generatedAt, sources:[{tool,rel,redactions}], sections:RuleSection[] }
 
-const fs = require('fs');
-const path = require('path');
-const fsutil = require('./fsutil');
-const secretscan = require('./secretscan');
-const agents = require('./agents'); // reuse the canonical tool-id set + labels (CONFIG_REGISTRY/REGISTRY)
+import fs from 'fs';
+import path from 'path';
+import * as fsutil from './fsutil.js';
+import * as secretscan from './secretscan.js';
+import * as _agents from './agents.js';
+const agents = _agents; // reuse the canonical tool-id set + labels (CONFIG_REGISTRY/REGISTRY)
 
 const SCHEMA_VERSION = 1;
 
@@ -263,23 +263,4 @@ function writeTarget(projectPath, target, content, opts) {
   return { path: dest, bytes: Buffer.byteLength(content, 'utf8') };
 }
 
-module.exports = {
-  SCHEMA_VERSION: SCHEMA_VERSION,
-  RULE_SOURCES: RULE_SOURCES,
-  EMIT_TARGETS: EMIT_TARGETS,
-  KIND_ORDER: KIND_ORDER,
-  redactText: redactText,
-  classify: classify,
-  splitSections: splitSections,
-  collectSources: collectSources,
-  importRules: importRules,
-  detectRuleFiles: detectRuleFiles,
-  emit: emit,
-  assertModel: assertModel,
-  toolLabel: toolLabel,
-  rulesDir: rulesDir,
-  rulesFile: rulesFile,
-  saveModel: saveModel,
-  loadModel: loadModel,
-  writeTarget: writeTarget,
-};
+export { SCHEMA_VERSION, RULE_SOURCES, EMIT_TARGETS, KIND_ORDER, redactText, classify, splitSections, collectSources, importRules, detectRuleFiles, emit, assertModel, toolLabel, rulesDir, rulesFile, saveModel, loadModel, writeTarget };

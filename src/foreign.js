@@ -1,4 +1,3 @@
-'use strict';
 // Epic F: read OTHER agents' session logs into keyflip's unified conversation shape (the same
 // { messages:[{role,text,tools,ts}], cwd, counts } that src/transcript.js produces for Claude
 // Code), so the same export/markdown/HTML rendering works across tools.
@@ -12,8 +11,13 @@
 //   - Aider `.aider.chat.history.md` → best-effort markdown (`#### ` user, `> ` tool, else assistant).
 // Copilot (YAML) is deferred (needs a YAML parser).
 
-const fs = require('fs');
-const path = require('path');
+import fs from 'fs';
+import path from 'path';
+import * as _sq from './sqliteread.js';
+import _os from 'os';
+import * as _yamlread from './yamlread.js';
+import * as _walmerge from './walmerge.js';
+import * as _transcript from './transcript.js';
 
 // Best-effort locations of OTHER agents' session stores (relative to $HOME). Existence-gated,
 // so a machine without a given tool simply yields nothing. Paths are NEEDS-VERIFICATION —
@@ -49,7 +53,7 @@ function walkFind(dir, matchRe, budget, out) {
 }
 // Discover foreign session files present on this machine → [{ tool, path, mtime }].
 function discover(ctx) {
-  const home = (ctx && ctx.home) || require('os').homedir();
+  const home = (ctx && ctx.home) || _os.homedir();
   const budget = { left: 3000 };
   const out = [];
   const add = function (tool, p) { try { const st = fs.statSync(p); out.push({ tool: tool, path: p, mtime: st.mtime.toISOString() }); } catch (e) { /* vanished */ } };
@@ -124,7 +128,7 @@ function roleOf(j) {
   return 'user';
 }
 function parseCursor(buf) {
-  const sq = require('./sqliteread');
+  const sq = _sq;
   const kv = sq.readKV(buf, 'cursorDiskKV'); // throws if the table is absent
   const bubbles = [];
   const composers = Object.create(null); // keyed by attacker-controlled composer ids
@@ -177,7 +181,7 @@ function parseJson(text) {
 // Copilot / generic YAML: parse then find the conversation array (best-effort — Copilot's
 // session shape is NEEDS-VERIFICATION; the YAML reader itself is fixture-tested).
 function parseYaml(text) {
-  const doc = require('./yamlread').parse(text);
+  const doc = _yamlread.parse(text);
   return extractMessages(doc);
 }
 
@@ -201,12 +205,12 @@ function normalize(filePath, input) {
     // never throws and returns the same buffer when there's nothing to merge — only warn if a -wal
     // exists but we could NOT fold it in.
     let dbBuf = buf, merged = false;
-    if (filePath) { try { const walBuf = fs.readFileSync(filePath + '-wal'); const m = require('./walmerge').applyOverlay(buf, walBuf); if (m !== buf) { dbBuf = m; merged = true; } } catch (e) { /* no -wal sibling */ } }
+    if (filePath) { try { const walBuf = fs.readFileSync(filePath + '-wal'); const m = _walmerge.applyOverlay(buf, walBuf); if (m !== buf) { dbBuf = m; merged = true; } } catch (e) { /* no -wal sibling */ } }
     const out = Object.assign({ tool: 'cursor' }, parseCursor(dbBuf));
     if (!merged) { const w = walNote(filePath); if (w) out.warning = w; }
     return out;
   }
-  if (tool === 'jsonl') return Object.assign({ tool: 'jsonl' }, require('./transcript').parse(buf.toString('utf8')));
+  if (tool === 'jsonl') return Object.assign({ tool: 'jsonl' }, _transcript.parse(buf.toString('utf8')));
   if (tool === 'json') return Object.assign({ tool: 'json' }, parseJson(buf.toString('utf8')));
   if (tool === 'yaml') return Object.assign({ tool: 'copilot' }, parseYaml(buf.toString('utf8')));
   if (tool === 'aider') return Object.assign({ tool: 'aider' }, parseAider(buf.toString('utf8')));
@@ -226,4 +230,4 @@ function resumeCommand(tool, id) {
   return (f && id) ? f(String(id)) : null;
 }
 
-module.exports = { detect: detect, parseAider: parseAider, parseCursor: parseCursor, parseJson: parseJson, parseYaml: parseYaml, normalize: normalize, walNote: walNote, discover: discover, resumeCommand: resumeCommand, SESSION_SOURCES: SESSION_SOURCES };
+export { detect, parseAider, parseCursor, parseJson, parseYaml, normalize, walNote, discover, resumeCommand, SESSION_SOURCES };

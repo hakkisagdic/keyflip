@@ -1,14 +1,13 @@
-'use strict';
 // J1: carry OTHER agents' home-level memory (markdown) across machines. These tests cover
 // existence-gating, the union merge, path-traversal refusal, memory-only filtering, and the
 // migrate bundle wiring behind the opt-in --agents flag.
-const { test } = require('node:test');
-const assert = require('node:assert');
-const fs = require('fs');
-const path = require('path');
-const { makeCtx } = require('./helpers');
-const agents = require('../src/agents');
-const migrate = require('../src/migrate');
+import { test } from 'node:test';
+import assert from 'node:assert';
+import fs from 'fs';
+import path from 'path';
+import { makeCtx } from './helpers.js';
+import * as agents from '../src/agents.js';
+import * as migrate from '../src/migrate.js';
 
 // migrate.buildBundle also scans transcripts (ctx.claudeDir/projects) — give it a real dir.
 function ctxM(overrides) {
@@ -149,7 +148,7 @@ test('bundle: agentIds narrows which agents travel', function () {
 });
 
 // SECURITY (review P1 #7): mergeAgentMemory must not follow a pre-planted symlink out of $HOME.
-const os = require('os');
+import os from 'os';
 test('mergeAgentMemory refuses a symlinked leaf (no clobber through a symlink, even with force)', function () {
   const dst = makeCtx();
   const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'kf-ag-'));
@@ -163,7 +162,7 @@ test('mergeAgentMemory refuses a symlinked leaf (no clobber through a symlink, e
 });
 
 // ---- J1 config-tier (redacted agent config) ----
-const secretscan = require('../src/secretscan');
+import * as secretscan from '../src/secretscan.js';
 function seedCursorMcp(ctx, body) {
   const dir = path.join(ctx.home, '.cursor'); fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(path.join(dir, 'mcp.json'), body);

@@ -1,13 +1,12 @@
-'use strict';
 // Skills marketplace: install ARBITRARY skills (not just keyflip's own) into
 // ~/.claude/skills from a GitHub repo, a local directory, or a .tar.gz/.zip
 // archive. A manifest records what keyflip installed so `remove` never touches
 // the user's own skills. Archive extraction is isolated + path-traversal-guarded.
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
-const { writeJsonStable } = require('./fsutil');
-const { run } = require('./exec');
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+import { writeJsonStable } from './fsutil.js';
+import { run } from './exec.js';
 
 function skillsDir(ctx) { return path.join(ctx.claudeDir || path.join(ctx.home, '.claude'), 'skills'); }
 function manifestPath(ctx) { return path.join(ctx.configDir, 'installed-skills.json'); }
@@ -149,4 +148,4 @@ function remove(ctx, name) {
   delete m[name]; writeManifest(ctx, m);
 }
 
-module.exports = { add: add, list: list, remove: remove, findSkillDirs: findSkillDirs, parseGithub: parseGithub, installFromDir: installFromDir, resolveSource: resolveSource, skillsDir: skillsDir };
+export { add, list, remove, findSkillDirs, parseGithub, installFromDir, resolveSource, skillsDir };

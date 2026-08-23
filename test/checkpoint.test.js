@@ -1,14 +1,13 @@
-'use strict';
 // Git-bound checkpoints (src/checkpoint.js): create/list/latest/get + READ-ONLY restore, the
 // parent chain, canonical content hashing, and — critically — that NO secret ever reaches a
 // checkpoint file (summary prose, provider, or nested task fields).
-const test = require('node:test');
-const assert = require('node:assert');
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
-const checkpoint = require('../src/checkpoint');
-const secretscan = require('../src/secretscan');
+import test from 'node:test';
+import assert from 'node:assert';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+import * as checkpoint from '../src/checkpoint.js';
+import * as secretscan from '../src/secretscan.js';
 
 function tmpProject() { return fs.mkdtempSync(path.join(os.tmpdir(), 'keyflip-cp-')); }
 
