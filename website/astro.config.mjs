@@ -3,11 +3,8 @@ import sitemap from '@astrojs/sitemap';
 import tailwindcss from '@tailwindcss/vite';
 
 export default defineConfig({
-  // TODO: Update this URL before deployment. Use your GitHub Pages URL
-  // (e.g. https://hakkisagdic.github.io/keyflip) or Cloudflare Pages subdomain
-  // (e.g. https://keyflip.pages.dev). This placeholder is used for sitemap
-  // generation and og:url meta tags.
-  site: 'https://keyflip.dev',
+  site: 'https://hakkisagdic.github.io/keyflip',
+  base: '/keyflip',
   output: 'static',
   vite: {
     plugins: [tailwindcss()]
