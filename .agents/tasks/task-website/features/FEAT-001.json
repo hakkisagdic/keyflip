@@ -2,7 +2,7 @@
   "id": "FEAT-001",
   "type": "feat",
   "description": "Create the Astro project scaffold in /website with i18n (EN+TR), Tailwind CSS, dark mode, and all page routes. This is the foundation feature that sets up the entire site structure including layouts, components, navigation, footer, and all page stubs with real content pulled from project docs.",
-  "status": "in_progress",
+  "status": "completed",
   "steps": [
     "Initialize Astro project in /projects/sandbox/keyflip/website with TypeScript, Tailwind CSS 4, and @astrojs/sitemap integration",
     "Configure astro.config.mjs with i18n routing (EN default, TR secondary), site URL placeholder, and static output mode suitable for GitHub Pages / Cloudflare Pages",
@@ -38,5 +38,5 @@
     "Check that dist/index.html contains expected landing page content"
   ],
   "blocked_reason": null,
-  "findings": ""
+  "findings": "Build produces 29 pages (14 EN + 14 TR + 404) in 1.07s. Used @tailwindcss/vite plugin directly (not @astrojs/tailwind which is for v3). Astro 5.9.3 with Tailwind CSS 4.3.3. The package-lock.json is included in the commit. All acceptance criteria verified: bilingual output, dark mode toggle, language switcher, SEO meta tags, responsive layout, CLI reference with 130+ commands organized by category."
 }
