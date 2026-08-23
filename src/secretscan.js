@@ -13,7 +13,7 @@
 // Redaction always errs BROAD: a false-positive redaction is harmless, a missed
 // secret is a leak. Paths to secret FILES live in secretpaths.js — different concern.
 
-const REDACTED = '«REDACTED»';
+const REDACTED = '«keyflip_redacted»';
 
 // Known secret SHAPES. Each entry is { re }, consumed as new RegExp(re.source, 'g').
 const SECRET_PATTERNS = [
@@ -89,6 +89,18 @@ function redactShapes(s) {
   return { text: out, count: count };
 }
 
+// Scan text for known secret SHAPES. Returns an array of match strings (empty = clean).
+function scanText(text) {
+  const s = String(text == null ? '' : text);
+  const matches = [];
+  for (const p of SECRET_PATTERNS) {
+    let m;
+    const re = new RegExp(p.re.source, 'g');
+    while ((m = re.exec(s)) !== null) matches.push(m[0]);
+  }
+  return matches;
+}
+
 // Line-oriented KEY redaction: `key: value` / `key = value` where the key is
 // credential-shaped and the value is a real (non-placeholder) secret.
 function redactLines(s) {
@@ -162,6 +174,7 @@ module.exports = {
   isCredentialKey: isCredentialKey,
   isEnvRefOrEmpty: isEnvRefOrEmpty,
   looksSecret: looksSecret,
+  scanText: scanText,
   redactValue: redactValue,
   redactLines: redactLines,
   redactJson: redactJson,
