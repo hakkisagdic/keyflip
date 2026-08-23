@@ -686,6 +686,12 @@ configured):
 
 ---
 
+## Website
+
+The `/website` directory contains the project's marketing and documentation site, built with Astro. It is a standalone sub-project with its own `package.json`. See [`website/README.md`](website/README.md) for development and deployment instructions.
+
+---
+
 ## License
 
 [MIT](LICENSE)

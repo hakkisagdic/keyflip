@@ -708,6 +708,12 @@ sonra ayarlanabilir):
 
 ---
 
+## Web Sitesi
+
+`/website` dizini, Astro ile olusturulmus projenin pazarlama ve dokumantasyon sitesini icerir. Kendi `package.json` dosyasina sahip bagimsiz bir alt projedir. Gelistirme ve dagitim talimatlari icin [`website/README.md`](website/README.md) dosyasina bakiniz.
+
+---
+
 ## Lisans
 
 [MIT](LICENSE)
