@@ -1,14 +1,13 @@
-'use strict';
 // COST intelligence tests. Fully hermetic: makeCtx gives a temp home + fixed
 // clock; we write .usage-cache.json / usage-history.jsonl / fake transcripts
 // directly (cost.js only READS them). No network, no subprocess, no real time.
-const test = require('node:test');
-const assert = require('node:assert');
-const fs = require('fs');
-const path = require('path');
-const cost = require('../src/cost');
-const history = require('../src/history');
-const { makeCtx } = require('./helpers');
+import test from 'node:test';
+import assert from 'node:assert';
+import fs from 'fs';
+import path from 'path';
+import * as cost from '../src/cost.js';
+import * as history from '../src/history.js';
+import { makeCtx } from './helpers.js';
 
 function writeCache(ctx, obj) {
   fs.writeFileSync(path.join(ctx.configDir, '.usage-cache.json'), typeof obj === 'string' ? obj : JSON.stringify(obj));

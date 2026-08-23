@@ -1,9 +1,8 @@
-'use strict';
 // Cross-platform "write a file as safely as we can".
 // POSIX: temp + atomic rename. Windows: rename onto an open/existing file can
 // fail (EPERM/EACCES/EBUSY), so fall back to an in-place write.
-const fs = require('fs');
-const path = require('path');
+import fs from 'fs';
+import path from 'path';
 
 let seq = 0; // process-unique suffix component (avoids Date.now/Math.random)
 
@@ -86,4 +85,4 @@ function readJsonForWrite(filePath) {
   catch (e) { throw new Error(filePath + ' exists but is not valid JSON — refusing to overwrite it (fix or remove it first)'); }
 }
 
-module.exports = { atomicWrite: atomicWrite, sortKeys: sortKeys, writeJsonStable: writeJsonStable, readJsonForWrite: readJsonForWrite, safeDestUnder: safeDestUnder };
+export { atomicWrite, sortKeys, writeJsonStable, readJsonForWrite, safeDestUnder };

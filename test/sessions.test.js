@@ -1,10 +1,9 @@
-'use strict';
-const test = require('node:test');
-const assert = require('node:assert');
-const fs = require('fs');
-const path = require('path');
-const sessions = require('../src/sessions');
-const { makeCtx } = require('./helpers');
+import test from 'node:test';
+import assert from 'node:assert';
+import fs from 'fs';
+import path from 'path';
+import * as sessions from '../src/sessions.js';
+import { makeCtx } from './helpers.js';
 
 function seedSession(ctx, project, id, cwd, firstUserText, mtimeMs) {
   const dir = path.join(ctx.home, '.claude', 'projects', project);

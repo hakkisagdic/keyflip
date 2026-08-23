@@ -1,4 +1,3 @@
-'use strict';
 // EXTERNAL SECRET BACKEND: keep saved keyflip credentials in a real secret
 // manager — 1Password (`op`), Bitwarden (`bw`) or HashiCorp Vault (`vault`) —
 // instead of (or beside) the OS keychain. Each backend is driven through its
@@ -12,11 +11,11 @@
 // `credential=-`). A secret is NEVER logged, echoed or returned except as the
 // value asked for by get(). A locked/absent/unauthenticated vault fails LOUDLY
 // with a clear, actionable Error (code 'EVAULT') instead of a silent miss.
-const path = require('path');
-const profiles = require('./profiles');
-const { atomicWrite, readJsonForWrite } = require('./fsutil');
+import path from 'path';
+import * as profiles from './profiles.js';
+import { atomicWrite, readJsonForWrite } from './fsutil.js';
 
-const defaultRun = require('./exec').run;
+import { run as defaultRun } from './exec.js';
 
 // Canonical backend ids, in probe/display order. A frozen array + indexOf gives
 // a pollution-safe membership test for a user-supplied provider name.
@@ -464,19 +463,4 @@ const tools = [
   },
 ];
 
-module.exports = {
-  PROV_IDS: PROV_IDS,
-  isProvider: isProvider,
-  PROVIDERS: PROVIDERS,
-  detect: detect,
-  probe: probe,
-  makeStore: makeStore,
-  statePath: statePath,
-  readState: readState,
-  writeState: writeState,
-  status: status,
-  use: use,
-  off: off,
-  cli: cli,
-  tools: tools,
-};
+export { PROV_IDS, isProvider, PROVIDERS, detect, probe, makeStore, statePath, readState, writeState, status, use, off, cli, tools };

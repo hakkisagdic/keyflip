@@ -1,10 +1,9 @@
-'use strict';
 // I2 (opt-in): an EMBEDDING seam for true semantic recall. keyflip bundles NO model — it
 // calls a user-run embedding endpoint (Ollama by default: POST /api/embed, or
 // KEYFLIP_EMBED_URL) so zero-dep holds and nothing leaves the machine unless the user set up
 // a hosted one. Used only by `recall --semantic`. Injectable poster for tests.
-const http = require('http');
-const https = require('https');
+import http from 'http';
+import https from 'https';
 
 function defaultUrl() { return process.env.KEYFLIP_EMBED_URL || 'http://localhost:11434/api/embed'; }
 function defaultModel() { return process.env.KEYFLIP_EMBED_MODEL || 'nomic-embed-text'; }
@@ -62,4 +61,4 @@ function cosine(a, b) {
   return (na && nb) ? dot / (Math.sqrt(na) * Math.sqrt(nb)) : 0;
 }
 
-module.exports = { embed: embed, cosine: cosine, defaultUrl: defaultUrl, defaultModel: defaultModel };
+export { embed, cosine, defaultUrl, defaultModel };

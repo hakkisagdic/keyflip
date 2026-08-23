@@ -1,17 +1,16 @@
-'use strict';
 // Tests for the `keyflip doctor` state-hygiene checks (src/doctor.js diagnose). The git checks
 // need the enabled VCS path, so this file clears KEYFLIP_VCS (the rest of the suite runs with it
 // off). Skips the git tests if git is absent.
 delete process.env.KEYFLIP_VCS;
 
-const test = require('node:test');
-const assert = require('node:assert');
-const fs = require('fs');
-const path = require('path');
-const cp = require('child_process');
-const doctor = require('../src/doctor');
-const vcs = require('../src/vcs');
-const { makeCtx } = require('./helpers');
+import test from 'node:test';
+import assert from 'node:assert';
+import fs from 'fs';
+import path from 'path';
+import cp from 'child_process';
+import * as doctor from '../src/doctor.js';
+import * as vcs from '../src/vcs.js';
+import { makeCtx } from './helpers.js';
 
 const HAS_GIT = vcs.gitAvailable();
 function find(checks, name) { return checks.filter(function (c) { return c.name === name; })[0]; }

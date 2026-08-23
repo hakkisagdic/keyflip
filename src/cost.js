@@ -1,4 +1,3 @@
-'use strict';
 // COST / SPEND INTELLIGENCE. A dated static pricing table + read-only spend
 // reporting. estimateCost/priceFor are pure; unified aggregates per-account
 // utilization from <configDir>/.usage-cache.json (pct-based -- the OAuth usage
@@ -6,8 +5,11 @@
 // fabricate a dollar figure); predict projects time-to-limit from the usage
 // trend log; attribute measures per-cwd/repo token+cost by scanning
 // ~/.claude/projects transcripts. Nothing here writes state or hits the network.
-const fs = require('fs');
-const path = require('path');
+import fs from 'fs';
+import path from 'path';
+import * as _sessions from './sessions.js';
+import * as _transcript from './transcript.js';
+import * as _history from './history.js';
 
 // ---------------------------------------------------------------------------
 // PRICING SNAPSHOT -- USD per 1,000,000 tokens (input / output). This is a
@@ -237,7 +239,7 @@ function predict(ctx, name, opts) {
   const nowIso = opts.clock ? opts.clock() : ctx.now();
   let samples = opts.samples;
   if (!samples) {
-    try { samples = require('./history').readUsage(ctx); } catch (e) { samples = []; }
+    try { samples = _history.readUsage(ctx); } catch (e) { samples = []; }
     samples = (samples || []).filter(function (s) { return s && s.account === name; });
   }
   const cache = opts.cache || readUsageCache(ctx);
@@ -314,8 +316,8 @@ function scanUsage(text, bucket) {
 // capped: opts.maxSessions (default 200) and opts.maxBytesPerFile (default 8MB).
 function attribute(ctx, opts) {
   opts = opts || {};
-  const sessions = require('./sessions');
-  const transcript = require('./transcript');
+  const sessions = _sessions;
+  const transcript = _transcript;
   const maxSessions = clampInt(opts.maxSessions, 200, 1, 5000);
   const maxBytes = clampInt(opts.maxBytesPerFile, 8 * 1024 * 1024, 64 * 1024, 128 * 1024 * 1024);
 
@@ -387,19 +389,4 @@ function fmtEta(minutes) {
   const d = Math.floor(minutes / 1440); const h = Math.round((minutes % 1440) / 60); return d + 'd' + (h ? ' ' + h + 'h' : '');
 }
 
-module.exports = {
-  PRICING: PRICING,
-  PRICING_AS_OF: PRICING_AS_OF,
-  FALLBACK_PRICE: FALLBACK_PRICE,
-  CACHE_READ_MULT: CACHE_READ_MULT,
-  CACHE_WRITE_MULT: CACHE_WRITE_MULT,
-  priceFor: priceFor,
-  estimateCost: estimateCost,
-  unified: unified,
-  predict: predict,
-  attribute: attribute,
-  readUsageCache: readUsageCache,
-  fmtUsd: fmtUsd,
-  fmtEta: fmtEta,
-  usageCachePath: usageCachePath,
-};
+export { PRICING, PRICING_AS_OF, FALLBACK_PRICE, CACHE_READ_MULT, CACHE_WRITE_MULT, priceFor, estimateCost, unified, predict, attribute, readUsageCache, fmtUsd, fmtEta, usageCachePath };

@@ -1,14 +1,13 @@
-'use strict';
 // Interactive menu. Two modes:
 //   • keys mode  — a real TTY: arrow-key navigation (↑/↓, Enter), number shortcuts.
 //   • line mode  — piped/non-TTY (tests, CI): type a number/letter + Enter.
-const readline = require('readline');
-const core = require('./core');
-const profiles = require('./profiles');
-const appctl = require('./platform');
-const appsessions = require('./appsessions');
-const appauth = require('./appauth');
-const lock = require('./lock');
+import readline from 'readline';
+import * as core from './core.js';
+import * as profiles from './profiles.js';
+import * as appctl from './platform.js';
+import * as appsessions from './appsessions.js';
+import * as appauth from './appauth.js';
+import * as lock from './lock.js';
 
 function delay(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
 
@@ -322,9 +321,4 @@ function runMenu(ctx, io) {
   return runMenuLine(ctx, io);
 }
 
-module.exports = {
-  runMenu: runMenu,
-  runMenuLine: runMenuLine,
-  runMenuKeys: runMenuKeys,
-  firstNonActiveIndex: firstNonActiveIndex,
-};
+export { runMenu, runMenuLine, runMenuKeys, firstNonActiveIndex };

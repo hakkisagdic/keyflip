@@ -1,13 +1,12 @@
-'use strict';
 // Tests for C2: scheduling the nightly `keyflip dream` (src/schedule.js). All system calls
 // (launchctl/crontab) go through an injected runner and a temp home, so nothing touches the
 // real machine.
-const test = require('node:test');
-const assert = require('node:assert');
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
-const schedule = require('../src/schedule');
+import test from 'node:test';
+import assert from 'node:assert';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+import * as schedule from '../src/schedule.js';
 
 function fakeRunner(recorder, cronState) {
   return function (cmd, args, input) {

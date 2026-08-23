@@ -1,8 +1,7 @@
-'use strict';
 // Non-secret profile metadata stored as <configDir>/<name>.json (0600).
-const fs = require('fs');
-const path = require('path');
-const { atomicWrite } = require('./fsutil');
+import fs from 'fs';
+import path from 'path';
+import { atomicWrite } from './fsutil.js';
 
 // Must start with an alphanumeric (blocks '-flag', '.dotfile', '..') and use only
 // safe chars. Reserved object-property names are rejected outright so a profile
@@ -68,15 +67,4 @@ function sanitizeName(emailAddr) {
   return base || 'account';
 }
 
-module.exports = {
-  metaPath: metaPath,
-  list: list,
-  read: read,
-  exists: exists,
-  write: write,
-  remove: remove,
-  email: email,
-  isValidName: isValidName,
-  sanitizeName: sanitizeName,
-  NAME_RE: NAME_RE,
-};
+export { metaPath, list, read, exists, write, remove, email, isValidName, sanitizeName, NAME_RE };

@@ -1,13 +1,12 @@
-'use strict';
 // REAL-keychain end-to-end test against a throwaway keychain. Opt-in only:
 // runs when KEYFLIP_REAL_KEYCHAIN=1 on macOS (a dedicated CI job sets it), so
 // local `npm test` never touches any keychain.
-const test = require('node:test');
-const assert = require('node:assert');
-const os = require('os');
-const path = require('path');
-const { execFileSync } = require('child_process');
-const KeychainStore = require('../src/stores/keychain');
+import test from 'node:test';
+import assert from 'node:assert';
+import os from 'os';
+import path from 'path';
+import { execFileSync } from 'child_process';
+import KeychainStore from '../src/stores/keychain.js';
 
 const ENABLED = process.platform === 'darwin' && process.env.KEYFLIP_REAL_KEYCHAIN === '1';
 

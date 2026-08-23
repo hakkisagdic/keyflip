@@ -1,4 +1,3 @@
-'use strict';
 // SINGLE SOURCE OF TRUTH for secret-bearing paths under keyflip's config dir.
 // Consumed by BOTH vcs.js (the managed .gitignore) and backup.js (the backup SKIP set)
 // so the two can never drift apart. That drift is exactly what let the desktop-app OAuth
@@ -38,10 +37,4 @@ function gitignoreLines() {
     .concat(SECRET_FILE_NAMES);
 }
 
-module.exports = {
-  SECRET_DIRS: SECRET_DIRS,
-  SECRET_FILE_EXTS: SECRET_FILE_EXTS,
-  SECRET_FILE_NAMES: SECRET_FILE_NAMES,
-  isSecretFile: isSecretFile,
-  gitignoreLines: gitignoreLines,
-};
+export { SECRET_DIRS, SECRET_FILE_EXTS, SECRET_FILE_NAMES, isSecretFile, gitignoreLines };

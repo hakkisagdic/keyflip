@@ -1,10 +1,9 @@
-'use strict';
 // Portable, versioned export/import of saved accounts — for backups and moving to
 // a new machine. The envelope contains CLI credential blobs (SECRETS — the file
 // is written 0600 and callers must warn). Desktop-app logins are intentionally
 // EXCLUDED: they're encrypted with a machine-specific safeStorage key and cannot
 // work on another machine (re-run `keyflip add` there instead).
-const profiles = require('./profiles');
+import * as profiles from './profiles.js';
 
 const FORMAT = 'keyflip-export';
 const VERSION = 1;
@@ -75,4 +74,4 @@ function applyImport(ctx, envelope, opts) {
   return { imported: imported, skipped: skipped };
 }
 
-module.exports = { buildExport: buildExport, applyImport: applyImport, FORMAT: FORMAT, VERSION: VERSION };
+export { buildExport, applyImport, FORMAT, VERSION };

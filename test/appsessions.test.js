@@ -1,12 +1,11 @@
-'use strict';
-const test = require('node:test');
-const assert = require('node:assert');
-const fs = require('fs');
-const path = require('path');
-const { consolidate, mergeStore, pruneBackups } = require('../src/appsessions');
+import test from 'node:test';
+import assert from 'node:assert';
+import fs from 'fs';
+import path from 'path';
+import { consolidate, mergeStore, pruneBackups } from '../src/appsessions.js';
 // backup behavior is a per-store concern -> test it on mergeStore directly.
 function mergeCode(ctx) { return mergeStore(ctx, 'claude-code-sessions', 'claude-code-sessions-'); }
-const { tmpdir } = require('./helpers');
+import { tmpdir } from './helpers.js';
 
 // Fake Claude desktop app store with two accounts (A active in ~/.claude.json,
 // but consolidate unions all folders regardless of which account is "active").

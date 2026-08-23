@@ -1,11 +1,10 @@
-'use strict';
 // Cowork sessions (the Claude desktop app's local agent-mode work). Each session
 // is indexed at:
 //   <appData>/local-agent-mode-sessions/<accountUuid>/<orgUuid>/local_<id>.json
 // with title, initial message, the underlying Claude Code cliSessionId, cwd,
 // model, account email and timestamps. Read-only; account-independent browsing.
-const fs = require('fs');
-const path = require('path');
+import fs from 'fs';
+import path from 'path';
 
 function coworkDir(ctx) { return ctx.appDataDir ? path.join(ctx.appDataDir, 'local-agent-mode-sessions') : null; }
 
@@ -87,4 +86,4 @@ function resumeCommand(row) {
   return { cwd: row.cwd, command: 'claude', args: ['--resume', row.cliSessionId] };
 }
 
-module.exports = { coworkDir: coworkDir, list: list, find: find, readIndex: readIndex, resumeCommand: resumeCommand };
+export { coworkDir, list, find, readIndex, resumeCommand };

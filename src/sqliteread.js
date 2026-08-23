@@ -1,4 +1,3 @@
-'use strict';
 // A minimal, READ-ONLY, zero-dependency SQLite file reader — just enough to pull rows out of a
 // table B-tree (used to read Cursor's `cursorDiskKV` chat store for epic F). Implements the
 // parts of the file format we need: the 100-byte header, table B-tree pages (interior + leaf),
@@ -144,4 +143,4 @@ function readKV(buf, tableName) {
   return map;
 }
 
-module.exports = { open: open, readTable: readTable, readKV: readKV, parseRecord: parseRecord, varint: varint };
+export { open, readTable, readKV, parseRecord, varint };

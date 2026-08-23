@@ -1,4 +1,3 @@
-'use strict';
 // Command-activated failover proxy. NOT a resident daemon — it runs only after
 // `keyflip proxy start` (a detached background process) and stops on
 // `keyflip proxy stop`. It sits on 127.0.0.1 in front of the Anthropic API,
@@ -6,15 +5,21 @@
 // (429/5xx/auth) BEFORE any response byte reached the client, rotates to the next
 // healthy account (breaker-aware) and retries the same request. Token usage is
 // recorded for `keyflip proxy stats`. Binds localhost only.
-const fs = require('fs');
-const path = require('path');
-const http = require('http');
-const https = require('https');
-const core = require('./core');
-const usage = require('./usage');
-const breaker = require('./breaker');
-const provider = require('./provider');
-const history = require('./history');
+import fs from 'fs';
+import path from 'path';
+import http from 'http';
+import https from 'https';
+import * as core from './core.js';
+import * as usage from './usage.js';
+import * as breaker from './breaker.js';
+import * as provider from './provider.js';
+import * as history from './history.js';
+import * as _settings from './settings.js';
+import * as _fsutil from './fsutil.js';
+import _child_process from 'child_process';
+import { fileURLToPath } from 'url';
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const DEFAULT_PORT = 8787;
 const RETRYABLE = function (s) { return s === 401 || s === 403 || s === 408 || s === 429 || (s >= 500 && s <= 599); };
@@ -203,8 +208,8 @@ function isRunning(ctx) { const m = readMeta(ctx); return !!(m && m.pid && pidAl
 
 // Set/clear ANTHROPIC_BASE_URL in settings.json (safe: throws on corrupt).
 function wireSettings(ctx, url) {
-  const settings = require('./settings');
-  const { writeJsonStable } = require('./fsutil');
+  const settings = _settings;
+  const { writeJsonStable  } = _fsutil;
   const cfg = settings.read(ctx.claudeSettingsPath);
   cfg.env = cfg.env || {};
   if (url) cfg.env.ANTHROPIC_BASE_URL = url; else delete cfg.env.ANTHROPIC_BASE_URL;
@@ -218,10 +223,10 @@ function start(ctx, opts) {
   if (isRunning(ctx)) { const m = readMeta(ctx); return { already: true, pid: m.pid, port: m.port, url: m.url }; }
   const port = opts.port || DEFAULT_PORT;
   const bin = path.join(__dirname, '..', 'bin', 'keyflip.js');
-  const child = require('child_process').spawn(process.execPath, [bin, '__proxy-serve', '--port', String(port)], { detached: true, stdio: 'ignore' });
+  const child = _child_process.spawn(process.execPath, [bin, '__proxy-serve', '--port', String(port)], { detached: true, stdio: 'ignore' });
   child.unref();
   const url = 'http://127.0.0.1:' + port;
-  require('./fsutil').writeJsonStable(metaPath(ctx), { pid: child.pid, port: port, url: url, wired: !!opts.wire, at: ctx.now() }, 0o600);
+  _fsutil.writeJsonStable(metaPath(ctx), { pid: child.pid, port: port, url: url, wired: !!opts.wire, at: ctx.now() }, 0o600);
   let wireError = null;
   if (opts.wire) { try { wireSettings(ctx, url); } catch (e) { wireError = e.message; } }
   return { pid: child.pid, port: port, url: url, wired: !!opts.wire, wireError: wireError };
@@ -242,9 +247,4 @@ function stop(ctx) {
   });
 }
 
-module.exports = {
-  serve: serve, handleRequest: handleRequest, candidates: candidates, upstreamFor: upstreamFor,
-  extractUsage: extractUsage, stats: stats, metaPath: metaPath, readMeta: readMeta, costFile: costFile,
-  start: start, stop: stop, isRunning: isRunning, wireSettings: wireSettings, pidAlive: pidAlive,
-  DEFAULT_PORT: DEFAULT_PORT, RETRYABLE: RETRYABLE,
-};
+export { serve, handleRequest, candidates, upstreamFor, extractUsage, stats, metaPath, readMeta, costFile, start, stop, isRunning, wireSettings, pidAlive, DEFAULT_PORT, RETRYABLE };

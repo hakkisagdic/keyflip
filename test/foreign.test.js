@@ -1,8 +1,7 @@
-'use strict';
 // Epic F: normalize other agents' session logs into keyflip's unified shape (src/foreign.js).
-const test = require('node:test');
-const assert = require('node:assert');
-const foreign = require('../src/foreign');
+import test from 'node:test';
+import assert from 'node:assert';
+import * as foreign from '../src/foreign.js';
 
 const AIDER = [
   '# aider chat started at 2026-07-07 09:00:00',
@@ -70,7 +69,7 @@ test('normalize: an unrecognized format throws a clear error', function () {
 });
 
 test('the normalized shape feeds straight into the transcript exporter', function () {
-  const transcript = require('../src/transcript');
+  const transcript = _transcript;
   const n = foreign.normalize('.aider.chat.history.md', AIDER);
   const md = transcript.toMarkdown(n, { id: n.tool });
   assert.ok(md.indexOf('### You') !== -1 && md.indexOf('### Claude') !== -1);
@@ -79,10 +78,11 @@ test('the normalized shape feeds straight into the transcript exporter', functio
 });
 
 // --- Cursor SQLite + generic JSON (epic F extensions) ---
-const cp = require('child_process');
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
+import cp from 'child_process';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+import * as _transcript from '../src/transcript.js';
 let HAS_SQLITE = false;
 try { cp.execFileSync('sqlite3', ['--version'], { stdio: 'ignore' }); HAS_SQLITE = true; } catch (e) { HAS_SQLITE = false; }
 function mkdb(sql) { const f = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'kf-fdb-')), 'x.db'); cp.execFileSync('sqlite3', [f], { input: sql }); return fs.readFileSync(f); }

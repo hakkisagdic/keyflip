@@ -1,15 +1,14 @@
-'use strict';
 // Wave 4 (Context Layer): handoff.js — target-aware CONTINUE-PROMPT generator. Covers the happy path
 // (tool trail, active task, locked decisions, per-target phrasing, files list), the pure/deterministic
 // contract, and the SECURITY invariant: a secret that leaked into the package must NEVER reach the
 // emitted prompt (defence-in-depth re-redaction).
-const test = require('node:test');
-const assert = require('node:assert');
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
-const handoff = require('../src/handoff');
-const secretscan = require('../src/secretscan');
+import test from 'node:test';
+import assert from 'node:assert';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+import * as handoff from '../src/handoff.js';
+import * as secretscan from '../src/secretscan.js';
 
 const NOW = function () { return '2026-07-12T10:00:00.000Z'; };
 

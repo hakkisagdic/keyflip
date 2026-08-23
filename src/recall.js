@@ -1,12 +1,14 @@
-'use strict';
 // I1: local, zero-dep semantic-ish recall over keyflip's distilled KEEPSAKES (and optionally
 // raw transcripts) using BM25 lexical ranking. Offline, private, no embeddings, no cost — the
 // honest baseline of epic I. The corpus is the distilled keepsakes, which are small and
 // high-signal, so plain BM25 already answers "where did I discuss X" well. (Optional embedding
 // + `claude -p` answer layers come later as I2/I3.)
-const fs = require('fs');
-const path = require('path');
-const memory = require('./memory');
+import fs from 'fs';
+import path from 'path';
+import * as memory from './memory.js';
+import * as _llm from './llm.js';
+import * as _embed from './embed.js';
+import _crypto from 'crypto';
 
 const K1 = 1.5, B = 0.75;
 const STOP = new Set(['the', 'a', 'an', 'and', 'or', 'of', 'to', 'in', 'is', 'it', 'for', 'on', 'with', 'this', 'that', 'as', 'at', 'by', 'be', 'i']);
@@ -87,7 +89,7 @@ function search(ctx, query, opts) {
 // { ok:false, reason, hits }. Runner injectable for tests.
 function answer(ctx, query, opts) {
   opts = opts || {};
-  const llm = require('./llm');
+  const llm = _llm;
   if (!opts.skipCheck && !llm.available(opts.run)) return { ok: false, reason: 'claude-not-installed', hits: [] };
   const docs = corpus(ctx);
   const hits = rank(docs, query, opts.limit || 6);
@@ -109,8 +111,8 @@ function answer(ctx, query, opts) {
 // fall back to lexical.
 async function semanticSearch(ctx, query, opts) {
   opts = opts || {};
-  const embed = require('./embed');
-  const fs = require('fs'); const path = require('path'); const crypto = require('crypto');
+  const embed = _embed;
+  const crypto = _crypto;
   const docs = corpus(ctx);
   if (!docs.length) return { ok: false, reason: 'no-keepsakes', hits: [] };
 
@@ -145,4 +147,4 @@ async function semanticSearch(ctx, query, opts) {
   } catch (e) { return { ok: false, reason: (e && e.message) || 'embed-failed', hits: [] }; }
 }
 
-module.exports = { tokenize: tokenize, corpus: corpus, rank: rank, search: search, answer: answer, semanticSearch: semanticSearch };
+export { tokenize, corpus, rank, search, answer, semanticSearch };

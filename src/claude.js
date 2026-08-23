@@ -1,7 +1,6 @@
-'use strict';
 // Read/write ~/.claude.json (the account "pointer") safely and cross-platform.
-const fs = require('fs');
-const { atomicWrite } = require('./fsutil');
+import fs from 'fs';
+import { atomicWrite } from './fsutil.js';
 
 // Lenient read: returns null for a missing OR unparseable file. Use for display.
 function readConfig(p) {
@@ -42,4 +41,4 @@ function currentAccount(config) {
   };
 }
 
-module.exports = { readConfig, loadForWrite, writeConfig, currentAccount };
+export { readConfig, loadForWrite, writeConfig, currentAccount };

@@ -1,15 +1,14 @@
-'use strict';
 // Batch A foundations: atomicWrite mode/sorted-JSON (#9), txn rollback (#5),
 // config-dir resolution (#2), per-resource locks (#8).
-const test = require('node:test');
-const assert = require('node:assert');
-const fs = require('fs');
-const path = require('path');
-const fsutil = require('../src/fsutil');
-const txn = require('../src/txn');
-const lock = require('../src/lock');
-const { createContext } = require('../src/context');
-const { tmpdir } = require('./helpers');
+import test from 'node:test';
+import assert from 'node:assert';
+import fs from 'fs';
+import path from 'path';
+import * as fsutil from '../src/fsutil.js';
+import * as txn from '../src/txn.js';
+import * as lock from '../src/lock.js';
+import { createContext } from '../src/context.js';
+import { tmpdir } from './helpers.js';
 
 // ---- #9 atomicWrite ----
 test('atomicWrite preserves an existing file mode when none is given', function (t) {

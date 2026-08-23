@@ -1,13 +1,16 @@
-'use strict';
 // Wave-4 Context Layer CLI arg-parsing regressions (found by the adversarial review):
 //   - `context decision/task add` must not grab a preceding flag's VALUE as the title.
 //   - `checkpoint create` must not fold the --tasks-file path (or its value) into the summary.
 // These run the real CLI in a throwaway project dir so `.keyflip/` is created in tmp, never the repo.
-const test = require('node:test');
-const assert = require('node:assert');
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
+import test from 'node:test';
+import assert from 'node:assert';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+import _child_process from 'child_process';
+import { fileURLToPath } from 'url';
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const BIN = path.join(__dirname, '..', 'bin', 'keyflip.js');
 
@@ -19,7 +22,7 @@ function tmpEnv() {
 }
 // Run the CLI in `proj` as cwd (so context/checkpoint write .keyflip/ there), isolated HOME/config.
 function run(env, args) {
-  return require('child_process').spawnSync(process.execPath, [BIN].concat(args), {
+  return _child_process.spawnSync(process.execPath, [BIN].concat(args), {
     cwd: env.proj,
     encoding: 'utf8',
     env: Object.assign({}, process.env, {

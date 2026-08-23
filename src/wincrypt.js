@@ -1,4 +1,3 @@
-'use strict';
 // Windows app-auth CRYPTO primitives, isolated + injectable so the (hardened) macOS path in
 // appauth.js is untouched. On Windows, Electron/Chromium protects the safeStorage MASTER KEY
 // with DPAPI (stored in "Local State" → `os_crypt.encrypted_key`, "DPAPI"-prefixed) and encrypts
@@ -7,7 +6,8 @@
 // key extraction. The AES-GCM + key-extraction paths are fixture-tested here; wiring this into
 // appauth's account detection is the remaining Windows step (needs a real Windows machine to
 // verify) — see docs/PORTING.md.
-const crypto = require('crypto');
+import crypto from 'crypto';
+import * as _exec from './exec.js';
 
 // Decrypt a Chromium/Electron "v10"/"v11" AES-256-GCM value with the 32-byte master key.
 function decryptValue(input, key) {
@@ -31,7 +31,7 @@ function dpapiUnprotect(blob, opts) {
   opts = opts || {};
   const bytes = Buffer.isBuffer(blob) ? blob : Buffer.from(String(blob), 'base64');
   if (opts.unprotect) return opts.unprotect(bytes); // test hook (no PowerShell)
-  const run = opts.run || require('./exec').run;
+  const run = opts.run || _exec.run;
   const b64 = bytes.toString('base64');
   const ps = "$ErrorActionPreference='Stop';Add-Type -AssemblyName System.Security;" +
     "$b=[Convert]::FromBase64String('" + b64 + "');" +
@@ -53,4 +53,4 @@ function masterKey(localStateText, opts) {
   return (Buffer.isBuffer(key) && key.length === 32) ? key : null; // a valid 32-byte key, or null
 }
 
-module.exports = { decryptValue: decryptValue, dpapiUnprotect: dpapiUnprotect, masterKey: masterKey };
+export { decryptValue, dpapiUnprotect, masterKey };

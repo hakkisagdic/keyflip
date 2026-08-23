@@ -1,21 +1,24 @@
-'use strict';
 // Regression tests for the CLI-argument-parsing fixes found in the max-effort review:
 //  - `positionals()` must skip value-taking flags AND their values, so a flag value
 //    (e.g. the --passphrase-file path) is never mistaken for the positional file/host.
 //  - `migrate export` must never overwrite the passphrase file, must fail (not write
 //    plaintext) when the passphrase file is unreadable, and must keep stdout clean on `-`.
 //  - `transfer pull --code X` (no host) must run LAN discovery, not treat the code as a host.
-const test = require('node:test');
-const assert = require('node:assert');
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
-const { positionals } = require('../src/cli');
+import test from 'node:test';
+import assert from 'node:assert';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+import { positionals } from '../src/cli.js';
+import _child_process from 'child_process';
+import { fileURLToPath } from 'url';
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const BIN = path.join(__dirname, '..', 'bin', 'keyflip.js');
 function tmp() { return fs.mkdtempSync(path.join(os.tmpdir(), 'keyflip-migcli-')); }
 function run(home, args) {
-  return require('child_process').spawnSync(process.execPath, [BIN].concat(args), {
+  return _child_process.spawnSync(process.execPath, [BIN].concat(args), {
     encoding: 'utf8',
     env: Object.assign({}, process.env, {
       HOME: home, USERPROFILE: home,

@@ -1,4 +1,3 @@
-'use strict';
 // CONFIG (E4): a validated, namespaced SETTINGS store at <configDir>/config.json.
 // A hermetic makeCtx() gives each test a fresh temp configDir; config.json is the
 // only state. Covers the happy path (get/getAll/set/unset/describe, coercion of
@@ -8,12 +7,12 @@
 // The enum machinery is exercised through autoswitch.strategy and the int bounds
 // through usage.cacheTtlSeconds (ui.theme + security.relockMinutes were removed as
 // inert settings — see the cleanup commit).
-const test = require('node:test');
-const assert = require('node:assert');
-const fs = require('fs');
-const path = require('path');
-const config = require('../src/config');
-const { makeCtx } = require('./helpers');
+import test from 'node:test';
+import assert from 'node:assert';
+import fs from 'fs';
+import path from 'path';
+import * as config from '../src/config.js';
+import { makeCtx } from './helpers.js';
 
 function cpath(ctx) { return path.join(ctx.configDir, 'config.json'); }
 

@@ -1,8 +1,7 @@
-'use strict';
-const test = require('node:test');
-const assert = require('node:assert');
-const oauth = require('../src/oauth');
-const { makeCtx } = require('./helpers');
+import test from 'node:test';
+import assert from 'node:assert';
+import * as oauth from '../src/oauth.js';
+import { makeCtx } from './helpers.js';
 
 const NOW = 1800000000000;
 function blobExpiring() {

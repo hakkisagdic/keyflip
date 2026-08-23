@@ -1,15 +1,14 @@
-'use strict';
 // Tests for: structured process detection (#10), live-account guard (#11),
 // store reconciliation (#14), learned keychain fallback (#15), migrations (#18).
-const test = require('node:test');
-const assert = require('node:assert');
-const fs = require('fs');
-const path = require('path');
-const platform = require('../src/platform');
-const { HybridStore, KeychainStore, FileStore, reconcileStaleKeychain } = require('../src/stores');
-const migrations = require('../src/migrations');
-const profiles = require('../src/profiles');
-const { tmpdir } = require('./helpers');
+import test from 'node:test';
+import assert from 'node:assert';
+import fs from 'fs';
+import path from 'path';
+import * as platform from '../src/platform.js';
+import { HybridStore, KeychainStore, FileStore, reconcileStaleKeychain } from '../src/stores/index.js';
+import * as migrations from '../src/migrations.js';
+import * as profiles from '../src/profiles.js';
+import { tmpdir } from './helpers.js';
 
 // ---- claudeInstances ----
 test('claudeInstances reads live sessions from ~/.claude/sessions/<pid>.json', function () {

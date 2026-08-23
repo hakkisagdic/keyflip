@@ -35,6 +35,7 @@
     "cli"
   ],
   "author": "Hakkı Sağdıç",
+  "type": "module",
   "license": "MIT",
   "homepage": "https://github.com/hakkisagdic/keyflip#readme",
   "bugs": {

@@ -1,8 +1,7 @@
-'use strict';
 // Tests for the zero-dep YAML subset reader (src/yamlread.js).
-const test = require('node:test');
-const assert = require('node:assert');
-const yaml = require('../src/yamlread');
+import test from 'node:test';
+import assert from 'node:assert';
+import * as yaml from '../src/yamlread.js';
 
 test('scalars are coerced (int/float/bool/null) and quoted strings preserved', function () {
   const o = yaml.parse('a: 1\nb: 1.5\nc: true\nd: false\ne: ~\nf: null\ng: "hi: there # not a comment"\nh: plain text');

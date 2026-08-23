@@ -1,14 +1,13 @@
-'use strict';
 // GROUPS/TAGS: label accounts into pools so rotation/failover can be scoped.
 // A hermetic makeCtx() gives each test a fresh temp configDir; groups.json is the
 // only state. Covers the happy path plus hostile input (prototype pollution,
 // corrupt file, bad names/tags) — no network, no real credential store needed.
-const test = require('node:test');
-const assert = require('node:assert');
-const fs = require('fs');
-const path = require('path');
-const groups = require('../src/groups');
-const { makeCtx } = require('./helpers');
+import test from 'node:test';
+import assert from 'node:assert';
+import fs from 'fs';
+import path from 'path';
+import * as groups from '../src/groups.js';
+import { makeCtx } from './helpers.js';
 
 function gpath(ctx) { return path.join(ctx.configDir, 'groups.json'); }
 

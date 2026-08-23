@@ -1,10 +1,13 @@
-'use strict';
 // status / next / --json / --debug / styling behaviors via the spawned CLI.
-const test = require('node:test');
-const assert = require('node:assert');
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
+import test from 'node:test';
+import assert from 'node:assert';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+import _child_process from 'child_process';
+import { fileURLToPath } from 'url';
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const BIN = path.join(__dirname, '..', 'bin', 'keyflip.js');
 
@@ -22,7 +25,7 @@ function loginAs(home, email, userID, token) {
     JSON.stringify({ oauthAccount: { emailAddress: email }, userID: userID }));
 }
 function run(home, args, extraEnv) {
-  return require('child_process').spawnSync(process.execPath, [BIN].concat(args), {
+  return _child_process.spawnSync(process.execPath, [BIN].concat(args), {
     encoding: 'utf8',
     env: Object.assign({}, process.env, {
       HOME: home, USERPROFILE: home,

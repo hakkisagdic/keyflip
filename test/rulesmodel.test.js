@@ -1,14 +1,13 @@
-'use strict';
 // Context-Layer: normalize AI rule/instruction files into one model and re-emit per tool
 // (src/rulesmodel.js). Covers happy path (detect/import/classify/emit/round-trip + .keyflip cache)
 // and HOSTILE input — a leaked secret in ANY source must never reach the model or an emitted file.
-const test = require('node:test');
-const assert = require('node:assert');
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
-const rules = require('../src/rulesmodel');
-const secretscan = require('../src/secretscan');
+import test from 'node:test';
+import assert from 'node:assert';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+import * as rules from '../src/rulesmodel.js';
+import * as secretscan from '../src/secretscan.js';
 
 function tmpProject() { return fs.mkdtempSync(path.join(os.tmpdir(), 'kf-rules-')); }
 function write(base, rel, content) {

@@ -1,12 +1,16 @@
-'use strict';
-const test = require('node:test');
-const assert = require('node:assert');
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
-const transfer = require('../src/transfer');
-const core = require('../src/core');
-const { makeCtx, writeClaude } = require('./helpers');
+import test from 'node:test';
+import assert from 'node:assert';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+import * as transfer from '../src/transfer.js';
+import * as core from '../src/core.js';
+import { makeCtx, writeClaude } from './helpers.js';
+import * as _profiles from '../src/profiles.js';
+import _child_process from 'child_process';
+import { fileURLToPath } from 'url';
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 function login(ctx, email, uid, tok) {
   writeClaude(ctx, { oauthAccount: { emailAddress: email }, userID: uid });
@@ -31,7 +35,7 @@ test('export/import round-trips accounts onto a fresh machine', function () {
   const r = transfer.applyImport(dst, JSON.parse(JSON.stringify(envelope)));
   assert.deepStrictEqual(r.imported.sort(), ['alice', 'bob']);
   assert.strictEqual(dst.store.getProfile('alice'), '{"claudeAiOauth":{"accessToken":"A"}}');
-  assert.strictEqual(require('../src/profiles').email(dst.configDir, 'bob'), 'bob@example.com');
+  assert.strictEqual(_profiles.email(dst.configDir, 'bob'), 'bob@example.com');
 });
 
 test('import validates everything before writing anything', function () {
@@ -70,7 +74,7 @@ test('CLI export writes a 0600 file and import restores it (spawned)', function 
     return home;
   }
   function run(home, args) {
-    return require('child_process').spawnSync(process.execPath, [BIN].concat(args), {
+    return _child_process.spawnSync(process.execPath, [BIN].concat(args), {
       encoding: 'utf8',
       env: Object.assign({}, process.env, { HOME: home, USERPROFILE: home, XDG_CONFIG_HOME: path.join(home, '.config'), APPDATA: path.join(home, 'AppData', 'Roaming'), KEYFLIP_TEST_CLAUDE: 'stopped' }),
     });

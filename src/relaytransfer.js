@@ -1,4 +1,3 @@
-'use strict';
 // Roadmap #10(b): the INTERNET RELAY transport for `keyflip transfer` — the same
 // one-time-CODE, ephemeral, one-shot UX as the LAN path, but the encrypted bundle
 // travels THROUGH a user-controlled relay (a plain directory that both machines can
@@ -21,12 +20,12 @@
 //   * Both machines split the same pairing to rendezvous (find the blob) + key (decrypt).
 //   * One-shot: after the receiver picks up + decrypts, it DELETES the blob (cleanup());
 //     the source's awaitPickup() sees it vanish and reports the live "picked up" signal.
-const fs = require('fs');
-const path = require('path');
-const sync = require('./sync');
-const migrate = require('./migrate');
-const fsutil = require('./fsutil');
-const lantransfer = require('./lantransfer');
+import fs from 'fs';
+import path from 'path';
+import * as sync from './sync.js';
+import * as migrate from './migrate.js';
+import * as fsutil from './fsutil.js';
+import * as lantransfer from './lantransfer.js';
 
 // The same slot grammar the relay server enforces: a single, harmless path segment.
 const SLOT_RE = /^[A-Za-z0-9._-]{1,128}$/;
@@ -190,16 +189,4 @@ async function awaitPickup(backend, code, opts) {
   }
 }
 
-module.exports = {
-  push: push,
-  pull: pull,
-  awaitPickup: awaitPickup,
-  genPairing: genPairing,
-  parsePairing: parsePairing,
-  slotFor: slotFor,
-  resolveBackend: resolveBackend,
-  dirBackend: dirBackend,
-  davBackend: davBackend,
-  joinUrl: joinUrl,
-  normCode: normCode,
-};
+export { push, pull, awaitPickup, genPairing, parsePairing, slotFor, resolveBackend, dirBackend, davBackend, joinUrl, normCode };

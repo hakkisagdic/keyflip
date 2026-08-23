@@ -1,4 +1,3 @@
-'use strict';
 // Provider profiles (#1, #14): switch Claude Code to a third-party endpoint
 // (relay / gateway / Bedrock / OpenRouter) by patching the `env` block of
 // ~/.claude/settings.json, which Claude Code hot-reloads — no restart.
@@ -12,12 +11,12 @@
 // providers/.active.json, so switching back to 'official' removes precisely
 // those keys (evidence on disk, not an in-memory flag) and the user's own env
 // entries survive.
-const fs = require('fs');
-const path = require('path');
-const profiles = require('./profiles');
-const settings = require('./settings');
-const txn = require('./txn');
-const { writeJsonStable, atomicWrite } = require('./fsutil');
+import fs from 'fs';
+import path from 'path';
+import * as profiles from './profiles.js';
+import * as settings from './settings.js';
+import * as txn from './txn.js';
+import { writeJsonStable, atomicWrite } from './fsutil.js';
 
 // env keys keyflip manages for a provider (everything else in env is the user's)
 const MODEL_KEYS = {
@@ -173,9 +172,4 @@ async function speedtest(ctx, name, opts) {
   return { results: results, chosen: chosen, fastest: fastest, persisted: persisted };
 }
 
-module.exports = {
-  providersDir: providersDir, metaPath: metaPath, activePath: activePath,
-  list: list, read: read, exists: exists, readActive: readActive,
-  add: add, remove: remove, use: use, useOfficial: useOfficial, envFor: envFor,
-  speedtest: speedtest, MODEL_KEYS: MODEL_KEYS, ALL_MANAGED: ALL_MANAGED,
-};
+export { providersDir, metaPath, activePath, list, read, exists, readActive, add, remove, use, useOfficial, envFor, speedtest, MODEL_KEYS, ALL_MANAGED };

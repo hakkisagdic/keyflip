@@ -1,19 +1,24 @@
-'use strict';
 // G1: `keyflip panel` — a command-activated LOCAL web dashboard (loopback only, never a
 // daemon; the user starts/stops it). Read-only v1: it aggregates keyflip state (accounts +
 // cached quota, providers, recent sessions, keepsakes) and renders it. Zero-dep (Node http +
 // inline HTML/CSS/JS). No mutation surface → nothing dangerous is exposed over HTTP.
-const http = require('http');
-const fs = require('fs');
-const path = require('path');
+import http from 'http';
+import fs from 'fs';
+import path from 'path';
+import * as _core from './core.js';
+import * as _provider from './provider.js';
+import * as _sessions from './sessions.js';
+import * as _memory from './memory.js';
+import * as _recall from './recall.js';
+import * as _history from './history.js';
 
 // Aggregate the dashboard state. FAST — reads the cached usage (no network fetch) and bounds
 // the session/keepsake lists. Never throws (a panel must not crash on partial data).
 function buildState(ctx) {
-  const core = require('./core');
-  const provider = require('./provider');
-  const sessions = require('./sessions');
-  const memory = require('./memory');
+  const core = _core;
+  const provider = _provider;
+  const sessions = _sessions;
+  const memory = _memory;
 
   let usageCache = {};
   try { usageCache = JSON.parse(fs.readFileSync(path.join(ctx.configDir, '.usage-cache.json'), 'utf8')) || {}; } catch (e) { usageCache = {}; }
@@ -21,7 +26,7 @@ function buildState(ctx) {
   // G5: per-account 5h utilization trend (chronological) from the usage-history log.
   const trendByAccount = {};
   safe(function () {
-    require('./history').readUsage(ctx, 1000).forEach(function (s) {
+    _history.readUsage(ctx, 1000).forEach(function (s) {
       if (s && s.account != null && typeof s.fiveHour === 'number') { (trendByAccount[s.account] = trendByAccount[s.account] || []).push(s.fiveHour); }
     });
   }, null);
@@ -97,8 +102,8 @@ function buildActivity(ctx, sessionRows) {
 // >=2 of their top terms (ties into dreaming/distillation). Bounded + zero-dep (reuses the
 // recall tokenizer). Layout (circle) is done client-side.
 function buildMemoryGraph(ctx) {
-  const memory = require('./memory');
-  const recall = require('./recall');
+  const memory = _memory;
+  const recall = _recall;
   let list; try { list = memory.list(ctx).slice(0, 24); } catch (e) { return { nodes: [], edges: [] }; }
   const nodes = list.map(function (m) {
     let text = ''; try { text = memory.read(ctx, m.key) || ''; } catch (e) { text = ''; }
@@ -369,4 +374,4 @@ function serveFleet(ctx, opts) {
   });
 }
 
-module.exports = { buildState: buildState, buildActivity: buildActivity, buildMemoryGraph: buildMemoryGraph, buildSnapshot: buildSnapshot, renderSnapshot: renderSnapshot, renderPage: renderPage, renderFleetPage: renderFleetPage, serve: serve, serveFleet: serveFleet };
+export { buildState, buildActivity, buildMemoryGraph, buildSnapshot, renderSnapshot, renderPage, renderFleetPage, serve, serveFleet };

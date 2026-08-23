@@ -1,14 +1,13 @@
-'use strict';
 // Tests for #8: the desktop↔CLI tug-of-war warning. desktopTugRisk() decides whether a
 // running desktop app on a DIFFERENT account than the just-switched CLI account should
 // be flagged (it can rewrite the shared login and undo an in-place --force swap).
-const test = require('node:test');
-const assert = require('node:assert');
-const fs = require('fs');
-const path = require('path');
-const cli = require('../src/cli');
-const profiles = require('../src/profiles');
-const { makeCtx } = require('./helpers');
+import test from 'node:test';
+import assert from 'node:assert';
+import fs from 'fs';
+import path from 'path';
+import * as cli from '../src/cli.js';
+import * as profiles from '../src/profiles.js';
+import { makeCtx } from './helpers.js';
 
 const APP_ORG = '11111111-2222-3333-4444-555555555555';
 const OTHER_ORG = '99999999-8888-7777-6666-555555555555';

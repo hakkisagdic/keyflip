@@ -1,11 +1,10 @@
-'use strict';
 // Tests the arrow-key (raw keypress) menu using a mock TTY input/output.
-const test = require('node:test');
-const assert = require('node:assert');
-const { EventEmitter } = require('events');
-const menu = require('../src/menu');
-const core = require('../src/core');
-const { makeCtx, writeClaude } = require('./helpers');
+import test from 'node:test';
+import assert from 'node:assert';
+import { EventEmitter } from 'events';
+import * as menu from '../src/menu.js';
+import * as core from '../src/core.js';
+import { makeCtx, writeClaude } from './helpers.js';
 
 function mockIO() {
   const input = new EventEmitter();

@@ -1,12 +1,13 @@
-'use strict';
-const test = require('node:test');
-const assert = require('node:assert');
-const fs = require('fs');
-const path = require('path');
-const autosw = require('../src/autoswitch');
-const links = require('../src/links');
-const core = require('../src/core');
-const { makeCtx, writeClaude, tmpdir } = require('./helpers');
+import test from 'node:test';
+import assert from 'node:assert';
+import fs from 'fs';
+import path from 'path';
+import * as autosw from '../src/autoswitch.js';
+import * as links from '../src/links.js';
+import * as core from '../src/core.js';
+import { makeCtx, writeClaude, tmpdir } from './helpers.js';
+import * as _session from '../src/session.js';
+import * as _groups from '../src/groups.js';
 
 function login(ctx, email, uid, tok) {
   writeClaude(ctx, { oauthAccount: { emailAddress: email }, userID: uid });
@@ -59,7 +60,7 @@ test('autoswitch tick reports no-candidate when every alternative is exhausted',
 
 test('autoswitch tick with a group scopes rotation to the tagged pool (overrides strategy)', async function () {
   const ctx = threeAccounts();
-  require('../src/groups').addTag(ctx, 'a', 'work'); // only 'a' is in group 'work'
+  _groups.addTag(ctx, 'a', 'work'); // only 'a' is in group 'work'
   // 'best' alone would prefer b (5% used, most headroom), but group 'work' restricts the pool to a.
   const r = await autosw.tick(ctx, { threshold: 90, strategy: 'best', group: 'work', fetch: usageFetch({ TC: 95, TA: 40, TB: 5 }), nowMs: 1, cacheTtlMs: 0 });
   assert.strictEqual(r.state, 'switched');
@@ -114,7 +115,7 @@ test('link set/lookup resolves through ancestors; remove unlinks', function () {
 
 test('run --share-history shares projects/ into the session (opt-in)', function (t) {
   if (process.platform === 'win32') return t.skip('symlink semantics differ on Windows');
-  const session = require('../src/session');
+  const session = _session;
   const ctx = makeCtx();
   login(ctx, 'a@x.com', 'u1', 'TA'); core.addCurrent(ctx);
   fs.mkdirSync(path.join(ctx.home, '.claude', 'projects'), { recursive: true });

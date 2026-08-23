@@ -1,10 +1,9 @@
-'use strict';
-const test = require('node:test');
-const assert = require('node:assert');
-const fs = require('fs');
-const path = require('path');
-const update = require('../src/update');
-const { tmpdir } = require('./helpers');
+import test from 'node:test';
+import assert from 'node:assert';
+import fs from 'fs';
+import path from 'path';
+import * as update from '../src/update.js';
+import { tmpdir } from './helpers.js';
 
 function ctxAt(dir) { return { configDir: dir }; }
 const NOW = 1800000000000;

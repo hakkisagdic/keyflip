@@ -1,4 +1,3 @@
-'use strict';
 // Wave 4 Context Layer — the PROJECT-CONTEXT store. A tool-independent, portable project
 // memory that lives in a `.keyflip/` folder in the PROJECT directory (NOT ctx.configDir) so it
 // travels with the repo across AI tools/accounts/machines. Holds a NormalizedProjectContext:
@@ -18,11 +17,12 @@
 // ships as `projctx.js`; the user-facing command stays `keyflip context` and the MCP tools stay
 // `keyflip_context_*`. Zero-dep: Node built-ins only. All IO/time/subprocess is injectable via
 // opts (opts.now/opts.clock, opts.run) so tests need no network/subprocess/real time/real git.
-const fs = require('fs');
-const path = require('path');
-const crypto = require('crypto');
-const { atomicWrite } = require('./fsutil');
-const secretscan = require('./secretscan');
+import fs from 'fs';
+import path from 'path';
+import crypto from 'crypto';
+import { atomicWrite } from './fsutil.js';
+import * as secretscan from './secretscan.js';
+import * as _exec from './exec.js';
 
 const SCHEMA_VERSION = 1;
 const DECISION_STATUS = ['decided', 'rejected', 'superseded'];
@@ -207,7 +207,7 @@ function init(projectPath, opts) {
 // Best-effort current-branch detection via the injected runner (default exec.run). Returns
 // { path:'.', branch } or null. Zero secrets, never throws, and fully skippable in tests.
 function detectRepo(projectPath, opts) {
-  const run = (opts && opts.run) || require('./exec').run;
+  const run = (opts && opts.run) || _exec.run;
   try {
     const r = run('git', ['-C', base(projectPath), 'rev-parse', '--abbrev-ref', 'HEAD']);
     if (r && r.code === 0) {
@@ -433,28 +433,4 @@ function summary(projectPath, opts) {
   return redactText(lines.join('\n'));
 }
 
-module.exports = {
-  SCHEMA_VERSION: SCHEMA_VERSION,
-  DECISION_STATUS: DECISION_STATUS,
-  TASK_STATUS: TASK_STATUS,
-  dir: dir,
-  init: init,
-  exists: exists,
-  read: read,
-  setProject: setProject,
-  patchProject: patchProject,
-  setContextMd: setContextMd,
-  addDecision: addDecision,
-  updateDecision: updateDecision,
-  removeDecision: removeDecision,
-  addTask: addTask,
-  updateTask: updateTask,
-  removeTask: removeTask,
-  setActiveTask: setActiveTask,
-  scanEnvVars: scanEnvVars,
-  pack: pack,
-  summary: summary,
-  // exported for tests / reuse
-  redactText: redactText,
-  detectRepo: detectRepo,
-};
+export { SCHEMA_VERSION, DECISION_STATUS, TASK_STATUS, dir, init, exists, read, setProject, patchProject, setContextMd, addDecision, updateDecision, removeDecision, addTask, updateTask, removeTask, setActiveTask, scanEnvVars, pack, summary, redactText, detectRepo };

@@ -1,10 +1,9 @@
-'use strict';
 // Lightweight action log for postmortems. Key events (switch/add/clean/errors)
 // are appended to <configDir>/logs/keyflip.log — the directory is only created
 // on the first record, so read-only runs leave no artifacts. --debug additionally
 // echoes records to stderr. Never logs secrets.
-const fs = require('fs');
-const path = require('path');
+import fs from 'fs';
+import path from 'path';
 
 const state = { dir: null, debug: false, ready: false };
 
@@ -24,4 +23,4 @@ function log(msg) {
 
 function debugEnabled() { return state.debug; }
 
-module.exports = { init: init, log: log, debugEnabled: debugEnabled };
+export { init, log, debugEnabled };

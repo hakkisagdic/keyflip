@@ -1,11 +1,10 @@
-'use strict';
-const test = require('node:test');
-const assert = require('node:assert');
-const fs = require('fs');
-const path = require('path');
-const appauth = require('../src/appauth');
-const profiles = require('../src/profiles');
-const { tmpdir } = require('./helpers');
+import test from 'node:test';
+import assert from 'node:assert';
+import fs from 'fs';
+import path from 'path';
+import * as appauth from '../src/appauth.js';
+import * as profiles from '../src/profiles.js';
+import { tmpdir } from './helpers.js';
 
 function setup() {
   const home = tmpdir();
@@ -155,7 +154,6 @@ test('applyFromProfile refuses to restore a snapshot without a session cookie', 
 });
 
 function encryptV10(text, password) {
-  const crypto = require('crypto');
   const key = crypto.pbkdf2Sync(password, 'saltysalt', 1003, 16, 'sha1');
   const c = crypto.createCipheriv('aes-128-cbc', key, Buffer.alloc(16, 0x20));
   return Buffer.concat([Buffer.from('v10'), c.update(text, 'utf8'), c.final()]).toString('base64');
@@ -290,8 +288,8 @@ test('detectAppAccount returns unresolved-org (not a stale org) when the token n
 
 // Windows: the app's token cache is AES-256-GCM under a DPAPI-protected master key (no Keychain).
 // The macOS path is untouched; this covers the gated win32 branch with an injected DPAPI decryptor.
-const crypto = require('crypto');
-const os = require('os');
+import crypto from 'crypto';
+import os from 'os';
 test('decryptAppBlobWin recovers a v10 AES-256-GCM token cache via the DPAPI master key', function () {
   const key = crypto.randomBytes(32);
   const nonce = crypto.randomBytes(12);

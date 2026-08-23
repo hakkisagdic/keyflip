@@ -1,11 +1,10 @@
-'use strict';
 // The headless-Claude seam used by distill / dream: run `claude -p "<instruction>"` with
 // the transcript on STDIN and return the model's text. Zero-dep (shells the Claude Code
 // CLI); degrades to a clear error if `claude` isn't installed. NOTE: this spends the ACTIVE
 // account's quota — callers must make that explicit and get consent. Runner is injectable
 // for tests. The instruction is a non-secret positional arg; the (possibly huge) transcript
 // goes on stdin so it never hits argv limits.
-const { run } = require('./exec');
+import { run } from './exec.js';
 
 function available(runner) { try { const r = (runner || run)('claude', ['--version']); return !!(r && r.code === 0); } catch (e) { return false; } }
 
@@ -23,4 +22,4 @@ function summarize(instruction, text, opts) {
   return { ok: true, text: out };
 }
 
-module.exports = { available: available, summarize: summarize };
+export { available, summarize };

@@ -1,12 +1,12 @@
-'use strict';
 // J1: carry OTHER AI agents' home-level MEMORY / instruction files across machines (like
 // keyflip does ~/.claude for Claude). v1 ships the SAFE slice — markdown/text instruction
 // files under the user's home, existence-gated, opt-in (`--agents`). NO config/auth/secret
 // files (those hold API keys/tokens — deferred; see docs/MULTI-AGENT-STATE.md). Project-level
 // files (.cursorrules, copilot-instructions.md, CONVENTIONS.md) travel with their git repos.
-const fs = require('fs');
-const path = require('path');
-const fsutil = require('./fsutil');
+import fs from 'fs';
+import path from 'path';
+import * as fsutil from './fsutil.js';
+import * as _secretscan from './secretscan.js';
 
 // Each root is relative to $HOME. A root can be a single file or a directory of memory files.
 const REGISTRY = [
@@ -108,7 +108,7 @@ function presentAgents(ctx) {
 function collectAgentConfig(ctx, opts) {
   opts = opts || {};
   const redact = opts.redact !== false; // default: redact
-  const secretscan = require('./secretscan');
+  const secretscan = _secretscan;
   const only = opts.only && opts.only.length ? opts.only : null;
   const out = [];
   CONFIG_REGISTRY.forEach(function (a) {
@@ -128,7 +128,7 @@ function collectAgentConfig(ctx, opts) {
 // EXCEPT entries the sender intentionally carried with secrets (redacted === false).
 function mergeAgentConfig(ctx, list, opts) {
   opts = opts || {};
-  const secretscan = require('./secretscan');
+  const secretscan = _secretscan;
   const home = ctx.home;
   let added = 0, kept = 0, overwritten = 0, skipped = 0;
   (list || []).forEach(function (m) {
@@ -154,9 +154,4 @@ function presentAgentConfig(ctx) {
   }).map(function (a) { return a.id; });
 }
 
-module.exports = {
-  REGISTRY: REGISTRY, CONFIG_REGISTRY: CONFIG_REGISTRY,
-  collectAgentMemory: collectAgentMemory, mergeAgentMemory: mergeAgentMemory,
-  collectAgentConfig: collectAgentConfig, mergeAgentConfig: mergeAgentConfig,
-  presentAgents: presentAgents, presentAgentConfig: presentAgentConfig, isMemoryFile: isMemoryFile,
-};
+export { REGISTRY, CONFIG_REGISTRY, collectAgentMemory, mergeAgentMemory, collectAgentConfig, mergeAgentConfig, presentAgents, presentAgentConfig, isMemoryFile };

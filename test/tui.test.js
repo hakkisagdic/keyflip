@@ -1,15 +1,14 @@
-'use strict';
 // Tests for E5 (src/tui.js): the pure render/reducer/buildState/normalizeKey are exercised with
 // no TTY, and run()'s loop is driven through a FAKE tty (an EventEmitter) so the interactive
 // path (alt-screen, quit, Enter->switch) is covered without a real terminal or network.
-const test = require('node:test');
-const assert = require('node:assert');
-const fs = require('fs');
-const path = require('path');
-const { EventEmitter } = require('events');
-const tui = require('../src/tui');
-const profiles = require('../src/profiles');
-const { makeCtx } = require('./helpers');
+import test from 'node:test';
+import assert from 'node:assert';
+import fs from 'fs';
+import path from 'path';
+import { EventEmitter } from 'events';
+import * as tui from '../src/tui.js';
+import * as profiles from '../src/profiles.js';
+import { makeCtx } from './helpers.js';
 
 function writeProfile(ctx, name, email) {
   profiles.write(ctx.configDir, { name: name, email: email });

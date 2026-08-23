@@ -1,4 +1,3 @@
-'use strict';
 // Secret SCANNER / REDACTOR — the "never carry a secret" net that every outbound
 // or versioned surface runs text through (router prompts, checkpoints, rules,
 // project context, brain/Gemini payloads, agent config carry, ctx sync, codexbar).
@@ -168,15 +167,4 @@ function redactConfig(text) {
   return { text: shaped.text, count: lined.count + shaped.count };
 }
 
-module.exports = {
-  REDACTED: REDACTED,
-  SECRET_PATTERNS: SECRET_PATTERNS,
-  isCredentialKey: isCredentialKey,
-  isEnvRefOrEmpty: isEnvRefOrEmpty,
-  looksSecret: looksSecret,
-  scanText: scanText,
-  redactValue: redactValue,
-  redactLines: redactLines,
-  redactJson: redactJson,
-  redactConfig: redactConfig,
-};
+export { REDACTED, SECRET_PATTERNS, isCredentialKey, isEnvRefOrEmpty, looksSecret, scanText, redactValue, redactLines, redactJson, redactConfig };

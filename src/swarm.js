@@ -1,4 +1,3 @@
-'use strict';
 // SWARM: run one command across YOUR OWN enrolled fleet machines + reachability (ping) checks.
 // This is AUTHORIZED distributed ops on machines the operator themselves enrolled in their
 // encrypted rendezvous (see fleet.js) — NOT a tool for reaching third-party targets. It COMPOSES
@@ -9,10 +8,11 @@
 // origin-authenticated (fleet.checkOrigin — a leaked passphrase still can't forge one) and
 // replay-guarded (fleet.markApplied). Results are published back, encrypted, so the initiator can
 // aggregate them. State lives at <configDir>/swarm.json (0600).
-const path = require('path');
-const crypto = require('crypto');
-const fleet = require('./fleet');
-const fsutil = require('./fsutil');
+import path from 'path';
+import crypto from 'crypto';
+import * as fleet from './fleet.js';
+import * as fsutil from './fsutil.js';
+import * as _exec from './exec.js';
 
 const MAX_OUTPUT = 64 * 1024;      // cap each captured stream (anti-DoS / anti-transcript-bloat)
 const MAX_ARGS = 256;              // cap argv length
@@ -111,7 +111,7 @@ function ping(ctx, b, url, opts) {
 
 // Apply ONE inbound exec command. CONSENT-GATED: does nothing unless opts.allowExec === true
 // (default OFF, mirroring fleet.applyCommand's allowSwitch/allowSave). Origin is re-verified when a
-// senderKey is supplied (defence in depth). Executes via opts.run (default require('./exec').run)
+// senderKey is supplied (defence in depth). Executes via opts.run (default _exec.run)
 // as an ARGV ARRAY — spawnSync with no shell. Output is size-capped. When opts.bus is supplied the
 // result is published back to the initiator. Returns { ok, applied:'exec', detail, result?, skipped? }.
 function applyExec(ctx, cmd, opts) {
@@ -130,7 +130,7 @@ function applyExec(ctx, cmd, opts) {
   let command, args;
   try { command = normCommand(payload.command); args = normArgs(payload.args); }
   catch (e) { return { ok: false, applied: 'exec', detail: (e && e.message) || 'bad exec payload' }; }
-  const run = opts.run || require('./exec').run;
+  const run = opts.run || _exec.run;
   let r;
   try { r = run(command, args, undefined, { timeoutMs: opts.timeoutMs || DEFAULT_TIMEOUT_MS }); }
   catch (e) { return { ok: false, applied: 'exec', detail: 'exec failed: ' + ((e && e.message) || 'error') }; }
@@ -237,12 +237,4 @@ function aggregate(ctx, b, opts) {
 // A null-prototype id set — a hostile id ("__proto__"/"constructor") can never pollute a prototype.
 function indexList(ids) { const m = Object.create(null); ids.forEach(function (id) { if (typeof id === 'string') m[id] = 1; }); return m; }
 
-module.exports = {
-  queueExec: queueExec, applyExec: applyExec, drainExec: drainExec,
-  ping: ping, aggregate: aggregate,
-  publishResult: publishResult, resultName: resultName,
-  targets: targets, normArgs: normArgs, normCommand: normCommand, capOutput: capOutput,
-  readState: readState, writeState: writeState, statePath: statePath,
-  execTrusted: execTrusted, isExecTrusted: isExecTrusted, trustExec: trustExec, untrustExec: untrustExec, execTrustList: execTrustList,
-  RESULT_SUFFIX: RESULT_SUFFIX, MAX_OUTPUT: MAX_OUTPUT,
-};
+export { queueExec, applyExec, drainExec, ping, aggregate, publishResult, resultName, targets, normArgs, normCommand, capOutput, readState, writeState, statePath, execTrusted, isExecTrusted, trustExec, untrustExec, execTrustList, RESULT_SUFFIX, MAX_OUTPUT };

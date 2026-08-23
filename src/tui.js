@@ -1,4 +1,3 @@
-'use strict';
 // E5: `keyflip ui` — a self-contained full-screen TUI dashboard (zero-dep ANSI). The design
 // SPLITS pure logic from IO so the whole surface is unit-testable without a TTY: render(state)
 // -> a STRING frame, reducer(state,key) -> the next state (navigation/filter/effects), and
@@ -7,9 +6,13 @@
 // run() is a thin interactive loop: raw-mode stdin, alt-screen, SIGWINCH, render each frame,
 // and Enter performs a switch via an injected opts.onSwitch (default core.performSwitch, which
 // the CLI wraps in its lock). All escape/cleanup is restored on exit.
-const fs = require('fs');
-const path = require('path');
-const { atomicWrite, readJsonForWrite } = require('./fsutil');
+import fs from 'fs';
+import path from 'path';
+import { atomicWrite, readJsonForWrite } from './fsutil.js';
+import * as _core from './core.js';
+import * as _provider from './provider.js';
+import _readline from 'readline';
+import * as _commands from './commands.js';
 
 const BARW = 12;           // width of a usage bar
 const CSI = '\x1b[';       // ANSI Control Sequence Introducer
@@ -28,7 +31,7 @@ const KEYMAP = [
 
 // The command PALETTE: a searchable index of the whole CLI surface so nothing has to be memorized.
 // commands.js is pure data (no IO); require it lazily + defensively so the TUI never hard-breaks.
-function commandCatalog() { try { return require('./commands'); } catch (e) { return { search: function () { return []; }, CATALOG: [] }; }
+function commandCatalog() { try { return _commands; } catch (e) { return { search: function () { return []; }, CATALOG: [] }; }
 }
 function paletteResults(state) {
   const q = (state && state.filter) || '';
@@ -92,8 +95,8 @@ function fleetSummary(ctx) {
 // falling back to the on-disk .usage-cache.json (no network). Tests inject and need nothing live.
 function buildState(ctx, opts) {
   opts = opts || {};
-  const core = require('./core');
-  const provider = require('./provider');
+  const core = _core;
+  const provider = _provider;
   const snap = usageLookup(opts.usage != null ? opts.usage : readUsageCache(ctx));
 
   const accounts = safe(function () {
@@ -359,8 +362,8 @@ function run(ctx, opts) {
     return Promise.resolve({ tty: false });
   }
 
-  const core = require('./core');
-  const readline = require('readline');
+  const core = _core;
+  const readline = _readline;
   const onSwitch = opts.onSwitch || function (name) { return core.performSwitch(ctx, name); };
   let state = buildState(ctx, opts);
 
@@ -431,17 +434,4 @@ function run(ctx, opts) {
   });
 }
 
-module.exports = {
-  buildState: buildState,
-  render: render,
-  reducer: reducer,
-  run: run,
-  keymap: KEYMAP,
-  // exported for tests / reuse:
-  visible: visible,
-  selectedName: selectedName,
-  normalizeKey: normalizeKey,
-  loadPrefs: loadPrefs,
-  savePrefs: savePrefs,
-  fleetSummary: fleetSummary,
-};
+export { buildState, render, reducer, run, KEYMAP as keymap, visible, selectedName, normalizeKey, loadPrefs, savePrefs, fleetSummary };

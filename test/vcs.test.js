@@ -1,16 +1,15 @@
-'use strict';
 // Tests for git-backed versioning (src/vcs.js). Requires the system `git`; skips if absent.
 // This file OWNS the enabled path, so it clears KEYFLIP_VCS (the rest of the suite runs
 // with KEYFLIP_VCS=off from package.json so it doesn't git-init temp dirs).
 delete process.env.KEYFLIP_VCS;
 
-const test = require('node:test');
-const assert = require('node:assert');
-const fs = require('fs');
-const path = require('path');
-const cp = require('child_process');
-const vcs = require('../src/vcs');
-const { makeCtx } = require('./helpers');
+import test from 'node:test';
+import assert from 'node:assert';
+import fs from 'fs';
+import path from 'path';
+import cp from 'child_process';
+import * as vcs from '../src/vcs.js';
+import { makeCtx } from './helpers.js';
 
 const HAS_GIT = vcs.gitAvailable();
 function tracked(cfg) { return cp.execFileSync('git', ['-C', cfg, 'ls-files'], { encoding: 'utf8' }).trim().split('\n').filter(Boolean); }

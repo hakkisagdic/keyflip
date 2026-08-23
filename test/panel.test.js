@@ -1,15 +1,14 @@
-'use strict';
 // Tests for G1: the local web panel (src/panel.js). buildState is pure; serve is exercised
 // over real loopback HTTP.
-const test = require('node:test');
-const assert = require('node:assert');
-const fs = require('fs');
-const path = require('path');
-const http = require('http');
-const panel = require('../src/panel');
-const profiles = require('../src/profiles');
-const memory = require('../src/memory');
-const { makeCtx, writeClaude } = require('./helpers');
+import test from 'node:test';
+import assert from 'node:assert';
+import fs from 'fs';
+import path from 'path';
+import http from 'http';
+import * as panel from '../src/panel.js';
+import * as profiles from '../src/profiles.js';
+import * as memory from '../src/memory.js';
+import { makeCtx, writeClaude } from './helpers.js';
 
 function get(url) {
   return new Promise(function (resolve, reject) {

@@ -1,4 +1,3 @@
-'use strict';
 // brain.js — an OPT-IN, SUGGEST+APPROVE planner. It turns a natural-language
 // intent into a VALIDATED PLAN of keyflip commands and PROPOSES it to the CALLER
 // (the CLI), which is the ONLY thing that ever approves + executes. This module
@@ -20,7 +19,8 @@
 //      marked mutating = (entry.safe !== true). The plan is capped. Junk / prose /
 //      no-JSON -> { ok:false, reason } — never a throw.
 
-const secretscan = require('./secretscan');
+import * as secretscan from './secretscan.js';
+import * as _commands from './commands.js';
 
 // Hard cap on how many steps a proposed plan may contain. A hostile model that
 // returns a 10k-step plan is truncated to this.
@@ -83,7 +83,7 @@ function redactOutbound(input) {
 function resolveCatalog(deps) {
   deps = deps || {};
   if (deps.catalog && typeof deps.catalog.get === 'function') return deps.catalog;
-  return require('./commands');
+  return _commands;
 }
 
 // A compact, non-secret view of the catalog for the prompt: name + safe + desc.
@@ -306,14 +306,4 @@ function formatPlan(plan) {
   return lines.join('\n');
 }
 
-module.exports = {
-  enabled: enabled,
-  propose: propose,
-  redactOutbound: redactOutbound,
-  formatPlan: formatPlan,
-  callGemini: callGemini,
-  validatePlan: validatePlan,
-  extractFirstJsonObject: extractFirstJsonObject,
-  MAX_STEPS: MAX_STEPS,
-  DEFAULT_MODEL: DEFAULT_MODEL,
-};
+export { enabled, propose, redactOutbound, formatPlan, callGemini, validatePlan, extractFirstJsonObject, MAX_STEPS, DEFAULT_MODEL };

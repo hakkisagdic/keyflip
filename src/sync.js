@@ -1,4 +1,3 @@
-'use strict';
 // #18 Encrypted cloud sync of the account/provider bundle over WebDAV. Because
 // keyflip's export contains OAuth tokens (secrets), the payload is ALWAYS
 // encrypted with a passphrase (AES-256-GCM, scrypt-derived key) before it leaves
@@ -7,10 +6,10 @@
 //
 // (The simpler "point KEYFLIP_CONFIG_DIR at a Dropbox/iCloud folder" path needs
 // no code — it's documented in the README.)
-const fs = require('fs');
-const path = require('path');
-const crypto = require('crypto');
-const transfer = require('./transfer');
+import fs from 'fs';
+import path from 'path';
+import crypto from 'crypto';
+import * as transfer from './transfer.js';
 
 const MAGIC = 'keyflip-sync';
 const VERSION = 2;
@@ -112,4 +111,4 @@ function apply(ctx, pulled, opts) {
   return transfer.applyImport(ctx, pulled._bundle, { force: !!(opts && opts.force) });
 }
 
-module.exports = { encrypt: encrypt, decrypt: decrypt, test: test, push: push, pull: pull, apply: apply, davPut: davPut, davGet: davGet, davDelete: davDelete, VERSION: VERSION };
+export { encrypt, decrypt, test, push, pull, apply, davPut, davGet, davDelete, VERSION };

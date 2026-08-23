@@ -1,4 +1,3 @@
-'use strict';
 // #16 WSL helpers for a Windows-side keyflip managing a WSL-resident Claude
 // install (config dir pointed at \\wsl$\<distro>\...\.claude or \\wsl.localhost\...).
 // Port cc-switch's rules: detect WSL UNC prefixes, case-insensitive lexical
@@ -36,4 +35,4 @@ function wrapExec(command, args, distro) {
   return { command: 'wsl.exe', args: ['-d', distro, '--', 'sh', '-lc', line] };
 }
 
-module.exports = { isWslPath: isWslPath, distroOf: distroOf, normalizeForCompare: normalizeForCompare, samePath: samePath, wrapExec: wrapExec };
+export { isWslPath, distroOf, normalizeForCompare, samePath, wrapExec };

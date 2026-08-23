@@ -1,16 +1,15 @@
-'use strict';
 // Tests for the self-hostable ZERO-KNOWLEDGE blob relay (src/relayserver.js). Everything
 // is exercised over REAL loopback HTTP on an ephemeral port (bind 127.0.0.1, port 0) so we
 // cover the actual wire behaviour of the PUT/GET/DELETE/HEAD/OPTIONS subset that keyflip's
 // WebDAV client speaks — plus the anti-traversal, size, count, TTL and auth guards.
-const test = require('node:test');
-const assert = require('node:assert');
-const http = require('http');
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
+import test from 'node:test';
+import assert from 'node:assert';
+import http from 'http';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
 
-const relay = require('../src/relayserver');
+import * as relay from '../src/relayserver.js';
 
 function tmpDir() { return fs.mkdtempSync(path.join(os.tmpdir(), 'kf-relay-')); }
 

@@ -1,4 +1,3 @@
-'use strict';
 // Git-bound checkpoints: a portable snapshot of project state at a session boundary. A
 // checkpoint records WHERE the repo was (branch/commit/dirty files), a redacted human summary,
 // a snapshot of the agent's tasks, and the active provider, chained by `parent` to the previous
@@ -13,11 +12,12 @@
 // ALL IO/time/subprocess is injected (opts.run / opts.now / opts.clock) so tests need no real
 // git, no subprocess, and no real clock. Design ported from a TS proposal to zero-dep JS (plain
 // objects + runtime shape guards); built-ins only.
-const fs = require('fs');
-const path = require('path');
-const crypto = require('crypto');
-const { atomicWrite } = require('./fsutil');
-const secretscan = require('./secretscan');
+import fs from 'fs';
+import path from 'path';
+import crypto from 'crypto';
+import { atomicWrite } from './fsutil.js';
+import * as secretscan from './secretscan.js';
+import * as _exec from './exec.js';
 
 // ---- layout -----------------------------------------------------------------
 
@@ -170,7 +170,7 @@ function create(projectPath, data, opts) {
   projectPath = projectPath || process.cwd();
   data = data || {};
   opts = opts || {};
-  const run = opts.run || require('./exec').run;
+  const run = opts.run || _exec.run;
   const nowFn = typeof opts.now === 'function' ? opts.now
     : (typeof opts.clock === 'function' ? opts.clock
       : function () { return new Date().toISOString(); });
@@ -204,16 +204,4 @@ function create(projectPath, data, opts) {
   return cp;
 }
 
-module.exports = {
-  create: create,
-  list: list,
-  latest: latest,
-  get: get,
-  restore: restore,
-  // exposed for reuse / wiring / tests
-  checkpointsDir: checkpointsDir,
-  safeId: safeId,
-  redactText: redactText,
-  deepRedact: deepRedact,
-  stableStringify: stableStringify,
-};
+export { create, list, latest, get, restore, checkpointsDir, safeId, redactText, deepRedact, stableStringify };

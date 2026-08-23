@@ -1,9 +1,8 @@
-'use strict';
 // Tests for G4: the xbar/SwiftBar menu-bar plugin output (src/menubar.js). render() is pure
 // given a state + exec, so we inject both and assert the emitted plugin format.
-const test = require('node:test');
-const assert = require('node:assert');
-const menubar = require('../src/menubar');
+import test from 'node:test';
+import assert from 'node:assert';
+import * as menubar from '../src/menubar.js';
 
 const EXEC = { exec: 'keyflip', pre: [] }; // predictable action lines (no `which` lookup)
 function render(state) { return menubar.render({}, { state: state, exec: EXEC }); }
@@ -79,7 +78,7 @@ test('resolveExec: a .js checkout runs via node; an installed binary runs direct
   assert.deepStrictEqual(asBin.pre, []);
 });
 
-const path = require('path');
+import path from 'path';
 test('pluginTarget resolves the menu-bar host + folder per platform (xbar / Argos / none)', function () {
   const mac = menubar.pluginTarget('darwin', '/Users/me', undefined);
   assert.strictEqual(mac.host, 'xbar/SwiftBar');

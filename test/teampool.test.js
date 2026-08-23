@@ -1,16 +1,15 @@
-'use strict';
 // TEAM POOL: a shared, ENCRYPTED credential pool with role-scoped visibility. An OWNER
 // machine and a MEMBER machine are two makeCtx contexts (separate config dirs + credential
 // stores) sharing one pool dir + passphrase — the real topology, run locally.
-const test = require('node:test');
-const assert = require('node:assert');
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
-const teampool = require('../src/teampool');
-const profiles = require('../src/profiles');
-const sync = require('../src/sync');
-const { makeCtx } = require('./helpers');
+import test from 'node:test';
+import assert from 'node:assert';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+import * as teampool from '../src/teampool.js';
+import * as profiles from '../src/profiles.js';
+import * as sync from '../src/sync.js';
+import { makeCtx } from './helpers.js';
 
 const PASS = 'team-pool-secret-passphrase';
 function sharedDir() { return fs.mkdtempSync(path.join(os.tmpdir(), 'kf-pool-')); }

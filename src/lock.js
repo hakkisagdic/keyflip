@@ -1,4 +1,3 @@
-'use strict';
 // Cross-process advisory lock so two keyflip invocations can't interleave a
 // switch (e.g. double-fired alias, the launcher app racing a terminal). The lock
 // is <configDir>/.lock holding {pid, at, token}. A lock is reclaimed only when
@@ -6,8 +5,8 @@
 // crashed process whose pid was later reused). release() removes the file ONLY
 // if it still carries our token, so a holder whose lock was reclaimed can never
 // delete the new owner's lock.
-const fs = require('fs');
-const path = require('path');
+import fs from 'fs';
+import path from 'path';
 
 function pidAlive(pid) {
   try { process.kill(pid, 0); return true; }
@@ -80,4 +79,4 @@ async function acquire(configDir, opts) {
   }
 }
 
-module.exports = { acquire: acquire, _pidAlive: pidAlive };
+export { acquire, pidAlive as _pidAlive };

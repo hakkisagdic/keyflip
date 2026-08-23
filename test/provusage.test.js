@@ -1,10 +1,9 @@
-'use strict';
-const test = require('node:test');
-const assert = require('node:assert');
-const fs = require('fs');
-const path = require('path');
-const prov = require('../src/provusage');
-const { makeCtx } = require('./helpers');
+import test from 'node:test';
+import assert from 'node:assert';
+import fs from 'fs';
+import path from 'path';
+import * as prov from '../src/provusage.js';
+import { makeCtx } from './helpers.js';
 
 // Fixed clock so relative "resets in" strings are deterministic.
 const NOW_MS = Date.UTC(2026, 0, 1, 0, 0, 0); // 2026-01-01T00:00:00Z

@@ -1,4 +1,3 @@
-'use strict';
 // SURFACE (E1): a universal credential-surface registry — one place that knows how to DETECT
 // (and, later, SWITCH) the active account for EACH supported AI tool, so keyflip can manage more
 // than Claude. v1 ships SAFE, READ-first adapters for the tools keyflip already understands via
@@ -6,8 +5,8 @@
 // where the identity lives in a plain NON-SECRET file, read the active account — never decrypting,
 // reading, or moving a secret. Opaque/keychain/secret stores report present + 'switch not supported
 // yet'. Claude itself stays handled by keyflip core; switch() is a clean seam that throws until built.
-const fs = require('fs');
-const path = require('path');
+import fs from 'fs';
+import path from 'path';
 
 function safe(fn, d) { try { return fn(); } catch (e) { return d; } }
 function pathExists(ctx, rel) { try { return fs.existsSync(path.join(ctx.home, rel)); } catch (e) { return false; } }
@@ -148,11 +147,4 @@ const mcpTools = [
   },
 ];
 
-module.exports = {
-  SURFACES: SURFACES,
-  get: get,
-  detectOne: detectOne,
-  detectAll: detectAll,
-  switch: switchSurface,
-  mcpTools: mcpTools,
-};
+export { SURFACES, get, detectOne, detectAll, switchSurface as switch, mcpTools };

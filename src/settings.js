@@ -1,8 +1,7 @@
-'use strict';
 // Helpers for ~/.claude/settings.json — the file Claude Code hot-reloads. Used
 // by provider switching (env block) and the shared-config-snippet feature.
-const fs = require('fs');
-const { readJsonForWrite } = require('./fsutil');
+import fs from 'fs';
+import { readJsonForWrite } from './fsutil.js';
 
 // Missing file -> {} (legit empty). Exists-but-corrupt -> THROW (never clobber
 // the user's real settings.json by treating a parse error as emptiness).
@@ -58,4 +57,4 @@ function setPath(obj, kp, val) {
   if (val === undefined) delete o[last]; else o[last] = val;
 }
 
-module.exports = { read: read, isCredentialKey: isCredentialKey, stripCredentialEnv: stripCredentialEnv, deepMerge: deepMerge, getPath: getPath, setPath: setPath };
+export { read, isCredentialKey, stripCredentialEnv, deepMerge, getPath, setPath };

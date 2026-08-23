@@ -1,12 +1,11 @@
-'use strict';
 // Per-account circuit breaker (#7): an account that repeatedly fails (expired
 // token, hard errors) trips OPEN and is skipped by autoswitch until a recovery
 // window passes (HALF-OPEN trial); a success CLOSES it again. State persists in
 // <configDir>/breakers.json so it survives across invocations. Passive usage
 // polls must NOT reset breaker state — only real success/failure signals do.
-const fs = require('fs');
-const path = require('path');
-const { writeJsonStable } = require('./fsutil');
+import fs from 'fs';
+import path from 'path';
+import { writeJsonStable } from './fsutil.js';
 
 const DEFAULTS = { failureThreshold: 4, recoveryMs: 60 * 1000, successesToClose: 2 };
 
@@ -68,4 +67,4 @@ function reset(ctx, name) {
   const all = readAll(ctx); delete all[name]; writeAll(ctx, all);
 }
 
-module.exports = { state: state, isAvailable: isAvailable, recordFailure: recordFailure, recordSuccess: recordSuccess, reset: reset, readAll: readAll, DEFAULTS: DEFAULTS };
+export { state, isAvailable, recordFailure, recordSuccess, reset, readAll, DEFAULTS };

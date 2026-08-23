@@ -1,15 +1,14 @@
-'use strict';
 // Context-sync privacy modes + conflict detection (src/ctxsync.js). Covers the mode/policy store,
 // per-policy filtering, the ALWAYS-ON secret scrub (the security invariant: no token/key ever
 // reaches an emitted payload — proven for every syncing mode), export/import round-trips
 // (plain + encrypted), prototype-pollution hardening, and the checkpoint conflict model.
-const test = require('node:test');
-const assert = require('node:assert');
-const os = require('os');
-const fs = require('fs');
-const path = require('path');
-const ctxsync = require('../src/ctxsync');
-const secretscan = require('../src/secretscan');
+import test from 'node:test';
+import assert from 'node:assert';
+import os from 'os';
+import fs from 'fs';
+import path from 'path';
+import * as ctxsync from '../src/ctxsync.js';
+import * as secretscan from '../src/secretscan.js';
 
 function tmpProject() { return fs.mkdtempSync(path.join(os.tmpdir(), 'keyflip-ctxsync-')); }
 const CLOCK = function () { return '2026-07-12T00:00:00.000Z'; };

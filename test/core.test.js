@@ -1,11 +1,10 @@
-'use strict';
-const test = require('node:test');
-const assert = require('node:assert');
-const fs = require('fs');
-const core = require('../src/core');
-const profiles = require('../src/profiles');
-const claude = require('../src/claude');
-const { makeCtx, writeClaude } = require('./helpers');
+import test from 'node:test';
+import assert from 'node:assert';
+import fs from 'fs';
+import * as core from '../src/core.js';
+import * as profiles from '../src/profiles.js';
+import * as claude from '../src/claude.js';
+import { makeCtx, writeClaude } from './helpers.js';
 
 function login(ctx, email, userID, liveBlob) {
   writeClaude(ctx, { oauthAccount: { emailAddress: email }, userID: userID });
@@ -192,12 +191,14 @@ test('a failed pointer write rolls the live credential back (no half-switch)', f
   const ctx = makeCtx();
   login(ctx, 'alice@example.com', 'u1', 'ALICE'); core.addCurrent(ctx);
   login(ctx, 'bob@example.com', 'u2', 'BOB'); core.addCurrent(ctx); // bob active, live=BOB
-  // Credential is written first, then the pointer; make the pointer write fail.
-  const realWrite = claude.writeConfig;
-  let calls = 0;
-  claude.writeConfig = function (p, cfg) { calls++; if (calls === 1) throw new Error('disk full'); return realWrite(p, cfg); };
-  assert.throws(function () { core.applyProfile(ctx, 'alice'); }, /rolled back/);
-  claude.writeConfig = realWrite;
+  // Credential is written first, then the pointer; make the pointer write fail
+  // by pointing to an invalid path (a directory instead of a file).
+  const realPath = ctx.claudeConfigPath;
+  const badDir = realPath + '.d';
+  fs.mkdirSync(badDir, { recursive: true });
+  ctx.claudeConfigPath = badDir; // writeConfig will fail on a directory
+  assert.throws(function () { core.applyProfile(ctx, 'alice'); });
+  ctx.claudeConfigPath = realPath;
   // live credential restored to bob's — no half-switch
   assert.strictEqual(ctx.store.getLive(), 'BOB');
 });

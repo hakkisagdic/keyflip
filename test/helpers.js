@@ -1,8 +1,7 @@
-'use strict';
-const os = require('os');
-const fs = require('fs');
-const path = require('path');
-const { MemoryStore } = require('../src/stores');
+import os from 'os';
+import fs from 'fs';
+import path from 'path';
+import { MemoryStore } from '../src/stores/index.js';
 
 function tmpdir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'keyflip-test-'));
@@ -32,4 +31,4 @@ function writeClaude(ctx, obj) {
   fs.writeFileSync(ctx.claudeConfigPath, JSON.stringify(obj, null, 2));
 }
 
-module.exports = { tmpdir: tmpdir, makeCtx: makeCtx, writeClaude: writeClaude };
+export { tmpdir, makeCtx, writeClaude };

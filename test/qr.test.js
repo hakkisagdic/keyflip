@@ -1,10 +1,9 @@
-'use strict';
 // Tests for the zero-dep QR encoder (src/qr.js). A wrong QR is worse than none, so we pin
 // every primitive to published ISO/IEC 18004 constants AND round-trip a real payload back
 // out of the rendered matrix (self-decode) to prove masking + placement + byte encoding.
-const test = require('node:test');
-const assert = require('node:assert');
-const qr = require('../src/qr');
+import test from 'node:test';
+import assert from 'node:assert';
+import * as qr from '../src/qr.js';
 
 // ---- GF(256) + Reed-Solomon primitives ----
 test('GF(256) multiply matches known values', function () {

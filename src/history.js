@@ -1,8 +1,7 @@
-'use strict';
 // Append-only logs (#7 event log, #12 usage history) as JSONL, pruned to a max
 // line count so they never grow unbounded. Failure to log never breaks a command.
-const fs = require('fs');
-const path = require('path');
+import fs from 'fs';
+import path from 'path';
 
 const MAX_LINES = 5000;
 
@@ -45,4 +44,4 @@ function recordUsage(ctx, account, info) {
 }
 function readUsage(ctx, limit) { return read(usageFile(ctx), limit); }
 
-module.exports = { recordEvent: recordEvent, readEvents: readEvents, recordUsage: recordUsage, readUsage: readUsage, eventsFile: eventsFile, usageFile: usageFile };
+export { recordEvent, readEvents, recordUsage, readUsage, eventsFile, usageFile };

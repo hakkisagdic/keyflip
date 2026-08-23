@@ -1,10 +1,11 @@
-'use strict';
 // Best-effort control of the Claude desktop app, per platform. Only used by the
 // CLI/menu (never by core), so the core stays hermetically testable.
 //
 // Test hook: set KEYFLIP_TEST_CLAUDE=running|stopped to control detection and make
 // quit/open no-ops (so tests never touch a real app). quit flips state to stopped.
-const { run } = require('./exec');
+import { run } from './exec.js';
+import _fs from 'fs';
+import _path from 'path';
 
 let _testStopped = false;
 
@@ -68,8 +69,8 @@ function pidAlive(pid) {
   catch (e) { return e && e.code === 'EPERM'; }
 }
 function claudeInstances(home) {
-  const fs = require('fs');
-  const path = require('path');
+  const fs = _fs;
+  const path = _path;
   const dir = path.join(home, '.claude', 'sessions');
   let files;
   try { files = fs.readdirSync(dir); } catch (e) { return []; }
@@ -95,11 +96,4 @@ function canManageApp(p) {
   return p === 'darwin';
 }
 
-module.exports = {
-  isClaudeRunning: isClaudeRunning,
-  isDesktopAppRunning: isDesktopAppRunning,
-  quitClaude: quitClaude,
-  openClaude: openClaude,
-  canManageApp: canManageApp,
-  claudeInstances: claudeInstances,
-};
+export { isClaudeRunning, isDesktopAppRunning, quitClaude, openClaude, canManageApp, claudeInstances };

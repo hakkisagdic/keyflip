@@ -1,10 +1,9 @@
-'use strict';
-const test = require('node:test');
-const assert = require('node:assert');
-const fs = require('fs');
-const path = require('path');
-const lock = require('../src/lock');
-const { tmpdir } = require('./helpers');
+import test from 'node:test';
+import assert from 'node:assert';
+import fs from 'fs';
+import path from 'path';
+import * as lock from '../src/lock.js';
+import { tmpdir } from './helpers.js';
 
 test('acquire creates the lock and release removes it', async function () {
   const dir = tmpdir();

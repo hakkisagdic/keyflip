@@ -1,4 +1,3 @@
-'use strict';
 // FLEET: manage every associated keyflip from one place. keyflip is not a daemon, so the fleet
 // coordinates through a SHARED RENDEZVOUS folder (a Dropbox/iCloud/WebDAV-synced dir, or any
 // path both machines can reach) — every file written there is encrypted with the fleet
@@ -6,10 +5,16 @@
 // status (accounts + quota + chat state) and reads an INBOX of commands other machines queued
 // for it (switch account, receive a distributed account). This lets machine A, in one screen,
 // see B and C, flip B's account, and hand C's account to B.
-const fs = require('fs');
-const path = require('path');
-const os = require('os');
-const crypto = require('crypto');
+import fs from 'fs';
+import path from 'path';
+import os from 'os';
+import crypto from 'crypto';
+import * as _sync from './sync.js';
+import * as _core from './core.js';
+import * as _sessions from './sessions.js';
+import * as _transcript from './transcript.js';
+import * as _transfer from './transfer.js';
+import * as _fsutil from './fsutil.js';
 
 function idPath(ctx) { return path.join(ctx.configDir, 'fleet.json'); }
 
@@ -20,10 +25,10 @@ function identity(ctx) {
   try { id = JSON.parse(fs.readFileSync(idPath(ctx), 'utf8')) || {}; } catch (e) { id = {}; }
   if (!id.machineId) {
     const host = safeHost();
-    const suffix = require('crypto').randomBytes(3).toString('hex');
+    const suffix = crypto.randomBytes(3).toString('hex');
     id.machineId = host + '-' + suffix;
     if (!id.name) id.name = host;
-    try { const fsutil = require('./fsutil'); fsutil.atomicWrite(idPath(ctx), JSON.stringify(id, null, 2), 0o600); } catch (e) { /* best-effort */ }
+    try { const fsutil = _fsutil; fsutil.atomicWrite(idPath(ctx), JSON.stringify(id, null, 2), 0o600); } catch (e) { /* best-effort */ }
   }
   return id;
 }
@@ -46,7 +51,7 @@ function scrub(s, max) { return String(s == null ? '' : s).replace(CTRL, ' ').sl
 function setConfig(ctx, patch) {
   const id = identity(ctx);
   Object.keys(patch || {}).forEach(function (k) { if (patch[k] != null) id[k] = patch[k]; });
-  require('./fsutil').atomicWrite(idPath(ctx), JSON.stringify(id, null, 2), 0o600);
+  _fsutil.atomicWrite(idPath(ctx), JSON.stringify(id, null, 2), 0o600);
   return id;
 }
 
@@ -68,7 +73,7 @@ function machineKeys(ctx) {
       publicB64: pair.publicKey.export({ type: 'spki', format: 'der' }).toString('base64'),
       createdAt: ctx.now(),
     };
-    try { require('./fsutil').atomicWrite(keyPath(ctx), JSON.stringify(k), 0o600); } catch (e) { /* best-effort */ }
+    try { _fsutil.atomicWrite(keyPath(ctx), JSON.stringify(k), 0o600); } catch (e) { /* best-effort */ }
   }
   return k;
 }
@@ -105,7 +110,7 @@ function knownKeys(ctx) {
   } catch (e) { /* none yet */ }
   return out;
 }
-function saveKnown(ctx, map) { try { require('./fsutil').atomicWrite(knownPath(ctx), JSON.stringify(map), 0o600); } catch (e) { /* best-effort */ } }
+function saveKnown(ctx, map) { try { _fsutil.atomicWrite(knownPath(ctx), JSON.stringify(map), 0o600); } catch (e) { /* best-effort */ } }
 const MAX_KNOWN = 1000; // cap the TOFU roster (anti-DoS: a passphrase holder flooding distinct ids)
 // Reconcile pinned keys against what peers currently publish. Pins keys on FIRST sight; NEVER
 // overwrites a pinned key — a mismatch is surfaced as a conflict (possible substitution) instead.
@@ -180,7 +185,7 @@ function bus(ctx, opts) {
   const dir = opts.dir || id.dir;
   if (!dir) throw new Error('no fleet rendezvous configured — run `keyflip fleet init --dir <shared-folder>`');
   if (!opts.passphrase) throw new Error('a fleet passphrase is required (--passphrase-file <f>)');
-  const sync = require('./sync');
+  const sync = _sync;
   return {
     dir: dir, machineId: id.machineId, name: id.name,
     write: function (name, obj) { if (!nameOk(name)) throw new Error('unsafe fleet entry name'); fs.mkdirSync(dir, { recursive: true }); const f = path.join(dir, name); fs.writeFileSync(f, sync.encrypt(JSON.stringify(obj), opts.passphrase), { mode: 0o600 }); try { fs.chmodSync(f, 0o600); } catch (e) { /* non-POSIX */ } },
@@ -198,7 +203,7 @@ function inboxName(machineId) { if (!safeId(machineId)) throw new Error('unsafe 
 // (encrypted in the bus) so another machine can be handed one of them.
 function buildStatus(ctx, opts) {
   opts = opts || {};
-  const core = require('./core');
+  const core = _core;
   const id = identity(ctx);
   let usageCache = {}; try { usageCache = JSON.parse(fs.readFileSync(path.join(ctx.configDir, '.usage-cache.json'), 'utf8')) || {}; } catch (e) { usageCache = {}; }
   const accounts = safe(function () {
@@ -218,7 +223,7 @@ function buildStatus(ctx, opts) {
   };
   if (opts.withSecrets) {
     const creds = {};
-    safe(function () { require('./transfer').buildExport(ctx).envelope.accounts.forEach(function (a) { creds[a.name] = { email: a.email, oauthAccount: a.oauthAccount, userID: a.userID, cliCredentials: a.cliCredentials }; }); }, null);
+    safe(function () { _transfer.buildExport(ctx).envelope.accounts.forEach(function (a) { creds[a.name] = { email: a.email, oauthAccount: a.oauthAccount, userID: a.userID, cliCredentials: a.cliCredentials }; }); }, null);
     status.creds = creds;
   }
   return status;
@@ -227,8 +232,8 @@ function safe(fn, d) { try { return fn(); } catch (e) { return d; } }
 
 // Recent sessions with last-message role (assistant = a reply arrived; user = waiting on Claude).
 function recentChats(ctx, limit) {
-  const sessions = require('./sessions');
-  const transcript = require('./transcript');
+  const sessions = _sessions;
+  const transcript = _transcript;
   return sessions.list(ctx, { limit: limit }).map(function (r) {
     let lastRole = null, lastText = null;
     try { const msgs = transcript.parse(fs.readFileSync(r.file, 'utf8')).messages; const last = msgs[msgs.length - 1]; if (last) { lastRole = last.role; lastText = String(last.text || '').replace(/\s+/g, ' ').slice(0, 80); } } catch (e) { /* ignore */ }
@@ -315,7 +320,7 @@ function markApplied(ctx, id) {
   if (ids.indexOf(id) !== -1) return;
   ids.push(id);
   if (ids.length > 1000) ids = ids.slice(-1000); // bounded ledger
-  try { require('./fsutil').atomicWrite(appliedPath(ctx), JSON.stringify({ ids: ids }), 0o600); } catch (e) { /* best-effort */ }
+  try { _fsutil.atomicWrite(appliedPath(ctx), JSON.stringify({ ids: ids }), 0o600); } catch (e) { /* best-effort */ }
 }
 const CMD_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000; // ignore inbox commands older than a week
 function commandFresh(ctx, cmd) {
@@ -342,7 +347,7 @@ function applyCommand(ctx, cmd, opts) {
     const a = cmd.payload && cmd.payload.account;
     if (!a || !a.name || !a.cliCredentials) return { ok: false, detail: 'no account payload' };
     try {
-      const transfer = require('./transfer');
+      const transfer = _transfer;
       const r = transfer.applyImport(ctx, { format: transfer.FORMAT, version: transfer.VERSION, accounts: [a] }, { force: !!opts.force });
       return { ok: true, applied: 'save-account', detail: (r.imported[0] ? 'saved ' + r.imported[0] : 'kept existing ' + a.name) };
     } catch (e) { return { ok: false, applied: 'save-account', detail: (e && e.message) || 'error' }; }
@@ -350,7 +355,7 @@ function applyCommand(ctx, cmd, opts) {
   if (cmd.type === 'switch') {
     if (!opts.allowSwitch) return { ok: false, applied: 'switch', detail: 'skipped (needs consent)' };
     const name = cmd.payload && cmd.payload.account;
-    const core = require('./core');
+    const core = _core;
     const resolved = core.resolveProfile(ctx, name);
     if (!resolved) return { ok: false, applied: 'switch', detail: "no such account: '" + name + "'" };
     try { core.performSwitch(ctx, resolved); return { ok: true, applied: 'switch', detail: 'switched to ' + resolved }; }
@@ -386,16 +391,6 @@ function newReplies(ctx, statuses) {
   });
   return { newReplies: out, snapshot: fresh };
 }
-function saveSeen(ctx, snapshot) { try { require('./fsutil').atomicWrite(seenPath(ctx), JSON.stringify(snapshot), 0o600); } catch (e) { /* ignore */ } }
+function saveSeen(ctx, snapshot) { try { _fsutil.atomicWrite(seenPath(ctx), JSON.stringify(snapshot), 0o600); } catch (e) { /* ignore */ } }
 
-module.exports = {
-  identity: identity, setConfig: setConfig, bus: bus,
-  buildStatus: buildStatus, publish: publish, readFleet: readFleet,
-  normalizeStatus: normalizeStatus, sanitizeStatus: sanitizeStatus,
-  machineKeys: machineKeys, publicKey: publicKey, signCommand: signCommand, verifyCommand: verifyCommand,
-  knownKeys: knownKeys, reconcileKeys: reconcileKeys, checkOrigin: checkOrigin, trustKey: trustKey, fingerprint: fingerprint, keyReport: keyReport,
-  queue: queue, readInbox: readInbox, clearInbox: clearInbox, applyCommand: applyCommand,
-  wasApplied: wasApplied, markApplied: markApplied, commandFresh: commandFresh,
-  accountFrom: accountFrom, newReplies: newReplies, saveSeen: saveSeen,
-  statusName: statusName, inboxName: inboxName, safeId: safeId,
-};
+export { identity, setConfig, bus, buildStatus, publish, readFleet, normalizeStatus, sanitizeStatus, machineKeys, publicKey, signCommand, verifyCommand, knownKeys, reconcileKeys, checkOrigin, trustKey, fingerprint, keyReport, queue, readInbox, clearInbox, applyCommand, wasApplied, markApplied, commandFresh, accountFrom, newReplies, saveSeen, statusName, inboxName, safeId };

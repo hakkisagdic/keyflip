@@ -1,9 +1,8 @@
-'use strict';
 // Bundles all environment-dependent bits (paths, platform, credential store, clock)
 // into one object so the core logic can be unit-tested with fakes.
-const os = require('os');
-const path = require('path');
-const { createStore } = require('./stores');
+import os from 'os';
+import path from 'path';
+import { createStore } from './stores/index.js';
 
 function createContext(opts) {
   opts = opts || {};
@@ -78,4 +77,4 @@ function createContext(opts) {
   };
 }
 
-module.exports = { createContext: createContext };
+export { createContext };

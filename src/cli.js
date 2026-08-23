@@ -1,43 +1,100 @@
-'use strict';
 // Argument parsing + command dispatch. Thin wrapper over core/menu.
-const fs = require('fs');
-const path = require('path');
-const { createContext } = require('./context');
-const core = require('./core');
-const claude = require('./claude');
-const profiles = require('./profiles');
-const appctl = require('./platform');
-const appsessions = require('./appsessions');
-const appauth = require('./appauth');
-const lock = require('./lock');
-const logmod = require('./log');
-const oauth = require('./oauth');
-const update = require('./update');
-const transfer = require('./transfer');
-const usagemod = require('./usage');
-const session = require('./session');
-const links = require('./links');
-const autosw = require('./autoswitch');
-const provider = require('./provider');
-const doctor = require('./doctor');
-const history = require('./history');
-const backup = require('./backup');
-const share = require('./share');
-const skill = require('./skill');
-const mcpreg = require('./mcpreg');
-const desktopgw = require('./desktopgw');
-const importcreds = require('./importcreds');
-const auditview = require('./auditview');
-const cost = require('./cost');
-const router = require('./router');
-const sync = require('./sync');
-const sessions = require('./sessions');
-const mcp = require('./mcp');
-const proxy = require('./proxy');
-const uninstallmod = require('./uninstall');
-const exec = require('./exec');
-const loginmod = require('./login');
-let style = require('./style').make(process.stdout); // may be re-made in main() once config ui.color is known
+import fs from 'fs';
+import path from 'path';
+import { createContext } from './context.js';
+import * as core from './core.js';
+import * as claude from './claude.js';
+import * as profiles from './profiles.js';
+import * as appctl from './platform.js';
+import * as appsessions from './appsessions.js';
+import * as appauth from './appauth.js';
+import * as lock from './lock.js';
+import * as logmod from './log.js';
+import * as oauth from './oauth.js';
+import * as update from './update.js';
+import * as transfer from './transfer.js';
+import * as usagemod from './usage.js';
+import * as session from './session.js';
+import * as links from './links.js';
+import * as autosw from './autoswitch.js';
+import * as provider from './provider.js';
+import * as doctor from './doctor.js';
+import * as history from './history.js';
+import * as backup from './backup.js';
+import * as share from './share.js';
+import * as skill from './skill.js';
+import * as mcpreg from './mcpreg.js';
+import * as desktopgw from './desktopgw.js';
+import * as importcreds from './importcreds.js';
+import * as auditview from './auditview.js';
+import * as cost from './cost.js';
+import * as router from './router.js';
+import * as sync from './sync.js';
+import * as sessions from './sessions.js';
+import * as mcp from './mcp.js';
+import * as proxy from './proxy.js';
+import * as uninstallmod from './uninstall.js';
+import * as exec from './exec.js';
+import * as loginmod from './login.js';
+import * as _styleModule from './style.js';
+import * as _browser from './browser.js';
+import * as _cfg from './config.js';
+import * as _svc from './autoswitchservice.js';
+import * as _groups from './groups.js';
+import * as _budget from './budget.js';
+import * as _shellhook from './shellhook.js';
+import * as _notify from './notify.js';
+import * as _orchestrator from './orchestrator.js';
+import * as _teampool from './teampool.js';
+import * as _policy from './policy.js';
+import * as _vault from './vault.js';
+import * as _integrations from './integrations.js';
+import * as _swarm from './swarm.js';
+import * as _fleet from './fleet.js';
+import * as _lic from './license.js';
+import * as _tui from './tui.js';
+import * as _brain from './brain.js';
+import * as _codexbar from './codexbar.js';
+import * as _surface from './surface.js';
+import * as _agents from './agents.js';
+import * as _migrate from './migrate.js';
+import * as _qr from './qr.js';
+import * as _lan from './lantransfer.js';
+import * as _relayserver from './relayserver.js';
+import * as _rt from './relaytransfer.js';
+import * as _panel from './panel.js';
+import * as _menubar from './menubar.js';
+import * as _cowork from './cowork.js';
+import * as _chat from './chat.js';
+import * as _skillstore from './skillstore.js';
+import * as _archive from './archive.js';
+import * as _sessionmap from './sessionmap.js';
+import * as _schedule from './schedule.js';
+import * as _settingsmod from './settings.js';
+import * as _recall from './recall.js';
+import * as _llm from './llm.js';
+import * as _memory from './memory.js';
+import * as _foreign from './foreign.js';
+import * as _transcript from './transcript.js';
+import * as _ctxsync from './ctxsync.js';
+import * as _projctx from './projctx.js';
+import * as _rules from './rulesmodel.js';
+import * as _checkpoint from './checkpoint.js';
+import * as _handoffmod from './handoff.js';
+import * as _pii from './pii.js';
+import * as _onboard from './onboard.js';
+import * as _vcs from './vcs.js';
+import * as _fsutil from './fsutil.js';
+import _readline from 'readline';
+import * as _provusage from './provusage.js';
+import * as _sessionedit from './sessionedit.js';
+import _child_process from 'child_process';
+import * as _migrations from './migrations.js';
+import * as _menu from './menu.js';
+import { fileURLToPath } from 'url';
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+let style = _styleModule.make(process.stdout); // may be re-made in main() once config ui.color is known
 
 // Serialize every mutation across processes (double-fired alias, launcher app
 // racing a terminal, two menus) so a switch can never interleave with another.
@@ -49,12 +106,12 @@ async function withLock(ctx, fn, resource) {
     l.release();
     // H3: version every successful mutation (best-effort, secrets git-ignored). Single
     // funnel point — the command label is stashed on ctx by main().
-    if (ok) { try { require('./vcs').autoCommit(ctx, ctx._vcsLabel || resource || 'update'); } catch (e) { /* never break a mutation on versioning */ } }
+    if (ok) { try { _vcs.autoCommit(ctx, ctx._vcsLabel || resource || 'update'); } catch (e) { /* never break a mutation on versioning */ } }
   }
 }
 
 let VERSION = '0.0.0';
-try { VERSION = require('../package.json').version; } catch (e) { /* ignore */ }
+try { VERSION = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version; } catch (e) { /* ignore */ }
 
 // --json mode: stdout carries exactly one JSON object; human text goes to stderr.
 let JSON_MODE = false;
@@ -212,7 +269,7 @@ function usage() {
 // Read a secret from the TTY without echoing it (prompt on stderr).
 function promptHidden(question) {
   return new Promise(function (resolve) {
-    const rl = require('readline').createInterface({ input: process.stdin, output: process.stderr, terminal: true });
+    const rl = _readline.createInterface({ input: process.stdin, output: process.stderr, terminal: true });
     let muted = false;
     const realWrite = rl._writeToOutput ? rl._writeToOutput.bind(rl) : null;
     rl._writeToOutput = function (s) { if (muted) { process.stderr.write('*'); } else if (realWrite) { realWrite(s); } };
@@ -226,7 +283,7 @@ function confirm(question) {
   return new Promise(function (resolve) {
     // Prompt goes to stderr so it never pollutes stdout (keeps the --json contract:
     // stdout carries only the single JSON object).
-    const rl = require('readline').createInterface({ input: process.stdin, output: process.stderr });
+    const rl = _readline.createInterface({ input: process.stdin, output: process.stderr });
     rl.question(question, function (a) { rl.close(); resolve(/^y(es)?$/i.test((a || '').trim())); });
   });
 }
@@ -261,7 +318,7 @@ async function cmdSwitch(ctx, rest) {
   }
   // Policy engine: block a switch this directory isn't allowed to use (no-op until rules exist).
   if (!force) {
-    try { require('./policy').enforce(ctx, { cwd: process.cwd(), account: name }); }
+    try { _policy.enforce(ctx, { cwd: process.cwd(), account: name }); }
     catch (e) { if (e && e.code === 'POLICY_DENIED') return fail(e.message + '  (override with --force)'); throw e; }
   }
   logmod.log('switch requested -> ' + name);
@@ -296,7 +353,7 @@ async function cmdSwitch(ctx, rest) {
           if (synced.length) print('  ' + style.ok('↳') + ' synced the browser (' + synced.join(', ') + ') to this account — the Claude extension reconnects.');
           else print('  ' + style.dim('↳ no saved browser session for this account yet — capture one via `keyflip onboard`/`login` while the browser is signed into it.'));
         } else {
-          const browser = require('./browser');
+          const browser = _browser;
           const meta = profiles.read(ctx.configDir, name) || {};
           const wantOrg = meta.oauthAccount && meta.oauthAccount.organizationUuid;
           if (wantOrg) browser.installed(ctx.home).forEach(function (b) {
@@ -317,7 +374,7 @@ async function cmdSwitch(ctx, rest) {
     });
     // Opt-in switch notification — a no-op unless the user configured notify for the 'switch'
     // event (and a sink). Guarded + secret-stripped inside send(); never block a switch on it.
-    try { await require('./notify').send(ctx, 'switch', { to: name, cli: !!(did && did.cli), app: !!(appl && appl.ok) }); } catch (e) { /* notify must never affect the switch */ }
+    try { await _notify.send(ctx, 'switch', { to: name, cli: !!(did && did.cli), app: !!(appl && appl.ok) }); } catch (e) { /* notify must never affect the switch */ }
   }
 
   // --force: swap in place without closing the app.
@@ -396,7 +453,7 @@ async function cmdNext(ctx, rest) {
   const gi = rest.indexOf('--group');
   if (gi !== -1 && rest[gi + 1]) {
     const grp = rest[gi + 1];
-    const scoped = require('./groups').filterProfiles(ctx, candidates, grp);
+    const scoped = _groups.filterProfiles(ctx, candidates, grp);
     if (!scoped.length) return fail("no other account in group '" + grp + "' to rotate to (tag one: keyflip group tag <account> " + grp + ')');
     candidates.length = 0; Array.prototype.push.apply(candidates, scoped);
   }
@@ -487,7 +544,7 @@ async function cmdAutoswitch(ctx, rest) {
   function numFlag(flag, dflt) { const i = rest.indexOf(flag); const v = i !== -1 ? parseInt(rest[i + 1], 10) : NaN; return isNaN(v) ? dflt : v; }
   // Defaults come from the stored config when a flag isn't given, so these settings aren't
   // advertised-but-inert: `keyflip config set autoswitch.<threshold|strategy|group> …`.
-  const cfg = require('./config');
+  const cfg = _cfg;
   const threshold = Math.min(100, Math.max(50, numFlag('--threshold', cfg.get(ctx, 'autoswitch.threshold'))));
   const interval = Math.max(30, numFlag('--interval', 60));
   const si = rest.indexOf('--strategy');
@@ -502,12 +559,12 @@ async function cmdAutoswitch(ctx, rest) {
     if (r.state === 'switched') {
       print('[' + at + '] ' + style.ok('⇄ switched: ') + (r.active.email || r.active.name) + ' → ' + (r.switchedTo.email || r.switchedTo.name) + ' (usage crossed ' + threshold + '%)');
       logmod.log('autoswitch: ' + r.active.name + ' -> ' + r.switchedTo.name);
-      require('./notify').send(ctx, 'switch', { from: r.active.name, to: r.switchedTo.name, reason: 'autoswitch', threshold: threshold }).catch(function () {});
+      _notify.send(ctx, 'switch', { from: r.active.name, to: r.switchedTo.name, reason: 'autoswitch', threshold: threshold }).catch(function () {});
     } else if (r.state === 'below') {
       print('[' + at + '] ' + (r.active.email || r.active.name) + ': ' + Math.round(100 - r.headroom) + '% used — ok');
     } else if (r.state === 'no-candidate') {
       print('[' + at + '] ' + style.warn('threshold crossed but no other account is available'));
-      require('./notify').send(ctx, 'quota', { account: (r.active && r.active.name) || null, threshold: threshold, state: 'no-candidate' }).catch(function () {});
+      _notify.send(ctx, 'quota', { account: (r.active && r.active.name) || null, threshold: threshold, state: 'no-candidate' }).catch(function () {});
     } else if (r.state === 'unknown') {
       print('[' + at + '] usage unknown (endpoint throttled or offline) — waiting');
     } else if (r.state === 'no-active') {
@@ -526,7 +583,7 @@ async function cmdAutoswitch(ctx, rest) {
   // ---- unattended background SERVICE (launchd StartInterval / cron */N) ----
   const svcSub = rest[0];
   if (svcSub === 'install' || svcSub === 'uninstall' || svcSub === 'status') {
-    const svc = require('./autoswitchservice');
+    const svc = _svc;
     if (svcSub === 'status') {
       const st = svc.status(ctx, { home: ctx.home });
       if (JSON_MODE) { jsonOut({ autoswitchService: st }); return; }
@@ -602,7 +659,7 @@ function cmdLink(ctx, rest) {
 // Account groups/tags: scope rotation/failover to a pool.
 //   keyflip group [list] | members <g> | tag <account> <g...> | untag <account> <g>
 function cmdGroup(ctx, rest) {
-  const groups = require('./groups');
+  const groups = _groups;
   const sub = rest[0];
   const args = rest.slice(1);
   switch (sub) {
@@ -652,7 +709,7 @@ function cmdGroup(ctx, rest) {
 // SPEND/QUOTA BUDGETS: per-account (or '*' default) usage ceilings + breach/near-breach alerts.
 // Reads the usage cache (populated by `keyflip list --usage`) — never fetches.
 function cmdBudget(ctx, rest) {
-  const budget = require('./budget');
+  const budget = _budget;
   const sub = rest[0] || 'status';
   const args = rest.slice(1);
   function fmtPct(v) { return v == null ? '?' : Math.round(v) + '%'; }
@@ -724,7 +781,7 @@ async function cmdImportEnv(ctx, rest) {
 
 // Print the shell auto-activation hook (direnv-style for account pins). Clean stdout only.
 function cmdShellInit(rest) {
-  const shellhook = require('./shellhook');
+  const shellhook = _shellhook;
   const shell = rest.filter(function (a) { return a.indexOf('-') !== 0; })[0];
   if (!shell) return fail('usage: keyflip shell-init <bash|zsh|fish>');
   if (!shellhook.isSupported(shell)) return fail("unsupported shell: '" + shell + "' (supported: " + shellhook.supported().join(', ') + ')');
@@ -744,7 +801,7 @@ function cmdAuditLog(ctx, rest) {
 
 // Notifications / webhooks on key events (quota / switch / fleet-reply).
 async function cmdNotify(ctx, rest) {
-  const notify = require('./notify');
+  const notify = _notify;
   const sub = rest[0];
   const args = rest.slice(1);
   if (sub === 'status' || sub === undefined) {
@@ -789,7 +846,7 @@ async function cmdNotify(ctx, rest) {
 
 // Headless job queue: run a prompt on the best available account, isolated.
 async function cmdRunJob(ctx, rest) {
-  const orchestrator = require('./orchestrator');
+  const orchestrator = _orchestrator;
   const fv = function (n) { const i = rest.indexOf(n); return i !== -1 ? rest[i + 1] : undefined; };
   const group = fv('--group'); const strategy = fv('--strategy') || 'best';
   const prompt = rest.filter(function (a, i) { return a.indexOf('-') !== 0 && rest[i - 1] !== '--group' && rest[i - 1] !== '--strategy'; }).join(' ').trim();
@@ -801,7 +858,7 @@ async function cmdRunJob(ctx, rest) {
   else fail('job failed' + (done.account ? ' on ' + done.account : '') + ': ' + (done.error || 'unknown'));
 }
 async function cmdJobs(ctx, rest) {
-  const orchestrator = require('./orchestrator');
+  const orchestrator = _orchestrator;
   const sub = rest[0] || 'list';
   const fv = function (n) { const i = rest.indexOf(n); return i !== -1 ? rest[i + 1] : undefined; };
   if (sub === 'list') {
@@ -823,7 +880,7 @@ async function cmdJobs(ctx, rest) {
   return fail('unknown: keyflip jobs ' + sub + ' (use: list | run | clear)');
 }
 async function cmdFanout(ctx, rest) {
-  const orchestrator = require('./orchestrator');
+  const orchestrator = _orchestrator;
   const i = rest.indexOf('--accounts'); const accountsArg = i !== -1 ? rest[i + 1] : undefined;
   const prompt = rest.filter(function (a, idx) { return a.indexOf('-') !== 0 && rest[idx - 1] !== '--accounts'; }).join(' ').trim();
   if (!prompt || !accountsArg) return fail('usage: keyflip fanout "<prompt>" --accounts a,b,c');
@@ -876,7 +933,7 @@ function collectAccountFlags(rest) {
   return any ? map : null;
 }
 async function cmdTeam(ctx, rest) {
-  const teampool = require('./teampool');
+  const teampool = _teampool;
   const sub = rest[0];
   if (sub === 'list' || sub === undefined) {
     const pools = teampool.list(ctx);
@@ -915,7 +972,7 @@ async function cmdTeam(ctx, rest) {
 
 // POLICY engine: constrain which account a directory/repo may use.
 function cmdPolicy(ctx, rest) {
-  const policy = require('./policy');
+  const policy = _policy;
   const sub = rest[0]; const args = rest.slice(1);
   function multi(flag) { const out = []; for (let i = 0; i < args.length; i++) if (args[i] === flag && args[i + 1] != null) out.push(args[++i]); return out; }
   function one(flag) { const j = args.indexOf(flag); return j !== -1 ? args[j + 1] : undefined; }
@@ -939,7 +996,7 @@ function cmdPolicy(ctx, rest) {
 
 // VAULT backend: store credentials in 1Password / Bitwarden / HashiCorp Vault.
 function cmdVault(ctx, rest) {
-  const vault = require('./vault');
+  const vault = _vault;
   let out; try { out = vault.cli(ctx, rest); } catch (e) { return fail(e.message); }
   if (JSON_MODE) { jsonOut(out.data); return; }
   out.lines.forEach(function (l) { print(l); });
@@ -947,7 +1004,7 @@ function cmdVault(ctx, rest) {
 
 // Post status/events to a Slack/Discord/generic webhook.
 async function cmdPost(ctx, rest) {
-  const integrations = require('./integrations');
+  const integrations = _integrations;
   const r = await integrations.cli(ctx, rest, {});
   if (r.error) return fail(r.error);
   if (JSON_MODE) { jsonOut(r); return; }
@@ -978,8 +1035,8 @@ function cmdCache(ctx, rest) {
 // CONSENT-GATED (a target only runs a queued command when its operator drains with --allow-exec);
 // commands travel as an ARGV ARRAY spawned with NO shell — nothing to inject. Origin-authenticated.
 async function cmdSwarm(ctx, rest) {
-  const swarm = require('./swarm');
-  const fleet = require('./fleet');
+  const swarm = _swarm;
+  const fleet = _fleet;
   const sub = rest[0];
   if (sub === 'run') {
     const to = flagVal(rest, '--to');
@@ -1061,7 +1118,7 @@ async function cmdSwarm(ctx, rest) {
 
 // LICENSE: offline plan management (Ed25519-signed license, verified locally — no phone-home).
 function cmdLicense(ctx, rest) {
-  const lic = require('./license');
+  const lic = _lic;
   const sub = rest[0] || 'status';
   switch (sub) {
     case 'status': {
@@ -1094,7 +1151,7 @@ function cmdLicense(ctx, rest) {
 
 // CONFIG (E4): one validated home for scattered toggles (<configDir>/config.json).
 function cmdConfig(ctx, rest) {
-  const config = require('./config');
+  const config = _cfg;
   const sub = rest[0] || 'list';
   const args = rest.slice(1);
   switch (sub) {
@@ -1136,8 +1193,8 @@ function cmdConfig(ctx, rest) {
 
 // UI (E5): a self-contained full-screen TUI dashboard.
 async function cmdUi(ctx, rest) {
-  const tui = require('./tui');
-  const usagemod = require('./usage');
+  const tui = _tui;
+
   const view = rest.indexOf('--fleet') !== -1 ? 'fleet' : undefined;
   const loadUsage = async function (c) {
     const profs = core.listProfiles(c);
@@ -1147,7 +1204,7 @@ async function cmdUi(ctx, rest) {
   };
   // Multi-provider usage (other AI tools) for the 'usage' view — best-effort, never blocks the UI.
   const loadProvUsage = async function (c) {
-    try { return await require('./provusage').readAll(c, { fetch: (typeof fetch !== 'undefined' ? fetch : undefined) }); } catch (e) { return []; }
+    try { return await _provusage.readAll(c, { fetch: (typeof fetch !== 'undefined' ? fetch : undefined) }); } catch (e) { return []; }
   };
   const r = await tui.run(ctx, {
     view: view,
@@ -1169,7 +1226,7 @@ async function cmdUi(ctx, rest) {
 // which you approve STEP BY STEP. It NEVER runs anything on its own; approved steps go through the
 // normal dispatch (so destructive ones still re-confirm). OFF unless KEYFLIP_BRAIN=1 + GEMINI_API_KEY.
 async function cmdBrain(ctx, rest) {
-  const brain = require('./brain');
+  const brain = _brain;
   if (!brain.enabled(ctx, {})) {
     return fail('the brain is OFF. Turn it on with ' + style.bold('KEYFLIP_BRAIN=1') + ' and ' + style.bold('GEMINI_API_KEY=<your free Gemini key>') +
       '.\n  It only PROPOSES keyflip actions from plain-language intent — you approve each step; nothing runs on its own.');
@@ -1205,7 +1262,7 @@ async function cmdBrain(ctx, rest) {
 // Bridge to a locally-installed CodexBar (the menu-bar usage monitor): show whether it's present
 // and how its tracked providers line up with what keyflip can read. Complementary, not a dependency.
 function cmdCodexbar(ctx, rest) {
-  const codexbar = require('./codexbar');
+  const codexbar = _codexbar;
   const det = codexbar.detect(ctx);
   const align = codexbar.align(ctx);
   if (JSON_MODE) { jsonOut({ codexbar: { detected: det, align: align } }); return; }
@@ -1226,7 +1283,7 @@ function cmdCodexbar(ctx, rest) {
 
 // SURFACES (E1): detect which OTHER AI tools are on this machine (read-only — never reads/moves a secret).
 function cmdSurfaces(ctx, rest) {
-  const surface = require('./surface');
+  const surface = _surface;
   const all = surface.detectAll(ctx);
   if (JSON_MODE) { jsonOut({ surfaces: all }); return; }
   print(style.bold('Credential surfaces on this machine') + ' ' + style.dim('(detection only — secrets are never read or moved):'));
@@ -1250,7 +1307,7 @@ async function cmdMcp(ctx, rest) {
     print('  Or in .mcp.json / mcp.json:');
     print(JSON.stringify({ mcpServers: { keyflip: { command: 'keyflip', args: ['mcp'] } } }, null, 2));
     print('');
-    print(require('./mcp').TOOLS.length + ' tools cover the full surface — accounts (status/list/switch/next/add/account_remove),');
+    print(mcp.TOOLS.length + ' tools cover the full surface — accounts (status/list/switch/next/add/account_remove),');
     print('providers, sessions (sessions/resume/archive/distill), migrate + transfer, the FLEET control');
     print('plane (fleet_status/switch/send_account/collect/keys/trust), other-agent memory (agents),');
     print('diagnostics (doctor/usage_history), backup, skills, and the failover proxy.');
@@ -1397,7 +1454,7 @@ async function cmdUsage(ctx, rest) {
   // from provusage — the CodexBar-style multi-provider monitor (same data the TUI's `u` view shows).
   if (rest.indexOf('--providers') !== -1) {
     let list = [];
-    try { list = await require('./provusage').readAll(ctx, { fetch: (typeof fetch !== 'undefined' ? fetch : undefined) }); } catch (e) { list = []; }
+    try { list = await _provusage.readAll(ctx, { fetch: (typeof fetch !== 'undefined' ? fetch : undefined) }); } catch (e) { list = []; }
     if (JSON_MODE) { jsonOut({ providerUsage: list }); return; }
     if (!list.length) { print('No other AI providers detected on this machine.'); return; }
     print(style.bold('Provider usage') + ' ' + style.dim('(other AI tools on this machine):'));
@@ -1569,7 +1626,7 @@ function bundleFilterOpts(rest) {
 
 // J1: show which OTHER agents' home-level memory keyflip can carry (existence-gated).
 function cmdAgents(ctx, rest) {
-  const agents = require('./agents');
+  const agents = _agents;
   const present = agents.presentAgents(ctx);
   const cfgPresent = agents.presentAgentConfig(ctx);
   const rows = agents.REGISTRY.map(function (a) {
@@ -1600,7 +1657,7 @@ function cmdAgents(ctx, rest) {
 // providers (keys) + every Claude Code session transcript in one bundle, and on
 // the target MERGE (union) them with whatever is already there.
 async function cmdMigrate(ctx, rest) {
-  const migrate = require('./migrate');
+  const migrate = _migrate;
   const sub = rest[0];
   const target = positionals(rest.slice(1), BUNDLE_VALUE_FLAGS)[0];
   const passphraseGiven = rest.indexOf('--passphrase-file') !== -1;
@@ -1744,8 +1801,8 @@ function printTransferQR(rest, host, port, code, fp) {
   if (rest.indexOf('--qr') === -1) return;
   if (!host || host.indexOf('<') === 0) { print('   ' + style.dim('(no LAN address detected — QR skipped)')); return; }
   try {
-    const qr = require('./qr');
-    const url = require('./lantransfer').pairingUrl(host, port, code, fp);
+    const qr = _qr;
+    const url = _lan.pairingUrl(host, port, code, fp);
     print('');
     print('   ' + style.dim('Scan on the other machine (' + url + '):'));
     print(qr.toText(qr.encode(url, { ecc: 'M' }), { quiet: 2 }));
@@ -1753,8 +1810,8 @@ function printTransferQR(rest, host, port, code, fp) {
 }
 
 async function cmdTransfer(ctx, rest) {
-  const lan = require('./lantransfer');
-  const migrate = require('./migrate');
+  const lan = _lan;
+  const migrate = _migrate;
   const sub = rest[0];
   const pi = rest.indexOf('--port'); const port = pi !== -1 ? (parseInt(rest[pi + 1], 10) || lan.DEFAULT_PORT) : lan.DEFAULT_PORT;
 
@@ -1781,7 +1838,7 @@ async function cmdTransfer(ctx, rest) {
     print('   ' + style.dim('Auto-closes after one transfer or ' + ttlS + 's; Ctrl-C to stop.'));
     logmod.log('transfer serve --receive on ' + handle.port);
     const r = await handle.wait;
-    if (r.reason === 'received') { try { require('./vcs').autoCommit(ctx, 'transfer receive'); } catch (e) { /* best-effort */ } }
+    if (r.reason === 'received') { try { _vcs.autoCommit(ctx, 'transfer receive'); } catch (e) { /* best-effort */ } }
     print(r.reason === 'received' ? style.ok('✅') + ' done — listener closed.' : 'Listener closed (' + r.reason + ').');
     return;
   }
@@ -1806,7 +1863,7 @@ async function cmdTransfer(ctx, rest) {
   // transfer over the INTERNET without a Nextcloud/WebDAV account (no Docker, no daemon — it
   // runs in this terminal). keyflip's WebDAV client (PUT/GET/DELETE) talks to it directly.
   if (sub === 'relay') {
-    const relayserver = require('./relayserver');
+    const relayserver = _relayserver;
     const dir = flagVal(rest, '--dir') || path.join(ctx.configDir, 'relay-store');
     const host = flagVal(rest, '--host') || '127.0.0.1';
     const port = flagVal(rest, '--port') ? (parseInt(flagVal(rest, '--port'), 10) || 8788) : 8788;
@@ -1832,7 +1889,7 @@ async function cmdTransfer(ctx, rest) {
   // user-controlled relay (a synced folder path OR a WebDAV/relay URL) instead of a LAN socket.
   const relayArg = flagVal(rest, '--relay');
   if (sub === 'serve' && relayArg) {
-    const rt = require('./relaytransfer');
+    const rt = _rt;
     const pair = rt.genPairing();
     const ropts = { relay: relayArg, code: pair.code, user: flagVal(rest, '--user') || undefined, pass: readSecretArg(rest, '--pass-file') || undefined, fetch: (typeof fetch !== 'undefined' ? fetch : undefined) };
     const ti = rest.indexOf('--ttl'); const ttlS = ti !== -1 ? Math.max(15, parseInt(rest[ti + 1], 10) || 300) : 300;
@@ -1873,7 +1930,7 @@ async function cmdTransfer(ctx, rest) {
   }
 
   if (sub === 'pull' && relayArg) {
-    const rt = require('./relaytransfer');
+    const rt = _rt;
     const code = flagVal(rest, '--code');
     const force = rest.indexOf('--force') !== -1;
     if (!code) return fail('pass --code <rendezvous>-<key> (the one-time code shown on the sending machine).');
@@ -1890,7 +1947,7 @@ async function cmdTransfer(ctx, rest) {
       if (!ok) { print('Cancelled (the blob stays on the relay).'); return; }
     }
     let res;
-    try { res = await withLock(ctx, function () { return require('./migrate').applyBundle(ctx, b, { force: force }); }); } catch (e) { return fail(e.message); }
+    try { res = await withLock(ctx, function () { return _migrate.applyBundle(ctx, b, { force: force }); }); } catch (e) { return fail(e.message); }
     try { await r.cleanup(); } catch (e) { /* one-shot delete is best-effort; the relay TTL sweeps it otherwise */ }
     const tx = res.transcripts;
     print(style.ok('✅') + ' merged: accounts +' + res.accounts.imported.length + ' (kept ' + res.accounts.skipped.length + '), providers +' + res.providers.imported.length + ', transcripts +' + tx.added + ' (kept ' + tx.kept + (tx.overwritten ? ', overwrote ' + tx.overwritten : '') + '), memory +' + (res.memory ? res.memory.added : 0) + ' (kept ' + (res.memory ? res.memory.kept : 0) + ')' + (res.agents && res.agents.total ? ', agent-memory +' + res.agents.added + ' (kept ' + res.agents.kept + ')' : '') + '. ' + style.dim('(deleted from the relay)'));
@@ -1929,7 +1986,7 @@ async function cmdTransfer(ctx, rest) {
     }
     let res;
     // Lock ONLY the write — not the network fetch + confirm prompt above.
-    try { res = await withLock(ctx, function () { return require('./migrate').applyBundle(ctx, bundle, { force: force }); }); } catch (e) { return fail(e.message); }
+    try { res = await withLock(ctx, function () { return _migrate.applyBundle(ctx, bundle, { force: force }); }); } catch (e) { return fail(e.message); }
     const tx = res.transcripts;
     print(style.ok('✅') + ' merged: accounts +' + res.accounts.imported.length + ' (kept ' + res.accounts.skipped.length + '), providers +' + res.providers.imported.length + ', transcripts +' + tx.added + ' (kept ' + tx.kept + (tx.overwritten ? ', overwrote ' + tx.overwritten : '') + '), memory +' + (res.memory ? res.memory.added : 0) + ' (kept ' + (res.memory ? res.memory.kept : 0) + ')' + (res.agents && res.agents.total ? ', agent-memory +' + res.agents.added + ' (kept ' + res.agents.kept + ')' : '') + '.');
     if (rest.indexOf('--no-consolidate') === -1) { const cons = consolidateAndReport(ctx); if (cons && cons.reason) print('  ↳ ' + style.dim('desktop chat sync deferred: ' + cons.reason + ' (run `keyflip consolidate` with the app closed).')); }
@@ -1948,7 +2005,7 @@ async function cmdTransfer(ctx, rest) {
 // Command-activated failover proxy (never a resident daemon).
 // G1: `keyflip panel` — a command-activated local web dashboard (loopback, read-only).
 async function cmdPanel(ctx, rest) {
-  const panel = require('./panel');
+  const panel = _panel;
   // G8: export a SHARE-SAFE static snapshot instead of serving (no session content, no secrets).
   const ei = rest.indexOf('--export');
   if (ei !== -1) {
@@ -1978,12 +2035,12 @@ async function cmdPanel(ctx, rest) {
 // G4: emit xbar/SwiftBar plugin output (or install a wrapper into a plugin folder). Plain
 // stdout so the menu-bar host renders it verbatim.
 function cmdMenubar(ctx, rest) {
-  const menubar = require('./menubar');
+  const menubar = _menubar;
   if (rest.indexOf('--install') !== -1) return menubarInstall(ctx, rest);
   process.stdout.write(menubar.render(ctx, {}) + '\n');
 }
 function menubarInstall(ctx, rest) {
-  const menubar = require('./menubar');
+  const menubar = _menubar;
   const iv = flagVal(rest, '--interval') || '30s';
   const di = rest.indexOf('--dir'); let dir = di !== -1 ? rest[di + 1] : null;
   // The plugin format (a script whose stdout is the menu, filename `keyflip.<interval>.sh`) is shared
@@ -2009,7 +2066,7 @@ function menubarInstall(ctx, rest) {
 }
 
 async function cmdProxy(ctx, rest) {
-  const proxy = require('./proxy');
+
   const sub = rest[0];
   const meta = proxy.readMeta(ctx);
   const running = proxy.isRunning(ctx);
@@ -2053,7 +2110,7 @@ async function cmdProxy(ctx, rest) {
 
 // The detached background server. Runs until killed.
 async function proxyServe(ctx, rest) {
-  const proxy = require('./proxy');
+
   const pi = rest.indexOf('--port'); const port = pi !== -1 ? parseInt(rest[pi + 1], 10) : proxy.DEFAULT_PORT;
   logmod.log('proxy serving on ' + port);
   await proxy.serve(ctx, { port: port });
@@ -2062,7 +2119,7 @@ async function proxyServe(ctx, rest) {
 
 // Cowork sessions (desktop app agent-mode), cross-account, local & read-only.
 function cmdCowork(ctx, rest) {
-  const cowork = require('./cowork');
+  const cowork = _cowork;
   if (!ctx.appDataDir) return fail('the Claude desktop app (macOS) is required for Cowork sessions');
   const sub = rest[0];
   if (sub === 'resume') {
@@ -2086,7 +2143,7 @@ function cmdCowork(ctx, rest) {
 
 // EXPERIMENTAL: read claude.ai cloud Chat conversations (per active account).
 async function cmdChat(ctx, rest) {
-  const chat = require('./chat');
+  const chat = _chat;
   // Reading claude.ai chats decrypts the desktop app's session cookie via the macOS keychain — it is
   // macOS-only for now. Gate on the PLATFORM (not just appDataDir, which is also set on Windows) so
   // Windows/Linux get a clear message instead of a confusing failure deep in the cookie decrypt.
@@ -2117,7 +2174,7 @@ async function cmdChat(ctx, rest) {
 
 // Skills marketplace: install arbitrary skills from GitHub/dir/archive.
 async function cmdSkill(ctx, rest) {
-  const skillstore = require('./skillstore');
+  const skillstore = _skillstore;
   const sub = rest[0]; const args = rest.slice(1);
   if (sub === 'add') {
     const src = args.filter(function (a) { return a.indexOf('-') !== 0; })[0];
@@ -2161,7 +2218,7 @@ function parseDays(s) {
 // `keyflip sessions archive <id> | --older-than <30d>` (B1/B2): gzip transcripts into
 // keyflip's archive store and remove the live copies. Reversible via `unarchive`.
 async function cmdSessionsArchive(ctx, rest) {
-  const archive = require('./archive');
+  const archive = _archive;
   const yes = rest.indexOf('-y') !== -1 || rest.indexOf('--force') !== -1;
   const oi = rest.indexOf('--older-than');
   let targets = [];
@@ -2197,7 +2254,7 @@ async function cmdSessionsArchive(ctx, rest) {
 }
 
 async function cmdSessionsUnarchive(ctx, rest) {
-  const archive = require('./archive');
+  const archive = _archive;
   const id = positionals(rest, [])[0];
   if (!id) return fail('usage: keyflip sessions unarchive <id>   (list with: keyflip sessions archived)');
   const row = archive.findArchived(ctx, id);
@@ -2210,7 +2267,7 @@ async function cmdSessionsUnarchive(ctx, rest) {
 }
 
 function cmdSessionsArchived(ctx) {
-  const rows = require('./archive').listArchived(ctx);
+  const rows = _archive.listArchived(ctx);
   if (JSON_MODE) { jsonOut({ archived: rows.map(function (r) { return { sessionId: r.sessionId, project: r.project, gzBytes: r.gzBytes, mtime: r.mtime }; }) }); return; }
   if (!rows.length) { print('No archived sessions. Archive some with: keyflip sessions archive --older-than 30d'); return; }
   let total = 0;
@@ -2221,7 +2278,7 @@ function cmdSessionsArchived(ctx) {
 // A2: assign a session to a specific account, so `keyflip resume <id> --run` continues it
 // AS that account (isolated) without switching the machine's active profile.
 function cmdSessionsAssign(ctx, rest) {
-  const sessionmap = require('./sessionmap');
+  const sessionmap = _sessionmap;
   const pos = positionals(rest, []);
   const id = pos[0], acct = pos[1];
   if (!id || !acct) return fail('usage: keyflip sessions assign <id> <account>');
@@ -2235,7 +2292,7 @@ function cmdSessionsAssign(ctx, rest) {
   jsonOut({ assigned: { session: row.sessionId, account: name } });
 }
 function cmdSessionsUnassign(ctx, rest) {
-  const sessionmap = require('./sessionmap');
+  const sessionmap = _sessionmap;
   const id = positionals(rest, [])[0];
   if (!id) return fail('usage: keyflip sessions unassign <id>');
   let row; try { row = sessions.find(ctx, id); } catch (e) { row = null; }
@@ -2272,7 +2329,7 @@ async function cmdSessionsCompact(ctx, rest) {
 // C2: install/remove the nightly `keyflip dream --apply` schedule (launchd on macOS, cron
 // on Linux). Command-activated — the user runs it; nothing daemonizes on its own.
 async function cmdDreamSchedule(ctx, rest) {
-  const schedule = require('./schedule');
+  const schedule = _schedule;
   const sub = rest[0];
   if (sub === 'status') {
     const st = schedule.status(ctx);
@@ -2310,7 +2367,7 @@ async function cmdDreamSchedule(ctx, rest) {
 async function cmdDream(ctx, rest) {
   // C2: schedule/unschedule the nightly unattended pass.
   if (rest[0] === 'schedule' || rest[0] === 'unschedule' || rest[0] === 'status') return cmdDreamSchedule(ctx, rest);
-  const memory = require('./memory'), llm = require('./llm'), archive = require('./archive');
+  const memory = _memory, llm = _llm, archive = _archive;
   const oi = rest.indexOf('--older-than'); const days = oi !== -1 ? (parseDays(rest[oi + 1]) || 30) : 30;
   const li = rest.indexOf('--limit'); const cap = li !== -1 ? (parseInt(rest[li + 1], 10) || 20) : 20;
   const apply = rest.indexOf('--apply') !== -1;
@@ -2349,7 +2406,7 @@ async function cmdDream(ctx, rest) {
 // B4: distill a session into a durable "keepsake" (via `claude -p`) in keyflip's OWN
 // memory store. --to-claude also writes it into ~/.claude project memory (opt-in, H1).
 async function cmdSessionsDistill(ctx, rest) {
-  const memory = require('./memory'), llm = require('./llm');
+  const memory = _memory, llm = _llm;
   const id = positionals(rest, [])[0];
   if (!id) return fail('usage: keyflip sessions distill <id> [--to-claude] [--model <m>]');
   let row; try { row = sessions.find(ctx, id); } catch (e) { return fail(e.message); }
@@ -2386,7 +2443,7 @@ function statuslineCommand() {
   return process.execPath + ' ' + path.join(__dirname, '..', 'bin', 'keyflip.js') + ' statusline';
 }
 function statuslineInstall(ctx, on) {
-  const settingsmod = require('./settings'); const { writeJsonStable } = require('./fsutil');
+  const settingsmod = _settingsmod; const { writeJsonStable } = _fsutil;
   const file = ctx.claudeSettingsPath;
   let cur; try { cur = settingsmod.read(file); } catch (e) { return fail('~/.claude/settings.json is corrupt — fix it first.'); }
   if (on) {
@@ -2431,8 +2488,8 @@ function cmdStatusline(ctx, rest) {
 // J3: `keyflip settings [show | get <key> | set <key> <value> | unset <key>]` — view/edit
 // ~/.claude/settings.json (the file Claude Code hot-reloads). Dot-paths for nested keys.
 function cmdSettings(ctx, rest) {
-  const settings = require('./settings');
-  const { writeJsonStable } = require('./fsutil');
+  const settings = _settingsmod;
+  const { writeJsonStable  } = _fsutil;
   const file = ctx.claudeSettingsPath;
   let cur; try { cur = settings.read(file); } catch (e) { return fail('~/.claude/settings.json is corrupt — fix it first (' + e.message + ').'); }
   const sub = rest[0];
@@ -2465,7 +2522,7 @@ function cmdSettings(ctx, rest) {
 // I1: `keyflip recall "<query>"` — local BM25 semantic-ish recall over the distilled
 // keepsakes (zero-dep, offline, private). Answers "where did I discuss X" across all chats.
 async function cmdRecall(ctx, rest) {
-  const recall = require('./recall');
+  const recall = _recall;
   const li = rest.indexOf('--limit'); const limit = li !== -1 ? (parseInt(rest[li + 1], 10) || 10) : 10;
   const query = positionals(rest, []).join(' ');
   if (!query) return fail('usage: keyflip recall "<query>" [--semantic] [--answer]   (searches your distilled keepsakes; make some with: keyflip dream --apply)');
@@ -2487,7 +2544,7 @@ async function cmdRecall(ctx, rest) {
 
   // I3: --answer synthesizes a cited answer over the retrieved keepsakes via `claude -p`.
   if (rest.indexOf('--answer') !== -1) {
-    const llm = require('./llm');
+    const llm = _llm;
     if (!llm.available()) { print(style.warn('·') + ' --answer needs Claude Code on PATH (`claude -p`); showing the ranked keepsakes instead.'); }
     else {
       print('Researching "' + style.bold(query) + '" across your keepsakes via ' + style.bold('claude -p') + ' ' + style.dim('(spends the active account)') + '…');
@@ -2516,7 +2573,7 @@ async function cmdRecall(ctx, rest) {
 
 // `keyflip memory [list | show <key> | remove <key>]` — browse keyflip's distilled keepsakes.
 function cmdMemory(ctx, rest) {
-  const memory = require('./memory');
+  const memory = _memory;
   const sub = rest[0];
   if (sub === 'show' || sub === 'get' || sub === 'cat') {
     const txt = memory.read(ctx, rest[1] || '');
@@ -2584,7 +2641,7 @@ async function cmdSessionsRebind(ctx, rest) {
 function fleetBus(ctx, rest) {
   const passphrase = readSecretArg(rest, '--passphrase-file');
   if (!passphrase) { fail('a fleet passphrase is required: --passphrase-file <file>'); return null; }
-  try { return require('./fleet').bus(ctx, { passphrase: passphrase }); } catch (e) { fail(e.message); return null; }
+  try { return _fleet.bus(ctx, { passphrase: passphrase }); } catch (e) { fail(e.message); return null; }
 }
 function resolveMachine(statuses, arg) {
   const n = statuses.filter(function (s) { return s.name === arg; });
@@ -2593,15 +2650,15 @@ function resolveMachine(statuses, arg) {
   return id.length === 1 ? id[0] : (n.length > 1 ? 'ambiguous' : null);
 }
 async function cmdFleet(ctx, rest) {
-  const fleet = require('./fleet');
+  const fleet = _fleet;
   const sub = rest[0];
 
   if (sub === 'init') {
     const ni = rest.indexOf('--name'); const di = rest.indexOf('--dir');
     const patch = {};
-    if (di !== -1 && rest[di + 1]) patch.dir = require('path').resolve(rest[di + 1]);
+    if (di !== -1 && rest[di + 1]) patch.dir = path.resolve(rest[di + 1]);
     if (ni !== -1 && rest[ni + 1]) patch.name = rest[ni + 1];
-    if (!patch.dir && !require('./fleet').identity(ctx).dir) return fail('usage: keyflip fleet init --dir <shared-folder> [--name <this-machine>]\n  the folder must be reachable by every machine (a Dropbox/iCloud/synced dir).');
+    if (!patch.dir && !_fleet.identity(ctx).dir) return fail('usage: keyflip fleet init --dir <shared-folder> [--name <this-machine>]\n  the folder must be reachable by every machine (a Dropbox/iCloud/synced dir).');
     const id = fleet.setConfig(ctx, patch);
     if (JSON_MODE) { jsonOut({ fleet: { machineId: id.machineId, name: id.name, dir: id.dir } }); return; }
     print(style.ok('✅') + ' this machine is ' + style.bold(id.name) + ' ' + style.dim('(' + id.machineId + ')') + ' in the fleet at ' + style.bold(id.dir));
@@ -2678,7 +2735,7 @@ async function cmdFleet(ctx, rest) {
       nr.newReplies.forEach(function (r) { print('   ' + style.bold(r.machine) + ' ' + style.dim(r.sessionId.slice(0, 8)) + '  “' + (r.lastText || '') + '”'); });
       // Opt-in fleet-reply notification (no-op unless configured). send() strips secrets from the
       // payload; carry only machine names + count, never the reply text.
-      try { await require('./notify').send(ctx, 'fleet-reply', { count: nr.newReplies.length, machines: nr.newReplies.map(function (r) { return r.machine; }) }); } catch (e) { /* never block fleet status on notify */ }
+      try { await _notify.send(ctx, 'fleet-reply', { count: nr.newReplies.length, machines: nr.newReplies.map(function (r) { return r.machine; }) }); } catch (e) { /* never block fleet status on notify */ }
     }
     return;
   }
@@ -2712,7 +2769,7 @@ async function cmdFleet(ctx, rest) {
       acctObj = fleet.accountFrom(from, account);
       if (!acctObj) return fail("'" + fromArg + "' has not published account '" + account + "' with credentials (it must `keyflip fleet push --with-secrets`).");
     } else {
-      const ex = require('./transfer').buildExport(ctx).envelope.accounts.filter(function (a) { return a.name === account; })[0];
+      const ex = transfer.buildExport(ctx).envelope.accounts.filter(function (a) { return a.name === account; })[0];
       if (!ex) return fail("no local account '" + account + "' (or its credentials are unreadable).");
       acctObj = ex;
     }
@@ -2764,7 +2821,7 @@ async function cmdFleet(ctx, rest) {
 
   if (sub === 'collect') {
     const statuses = fleet.readFleet(ctx, b);
-    const transfer = require('./transfer');
+
     const seen = {}; const toImport = [];
     statuses.forEach(function (s) { Object.keys((s.creds) || {}).forEach(function (name) { if (seen[name]) return; seen[name] = 1; const a = fleet.accountFrom(s, name); if (a) toImport.push(a); }); });
     if (!toImport.length) return fail('no accounts published with credentials across the fleet (machines must `keyflip fleet push --with-secrets`).');
@@ -2775,7 +2832,7 @@ async function cmdFleet(ctx, rest) {
   }
 
   if (sub === 'panel') {
-    const panel = require('./panel');
+    const panel = _panel;
     const pi = rest.indexOf('--port'); const port = pi !== -1 ? (parseInt(rest[pi + 1], 10) || 8898) : 8898;
     // The panel is a display surface — strip credentials from every machine before they cross to HTTP.
     const getFleet = function () { const statuses = fleet.readFleet(ctx, b); const nr = fleet.newReplies(ctx, statuses); return { machines: statuses.map(fleet.sanitizeStatus), newReplies: nr.newReplies }; };
@@ -2793,8 +2850,8 @@ async function cmdFleet(ctx, rest) {
 // Epic F: normalize ANOTHER agent's session file (JSONL, or an Aider .md) into keyflip's
 // unified shape and render it with the same exporter. Point it at a file the user provides.
 function cmdForeign(ctx, rest) {
-  const foreign = require('./foreign');
-  const transcript = require('./transcript');
+  const foreign = _foreign;
+  const transcript = _transcript;
   if (rest.indexOf('--list') !== -1) {
     const found = foreign.discover(ctx);
     if (JSON_MODE) { jsonOut({ foreign: found }); return; }
@@ -2833,12 +2890,12 @@ function cmdContext(ctx, rest) {
 
   // ---- context sync … → ctxsync privacy layer ----
   if (sub === 'sync') {
-    const ctxsync = require('./ctxsync');
+    const ctxsync = _ctxsync;
     const args = rest.slice(1);
     const opts = {
       projectPath: process.cwd(),
       now: ctx.now,
-      run: require('./exec').run,
+      run: exec.run,
       passphrase: readSecretArg(args, '--passphrase-file'), // export in encrypted mode
       against: readSecretArg(args, '--against'),            // check: a remote payload file to compare
     };
@@ -2850,7 +2907,7 @@ function cmdContext(ctx, rest) {
   }
 
   // ---- everything else → projctx store ----
-  const projctx = require('./projctx');
+  const projctx = _projctx;
   const pp = process.cwd();
   const opts = { now: ctx.now };
   const fv = function (n) { const i = rest.indexOf(n); return i !== -1 ? rest[i + 1] : undefined; };
@@ -2912,7 +2969,7 @@ function cmdContext(ctx, rest) {
 // keyflip rules <show | import | emit --to claude|cursor|agents|gemini|generic [--write]>
 // Normalize this project's AI rule files into one model and re-emit per tool.
 function cmdRules(ctx, rest) {
-  const rules = require('./rulesmodel');
+  const rules = _rules;
   const sub = rest[0];
   const projectPath = flagVal(rest, '--project') || process.cwd();
   const nowOpt = { now: ctx.now };
@@ -2958,7 +3015,7 @@ function cmdRules(ctx, rest) {
 // keyflip checkpoint <list | create --summary "…" | latest | show <id>>
 // Git-bound session-boundary snapshots stored in .keyflip/checkpoints/.
 async function cmdCheckpoint(ctx, rest) {
-  const checkpoint = require('./checkpoint');
+  const checkpoint = _checkpoint;
   const projectPath = process.cwd();
   const sub = rest[0];
 
@@ -2987,7 +3044,7 @@ async function cmdCheckpoint(ctx, rest) {
       catch (e) { return fail('cannot read --tasks-file: ' + (e && e.message)); }
     }
     let provider = null;
-    try { const a = require('./provider').readActive(ctx); provider = a ? a.name : 'official'; } catch (e) { /* best-effort */ }
+    try { const a = provider.readActive(ctx); provider = a ? a.name : 'official'; } catch (e) { /* best-effort */ }
     const cp = checkpoint.create(projectPath, { summary: summary, tasksSnapshot: tasksSnapshot, provider: provider }, { now: ctx.now });
     if (JSON_MODE) return jsonOut({ checkpoint: cp });
     print(style.ok('✅') + ' checkpoint ' + style.bold(cp.id) + ' saved'
@@ -3024,7 +3081,7 @@ async function cmdCheckpoint(ctx, rest) {
 // keyflip handoff [--to <tool>] [--path <dir>] [--out <file|->]
 // Print a target-aware CONTINUE-PROMPT so a NEW AI tool can resume this project from .keyflip/.
 function cmdHandoff(ctx, rest) {
-  const handoffmod = require('./handoff');
+  const handoffmod = _handoffmod;
   if (rest.indexOf('--help') !== -1 || rest.indexOf('-h') !== -1) {
     return print('usage: keyflip handoff [--to <claude|cursor|kiro|opencode|windsurf|generic>] [--path <dir>] [--out <file|->]\n'
       + '  Prints a CONTINUE-PROMPT (markdown) so a NEW AI tool can resume THIS project from .keyflip/\n'
@@ -3045,7 +3102,7 @@ function cmdHandoff(ctx, rest) {
 
 // Export a session transcript as a clean, shareable markdown / HTML / json document.
 function cmdSessionsExport(ctx, rest) {
-  const transcript = require('./transcript');
+  const transcript = _transcript;
   const id = positionals(rest, ['--format', '--out'])[0];
   if (!id) return fail('usage: keyflip sessions export <id> [--format md|html|json] [--out <file|->]');
   let row; try { row = sessions.find(ctx, id); } catch (e) { return fail(e.message); }
@@ -3086,7 +3143,7 @@ async function cmdSessionsDelete(ctx, rest) {
       : 'Delete session ' + row.sessionId.slice(0, 8) + '? It is archived first (recover with `keyflip sessions unarchive`). [y/N] ';
     if (!(await confirm(q))) { print('Cancelled.'); return; }
   }
-  const r = require('./sessionedit').deleteSession(ctx, { project: row.project, sessionId: row.sessionId, hard: hard });
+  const r = _sessionedit.deleteSession(ctx, { project: row.project, sessionId: row.sessionId, hard: hard });
   if (!r.ok) return fail('could not delete: ' + (r.reason || 'unknown'));
   if (JSON_MODE) { jsonOut({ deleted: r }); return; }
   print(style.ok('✅') + (r.mode === 'archived'
@@ -3101,7 +3158,7 @@ async function cmdSessionsScrub(ctx, rest) {
   if (!row) return fail('no such session (pass a list number or a session id).');
   const apply = rest.indexOf('--apply') !== -1;
   const catArg = flagVal(rest, '--categories');
-  const pii = require('./pii');
+  const pii = _pii;
   const opts = {
     project: row.project, sessionId: row.sessionId, apply: apply,
     categories: catArg ? catArg.split(',').map(function (s) { return s.trim(); }).filter(Boolean) : undefined,
@@ -3109,7 +3166,7 @@ async function cmdSessionsScrub(ctx, rest) {
   };
   const url = flagVal(rest, '--llm-url');
   if (url) opts.llm = { url: url, model: flagVal(rest, '--llm-model') || undefined };
-  const r = require('./sessionedit').scrubSession(ctx, opts);
+  const r = _sessionedit.scrubSession(ctx, opts);
   if (!r.ok) return fail('could not scrub: ' + (r.reason || 'unknown'));
   if (JSON_MODE) { jsonOut({ scrub: r }); return; }
   const total = Object.keys(r.redactions || {}).reduce(function (n, k) { return n + r.redactions[k]; }, 0);
@@ -3135,7 +3192,7 @@ async function cmdSessionsEdit(ctx, rest) {
   const apply = rest.indexOf('--apply') !== -1;
   const op = { type: type, index: index, apply: apply };
   const rep = flagVal(rest, '--replacement'); if (rep) op.replacement = rep;
-  const r = require('./sessionedit').editSession(ctx, { project: row.project, sessionId: row.sessionId, op: op });
+  const r = _sessionedit.editSession(ctx, { project: row.project, sessionId: row.sessionId, op: op });
   if (!r.ok) return fail('could not edit: ' + (r.reason || 'unknown'));
   if (JSON_MODE) { jsonOut({ edit: r }); return; }
   if (!apply) { print(style.bold('Dry run') + ' — ' + type + ' @ ' + index + ': ' + r.before + ' → ' + r.after + ' event line(s). Add --apply (backs up first).'); return; }
@@ -3183,7 +3240,7 @@ async function cmdSessions(ctx, rest) {
 // (--as, or an assignment) and/or --fork (branch instead of appending). This is how you
 // steer/continue a chat from another machine (keyflip carries the session; send drives it).
 async function cmdSend(ctx, rest) {
-  const sessionmap = require('./sessionmap');
+  const sessionmap = _sessionmap;
   // Exclude the values of value-taking flags (--as/--message/-m) from positionals, else
   // e.g. `send <id> "hi" --as bob` would fold "bob" into the message body sent to Claude.
   const pos = positionals(rest, ['--as', '--message', '-m']);
@@ -3193,7 +3250,7 @@ async function cmdSend(ctx, rest) {
   if (!id || !message) return fail('usage: keyflip send <id> "<message>" [--as <account>] [--fork]');
   let row; try { row = sessions.find(ctx, id); } catch (e) { return fail(e.message); }
   if (!row) return fail("no session matches '" + id + "'.");
-  if (!require('./llm').available()) return fail('send needs Claude Code on PATH (`claude -p --resume`).');
+  if (!_llm.available()) return fail('send needs Claude Code on PATH (`claude -p --resume`).');
   const sc = sessions.sendCommand(row, message, { fork: rest.indexOf('--fork') !== -1 });
   const cwd = (row.cwd && fs.existsSync(row.cwd)) ? row.cwd : process.cwd();
 
@@ -3205,20 +3262,20 @@ async function cmdSend(ctx, rest) {
     resolved = core.resolveProfile(ctx, asName);
     if (!resolved) return fail("no such account: '" + asName + "'");
     em = profiles.email(ctx.configDir, resolved) || resolved;
-    const session = require('./session');
+
     let dir; await withLock(ctx, function () { dir = session.prepareSession(ctx, resolved, { share: true, shareHistory: true }); });
     env = session.sessionEnv(ctx, dir).env;
   }
   if (JSON_MODE) { jsonOut({ send: { session: row.sessionId, as: resolved || null, cwd: cwd, command: sc.command + ' ' + sc.args.join(' ') } }); return; }
   print('Sending to ' + style.bold(row.sessionId.slice(0, 8)) + (em ? ' as ' + em : '') + (rest.indexOf('--fork') !== -1 ? ' ' + style.dim('(forked)') : '') + ' via ' + style.bold('claude -p') + ' ' + style.dim('(spends quota)') + '…\n');
   const bin = process.env.KEYFLIP_CLAUDE_BIN || 'claude';
-  const r = require('child_process').spawnSync(bin, sc.args, { stdio: 'inherit', cwd: cwd, env: env });
-  if (resolved) await withLock(ctx, function () { try { require('./session').syncBack(ctx, resolved); } catch (e) { /* best-effort */ } });
+  const r = _child_process.spawnSync(bin, sc.args, { stdio: 'inherit', cwd: cwd, env: env });
+  if (resolved) await withLock(ctx, function () { try { session.syncBack(ctx, resolved); } catch (e) { /* best-effort */ } });
   process.exitCode = typeof r.status === 'number' ? r.status : 1;
 }
 
 async function cmdResume(ctx, rest) {
-  const sessionmap = require('./sessionmap');
+  const sessionmap = _sessionmap;
   // positionals() knows --as takes a value, so `resume --as bob 5` resolves to `5`, not `bob`.
   const arg = positionals(rest, ['--as'])[0];
   if (!arg) return fail('usage: keyflip resume <number|session-id> [--run] [--as <account>]');
@@ -3247,12 +3304,12 @@ async function cmdResume(ctx, rest) {
       print('Resume ' + row.sessionId.slice(0, 8) + ' as ' + style.bold(em) + ' — parallel (this terminal only); your active account stays unchanged.');
       if (!(await confirm('Continue? [y/N] '))) { print('Cancelled.'); return; }
     }
-    const session = require('./session');
+
     let dir; await withLock(ctx, function () { dir = session.prepareSession(ctx, name, { share: true, shareHistory: true }); });
     const se = session.sessionEnv(ctx, dir);
     print('Resuming as ' + em + ' (this terminal only)…');
     const bin = process.env.KEYFLIP_CLAUDE_BIN || 'claude';
-    const r = require('child_process').spawnSync(bin, rc.args, { stdio: 'inherit', cwd: cwd, env: se.env });
+    const r = _child_process.spawnSync(bin, rc.args, { stdio: 'inherit', cwd: cwd, env: se.env });
     await withLock(ctx, function () { try { session.syncBack(ctx, name); } catch (e) { /* best-effort */ } });
     process.exitCode = typeof r.status === 'number' ? r.status : 1;
     return;
@@ -3263,7 +3320,7 @@ async function cmdResume(ctx, rest) {
     if (rc.cwd && !fs.existsSync(rc.cwd)) print(style.warn('⚠️  original directory is gone: ' + rc.cwd + ' — launching in the current directory.'));
     const cwd = (rc.cwd && fs.existsSync(rc.cwd)) ? rc.cwd : process.cwd();
     const bin = process.env.KEYFLIP_CLAUDE_BIN || 'claude';
-    const r = require('child_process').spawnSync(bin, rc.args, { stdio: 'inherit', cwd: cwd });
+    const r = _child_process.spawnSync(bin, rc.args, { stdio: 'inherit', cwd: cwd });
     process.exitCode = typeof r.status === 'number' ? r.status : 1;
     return;
   }
@@ -3364,7 +3421,7 @@ async function cmdRun(ctx, rest) {
   // Policy engine: `run` ACTIVATES an account in this directory (isolated session), so it must be
   // constrained the same as a switch (no-op until rules exist; --force overrides).
   if (own.indexOf('--force') === -1) {
-    try { require('./policy').enforce(ctx, { cwd: process.cwd(), account: name }); }
+    try { _policy.enforce(ctx, { cwd: process.cwd(), account: name }); }
     catch (e) { if (e && e.code === 'POLICY_DENIED') return fail(e.message + '  (override with --force)'); throw e; }
   }
 
@@ -3389,7 +3446,7 @@ async function cmdRun(ctx, rest) {
   print('Launching Claude Code as ' + em + ' (this terminal only)…');
   logmod.log('run session: ' + name);
   const bin = process.env.KEYFLIP_CLAUDE_BIN || 'claude';
-  const r = require('child_process').spawnSync(bin, fwd, { stdio: 'inherit', env: se.env });
+  const r = _child_process.spawnSync(bin, fwd, { stdio: 'inherit', env: se.env });
   await withLock(ctx, function () {
     if (session.syncBack(ctx, name)) print('  ↳ session token rotated — saved back to the profile.');
   });
@@ -3464,7 +3521,7 @@ async function cmdUpgrade(ctx) {
       update.upgradeCommand('installer') + '\n  ' + update.upgradeCommand('npm'));
   }
   print('Upgrading (' + method + '):  ' + update.upgradeCommand(method));
-  const r = require('child_process').spawnSync(spawn.cmd, spawn.args, { stdio: 'inherit' });
+  const r = _child_process.spawnSync(spawn.cmd, spawn.args, { stdio: 'inherit' });
   if (r.error) return fail('could not run the upgrade (' + spawn.cmd + ' not found?): ' + r.error.message +
     '\nRun manually:  ' + update.upgradeCommand(method));
   if (r.status !== 0) return fail('upgrade failed (exit ' + r.status + ') — run manually:  ' + update.upgradeCommand(method));
@@ -3666,7 +3723,7 @@ async function cmdLogin(ctx, rest) {
   // a genuine login as the account you want (OAuth reuses whatever the browser is
   // signed into — otherwise it silently captures THAT account, not the one you meant).
   if (fresh && ctx.platform === 'darwin') {
-    const browser = require('./browser');
+    const browser = _browser;
     browser.installed(ctx.home).forEach(function (b) {
       const cr = browser.clearClaudeCookies(b, {});
       if (cr.ok) print(style.dim('· cleared ' + b.name + ' claude.ai session (backup: ' + cr.backup + ')'));
@@ -3727,7 +3784,7 @@ function captureLive(ctx, captured) {
 // — creating a fresh interface per round breaks stdin on the second prompt.
 // Resolves { found } | { rescan } | { done }.
 function waitForNextLogin(ctx, captured, rl, isClosed) {
-  const onboard = require('./onboard');
+  const onboard = _onboard;
   return new Promise(function (resolve) {
     if (isClosed()) return resolve({ done: true });
     let settled = false;
@@ -3761,7 +3818,7 @@ async function cmdSetup(ctx, rest) {
     return fail('`keyflip setup` is an interactive wizard — run it directly in a terminal.\n' +
       'Non-interactive: log in, then `keyflip add` (once per account).');
   }
-  const onboard = require('./onboard');
+  const onboard = _onboard;
   const captured = onboard.capturedEmails(ctx);
   let total = captured.size;
 
@@ -3777,7 +3834,7 @@ async function cmdSetup(ctx, rest) {
   }
 
   // One readline for the whole wizard (a fresh one per round breaks stdin).
-  const rl = require('readline').createInterface({ input: process.stdin, output: process.stderr });
+  const rl = _readline.createInterface({ input: process.stdin, output: process.stderr });
   let rlClosed = false;
   rl.once('close', function () { rlClosed = true; });
   const isClosed = function () { return rlClosed; };
@@ -3851,7 +3908,7 @@ async function cmdOnboard(ctx, rest) {
   // the only thing askHidden() can mute. Without it (e.g. `onboard 2>file`, stderr not a
   // TTY → readline defaults to terminal:false), the TTY driver echoes the typed provider
   // API key in cleartext and the mute never fires.
-  const rl = require('readline').createInterface({ input: process.stdin, output: process.stderr, terminal: true });
+  const rl = _readline.createInterface({ input: process.stdin, output: process.stderr, terminal: true });
   const ask = function (q) { return new Promise(function (r) { rl.question(q, r); }); };
   const isDone = function (s) { return /^(d|done|q|quit|n|no)$/i.test(String(s || '').trim()); };
   const isProvider = function (s) { return /^(p|provider)$/i.test(String(s || '').trim()); };
@@ -3867,7 +3924,7 @@ async function cmdOnboard(ctx, rest) {
       // fresh login — no manual "switch account" on the page.
       if (count > 0 && ctx.platform === 'darwin') {
         try {
-          const browser = require('./browser');
+          const browser = _browser;
           const napMs = function (ms) { return new Promise(function (r) { setTimeout(r, ms); }); };
           let did = false;
           const list = browser.installed(ctx.home);
@@ -3923,7 +3980,7 @@ async function cmdOnboard(ctx, rest) {
 // stored cookies, reopens. Returns the browsers actually synced. macOS only.
 async function browserSync(ctx, name) {
   if (ctx.platform !== 'darwin') return [];
-  const browser = require('./browser');
+  const browser = _browser;
   const napMs = function (ms) { return new Promise(function (r) { setTimeout(r, ms); }); };
   const synced = [];
   const list = browser.installed(ctx.home);
@@ -3946,7 +4003,7 @@ async function browserSync(ctx, name) {
 function saveBrowserSession(ctx, name) {
   if (ctx.platform !== 'darwin') return;
   try {
-    const browser = require('./browser');
+    const browser = _browser;
     browser.installed(ctx.home).forEach(function (b) { browser.saveSession(ctx.configDir, name, b, {}); });
   } catch (e) { /* best-effort */ }
 }
@@ -3957,7 +4014,7 @@ function saveBrowserSession(ctx, name) {
 // the "Claude browser" extension refuses to connect.
 async function cmdBrowser(ctx, rest) {
   logmod.log('browser invoked');
-  const browser = require('./browser');
+  const browser = _browser;
   if (ctx.platform !== 'darwin') return fail('browser session management is macOS-only for now (cookie decryption differs on Windows/Linux).');
   const sub = rest[0] && rest[0].indexOf('-') !== 0 ? rest[0] : 'status';
   const bi = rest.indexOf('--browser');
@@ -4166,7 +4223,7 @@ async function logoutSurfaces(ctx, opts) {
   // unlocks), then clear its claude.ai session — the Claude extension logs out with
   // it. Without closeApps we refuse while it runs (clearing a live DB can corrupt it).
   if (opts.browser && ctx.platform === 'darwin') {
-    const browser = require('./browser');
+    const browser = _browser;
     const list = browser.installed(ctx.home);
     if (!list.length) print('  ' + style.dim('· no Chromium browser to sign out.'));
     for (let i = 0; i < list.length; i++) {
@@ -4280,7 +4337,7 @@ async function cmdReset(ctx, rest) {
   // Also sweep keyflip's stray artifacts OUTSIDE configDir (browser Cookies backups).
   if (ctx.platform === 'darwin') {
     try {
-      const browser = require('./browser');
+      const browser = _browser;
       browser.installed(ctx.home).forEach(function (b) { try { fs.rmSync(b.cookies + '.keyflip-bak', { force: true }); } catch (e) { /* none */ } });
     } catch (e) { /* best-effort */ }
   }
@@ -4330,7 +4387,7 @@ async function cmdUninstall(ctx, rest) {
   if (purge) { const n = wipeKeyflipData(ctx); print('  ✓ purged keyflip data (' + n + ' account(s)).'); }
 
   if (method === 'npm') {
-    const r = require('child_process').spawnSync(plan.npm.cmd, plan.npm.args, { stdio: 'inherit' });
+    const r = _child_process.spawnSync(plan.npm.cmd, plan.npm.args, { stdio: 'inherit' });
     if (r.error || r.status !== 0) print(style.warn('⚠️ could not auto-remove the npm package — run it yourself: ' + plan.npm.cmd + ' ' + plan.npm.args.join(' ')));
     else print('  ✓ removed the npm global package.');
   } else if (method !== 'dev') {
@@ -4375,7 +4432,7 @@ async function cmdList(ctx, rest) {
   let browsersPresent = 0;
   if (ctx.platform === 'darwin') {
     try {
-      const browser = require('./browser');
+      const browser = _browser;
       const inst = browser.installed(ctx.home);
       browsersPresent = inst.length;
       inst.forEach(function (b) {
@@ -4459,7 +4516,7 @@ async function cmdList(ctx, rest) {
 
 // H3: git-backed versioning of keyflip's config/state (never secrets). history/undo/restore.
 async function cmdVersion(ctx, rest) {
-  const vcs = require('./vcs');
+  const vcs = _vcs;
   const sub = rest[0];
   if (sub === 'on' || sub === 'enable') {
     const ok = vcs.enable(ctx);
@@ -4481,7 +4538,7 @@ async function cmdVersion(ctx, rest) {
 }
 
 function cmdHistory(ctx, rest) {
-  const vcs = require('./vcs');
+  const vcs = _vcs;
   const n = parseInt(rest[0], 10) || 20;
   const hist = vcs.log(ctx, n);
   if (JSON_MODE) { jsonOut({ history: hist }); return; }
@@ -4491,7 +4548,7 @@ function cmdHistory(ctx, rest) {
 }
 
 function cmdUndo(ctx) {
-  const r = require('./vcs').undo(ctx);
+  const r = _vcs.undo(ctx);
   if (!r.ok) return fail('cannot undo: ' + (r.reason === 'nothing-to-undo' ? 'no earlier state recorded' : r.reason || 'unknown'));
   print(style.ok('✅') + ' undid the last change (a revert was recorded — see keyflip history).');
   jsonOut({ undone: true });
@@ -4500,7 +4557,7 @@ function cmdUndo(ctx) {
 function cmdRestore(ctx, rest) {
   const ref = rest[0];
   if (!ref) return fail('usage: keyflip restore <ref>   (list refs with: keyflip history)');
-  const r = require('./vcs').restore(ctx, ref);
+  const r = _vcs.restore(ctx, ref);
   if (!r.ok) return fail('restore failed: ' + (r.reason || 'unknown') + (r.detail ? ' (' + String(r.detail).trim() + ')' : ''));
   print(style.ok('✅') + ' restored keyflip state to ' + ref + '.');
   jsonOut({ restored: ref });
@@ -4517,11 +4574,11 @@ async function main(argv) {
   const ctx = createContext();
   // Honor config ui.color=false (hard-disable color, like NO_COLOR). Re-made here because ctx —
   // and thus config — isn't available when the module-level `style` is first created. Only disables.
-  try { if (require('./config').get(ctx, 'ui.color') === false) style = require('./style').make(process.stdout, { color: false }); } catch (e) { /* keep the default style */ }
+  try { if (_cfg.get(ctx, 'ui.color') === false) style = _styleModule.make(process.stdout, { color: false }); } catch (e) { /* keep the default style */ }
   logmod.init(ctx.configDir, debug);
   // H3: a descriptive label for the auto-version commit (argv holds no secrets by rule).
   ctx._vcsLabel = [cmd].concat(rest.filter(function (a) { return a && a[0] !== '-'; }).slice(0, 2)).join(' ') || 'update';
-  try { require('./migrations').runMigrations(ctx); } catch (e) { /* never blocks startup */ }
+  try { _migrations.runMigrations(ctx); } catch (e) { /* never blocks startup */ }
   try {
     await dispatch(ctx, cmd, rest);
   } catch (e) {
@@ -4539,15 +4596,15 @@ async function main(argv) {
 async function dispatch(ctx, cmd, rest) {
   // Paywall gate (a NO-OP unless KEYFLIP_LICENSING is enabled) — one central check maps the command to
   // its tier and blocks it with a clear upgrade message when the license is insufficient.
-  try { require('./license').requireForName(ctx, cmd); }
+  try { _lic.requireForName(ctx, cmd); }
   catch (e) { if (e && e.code === 'LICENSE_REQUIRED') return fail(e.message); throw e; }
   {
     switch (cmd) {
       case undefined:
         if (!process.stdin.isTTY) { usage(); return; }
-        return require('./menu').runMenu(ctx);
+        return _menu.runMenu(ctx);
       case 'menu': // hidden: used by the launcher app; same as bare `keyflip`
-        return require('./menu').runMenu(ctx);
+        return _menu.runMenu(ctx);
       case 'add':
         return withLock(ctx, function () { return cmdAdd(ctx, rest); });
       case 'setup':
@@ -4777,4 +4834,4 @@ async function dispatch(ctx, cmd, rest) {
   }
 }
 
-module.exports = { main: main, usage: usage, positionals: positionals, onboardProvider: onboardProvider, desktopTugRisk: desktopTugRisk };
+export { main, usage, positionals, onboardProvider, desktopTugRisk };

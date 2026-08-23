@@ -1,12 +1,11 @@
-'use strict';
 // NOTIFY: event-driven webhook + macOS desktop notifications. All IO is injected
 // (opts.fetch / opts.run) so nothing here touches the network or spawns osascript.
-const test = require('node:test');
-const assert = require('node:assert');
-const fs = require('fs');
-const path = require('path');
-const notify = require('../src/notify');
-const { makeCtx } = require('./helpers');
+import test from 'node:test';
+import assert from 'node:assert';
+import fs from 'fs';
+import path from 'path';
+import * as notify from '../src/notify.js';
+import { makeCtx } from './helpers.js';
 
 // A fetch double that records every call and returns a canned response.
 function fetchRecorder(response) {

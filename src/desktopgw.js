@@ -1,4 +1,3 @@
-'use strict';
 // #17 Claude Desktop third-party gateway switching. Points the desktop app at a
 // provider profile's gateway by setting deploymentMode:'3p' in
 // claude_desktop_config.json of BOTH config dirs (Claude and Claude-3p on macOS;
@@ -6,11 +5,11 @@
 // into configLibrary/. Restoring flips back to '1p' and removes what we added.
 // All edits are wrapped in the multi-file rollback so a mid-way failure never
 // leaves the app half-configured.
-const fs = require('fs');
-const path = require('path');
-const { writeJsonStable, readJsonForWrite } = require('./fsutil');
-const provider = require('./provider');
-const txn = require('./txn');
+import fs from 'fs';
+import path from 'path';
+import { writeJsonStable, readJsonForWrite } from './fsutil.js';
+import * as provider from './provider.js';
+import * as txn from './txn.js';
 
 const KEYFLIP_PROFILE_ID = 'keyflip-gateway-0000-0000-0000-000000000001'; // fixed id we own
 const META = '.keyflip-gateway.json';
@@ -86,4 +85,4 @@ function restore(ctx) {
 
 function active(ctx) { const m = readJson(metaPath(ctx)); return m && m.provider ? m : null; }
 
-module.exports = { use: use, restore: restore, active: active, configDirs: configDirs, KEYFLIP_PROFILE_ID: KEYFLIP_PROFILE_ID };
+export { use, restore, active, configDirs, KEYFLIP_PROFILE_ID };

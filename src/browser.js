@@ -1,4 +1,3 @@
-'use strict';
 // Phase 2/3: read and manage the BROWSER's claude.ai session. The Claude Chrome
 // extension has NO login of its own — it inherits the browser's claude.ai cookies.
 // The native-messaging bridge rejects the connection ("Invalid token or user
@@ -7,11 +6,11 @@
 //
 // Cookie decryption reuses chat.js's Chromium v10 scheme, but with each BROWSER's
 // own "Safe Storage" Keychain key (Chrome/Brave/Edge/Arc), not Claude's.
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
-const { run } = require('./exec');
-const { decryptCookie } = require('./chat');
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+import { run } from './exec.js';
+import { decryptCookie } from './chat.js';
 
 // Known Chromium browsers: default-profile Cookies DB, the macOS login-Keychain
 // service/account that holds their cookie key, and the process name (for the
@@ -160,18 +159,4 @@ function loadSession(configDir, name, b) {
   try { return fs.readFileSync(sessionStorePath(configDir, name, b.id), 'utf8'); } catch (e) { return null; }
 }
 
-module.exports = {
-  catalog: catalog,
-  installed: installed,
-  sessionStorePath: sessionStorePath,
-  saveSession: saveSession,
-  loadSession: loadSession,
-  safeKey: safeKey,
-  isRunning: isRunning,
-  quit: quit,
-  readClaudeCookies: readClaudeCookies,
-  parseCookieRows: parseCookieRows,
-  clearClaudeCookies: clearClaudeCookies,
-  snapshotClaudeCookies: snapshotClaudeCookies,
-  restoreClaudeCookies: restoreClaudeCookies,
-};
+export { catalog, installed, sessionStorePath, saveSession, loadSession, safeKey, isRunning, quit, readClaudeCookies, parseCookieRows, clearClaudeCookies, snapshotClaudeCookies, restoreClaudeCookies };

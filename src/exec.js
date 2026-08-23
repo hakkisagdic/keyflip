@@ -1,6 +1,5 @@
-'use strict';
 // Tiny synchronous process runner. Never throws; returns a normalized result.
-const { spawnSync } = require('child_process');
+import { spawnSync } from 'child_process';
 
 function run(cmd, args, input, opts) {
   opts = opts || {};
@@ -21,4 +20,4 @@ function run(cmd, args, input, opts) {
   };
 }
 
-module.exports = { run };
+export { run };

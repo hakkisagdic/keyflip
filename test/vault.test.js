@@ -1,4 +1,3 @@
-'use strict';
 // EXTERNAL SECRET BACKEND: drive 1Password/Bitwarden/HashiCorp Vault through an
 // INJECTED CLI runner, so every path is exercised with zero real subprocesses,
 // no network and a fixed clock. Each provider gets a tiny in-memory emulator so
@@ -6,12 +5,12 @@
 // (locked, absent, missing item, bad names, prototype pollution, confirm gates)
 // use hand-programmed runners. The security-critical assertion throughout: a
 // secret only ever travels on stdin (call.input), NEVER on argv (call.args).
-const test = require('node:test');
-const assert = require('node:assert');
-const fs = require('fs');
-const path = require('path');
-const vault = require('../src/vault');
-const { makeCtx } = require('./helpers');
+import test from 'node:test';
+import assert from 'node:assert';
+import fs from 'fs';
+import path from 'path';
+import * as vault from '../src/vault.js';
+import { makeCtx } from './helpers.js';
 
 const TOKEN = 'SUPER-SECRET-TOKEN-123'; // quote-free marker: survives JSON.stringify + base64 verbatim
 const SECRET = '{"claudeAiOauth":{"accessToken":"' + TOKEN + '"}}';

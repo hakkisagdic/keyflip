@@ -1,18 +1,19 @@
-'use strict';
 // Per-account usage/quota via the OAuth usage API (ported from claude-swap):
 // GET https://api.anthropic.com/api/oauth/usage with the account's Bearer token.
 // Best-effort with a short cache; degraded states are explicit sentinels so the
 // UI can render "?" instead of lying.
-const fs = require('fs');
-const path = require('path');
-const { atomicWrite } = require('./fsutil');
+import fs from 'fs';
+import path from 'path';
+import { atomicWrite } from './fsutil.js';
+import * as _config from './config.js';
+import * as _history from './history.js';
 
 const USAGE_URL = 'https://api.anthropic.com/api/oauth/usage';
 const OAUTH_BETA_HEADER = 'oauth-2025-04-20';
 const CACHE_TTL_MS = 60 * 1000;
 
 let VERSION = '0.0.0';
-try { VERSION = require('../package.json').version; } catch (e) { /* ignore */ }
+try { VERSION = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version; } catch (e) { /* ignore */ }
 
 function accessTokenOf(blob) {
   try { return JSON.parse(blob).claudeAiOauth.accessToken || null; } catch (e) { return null; }
@@ -75,7 +76,7 @@ function cachePath(ctx) { return path.join(ctx.configDir, '.usage-cache.json'); 
 // The cache TTL, in ms, defaulting from config (`keyflip config set usage.cacheTtlSeconds N`).
 // Falls back to the built-in 60s if config is unreadable. Callers can still override via opts.cacheTtlMs.
 function cfgTtlMs(ctx) {
-  try { const s = require('./config').get(ctx, 'usage.cacheTtlSeconds'); return (typeof s === 'number' ? s : 60) * 1000; }
+  try { const s = _config.get(ctx, 'usage.cacheTtlSeconds'); return (typeof s === 'number' ? s : 60) * 1000; }
   catch (e) { return CACHE_TTL_MS; }
 }
 
@@ -126,7 +127,7 @@ async function usageForProfiles(ctx, names, opts) {
     }
     cache[name] = { at: nowMs, status: out[name].status, usage: out[name].usage };
     // #12: record every FRESH sample (cache hits `continue` above) to the trend log.
-    if (opts.recordHistory) { try { require('./history').recordUsage(ctx, name, out[name]); } catch (e) { /* best effort */ } }
+    if (opts.recordHistory) { try { _history.recordUsage(ctx, name, out[name]); } catch (e) { /* best effort */ } }
   }
   try { atomicWrite(cachePath(ctx), JSON.stringify(cache), 0o600); } catch (e) { /* best effort */ }
   return out;
@@ -156,13 +157,4 @@ function pickByStrategy(candidates, infos, strategy) {
   return null;
 }
 
-module.exports = {
-  fetchUsage: fetchUsage,
-  fetchUsageDetailed: fetchUsageDetailed,
-  headroom: headroom,
-  fmt: fmt,
-  usageForProfiles: usageForProfiles,
-  pickByStrategy: pickByStrategy,
-  accessTokenOf: accessTokenOf,
-  USAGE_URL: USAGE_URL,
-};
+export { fetchUsage, fetchUsageDetailed, headroom, fmt, usageForProfiles, pickByStrategy, accessTokenOf, USAGE_URL };

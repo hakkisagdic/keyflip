@@ -1,12 +1,11 @@
-'use strict';
 // #6 Unified backup of keyflip's own (non-secret) metadata: the profile/provider
 // JSON, links, breakers — everything in configDir EXCEPT secrets (credentials
 // live in the OS store / creds dir and are never copied here) and volatile files
 // (locks, caches, the backups dir itself). Timestamped, retention-capped, with a
 // mandatory safety snapshot before any restore.
-const fs = require('fs');
-const path = require('path');
-const secretpaths = require('./secretpaths');
+import fs from 'fs';
+import path from 'path';
+import * as secretpaths from './secretpaths.js';
 
 const DEFAULT_KEEP = 10;
 // Dirs never backed up: the shared SECRET set (creds/app/browser-sessions/pre-sync-backups)
@@ -103,4 +102,4 @@ function restore(ctx, nameOrIndex) {
   return { name: target.name, files: restored };
 }
 
-module.exports = { create: create, list: list, prune: prune, restore: restore, backupsDir: backupsDir, DEFAULT_KEEP: DEFAULT_KEEP };
+export { create, list, prune, restore, backupsDir, DEFAULT_KEEP };

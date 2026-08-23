@@ -1,13 +1,12 @@
-'use strict';
 // BUDGET: per-account usage ceilings + breach/near-breach alerts. Everything is
 // hermetic — makeCtx gives a temp configDir; we write .usage-cache.json directly
 // (the module only READS it) so no network/time is ever touched.
-const test = require('node:test');
-const assert = require('node:assert');
-const fs = require('fs');
-const path = require('path');
-const budget = require('../src/budget');
-const { makeCtx } = require('./helpers');
+import test from 'node:test';
+import assert from 'node:assert';
+import fs from 'fs';
+import path from 'path';
+import * as budget from '../src/budget.js';
+import { makeCtx } from './helpers.js';
 
 // Write the usage cache the way usage.js does: { name: { at, status, usage } }.
 function writeCache(ctx, byName) {

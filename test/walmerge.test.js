@@ -1,4 +1,3 @@
-'use strict';
 // Tests for the zero-dep SQLite WAL replayer (src/walmerge.js). Two layers:
 //   1. GROUND TRUTH via the sqlite3 CLI (skipped if absent): a real DB in WAL mode with a
 //      concurrent reader holding a snapshot so the writer's close cannot checkpoint the -wal
@@ -7,14 +6,14 @@
 //   2. HAND-BUILT fixtures (a local WAL writer that computes the SAME running checksum) for the
 //      cases sqlite3 won't hand us on demand: last-write-wins, uncommitted trailing frames, salt
 //      mismatch, corrupt frames, big-endian checksums, file growth, and hostile/garbage input.
-const test = require('node:test');
-const assert = require('node:assert');
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
-const cp = require('child_process');
-const wm = require('../src/walmerge');
-const sq = require('../src/sqliteread');
+import test from 'node:test';
+import assert from 'node:assert';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+import cp from 'child_process';
+import * as wm from '../src/walmerge.js';
+import * as sq from '../src/sqliteread.js';
 
 let HAS_SQLITE = false;
 try { cp.execFileSync('sqlite3', ['--version'], { stdio: 'ignore' }); HAS_SQLITE = true; } catch (e) { HAS_SQLITE = false; }

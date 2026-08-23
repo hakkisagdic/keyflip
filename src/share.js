@@ -1,11 +1,10 @@
-'use strict';
 // #11 keyflip:// share URLs — paste-to-import for provider (and account-pointer)
 // configs. Format mirrors cc-switch's wire format:
 //   keyflip://v1/import?resource=<provider|account>&name=<n>&config=<base64url JSON>
 // Importing ALWAYS shows a decoded preview and requires confirmation (the caller
 // does the prompt); links that carry a key are secrets.
-const provider = require('./provider');
-const profiles = require('./profiles');
+import * as provider from './provider.js';
+import * as profiles from './profiles.js';
 
 function b64urlEncode(str) {
   return Buffer.from(str, 'utf8').toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
@@ -73,4 +72,4 @@ function apply(ctx, parsed) {
   return { resource: 'account', name: parsed.name, note: 'pointer only — log into this account and run `keyflip add` to capture its credential' };
 }
 
-module.exports = { build: build, parse: parse, preview: preview, apply: apply, b64urlEncode: b64urlEncode, b64urlDecode: b64urlDecode };
+export { build, parse, preview, apply, b64urlEncode, b64urlDecode };

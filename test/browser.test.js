@@ -1,12 +1,11 @@
-'use strict';
 // Tests for Phase 2/3 browser-session management (src/browser.js). The live
 // claude.ai calls and real Cookies-DB writes can't be unit-tested, so we cover
 // the browser catalog, Keychain key read, the v10 cookie decrypt/parse (with an
 // encrypt fixture), and the destructive-op guards.
-const test = require('node:test');
-const assert = require('node:assert');
-const crypto = require('crypto');
-const browser = require('../src/browser');
+import test from 'node:test';
+import assert from 'node:assert';
+import crypto from 'crypto';
+import * as browser from '../src/browser.js';
 
 // Encrypt like Chromium's macOS v10 scheme so we can round-trip parseCookieRows.
 function encV10(plain, password) {
@@ -89,9 +88,9 @@ test('quit issues an osascript "quit" for the browser app', function () {
 });
 
 // ---- browser-session snapshot/restore (gap #1: browser sync on switch) ----
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
 
 function tmpCookiesFile() {
   const p = path.join(os.tmpdir(), 'keyflip-test-cookies-' + process.pid + '-' + Math.floor(Math.random() * 1e6));

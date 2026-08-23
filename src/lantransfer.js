@@ -1,4 +1,3 @@
-'use strict';
 // Roadmap #10(a): LIVE device-to-device transfer over the LAN, zero-dependency.
 // The source runs `transfer serve`: it builds the same encrypted migrate bundle,
 // shows a short ONE-TIME CODE, and streams the bundle over HTTP only to a peer that
@@ -14,12 +13,12 @@
 //   * Single-shot: the listener shuts down after ONE successful transfer.
 //   * Rate-limited: a few bad codes shut it down (blunts online guessing).
 //   * Auto-expires after a TTL. Binds the LAN; never advertises the code.
-const http = require('http');
-const dgram = require('dgram');
-const os = require('os');
-const crypto = require('crypto');
-const migrate = require('./migrate');
-const sync = require('./sync');
+import http from 'http';
+import dgram from 'dgram';
+import os from 'os';
+import crypto from 'crypto';
+import * as migrate from './migrate.js';
+import * as sync from './sync.js';
 
 const DEFAULT_PORT = 8787;
 const MCAST_ADDR = '239.255.41.42';
@@ -295,18 +294,4 @@ function pull(opts) {
   });
 }
 
-module.exports = {
-  DEFAULT_PORT: DEFAULT_PORT,
-  pairingUrl: pairingUrl,
-  serve: serve,
-  serveReceive: serveReceive,
-  pull: pull,
-  push: push,
-  discover: discover,
-  genCode: genCode,
-  normCode: normCode,
-  codeEqual: codeEqual,
-  fingerprint: fingerprint,
-  splitHostPort: splitHostPort,
-  lanAddresses: lanAddresses,
-};
+export { DEFAULT_PORT, pairingUrl, serve, serveReceive, pull, push, discover, genCode, normCode, codeEqual, fingerprint, splitHostPort, lanAddresses };

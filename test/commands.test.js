@@ -1,10 +1,9 @@
-'use strict';
 // commands.test.js — the CATALOG of the keyflip CLI surface stays well-formed
 // and searchable so a TUI command palette can list/search every command.
 
-const { test } = require('node:test');
-const assert = require('node:assert');
-const { CATALOG, GROUPS, search, byGroup, get } = require('../src/commands');
+import { test } from 'node:test';
+import assert from 'node:assert';
+import { CATALOG, GROUPS, search, byGroup, get } from '../src/commands.js';
 
 test('CATALOG is non-empty and every entry is well-formed', function () {
   assert.ok(Array.isArray(CATALOG), 'CATALOG is an array');

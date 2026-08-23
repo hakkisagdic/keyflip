@@ -1,4 +1,3 @@
-'use strict';
 // macOS credential store backed by the login Keychain via /usr/bin/security.
 // Secrets never touch the filesystem here, and writes go through stdin so the
 // secret never appears in the process table.
@@ -7,7 +6,7 @@
 // reads return null; any other failure (locked keychain, denied ACL, timeout)
 // throws an Error with code 'EKEYCHAIN' so callers can say "keychain locked"
 // instead of the misleading "no credentials".
-const defaultRun = require('../exec').run;
+import { run as defaultRun } from '../exec.js';
 
 const SERVICE_LIVE = 'Claude Code-credentials'; // the item Claude itself manages
 const PROFILE_PREFIX = 'keyflip:';
@@ -83,7 +82,5 @@ class KeychainStore {
   delProfile(name) { this._delete(PROFILE_PREFIX + name); }
 }
 
-module.exports = KeychainStore;
-module.exports.SERVICE_LIVE = SERVICE_LIVE;
-module.exports.PROFILE_PREFIX = PROFILE_PREFIX;
-module.exports.SECURITY = SECURITY;
+export default KeychainStore;
+export { SERVICE_LIVE, PROFILE_PREFIX, SECURITY };

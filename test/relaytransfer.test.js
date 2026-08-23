@@ -1,4 +1,3 @@
-'use strict';
 // Tests for the internet RELAY transport (relaytransfer.js). The relay is
 // ZERO-KNOWLEDGE: it only ever holds CIPHERTEXT, and the slot it is keyed by is a
 // PUBLIC random rendezvous handle — NOT the encryption key and NOT derived from it.
@@ -8,17 +7,17 @@
 // succeeds only with the right pairing (and fails the SAME way for a wrong key as for
 // corruption), the WebDAV backend addresses the slot as a single path segment, and
 // awaitPickup gives the live pickup signal. No network, no clock.
-const test = require('node:test');
-const assert = require('node:assert');
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
+import test from 'node:test';
+import assert from 'node:assert';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
 
-const relay = require('../src/relaytransfer');
-const sync = require('../src/sync');
-const migrate = require('../src/migrate');
-const lantransfer = require('../src/lantransfer');
-const { createContext } = require('../src/context');
+import * as relay from '../src/relaytransfer.js';
+import * as sync from '../src/sync.js';
+import * as migrate from '../src/migrate.js';
+import * as lantransfer from '../src/lantransfer.js';
+import { createContext } from '../src/context.js';
 
 function tmpdir(tag) { return fs.mkdtempSync(path.join(os.tmpdir(), 'kf-relay-' + (tag || '') + '-')); }
 

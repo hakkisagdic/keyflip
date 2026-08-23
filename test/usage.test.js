@@ -1,8 +1,8 @@
-'use strict';
-const test = require('node:test');
-const assert = require('node:assert');
-const usage = require('../src/usage');
-const { makeCtx } = require('./helpers');
+import test from 'node:test';
+import assert from 'node:assert';
+import * as usage from '../src/usage.js';
+import { makeCtx } from './helpers.js';
+import * as _config from '../src/config.js';
 
 function apiFetch(fiveHour, sevenDay, calls) {
   return async function (url, opts) {
@@ -55,7 +55,7 @@ test('usageForProfiles honors config usage.cacheTtlSeconds for the default TTL',
     ctx.store.setProfile('ok', blobWithToken('T1'));
     let calls = 0;
     const f = async function () { calls++; return { ok: true, json: async function () { return { five_hour: { utilization: 50 } }; } }; };
-    require('../src/config').set(ctx, 'usage.cacheTtlSeconds', '5'); // 5-second cache
+    _config.set(ctx, 'usage.cacheTtlSeconds', '5'); // 5-second cache
     const NOW = 1800000000000;
     await usage.usageForProfiles(ctx, ['ok'], { fetch: f, nowMs: NOW });
     assert.strictEqual(calls, 1);

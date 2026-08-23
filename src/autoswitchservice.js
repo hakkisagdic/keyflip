@@ -1,4 +1,3 @@
-'use strict';
 // The autoswitch PILOT as an unattended background service. `keyflip autoswitch` alone is a
 // foreground loop you must keep a terminal open for — so it never runs when you actually need it.
 // This installs a scheduled `keyflip autoswitch --once -y` that fires on an INTERVAL (macOS launchd
@@ -7,10 +6,13 @@
 // Command-activated, NOT a hidden daemon: the user explicitly installs/removes it. Runner + home are
 // injectable so tests never touch the real launchctl/crontab. Sibling of schedule.js (dream's
 // nightly CALENDAR job); this one is INTERVAL-based and left separate so dream stays untouched.
-const fs = require('fs');
-const path = require('path');
-const os = require('os');
-const { run } = require('./exec');
+import fs from 'fs';
+import path from 'path';
+import os from 'os';
+import { run } from './exec.js';
+import { fileURLToPath } from 'url';
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const LABEL = 'com.keyflip.autoswitch';
 const CRON_MARK = '# keyflip-autoswitch (managed by keyflip)';
@@ -123,11 +125,4 @@ function status(ctx, opts) {
   return { kind: 'unsupported', installed: false };
 }
 
-module.exports = {
-  LABEL: LABEL, CRON_MARK: CRON_MARK,
-  autoswitchCommand: autoswitchCommand, intervalSec: intervalSec,
-  buildPlist: buildPlist, cronLine: cronLine, plistPath: plistPath,
-  installLaunchd: installLaunchd, uninstallLaunchd: uninstallLaunchd,
-  installCron: installCron, uninstallCron: uninstallCron,
-  install: install, uninstall: uninstall, status: status,
-};
+export { LABEL, CRON_MARK, autoswitchCommand, intervalSec, buildPlist, cronLine, plistPath, installLaunchd, uninstallLaunchd, installCron, uninstallCron, install, uninstall, status };

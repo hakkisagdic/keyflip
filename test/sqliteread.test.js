@@ -1,14 +1,13 @@
-'use strict';
 // Tests for the zero-dep read-only SQLite reader (src/sqliteread.js). Fixtures are built with
 // the sqlite3 CLI (skipped if it's not installed) so we validate against REAL SQLite files,
 // including large values that spill onto overflow pages.
-const test = require('node:test');
-const assert = require('node:assert');
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
-const cp = require('child_process');
-const sq = require('../src/sqliteread');
+import test from 'node:test';
+import assert from 'node:assert';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+import cp from 'child_process';
+import * as sq from '../src/sqliteread.js';
 
 let HAS_SQLITE = false;
 try { cp.execFileSync('sqlite3', ['--version'], { stdio: 'ignore' }); HAS_SQLITE = true; } catch (e) { HAS_SQLITE = false; }
@@ -76,7 +75,7 @@ test('a missing table throws; a non-SQLite buffer throws', function (t) {
 test('parseRecord bounds an attacker-controlled header size (no hang/OOM)', function () {
   // header-size varint 0x8100 = 128, but the payload is only 3 bytes — must not spin to 128.
   const t0 = Date.now();
-  const rec = require('../src/sqliteread').parseRecord(Buffer.from([0x81, 0x00, 0x09]));
+  const rec = sq.parseRecord(Buffer.from([0x81, 0x00, 0x09]));
   assert.ok(Date.now() - t0 < 50, 'returns immediately, not a billion-iteration hang');
   assert.ok(rec.length <= 3, 'type count is bounded by the actual payload length');
 });

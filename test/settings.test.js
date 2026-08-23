@@ -1,8 +1,7 @@
-'use strict';
 // Tests for J3's settings dot-path helpers (src/settings.js getPath/setPath).
-const test = require('node:test');
-const assert = require('node:assert');
-const settings = require('../src/settings');
+import test from 'node:test';
+import assert from 'node:assert';
+import * as settings from '../src/settings.js';
 
 test('getPath/setPath handle top-level and nested dot-paths', function () {
   const o = { model: 'opus', env: { A: '1' } };

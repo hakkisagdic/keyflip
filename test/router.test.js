@@ -1,12 +1,11 @@
-'use strict';
-const test = require('node:test');
-const assert = require('node:assert');
-const fs = require('fs');
-const path = require('path');
-const router = require('../src/router');
-const provider = require('../src/provider');
-const secretscan = require('../src/secretscan');
-const { makeCtx } = require('./helpers');
+import test from 'node:test';
+import assert from 'node:assert';
+import fs from 'fs';
+import path from 'path';
+import * as router from '../src/router.js';
+import * as provider from '../src/provider.js';
+import * as secretscan from '../src/secretscan.js';
+import { makeCtx } from './helpers.js';
 
 function addProv(ctx, name, baseUrl, models, extra) {
   provider.add(ctx, name, Object.assign({ baseUrl: baseUrl, models: models || {} }, extra || {}));

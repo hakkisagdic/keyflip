@@ -1,12 +1,11 @@
-'use strict';
-const test = require('node:test');
-const assert = require('node:assert');
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
-const crypto = require('crypto');
-const license = require('../src/license');
-const { makeCtx } = require('./helpers');
+import test from 'node:test';
+import assert from 'node:assert';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+import crypto from 'crypto';
+import * as license from '../src/license.js';
+import { makeCtx } from './helpers.js';
 
 // A throwaway Ed25519 keypair + its SPKI-DER base64 public key (same encoding
 // the release build embeds). Tests pin it with setPublicKey so the whole
@@ -303,7 +302,7 @@ test('MCP license_activate requires confirm and then activates from a file', asy
 // Paywall enforcement is OFF unless KEYFLIP_LICENSING is enabled — shipping the machinery without
 // gating anyone until launch. requireTier must be a pure no-op by default.
 test('paywall is env-gated: requireTier is a no-op unless KEYFLIP_LICENSING is set', function () {
-  const license = require('../src/license');
+
   const ctx = makeCtx();
   const prev = process.env.KEYFLIP_LICENSING;
   try {

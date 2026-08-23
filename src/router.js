@@ -1,4 +1,3 @@
-'use strict';
 // MODEL ROUTING / ARBITRAGE + a response CACHE.
 //
 // (1) Routing: given a desired model, pick the CHEAPEST configured provider that
@@ -16,13 +15,13 @@
 //     is model text that still gets a notify-style secret strip before it lands
 //     on disk. The dir is bounded (cap file count, evict oldest). TTL and "now"
 //     come from ctx.now() (injectable) — no real clock, no network, pure-ish.
-const fs = require('fs');
-const path = require('path');
-const crypto = require('crypto');
-const profiles = require('./profiles');
-const provider = require('./provider');
-const secretscan = require('./secretscan');
-const { atomicWrite, readJsonForWrite } = require('./fsutil');
+import fs from 'fs';
+import path from 'path';
+import crypto from 'crypto';
+import * as profiles from './profiles.js';
+import * as provider from './provider.js';
+import * as secretscan from './secretscan.js';
+import { atomicWrite, readJsonForWrite } from './fsutil.js';
 
 // A model id is user-supplied and becomes a MAP KEY, so it must be bounded and
 // free of reserved object-property names (prototype-pollution safety). The char
@@ -318,14 +317,6 @@ function cacheStatus(ctx) {
   return { dir: dir, count: files.length, bytes: bytes, cap: MAX_CACHE_FILES, oldest: oldest, newest: newest };
 }
 
-module.exports = {
-  // routing
-  routerPath: routerPath, get: get, route: route,
-  setRoute: setRoute, clearRoute: clearRoute, setArbitrage: setArbitrage,
-  isValidModel: isValidModel, servedModels: servedModels, providerServes: providerServes, costHintOf: costHintOf,
-  // cache
-  cacheDir: cacheDir, cacheKey: cacheKey, cacheFile: cacheFile,
-  cacheGet: cacheGet, cachePut: cachePut, cachePurge: cachePurge, cacheStatus: cacheStatus,
-  stripSecretText: stripSecretText,
-  DAY_MS: DAY_MS, MAX_CACHE_FILES: MAX_CACHE_FILES,
-};
+export { // routing
+  routerPath, get, route, setRoute, clearRoute, setArbitrage, isValidModel, servedModels, providerServes, costHintOf, // cache
+  cacheDir, cacheKey, cacheFile, cacheGet, cachePut, cachePurge, cacheStatus, stripSecretText, DAY_MS, MAX_CACHE_FILES };

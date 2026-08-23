@@ -1,10 +1,9 @@
-'use strict';
 // Chooses the right credential backend for the current machine, and provides an
 // in-memory store used by the tests.
-const fs = require('fs');
-const path = require('path');
-const KeychainStore = require('./keychain');
-const FileStore = require('./file');
+import fs from 'fs';
+import path from 'path';
+import KeychainStore from './keychain.js';
+import FileStore from './file.js';
 
 // macOS store: live credential ALWAYS lives in the Keychain (Claude Code reads it
 // there first), but keyflip's own profile backups learn to fall back to files
@@ -92,4 +91,4 @@ class MemoryStore {
   delProfile(name) { delete this.profiles[name]; }
 }
 
-module.exports = { createStore, MemoryStore, KeychainStore, FileStore, HybridStore, reconcileStaleKeychain };
+export { createStore, MemoryStore, KeychainStore, FileStore, HybridStore, reconcileStaleKeychain };

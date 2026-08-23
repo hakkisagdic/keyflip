@@ -1,4 +1,3 @@
-'use strict';
 // Consolidate the Claude *desktop app*'s Code-session index across accounts.
 //
 // The app stores its "Recents" as index files at:
@@ -14,8 +13,8 @@
 //
 // macOS desktop app only. The cloud "Chat" conversations (claude.ai) are NOT here —
 // they live server-side per account and cannot be merged locally.
-const fs = require('fs');
-const path = require('path');
+import fs from 'fs';
+import path from 'path';
 
 const BACKUP_PREFIX = 'claude-code-sessions-';
 const BACKUPS_TO_KEEP = 5;
@@ -118,4 +117,4 @@ function consolidate(ctx) {
   return { ok: code.ok || cowork.ok, merged: merged, code: code.merged || 0, cowork: cowork.merged || 0 };
 }
 
-module.exports = { consolidate: consolidate, mergeStore: mergeStore, pruneBackups: pruneBackups };
+export { consolidate, mergeStore, pruneBackups };

@@ -1,4 +1,3 @@
-'use strict';
 // NOTIFICATIONS / WEBHOOKS on key events (quota breach, account switch, fleet
 // reply) so keyflip isn't purely pull-based. State lives in <configDir>/notify.json
 // = { webhook: url|null, events: [...], desktop: bool }. Delivery is best-effort and
@@ -8,12 +7,13 @@
 // machine we defensively strip any key that looks like a token/key/credential/
 // password (recursively, at every level), and the webhook URL is restricted to
 // http(s). Nothing here ever reads ctx.store or logs a secret.
-const fs = require('fs');
-const path = require('path');
-const { atomicWrite, readJsonForWrite } = require('./fsutil');
+import fs from 'fs';
+import path from 'path';
+import { atomicWrite, readJsonForWrite } from './fsutil.js';
+import * as _exec from './exec.js';
 
 let VERSION = '0.0.0';
-try { VERSION = require('../package.json').version; } catch (e) { /* ignore */ }
+try { VERSION = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version; } catch (e) { /* ignore */ }
 
 // The events keyflip knows how to emit; a user may enable arbitrary extra names.
 const KNOWN_EVENTS = ['quota', 'switch', 'fleet-reply'];
@@ -171,7 +171,7 @@ async function send(ctx, event, payload, opts) {
   if (cfg.desktop) {
     if (ctx.platform !== 'darwin') channels.push({ channel: 'desktop', ok: false, reason: 'not-macos' });
     else {
-      const runner = opts.run || require('./exec').run;
+      const runner = opts.run || _exec.run;
       try {
         const script = 'display notification "' + asAppleScript(summarize(event, safe)) +
           '" with title "keyflip" subtitle "' + asAppleScript(event) + '"';
@@ -194,15 +194,4 @@ async function test(ctx, opts) {
   return send(ctx, 'test', { message: 'keyflip test notification' }, Object.assign({}, opts, { force: true }));
 }
 
-module.exports = {
-  getConfig: getConfig,
-  setConfig: setConfig,
-  send: send,
-  test: test,
-  isEnabled: isEnabled,
-  stripSecrets: stripSecrets,
-  sanitizeWebhook: sanitizeWebhook,
-  sanitizeEvents: sanitizeEvents,
-  KNOWN_EVENTS: KNOWN_EVENTS,
-  notifyPath: notifyPath,
-};
+export { getConfig, setConfig, send, test, isEnabled, stripSecrets, sanitizeWebhook, sanitizeEvents, KNOWN_EVENTS, notifyPath };

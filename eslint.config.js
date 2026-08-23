@@ -1,23 +1,16 @@
-'use strict';
+import js from '@eslint/js';
+import prettier from 'eslint-config-prettier';
 
-const js = require('@eslint/js');
-const prettier = require('eslint-config-prettier');
-
-module.exports = [
+export default [
   js.configs.recommended,
   prettier,
   {
     languageOptions: {
       ecmaVersion: 2022,
-      sourceType: 'commonjs',
+      sourceType: 'module',
       globals: {
         console: 'readonly',
         process: 'readonly',
-        __dirname: 'readonly',
-        __filename: 'readonly',
-        require: 'readonly',
-        module: 'readonly',
-        exports: 'readonly',
         Buffer: 'readonly',
         setTimeout: 'readonly',
         setInterval: 'readonly',
@@ -69,6 +62,6 @@ module.exports = [
     },
   },
   {
-    ignores: ['node_modules/', 'coverage/', '.husky/'],
+    ignores: ['node_modules/', 'coverage/', '.husky/', 'convert-to-esm.mjs', 'convert-remaining.mjs', 'fix-dirname.mjs'],
   },
 ];

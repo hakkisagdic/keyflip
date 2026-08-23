@@ -1,11 +1,10 @@
-'use strict';
 // A2: map a session to a specific account, so it can be resumed AS that account without
 // switching the machine's active profile (`keyflip resume <id>` then runs it isolated as the
 // assigned account). Transcripts are account-independent, so this is just a pointer stored in
 // keyflip's config (H3 git-versions it). Keyed by full sessionId.
-const fs = require('fs');
-const path = require('path');
-const fsutil = require('./fsutil');
+import fs from 'fs';
+import path from 'path';
+import * as fsutil from './fsutil.js';
 
 function file(ctx) { return path.join(ctx.configDir, 'session-accounts.json'); }
 function read(ctx) { try { return JSON.parse(fs.readFileSync(file(ctx), 'utf8')) || {}; } catch (e) { return {}; } }
@@ -23,4 +22,4 @@ function unset(ctx, id) {
   return true;
 }
 
-module.exports = { read: read, get: get, set: set, unset: unset };
+export { read, get, set, unset };

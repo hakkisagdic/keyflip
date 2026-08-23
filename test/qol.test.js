@@ -1,15 +1,14 @@
-'use strict';
 // Batch D: backup (#6), keyflip:// share/import (#11), skill freshness (#10).
-const test = require('node:test');
-const assert = require('node:assert');
-const fs = require('fs');
-const path = require('path');
-const backup = require('../src/backup');
-const share = require('../src/share');
-const skill = require('../src/skill');
-const provider = require('../src/provider');
-const profiles = require('../src/profiles');
-const { makeCtx } = require('./helpers');
+import test from 'node:test';
+import assert from 'node:assert';
+import fs from 'fs';
+import path from 'path';
+import * as backup from '../src/backup.js';
+import * as share from '../src/share.js';
+import * as skill from '../src/skill.js';
+import * as provider from '../src/provider.js';
+import * as profiles from '../src/profiles.js';
+import { makeCtx } from './helpers.js';
 
 // ---- #6 backup ----
 test('backup snapshots metadata (not creds), lists, prunes, and restores with a safety copy', function () {

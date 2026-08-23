@@ -1,14 +1,13 @@
-'use strict';
 // Tests for the CodexBar bridge (src/codexbar.js). Fully hermetic: a temp home + injected env, an
 // injected provusage/surface registry for align(), and fixtures we write ourselves. Two invariants
 // get special attention: unknown/junk config shapes must degrade to [] (never throw), and a secret
 // carried in the config must NEVER appear in any output.
-const test = require('node:test');
-const assert = require('node:assert');
-const fs = require('fs');
-const path = require('path');
-const os = require('os');
-const codexbar = require('../src/codexbar');
+import test from 'node:test';
+import assert from 'node:assert';
+import fs from 'fs';
+import path from 'path';
+import os from 'os';
+import * as codexbar from '../src/codexbar.js';
 
 function tmpHome() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'keyflip-codexbar-'));

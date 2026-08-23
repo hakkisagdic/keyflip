@@ -1,12 +1,14 @@
-'use strict';
 // Connectivity + config diagnostics (#13).
 //   probe(url)     — cheap reachability: ANY HTTP status = reachable; only DNS/
 //                    connect/TLS/timeout = failure.
 //   diagnose(ctx)  — a `keyflip doctor` report over config + providers + creds.
 //   test(provider) — one minimal REAL request to a provider endpoint (auth check).
-const fs = require('fs');
-const path = require('path');
-const provider = require('./provider');
+import fs from 'fs';
+import path from 'path';
+import * as provider from './provider.js';
+import * as _vcs from './vcs.js';
+import * as _secretpaths from './secretpaths.js';
+import * as _sessions from './sessions.js';
 
 async function probe(url, opts) {
   opts = opts || {};
@@ -85,9 +87,9 @@ async function testProvider(ctx, name, opts) {
 
 // The flagship hygiene check: NO secret-bearing file may be tracked by keyflip's git.
 function secretsInGit(ctx, add) {
-  const vcs = require('./vcs');
+  const vcs = _vcs;
   if (!vcs.isEnabled(ctx) || !vcs.isRepo(ctx)) return; // nothing versioned → no risk to report
-  const secretpaths = require('./secretpaths');
+  const secretpaths = _secretpaths;
   const tracked = vcs.tracked(ctx);
   const leaked = tracked.filter(function (f) {
     const parts = f.split('/');
@@ -98,13 +100,13 @@ function secretsInGit(ctx, add) {
 }
 
 function versioningState(ctx, add) {
-  const vcs = require('./vcs');
+  const vcs = _vcs;
   const on = vcs.isEnabled(ctx) && vcs.isRepo(ctx);
   add('config versioning', on ? true : 'warn', on ? 'on (undo / history available)' : 'off', on ? undefined : 'keyflip versioning enable  (needs git)');
 }
 
 function orphanSessions(ctx, add) {
-  let rows; try { rows = require('./sessions').list(ctx, { limit: 2000 }); } catch (e) { return; }
+  let rows; try { rows = _sessions.list(ctx, { limit: 2000 }); } catch (e) { return; }
   const n = rows.filter(function (r) { return r.orphan; }).length;
   if (n) add('orphaned sessions', 'warn', n + ' session(s) point at a moved/renamed folder', 'keyflip sessions rebind <old-path> <new-path>');
   else if (rows.length) add('orphaned sessions', true, 'none (' + rows.length + ' session(s), folders present)');
@@ -122,4 +124,4 @@ function settingsJson(ctx, add) {
   try { JSON.parse(raw); } catch (e) { add('settings.json', false, '~/.claude/settings.json is not valid JSON', 'fix or remove it — Claude Code ignores a broken settings file'); }
 }
 
-module.exports = { probe: probe, diagnose: diagnose, testProvider: testProvider };
+export { probe, diagnose, testProvider };

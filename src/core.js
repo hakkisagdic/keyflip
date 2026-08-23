@@ -1,8 +1,8 @@
-'use strict';
 // Account-switching logic. Pure with respect to `ctx` (see context.js): every
 // side effect goes through ctx.store / ctx paths, so tests inject fakes.
-const claude = require('./claude');
-const profiles = require('./profiles');
+import * as claude from './claude.js';
+import * as profiles from './profiles.js';
+import * as _stores from './stores/index.js';
 
 function currentEmail(ctx) {
   const acc = claude.currentAccount(claude.readConfig(ctx.claudeConfigPath));
@@ -139,7 +139,7 @@ function applyProfile(ctx, name) {
   }
   // Claude Code reads the Keychain before the credentials file — after a file
   // write, clear any stale Keychain copy so it can't resurrect the old account.
-  try { require('./stores').reconcileStaleKeychain(ctx); } catch (e) { /* best effort */ }
+  try { _stores.reconcileStaleKeychain(ctx); } catch (e) { /* best effort */ }
 }
 
 // Before switching away, preserve the live account's (possibly rotated) token:
@@ -203,17 +203,4 @@ function removeProfile(ctx, name) {
   profiles.remove(ctx.configDir, name);
 }
 
-module.exports = {
-  currentEmail: currentEmail,
-  saveAs: saveAs,
-  uniqueName: uniqueName,
-  autoName: autoName,
-  addCurrent: addCurrent,
-  applyProfile: applyProfile,
-  refreshCurrent: refreshCurrent,
-  doSwitch: doSwitch,
-  performSwitch: performSwitch,
-  listProfiles: listProfiles,
-  resolveProfile: resolveProfile,
-  removeProfile: removeProfile,
-};
+export { currentEmail, saveAs, uniqueName, autoName, addCurrent, applyProfile, refreshCurrent, doSwitch, performSwitch, listProfiles, resolveProfile, removeProfile };

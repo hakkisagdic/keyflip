@@ -1,18 +1,17 @@
-'use strict';
 // JOB QUEUE / capacity scheduler. Everything IO/time is injected — a fake usage
 // `fetch`, a fake `run` (NO real claude), a fixed clock — so the whole scheduler is
 // exercised hermetically: enqueue/list/get/clear, headroom-based selection, isolated
 // per-account headless runs, fan-out, and the confirm-gated MCP tools.
-const test = require('node:test');
-const assert = require('node:assert');
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
-const orch = require('../src/orchestrator');
-const profiles = require('../src/profiles');
-const groups = require('../src/groups');
-const policy = require('../src/policy');
-const { makeCtx } = require('./helpers');
+import test from 'node:test';
+import assert from 'node:assert';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+import * as orch from '../src/orchestrator.js';
+import * as profiles from '../src/profiles.js';
+import * as groups from '../src/groups.js';
+import * as policy from '../src/policy.js';
+import { makeCtx } from './helpers.js';
 
 test('runJob is BLOCKED by a policy deny rule for the selected account — nothing spawns', async function () {
   const ctx = makeCtx();

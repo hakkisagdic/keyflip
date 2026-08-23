@@ -1,14 +1,14 @@
-'use strict';
 // Auto-switch on usage threshold (adopted from claude-swap PR #76 / issues #38,
 // #50): watch the ACTIVE account's utilization and, when it crosses the
 // threshold, swap the CLI credential to another account chosen by strategy.
 // Only the CLI credential is swapped (Claude Code picks it up on its next
 // request; the file backend re-reads immediately, the macOS keychain cache is
 // ~30s) — the desktop app is never closed from under the user.
-const core = require('./core');
-const usage = require('./usage');
-const breaker = require('./breaker');
-const history = require('./history');
+import * as core from './core.js';
+import * as usage from './usage.js';
+import * as breaker from './breaker.js';
+import * as history from './history.js';
+import * as _groups from './groups.js';
 
 // One watch iteration. Injectable deps for tests. Returns
 //   { state: 'idle'|'no-active'|'below'|'switched'|'no-candidate'|'unknown',
@@ -43,7 +43,7 @@ async function tick(ctx, opts) {
   }
   // Optional group scoping (config autoswitch.group / --group): rotate only within a tagged pool.
   // Applied BEFORE the usage fetch so out-of-group accounts aren't queried. Preserves rotation order.
-  if (opts.group) candidates = require('./groups').filterProfiles(ctx, candidates, opts.group);
+  if (opts.group) candidates = _groups.filterProfiles(ctx, candidates, opts.group);
   if (!candidates.length) return { state: 'no-candidate', active: active, headroom: h, switchedTo: null };
 
   const cinfos = await usage.usageForProfiles(ctx, candidates.map(function (e) { return e.name; }), {
@@ -79,4 +79,4 @@ async function tick(ctx, opts) {
   return { state: 'switched', active: active, headroom: h, switchedTo: picked };
 }
 
-module.exports = { tick: tick };
+export { tick };

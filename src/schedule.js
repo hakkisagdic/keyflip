@@ -1,12 +1,14 @@
-'use strict';
 // C2: schedule `keyflip dream --apply` to run UNATTENDED (nightly). Command-activated, NOT
 // a daemon — the user explicitly installs/removes it. macOS = a launchd user agent; Linux =
 // a crontab line; else unsupported (documented). Runner + home are injectable so tests never
 // touch the real system.
-const fs = require('fs');
-const path = require('path');
-const os = require('os');
-const { run } = require('./exec');
+import fs from 'fs';
+import path from 'path';
+import os from 'os';
+import { run } from './exec.js';
+import { fileURLToPath } from 'url';
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const LABEL = 'com.keyflip.dream';
 const CRON_MARK = '# keyflip-dream (managed by keyflip)';
@@ -116,10 +118,4 @@ function status(ctx, opts) {
   return { kind: 'unsupported', installed: false };
 }
 
-module.exports = {
-  LABEL: LABEL, CRON_MARK: CRON_MARK,
-  dreamCommand: dreamCommand, parseAt: parseAt, buildPlist: buildPlist, cronLine: cronLine,
-  plistPath: plistPath, installLaunchd: installLaunchd, uninstallLaunchd: uninstallLaunchd,
-  installCron: installCron, uninstallCron: uninstallCron,
-  install: install, uninstall: uninstall, status: status,
-};
+export { LABEL, CRON_MARK, dreamCommand, parseAt, buildPlist, cronLine, plistPath, installLaunchd, uninstallLaunchd, installCron, uninstallCron, install, uninstall, status };
