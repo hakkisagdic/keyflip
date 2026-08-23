@@ -12,17 +12,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Turkish translations for architecture and labels documentation
 - GitHub labels configuration (`docs/LABELS.md`) for project management
 - TypeScript type-checking via JSDoc annotations and `tsc --noEmit`
+- ESLint configuration for code quality enforcement
+- Prettier for consistent code formatting
+- Husky and lint-staged for pre-commit hooks
+- `.nvmrc` for consistent Node.js version across contributors
 
 ### Changed
 - Migrated entire codebase from CommonJS to ES Modules
 - CHANGELOG.md now follows Keep a Changelog format with comparison links
 - CI pipeline includes lint, format check, and type-check steps
-
-### Infrastructure
-- ESLint configuration for code quality enforcement
-- Prettier for consistent code formatting
-- Husky and lint-staged for pre-commit hooks
-- `.nvmrc` for consistent Node.js version across contributors
 
 ## [1.5.2] - 2025-07-14
 

@@ -57,7 +57,7 @@ keyflip'in temeli - profilleri, yapilandirmayi ve CLI komutlarini yonetir.
 |-------|------------|
 | `core.js` | Merkezi orkestrasyon, profil aktivasyonu ve hesap degistirme mantigi |
 | `profiles.js` | Profil CRUD islemleri, profil depolama ve dogrulama |
-| `cli.js` | CLI arguman ayrıstirma ve komut dagitimi |
+| `cli.js` | CLI arguman ayristirma ve komut dagitimi |
 | `commands.js` | Komut kayit defteri ve isleyici tanimlari |
 | `config.js` | Yapilandirma dosyasi yonetimi (yollar, varsayilanlar, okuma/yazma) |
 | `menu.js` | Profil secimi icin etkilesimli menu sistemi |
@@ -175,7 +175,7 @@ Dosya sistemi yardimlari, kodlama, veri formati okuyuculari ve cesitli araclar.
 | `embed.js` | Gomme yardimcilari |
 | `llm.js` | LLM etkilesim yardimcilari |
 | `sqliteread.js` | SQLite veritabani okuyucu (Claude yerel DB icin) |
-| `yamlread.js` | YAML dosya ayrıstirici |
+| `yamlread.js` | YAML dosya ayristirici |
 | `walmerge.js` | WAL (Write-Ahead Log) birlestirme islemleri |
 
 ### Diger Moduller
@@ -274,7 +274,7 @@ Kullanici Istegi (CLI / TUI / Otomatik tetikleme)
 
 3. **Platform Soyutlamasi**: `platform.js` tum isletim sistemine ozel yollari ve davranislari cozer, temel mantigin platformdan bagimsiz kalmasini saglar.
 
-4. **Kimlik Bilgisi Izolasyonu**: Kimlik bilgileri bellekte gerekenden fazla tutulmaz. Kasa talep uzerine cozer ve kullanım sonrasi temizler.
+4. **Kimlik Bilgisi Izolasyonu**: Kimlik bilgileri bellekte gerekenden fazla tutulmaz. Kasa talep uzerine cozer ve kullanim sonrasi temizler.
 
 ---
 

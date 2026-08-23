@@ -34,8 +34,7 @@ jobs:
       - name: Install dependencies
         run: npm install
       - name: Run npm audit
-        run: npm audit --audit-level=moderate
-        continue-on-error: true
+        run: npm audit --audit-level=high
 
   test:
     name: test (${{ matrix.os }}, node ${{ matrix.node }})

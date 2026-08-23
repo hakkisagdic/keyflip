@@ -67,7 +67,7 @@ body:
     id: node-version
     attributes:
       label: "Node.js Version / Node.js Surumu"
-      description: "Run `node --version` to get this (Bunu ogrenmes icin `node --version` calistirin)"
+      description: "Run `node --version` to get this (Bunu ogrenmek icin `node --version` calistirin)"
       placeholder: "e.g., v20.11.0"
     validations:
       required: true
