@@ -1,0 +1,69 @@
+---
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import PageHeader from '../../components/PageHeader.astro';
+import CodeBlock from '../../components/CodeBlock.astro';
+---
+
+<BaseLayout title="Providers" locale="en" currentPath="/docs/providers">
+  <PageHeader title="Providers" subtitle="Route Claude Code to third-party endpoints, gateways, and relays" />
+
+  <section class="py-16">
+    <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
+
+      <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-4">What are Providers?</h2>
+      <p class="text-surface-700 dark:text-surface-300 mb-6">
+        Accounts are your Anthropic <strong>subscriptions</strong> (OAuth). Providers point Claude Code at a <em>different API endpoint</em> -- a relay, a corporate gateway, AWS Bedrock, OpenRouter, anything Anthropic-compatible -- by patching the <code>env</code> block of <code>~/.claude/settings.json</code>, which Claude Code hot-reloads (no restart needed).
+      </p>
+
+      <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-4 mt-10">Quick Start</h2>
+      <CodeBlock code={`# Add a provider (key read from stdin - never on command line)
+keyflip provider add openrouter --base-url https://openrouter.ai/api/v1 --key-file -
+
+# Route Claude Code to it
+keyflip use openrouter
+
+# Back to your subscription (OAuth)
+keyflip provider off
+
+# List saved/active providers
+keyflip provider list
+
+# Benchmark latency
+keyflip speedtest openrouter
+
+# Verify auth is working
+keyflip test openrouter`} />
+
+      <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-4 mt-10">How it works</h2>
+      <ul class="list-disc pl-6 text-surface-700 dark:text-surface-300 space-y-3 mb-8">
+        <li>The API key is stored in the OS credential store, never in the metadata file and never on the command line</li>
+        <li>Switching only touches the keys keyflip manages; your own settings.json (hooks, plugins, model overrides) is preserved</li>
+        <li><code>provider off</code> removes exactly what was injected</li>
+        <li><code>keyflip gateway use &lt;provider&gt;</code> does the same for the Claude desktop app (restart the app to apply)</li>
+      </ul>
+
+      <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-4 mt-10">Model Routing & Arbitrage</h2>
+      <p class="text-surface-700 dark:text-surface-300 mb-4">Route specific models to specific providers for cost optimization:</p>
+      <CodeBlock code={`keyflip route set claude-3-opus openrouter
+keyflip route set claude-3-haiku bedrock
+keyflip route arbitrage on    # auto-select cheapest
+keyflip route list
+keyflip cache status          # response caching`} />
+
+      <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-4 mt-10">Failover Proxy</h2>
+      <p class="text-surface-700 dark:text-surface-300 mb-4">
+        The proxy is command-started (never an always-on daemon). While running, it routes each API request to your active account and, on a 429/5xx before any byte reaches the client, fails over to the next healthy account and retries.
+      </p>
+      <CodeBlock code={`keyflip proxy start --wire    # start + wire Claude to it
+keyflip proxy status          # check health
+keyflip proxy stats           # request counts, failovers
+keyflip proxy stop            # stop + unwire`} />
+
+      <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-4 mt-10">Import from Environment</h2>
+      <CodeBlock code={`# Import provider endpoints from a .env file
+keyflip import-env .env --dry-run   # preview what would be imported
+keyflip import-env .env             # import (keys never printed)
+keyflip import-env --env            # from the current environment`} />
+    </div>
+  </section>
+</BaseLayout>

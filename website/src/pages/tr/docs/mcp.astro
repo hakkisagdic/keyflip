@@ -1,0 +1,55 @@
+---
+import BaseLayout from '../../../layouts/BaseLayout.astro';
+import PageHeader from '../../../components/PageHeader.astro';
+import CodeBlock from '../../../components/CodeBlock.astro';
+---
+
+<BaseLayout title="MCP" locale="tr" currentPath="/tr/docs/mcp">
+  <PageHeader title="MCP (Model Baglam Protokolu)" subtitle="AI ajanlari icin 130+ aracla tam MCP sunucusu" />
+
+  <section class="py-16">
+    <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
+
+      <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-4">Genel Bakis</h2>
+      <p class="text-surface-700 dark:text-surface-300 mb-6">
+        Ajanlar CLI'yi tahmin etmek zorunda kalmamali -- keyflip MCP konusur. Tum CLI yuzeyi 130+ MCP araci olarak aciga cikarilir, boylece bir ajan kabuk komutu olmadan her seyi yapabilir.
+      </p>
+
+      <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-4 mt-10">Kurulum</h2>
+      <CodeBlock code={`claude mcp add keyflip -- keyflip mcp
+# veya tam kurulumu gorun:
+keyflip mcp --setup`} />
+
+      <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-4 mt-10">Arac Kategorileri</h2>
+      <div class="space-y-4 mb-8">
+        <div class="p-4 bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-800 rounded-lg">
+          <h3 class="font-semibold text-surface-900 dark:text-surface-100">Hesaplar</h3>
+          <p class="text-sm text-surface-700 dark:text-surface-300 mt-1"><code>keyflip_status</code>, <code>keyflip_list</code>, <code>keyflip_switch</code>, <code>keyflip_next</code>, <code>keyflip_add</code>, <code>keyflip_account_remove</code></p>
+        </div>
+        <div class="p-4 bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-800 rounded-lg">
+          <h3 class="font-semibold text-surface-900 dark:text-surface-100">Saglayicilar</h3>
+          <p class="text-sm text-surface-700 dark:text-surface-300 mt-1"><code>keyflip_providers</code>, <code>keyflip_provider_use</code>, <code>keyflip_provider_add</code>, <code>keyflip_test_provider</code>, <code>keyflip_speedtest</code></p>
+        </div>
+        <div class="p-4 bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-800 rounded-lg">
+          <h3 class="font-semibold text-surface-900 dark:text-surface-100">Filo</h3>
+          <p class="text-sm text-surface-700 dark:text-surface-300 mt-1"><code>keyflip_fleet_status</code>, <code>keyflip_fleet_switch</code>, <code>keyflip_fleet_send_account</code>, <code>keyflip_fleet_collect</code></p>
+        </div>
+        <div class="p-4 bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-800 rounded-lg">
+          <h3 class="font-semibold text-surface-900 dark:text-surface-100">Baglam Katmani</h3>
+          <p class="text-sm text-surface-700 dark:text-surface-300 mt-1"><code>keyflip_context_read</code>, <code>keyflip_context_task_set</code>, <code>keyflip_context_decision_add</code>, <code>keyflip_checkpoint_*</code></p>
+        </div>
+      </div>
+
+      <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-4 mt-10">Guvenlik Modeli</h2>
+      <ul class="list-disc pl-6 text-surface-700 dark:text-surface-300 space-y-2 mb-8">
+        <li>Her aracin uygun JSON Semasi ve salt okunur/yikici aciklamalari var</li>
+        <li><strong>Degistirici araclar <code>confirm: true</code> gerektirir</strong> -- tanimlar ajanlara once sormalarini soyler</li>
+        <li>Sifreler asla MCP uzerinden kabul edilmez (ornegin saglayici anahtari ekleme CLI'da <code>--key-file</code>'a ertelenir)</li>
+      </ul>
+
+      <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-4 mt-10">Claude Code Becerisi</h2>
+      <p class="text-surface-700 dark:text-surface-300 mb-4">Dahili beceri, ajana keyflip'i ne zaman ve nasil kullanacagini ogretir:</p>
+      <CodeBlock code={`keyflip install-skill   # ~/.claude/skills/keyflip'e kopyalar`} />
+    </div>
+  </section>
+</BaseLayout>

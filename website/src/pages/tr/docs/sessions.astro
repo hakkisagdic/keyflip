@@ -1,0 +1,40 @@
+---
+import BaseLayout from '../../../layouts/BaseLayout.astro';
+import PageHeader from '../../../components/PageHeader.astro';
+import CodeBlock from '../../../components/CodeBlock.astro';
+---
+
+<BaseLayout title="Oturumlar" locale="tr" currentPath="/tr/docs/sessions">
+  <PageHeader title="Oturumlar ve Hatirlama" subtitle="Konusmalarinizi arayin, devam ettirin, arsivleyin, ozetleyin ve hatirlayin" />
+
+  <section class="py-16">
+    <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
+
+      <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-4">Genel Bakis</h2>
+      <p class="text-surface-700 dark:text-surface-300 mb-6">
+        Claude Code transkriptleri (<code>~/.claude/projects</code>) hesaptan bagimsizdir. keyflip hepsini tek yerden gozatabilir, arayabilir ve herhangi birini orijinal dizininde devam ettirebilir.
+      </p>
+
+      <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-4 mt-10">Arama ve Devam</h2>
+      <CodeBlock code={`keyflip sessions --search "oauth"     # tum konusmalari ara
+keyflip sessions --here               # sadece bu dizindeki oturumlar
+keyflip resume 3                      # 3. oge icin devam komutu
+keyflip resume <id> --run             # claude --resume dizininde baslat
+keyflip sessions rebind <eski> <yeni> # klasor yeniden adlandirmadan sonra yeniden bagla
+keyflip sessions assign <id> <hesap>  # baska hesap altinda devam et`} />
+
+      <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-4 mt-10">Arsiv ve Ozet</h2>
+      <CodeBlock code={`keyflip sessions archive <id|--older-than 30d>   # eski transkriptleri gziple
+keyflip sessions distill <id>          # claude -p ile ozetle
+keyflip dream [--older-than 30d]       # tek geciste ozetle + arsivle
+keyflip dream schedule [--at 03:00]    # gece otomatik calistir (launchd/cron)`} />
+
+      <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-4 mt-10">Hatirlama Motoru</h2>
+      <p class="text-surface-700 dark:text-surface-300 mb-4">
+        BM25 veya anlamsal (gomme) aramayla tum sohbetlerinizde arama yapin. Kaynakli sentez yanitlari alin.
+      </p>
+      <CodeBlock code={`keyflip recall "kimlik dogrulamayi nasil yapilardik?"
+keyflip recall "dagitim hatti" --answer   # claude -p ile kaynakli sentez`} />
+    </div>
+  </section>
+</BaseLayout>

@@ -1,0 +1,35 @@
+---
+import BaseLayout from '../../../layouts/BaseLayout.astro';
+import PageHeader from '../../../components/PageHeader.astro';
+import { t } from '../../../i18n';
+
+const locale = 'tr';
+const trans = t(locale);
+
+const sections = [
+  { title: 'Kurulum', href: '/tr/docs/installation', desc: 'keyflip\'i macOS, Linux veya Windows\'a saniyeler icinde kurun.' },
+  { title: 'Kullanim', href: '/tr/docs/usage', desc: 'Gunluk is akislari: kurulum, gecis, durum, otomatik gecis.' },
+  { title: 'CLI Referansi', href: '/tr/docs/cli-reference', desc: 'Kategoriye gore duzenlenmis tum 130+ komut.' },
+  { title: 'Saglayicilar', href: '/tr/docs/providers', desc: 'Claude Code\'u ucuncu taraf ucnoktalar, gecitler ve rolelere yonlendirin.' },
+  { title: 'Oturumlar', href: '/tr/docs/sessions', desc: 'Konusmalarinizi arayin, devam ettirin, arsivleyin, ozetleyin ve hatirlayin.' },
+  { title: 'Filo', href: '/tr/docs/fleet', desc: 'Birden fazla makineyi koordine edin, uzaktan gecis yapin, hesap dagitin.' },
+  { title: 'MCP', href: '/tr/docs/mcp', desc: 'AI ajanlari icin 130+ aracla Model Baglam Protokolu sunucusu.' },
+];
+---
+
+<BaseLayout title="Dokumantasyon" locale={locale} currentPath="/tr/docs">
+  <PageHeader title={trans.docs.title} subtitle={trans.docs.subtitle} />
+
+  <section class="py-16">
+    <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-6">
+        {sections.map((s) => (
+          <a href={s.href} class="block p-6 bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-800 rounded-xl hover:border-primary-300 dark:hover:border-primary-700 hover:shadow-lg transition-all">
+            <h3 class="text-lg font-semibold text-surface-900 dark:text-surface-100">{s.title}</h3>
+            <p class="mt-2 text-sm text-surface-700 dark:text-surface-300">{s.desc}</p>
+          </a>
+        ))}
+      </div>
+    </div>
+  </section>
+</BaseLayout>

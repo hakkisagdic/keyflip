@@ -1,0 +1,35 @@
+---
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import PageHeader from '../../components/PageHeader.astro';
+import { t } from '../../i18n';
+
+const locale = 'en';
+const trans = t(locale);
+
+const sections = [
+  { title: 'Installation', href: '/docs/installation', desc: 'Install keyflip on macOS, Linux, or Windows in seconds.' },
+  { title: 'Usage', href: '/docs/usage', desc: 'Everyday workflows: setup, switching, status, autoswitch.' },
+  { title: 'CLI Reference', href: '/docs/cli-reference', desc: 'All 130+ commands organized by category with descriptions.' },
+  { title: 'Providers', href: '/docs/providers', desc: 'Route Claude Code to third-party endpoints, gateways, and relays.' },
+  { title: 'Sessions', href: '/docs/sessions', desc: 'Search, resume, archive, distill, and recall your conversations.' },
+  { title: 'Fleet', href: '/docs/fleet', desc: 'Coordinate multiple machines, remote switch, account distribution.' },
+  { title: 'MCP', href: '/docs/mcp', desc: 'Model Context Protocol server with 130+ tools for AI agents.' },
+];
+---
+
+<BaseLayout title="Documentation" locale={locale} currentPath="/docs">
+  <PageHeader title={trans.docs.title} subtitle={trans.docs.subtitle} />
+
+  <section class="py-16">
+    <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-6">
+        {sections.map((s) => (
+          <a href={s.href} class="block p-6 bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-800 rounded-xl hover:border-primary-300 dark:hover:border-primary-700 hover:shadow-lg transition-all">
+            <h3 class="text-lg font-semibold text-surface-900 dark:text-surface-100">{s.title}</h3>
+            <p class="mt-2 text-sm text-surface-700 dark:text-surface-300">{s.desc}</p>
+          </a>
+        ))}
+      </div>
+    </div>
+  </section>
+</BaseLayout>

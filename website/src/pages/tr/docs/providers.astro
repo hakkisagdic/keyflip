@@ -1,0 +1,54 @@
+---
+import BaseLayout from '../../../layouts/BaseLayout.astro';
+import PageHeader from '../../../components/PageHeader.astro';
+import CodeBlock from '../../../components/CodeBlock.astro';
+---
+
+<BaseLayout title="Saglayicilar" locale="tr" currentPath="/tr/docs/providers">
+  <PageHeader title="Saglayicilar" subtitle="Claude Code'u ucuncu taraf ucnoktalara, gecitlere ve rolelere yonlendirin" />
+
+  <section class="py-16">
+    <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
+
+      <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-4">Saglayicilar Nedir?</h2>
+      <p class="text-surface-700 dark:text-surface-300 mb-6">
+        Hesaplar Anthropic <strong>aboneliklerinizdir</strong> (OAuth). Saglayicilar Claude Code'u farkli bir API ucnoktasina yonlendirir -- bir role, kurumsal gecit, AWS Bedrock, OpenRouter, Anthropic uyumlu herhangi bir sey -- <code>~/.claude/settings.json</code>'daki <code>env</code> blogunu yamalayarak. Claude Code bunu aninda yeniden yukler (yeniden baslatma gerekmez).
+      </p>
+
+      <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-4 mt-10">Hizli Baslangic</h2>
+      <CodeBlock code={`# Saglayici ekle (anahtar stdin'den okunur - asla komut satirinda degil)
+keyflip provider add openrouter --base-url https://openrouter.ai/api/v1 --key-file -
+
+# Claude Code'u ona yonlendir
+keyflip use openrouter
+
+# Abonelige geri don (OAuth)
+keyflip provider off
+
+# Kayitli/aktif saglayicilari listele
+keyflip provider list
+
+# Gecikme testi
+keyflip speedtest openrouter
+
+# Kimlik dogrulamasi calisiyor mu dogrula
+keyflip test openrouter`} />
+
+      <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-4 mt-10">Nasil Calisir</h2>
+      <ul class="list-disc pl-6 text-surface-700 dark:text-surface-300 space-y-3 mb-8">
+        <li>API anahtari isletim sistemi kimlik deposunda saklanir, asla meta veri dosyasinda ve asla komut satirinda degil</li>
+        <li>Gecis sadece keyflip'in yonettigi anahtarlara dokunur; kendi settings.json'unuz korunur</li>
+        <li><code>provider off</code> tam olarak ne enjekte edildiyse onu kaldirir</li>
+        <li><code>keyflip gateway use &lt;saglayici&gt;</code> ayni seyi Claude masaustu uygulamasi icin yapar</li>
+      </ul>
+
+      <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-4 mt-10">Yedekleme Proxy'si</h2>
+      <p class="text-surface-700 dark:text-surface-300 mb-4">
+        Proxy komutla baslatilir (asla surekli calisan bir daemon degil). Calismakta iken her API istegini aktif hesabiniza yonlendirir ve 429/5xx durumunda istemciye hata ulasmadan once bir sonraki saglikli hesapta otomatik yeniden dener.
+      </p>
+      <CodeBlock code={`keyflip proxy start --wire    # baslat + Claude'a bagla
+keyflip proxy status          # saglik kontrol
+keyflip proxy stop            # durdur + baglantisini kes`} />
+    </div>
+  </section>
+</BaseLayout>

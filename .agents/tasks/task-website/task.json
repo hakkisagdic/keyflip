@@ -1,0 +1,7 @@
+{
+  "task_id": "task-website",
+  "task_description": "Create a public marketing and documentation website for keyflip in /website directory. Astro-based static site with full bilingual EN+TR support, modern dark-mode design, comprehensive docs from existing project content, and ready for GitHub Pages or Cloudflare Pages deployment.",
+  "status": "in_progress",
+  "feature_order": ["FEAT-001", "FEAT-002"],
+  "blocked_reason": null
+}

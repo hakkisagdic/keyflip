@@ -1,0 +1,25 @@
+{
+  "project_type": "Astro static site (marketing + docs) for keyflip CLI tool",
+  "language": "TypeScript / Astro / CSS",
+  "build_system": "npm (inside /website subdirectory)",
+  "test_framework": "Astro build check (no unit tests needed for static site)",
+  "build_command": "cd website && npm run build",
+  "test_command": "cd website && npm run build",
+  "verification_instructions": "1. cd website && npm install 2. npm run build (must produce dist/ with no errors) 3. Verify both EN and TR pages are generated in dist/",
+  "snapshot_or_generated_files": null,
+  "setup_instructions": "cd /projects/sandbox/keyflip/website && npm install",
+  "environment_constraints": "Open internet - npm install available. Do NOT deploy. Just build the site locally. Site lives in /website inside the monorepo.",
+  "contribution_requirements": "Bilingual EN+TR. Modern design with dark mode. Developer-focused. SEO-friendly. Ready for GitHub Pages or Cloudflare Pages deployment.",
+  "key_patterns": "The main project is zero-dep Node.js CLI. The website is a separate sub-project in /website with its own package.json. Content sources: README.md, README.tr.md, docs/ARCHITECTURE.md, docs/ARCHITECTURE.tr.md, docs/USE-CASES.md, docs/USE-CASES.tr.md, docs/PRODUCTIZATION.md. 130+ CLI commands organized by category. GitHub repo: hakkisagdic/keyflip.",
+  "relevant_files": [
+    "README.md",
+    "README.tr.md",
+    "docs/ARCHITECTURE.md",
+    "docs/ARCHITECTURE.tr.md",
+    "docs/USE-CASES.md",
+    "docs/USE-CASES.tr.md",
+    "docs/PRODUCTIZATION.md",
+    "package.json"
+  ],
+  "directory_structure": "keyflip/ is a Node.js CLI tool. /website will be a new Astro project with i18n support. Key docs in /docs/. Source in /src/ (100+ modules). Tests in /test/. The website pulls content from README and docs to generate static pages."
+}

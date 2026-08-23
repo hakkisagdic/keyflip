@@ -1,0 +1,23 @@
+{
+  "id": "FEAT-002",
+  "type": "chore",
+  "description": "Final polish: add build/deploy documentation in website/README.md, ensure the monorepo root acknowledges the website, and verify the complete build produces a deployable static site.",
+  "status": "pending",
+  "steps": [
+    "Create website/README.md with: project overview, development commands (npm run dev, npm run build, npm run preview), deployment instructions for both GitHub Pages and Cloudflare Pages (without actually deploying), directory structure explanation, how to add/edit content",
+    "Add a brief note in the root README.md (both EN and TR) mentioning the /website directory as the project's documentation site",
+    "Ensure .gitignore in /website properly excludes node_modules/, dist/, and .astro/",
+    "Verify the final build produces a clean dist/ that can be deployed as-is to any static host"
+  ],
+  "acceptance_criteria": [
+    "website/README.md exists with clear development and deployment instructions",
+    "Running `cd website && npm run build` still succeeds after all changes",
+    "The dist/ output is self-contained (no broken asset references)"
+  ],
+  "verification": [
+    "cd /projects/sandbox/keyflip/website && npm run build",
+    "Verify dist/ contains index.html and all static assets"
+  ],
+  "blocked_reason": null,
+  "findings": ""
+}

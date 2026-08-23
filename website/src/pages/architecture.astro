@@ -1,0 +1,125 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import PageHeader from '../components/PageHeader.astro';
+import CodeBlock from '../components/CodeBlock.astro';
+---
+
+<BaseLayout title="Architecture" locale="en" currentPath="/architecture">
+  <PageHeader title="Architecture" subtitle="Internal architecture, module organization, data flow, and security model" />
+
+  <section class="py-16">
+    <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
+
+      <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-4">Directory Layout</h2>
+      <CodeBlock code={`keyflip/
+├── bin/               CLI entry point (keyflip.js)
+├── src/               Source modules (100+ files)
+├── test/              Test suite (node:test, 1200+ tests)
+├── docs/              Additional documentation
+├── skills/            Claude Code skill definitions
+├── issuer/            License issuer skeleton
+├── .github/workflows/ CI and publishing
+└── package.json       Zero runtime dependencies`} lang="text" />
+
+      <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-4 mt-10">Module Categories</h2>
+
+      <div class="space-y-6">
+        <div class="p-6 bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-800 rounded-xl">
+          <h3 class="text-lg font-semibold text-surface-900 dark:text-surface-100 mb-3">Core Account Management</h3>
+          <p class="text-sm text-surface-700 dark:text-surface-300 mb-3">Central orchestration, profile activation, and switching logic.</p>
+          <div class="grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs font-mono text-surface-700 dark:text-surface-300">
+            <span>core.js</span><span>profiles.js</span><span>cli.js</span>
+            <span>commands.js</span><span>config.js</span><span>menu.js</span>
+            <span>platform.js</span><span>lock.js</span><span>txn.js</span>
+          </div>
+        </div>
+
+        <div class="p-6 bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-800 rounded-xl">
+          <h3 class="text-lg font-semibold text-surface-900 dark:text-surface-100 mb-3">Providers</h3>
+          <p class="text-sm text-surface-700 dark:text-surface-300 mb-3">Multi-provider support and routing logic.</p>
+          <div class="grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs font-mono text-surface-700 dark:text-surface-300">
+            <span>provider.js</span><span>provusage.js</span><span>proxy.js</span>
+            <span>router.js</span><span>breaker.js</span>
+          </div>
+        </div>
+
+        <div class="p-6 bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-800 rounded-xl">
+          <h3 class="text-lg font-semibold text-surface-900 dark:text-surface-100 mb-3">Sessions</h3>
+          <p class="text-sm text-surface-700 dark:text-surface-300 mb-3">Session lifecycle, transcript handling, and recall.</p>
+          <div class="grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs font-mono text-surface-700 dark:text-surface-300">
+            <span>session.js</span><span>sessions.js</span><span>sessionmap.js</span>
+            <span>sessionedit.js</span><span>transcript.js</span><span>recall.js</span>
+          </div>
+        </div>
+
+        <div class="p-6 bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-800 rounded-xl">
+          <h3 class="text-lg font-semibold text-surface-900 dark:text-surface-100 mb-3">Fleet & Transfer</h3>
+          <p class="text-sm text-surface-700 dark:text-surface-300 mb-3">Multi-device synchronization and data transfer.</p>
+          <div class="grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs font-mono text-surface-700 dark:text-surface-300">
+            <span>fleet.js</span><span>transfer.js</span><span>migrate.js</span>
+            <span>relay.js</span><span>swarm.js</span>
+          </div>
+        </div>
+
+        <div class="p-6 bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-800 rounded-xl">
+          <h3 class="text-lg font-semibold text-surface-900 dark:text-surface-100 mb-3">Security & Credentials</h3>
+          <p class="text-sm text-surface-700 dark:text-surface-300 mb-3">Credential store abstraction, encryption, and policy.</p>
+          <div class="grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs font-mono text-surface-700 dark:text-surface-300">
+            <span>keychain.js</span><span>creds.js</span><span>vault.js</span>
+            <span>policy.js</span><span>license.js</span><span>secret-scan.js</span>
+          </div>
+        </div>
+
+        <div class="p-6 bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-800 rounded-xl">
+          <h3 class="text-lg font-semibold text-surface-900 dark:text-surface-100 mb-3">Context Layer</h3>
+          <p class="text-sm text-surface-700 dark:text-surface-300 mb-3">Portable project memory, rules unification, checkpoints.</p>
+          <div class="grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs font-mono text-surface-700 dark:text-surface-300">
+            <span>context.js</span><span>rules.js</span><span>checkpoint.js</span>
+            <span>handoff.js</span><span>ctxsync.js</span>
+          </div>
+        </div>
+      </div>
+
+      <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-4 mt-10">Data Flow: Account Switching</h2>
+      <CodeBlock code={`1. User runs: keyflip <name>
+2. Cross-process lock acquired
+3. Current account's token re-saved (catches refreshes)
+4. Target account's token loaded from OS credential store
+5. Token written to live credential slot
+6. oauthAccount + userID patched in ~/.claude.json (atomic write)
+7. If desktop: app quit → config patched → app reopened
+8. Lock released
+9. On failure at step 5-6: rollback to previous state`} lang="text" />
+
+      <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-4 mt-10">Security Model</h2>
+      <ul class="list-disc pl-6 text-surface-700 dark:text-surface-300 space-y-3">
+        <li>OAuth tokens in OS credential store (macOS Keychain / encrypted files on Linux/Windows)</li>
+        <li>Keychain writes via stdin (hex-encoded) so secrets never appear in process table</li>
+        <li>Config writes are atomic and preserve file mode</li>
+        <li>Every mutation serialized under cross-process lock</li>
+        <li>Transactional switches with automatic rollback on failure</li>
+        <li>Secret scanner on all text fields before writing to context/checkpoints</li>
+        <li>Fleet commands signed with Ed25519 and bound to recipient</li>
+      </ul>
+
+      <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-4 mt-10">Cross-Platform Strategy</h2>
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm border border-surface-200 dark:border-surface-800 rounded-lg overflow-hidden">
+          <thead class="bg-surface-100 dark:bg-surface-800">
+            <tr>
+              <th class="px-4 py-3 text-left font-semibold">Piece</th>
+              <th class="px-4 py-3 text-left font-semibold">macOS</th>
+              <th class="px-4 py-3 text-left font-semibold">Linux / Windows</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-surface-200 dark:divide-surface-800">
+            <tr><td class="px-4 py-2">Live login token</td><td class="px-4 py-2 font-mono text-xs">Keychain</td><td class="px-4 py-2 font-mono text-xs">~/.claude/.credentials.json</td></tr>
+            <tr><td class="px-4 py-2">Saved profiles</td><td class="px-4 py-2 font-mono text-xs">Keychain items</td><td class="px-4 py-2 font-mono text-xs">~/.config/keyflip/creds/ (0600)</td></tr>
+            <tr><td class="px-4 py-2">Account identity</td><td class="px-4 py-2 font-mono text-xs" colspan="2">oauthAccount + userID in ~/.claude.json</td></tr>
+            <tr><td class="px-4 py-2">Profile metadata</td><td class="px-4 py-2 font-mono text-xs" colspan="2">~/.config/keyflip/&lt;name&gt;.json (0600)</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+</BaseLayout>

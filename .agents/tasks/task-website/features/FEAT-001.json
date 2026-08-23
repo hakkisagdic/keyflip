@@ -1,0 +1,42 @@
+{
+  "id": "FEAT-001",
+  "type": "feat",
+  "description": "Create the Astro project scaffold in /website with i18n (EN+TR), Tailwind CSS, dark mode, and all page routes. This is the foundation feature that sets up the entire site structure including layouts, components, navigation, footer, and all page stubs with real content pulled from project docs.",
+  "status": "in_progress",
+  "steps": [
+    "Initialize Astro project in /projects/sandbox/keyflip/website with TypeScript, Tailwind CSS 4, and @astrojs/sitemap integration",
+    "Configure astro.config.mjs with i18n routing (EN default, TR secondary), site URL placeholder, and static output mode suitable for GitHub Pages / Cloudflare Pages",
+    "Set up Tailwind CSS with a developer-focused color palette and dark mode (class-based toggle)",
+    "Create base layout (src/layouts/BaseLayout.astro) with: HTML lang attribute from locale, meta tags for SEO, Open Graph tags, dark mode toggle, responsive viewport, font loading (Inter or similar)",
+    "Create shared components: Header (nav with language switcher + mobile hamburger menu), Footer (GitHub link, MIT license, author credit), Hero section, FeatureCard, CodeBlock (syntax-highlighted install commands), CommandReference (for CLI docs), DarkModeToggle",
+    "Create EN pages: src/pages/index.astro (landing/hero), src/pages/features.astro, src/pages/docs/index.astro, src/pages/docs/installation.astro, src/pages/docs/usage.astro, src/pages/docs/cli-reference.astro, src/pages/docs/providers.astro, src/pages/docs/sessions.astro, src/pages/docs/fleet.astro, src/pages/docs/mcp.astro, src/pages/architecture.astro, src/pages/use-cases.astro, src/pages/pricing.astro, src/pages/faq.astro",
+    "Create TR pages mirroring the EN structure under src/pages/tr/ with full Turkish content translated from the TR docs already available in the project",
+    "Landing page content: tagline ('Multi-account switcher for Claude Code & AI tools'), key value props (zero dependencies, cross-platform, 130+ commands, MCP support, fleet management), install code blocks for macOS/Linux/Windows/npm, GitHub stars badge",
+    "Features page: detailed breakdown organized into categories (Core Account Management, Providers, Sessions & Recall, Fleet & Transfer, Context Layer, Security, Desktop/Browser Integration, MCP, TUI/Panel) with icons and descriptions pulled from docs/ARCHITECTURE.md",
+    "Documentation section: Installation (from README install section), Usage (everyday use from README), CLI Reference (all 130+ commands organized by category from README CLI section), Providers (from README providers section), Sessions (from README sessions section), Fleet (from README fleet section), MCP (from README MCP section)",
+    "Architecture page: content from docs/ARCHITECTURE.md with diagrams rendered as styled code blocks or ASCII art",
+    "Use Cases page: content from docs/USE-CASES.md organized as expandable/linked sections",
+    "Pricing page: placeholder tiers from docs/PRODUCTIZATION.md (Free/Pro/Team/Enterprise) with 'Coming Soon' badges, feature comparison table",
+    "FAQ page: common questions derived from README troubleshooting section and general usage patterns",
+    "Add proper 404 page",
+    "Configure package.json scripts: dev, build, preview, and add .gitignore for node_modules and dist"
+  ],
+  "acceptance_criteria": [
+    "Running `cd website && npm install && npm run build` succeeds with zero errors",
+    "The dist/ directory contains both EN and TR versions of all pages",
+    "All pages have proper SEO meta tags (title, description, og:image placeholder)",
+    "Navigation works between all pages (internal links are correct)",
+    "Dark mode toggle is functional via class-based switching",
+    "Language switcher links correctly map EN pages to TR equivalents and vice versa",
+    "The site is fully responsive (mobile, tablet, desktop layouts)",
+    "Install commands are displayed in styled code blocks",
+    "CLI reference organizes 130+ commands into logical categories with descriptions"
+  ],
+  "verification": [
+    "cd /projects/sandbox/keyflip/website && npm install && npm run build",
+    "ls dist/ && ls dist/tr/ to confirm bilingual output exists",
+    "Check that dist/index.html contains expected landing page content"
+  ],
+  "blocked_reason": null,
+  "findings": ""
+}

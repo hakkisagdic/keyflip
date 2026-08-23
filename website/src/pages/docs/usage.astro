@@ -1,0 +1,66 @@
+---
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import PageHeader from '../../components/PageHeader.astro';
+import CodeBlock from '../../components/CodeBlock.astro';
+---
+
+<BaseLayout title="Usage" locale="en" currentPath="/docs/usage">
+  <PageHeader title="Usage" subtitle="Everyday workflows for managing your Claude accounts" />
+
+  <section class="py-16">
+    <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
+
+      <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-4">Interactive Menu</h2>
+      <p class="text-surface-700 dark:text-surface-300 mb-4">Run <code>keyflip</code> with no arguments to open the interactive account picker:</p>
+      <CodeBlock code={`        Keyflip (keyflip)
+  Active: alice@example.com
+
+  → [1] alice@example.com
+    [2] bob@example.org
+
+  [number] switch   [a] save current   [d] delete   [r] refresh   [q] quit`} lang="text" />
+
+      <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-4 mt-10">Quick Switch</h2>
+      <p class="text-surface-700 dark:text-surface-300 mb-4">Switch directly by name or number:</p>
+      <CodeBlock code={`keyflip work              # switch to "work" account
+keyflip 2                 # switch to account #2
+keyflip work --restart    # close & reopen Claude without asking
+keyflip work --force      # swap without closing Claude
+keyflip work --browser    # also align the browser + Chrome extension`} />
+
+      <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-4 mt-10">Rotation</h2>
+      <p class="text-surface-700 dark:text-surface-300 mb-4">Automatically rotate to the next account or the one with most quota headroom:</p>
+      <CodeBlock code={`keyflip next                  # rotate to next saved account
+keyflip next --strategy best  # pick by remaining quota`} />
+
+      <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-4 mt-10">Auto-Switch</h2>
+      <p class="text-surface-700 dark:text-surface-300 mb-4">Watch usage and auto-swap when quota is nearly exhausted:</p>
+      <CodeBlock code={`keyflip autoswitch --threshold 90 --interval 60 --strategy next-available
+keyflip autoswitch install    # register as background service
+keyflip autoswitch status     # check if active
+keyflip autoswitch uninstall  # stop`} />
+
+      <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-4 mt-10">Status & Info</h2>
+      <CodeBlock code={`keyflip status            # which account each surface is on
+keyflip list --usage      # accounts + 5h/7d utilization
+keyflip doctor            # health check: secrets-in-git, config, endpoints`} />
+
+      <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-4 mt-10">Parallel Sessions</h2>
+      <p class="text-surface-700 dark:text-surface-300 mb-4">Run different accounts in different terminals simultaneously:</p>
+      <CodeBlock code={`keyflip run work          # this terminal only; others keep current account
+keyflip run work -- --resume   # forward args to claude`} />
+
+      <div class="mt-8 p-4 bg-primary-50 dark:bg-primary-950/50 border border-primary-200 dark:border-primary-800 rounded-lg">
+        <p class="text-sm text-surface-700 dark:text-surface-300">
+          <strong>Safety:</strong> If Claude is open, keyflip asks before closing it. On "no" it cancels. Mutations are serialized under a cross-process lock.
+        </p>
+      </div>
+
+      <div class="mt-8 flex gap-4">
+        <a href="/docs/cli-reference" class="px-6 py-2 bg-primary-600 text-white font-medium rounded-lg hover:bg-primary-700 transition-colors">
+          Next: CLI Reference &rarr;
+        </a>
+      </div>
+    </div>
+  </section>
+</BaseLayout>

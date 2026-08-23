@@ -1,0 +1,231 @@
+---
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import PageHeader from '../../components/PageHeader.astro';
+import CommandReference from '../../components/CommandReference.astro';
+---
+
+<BaseLayout title="CLI Reference" locale="en" currentPath="/docs/cli-reference">
+  <PageHeader title="CLI Reference" subtitle="All 130+ keyflip commands organized by category" />
+
+  <section class="py-16">
+    <div class="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8">
+
+      <!-- TOC -->
+      <nav class="mb-12 p-6 bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-800 rounded-xl">
+        <h2 class="text-lg font-semibold text-surface-900 dark:text-surface-100 mb-3">Categories</h2>
+        <div class="grid grid-cols-2 sm:grid-cols-3 gap-2 text-sm">
+          <a href="#core" class="text-primary-600 dark:text-primary-400 hover:underline">Core & Setup</a>
+          <a href="#switching" class="text-primary-600 dark:text-primary-400 hover:underline">Switching</a>
+          <a href="#providers" class="text-primary-600 dark:text-primary-400 hover:underline">Providers</a>
+          <a href="#sessions" class="text-primary-600 dark:text-primary-400 hover:underline">Sessions & Recall</a>
+          <a href="#fleet" class="text-primary-600 dark:text-primary-400 hover:underline">Fleet & Transfer</a>
+          <a href="#context" class="text-primary-600 dark:text-primary-400 hover:underline">Context Layer</a>
+          <a href="#automation" class="text-primary-600 dark:text-primary-400 hover:underline">Automation & Jobs</a>
+          <a href="#security" class="text-primary-600 dark:text-primary-400 hover:underline">Security & Policy</a>
+          <a href="#desktop" class="text-primary-600 dark:text-primary-400 hover:underline">Desktop & Browser</a>
+          <a href="#mcp" class="text-primary-600 dark:text-primary-400 hover:underline">MCP & Skills</a>
+          <a href="#tui" class="text-primary-600 dark:text-primary-400 hover:underline">TUI & Panel</a>
+          <a href="#maintenance" class="text-primary-600 dark:text-primary-400 hover:underline">Maintenance</a>
+        </div>
+      </nav>
+
+      <div id="core">
+        <CommandReference title="Core & Setup" commands={[
+          { cmd: 'keyflip', desc: 'Interactive menu (select by number)' },
+          { cmd: 'keyflip onboard [--manual] [--sso] [--console]', desc: 'Full first-run: sign in per account, point CLI+browser, sync chats' },
+          { cmd: 'keyflip setup', desc: 'Lighter wizard: log in, auto-detect & capture new logins' },
+          { cmd: 'keyflip login [name] [--email x] [--sso] [--console]', desc: 'Official browser flow, isolated + captured' },
+          { cmd: 'keyflip add [name] [--app]', desc: 'Save the currently logged-in account (CLI + desktop app)' },
+          { cmd: 'keyflip add <name> --token <file|->', desc: 'Headless import of raw credential (CI/provisioning)' },
+          { cmd: 'keyflip status', desc: 'Which account each surface is on (CLI + desktop app)' },
+          { cmd: 'keyflip list [--usage]', desc: 'List accounts; --usage shows 5h/7d utilization' },
+          { cmd: 'keyflip doctor', desc: 'Health check: secrets-in-git, orphaned sessions, config, endpoints' },
+          { cmd: 'keyflip config <list|get|set|unset>', desc: 'Validated settings home' },
+        ]} />
+      </div>
+
+      <div id="switching">
+        <CommandReference title="Switching" commands={[
+          { cmd: 'keyflip <name|number>', desc: 'Switch to that account (asks before closing Claude)' },
+          { cmd: 'keyflip <name> --restart', desc: 'Close & reopen Claude without asking' },
+          { cmd: 'keyflip <name> --force', desc: 'Swap without closing Claude (restart yourself)' },
+          { cmd: 'keyflip <name> --browser', desc: 'Also align browser + Chrome extension' },
+          { cmd: 'keyflip next', desc: 'Rotate to the next saved account' },
+          { cmd: 'keyflip next --strategy best', desc: 'Pick by remaining quota' },
+          { cmd: 'keyflip link [name|--remove]', desc: 'Map this directory to an account for `run`' },
+          { cmd: 'keyflip shell-init <bash|zsh|fish>', desc: 'Shell hook so cd auto-activates pinned account' },
+          { cmd: 'keyflip run <name> [-- args]', desc: 'Parallel session: that account in this terminal only' },
+          { cmd: 'keyflip group list|tag|untag|members', desc: 'Tag accounts into pools for rotation' },
+        ]} />
+      </div>
+
+      <div id="providers">
+        <CommandReference title="Providers" commands={[
+          { cmd: 'keyflip provider add <name> --base-url <url> --key-file -', desc: 'Save a third-party endpoint (key on stdin)' },
+          { cmd: 'keyflip use <name>', desc: 'Route Claude Code to a provider' },
+          { cmd: 'keyflip provider off', desc: 'Back to subscription (OAuth)' },
+          { cmd: 'keyflip provider list', desc: 'List saved/active providers' },
+          { cmd: 'keyflip speedtest <name>', desc: 'Time the endpoints, use the fastest' },
+          { cmd: 'keyflip test <name>', desc: 'One real request: is auth working?' },
+          { cmd: 'keyflip import-env [file] [--dry-run] [--env]', desc: 'Import provider endpoints from .env file' },
+          { cmd: 'keyflip route list|set|clear|arbitrage', desc: 'Model routing and arbitrage mode' },
+          { cmd: 'keyflip cache status|purge', desc: 'Response cache management' },
+          { cmd: 'keyflip proxy start --wire', desc: 'Start localhost failover proxy + wire Claude to it' },
+          { cmd: 'keyflip proxy status', desc: 'Proxy health and stats' },
+          { cmd: 'keyflip proxy stop', desc: 'Stop proxy and unwire' },
+          { cmd: 'keyflip gateway use|off <provider>', desc: 'Route the desktop app to a provider' },
+        ]} />
+      </div>
+
+      <div id="sessions">
+        <CommandReference title="Sessions & Recall" commands={[
+          { cmd: 'keyflip sessions --search "query"', desc: 'Search all Claude Code conversations' },
+          { cmd: 'keyflip sessions --here', desc: 'Only sessions started in this directory' },
+          { cmd: 'keyflip resume <n>', desc: 'Print the resume command for list item' },
+          { cmd: 'keyflip resume <id> --run', desc: 'Launch claude --resume in its dir' },
+          { cmd: 'keyflip sessions rebind <old> <new>', desc: 'Re-link chat history after folder rename' },
+          { cmd: 'keyflip sessions assign <id> <account>', desc: 'Continue session under another account' },
+          { cmd: 'keyflip send <id> "<msg>" [--as <acct>] [--fork]', desc: 'Inject message into a session' },
+          { cmd: 'keyflip sessions archive <id|--older-than 30d>', desc: 'Archive old transcripts (gzipped)' },
+          { cmd: 'keyflip sessions distill <id>', desc: 'Summarize a chat into a durable keepsake' },
+          { cmd: 'keyflip sessions compact <id> [--apply]', desc: 'Shrink transcript: elide bulky tool output' },
+          { cmd: 'keyflip sessions scrub <id> [--apply]', desc: 'Redact PII (email/phone/TCKN/card/IBAN/IP/secrets)' },
+          { cmd: 'keyflip sessions delete <id> [--hard]', desc: 'Delete a conversation (archives first by default)' },
+          { cmd: 'keyflip sessions edit <id> <action> <n>', desc: 'Surgical JSONL edits (delete/redact/truncate)' },
+          { cmd: 'keyflip sessions export <id> [--format md|html|json]', desc: 'Export chat as shareable doc' },
+          { cmd: 'keyflip foreign <file> [--format ...]', desc: 'Normalize another agent session (Cursor/Copilot/etc)' },
+          { cmd: 'keyflip recall "<query>" [--answer]', desc: 'BM25/semantic search all chats + cited synthesis' },
+          { cmd: 'keyflip dream [--older-than 30d] [--apply]', desc: 'Distill + archive old chats in one pass' },
+          { cmd: 'keyflip dream schedule|unschedule|status', desc: 'Run dreaming nightly unattended' },
+          { cmd: 'keyflip cowork --search "exam"', desc: 'Browse Claude desktop Cowork sessions' },
+          { cmd: 'keyflip chat', desc: 'List active account claude.ai Chat (experimental)' },
+          { cmd: 'keyflip chat get <id>', desc: 'Read one cloud conversation' },
+        ]} />
+      </div>
+
+      <div id="fleet">
+        <CommandReference title="Fleet & Transfer" commands={[
+          { cmd: 'keyflip fleet init --dir <folder>', desc: 'Link this machine into an encrypted fleet' },
+          { cmd: 'keyflip fleet push [--with-secrets]', desc: 'Publish status + apply queued commands' },
+          { cmd: 'keyflip fleet status | panel', desc: 'See every machine: accounts, quota, status' },
+          { cmd: 'keyflip fleet switch <machine> <account>', desc: 'Switch a remote machine account' },
+          { cmd: 'keyflip fleet send-account <acct> --to <machine>', desc: 'Distribute an account to another machine' },
+          { cmd: 'keyflip fleet collect', desc: 'Gather every account from fleet onto this machine' },
+          { cmd: 'keyflip fleet keys', desc: 'Audit signing-key fingerprints' },
+          { cmd: 'keyflip fleet trust <machine>', desc: 'Re-pin a machine key after legitimate re-key' },
+          { cmd: 'keyflip transfer serve [--qr]', desc: 'LAN: show one-time code + stream encrypted bundle' },
+          { cmd: 'keyflip transfer pull --code X', desc: 'LAN: auto-discover peer, pull + merge' },
+          { cmd: 'keyflip transfer serve --receive', desc: 'LAN: wait to receive a pushed bundle' },
+          { cmd: 'keyflip transfer push <host> --code X', desc: 'LAN: send bundle to a listening machine' },
+          { cmd: 'keyflip transfer serve --relay <dir|url>', desc: 'Internet: code UX via synced folder/WebDAV relay' },
+          { cmd: 'keyflip transfer pull --relay <dir|url> --code <code>', desc: 'Internet: pull + merge from relay' },
+          { cmd: 'keyflip transfer relay [--dir --host --port --auth...]', desc: 'Host your own zero-dep relay' },
+          { cmd: 'keyflip swarm run|ping|drain|results', desc: 'Run commands across fleet machines (consent-gated)' },
+          { cmd: 'keyflip migrate export <file>', desc: 'Bundle accounts + providers + transcripts + memory + config' },
+          { cmd: 'keyflip migrate import <file>', desc: 'Merge bundle into this machine' },
+          { cmd: 'keyflip migrate push --url <webdav>', desc: 'Relay bundle via WebDAV (encrypted)' },
+          { cmd: 'keyflip migrate pull --url <webdav>', desc: 'Pull + merge from WebDAV' },
+        ]} />
+      </div>
+
+      <div id="context">
+        <CommandReference title="Context Layer" commands={[
+          { cmd: 'keyflip context init', desc: 'Create .keyflip/ project memory' },
+          { cmd: 'keyflip context status', desc: 'Quick summary of project context' },
+          { cmd: 'keyflip context decision add "..." --rationale "..."', desc: 'Record architectural decision' },
+          { cmd: 'keyflip context task add "..."', desc: 'Add a project task' },
+          { cmd: 'keyflip context task set <id> <status>', desc: 'Update task status (todo/in_progress/blocked/done)' },
+          { cmd: 'keyflip context show --json', desc: 'Full secret-redacted context package' },
+          { cmd: 'keyflip context sync status', desc: 'Current privacy mode + policy' },
+          { cmd: 'keyflip context sync mode <mode>', desc: 'Switch privacy mode (local/git/encrypted/company)' },
+          { cmd: 'keyflip context sync export --passphrase-file f', desc: 'Emit the sync payload' },
+          { cmd: 'keyflip context sync check --against <file>', desc: 'Dry-run: what ships, conflicts?' },
+          { cmd: 'keyflip rules show', desc: 'Detect rule files + preview normalized model' },
+          { cmd: 'keyflip rules import', desc: 'Cache model at .keyflip/rules.json' },
+          { cmd: 'keyflip rules emit --to <tool> [--write]', desc: 'Emit rules for a specific tool' },
+          { cmd: 'keyflip checkpoint create --summary "..."', desc: 'Create git-bound session snapshot' },
+          { cmd: 'keyflip checkpoint list|latest|show <id>', desc: 'Inspect checkpoints' },
+          { cmd: 'keyflip handoff [--to <tool>] [--out CONTINUE.md]', desc: 'Generate continue-prompt for next tool' },
+        ]} />
+      </div>
+
+      <div id="automation">
+        <CommandReference title="Automation & Jobs" commands={[
+          { cmd: 'keyflip autoswitch --threshold N --interval N', desc: 'Watch usage, auto-swap at threshold' },
+          { cmd: 'keyflip autoswitch install|status|uninstall', desc: 'Background service for unattended rotation' },
+          { cmd: 'keyflip run-job "<prompt>" [--group g] [--strategy best]', desc: 'Run prompt headless on best-headroom account' },
+          { cmd: 'keyflip jobs list|run|clear', desc: 'Job queue management' },
+          { cmd: 'keyflip fanout "<prompt>" --accounts a,b,c', desc: 'Run same prompt across N accounts' },
+          { cmd: 'keyflip budget status|set|clear', desc: 'Usage-% ceilings + breach alerts' },
+          { cmd: 'keyflip notify set|test|off --webhook URL', desc: 'Push alerts on quota/switch/fleet events' },
+          { cmd: 'keyflip cost status|predict|by-project', desc: 'Spend/utilization and time-to-limit prediction' },
+          { cmd: 'keyflip usage --history', desc: 'Per-account usage trend + failover events' },
+          { cmd: 'keyflip usage --providers', desc: 'Usage/limits across other AI tools (CodexBar monitor)' },
+          { cmd: 'keyflip post --to <webhook> [--status]', desc: 'Post events to Slack/Discord/webhook' },
+        ]} />
+      </div>
+
+      <div id="security">
+        <CommandReference title="Security & Policy" commands={[
+          { cmd: 'keyflip policy list|allow|deny|remove|default|check', desc: 'Directory-to-account constraints' },
+          { cmd: 'keyflip vault status|use <op|bw|vault|off>', desc: 'Use 1Password/Bitwarden/HashiCorp Vault' },
+          { cmd: 'keyflip team publish|pull|members|add-member|remove-member', desc: 'Encrypted team pool with RBAC' },
+          { cmd: 'keyflip license status|activate|deactivate', desc: 'Offline Ed25519-signed license management' },
+          { cmd: 'keyflip export [file|-]', desc: 'Back up accounts (CONTAINS SECRETS)' },
+          { cmd: 'keyflip import <file|->', desc: 'Restore accounts from export' },
+          { cmd: 'keyflip backup now|list|restore <n>', desc: 'Snapshot keyflip metadata (no secrets)' },
+          { cmd: 'keyflip log [--tail N] [--grep S] [--since ISO]', desc: 'View the action/audit log' },
+          { cmd: 'keyflip history|undo|restore <ref>', desc: 'Git-versioned config: inspect/undo/rollback' },
+        ]} />
+      </div>
+
+      <div id="desktop">
+        <CommandReference title="Desktop & Browser" commands={[
+          { cmd: 'keyflip browser status|logout|sync', desc: 'Check/reset/restore browser claude.ai account' },
+          { cmd: 'keyflip consolidate [--watch]', desc: 'Sync every account chat index' },
+          { cmd: 'keyflip agents', desc: 'List other agents memory + config keyflip can carry' },
+          { cmd: 'keyflip settings show|get|set', desc: 'View/edit ~/.claude/settings.json' },
+          { cmd: 'keyflip surfaces', desc: 'Detect other AI tools on this machine' },
+          { cmd: 'keyflip codexbar', desc: 'Bridge to CodexBar usage monitor' },
+        ]} />
+      </div>
+
+      <div id="mcp">
+        <CommandReference title="MCP & Skills" commands={[
+          { cmd: 'keyflip mcp [--setup]', desc: 'MCP server over stdio for agents' },
+          { cmd: 'keyflip install-skill', desc: 'Install Claude Code skill (~/.claude/skills/keyflip)' },
+          { cmd: 'keyflip skill add <repo|dir|tgz>', desc: 'Install any skill from GitHub/dir/file' },
+          { cmd: 'keyflip skill list|remove <name>', desc: 'Manage installed skills' },
+          { cmd: 'keyflip brain "<intent>"', desc: 'Plain language to proposed keyflip steps (opt-in)' },
+        ]} />
+      </div>
+
+      <div id="tui">
+        <CommandReference title="TUI & Panel" commands={[
+          { cmd: 'keyflip ui [--fleet]', desc: 'Full-screen TUI: accounts, usage, fleet, command palette' },
+          { cmd: 'keyflip panel [--open]', desc: 'Local web dashboard: accounts, quotas, calendar, sessions' },
+          { cmd: 'keyflip panel --export <f> [--anon]', desc: 'Write share-safe static snapshot' },
+          { cmd: 'keyflip menubar [--install]', desc: 'Menu-bar/tray plugin (macOS xbar, Linux Argos)' },
+          { cmd: 'keyflip statusline install', desc: 'Show active account + quota in Claude Code prompt' },
+        ]} />
+      </div>
+
+      <div id="maintenance">
+        <CommandReference title="Maintenance" commands={[
+          { cmd: 'keyflip remove <name|number>', desc: 'Delete a saved account (confirms first)' },
+          { cmd: 'keyflip logout [--browser] [--desktop]', desc: 'Sign out of live sessions (saved accounts kept)' },
+          { cmd: 'keyflip reset [--soft]', desc: 'Factory reset: delete all keyflip data (--soft keeps accounts)' },
+          { cmd: 'keyflip reset --logout', desc: 'Also close + sign out every live surface' },
+          { cmd: 'keyflip uninstall [--purge]', desc: 'Remove keyflip (--purge deletes saved data too)' },
+          { cmd: 'keyflip upgrade', desc: 'Update keyflip itself (detects install method)' },
+        ]} />
+      </div>
+
+      <div class="mt-12 p-4 bg-surface-100 dark:bg-surface-800 rounded-lg">
+        <p class="text-sm text-surface-700 dark:text-surface-300">
+          <strong>Global flags:</strong> <code>--json</code> (machine-readable stdout, human text to stderr) and <code>--debug</code> (verbose log). <code>ccs</code> works as a short alias.
+        </p>
+      </div>
+    </div>
+  </section>
+</BaseLayout>

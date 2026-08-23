@@ -1,0 +1,137 @@
+---
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import PageHeader from '../../components/PageHeader.astro';
+import { t } from '../../i18n';
+
+const locale = 'tr';
+const trans = t(locale);
+
+const tiers = [
+  {
+    name: 'Ucretsiz',
+    price: '$0',
+    period: 'sonsuza kadar',
+    description: 'Acik kaynak, temel ozellikler sinirsiiz.',
+    features: [
+      'Hesap degistirme (sinirsiz)',
+      'Saglayici yonlendirme',
+      'Yedekleme proxy\'si',
+      'Oturum arama ve devam',
+      'Yedekleme ve goc',
+      'Yabanci oturum aktarimi',
+      'Temel MCP yuzeyi',
+      'CLI + interaktif menu',
+    ],
+    highlighted: false,
+    badge: null,
+  },
+  {
+    name: 'Pro',
+    price: '$8-12',
+    period: '/ay',
+    description: 'Guclu kullanicilar icin olcek, otomasyon ve zeka.',
+    features: [
+      'Ucretsiz\'deki her sey',
+      'Filo yonetimi',
+      'Orkestrator / isler / dagilim',
+      'Maliyet zekasi ve tahmin',
+      'Butceler ve uyarilar',
+      'Otomatik gecis (arka plan servisi)',
+      'Yonlendirici + onbellek',
+      'Oncelikli destek',
+    ],
+    highlighted: true,
+    badge: 'Yakinda',
+  },
+  {
+    name: 'Takim',
+    price: '$6-10',
+    period: '/kisi/ay',
+    description: 'Takimlar ve organizasyonlar icin guvenli isbirligi.',
+    features: [
+      'Pro\'daki her sey',
+      'Sifrelenmis takim havuzu (RBAC)',
+      'Politika motoru',
+      'Vault arka uclari (1Password/Bitwarden/HashiCorp)',
+      'Swarm (kendi filo yurut)',
+      'Denetim disari aktarimi',
+      'SSO destegi',
+    ],
+    highlighted: false,
+    badge: 'Yakinda',
+  },
+  {
+    name: 'Kurumsal',
+    price: 'Ozel',
+    period: '',
+    description: 'Kendi barindirma, ozel politika ve adanmis destek.',
+    features: [
+      'Takim\'daki her sey',
+      'Kendi barindirma lisans duzenleyici',
+      'Ozel politika kurallari',
+      'Oncelikli destek + SLA',
+      'Tedarik ve faturalandirma',
+      'Adanmis baslatma',
+    ],
+    highlighted: false,
+    badge: 'Yakinda',
+  },
+];
+---
+
+<BaseLayout title="Fiyatlandirma" locale={locale} currentPath="/tr/pricing">
+  <PageHeader title={trans.pricing.title} subtitle={trans.pricing.subtitle} />
+
+  <section class="py-16">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+      <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+        {tiers.map((tier) => (
+          <div class={`relative flex flex-col p-6 rounded-xl border ${tier.highlighted ? 'border-primary-500 dark:border-primary-400 shadow-xl ring-2 ring-primary-500/20' : 'border-surface-200 dark:border-surface-800'} bg-white dark:bg-surface-900`}>
+            {tier.badge && (
+              <span class="absolute -top-3 left-1/2 -translate-x-1/2 px-3 py-1 text-xs font-semibold bg-primary-600 text-white rounded-full">
+                {tier.badge}
+              </span>
+            )}
+            <h3 class="text-xl font-bold text-surface-900 dark:text-surface-100">{tier.name}</h3>
+            <div class="mt-4 flex items-baseline">
+              <span class="text-3xl font-extrabold text-surface-900 dark:text-surface-50">{tier.price}</span>
+              {tier.period && <span class="ml-1 text-sm text-surface-700 dark:text-surface-300">{tier.period}</span>}
+            </div>
+            <p class="mt-3 text-sm text-surface-700 dark:text-surface-300">{tier.description}</p>
+            <ul class="mt-6 space-y-3 flex-1">
+              {tier.features.map((f) => (
+                <li class="flex items-start gap-2 text-sm text-surface-700 dark:text-surface-300">
+                  <svg class="w-4 h-4 text-green-500 shrink-0 mt-0.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                    <path d="M5 13l4 4L19 7" />
+                  </svg>
+                  {f}
+                </li>
+              ))}
+            </ul>
+            <div class="mt-6">
+              {tier.name === 'Ucretsiz' ? (
+                <a href="/tr/docs/installation" class="block w-full text-center px-4 py-2 text-sm font-semibold text-primary-600 dark:text-primary-400 border border-primary-600 dark:border-primary-400 rounded-lg hover:bg-primary-50 dark:hover:bg-primary-950 transition-colors">
+                  Simdi Kurun
+                </a>
+              ) : (
+                <button disabled class="block w-full text-center px-4 py-2 text-sm font-semibold text-surface-400 dark:text-surface-600 border border-surface-200 dark:border-surface-700 rounded-lg cursor-not-allowed">
+                  Yakinda
+                </button>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div class="mt-16 max-w-3xl mx-auto">
+        <h2 class="text-2xl font-bold text-center text-surface-900 dark:text-surface-50 mb-6">Lisanslama Felsefesi</h2>
+        <div class="p-6 bg-surface-100 dark:bg-surface-800 rounded-xl space-y-4 text-surface-700 dark:text-surface-300">
+          <p><strong>Eve telefon yok:</strong> Lisans dogrulamasi cevrimdisi (Ed25519 imza). Hava bosluklu calisir.</p>
+          <p><strong>Ucretsiz katman gercekten faydali:</strong> Temel gecis/yonetim is akisi ucretsiz ve acik kaynak (MIT) kalir.</p>
+          <p><strong>Varsayilan olarak sifir telemetri:</strong> Acikca secmediginiz surece veri toplama yok.</p>
+          <p><strong>Sifir calisma zamani bagimliligi korunur:</strong> Lisanslama ilkeli sadece <code>node:crypto</code> kullanir.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+</BaseLayout>

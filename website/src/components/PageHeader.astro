@@ -1,0 +1,21 @@
+---
+interface Props {
+  title: string;
+  subtitle?: string;
+}
+
+const { title, subtitle } = Astro.props;
+---
+
+<section class="py-16 sm:py-20 bg-gradient-to-b from-primary-50/50 to-transparent dark:from-primary-950/30 dark:to-transparent">
+  <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
+    <h1 class="text-3xl sm:text-4xl lg:text-5xl font-extrabold text-surface-900 dark:text-surface-50">
+      {title}
+    </h1>
+    {subtitle && (
+      <p class="mt-4 max-w-2xl mx-auto text-lg text-surface-700 dark:text-surface-300">
+        {subtitle}
+      </p>
+    )}
+  </div>
+</section>

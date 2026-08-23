@@ -1,0 +1,58 @@
+---
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import PageHeader from '../../components/PageHeader.astro';
+import CodeBlock from '../../components/CodeBlock.astro';
+---
+
+<BaseLayout title="Sessions" locale="en" currentPath="/docs/sessions">
+  <PageHeader title="Sessions & Recall" subtitle="Search, resume, archive, distill, and recall your conversations" />
+
+  <section class="py-16">
+    <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
+
+      <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-4">Overview</h2>
+      <p class="text-surface-700 dark:text-surface-300 mb-6">
+        Claude Code transcripts (<code>~/.claude/projects</code>) are account-independent, so keyflip can browse and search all of them in one place and resume any one in its original directory.
+      </p>
+
+      <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-4 mt-10">Search & Resume</h2>
+      <CodeBlock code={`keyflip sessions --search "oauth"     # search all conversations
+keyflip sessions --here               # only sessions in this directory
+keyflip resume 3                      # print resume command for item #3
+keyflip resume <id> --run             # launch claude --resume <id> in its dir
+keyflip sessions rebind <old> <new>   # re-link after folder rename
+keyflip sessions assign <id> <acct>   # continue under another account`} />
+
+      <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-4 mt-10">Archive & Distill</h2>
+      <CodeBlock code={`keyflip sessions archive <id|--older-than 30d>   # gzip old transcripts
+keyflip sessions distill <id>          # summarize via claude -p
+keyflip dream [--older-than 30d]       # distill + archive in one pass
+keyflip dream schedule [--at 03:00]    # run nightly (launchd/cron)
+keyflip dream unschedule | status`} />
+
+      <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-4 mt-10">Session Editing</h2>
+      <CodeBlock code={`keyflip sessions compact <id> [--apply]   # shrink: elide bulky tool output
+keyflip sessions scrub <id> [--apply]     # redact PII (dry-run default)
+keyflip sessions delete <id> [--hard]     # archive first by default
+keyflip sessions edit <id> <action> <n>   # surgical JSONL edits`} />
+
+      <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-4 mt-10">Export & Import</h2>
+      <CodeBlock code={`keyflip sessions export <id> [--format md|html|json]   # shareable doc
+keyflip foreign <file> [--format ...]                  # normalize from other agents
+keyflip send <id> "<message>" [--as <acct>] [--fork]   # inject into session`} />
+
+      <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-4 mt-10">Recall Engine</h2>
+      <p class="text-surface-700 dark:text-surface-300 mb-4">
+        Search across all your chats with BM25 or semantic (embeddings) search. Get cited synthesis answers.
+      </p>
+      <CodeBlock code={`keyflip recall "how did we configure auth?"
+keyflip recall "deployment pipeline" --answer   # cited synthesis via claude -p`} />
+
+      <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-4 mt-10">What can be browsed across accounts</h2>
+      <ul class="list-disc pl-6 text-surface-700 dark:text-surface-300 space-y-2">
+        <li><strong>Claude Code sessions + Cowork sessions</strong> are stored locally per account -- keyflip consolidates both on switch</li>
+        <li><strong>claude.ai Chat</strong> (experimental) reads through the desktop app session cookie -- works after using the app, may otherwise return 403</li>
+      </ul>
+    </div>
+  </section>
+</BaseLayout>
