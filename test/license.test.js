@@ -5,7 +5,7 @@ import os from 'os';
 import path from 'path';
 import crypto from 'crypto';
 import * as license from '../src/license.js';
-import { makeCtx } from './helpers.js';
+import { makeCtx, assertPrivateMode } from './helpers.js';
 
 // A throwaway Ed25519 keypair + its SPKI-DER base64 public key (same encoding
 // the release build embeds). Tests pin it with setPublicKey so the whole
@@ -164,8 +164,7 @@ test('activate stores a verified license 0600 and status/tier read it back', fun
 
   const p = license.licensePath(ctx);
   assert.ok(fs.existsSync(p));
-  const mode = fs.statSync(p).mode & 0o777;
-  assert.strictEqual(mode, 0o600, 'license.json must be 0600, got ' + mode.toString(8));
+  assertPrivateMode(p, 'license.json');
 
   const s = license.status(ctx);
   assert.strictEqual(s.tier, 'pro');

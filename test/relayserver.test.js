@@ -10,6 +10,7 @@ import os from 'os';
 import path from 'path';
 
 import * as relay from '../src/relayserver.js';
+import { assertPrivateMode } from './helpers.js';
 
 function tmpDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'kf-relay-'));
@@ -65,8 +66,7 @@ test('PUT then GET round-trips the exact bytes', async function () {
     assert.strictEqual(get.status, 200);
     assert.ok(get.body.equals(payload), 'GET returns the identical bytes');
     // stored 0600 and inside the dir
-    const st = fs.statSync(path.join(dir, 'abc123'));
-    assert.strictEqual(st.mode & 0o777, 0o600);
+    assertPrivateMode(path.join(dir, 'abc123'));
     // overwrite -> 204
     const put2 = await req({ port: h.port, method: 'PUT', path: '/kf/abc123', body: Buffer.from('again') });
     assert.strictEqual(put2.status, 204);

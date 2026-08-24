@@ -9,6 +9,7 @@ import fs from 'fs';
 import path from 'path';
 import * as ctxsync from '../src/ctxsync.js';
 import * as secretscan from '../src/secretscan.js';
+import { assertPrivateMode } from './helpers.js';
 
 function tmpProject() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'keyflip-ctxsync-'));
@@ -64,7 +65,7 @@ test('setMode: persists to .keyflip/adapters/metadata.json (0600) and round-trip
   ctxsync.setMode(p, 'git', { now: CLOCK });
   const file = ctxsync.metaPath(p);
   assert.ok(fs.existsSync(file), 'metadata.json written under .keyflip/adapters/');
-  assert.strictEqual(fs.statSync(file).mode & 0o777, 0o600, 'metadata is 0600');
+  assertPrivateMode(file, 'metadata');
   const m = ctxsync.getMode(p);
   assert.strictEqual(m.mode, 'git');
   assert.strictEqual(m.updatedAt, '2026-07-12T00:00:00.000Z');

@@ -7,7 +7,7 @@ import fs from 'fs';
 import path from 'path';
 import zlib from 'zlib';
 import * as archive from '../src/archive.js';
-import { makeCtx } from './helpers.js';
+import { makeCtx, assertPrivateMode } from './helpers.js';
 
 function ctxWithClaude() {
   const ctx = makeCtx();
@@ -77,7 +77,7 @@ test('archiveSession stores the gz mode 0600; unarchiveSession reports corrupt o
   const a = archive.archiveSession(ctx, '-p', 'sc1');
   assert.ok(a.ok);
   const gz = path.join(archive.store(ctx), '-p', 'sc1.jsonl.gz');
-  assert.strictEqual(fs.statSync(gz).mode & 0o777, 0o600, 'archived gz is not world/group readable');
+  assertPrivateMode(gz, 'archived gz is not world/group readable');
   // corrupt it (non-gzip bytes) and confirm unarchive returns a clean {ok:false,reason:'corrupt'}
   fs.writeFileSync(gz, 'not-a-gzip-stream');
   const u = archive.unarchiveSession(ctx, '-p', 'sc1');

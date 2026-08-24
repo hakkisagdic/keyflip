@@ -5,7 +5,7 @@ import assert from 'node:assert';
 import fs from 'fs';
 import path from 'path';
 import * as notify from '../src/notify.js';
-import { makeCtx } from './helpers.js';
+import { makeCtx, assertPrivateMode } from './helpers.js';
 
 // A fetch double that records every call and returns a canned response.
 function fetchRecorder(response) {
@@ -47,8 +47,7 @@ test('setConfig merges patches without dropping other fields, and persists 0600'
   assert.strictEqual(cfg.desktop, true);
   // round-trips through disk
   assert.deepStrictEqual(notify.getConfig(ctx), cfg);
-  const mode = fs.statSync(notify.notifyPath(ctx)).mode & 0o777;
-  assert.strictEqual(mode, 0o600);
+  assertPrivateMode(notify.notifyPath(ctx));
 });
 
 test('setConfig with webhook:null clears the webhook', function () {

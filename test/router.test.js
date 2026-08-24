@@ -5,7 +5,7 @@ import path from 'path';
 import * as router from '../src/router.js';
 import * as provider from '../src/provider.js';
 import * as secretscan from '../src/secretscan.js';
-import { makeCtx } from './helpers.js';
+import { makeCtx, assertPrivateMode } from './helpers.js';
 
 function addProv(ctx, name, baseUrl, models, extra) {
   provider.add(ctx, name, Object.assign({ baseUrl: baseUrl, models: models || {} }, extra || {}));
@@ -127,8 +127,7 @@ test('setRoute / clearRoute / get round-trip and persist to router.json', functi
   router.setRoute(ctx, 'M', 'p');
   assert.deepStrictEqual(router.get(ctx).routes, { M: 'p' });
   // persisted with 0600
-  const st = fs.statSync(router.routerPath(ctx));
-  assert.strictEqual(st.mode & 0o777, 0o600);
+  assertPrivateMode(router.routerPath(ctx));
   assert.strictEqual(router.clearRoute(ctx, 'M'), true);
   assert.deepStrictEqual(router.get(ctx).routes, {});
   assert.strictEqual(router.clearRoute(ctx, 'M'), false); // idempotent

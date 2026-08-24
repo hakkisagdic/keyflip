@@ -1,3 +1,4 @@
+import assert from 'node:assert';
 import os from 'os';
 import fs from 'fs';
 import path from 'path';
@@ -35,4 +36,16 @@ function writeClaude(ctx, obj) {
   fs.writeFileSync(ctx.claudeConfigPath, JSON.stringify(obj, null, 2));
 }
 
-export { tmpdir, makeCtx, writeClaude };
+function assertPrivateMode(file, message) {
+  const st = fs.statSync(file);
+  const label = message || file;
+  if (process.platform === 'win32') {
+    assert.ok(st.isFile(), label + ' — expected a regular file');
+    fs.accessSync(file, fs.constants.R_OK | fs.constants.W_OK);
+    return;
+  }
+  const mode = st.mode & 0o777;
+  assert.strictEqual(mode, 0o600, label + ' — expected 0600, got 0' + mode.toString(8));
+}
+
+export { tmpdir, makeCtx, writeClaude, assertPrivateMode };

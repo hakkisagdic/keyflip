@@ -7,7 +7,7 @@ import assert from 'node:assert';
 import fs from 'fs';
 import * as integrations from '../src/integrations.js';
 import * as core from '../src/core.js';
-import { makeCtx, writeClaude } from './helpers.js';
+import { makeCtx, writeClaude, assertPrivateMode } from './helpers.js';
 import _path from 'path';
 
 // A fetch double that records every call and returns a canned response.
@@ -247,8 +247,7 @@ test('post records a NON-SECRET delivery log (no url, no payload) at 0600', asyn
   assert.strictEqual(log[0].platform, 'slack');
   assert.strictEqual(log[0].event, 'switch');
   assert.strictEqual(log[0].ok, true);
-  const mode = fs.statSync(integrations.statePath(ctx)).mode & 0o777;
-  assert.strictEqual(mode, 0o600);
+  assertPrivateMode(integrations.statePath(ctx));
 });
 
 test('the delivery log is bounded to 50 entries (newest first)', async function () {

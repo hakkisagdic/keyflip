@@ -14,6 +14,18 @@ const keygen = require('./keygen');
 const { signLicense } = require('./sign');
 const license = require('../src/license');
 
+function assertPrivateMode(file, message) {
+  const st = fs.statSync(file);
+  const label = message || file;
+  if (process.platform === 'win32') {
+    assert.ok(st.isFile(), label + ' — expected a regular file');
+    fs.accessSync(file, fs.constants.R_OK | fs.constants.W_OK);
+    return;
+  }
+  const mode = st.mode & 0o777;
+  assert.strictEqual(mode, 0o600, label + ' — expected 0600, got 0' + mode.toString(8));
+}
+
 test('genKeypair returns a single-line SPKI-DER base64 public key and PKCS8 DER private buffer', function () {
   const kp = keygen.genKeypair();
   assert.strictEqual(typeof kp.publicKeyB64, 'string');
@@ -48,8 +60,7 @@ test('writePrivateKey writes mode 0600 and refuses to overwrite without force', 
   const kp = keygen.genKeypair();
 
   keygen.writePrivateKey(kp.privateKeyDer, keyPath, false);
-  const mode = fs.statSync(keyPath).mode & 0o777;
-  assert.strictEqual(mode, 0o600, 'key file must be 0600, got 0' + mode.toString(8));
+  assertPrivateMode(keyPath, 'key file');
   // Bytes on disk must equal what we wrote (raw DER, loadable back).
   assert.ok(fs.readFileSync(keyPath).equals(kp.privateKeyDer));
 
@@ -63,7 +74,7 @@ test('writePrivateKey writes mode 0600 and refuses to overwrite without force', 
   const kp2 = keygen.genKeypair();
   keygen.writePrivateKey(kp2.privateKeyDer, keyPath, true);
   assert.ok(fs.readFileSync(keyPath).equals(kp2.privateKeyDer));
-  assert.strictEqual(fs.statSync(keyPath).mode & 0o777, 0o600);
+  assertPrivateMode(keyPath);
 });
 
 test('CLI prints the public key and NEVER the private key', function () {
@@ -76,7 +87,7 @@ test('CLI prints the public key and NEVER the private key', function () {
     env: env,
   });
   // The private key landed only at the redirected 0600 path, never in the repo.
-  assert.strictEqual(fs.statSync(keyPath).mode & 0o777, 0o600);
+  assertPrivateMode(keyPath);
   assert.ok(/Paste this public key/.test(out));
   const printedB64 = out.trim().split('\n').pop().trim();
   const pub = crypto.createPublicKey({ key: Buffer.from(printedB64, 'base64'), format: 'der', type: 'spki' });

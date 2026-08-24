@@ -10,7 +10,7 @@ import path from 'path';
 import zlib from 'zlib';
 import * as sessionedit from '../src/sessionedit.js';
 import * as archive from '../src/archive.js';
-import { makeCtx } from './helpers.js';
+import { makeCtx, assertPrivateMode } from './helpers.js';
 
 // A stand-in for pii.js honouring the { text, counts } contract: redacts emails + phones.
 const fakePii = {
@@ -187,7 +187,7 @@ test('scrubSession apply redacts visible text, keeps every line valid JSON, pres
   // backup exists, is the original, and is 0600
   assert.ok(r.backup && fs.existsSync(r.backup), 'backup written');
   assert.strictEqual(fs.readFileSync(r.backup, 'utf8'), original, 'backup is the original bytes');
-  assert.strictEqual(fs.statSync(r.backup).mode & 0o777, 0o600, 'backup not world/group readable');
+  assertPrivateMode(r.backup, 'backup not world/group readable');
   // every line still valid JSON
   const raw = eachLineIsJson(file);
   // PII gone from visible text, placeholders in
@@ -199,7 +199,7 @@ test('scrubSession apply redacts visible text, keeps every line valid JSON, pres
   assert.ok(raw.indexOf('toolu_ABC123') !== -1, 'tool_use id preserved');
   assert.ok(raw.indexOf('"file_path":"/x"') !== -1, 'tool input json preserved');
   // written file is 0600
-  assert.strictEqual(fs.statSync(file).mode & 0o777, 0o600);
+  assertPrivateMode(file);
 });
 
 test('scrubSession on a missing session returns not-found', function () {
