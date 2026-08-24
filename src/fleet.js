@@ -18,21 +18,34 @@ import * as _fsutil from './fsutil.js';
 
 function idPath(ctx) { return path.join(ctx.configDir, 'fleet.json'); }
 
-// Stable per-machine identity (hostname + a random suffix), created once. Also holds the
-// configured fleet name + rendezvous dir. The passphrase is NEVER stored (supplied per command).
+// Stable per-machine identity (hostname + a random suffix), minted once and then reused. Also
+// holds the configured fleet name + rendezvous dir. The passphrase is NEVER stored (supplied per
+// command). The id must satisfy safeId() or every bus filename derived from it throws, so it is
+// re-minted when a stored fleet.json carries one that does not.
 function identity(ctx) {
   let id = {};
   try { id = JSON.parse(fs.readFileSync(idPath(ctx), 'utf8')) || {}; } catch (e) { id = {}; }
+  let minted = false;
   if (!id.machineId) {
     const host = safeHost();
     const suffix = crypto.randomBytes(3).toString('hex');
     id.machineId = host + '-' + suffix;
     if (!id.name) id.name = host;
+    minted = true;
+  }
+  if (!safeId(id.machineId)) {
+    const host = safeHost();
+    id.machineId = host + '-' + crypto.randomBytes(3).toString('hex');
+    if (!id.name) id.name = host;
+    minted = true;
+  }
+  if (minted) {
     try { const fsutil = _fsutil; fsutil.atomicWrite(idPath(ctx), JSON.stringify(id, null, 2), 0o600); } catch (e) { /* best-effort */ }
   }
   return id;
 }
-function safeHost() { try { return String(os.hostname()).split('.')[0].replace(/[^A-Za-z0-9_-]/g, '') || 'machine'; } catch (e) { return 'machine'; } }
+// Capped at 40 chars so hostname + '-' + 6 hex suffix always fits SAFE_ID's 64-char bound.
+function safeHost() { try { return String(os.hostname()).split('.')[0].replace(/[^A-Za-z0-9_-]/g, '').slice(0, 40) || 'machine'; } catch (e) { return 'machine'; } }
 
 // A machine id must be a single SAFE FILENAME SEGMENT — never a path. Peer-supplied ids reach
 // filenames (<id>.status.enc / <id>.inbox.enc), so an unvalidated '../' would let a hostile peer
