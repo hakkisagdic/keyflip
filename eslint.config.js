@@ -62,6 +62,6 @@ export default [
     },
   },
   {
-    ignores: ['node_modules/', 'coverage/', '.husky/', 'convert-to-esm.mjs', 'convert-remaining.mjs', 'fix-dirname.mjs'],
+    ignores: ['node_modules/', 'coverage/', '.husky/'],
   },
 ];
