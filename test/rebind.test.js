@@ -105,9 +105,12 @@ test('list flags a session whose cwd no longer exists (orphan)', function () {
   const ctx = makeCtx();
   const dir = path.join(sessions.projectsDir(ctx), '-gone');
   fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(path.join(dir, 'cccc3333.jsonl'), '{"cwd":"/no/such/dir/anymore","text":"hi"}\n');
+  fs.writeFileSync(
+    path.join(dir, 'cccc3333.jsonl'),
+    JSON.stringify({ cwd: '/no/such/dir/anymore', text: 'hi' }) + '\n',
+  );
   const live = path.join(dir, 'dddd4444.jsonl');
-  fs.writeFileSync(live, '{"cwd":"' + ctx.home + '","text":"hi"}\n'); // ctx.home exists
+  fs.writeFileSync(live, JSON.stringify({ cwd: ctx.home, text: 'hi' }) + '\n'); // ctx.home exists
   const rows = sessions.list(ctx, { limit: 40 });
   const orphan = rows.filter(function (r) {
     return r.sessionId === 'cccc3333';
