@@ -16,17 +16,29 @@ function writeProfile(ctx, name, email) {
 }
 
 function baseState(over) {
-  return Object.assign({
-    activeEmail: 'alice@x.com',
-    accounts: [
-      { name: 'alice', email: 'alice@x.com', active: true, fiveHourPct: 62, sevenDayPct: 28 },
-      { name: 'bob', email: 'bob@y.com', active: false, fiveHourPct: 91, sevenDayPct: 44 },
-      { name: 'carol', email: 'carol@z.com', active: false, fiveHourPct: null, sevenDayPct: null },
-    ],
-    providers: [{ name: 'relay', active: true }, { name: 'spare', active: false }],
-    fleet: { configured: false, name: null, machineId: null, peers: [] },
-    sel: 1, view: 'accounts', filter: '', filtering: false, pending: null, message: null, quit: false,
-  }, over || {});
+  return Object.assign(
+    {
+      activeEmail: 'alice@x.com',
+      accounts: [
+        { name: 'alice', email: 'alice@x.com', active: true, fiveHourPct: 62, sevenDayPct: 28 },
+        { name: 'bob', email: 'bob@y.com', active: false, fiveHourPct: 91, sevenDayPct: 44 },
+        { name: 'carol', email: 'carol@z.com', active: false, fiveHourPct: null, sevenDayPct: null },
+      ],
+      providers: [
+        { name: 'relay', active: true },
+        { name: 'spare', active: false },
+      ],
+      fleet: { configured: false, name: null, machineId: null, peers: [] },
+      sel: 1,
+      view: 'accounts',
+      filter: '',
+      filtering: false,
+      pending: null,
+      message: null,
+      quit: false,
+    },
+    over || {},
+  );
 }
 
 // A minimal fake TTY stream that behaves like process.stdin for run().
@@ -35,12 +47,30 @@ function fakeTTY() {
   ee.setMaxListeners(50);
   ee.isTTY = true;
   ee.raw = false;
-  ee.setRawMode = function (v) { ee.raw = v; return ee; };
-  ee.resume = function () {}; ee.pause = function () {};
+  ee.setRawMode = function (v) {
+    ee.raw = v;
+    return ee;
+  };
+  ee.resume = function () {};
+  ee.pause = function () {};
   return ee;
 }
-function fakeOut() { return { data: '', columns: 80, rows: 24, write: function (s) { this.data += s; return true; } }; }
-const tick = function (ms) { return new Promise(function (r) { setTimeout(r, ms || 5); }); };
+function fakeOut() {
+  return {
+    data: '',
+    columns: 80,
+    rows: 24,
+    write: function (s) {
+      this.data += s;
+      return true;
+    },
+  };
+}
+const tick = function (ms) {
+  return new Promise(function (r) {
+    setTimeout(r, ms || 5);
+  });
+};
 
 // -------------------------------------------------------------------------
 // render (pure)
@@ -62,23 +92,37 @@ test('command palette: p opens it, typing searches, enter picks a command', func
   assert.strictEqual(s.view, 'palette');
   assert.strictEqual(s.filtering, true);
   // type "status" and render
-  ['s', 't', 'a', 't', 'u', 's'].forEach(function (c) { s = tui.reducer(s, c); });
+  ['s', 't', 'a', 't', 'u', 's'].forEach(function (c) {
+    s = tui.reducer(s, c);
+  });
   const f = tui.render(s, { width: 76, height: 18 });
   assert.ok(/Command palette/.test(f) && /status/.test(f), 'palette shows the status command');
   assert.ok(/search: status/.test(f), 'the live search box is in the footer');
   // enter selects the highlighted command -> a pending {type:command}
   const after = tui.reducer(s, 'enter');
-  assert.ok(after.pending && after.pending.type === 'command' && after.pending.name === 'status', 'enter picks the command');
+  assert.ok(
+    after.pending && after.pending.type === 'command' && after.pending.name === 'status',
+    'enter picks the command',
+  );
   assert.strictEqual(after.pending.safe, true, 'status is safe (directly runnable)');
   // esc leaves the palette back to accounts
   assert.strictEqual(tui.reducer(s, 'escape').view, 'accounts');
 });
 
 test('render: the usage view lists provider windows with bars + reset (u key toggles it)', function () {
-  const st = baseState({ view: 'usage', providerUsage: [
-    { id: 'codex', label: 'Codex', present: true, status: 'ok', windows: [{ name: '5h', usedPct: 42, human: 'resets in 3h' }] },
-    { id: 'cursor', label: 'Cursor', present: true, status: 'unknown', windows: [] },
-  ] });
+  const st = baseState({
+    view: 'usage',
+    providerUsage: [
+      {
+        id: 'codex',
+        label: 'Codex',
+        present: true,
+        status: 'ok',
+        windows: [{ name: '5h', usedPct: 42, human: 'resets in 3h' }],
+      },
+      { id: 'cursor', label: 'Cursor', present: true, status: 'unknown', windows: [] },
+    ],
+  });
   const f = tui.render(st, { width: 80, height: 20 });
   assert.ok(/Provider usage/.test(f), 'usage header');
   assert.ok(/Codex/.test(f) && /42%/.test(f) && /resets in 3h/.test(f), 'a provider window rendered');
@@ -91,19 +135,26 @@ test('render: the usage view lists provider windows with bars + reset (u key tog
 
 test('render: the selected row is marked with ❯ and unknown usage shows ? and dot bar', function () {
   const f = tui.render(baseState({ sel: 2 }), { width: 90, height: 24 });
-  const carolLine = f.split('\n').filter(function (l) { return l.indexOf('carol@z.com') !== -1; })[0];
+  const carolLine = f.split('\n').filter(function (l) {
+    return l.indexOf('carol@z.com') !== -1;
+  })[0];
   assert.ok(carolLine.indexOf('❯') !== -1, 'carol is selected');
   assert.ok(f.indexOf('[············]') !== -1, 'unknown usage -> dotted bar');
-  const dotBarLine = f.split('\n').filter(function (l) { return l.indexOf('[············]') !== -1; })[0];
+  const dotBarLine = f.split('\n').filter(function (l) {
+    return l.indexOf('[············]') !== -1;
+  })[0];
   assert.ok(dotBarLine.indexOf('?') !== -1, 'unknown usage -> ? label');
 });
 
 test('render: frame is exactly `height` rows and every row fits `width` (color off)', function () {
-  const W = 40, H = 20;
+  const W = 40,
+    H = 20;
   const f = tui.render(baseState(), { width: W, height: H });
   const lines = f.split('\n');
   assert.strictEqual(lines.length, H, 'exactly height rows');
-  lines.forEach(function (l) { assert.ok(Array.from(l).length <= W, 'row within width: ' + JSON.stringify(l)); });
+  lines.forEach(function (l) {
+    assert.ok(Array.from(l).length <= W, 'row within width: ' + JSON.stringify(l));
+  });
 });
 
 test('render: color mode wraps the selected row in inverse video and dims chrome', function () {
@@ -113,7 +164,15 @@ test('render: color mode wraps the selected row in inverse video and dims chrome
 });
 
 test('render: fleet view shows the machine + peers detail', function () {
-  const st = baseState({ view: 'fleet', fleet: { configured: true, name: 'laptop', machineId: 'laptop-ab12', peers: [{ name: 'desktop', activeEmail: 'x@y.com', accounts: 3 }] } });
+  const st = baseState({
+    view: 'fleet',
+    fleet: {
+      configured: true,
+      name: 'laptop',
+      machineId: 'laptop-ab12',
+      peers: [{ name: 'desktop', activeEmail: 'x@y.com', accounts: 3 }],
+    },
+  });
   const f = tui.render(st, { width: 90, height: 24 });
   assert.ok(f.indexOf('Fleet') !== -1 && f.indexOf('This machine: laptop') !== -1);
   assert.ok(f.indexOf('desktop') !== -1 && f.indexOf('x@y.com') !== -1 && f.indexOf('3 acct') !== -1);
@@ -122,10 +181,21 @@ test('render: fleet view shows the machine + peers detail', function () {
 test('render (hostile): control chars / ANSI / newlines / overlong labels cannot break the frame', function () {
   const st = baseState({
     activeEmail: 'ok',
-    accounts: [{ name: 'x', email: 'a@x.com\n\x1b[31mHACK\x00' + 'y'.repeat(300), active: false, fiveHourPct: 50, sevenDayPct: 10 }],
-    providers: [], fleet: { configured: false }, sel: 0,
+    accounts: [
+      {
+        name: 'x',
+        email: 'a@x.com\n\x1b[31mHACK\x00' + 'y'.repeat(300),
+        active: false,
+        fiveHourPct: 50,
+        sevenDayPct: 10,
+      },
+    ],
+    providers: [],
+    fleet: { configured: false },
+    sel: 0,
   });
-  const W = 40, H = 18;
+  const W = 40,
+    H = 18;
   const f = tui.render(st, { width: W, height: H, color: false });
   const lines = f.split('\n');
   assert.strictEqual(lines.length, H);
@@ -145,9 +215,12 @@ test('reducer: up/down move and clamp within the visible list, without mutating 
   assert.strictEqual(up.sel, 0, 'clamped at top');
   assert.strictEqual(s0.sel, 0, 'input state untouched');
   assert.notStrictEqual(up, s0, 'returns a new object');
-  let s = tui.reducer(s0, 'down'); assert.strictEqual(s.sel, 1);
-  s = tui.reducer(s, 'down'); assert.strictEqual(s.sel, 2);
-  s = tui.reducer(s, 'down'); assert.strictEqual(s.sel, 2, 'clamped at bottom');
+  let s = tui.reducer(s0, 'down');
+  assert.strictEqual(s.sel, 1);
+  s = tui.reducer(s, 'down');
+  assert.strictEqual(s.sel, 2);
+  s = tui.reducer(s, 'down');
+  assert.strictEqual(s.sel, 2, 'clamped at bottom');
 });
 
 test('reducer: enter on a non-active account emits a switch effect; on the active one, a message', function () {
@@ -177,7 +250,13 @@ test('reducer: / opens filter mode; typing filters; enter commits; escape cancel
   assert.strictEqual(s.filtering, true);
   s = tui.reducer(s, 'b'); // type 'b'
   assert.strictEqual(s.filter, 'b');
-  assert.deepStrictEqual(tui.visible(s).map(function (a) { return a.name; }), ['bob'], 'only bob matches');
+  assert.deepStrictEqual(
+    tui.visible(s).map(function (a) {
+      return a.name;
+    }),
+    ['bob'],
+    'only bob matches',
+  );
   s = tui.reducer(s, 'enter');
   assert.strictEqual(s.filtering, false, 'enter commits the filter');
   assert.strictEqual(s.filter, 'b', 'committed filter kept');
@@ -188,7 +267,9 @@ test('reducer: / opens filter mode; typing filters; enter commits; escape cancel
 
 test('reducer (hostile): in filter mode, q/r/f are typed as text — not commands — and backspace deletes', function () {
   let s = tui.reducer(baseState(), '/');
-  s = tui.reducer(s, 'q'); s = tui.reducer(s, 'r'); s = tui.reducer(s, 'f');
+  s = tui.reducer(s, 'q');
+  s = tui.reducer(s, 'r');
+  s = tui.reducer(s, 'f');
   assert.strictEqual(s.quit, false, 'q does not quit while filtering');
   assert.strictEqual(s.filter, 'qrf');
   s = tui.reducer(s, 'backspace');
@@ -204,8 +285,12 @@ test('buildState: maps profiles + an injected usage snapshot into account bars',
   writeProfile(ctx, 'b', 'b@y.com');
   const usage = { a: { status: 'ok', usage: { fiveHour: { pct: 42 }, sevenDay: { pct: 12 } } } };
   const st = tui.buildState(ctx, { usage: usage });
-  const a = st.accounts.filter(function (x) { return x.name === 'a'; })[0];
-  const b = st.accounts.filter(function (x) { return x.name === 'b'; })[0];
+  const a = st.accounts.filter(function (x) {
+    return x.name === 'a';
+  })[0];
+  const b = st.accounts.filter(function (x) {
+    return x.name === 'b';
+  })[0];
   assert.strictEqual(a.fiveHourPct, 42);
   assert.strictEqual(a.sevenDayPct, 12);
   assert.strictEqual(b.fiveHourPct, null, 'no snapshot entry -> unknown');
@@ -229,8 +314,10 @@ test('buildState (hostile): a __proto__ usage key cannot pollute the account loo
   writeProfile(ctx, 'a', 'a@x.com');
   const usage = JSON.parse('{"__proto__":{"usage":{"fiveHour":{"pct":99}}},"a":{"usage":{"fiveHour":{"pct":5}}}}');
   const st = tui.buildState(ctx, { usage: usage });
-  assert.strictEqual(({}).polluted, undefined);
-  const a = st.accounts.filter(function (x) { return x.name === 'a'; })[0];
+  assert.strictEqual({}.polluted, undefined);
+  const a = st.accounts.filter(function (x) {
+    return x.name === 'a';
+  })[0];
   assert.strictEqual(a.fiveHourPct, 5);
 });
 
@@ -268,7 +355,8 @@ test('run: without a TTY it prints a friendly message and resolves (never hangs 
 
 test('run: enters/leaves the alt-screen and quits on q', async function () {
   const ctx = makeCtx();
-  const input = fakeTTY(); const out = fakeOut();
+  const input = fakeTTY();
+  const out = fakeOut();
   const done = tui.run(ctx, { input: input, output: out, usage: {} });
   await tick();
   assert.ok(out.data.indexOf('\x1b[?1049h') !== -1, 'entered alt-screen');
@@ -284,11 +372,20 @@ test('run: Enter switches the selected account through the injected onSwitch', a
   const ctx = makeCtx();
   writeProfile(ctx, 'alice', 'alice@x.com');
   writeProfile(ctx, 'bob', 'bob@y.com');
-  const input = fakeTTY(); const out = fakeOut();
+  const input = fakeTTY();
+  const out = fakeOut();
   let switched = null;
-  const done = tui.run(ctx, { input: input, output: out, usage: {}, onSwitch: function (n) { switched = n; return Promise.resolve(); } });
+  const done = tui.run(ctx, {
+    input: input,
+    output: out,
+    usage: {},
+    onSwitch: function (n) {
+      switched = n;
+      return Promise.resolve();
+    },
+  });
   await tick();
-  input.emit('keypress', null, { name: 'down' });  // sel 0 (alice) -> 1 (bob)
+  input.emit('keypress', null, { name: 'down' }); // sel 0 (alice) -> 1 (bob)
   input.emit('keypress', '\r', { name: 'return' }); // switch bob
   await tick(20);
   input.emit('keypress', 'q', { name: 'q' });
@@ -299,9 +396,18 @@ test('run: Enter switches the selected account through the injected onSwitch', a
 
 test('run: r triggers a refresh via the injected onRefresh', async function () {
   const ctx = makeCtx();
-  const input = fakeTTY(); const out = fakeOut();
+  const input = fakeTTY();
+  const out = fakeOut();
   let refreshed = 0;
-  const done = tui.run(ctx, { input: input, output: out, usage: {}, onRefresh: function (c, s) { refreshed++; return tui.buildState(c, { usage: {}, view: s.view }); } });
+  const done = tui.run(ctx, {
+    input: input,
+    output: out,
+    usage: {},
+    onRefresh: function (c, s) {
+      refreshed++;
+      return tui.buildState(c, { usage: {}, view: s.view });
+    },
+  });
   await tick();
   input.emit('keypress', 'r', { name: 'r' });
   await tick(20);

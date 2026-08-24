@@ -47,7 +47,9 @@ test('loadForWrite returns {} when missing but throws on a corrupt file', functi
   const p = path.join(tmpdir(), '.claude.json');
   assert.deepStrictEqual(claude.loadForWrite(p), {});
   fs.writeFileSync(p, '{ not valid json');
-  assert.throws(function () { claude.loadForWrite(p); }, /not valid JSON/);
+  assert.throws(function () {
+    claude.loadForWrite(p);
+  }, /not valid JSON/);
 });
 
 test('writeConfig gives a brand-new file 0600 (non-Windows)', function (t) {

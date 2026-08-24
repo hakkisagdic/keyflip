@@ -16,8 +16,8 @@ const REGISTRY = [
   // Copilot's memory is project-level (.github/copilot-instructions.md, AGENTS.md) and travels
   // with its git repo, so no home-level memory roots — but it DOES have home-level config below.
   { id: 'copilot', label: 'GitHub Copilot', roots: [] },
-  { id: 'opencode', label: 'opencode', roots: [] },   // home-level memory NEEDS-VERIFICATION; config below
-  { id: 'aider', label: 'Aider', roots: [] },          // memory is project CONVENTIONS.md (travels w/ git)
+  { id: 'opencode', label: 'opencode', roots: [] }, // home-level memory NEEDS-VERIFICATION; config below
+  { id: 'aider', label: 'Aider', roots: [] }, // memory is project CONVENTIONS.md (travels w/ git)
   // Windsurf (Codeium): global rules + memories live under ~/.codeium/windsurf/memories/
   // (global_rules.md + per-workspace memory .md files). Project rules (.windsurf/rules) travel w/ git.
   { id: 'windsurf', label: 'Windsurf', roots: ['.codeium/windsurf/memories'] },
@@ -40,14 +40,24 @@ const CONFIG_REGISTRY = [
 ];
 const MEM_EXT = ['.md', '.mdc', '.txt'];
 
-function isMemoryFile(name) { return MEM_EXT.indexOf(path.extname(name).toLowerCase()) !== -1; }
+function isMemoryFile(name) {
+  return MEM_EXT.indexOf(path.extname(name).toLowerCase()) !== -1;
+}
 function walk(dir, budget, out) {
   if (budget.left <= 0) return;
-  let ents; try { ents = fs.readdirSync(dir, { withFileTypes: true }); } catch (e) { return; }
+  let ents;
+  try {
+    ents = fs.readdirSync(dir, { withFileTypes: true });
+  } catch (e) {
+    return;
+  }
   for (let i = 0; i < ents.length && budget.left > 0; i++) {
     const p = path.join(dir, ents[i].name);
     if (ents[i].isDirectory()) walk(p, budget, out);
-    else if (ents[i].isFile() && isMemoryFile(ents[i].name)) { out.push(p); budget.left--; }
+    else if (ents[i].isFile() && isMemoryFile(ents[i].name)) {
+      out.push(p);
+      budget.left--;
+    }
   }
 }
 
@@ -63,12 +73,24 @@ function collectAgentMemory(ctx, opts) {
     if (only && only.indexOf(a.id) === -1) return;
     a.roots.forEach(function (root) {
       const abs = path.join(home, root);
-      let st; try { st = fs.statSync(abs); } catch (e) { return; }
+      let st;
+      try {
+        st = fs.statSync(abs);
+      } catch (e) {
+        return;
+      }
       const files = [];
       if (st.isDirectory()) walk(abs, budget, files);
-      else if (st.isFile() && isMemoryFile(abs)) { files.push(abs); }
+      else if (st.isFile() && isMemoryFile(abs)) {
+        files.push(abs);
+      }
       files.forEach(function (f) {
-        let content; try { content = fs.readFileSync(f, 'utf8'); } catch (e) { return; }
+        let content;
+        try {
+          content = fs.readFileSync(f, 'utf8');
+        } catch (e) {
+          return;
+        }
         out.push({ agent: a.id, rel: path.relative(home, f), content: content });
       });
     });
@@ -81,24 +103,52 @@ function collectAgentMemory(ctx, opts) {
 function mergeAgentMemory(ctx, list, opts) {
   opts = opts || {};
   const home = ctx.home;
-  let added = 0, kept = 0, overwritten = 0, skipped = 0;
+  let added = 0,
+    kept = 0,
+    overwritten = 0,
+    skipped = 0;
   (list || []).forEach(function (m) {
-    if (!m || typeof m.content !== 'string' || typeof m.rel !== 'string') { skipped++; return; }
+    if (!m || typeof m.content !== 'string' || typeof m.rel !== 'string') {
+      skipped++;
+      return;
+    }
     const dest = path.resolve(home, m.rel);
-    if (!isMemoryFile(dest)) { skipped++; return; } // only ever write memory-shaped files
-    if (!fsutil.safeDestUnder(home, dest).ok) { skipped++; return; } // lexical + symlink escape guard
+    if (!isMemoryFile(dest)) {
+      skipped++;
+      return;
+    } // only ever write memory-shaped files
+    if (!fsutil.safeDestUnder(home, dest).ok) {
+      skipped++;
+      return;
+    } // lexical + symlink escape guard
     const exists = fs.existsSync(dest);
-    if (exists && !opts.force) { kept++; return; }
-    try { fsutil.atomicWrite(dest, m.content); if (exists) overwritten++; else added++; }
-    catch (e) { skipped++; }
+    if (exists && !opts.force) {
+      kept++;
+      return;
+    }
+    try {
+      fsutil.atomicWrite(dest, m.content);
+      if (exists) overwritten++;
+      else added++;
+    } catch (e) {
+      skipped++;
+    }
   });
   return { added: added, kept: kept, overwritten: overwritten, skipped: skipped, total: (list || []).length };
 }
 
 function presentAgents(ctx) {
   return REGISTRY.filter(function (a) {
-    return a.roots.some(function (r) { try { return fs.existsSync(path.join(ctx.home, r)); } catch (e) { return false; } });
-  }).map(function (a) { return a.id; });
+    return a.roots.some(function (r) {
+      try {
+        return fs.existsSync(path.join(ctx.home, r));
+      } catch (e) {
+        return false;
+      }
+    });
+  }).map(function (a) {
+    return a.id;
+  });
 }
 
 // J1 config-tier: collect present agents' config files. By DEFAULT every secret is redacted
@@ -115,7 +165,13 @@ function collectAgentConfig(ctx, opts) {
     if (only && only.indexOf(a.id) === -1) return;
     a.files.forEach(function (rel) {
       const abs = path.join(ctx.home, rel);
-      let raw; try { if (!fs.statSync(abs).isFile()) return; raw = fs.readFileSync(abs, 'utf8'); } catch (e) { return; }
+      let raw;
+      try {
+        if (!fs.statSync(abs).isFile()) return;
+        raw = fs.readFileSync(abs, 'utf8');
+      } catch (e) {
+        return;
+      }
       const red = secretscan.redactConfig(raw); // count = secrets present, regardless of mode
       out.push({ agent: a.id, rel: rel, content: redact ? red.text : raw, redactions: red.count, redacted: redact });
     });
@@ -130,28 +186,68 @@ function mergeAgentConfig(ctx, list, opts) {
   opts = opts || {};
   const secretscan = _secretscan;
   const home = ctx.home;
-  let added = 0, kept = 0, overwritten = 0, skipped = 0;
+  let added = 0,
+    kept = 0,
+    overwritten = 0,
+    skipped = 0;
   (list || []).forEach(function (m) {
-    if (!m || typeof m.content !== 'string' || typeof m.rel !== 'string') { skipped++; return; }
+    if (!m || typeof m.content !== 'string' || typeof m.rel !== 'string') {
+      skipped++;
+      return;
+    }
     // only write to a known config location for a known agent (no arbitrary paths)
-    const known = CONFIG_REGISTRY.some(function (a) { return a.files.indexOf(m.rel) !== -1; });
-    if (!known) { skipped++; return; }
+    const known = CONFIG_REGISTRY.some(function (a) {
+      return a.files.indexOf(m.rel) !== -1;
+    });
+    if (!known) {
+      skipped++;
+      return;
+    }
     const dest = path.resolve(home, m.rel);
-    if (!fsutil.safeDestUnder(home, dest).ok) { skipped++; return; }
+    if (!fsutil.safeDestUnder(home, dest).ok) {
+      skipped++;
+      return;
+    }
     const exists = fs.existsSync(dest);
-    if (exists && !opts.force) { kept++; return; }
+    if (exists && !opts.force) {
+      kept++;
+      return;
+    }
     // Honor an intentional secret-carry (redacted===false); otherwise re-redact defensively.
-    const safe = (m.redacted === false) ? m.content : secretscan.redactConfig(m.content).text;
-    try { fsutil.atomicWrite(dest, safe); if (exists) overwritten++; else added++; }
-    catch (e) { skipped++; }
+    const safe = m.redacted === false ? m.content : secretscan.redactConfig(m.content).text;
+    try {
+      fsutil.atomicWrite(dest, safe);
+      if (exists) overwritten++;
+      else added++;
+    } catch (e) {
+      skipped++;
+    }
   });
   return { added: added, kept: kept, overwritten: overwritten, skipped: skipped, total: (list || []).length };
 }
 
 function presentAgentConfig(ctx) {
   return CONFIG_REGISTRY.filter(function (a) {
-    return a.files.some(function (r) { try { return fs.existsSync(path.join(ctx.home, r)); } catch (e) { return false; } });
-  }).map(function (a) { return a.id; });
+    return a.files.some(function (r) {
+      try {
+        return fs.existsSync(path.join(ctx.home, r));
+      } catch (e) {
+        return false;
+      }
+    });
+  }).map(function (a) {
+    return a.id;
+  });
 }
 
-export { REGISTRY, CONFIG_REGISTRY, collectAgentMemory, mergeAgentMemory, collectAgentConfig, mergeAgentConfig, presentAgents, presentAgentConfig, isMemoryFile };
+export {
+  REGISTRY,
+  CONFIG_REGISTRY,
+  collectAgentMemory,
+  mergeAgentMemory,
+  collectAgentConfig,
+  mergeAgentConfig,
+  presentAgents,
+  presentAgentConfig,
+  isMemoryFile,
+};

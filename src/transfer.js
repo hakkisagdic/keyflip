@@ -17,8 +17,15 @@ function buildExport(ctx) {
   profiles.list(ctx.configDir).forEach(function (name) {
     const meta = profiles.read(ctx.configDir, name);
     let blob = null;
-    try { blob = ctx.store.getProfile(name); } catch (e) { blob = null; }
-    if (!blob) { skipped.push(name); return; }
+    try {
+      blob = ctx.store.getProfile(name);
+    } catch (e) {
+      blob = null;
+    }
+    if (!blob) {
+      skipped.push(name);
+      return;
+    }
     accounts.push({
       name: name,
       email: (meta && meta.email) || '',
@@ -38,7 +45,8 @@ function buildExport(ctx) {
 function applyImport(ctx, envelope, opts) {
   opts = opts || {};
   if (!envelope || envelope.format !== FORMAT) throw new Error('not a keyflip export file');
-  if (envelope.version !== VERSION) throw new Error('unsupported export version ' + envelope.version + ' (this keyflip understands v' + VERSION + ')');
+  if (envelope.version !== VERSION)
+    throw new Error('unsupported export version ' + envelope.version + ' (this keyflip understands v' + VERSION + ')');
   if (!Array.isArray(envelope.accounts) || !envelope.accounts.length) throw new Error('export contains no accounts');
 
   const seen = Object.create(null);
@@ -49,17 +57,25 @@ function applyImport(ctx, envelope, opts) {
     if (seen[a.name]) throw new Error("duplicate account name in export: '" + a.name + "'");
     seen[a.name] = true;
     if (a.email && !EMAIL_RE.test(a.email)) throw new Error(where + " has an invalid email: '" + a.email + "'");
-    if (typeof a.cliCredentials !== 'string' || !a.cliCredentials.trim()) throw new Error(where + ' has no credentials');
+    if (typeof a.cliCredentials !== 'string' || !a.cliCredentials.trim())
+      throw new Error(where + ' has no credentials');
     const t = a.cliCredentials.trim();
     if (t[0] === '{' || t[0] === '[') {
-      try { JSON.parse(t); } catch (e) { throw new Error(where + ' credentials are corrupt (invalid JSON)'); }
+      try {
+        JSON.parse(t);
+      } catch (e) {
+        throw new Error(where + ' credentials are corrupt (invalid JSON)');
+      }
     }
   });
 
   const imported = [];
   const skipped = [];
   envelope.accounts.forEach(function (a) {
-    if (profiles.exists(ctx.configDir, a.name) && !opts.force) { skipped.push(a.name); return; }
+    if (profiles.exists(ctx.configDir, a.name) && !opts.force) {
+      skipped.push(a.name);
+      return;
+    }
     ctx.store.setProfile(a.name, a.cliCredentials);
     profiles.write(ctx.configDir, {
       name: a.name,

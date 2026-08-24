@@ -20,39 +20,69 @@ import { run as defaultRun } from './exec.js';
 // Canonical backend ids, in probe/display order. A frozen array + indexOf gives
 // a pollution-safe membership test for a user-supplied provider name.
 const PROV_IDS = Object.freeze(['op', 'bw', 'vault']);
-function isProvider(x) { return typeof x === 'string' && PROV_IDS.indexOf(x) !== -1; }
+function isProvider(x) {
+  return typeof x === 'string' && PROV_IDS.indexOf(x) !== -1;
+}
 
-const OP_VAULT_DEFAULT = 'Private';   // 1Password personal vault
+const OP_VAULT_DEFAULT = 'Private'; // 1Password personal vault
 const VAULT_MOUNT_DEFAULT = 'secret'; // HashiCorp kv mount
-const NS = 'keyflip/';                // item namespace: keyflip/<name>
-const FIELD = 'credential';           // field/notes key holding the blob
+const NS = 'keyflip/'; // item namespace: keyflip/<name>
+const FIELD = 'credential'; // field/notes key holding the blob
 
-const PROBE_TIMEOUT_MS = 5000;        // a `--version` must never hang the CLI
-const OP_TIMEOUT_MS = 15000;          // a locked vault waiting on a prompt must not hang forever
+const PROBE_TIMEOUT_MS = 5000; // a `--version` must never hang the CLI
+const OP_TIMEOUT_MS = 15000; // a locked vault waiting on a prompt must not hang forever
 
-const confirmProp = { confirm: { type: 'boolean', description: 'Must be true — set it only after the user has agreed.' } };
+const confirmProp = {
+  confirm: { type: 'boolean', description: 'Must be true — set it only after the user has agreed.' },
+};
 const RO = { readOnlyHint: true, destructiveHint: false, openWorldHint: false };
 const MUT = { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false };
 
 // ---- errors ----------------------------------------------------------------
-function vaultError(msg) { const e = new Error(msg); e.code = 'EVAULT'; return e; }
+function vaultError(msg) {
+  const e = new Error(msg);
+  e.code = 'EVAULT';
+  return e;
+}
 // Strip control chars (incl. ANSI ESC) and collapse whitespace from a CLI's
 // stderr before it reaches an error message. The secret went in on stdin, so it
 // can't be in stderr — but scrubbing keeps errors tidy and non-injective.
 // eslint-disable-next-line no-control-regex
 const CTRL = /[\x00-\x1f\x7f]/g;
 function cleanErr(r) {
-  const raw = ((r && r.stderr) || '') || ((r && r.stdout) || '');
+  const raw = (r && r.stderr) || '' || (r && r.stdout) || '';
   return String(raw).replace(CTRL, ' ').replace(/\s+/g, ' ').trim().slice(0, 200);
 }
-function errText(r) { return (((r && r.stderr) || '') + '\n' + ((r && r.stdout) || '')); }
-function stripNl(s) { return String(s == null ? '' : s).replace(/\r?\n$/, ''); }
-function firstLine(s) { return String(s == null ? '' : s).split(/\r?\n/)[0].trim(); }
+function errText(r) {
+  return ((r && r.stderr) || '') + '\n' + ((r && r.stdout) || '');
+}
+function stripNl(s) {
+  return String(s == null ? '' : s).replace(/\r?\n$/, '');
+}
+function firstLine(s) {
+  return String(s == null ? '' : s)
+    .split(/\r?\n/)[0]
+    .trim();
+}
 
-function absentError(meta) { return vaultError(meta.label + " CLI ('" + meta.bin + "') not found — install it, or pick another backend with `keyflip vault use <op|bw|vault>`"); }
-function timeoutError(meta) { return vaultError(meta.label + ' timed out (locked, or waiting on an interactive prompt?) — ' + meta.hint); }
-function lockedError(meta, r) { const d = cleanErr(r); return vaultError(meta.label + ' is locked or not authenticated — ' + meta.hint + (d ? ' (' + d + ')' : '')); }
-function opFailed(meta, action, r) { return vaultError(meta.label + ' ' + action + ' failed: ' + (cleanErr(r) || ('exit ' + (r && r.code)))); }
+function absentError(meta) {
+  return vaultError(
+    meta.label +
+      " CLI ('" +
+      meta.bin +
+      "') not found — install it, or pick another backend with `keyflip vault use <op|bw|vault>`",
+  );
+}
+function timeoutError(meta) {
+  return vaultError(meta.label + ' timed out (locked, or waiting on an interactive prompt?) — ' + meta.hint);
+}
+function lockedError(meta, r) {
+  const d = cleanErr(r);
+  return vaultError(meta.label + ' is locked or not authenticated — ' + meta.hint + (d ? ' (' + d + ')' : ''));
+}
+function opFailed(meta, action, r) {
+  return vaultError(meta.label + ' ' + action + ' failed: ' + (cleanErr(r) || 'exit ' + (r && r.code)));
+}
 
 // ---- provider adapters -----------------------------------------------------
 // Each adapter's methods take an `io` = { run, settings, timeoutMs, meta } and a
@@ -61,8 +91,9 @@ function opFailed(meta, action, r) { return vaultError(meta.label + ' ' + action
 // spawn into a taxonomised Error so every method sees a normalized result.
 function invoke(io, args, input) {
   let r;
-  try { r = io.run(io.meta.bin, args, input, { timeoutMs: io.timeoutMs }); }
-  catch (e) {
+  try {
+    r = io.run(io.meta.bin, args, input, { timeoutMs: io.timeoutMs });
+  } catch (e) {
     if (e && (e.code === 'ENOENT' || e.errno === 'ENOENT')) throw absentError(io.meta);
     throw vaultError(io.meta.label + ' could not be run: ' + ((e && e.message) || 'spawn failed'));
   }
@@ -72,18 +103,32 @@ function invoke(io, args, input) {
   return r;
 }
 
-function parseJsonArray(s) { try { const v = JSON.parse(s); return Array.isArray(v) ? v : []; } catch (e) { return []; } }
+function parseJsonArray(s) {
+  try {
+    const v = JSON.parse(s);
+    return Array.isArray(v) ? v : [];
+  } catch (e) {
+    return [];
+  }
+}
 // De-namespace + validate a set of candidate item labels into sorted profile
 // names. The dedupe set is a NULL-PROTOTYPE map so a returned title like
 // "keyflip/__proto__" can never pollute a prototype during the scan.
 function namesFrom(candidates, strip) {
-  const out = []; const seen = Object.create(null);
+  const out = [];
+  const seen = Object.create(null);
   (candidates || []).forEach(function (c) {
     if (typeof c !== 'string') return;
     let n = c;
-    if (strip) { if (n.indexOf(NS) !== 0) return; n = n.slice(NS.length); }
+    if (strip) {
+      if (n.indexOf(NS) !== 0) return;
+      n = n.slice(NS.length);
+    }
     n = n.replace(/\/$/, ''); // vault kv list yields "name" (or "name/" for subtrees)
-    if (profiles.isValidName(n) && !seen[n]) { seen[n] = true; out.push(n); }
+    if (profiles.isValidName(n) && !seen[n]) {
+      seen[n] = true;
+      out.push(n);
+    }
   });
   return out.sort();
 }
@@ -99,7 +144,11 @@ function opGet(io, name) {
   // `op://…` reference — in op's reference grammar '/' is the path separator, so
   // `op://vault/keyflip/<name>/credential` mis-parses (item="keyflip", section="<name>") and never
   // finds the item titled "keyflip/<name>". `op item get <title> --fields …` takes the title literally.
-  const r = invoke(io, ['item', 'get', NS + name, '--vault', io.settings.vault, '--fields', 'label=' + FIELD, '--reveal'], undefined);
+  const r = invoke(
+    io,
+    ['item', 'get', NS + name, '--vault', io.settings.vault, '--fields', 'label=' + FIELD, '--reveal'],
+    undefined,
+  );
   if (r.code === 0) return stripNl(r.stdout);
   const t = errText(r);
   if (io.meta.lockedRe.test(t)) throw lockedError(io.meta, r);
@@ -115,9 +164,15 @@ function opDel(io, name) {
   throw opFailed(io.meta, 'delete', r);
 }
 function opSet(io, name, blob) {
-  try { opDel(io, name); } catch (e) { /* best effort; create below surfaces the real state (e.g. locked) */ }
+  try {
+    opDel(io, name);
+  } catch (e) {
+    /* best effort; create below surfaces the real state (e.g. locked) */
+  }
   const tmpl = JSON.stringify({
-    title: NS + name, category: 'PASSWORD', vault: { name: io.settings.vault },
+    title: NS + name,
+    category: 'PASSWORD',
+    vault: { name: io.settings.vault },
     fields: [{ id: FIELD, type: 'CONCEALED', label: FIELD, value: blob }],
   });
   const r = invoke(io, ['item', 'create', '--template=/dev/stdin'], tmpl);
@@ -127,8 +182,16 @@ function opSet(io, name, blob) {
 }
 function opList(io) {
   const r = invoke(io, ['item', 'list', '--vault', io.settings.vault, '--format=json'], undefined);
-  if (r.code !== 0) { if (io.meta.lockedRe.test(errText(r))) throw lockedError(io.meta, r); throw opFailed(io.meta, 'list', r); }
-  return namesFrom(parseJsonArray(r.stdout).map(function (it) { return it && it.title; }), true);
+  if (r.code !== 0) {
+    if (io.meta.lockedRe.test(errText(r))) throw lockedError(io.meta, r);
+    throw opFailed(io.meta, 'list', r);
+  }
+  return namesFrom(
+    parseJsonArray(r.stdout).map(function (it) {
+      return it && it.title;
+    }),
+    true,
+  );
 }
 
 // -- Bitwarden (bw) --
@@ -138,7 +201,14 @@ function opList(io) {
 // the inherited environment.
 function bwId(io, name) {
   const r = invoke(io, ['get', 'item', NS + name], undefined);
-  if (r.code === 0) { try { const it = JSON.parse(r.stdout); return it && typeof it.id === 'string' ? it.id : null; } catch (e) { return null; } }
+  if (r.code === 0) {
+    try {
+      const it = JSON.parse(r.stdout);
+      return it && typeof it.id === 'string' ? it.id : null;
+    } catch (e) {
+      return null;
+    }
+  }
   const t = errText(r);
   if (io.meta.lockedRe.test(t)) throw lockedError(io.meta, r);
   if (/more than one/i.test(t)) throw opFailed(io.meta, 'lookup (ambiguous item name)', r);
@@ -175,15 +245,25 @@ function bwDel(io, name) {
 }
 function bwList(io) {
   const r = invoke(io, ['list', 'items', '--search', NS], undefined);
-  if (r.code !== 0) { if (io.meta.lockedRe.test(errText(r))) throw lockedError(io.meta, r); throw opFailed(io.meta, 'list', r); }
-  return namesFrom(parseJsonArray(r.stdout).map(function (it) { return it && it.name; }), true);
+  if (r.code !== 0) {
+    if (io.meta.lockedRe.test(errText(r))) throw lockedError(io.meta, r);
+    throw opFailed(io.meta, 'list', r);
+  }
+  return namesFrom(
+    parseJsonArray(r.stdout).map(function (it) {
+      return it && it.name;
+    }),
+    true,
+  );
 }
 
 // -- HashiCorp Vault (vault) --
 // Secret path: `vault kv put <mount>/keyflip/<name> credential=-` reads the
 // field VALUE from stdin (the `-` sentinel), so the blob never hits argv. Auth
 // comes from VAULT_ADDR/VAULT_TOKEN in the inherited environment.
-function vPath(io, name) { return io.settings.mount + '/' + NS + name; }
+function vPath(io, name) {
+  return io.settings.mount + '/' + NS + name;
+}
 function vGet(io, name) {
   const r = invoke(io, ['kv', 'get', '-field=' + FIELD, vPath(io, name)], undefined);
   if (r.code === 0) return stripNl(r.stdout);
@@ -220,25 +300,43 @@ function vList(io) {
 // resolve to an inherited property. Always gate a lookup on isProvider() first.
 const PROVIDERS = Object.create(null);
 PROVIDERS.op = {
-  bin: 'op', label: '1Password', probeArgs: ['--version'],
-  hint: "run `op signin` (or set OP_SERVICE_ACCOUNT_TOKEN)",
-  lockedRe: /sign ?in|signed ?in|session (has )?expired|session .*invalid|not currently signed|no account found|unauthor|authoriz/i,
+  bin: 'op',
+  label: '1Password',
+  probeArgs: ['--version'],
+  hint: 'run `op signin` (or set OP_SERVICE_ACCOUNT_TOKEN)',
+  lockedRe:
+    /sign ?in|signed ?in|session (has )?expired|session .*invalid|not currently signed|no account found|unauthor|authoriz/i,
   missRe: /isn'?t an item|not found|no items? |couldn'?t find|could not find|doesn'?t exist|no such/i,
-  get: opGet, set: opSet, del: opDel, list: opList,
+  get: opGet,
+  set: opSet,
+  del: opDel,
+  list: opList,
 };
 PROVIDERS.bw = {
-  bin: 'bw', label: 'Bitwarden', probeArgs: ['--version'],
-  hint: "run `bw unlock` and export BW_SESSION",
-  lockedRe: /vault is locked|you are not logged in|not logged in|session key|bw_session|master password|mac failed|invalid master/i,
+  bin: 'bw',
+  label: 'Bitwarden',
+  probeArgs: ['--version'],
+  hint: 'run `bw unlock` and export BW_SESSION',
+  lockedRe:
+    /vault is locked|you are not logged in|not logged in|session key|bw_session|master password|mac failed|invalid master/i,
   missRe: /not found/i,
-  get: bwGet, set: bwSet, del: bwDel, list: bwList,
+  get: bwGet,
+  set: bwSet,
+  del: bwDel,
+  list: bwList,
 };
 PROVIDERS.vault = {
-  bin: 'vault', label: 'HashiCorp Vault', probeArgs: ['version'],
-  hint: "check VAULT_ADDR/VAULT_TOKEN and that the vault is unsealed",
-  lockedRe: /vault is sealed|permission denied|missing client token|no vault token|invalid token|connection refused|error checking seal|code:\s*403|code:\s*503|dial tcp|x509/i,
+  bin: 'vault',
+  label: 'HashiCorp Vault',
+  probeArgs: ['version'],
+  hint: 'check VAULT_ADDR/VAULT_TOKEN and that the vault is unsealed',
+  lockedRe:
+    /vault is sealed|permission denied|missing client token|no vault token|invalid token|connection refused|error checking seal|code:\s*403|code:\s*503|dial tcp|x509/i,
   missRe: /no value found|not found|no secret|secret not found/i,
-  get: vGet, set: vSet, del: vDel, list: vList,
+  get: vGet,
+  set: vSet,
+  del: vDel,
+  list: vList,
 };
 
 // ---- detection -------------------------------------------------------------
@@ -250,29 +348,42 @@ function probe(provider, opts) {
   const run = opts.run || defaultRun;
   const meta = PROVIDERS[provider];
   let r;
-  try { r = run(meta.bin, meta.probeArgs, undefined, { timeoutMs: opts.timeoutMs || PROBE_TIMEOUT_MS }); }
-  catch (e) { if (e && (e.code === 'ENOENT' || e.errno === 'ENOENT')) return { ok: false, reason: meta.bin + ' not installed' }; return { ok: false, reason: (e && e.message) || 'spawn failed' }; }
+  try {
+    r = run(meta.bin, meta.probeArgs, undefined, { timeoutMs: opts.timeoutMs || PROBE_TIMEOUT_MS });
+  } catch (e) {
+    if (e && (e.code === 'ENOENT' || e.errno === 'ENOENT')) return { ok: false, reason: meta.bin + ' not installed' };
+    return { ok: false, reason: (e && e.message) || 'spawn failed' };
+  }
   r = r || {};
-  if (r.error && (r.error.code === 'ENOENT' || r.error.errno === 'ENOENT')) return { ok: false, reason: meta.bin + ' not installed' };
+  if (r.error && (r.error.code === 'ENOENT' || r.error.errno === 'ENOENT'))
+    return { ok: false, reason: meta.bin + ' not installed' };
   if (r.timedOut) return { ok: false, reason: 'probe timed out' };
   if (r.code === 0) return { ok: true, version: firstLine(r.stdout) || null };
-  return { ok: false, reason: cleanErr(r) || ('exit ' + r.code) };
+  return { ok: false, reason: cleanErr(r) || 'exit ' + r.code };
 }
 // detect: which of ['op','bw','vault'] is available on this machine, in order.
 function detect(opts) {
   opts = opts || {};
   const run = opts.run || defaultRun;
   const out = [];
-  PROV_IDS.forEach(function (id) { if (probe(id, { run: run, timeoutMs: opts.timeoutMs }).ok) out.push(id); });
+  PROV_IDS.forEach(function (id) {
+    if (probe(id, { run: run, timeoutMs: opts.timeoutMs }).ok) out.push(id);
+  });
   return out;
 }
 
 // ---- persisted state (<configDir>/vault.json) ------------------------------
-function statePath(ctx) { return path.join(ctx.configDir, 'vault.json'); }
-function defaultSettings() { return { vault: OP_VAULT_DEFAULT, mount: VAULT_MOUNT_DEFAULT }; }
+function statePath(ctx) {
+  return path.join(ctx.configDir, 'vault.json');
+}
+function defaultSettings() {
+  return { vault: OP_VAULT_DEFAULT, mount: VAULT_MOUNT_DEFAULT };
+}
 // A settings value flows into an item reference/path as one argv token, so keep
 // it to a bounded, boring charset (no control chars, no newlines).
-function safeSetting(s) { return typeof s === 'string' && /^[A-Za-z0-9 ._/-]{1,64}$/.test(s); }
+function safeSetting(s) {
+  return typeof s === 'string' && /^[A-Za-z0-9 ._/-]{1,64}$/.test(s);
+}
 function normalizeState(raw) {
   const s = { backend: null, settings: defaultSettings(), updatedAt: null };
   if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
@@ -290,11 +401,19 @@ function normalizeState(raw) {
 // file is safe — it just means "no external backend yet".
 function readState(ctx) {
   let raw;
-  try { raw = readJsonForWrite(statePath(ctx)); } catch (e) { return normalizeState(null); }
+  try {
+    raw = readJsonForWrite(statePath(ctx));
+  } catch (e) {
+    return normalizeState(null);
+  }
   return normalizeState(raw);
 }
 function writeState(ctx, st) {
-  const out = { backend: st.backend || null, settings: st.settings || defaultSettings(), updatedAt: st.updatedAt || null };
+  const out = {
+    backend: st.backend || null,
+    settings: st.settings || defaultSettings(),
+    updatedAt: st.updatedAt || null,
+  };
   atomicWrite(statePath(ctx), JSON.stringify(out, null, 2), 0o600);
   return out;
 }
@@ -316,7 +435,11 @@ function blobStr(blob) {
   if (blob == null) throw vaultError('refusing to store an empty credential blob');
   return String(blob);
 }
-function liveUnsupported() { throw vaultError('the external vault backend stores saved profiles only — the live credential stays in the OS keychain / credentials file'); }
+function liveUnsupported() {
+  throw vaultError(
+    'the external vault backend stores saved profiles only — the live credential stays in the OS keychain / credentials file',
+  );
+}
 
 // makeStore(ctx, {provider, run, settings}) -> a Store-compatible object mapping
 // keyflip profile creds to the backend's item schema (items namespaced
@@ -326,7 +449,10 @@ function liveUnsupported() { throw vaultError('the external vault backend stores
 function makeStore(ctx, opts) {
   opts = opts || {};
   const provider = opts.provider;
-  if (!isProvider(provider)) throw vaultError("makeStore: unknown vault backend '" + provider + "' (choose one of: " + PROV_IDS.join(', ') + ')');
+  if (!isProvider(provider))
+    throw vaultError(
+      "makeStore: unknown vault backend '" + provider + "' (choose one of: " + PROV_IDS.join(', ') + ')',
+    );
   const st = readState(ctx);
   const io = {
     run: opts.run || (ctx && ctx.run) || defaultRun, // ctx.run: injection channel for the MCP path (ctx-only callers)
@@ -335,15 +461,33 @@ function makeStore(ctx, opts) {
     meta: PROVIDERS[provider],
   };
   return {
-    type: 'vault', provider: provider, label: io.meta.label,
-    get: function (name) { return io.meta.get(io, reqName(name)); },
-    set: function (name, blob) { return io.meta.set(io, reqName(name), blobStr(blob)); },
-    del: function (name) { return io.meta.del(io, reqName(name)); },
-    list: function () { return io.meta.list(io); },
-    getProfile: function (name) { return io.meta.get(io, reqName(name)); },
-    setProfile: function (name, blob) { return io.meta.set(io, reqName(name), blobStr(blob)); },
-    delProfile: function (name) { return io.meta.del(io, reqName(name)); },
-    getLive: liveUnsupported, setLive: liveUnsupported, delLive: liveUnsupported,
+    type: 'vault',
+    provider: provider,
+    label: io.meta.label,
+    get: function (name) {
+      return io.meta.get(io, reqName(name));
+    },
+    set: function (name, blob) {
+      return io.meta.set(io, reqName(name), blobStr(blob));
+    },
+    del: function (name) {
+      return io.meta.del(io, reqName(name));
+    },
+    list: function () {
+      return io.meta.list(io);
+    },
+    getProfile: function (name) {
+      return io.meta.get(io, reqName(name));
+    },
+    setProfile: function (name, blob) {
+      return io.meta.set(io, reqName(name), blobStr(blob));
+    },
+    delProfile: function (name) {
+      return io.meta.del(io, reqName(name));
+    },
+    getLive: liveUnsupported,
+    setLive: liveUnsupported,
+    delLive: liveUnsupported,
   };
 }
 
@@ -358,7 +502,7 @@ function status(ctx, opts) {
     backend: st.backend,
     configured: !!st.backend,
     backendLabel: st.backend ? PROVIDERS[st.backend].label : null,
-    backendAvailable: (st.backend && available) ? (available.indexOf(st.backend) !== -1) : null,
+    backendAvailable: st.backend && available ? available.indexOf(st.backend) !== -1 : null,
     available: available,
     settings: st.settings,
     updatedAt: st.updatedAt,
@@ -367,10 +511,17 @@ function status(ctx, opts) {
 function use(ctx, provider, opts) {
   opts = opts || {};
   const run = opts.run || (ctx && ctx.run) || defaultRun;
-  if (!isProvider(provider)) throw vaultError("unknown vault backend '" + provider + "' — choose one of: " + PROV_IDS.join(', '));
+  if (!isProvider(provider))
+    throw vaultError("unknown vault backend '" + provider + "' — choose one of: " + PROV_IDS.join(', '));
   if (!opts.force) {
     const p = probe(provider, { run: run, timeoutMs: opts.timeoutMs });
-    if (!p.ok) throw vaultError(PROVIDERS[provider].label + ' is not available: ' + p.reason + ' — install/authenticate it, or pass force to record it anyway');
+    if (!p.ok)
+      throw vaultError(
+        PROVIDERS[provider].label +
+          ' is not available: ' +
+          p.reason +
+          ' — install/authenticate it, or pass force to record it anyway',
+      );
   }
   const st = readState(ctx);
   st.backend = provider;
@@ -385,7 +536,9 @@ function off(ctx) {
   st.updatedAt = ctx.now();
   writeState(ctx, st);
   return {
-    backend: null, previous: previous, updatedAt: st.updatedAt,
+    backend: null,
+    previous: previous,
+    updatedAt: st.updatedAt,
     note: 'External vault backend disabled. Anything already stored in the external vault was left untouched.',
   };
 }
@@ -398,9 +551,17 @@ function off(ctx) {
 function statusLines(s) {
   const lines = [];
   if (!s.configured) lines.push('External secret backend: OFF (credentials use the OS keychain / credentials file).');
-  else lines.push('External secret backend: ' + s.backendLabel + ' (' + s.backend + ')' +
-    (s.backendAvailable === false ? '  [CLI not available right now]' : ''));
-  if (Array.isArray(s.available)) lines.push('Available backends: ' + (s.available.length ? s.available.join(', ') : '(none detected)'));
+  else
+    lines.push(
+      'External secret backend: ' +
+        s.backendLabel +
+        ' (' +
+        s.backend +
+        ')' +
+        (s.backendAvailable === false ? '  [CLI not available right now]' : ''),
+    );
+  if (Array.isArray(s.available))
+    lines.push('Available backends: ' + (s.available.length ? s.available.join(', ') : '(none detected)'));
   return lines;
 }
 function cli(ctx, rest, opts) {
@@ -413,54 +574,106 @@ function cli(ctx, rest, opts) {
     return { action: 'status', data: s, lines: statusLines(s) };
   }
   if (sub === 'use') {
-    const provider = rest.filter(function (a) { return a.indexOf('-') !== 0; })[1];
+    const provider = rest.filter(function (a) {
+      return a.indexOf('-') !== 0;
+    })[1];
     const force = rest.indexOf('--force') !== -1;
     if (!provider) throw vaultError('usage: keyflip vault use <op|bw|vault> [--force]');
     const s = use(ctx, provider, { run: run, force: force });
-    return { action: 'use', data: s, lines: ['Now using ' + s.backendLabel + ' (' + s.backend + ') for saved keyflip credentials.'] };
+    return {
+      action: 'use',
+      data: s,
+      lines: ['Now using ' + s.backendLabel + ' (' + s.backend + ') for saved keyflip credentials.'],
+    };
   }
   if (sub === 'off') {
     const s = off(ctx);
-    return { action: 'off', data: s, lines: [s.previous ? ('External secret backend disabled (was ' + s.previous + '). ' + s.note) : 'No external secret backend was configured.'] };
+    return {
+      action: 'off',
+      data: s,
+      lines: [
+        s.previous
+          ? 'External secret backend disabled (was ' + s.previous + '). ' + s.note
+          : 'No external secret backend was configured.',
+      ],
+    };
   }
   throw vaultError('unknown: keyflip vault ' + sub + ' (use: status | use <op|bw|vault> | off)');
 }
 
 // ---- MCP tools -------------------------------------------------------------
-function needConfirm(args) { if (!args || args.confirm !== true) throw new Error('confirmation required: ask the user first, then call again with confirm=true'); }
+function needConfirm(args) {
+  if (!args || args.confirm !== true)
+    throw new Error('confirmation required: ask the user first, then call again with confirm=true');
+}
 const tools = [
   {
     name: 'keyflip_vault_status',
     title: 'External secret backend status',
-    description: 'Which external secret backend (1Password/Bitwarden/HashiCorp Vault) keyflip is configured to use for saved credentials, plus which backend CLIs are currently available. Read-only.',
+    description:
+      'Which external secret backend (1Password/Bitwarden/HashiCorp Vault) keyflip is configured to use for saved credentials, plus which backend CLIs are currently available. Read-only.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
     annotations: RO,
-    run: async function (ctx) { return status(ctx, {}); },
+    run: async function (ctx) {
+      return status(ctx, {});
+    },
   },
   {
     name: 'keyflip_vault_use',
     title: 'Use an external secret backend',
-    description: 'Route saved keyflip credentials through an external secret manager instead of the OS keychain: "op" (1Password), "bw" (Bitwarden) or "vault" (HashiCorp Vault). Records the choice for future credential reads/writes; the backend must be installed and unlocked. Ask the user before calling, then set confirm=true.',
+    description:
+      'Route saved keyflip credentials through an external secret manager instead of the OS keychain: "op" (1Password), "bw" (Bitwarden) or "vault" (HashiCorp Vault). Records the choice for future credential reads/writes; the backend must be installed and unlocked. Ask the user before calling, then set confirm=true.',
     inputSchema: {
       type: 'object',
       properties: {
-        provider: { type: 'string', enum: ['op', 'bw', 'vault'], description: 'op=1Password, bw=Bitwarden, vault=HashiCorp Vault.' },
+        provider: {
+          type: 'string',
+          enum: ['op', 'bw', 'vault'],
+          description: 'op=1Password, bw=Bitwarden, vault=HashiCorp Vault.',
+        },
         confirm: confirmProp.confirm,
       },
       required: ['provider', 'confirm'],
       additionalProperties: false,
     },
     annotations: MUT,
-    run: async function (ctx, args) { needConfirm(args); return use(ctx, String(args.provider), {}); },
+    run: async function (ctx, args) {
+      needConfirm(args);
+      return use(ctx, String(args.provider), {});
+    },
   },
   {
     name: 'keyflip_vault_off',
     title: 'Disable the external secret backend',
-    description: 'Stop using an external secret backend for saved credentials and revert to the OS keychain / credentials file. Does NOT delete anything already stored in the external vault. Ask the user before calling, then set confirm=true.',
-    inputSchema: { type: 'object', properties: { confirm: confirmProp.confirm }, required: ['confirm'], additionalProperties: false },
+    description:
+      'Stop using an external secret backend for saved credentials and revert to the OS keychain / credentials file. Does NOT delete anything already stored in the external vault. Ask the user before calling, then set confirm=true.',
+    inputSchema: {
+      type: 'object',
+      properties: { confirm: confirmProp.confirm },
+      required: ['confirm'],
+      additionalProperties: false,
+    },
     annotations: MUT,
-    run: async function (ctx, args) { needConfirm(args); return off(ctx); },
+    run: async function (ctx, args) {
+      needConfirm(args);
+      return off(ctx);
+    },
   },
 ];
 
-export { PROV_IDS, isProvider, PROVIDERS, detect, probe, makeStore, statePath, readState, writeState, status, use, off, cli, tools };
+export {
+  PROV_IDS,
+  isProvider,
+  PROVIDERS,
+  detect,
+  probe,
+  makeStore,
+  statePath,
+  readState,
+  writeState,
+  status,
+  use,
+  off,
+  cli,
+  tools,
+};

@@ -20,23 +20,44 @@ const BACKUP_PREFIX = 'claude-code-sessions-';
 const BACKUPS_TO_KEEP = 5;
 
 function listDirs(p) {
-  try { return fs.readdirSync(p, { withFileTypes: true }).filter(function (d) { return d.isDirectory(); }).map(function (d) { return d.name; }); }
-  catch (e) { return []; }
+  try {
+    return fs
+      .readdirSync(p, { withFileTypes: true })
+      .filter(function (d) {
+        return d.isDirectory();
+      })
+      .map(function (d) {
+        return d.name;
+      });
+  } catch (e) {
+    return [];
+  }
 }
 function listIndexFiles(p) {
-  try { return fs.readdirSync(p).filter(function (f) { return f.indexOf('local_') === 0 && f.slice(-5) === '.json'; }); }
-  catch (e) { return []; }
+  try {
+    return fs.readdirSync(p).filter(function (f) {
+      return f.indexOf('local_') === 0 && f.slice(-5) === '.json';
+    });
+  } catch (e) {
+    return [];
+  }
 }
 function cliIdOf(file) {
-  try { const o = JSON.parse(fs.readFileSync(file, 'utf8')); return o.cliSessionId || o.sessionId || null; }
-  catch (e) { return null; }
+  try {
+    const o = JSON.parse(fs.readFileSync(file, 'utf8'));
+    return o.cliSessionId || o.sessionId || null;
+  } catch (e) {
+    return null;
+  }
 }
 function copyTree(src, dest) {
   const st = fs.lstatSync(src);
-  if (st.isSymbolicLink()) return;           // don't follow symlinks
+  if (st.isSymbolicLink()) return; // don't follow symlinks
   if (st.isDirectory()) {
     fs.mkdirSync(dest, { recursive: true });
-    fs.readdirSync(src).forEach(function (n) { copyTree(path.join(src, n), path.join(dest, n)); });
+    fs.readdirSync(src).forEach(function (n) {
+      copyTree(path.join(src, n), path.join(dest, n));
+    });
   } else if (st.isFile()) {
     fs.mkdirSync(path.dirname(dest), { recursive: true });
     fs.copyFileSync(src, dest);
@@ -46,11 +67,18 @@ function pruneBackups(configDir, keep, prefix) {
   prefix = prefix || BACKUP_PREFIX;
   try {
     const bdir = path.join(configDir, 'backups');
-    const entries = fs.readdirSync(bdir).filter(function (n) { return n.indexOf(prefix) === 0; }).sort();
+    const entries = fs
+      .readdirSync(bdir)
+      .filter(function (n) {
+        return n.indexOf(prefix) === 0;
+      })
+      .sort();
     for (let i = 0; i < entries.length - keep; i++) {
       fs.rmSync(path.join(bdir, entries[i]), { recursive: true, force: true });
     }
-  } catch (e) { /* ignore */ }
+  } catch (e) {
+    /* ignore */
+  }
 }
 
 // Merge one account-keyed index store (<appData>/<storeName>/<accountUuid>/<orgUuid>/
@@ -64,7 +92,9 @@ function mergeStore(ctx, storeName, backupPrefix) {
   // Every <accountUuid>/<orgUuid>/ folder that holds session index files.
   const orgDirs = [];
   listDirs(store).forEach(function (acct) {
-    listDirs(path.join(store, acct)).forEach(function (org) { orgDirs.push(path.join(store, acct, org)); });
+    listDirs(path.join(store, acct)).forEach(function (org) {
+      orgDirs.push(path.join(store, acct, org));
+    });
   });
   if (orgDirs.length < 2) return { ok: true, merged: 0, backup: null, accounts: orgDirs.length };
 
@@ -81,7 +111,10 @@ function mergeStore(ctx, storeName, backupPrefix) {
   const plan = [];
   orgDirs.forEach(function (dir) {
     const have = Object.create(null);
-    listIndexFiles(dir).forEach(function (f) { const id = cliIdOf(path.join(dir, f)); if (id) have[id] = true; });
+    listIndexFiles(dir).forEach(function (f) {
+      const id = cliIdOf(path.join(dir, f));
+      if (id) have[id] = true;
+    });
     Object.keys(master).forEach(function (id) {
       if (have[id]) return;
       const m = master[id];
@@ -100,10 +133,19 @@ function mergeStore(ctx, storeName, backupPrefix) {
     backup = path.join(ctx.configDir, 'backups', backupPrefix + ts);
     copyTree(store, backup);
     pruneBackups(ctx.configDir, BACKUPS_TO_KEEP, backupPrefix);
-  } catch (e) { backup = null; }
+  } catch (e) {
+    backup = null;
+  }
 
   let merged = 0;
-  plan.forEach(function (p) { try { fs.copyFileSync(p.from, p.to); merged += 1; } catch (e) { /* skip */ } });
+  plan.forEach(function (p) {
+    try {
+      fs.copyFileSync(p.from, p.to);
+      merged += 1;
+    } catch (e) {
+      /* skip */
+    }
+  });
   return { ok: true, merged: merged, backup: backup, accounts: orgDirs.length };
 }
 

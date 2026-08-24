@@ -17,8 +17,12 @@
 
 const WAL_MAGIC = 0x377f0682;
 
-function u32(b, o) { return b.readUInt32BE(o); }
-function pow2InRange(n) { return n >= 512 && n <= 65536 && (n & (n - 1)) === 0; } // legal SQLite page size
+function u32(b, o) {
+  return b.readUInt32BE(o);
+}
+function pow2InRange(n) {
+  return n >= 512 && n <= 65536 && (n & (n - 1)) === 0;
+} // legal SQLite page size
 
 // SQLite's WAL checksum: walk 8-byte blocks as two 32-bit words (byte order chosen by the header
 // magic's low bit), accumulating s1/s2 with 32-bit wrap-around. The pair is carried from the header
@@ -33,7 +37,10 @@ function checksum(buf, start, nByte, bigEnd, s1, s2) {
   return [s1, s2];
 }
 
-function sameBytes(buf, a, b, n) { for (let i = 0; i < n; i++) if (buf[a + i] !== buf[b + i]) return false; return true; }
+function sameBytes(buf, a, b, n) {
+  for (let i = 0; i < n; i++) if (buf[a + i] !== buf[b + i]) return false;
+  return true;
+}
 
 // Core recovery. Returns { pages, size, pageSize }: `pages` is a null-prototype map of pageNumber ->
 // page Buffer for every COMMITTED frame (last write wins), `size` is the db page count declared by
@@ -46,36 +53,44 @@ function recover(walBuf, pageSize) {
     if ((magic & 0xfffffffe) !== WAL_MAGIC) return empty; // not a WAL header
     const bigEnd = magic & 1;
     let ps = Number(pageSize);
-    if (!pow2InRange(ps)) { ps = u32(walBuf, 8); if (ps === 1) ps = 65536; } // fall back to the header's size
+    if (!pow2InRange(ps)) {
+      ps = u32(walBuf, 8);
+      if (ps === 1) ps = 65536;
+    } // fall back to the header's size
     if (!pow2InRange(ps)) return empty;
     // The header checksum covers its own first 24 bytes and seeds the running checksum for frames.
     let [s1, s2] = checksum(walBuf, 0, 24, bigEnd, 0, 0);
     if (s1 !== u32(walBuf, 24) || s2 !== u32(walBuf, 28)) return empty; // corrupt/foreign header
     const frameSize = 24 + ps;
     const committed = Object.create(null); // pageNumber (user/attacker-controlled) -> Buffer
-    let pending = Object.create(null);     // frames seen since the last commit, folded in on commit
+    let pending = Object.create(null); // frames seen since the last commit, folded in on commit
     let size = 0;
     for (let off = 32; off + frameSize <= walBuf.length; off += frameSize) {
-      if (!sameBytes(walBuf, 16, off + 8, 8)) break;              // salt != header salt -> older generation
+      if (!sameBytes(walBuf, 16, off + 8, 8)) break; // salt != header salt -> older generation
       const pgno = u32(walBuf, off);
-      if (pgno === 0) break;                                      // page 0 never exists -> invalid frame
-      [s1, s2] = checksum(walBuf, off, 8, bigEnd, s1, s2);        // first 8 bytes of the frame header ...
-      [s1, s2] = checksum(walBuf, off + 24, ps, bigEnd, s1, s2);  // ... then the page payload
+      if (pgno === 0) break; // page 0 never exists -> invalid frame
+      [s1, s2] = checksum(walBuf, off, 8, bigEnd, s1, s2); // first 8 bytes of the frame header ...
+      [s1, s2] = checksum(walBuf, off + 24, ps, bigEnd, s1, s2); // ... then the page payload
       if (s1 !== u32(walBuf, off + 16) || s2 !== u32(walBuf, off + 20)) break; // torn/garbage frame -> stop
       pending[pgno] = Buffer.from(walBuf.subarray(off + 24, off + 24 + ps));
       const dbSize = u32(walBuf, off + 4);
-      if (dbSize !== 0) {                                         // COMMIT frame: fold pending -> committed
+      if (dbSize !== 0) {
+        // COMMIT frame: fold pending -> committed
         for (const k in pending) committed[k] = pending[k];
         size = dbSize;
         pending = Object.create(null);
       }
     }
     return { pages: committed, size: size, pageSize: ps };
-  } catch (e) { return empty; }
+  } catch (e) {
+    return empty;
+  }
 }
 
 // overlay(walBuf, pageSize) -> null-prototype map of pageNumber -> latest committed page Buffer.
-function overlay(walBuf, pageSize) { return recover(walBuf, pageSize).pages; }
+function overlay(walBuf, pageSize) {
+  return recover(walBuf, pageSize).pages;
+}
 
 // applyOverlay(dbBuf, walBuf) -> a NEW db Buffer with the WAL's committed pages written over the DB
 // image (grown to the committed page count if the WAL extended the file). The page size comes from
@@ -85,7 +100,10 @@ function applyOverlay(dbBuf, walBuf) {
   try {
     if (!Buffer.isBuffer(dbBuf)) return dbBuf;
     let ps = 0;
-    if (dbBuf.length >= 18) { ps = dbBuf.readUInt16BE(16); if (ps === 1) ps = 65536; }
+    if (dbBuf.length >= 18) {
+      ps = dbBuf.readUInt16BE(16);
+      if (ps === 1) ps = 65536;
+    }
     if (!pow2InRange(ps)) ps = 0;
     const rec = recover(walBuf, ps || undefined);
     ps = rec.pageSize;
@@ -97,13 +115,21 @@ function applyOverlay(dbBuf, walBuf) {
     // no-confirm `keyflip foreign`). Cap to the physical input size; over-cap pages are simply dropped.
     const cap = Math.ceil((dbBuf.length + (Buffer.isBuffer(walBuf) ? walBuf.length : 0)) / ps) + 8;
     let maxPage = Math.min(rec.size, cap);
-    keys.forEach(function (k) { const n = +k; if (n > maxPage && n <= cap) maxPage = n; });
+    keys.forEach(function (k) {
+      const n = +k;
+      if (n > maxPage && n <= cap) maxPage = n;
+    });
     const totalPages = Math.max(Math.ceil(dbBuf.length / ps), maxPage);
     const out = Buffer.alloc(totalPages * ps);
     dbBuf.copy(out, 0, 0, Math.min(dbBuf.length, out.length));
-    keys.forEach(function (k) { const off = (+k - 1) * ps; if (off >= 0 && off + ps <= out.length) rec.pages[k].copy(out, off); });
+    keys.forEach(function (k) {
+      const off = (+k - 1) * ps;
+      if (off >= 0 && off + ps <= out.length) rec.pages[k].copy(out, off);
+    });
     return out;
-  } catch (e) { return dbBuf; }
+  } catch (e) {
+    return dbBuf;
+  }
 }
 
 export { overlay, applyOverlay };

@@ -607,9 +607,25 @@ You don't need to own every OS. Two layers:
    npm test
    ```
 
-2. **GitHub Actions matrix** (`.github/workflows/ci.yml`) runs the suite on **`ubuntu-latest` + `macos-latest` + `windows-latest`** across **Node 18 / 20 / 22** — real different OSes and versions, on every push. That is the "simulate different versions" part, for free.
+2. **GitHub Actions matrix** (`.github/workflows/ci.yml`) runs the suite on **`ubuntu-latest` + `macos-latest` + `windows-latest`** across **Node 20 / 22** — real different OSes and versions, on every push. That is the "simulate different versions" part, for free.
 
 Add more Node versions or OS images by editing the `matrix` in the workflow.
+
+### Code style and `git blame`
+
+`npm run lint` (eslint) and `npm run format:check` (prettier) both gate the
+`lint & format` job, and the pre-commit hook runs `eslint --fix` + `prettier
+--write` over staged files. Run `npm run format` before pushing if you have
+been editing outside the hook.
+
+The repository was brought under prettier in a single sweep, which would
+otherwise make `git blame` credit that one commit for most lines in the tree.
+The sweep is recorded in `.git-blame-ignore-revs`. GitHub honours that file
+automatically; locally you opt in once per clone:
+
+```bash
+git config blame.ignoreRevsFile .git-blame-ignore-revs
+```
 
 ---
 

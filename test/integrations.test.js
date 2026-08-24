@@ -7,13 +7,16 @@ import assert from 'node:assert';
 import fs from 'fs';
 import * as integrations from '../src/integrations.js';
 import * as core from '../src/core.js';
-import { makeCtx, writeClaude } from './helpers.js';
+import { makeCtx, writeClaude, assertPrivateMode } from './helpers.js';
 import _path from 'path';
 
 // A fetch double that records every call and returns a canned response.
 function fetchRecorder(response) {
   const calls = [];
-  const fn = async function (url, init) { calls.push({ url: url, init: init }); return response || { ok: true, status: 200 }; };
+  const fn = async function (url, init) {
+    calls.push({ url: url, init: init });
+    return response || { ok: true, status: 200 };
+  };
   fn.calls = calls;
   return fn;
 }
@@ -40,15 +43,28 @@ test('detect maps webhook hosts to platforms', function () {
 
 // ---- formatSlack ----
 test('formatSlack returns a Block Kit message: header, summary, fields, footer', function () {
-  const msg = integrations.formatSlack('switch', { message: 'switched work to home', from: 'work', to: 'home', at: '2026-01-01T00:00:00.000Z' });
+  const msg = integrations.formatSlack('switch', {
+    message: 'switched work to home',
+    from: 'work',
+    to: 'home',
+    at: '2026-01-01T00:00:00.000Z',
+  });
   assert.ok(Array.isArray(msg.blocks));
   assert.strictEqual(msg.blocks[0].type, 'header');
   assert.strictEqual(msg.blocks[0].text.type, 'plain_text');
   assert.match(msg.blocks[0].text.text, /Account switched/);
-  const section = msg.blocks.find(function (b) { return b.type === 'section' && b.text; });
+  const section = msg.blocks.find(function (b) {
+    return b.type === 'section' && b.text;
+  });
   assert.match(section.text.text, /switched work to home/);
-  const fieldBlock = msg.blocks.find(function (b) { return b.type === 'section' && b.fields; });
-  assert.ok(fieldBlock.fields.some(function (f) { return /from/.test(f.text) && /work/.test(f.text); }));
+  const fieldBlock = msg.blocks.find(function (b) {
+    return b.type === 'section' && b.fields;
+  });
+  assert.ok(
+    fieldBlock.fields.some(function (f) {
+      return /from/.test(f.text) && /work/.test(f.text);
+    }),
+  );
   const ctxBlock = msg.blocks[msg.blocks.length - 1];
   assert.strictEqual(ctxBlock.type, 'context');
   assert.match(ctxBlock.elements[0].text, /keyflip/);
@@ -57,7 +73,9 @@ test('formatSlack returns a Block Kit message: header, summary, fields, footer',
 
 test('formatSlack escapes mrkdwn metacharacters and strips control chars', function () {
   const msg = integrations.formatSlack('note', { message: 'a & b < c > d\nnewline' });
-  const section = msg.blocks.find(function (b) { return b.type === 'section' && b.text; });
+  const section = msg.blocks.find(function (b) {
+    return b.type === 'section' && b.text;
+  });
   assert.match(section.text.text, /&amp; b &lt; c &gt; d/);
   assert.strictEqual(section.text.text.indexOf('\n'), -1, 'newline stripped');
 });
@@ -66,7 +84,7 @@ test('formatSlack on an unknown/hostile event name falls back to a default (no p
   const msg = integrations.formatSlack('__proto__', { message: 'hi' });
   assert.strictEqual(msg.blocks[0].type, 'header');
   assert.ok(msg.blocks[0].text.text.length > 0);
-  assert.strictEqual(({}).polluted, undefined);
+  assert.strictEqual({}.polluted, undefined);
 });
 
 // ---- formatDiscord ----
@@ -75,7 +93,11 @@ test('formatDiscord returns an embed: title, color, description, fields, footer,
   assert.match(embed.title, /Quota alert/);
   assert.strictEqual(typeof embed.color, 'number');
   assert.strictEqual(embed.description, 'over quota');
-  assert.ok(embed.fields.some(function (f) { return f.name === 'pct' && f.value === '95'; }));
+  assert.ok(
+    embed.fields.some(function (f) {
+      return f.name === 'pct' && f.value === '95';
+    }),
+  );
   assert.match(embed.footer.text, /keyflip/);
   assert.strictEqual(embed.timestamp, '2026-01-01T00:00:00.000Z');
 });
@@ -89,7 +111,11 @@ test('formatDiscord omits a non-ISO timestamp', function () {
 test('post sends Slack blocks to a Slack webhook', async function () {
   const ctx = makeCtx();
   const doFetch = fetchRecorder({ ok: true, status: 200 });
-  const r = await integrations.post(ctx, { url: 'https://hooks.slack.com/services/x', event: 'note', payload: { message: 'hi' } }, { fetch: doFetch });
+  const r = await integrations.post(
+    ctx,
+    { url: 'https://hooks.slack.com/services/x', event: 'note', payload: { message: 'hi' } },
+    { fetch: doFetch },
+  );
   assert.strictEqual(r.ok, true);
   assert.strictEqual(r.platform, 'slack');
   const body = JSON.parse(doFetch.calls[0].init.body);
@@ -100,7 +126,11 @@ test('post sends Slack blocks to a Slack webhook', async function () {
 test('post wraps a Discord embed under { embeds: [...] }', async function () {
   const ctx = makeCtx();
   const doFetch = fetchRecorder({ ok: true, status: 204 });
-  const r = await integrations.post(ctx, { url: 'https://discord.com/api/webhooks/1/x', event: 'note', payload: { message: 'hi' } }, { fetch: doFetch });
+  const r = await integrations.post(
+    ctx,
+    { url: 'https://discord.com/api/webhooks/1/x', event: 'note', payload: { message: 'hi' } },
+    { fetch: doFetch },
+  );
   assert.strictEqual(r.ok, true);
   assert.strictEqual(r.platform, 'discord');
   const body = JSON.parse(doFetch.calls[0].init.body);
@@ -111,7 +141,11 @@ test('post wraps a Discord embed under { embeds: [...] }', async function () {
 test('post uses the generic envelope for an unknown host', async function () {
   const ctx = makeCtx();
   const doFetch = fetchRecorder({ ok: true, status: 200 });
-  const r = await integrations.post(ctx, { url: 'https://example.com/hook', event: 'switch', payload: { from: 'a', to: 'b' } }, { fetch: doFetch });
+  const r = await integrations.post(
+    ctx,
+    { url: 'https://example.com/hook', event: 'switch', payload: { from: 'a', to: 'b' } },
+    { fetch: doFetch },
+  );
   assert.strictEqual(r.platform, 'generic');
   const body = JSON.parse(doFetch.calls[0].init.body);
   assert.strictEqual(body.event, 'switch');
@@ -123,9 +157,13 @@ test('post uses the generic envelope for an unknown host', async function () {
 test('post secret-strips the payload before it leaves the machine (every platform)', async function () {
   const ctx = makeCtx();
   const payload = {
-    account: 'work', message: 'switching',
-    accessToken: 'sk-super-secret', apiKey: 'AK-nope', credential: 'c-nope',
-    password: 'p-nope', nested: { authorization: 'Bearer leak', ok: 'keep-me' },
+    account: 'work',
+    message: 'switching',
+    accessToken: 'sk-super-secret',
+    apiKey: 'AK-nope',
+    credential: 'c-nope',
+    password: 'p-nope',
+    nested: { authorization: 'Bearer leak', ok: 'keep-me' },
   };
   for (const url of ['https://hooks.slack.com/x', 'https://discord.com/api/webhooks/1/x', 'https://example.com/x']) {
     const doFetch = fetchRecorder({ ok: true, status: 200 });
@@ -134,7 +172,10 @@ test('post secret-strips the payload before it leaves the machine (every platfor
     ['sk-super-secret', 'AK-nope', 'c-nope', 'p-nope', 'Bearer leak'].forEach(function (s) {
       assert.strictEqual(raw.indexOf(s), -1, 'leaked ' + s + ' to ' + url);
     });
-    assert.ok(raw.indexOf('keep-me') !== -1 || url.indexOf('slack') !== -1 || url.indexOf('discord') !== -1, 'non-secret retained (generic)');
+    assert.ok(
+      raw.indexOf('keep-me') !== -1 || url.indexOf('slack') !== -1 || url.indexOf('discord') !== -1,
+      'non-secret retained (generic)',
+    );
   }
 });
 
@@ -152,11 +193,21 @@ test('post rejects a non-http(s) webhook without calling fetch', async function 
 
 test('post catches a network error and a non-2xx response', async function () {
   const ctx = makeCtx();
-  const boom = async function () { throw new Error('ECONNREFUSED'); };
-  const r1 = await integrations.post(ctx, { url: 'https://hooks.slack.com/x', event: 'note', payload: {} }, { fetch: boom });
+  const boom = async function () {
+    throw new Error('ECONNREFUSED');
+  };
+  const r1 = await integrations.post(
+    ctx,
+    { url: 'https://hooks.slack.com/x', event: 'note', payload: {} },
+    { fetch: boom },
+  );
   assert.strictEqual(r1.ok, false);
   assert.match(r1.reason, /ECONNREFUSED/);
-  const r2 = await integrations.post(ctx, { url: 'https://hooks.slack.com/x', event: 'note', payload: {} }, { fetch: fetchRecorder({ ok: false, status: 500 }) });
+  const r2 = await integrations.post(
+    ctx,
+    { url: 'https://hooks.slack.com/x', event: 'note', payload: {} },
+    { fetch: fetchRecorder({ ok: false, status: 500 }) },
+  );
   assert.strictEqual(r2.ok, false);
   assert.strictEqual(r2.httpStatus, 500);
   assert.strictEqual(r2.reason, 'http-500');
@@ -165,7 +216,16 @@ test('post catches a network error and a non-2xx response', async function () {
 test('post uses opts.clock for the timestamp when provided', async function () {
   const ctx = makeCtx();
   const doFetch = fetchRecorder({ ok: true, status: 200 });
-  const r = await integrations.post(ctx, { url: 'https://example.com/x', event: 'note', payload: {} }, { fetch: doFetch, clock: function () { return '2030-05-05T05:05:05.000Z'; } });
+  const r = await integrations.post(
+    ctx,
+    { url: 'https://example.com/x', event: 'note', payload: {} },
+    {
+      fetch: doFetch,
+      clock: function () {
+        return '2030-05-05T05:05:05.000Z';
+      },
+    },
+  );
   assert.strictEqual(r.at, '2030-05-05T05:05:05.000Z');
   assert.strictEqual(JSON.parse(doFetch.calls[0].init.body).at, '2030-05-05T05:05:05.000Z');
 });
@@ -174,7 +234,11 @@ test('post uses opts.clock for the timestamp when provided', async function () {
 test('post records a NON-SECRET delivery log (no url, no payload) at 0600', async function () {
   const ctx = makeCtx();
   const doFetch = fetchRecorder({ ok: true, status: 200 });
-  await integrations.post(ctx, { url: 'https://hooks.slack.com/secret-token-abc', event: 'switch', payload: { accessToken: 'sk-leak' } }, { fetch: doFetch });
+  await integrations.post(
+    ctx,
+    { url: 'https://hooks.slack.com/secret-token-abc', event: 'switch', payload: { accessToken: 'sk-leak' } },
+    { fetch: doFetch },
+  );
   const raw = fs.readFileSync(integrations.statePath(ctx), 'utf8');
   assert.strictEqual(raw.indexOf('secret-token-abc'), -1, 'webhook token not logged');
   assert.strictEqual(raw.indexOf('sk-leak'), -1, 'payload secret not logged');
@@ -183,8 +247,7 @@ test('post records a NON-SECRET delivery log (no url, no payload) at 0600', asyn
   assert.strictEqual(log[0].platform, 'slack');
   assert.strictEqual(log[0].event, 'switch');
   assert.strictEqual(log[0].ok, true);
-  const mode = fs.statSync(integrations.statePath(ctx)).mode & 0o777;
-  assert.strictEqual(mode, 0o600);
+  assertPrivateMode(integrations.statePath(ctx));
 });
 
 test('the delivery log is bounded to 50 entries (newest first)', async function () {
@@ -202,7 +265,11 @@ test('a corrupt delivery log neither throws nor is clobbered by post', async fun
   const ctx = makeCtx();
   fs.writeFileSync(integrations.statePath(ctx), '{ not json');
   const doFetch = fetchRecorder({ ok: true, status: 200 });
-  const r = await integrations.post(ctx, { url: 'https://example.com/x', event: 'note', payload: {} }, { fetch: doFetch });
+  const r = await integrations.post(
+    ctx,
+    { url: 'https://example.com/x', event: 'note', payload: {} },
+    { fetch: doFetch },
+  );
   assert.strictEqual(r.ok, true); // delivery still succeeds
   assert.deepStrictEqual(integrations.history(ctx), []); // unreadable -> empty, not thrown
   assert.strictEqual(fs.readFileSync(integrations.statePath(ctx), 'utf8'), '{ not json'); // not clobbered
@@ -214,9 +281,12 @@ test('statusMessage summarizes the active account, count, and headroom (non-secr
   addAccount(ctx, 'alice@example.com', 'u-a', 'LIVE-A');
   addAccount(ctx, 'bob@example.com', 'u-b', 'LIVE-B'); // bob now active
   // Seed the usage cache the way usage.js writes it.
-  fs.writeFileSync(_path.join(ctx.configDir, '.usage-cache.json'), JSON.stringify({
-    bob: { at: Date.now(), status: 'ok', usage: { fiveHour: { pct: 30 }, sevenDay: { pct: 10 } } },
-  }));
+  fs.writeFileSync(
+    _path.join(ctx.configDir, '.usage-cache.json'),
+    JSON.stringify({
+      bob: { at: Date.now(), status: 'ok', usage: { fiveHour: { pct: 30 }, sevenDay: { pct: 10 } } },
+    }),
+  );
   const s = integrations.statusMessage(ctx);
   assert.strictEqual(s.active, 'bob@example.com');
   assert.strictEqual(s.activeName, 'bob');
@@ -252,7 +322,9 @@ test('cli --to ... --status posts the current status', async function () {
 test('cli --message posts a note', async function () {
   const ctx = makeCtx();
   const doFetch = fetchRecorder({ ok: true, status: 200 });
-  const r = await integrations.cli(ctx, ['--to', 'https://example.com/x', '--message', 'hello team'], { fetch: doFetch });
+  const r = await integrations.cli(ctx, ['--to', 'https://example.com/x', '--message', 'hello team'], {
+    fetch: doFetch,
+  });
   assert.strictEqual(r.ok, true);
   const body = JSON.parse(doFetch.calls[0].init.body);
   assert.strictEqual(body.event, 'note');
@@ -272,14 +344,18 @@ test('cli without --to returns a usage error and posts nothing', async function 
 test('keyflip_post_status requires confirm and posts via ctx.fetch', async function () {
   const ctx = makeCtx();
   addAccount(ctx, 'alice@example.com', 'u-a', 'LIVE-A');
-  const tool = integrations.mcpTools.find(function (t) { return t.name === 'keyflip_post_status'; });
+  const tool = integrations.mcpTools.find(function (t) {
+    return t.name === 'keyflip_post_status';
+  });
   assert.ok(tool);
   assert.strictEqual(tool.annotations.readOnlyHint, false);
   assert.ok(tool.inputSchema.required.indexOf('confirm') !== -1);
   // No confirm -> refuses, no network.
   const doFetch = fetchRecorder({ ok: true, status: 200 });
   ctx.fetch = doFetch;
-  await assert.rejects(function () { return tool.run(ctx, { url: 'https://hooks.slack.com/x' }); }, /confirmation required/);
+  await assert.rejects(function () {
+    return tool.run(ctx, { url: 'https://hooks.slack.com/x' });
+  }, /confirmation required/);
   assert.strictEqual(doFetch.calls.length, 0);
   // With confirm -> posts.
   const out = await tool.run(ctx, { url: 'https://hooks.slack.com/x', confirm: true });
@@ -290,6 +366,10 @@ test('keyflip_post_status requires confirm and posts via ctx.fetch', async funct
 
 test('keyflip_post_status rejects a bad webhook url', async function () {
   const ctx = makeCtx();
-  const tool = integrations.mcpTools.find(function (t) { return t.name === 'keyflip_post_status'; });
-  await assert.rejects(function () { return tool.run(ctx, { url: 'file:///etc/passwd', confirm: true }); }, /valid http\(s\) webhook/);
+  const tool = integrations.mcpTools.find(function (t) {
+    return t.name === 'keyflip_post_status';
+  });
+  await assert.rejects(function () {
+    return tool.run(ctx, { url: 'file:///etc/passwd', confirm: true });
+  }, /valid http\(s\) webhook/);
 });

@@ -31,7 +31,9 @@ const GEMINI_BASE = 'https://generativelanguage.googleapis.com/v1beta/models/';
 
 // ---- env gate ----------------------------------------------------------------
 // Same "1"/"true"/"on" pattern as license.enforcementEnabled().
-function envOn(v) { return v === '1' || v === 'true' || v === 'on'; }
+function envOn(v) {
+  return v === '1' || v === 'true' || v === 'on';
+}
 
 // The API key comes from an injected dep first (tests), then the environment.
 // It is read here and NEVER stored on any returned object.
@@ -73,10 +75,18 @@ function redactOutbound(input) {
   // Object / array: JSON round-trip through the deep redactor. If it somehow
   // isn't JSON-serializable, fail closed to an empty object rather than leak.
   let text;
-  try { text = JSON.stringify(input); } catch (e) { return {}; }
+  try {
+    text = JSON.stringify(input);
+  } catch (e) {
+    return {};
+  }
   const red = secretscan.redactJson(text);
   if (!red) return {};
-  try { return JSON.parse(red.text); } catch (e) { return {}; }
+  try {
+    return JSON.parse(red.text);
+  } catch (e) {
+    return {};
+  }
 }
 
 // ---- catalog access ----------------------------------------------------------
@@ -123,22 +133,36 @@ function extractFirstJsonObject(text) {
   const s = String(text == null ? '' : text);
   const start = s.indexOf('{');
   if (start === -1) return null;
-  let depth = 0, inStr = false, esc = false;
+  let depth = 0,
+    inStr = false,
+    esc = false;
   for (let i = start; i < s.length; i++) {
     const ch = s[i];
     if (inStr) {
-      if (esc) { esc = false; }
-      else if (ch === '\\') { esc = true; }
-      else if (ch === '"') { inStr = false; }
+      if (esc) {
+        esc = false;
+      } else if (ch === '\\') {
+        esc = true;
+      } else if (ch === '"') {
+        inStr = false;
+      }
       continue;
     }
-    if (ch === '"') { inStr = true; continue; }
-    if (ch === '{') { depth++; }
-    else if (ch === '}') {
+    if (ch === '"') {
+      inStr = true;
+      continue;
+    }
+    if (ch === '{') {
+      depth++;
+    } else if (ch === '}') {
       depth--;
       if (depth === 0) {
         const candidate = s.slice(start, i + 1);
-        try { return JSON.parse(candidate); } catch (e) { return null; }
+        try {
+          return JSON.parse(candidate);
+        } catch (e) {
+          return null;
+        }
       }
     }
   }
@@ -153,7 +177,7 @@ async function callGemini(apiKey, prompt, deps) {
   deps = deps || {};
   const fetchFn = deps.fetch || (typeof fetch === 'function' ? fetch : null);
   if (typeof fetchFn !== 'function') return null;
-  const model = (typeof deps.model === 'string' && deps.model.trim()) ? deps.model.trim() : DEFAULT_MODEL;
+  const model = typeof deps.model === 'string' && deps.model.trim() ? deps.model.trim() : DEFAULT_MODEL;
   const url = GEMINI_BASE + encodeURIComponent(model) + ':generateContent?key=' + encodeURIComponent(apiKey);
   const body = {
     contents: [{ role: 'user', parts: [{ text: prompt }] }],
@@ -166,7 +190,13 @@ async function callGemini(apiKey, prompt, deps) {
   if (typeof AbortController === 'function' && timeoutMs > 0) {
     const ac = new AbortController();
     signal = ac.signal;
-    timer = setTimeout(function () { try { ac.abort(); } catch (e) { /* noop */ } }, timeoutMs);
+    timer = setTimeout(function () {
+      try {
+        ac.abort();
+      } catch (e) {
+        /* noop */
+      }
+    }, timeoutMs);
   }
 
   let res;
@@ -215,10 +245,16 @@ function validatePlan(modelObj, catalog) {
 
   for (let i = 0; i < rawSteps.length && plan.length < MAX_STEPS; i++) {
     const step = rawSteps[i];
-    if (!step || typeof step !== 'object' || Array.isArray(step)) { dropped.push('<non-object step>'); continue; }
+    if (!step || typeof step !== 'object' || Array.isArray(step)) {
+      dropped.push('<non-object step>');
+      continue;
+    }
     const name = typeof step.command === 'string' ? step.command : '';
     const entry = catalog.get(name); // null-proto safe; unknown/inherited -> null
-    if (!entry) { dropped.push(name || '<missing command>'); continue; }
+    if (!entry) {
+      dropped.push(name || '<missing command>');
+      continue;
+    }
     const kept = {
       command: entry.name,
       rationale: typeof step.rationale === 'string' ? step.rationale : '',
@@ -299,11 +335,21 @@ function formatPlan(plan) {
   const lines = plan.map(function (step, i) {
     const tag = step.mutating ? '[mutating]' : '[safe]';
     const args = typeof step.args === 'string' && step.args.length ? ' ' + step.args : '';
-    let line = (i + 1) + '. ' + tag + ' keyflip ' + step.command + args;
+    let line = i + 1 + '. ' + tag + ' keyflip ' + step.command + args;
     if (step.rationale) line += '\n     ↳ ' + step.rationale;
     return line;
   });
   return lines.join('\n');
 }
 
-export { enabled, propose, redactOutbound, formatPlan, callGemini, validatePlan, extractFirstJsonObject, MAX_STEPS, DEFAULT_MODEL };
+export {
+  enabled,
+  propose,
+  redactOutbound,
+  formatPlan,
+  callGemini,
+  validatePlan,
+  extractFirstJsonObject,
+  MAX_STEPS,
+  DEFAULT_MODEL,
+};

@@ -7,7 +7,7 @@ import fs from 'fs';
 import path from 'path';
 import zlib from 'zlib';
 import * as archive from '../src/archive.js';
-import { makeCtx } from './helpers.js';
+import { makeCtx, assertPrivateMode } from './helpers.js';
 
 function ctxWithClaude() {
   const ctx = makeCtx();
@@ -44,12 +44,17 @@ test('unarchiveSession restores byte-exact and removes the archived copy', funct
   assert.strictEqual(r.ok, true);
   const back = path.join(ctx.claudeDir, 'projects', '-proj', 'xyz.jsonl');
   assert.strictEqual(fs.readFileSync(back, 'utf8'), body);
-  assert.strictEqual(fs.existsSync(path.join(archive.store(ctx), '-proj', 'xyz.jsonl.gz')), false, 'archived copy removed');
+  assert.strictEqual(
+    fs.existsSync(path.join(archive.store(ctx), '-proj', 'xyz.jsonl.gz')),
+    false,
+    'archived copy removed',
+  );
 });
 
 test('listArchived + findArchived enumerate and resolve by prefix', function () {
   const ctx = ctxWithClaude();
-  seed(ctx, '-a', 'aaaa1111', 'x\n'); seed(ctx, '-b', 'bbbb2222', 'y\n');
+  seed(ctx, '-a', 'aaaa1111', 'x\n');
+  seed(ctx, '-b', 'bbbb2222', 'y\n');
   archive.archiveSession(ctx, '-a', 'aaaa1111');
   archive.archiveSession(ctx, '-b', 'bbbb2222');
   const all = archive.listArchived(ctx);
@@ -72,7 +77,7 @@ test('archiveSession stores the gz mode 0600; unarchiveSession reports corrupt o
   const a = archive.archiveSession(ctx, '-p', 'sc1');
   assert.ok(a.ok);
   const gz = path.join(archive.store(ctx), '-p', 'sc1.jsonl.gz');
-  assert.strictEqual(fs.statSync(gz).mode & 0o777, 0o600, 'archived gz is not world/group readable');
+  assertPrivateMode(gz, 'archived gz is not world/group readable');
   // corrupt it (non-gzip bytes) and confirm unarchive returns a clean {ok:false,reason:'corrupt'}
   fs.writeFileSync(gz, 'not-a-gzip-stream');
   const u = archive.unarchiveSession(ctx, '-p', 'sc1');

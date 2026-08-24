@@ -14,6 +14,18 @@ const keygen = require('./keygen');
 const { signLicense } = require('./sign');
 const license = require('../src/license');
 
+function assertPrivateMode(file, message) {
+  const st = fs.statSync(file);
+  const label = message || file;
+  if (process.platform === 'win32') {
+    assert.ok(st.isFile(), label + ' — expected a regular file');
+    fs.accessSync(file, fs.constants.R_OK | fs.constants.W_OK);
+    return;
+  }
+  const mode = st.mode & 0o777;
+  assert.strictEqual(mode, 0o600, label + ' — expected 0600, got 0' + mode.toString(8));
+}
+
 test('genKeypair returns a single-line SPKI-DER base64 public key and PKCS8 DER private buffer', function () {
   const kp = keygen.genKeypair();
   assert.strictEqual(typeof kp.publicKeyB64, 'string');
@@ -33,7 +45,11 @@ test('the generated pair round-trips through src/license.js verify()', function 
   license.setPublicKey(kp.publicKeyB64);
   const priv = crypto.createPrivateKey({ key: kp.privateKeyDer, format: 'der', type: 'pkcs8' });
   const token = signLicense({ tier: 'pro', email: 'k@e.co', expiry: null, issued: '2026-01-01T00:00:00.000Z' }, priv);
-  const v = license.verify(token, { now: function () { return '2026-06-01T00:00:00.000Z'; } });
+  const v = license.verify(token, {
+    now: function () {
+      return '2026-06-01T00:00:00.000Z';
+    },
+  });
   assert.strictEqual(v.valid, true);
   assert.strictEqual(v.tier, 'pro');
 });
@@ -44,20 +60,21 @@ test('writePrivateKey writes mode 0600 and refuses to overwrite without force', 
   const kp = keygen.genKeypair();
 
   keygen.writePrivateKey(kp.privateKeyDer, keyPath, false);
-  const mode = fs.statSync(keyPath).mode & 0o777;
-  assert.strictEqual(mode, 0o600, 'key file must be 0600, got 0' + mode.toString(8));
+  assertPrivateMode(keyPath, 'key file');
   // Bytes on disk must equal what we wrote (raw DER, loadable back).
   assert.ok(fs.readFileSync(keyPath).equals(kp.privateKeyDer));
 
   // Second write without force must throw EEXIST and leave the file untouched.
-  assert.throws(function () { keygen.writePrivateKey(keygen.genKeypair().privateKeyDer, keyPath, false); }, /EEXIST|refusing to overwrite/);
+  assert.throws(function () {
+    keygen.writePrivateKey(keygen.genKeypair().privateKeyDer, keyPath, false);
+  }, /EEXIST|refusing to overwrite/);
   assert.ok(fs.readFileSync(keyPath).equals(kp.privateKeyDer), 'original key must be intact after refused overwrite');
 
   // With force it replaces the key.
   const kp2 = keygen.genKeypair();
   keygen.writePrivateKey(kp2.privateKeyDer, keyPath, true);
   assert.ok(fs.readFileSync(keyPath).equals(kp2.privateKeyDer));
-  assert.strictEqual(fs.statSync(keyPath).mode & 0o777, 0o600);
+  assertPrivateMode(keyPath);
 });
 
 test('CLI prints the public key and NEVER the private key', function () {
@@ -65,10 +82,12 @@ test('CLI prints the public key and NEVER the private key', function () {
   const keyPath = path.join(dir, 'private', 'issuer.key');
   const env = Object.assign({}, process.env, { KEYFLIP_ISSUER_KEY: keyPath });
   const out = require('child_process').execFileSync(process.execPath, [path.join(__dirname, 'keygen.js')], {
-    cwd: dir, encoding: 'utf8', env: env,
+    cwd: dir,
+    encoding: 'utf8',
+    env: env,
   });
   // The private key landed only at the redirected 0600 path, never in the repo.
-  assert.strictEqual(fs.statSync(keyPath).mode & 0o777, 0o600);
+  assertPrivateMode(keyPath);
   assert.ok(/Paste this public key/.test(out));
   const printedB64 = out.trim().split('\n').pop().trim();
   const pub = crypto.createPublicKey({ key: Buffer.from(printedB64, 'base64'), format: 'der', type: 'spki' });

@@ -33,11 +33,16 @@ const AUTH_OVERRIDE_ENV_VARS = [
   'CLAUDE_CODE_API_KEY_FILE_DESCRIPTOR',
 ];
 
-function sessionDir(ctx, name) { return path.join(ctx.configDir, 'sessions', name); }
+function sessionDir(ctx, name) {
+  return path.join(ctx.configDir, 'sessions', name);
+}
 
 function readManifest(dir) {
-  try { return JSON.parse(fs.readFileSync(path.join(dir, SHARE_MANIFEST), 'utf8')).created || []; }
-  catch (e) { return []; }
+  try {
+    return JSON.parse(fs.readFileSync(path.join(dir, SHARE_MANIFEST), 'utf8')).created || [];
+  } catch (e) {
+    return [];
+  }
 }
 function writeManifest(dir, created) {
   atomicWrite(path.join(dir, SHARE_MANIFEST), JSON.stringify({ created: created }, null, 2), 0o600);
@@ -57,7 +62,9 @@ function syncShared(ctx, dir, share, extra) {
     try {
       const st = fs.lstatSync(p);
       if (st.isSymbolicLink() || ctx.platform === 'win32') fs.rmSync(p, { recursive: true, force: true });
-    } catch (e) { /* already gone */ }
+    } catch (e) {
+      /* already gone */
+    }
   });
   const created = [];
   if (share) {
@@ -69,7 +76,9 @@ function syncShared(ctx, dir, share, extra) {
         if (ctx.platform === 'win32') fs.cpSync(from, to, { recursive: true });
         else fs.symlinkSync(from, to);
         created.push(n);
-      } catch (e) { /* best-effort */ }
+      } catch (e) {
+        /* best-effort */
+      }
     });
   }
   writeManifest(dir, created);
@@ -80,11 +89,14 @@ function syncShared(ctx, dir, share, extra) {
 function prepareSession(ctx, name, opts) {
   opts = opts || {};
   const blob = ctx.store.getProfile(name);
-  if (!blob) throw new Error("profile '" + name + "' has no stored CLI credentials — run 'keyflip add' while logged into it");
+  if (!blob)
+    throw new Error("profile '" + name + "' has no stored CLI credentials — run 'keyflip add' while logged into it");
   try {
     const d = JSON.parse(blob);
     if (!d || !d.claudeAiOauth) throw 0;
-  } catch (e) { throw new Error("profile '" + name + "' credentials are unreadable — re-add the account"); }
+  } catch (e) {
+    throw new Error("profile '" + name + "' credentials are unreadable — re-add the account");
+  }
 
   const dir = sessionDir(ctx, name);
   fs.mkdirSync(dir, { recursive: true });
@@ -109,7 +121,10 @@ function sessionEnv(ctx, dir, baseEnv) {
   const env = Object.assign({}, baseEnv || process.env);
   const scrubbed = [];
   AUTH_OVERRIDE_ENV_VARS.forEach(function (k) {
-    if (env[k] !== undefined) { scrubbed.push(k); delete env[k]; }
+    if (env[k] !== undefined) {
+      scrubbed.push(k);
+      delete env[k];
+    }
   });
   env.CLAUDE_CONFIG_DIR = dir;
   return { env: env, scrubbed: scrubbed };
@@ -120,15 +135,30 @@ function sessionEnv(ctx, dir, baseEnv) {
 function syncBack(ctx, name) {
   const p = path.join(sessionDir(ctx, name), '.credentials.json');
   let blob;
-  try { blob = fs.readFileSync(p, 'utf8'); } catch (e) { return false; } // migrated to keychain or gone
+  try {
+    blob = fs.readFileSync(p, 'utf8');
+  } catch (e) {
+    return false;
+  } // migrated to keychain or gone
   try {
     const d = JSON.parse(blob);
     if (!d || !d.claudeAiOauth || !d.claudeAiOauth.accessToken) return false;
-  } catch (e) { return false; }
+  } catch (e) {
+    return false;
+  }
   let prev = null;
-  try { prev = ctx.store.getProfile(name); } catch (e) { prev = null; }
+  try {
+    prev = ctx.store.getProfile(name);
+  } catch (e) {
+    prev = null;
+  }
   if (blob === prev) return false;
-  try { ctx.store.setProfile(name, blob); return true; } catch (e) { return false; }
+  try {
+    ctx.store.setProfile(name, blob);
+    return true;
+  } catch (e) {
+    return false;
+  }
 }
 
 export { prepareSession, sessionEnv, syncBack, sessionDir, syncShared, SHARED_ITEMS, AUTH_OVERRIDE_ENV_VARS };

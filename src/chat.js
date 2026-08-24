@@ -20,7 +20,8 @@ function safeStoragePassword(ctx) {
   return r.code === 0 ? r.stdout.replace(/\r?\n$/, '') : null;
 }
 
-const BROWSER_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
+const BROWSER_UA =
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
 
 // Decrypt one Chromium cookie encrypted_value (macOS v10 scheme). Newer Chromium
 // prepends a 32-byte domain hash to the plaintext; strip it if the remainder is
@@ -35,7 +36,9 @@ function decryptCookie(encBuf, password) {
     const whole = p.toString('utf8');
     const val = /^[\x20-\x7e]+$/.test(stripped) ? stripped : whole;
     return /^[\x20-\x7e]+$/.test(val) ? val : null;
-  } catch (e) { return null; }
+  } catch (e) {
+    return null;
+  }
 }
 
 // Build the claude.ai cookie header from the desktop app's Cookies DB.
@@ -44,31 +47,54 @@ function cookieHeader(ctx) {
   if (!password) throw new Error('cannot read the Electron safeStorage key (Keychain) — is the desktop app installed?');
   const src = path.join(ctx.appDataDir, 'Cookies');
   const tmp = path.join(os.tmpdir(), 'keyflip-ck-' + process.pid + '.db');
-  try { fs.copyFileSync(src, tmp); } catch (e) { throw new Error('no desktop Cookies DB — sign into the Claude desktop app first'); }
   try {
-    const r = run('sqlite3', ['-separator', '\x01', 'file:' + tmp + '?mode=ro',
-      "SELECT name,quote(encrypted_value) FROM cookies WHERE host_key LIKE '%claude.ai';"]);
+    fs.copyFileSync(src, tmp);
+  } catch (e) {
+    throw new Error('no desktop Cookies DB — sign into the Claude desktop app first');
+  }
+  try {
+    const r = run('sqlite3', [
+      '-separator',
+      '\x01',
+      'file:' + tmp + '?mode=ro',
+      "SELECT name,quote(encrypted_value) FROM cookies WHERE host_key LIKE '%claude.ai';",
+    ]);
     if (r.code !== 0) throw new Error('could not read cookies (sqlite3): ' + (r.stderr || r.code));
     const pairs = [];
     let org = null;
-    r.stdout.trim().split('\n').forEach(function (line) {
-      const i = line.indexOf('\x01'); if (i === -1) return;
-      const name = line.slice(0, i);
-      const hex = line.slice(i + 1).replace(/^X'|'$/g, '');
-      const val = decryptCookie(Buffer.from(hex, 'hex'), password);
-      if (val == null) return;
-      pairs.push(name + '=' + val);
-      if (name === 'lastActiveOrg') org = val;
-    });
+    r.stdout
+      .trim()
+      .split('\n')
+      .forEach(function (line) {
+        const i = line.indexOf('\x01');
+        if (i === -1) return;
+        const name = line.slice(0, i);
+        const hex = line.slice(i + 1).replace(/^X'|'$/g, '');
+        const val = decryptCookie(Buffer.from(hex, 'hex'), password);
+        if (val == null) return;
+        pairs.push(name + '=' + val);
+        if (name === 'lastActiveOrg') org = val;
+      });
     if (!pairs.length) throw new Error('no readable claude.ai cookies (not signed in?)');
     return { cookie: pairs.join('; '), org: org };
-  } finally { try { fs.rmSync(tmp, { force: true }); } catch (e) { /* */ } }
+  } finally {
+    try {
+      fs.rmSync(tmp, { force: true });
+    } catch (e) {
+      /* */
+    }
+  }
 }
 
 function headers(cookie) {
   return {
-    cookie: cookie, 'user-agent': BROWSER_UA, accept: '*/*', 'accept-language': 'en-US,en;q=0.9',
-    'anthropic-client-platform': 'web_claude_ai', referer: 'https://claude.ai/', origin: 'https://claude.ai',
+    cookie: cookie,
+    'user-agent': BROWSER_UA,
+    accept: '*/*',
+    'accept-language': 'en-US,en;q=0.9',
+    'anthropic-client-platform': 'web_claude_ai',
+    referer: 'https://claude.ai/',
+    origin: 'https://claude.ai',
   };
 }
 
@@ -76,8 +102,17 @@ async function api(path_, cookie, opts) {
   opts = opts || {};
   const doFetch = opts.fetch || (typeof fetch !== 'undefined' ? fetch : null);
   if (!doFetch) throw new Error('no fetch available');
-  const res = await doFetch('https://claude.ai' + path_, { headers: headers(cookie), signal: (typeof AbortSignal !== 'undefined' && AbortSignal.timeout) ? AbortSignal.timeout(opts.timeoutMs || 15000) : undefined });
-  if (res.status === 403) throw new Error('claude.ai returned 403 — the Cloudflare clearance cookie is stale; open the Claude desktop app (or claude.ai) once, then retry');
+  const res = await doFetch('https://claude.ai' + path_, {
+    headers: headers(cookie),
+    signal:
+      typeof AbortSignal !== 'undefined' && AbortSignal.timeout
+        ? AbortSignal.timeout(opts.timeoutMs || 15000)
+        : undefined,
+  });
+  if (res.status === 403)
+    throw new Error(
+      'claude.ai returned 403 — the Cloudflare clearance cookie is stale; open the Claude desktop app (or claude.ai) once, then retry',
+    );
   if (res.status === 401) throw new Error('claude.ai returned 401 — the session is not authenticated');
   if (!res.ok) throw new Error('claude.ai API ' + path_ + ' -> HTTP ' + res.status);
   return res.json();
@@ -96,11 +131,20 @@ async function list(ctx, opts) {
   const ch = opts.cookieHeaderOverride || cookieHeader(ctx); // test seam
   const org = ch.org || (await activeOrg(ctx, ch.cookie, opts)).uuid;
   if (!org) throw new Error('could not determine the active claude.ai organization');
-  const convs = await api('/api/organizations/' + org + '/chat_conversations?limit=' + (opts.limit || 30), ch.cookie, opts);
+  const convs = await api(
+    '/api/organizations/' + org + '/chat_conversations?limit=' + (opts.limit || 30),
+    ch.cookie,
+    opts,
+  );
   return {
     org: org,
     conversations: (Array.isArray(convs) ? convs : []).map(function (c) {
-      return { uuid: c.uuid, name: c.name || c.summary || '(untitled)', updatedAt: c.updated_at, createdAt: c.created_at };
+      return {
+        uuid: c.uuid,
+        name: c.name || c.summary || '(untitled)',
+        updatedAt: c.updated_at,
+        createdAt: c.created_at,
+      };
     }),
   };
 }
@@ -110,7 +154,11 @@ async function get(ctx, id, opts) {
   opts = opts || {};
   const ch = cookieHeader(ctx);
   const org = ch.org || (await activeOrg(ctx, ch.cookie, opts)).uuid;
-  const conv = await api('/api/organizations/' + org + '/chat_conversations/' + id + '?tree=True&rendering_mode=messages', ch.cookie, opts);
+  const conv = await api(
+    '/api/organizations/' + org + '/chat_conversations/' + id + '?tree=True&rendering_mode=messages',
+    ch.cookie,
+    opts,
+  );
   return conv;
 }
 

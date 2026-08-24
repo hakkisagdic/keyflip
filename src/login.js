@@ -23,8 +23,12 @@ function isoKeychainService(dir) {
 function validBlob(s) {
   try {
     const d = JSON.parse(s);
-    return d && d.claudeAiOauth && typeof d.claudeAiOauth.accessToken === 'string' && d.claudeAiOauth.accessToken.trim() ? s : null;
-  } catch (e) { return null; }
+    return d && d.claudeAiOauth && typeof d.claudeAiOauth.accessToken === 'string' && d.claudeAiOauth.accessToken.trim()
+      ? s
+      : null;
+  } catch (e) {
+    return null;
+  }
 }
 
 // Read the credential an isolated `claude auth login` produced. Order: the
@@ -37,7 +41,9 @@ function readIsolatedCredential(dir, opts) {
     const s = fs.readFileSync(path.join(dir, '.credentials.json'), 'utf8');
     const v = validBlob(s);
     if (v) return v;
-  } catch (e) { /* not a file — try keychain */ }
+  } catch (e) {
+    /* not a file — try keychain */
+  }
   if (platform === 'darwin' && opts.run) {
     const svc = isoKeychainService(dir);
     const r = opts.run('/usr/bin/security', ['find-generic-password', '-s', svc, '-w'], undefined, { timeoutMs: 8000 });
@@ -54,15 +60,29 @@ function parseAuthStatus(stdout) {
   try {
     const j = JSON.parse(String(stdout || '').trim());
     if (!j || typeof j !== 'object') return null;
-    return { email: j.email || null, orgId: j.orgId || null, orgName: j.orgName || null, plan: j.subscriptionType || null, loggedIn: !!j.loggedIn };
-  } catch (e) { return null; }
+    return {
+      email: j.email || null,
+      orgId: j.orgId || null,
+      orgName: j.orgName || null,
+      plan: j.subscriptionType || null,
+      loggedIn: !!j.loggedIn,
+    };
+  } catch (e) {
+    return null;
+  }
 }
 
 // Best-effort removal of the hashed Keychain item Claude may have created.
 function cleanIsolatedKeychain(dir, opts) {
   opts = opts || {};
   if ((opts.platform || process.platform) !== 'darwin' || !opts.run) return;
-  try { opts.run('/usr/bin/security', ['delete-generic-password', '-s', isoKeychainService(dir)], undefined, { timeoutMs: 8000 }); } catch (e) { /* ignore */ }
+  try {
+    opts.run('/usr/bin/security', ['delete-generic-password', '-s', isoKeychainService(dir)], undefined, {
+      timeoutMs: 8000,
+    });
+  } catch (e) {
+    /* ignore */
+  }
 }
 
 // Build the `claude auth login` argv from options. Pure — one place both the auto and
@@ -92,15 +112,33 @@ function performLogin(ctx, opts) {
   const isoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'keyflip-login-'));
   const env = Object.assign({}, process.env, { CLAUDE_CONFIG_DIR: isoDir });
   try {
-    try { claude.writeConfig(path.join(isoDir, '.claude.json'), { hasCompletedOnboarding: true }); } catch (e) { /* best-effort */ }
+    try {
+      claude.writeConfig(path.join(isoDir, '.claude.json'), { hasCompletedOnboarding: true });
+    } catch (e) {
+      /* best-effort */
+    }
     const args = buildLoginArgs(opts);
     const r = cp.spawnSync('claude', args, { stdio: opts.stdio || 'inherit', env: env });
-    if (r.error) { const e = new Error('could not run `claude auth login` (is Claude Code installed and on PATH?): ' + r.error.message); e.code = 'claude-missing'; throw e; }
-    if (typeof r.status === 'number' && r.status !== 0) { const e = new Error('the login did not complete (exit ' + r.status + ')'); e.code = 'login-failed'; throw e; }
+    if (r.error) {
+      const e = new Error(
+        'could not run `claude auth login` (is Claude Code installed and on PATH?): ' + r.error.message,
+      );
+      e.code = 'claude-missing';
+      throw e;
+    }
+    if (typeof r.status === 'number' && r.status !== 0) {
+      const e = new Error('the login did not complete (exit ' + r.status + ')');
+      e.code = 'login-failed';
+      throw e;
+    }
     return captureFromIso(ctx, isoDir, env, opts);
   } finally {
     cleanIsolatedKeychain(isoDir, { platform: ctx.platform, run: exec.run });
-    try { fs.rmSync(isoDir, { recursive: true, force: true }); } catch (e) { /* ignore */ }
+    try {
+      fs.rmSync(isoDir, { recursive: true, force: true });
+    } catch (e) {
+      /* ignore */
+    }
   }
 }
 
@@ -113,22 +151,53 @@ function captureFromIso(ctx, isoDir, env, opts) {
   const profiles = _profiles;
   const core = _core;
   const blob = readIsolatedCredential(isoDir, { platform: ctx.platform, run: exec.run });
-  if (!blob) { const e = new Error('login completed but the new credential could not be read from the isolated store'); e.code = 'no-cred'; throw e; }
-  let em = null, org = null;
+  if (!blob) {
+    const e = new Error('login completed but the new credential could not be read from the isolated store');
+    e.code = 'no-cred';
+    throw e;
+  }
+  let em = null,
+    org = null;
   const st = parseAuthStatus(exec.run('claude', ['auth', 'status'], undefined, { timeoutMs: 8000, env: env }).stdout);
-  if (st) { em = st.email || null; org = st.orgId || null; }
+  if (st) {
+    em = st.email || null;
+    org = st.orgId || null;
+  }
   if (opts.email && em && em.toLowerCase() !== opts.email.toLowerCase()) {
-    const e = new Error('signed in as ' + em + ', not ' + opts.email + ' — the browser was already logged into claude.com as ' + em); e.code = 'mismatch'; e.actual = em; throw e;
+    const e = new Error(
+      'signed in as ' + em + ', not ' + opts.email + ' — the browser was already logged into claude.com as ' + em,
+    );
+    e.code = 'mismatch';
+    e.actual = em;
+    throw e;
   }
   let existing = null;
-  if (em) profiles.list(ctx.configDir).forEach(function (n) { if (!existing && (profiles.email(ctx.configDir, n) || '').toLowerCase() === em.toLowerCase()) existing = n; });
+  if (em)
+    profiles.list(ctx.configDir).forEach(function (n) {
+      if (!existing && (profiles.email(ctx.configDir, n) || '').toLowerCase() === em.toLowerCase()) existing = n;
+    });
   const finalName = existing || opts.name || core.autoName(ctx, em || '');
-  if (!existing && profiles.exists(ctx.configDir, finalName) && profiles.email(ctx.configDir, finalName) !== (em || '')) {
-    const e = new Error("profile '" + finalName + "' already exists for a different account — pass a name"); e.code = 'name-taken'; throw e;
+  if (
+    !existing &&
+    profiles.exists(ctx.configDir, finalName) &&
+    profiles.email(ctx.configDir, finalName) !== (em || '')
+  ) {
+    const e = new Error("profile '" + finalName + "' already exists for a different account — pass a name");
+    e.code = 'name-taken';
+    throw e;
   }
   ctx.store.setProfile(finalName, blob);
-  const oa = {}; if (org) oa.organizationUuid = org; if (em) oa.emailAddress = em;
-  profiles.write(ctx.configDir, { name: finalName, email: em || '', oauthAccount: oa, userID: '', savedAt: ctx.now(), viaLogin: true });
+  const oa = {};
+  if (org) oa.organizationUuid = org;
+  if (em) oa.emailAddress = em;
+  profiles.write(ctx.configDir, {
+    name: finalName,
+    email: em || '',
+    oauthAccount: oa,
+    userID: '',
+    savedAt: ctx.now(),
+    viaLogin: true,
+  });
   return { status: existing ? 'refreshed' : 'captured', name: finalName, email: em || null };
 }
 
@@ -148,30 +217,70 @@ function performLoginManual(ctx, opts) {
   opts = opts || {};
   return new Promise(function (resolve, reject) {
     const os = _os;
-    const cp = _cp; const readline = _readline;
+    const cp = _cp;
+    const readline = _readline;
     const exec = _exec;
     const isoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'keyflip-login-'));
     const env = Object.assign({}, process.env, { CLAUDE_CONFIG_DIR: isoDir });
-    try { _claude.writeConfig(path.join(isoDir, '.claude.json'), { hasCompletedOnboarding: true }); } catch (e) { /* best-effort */ }
+    try {
+      _claude.writeConfig(path.join(isoDir, '.claude.json'), { hasCompletedOnboarding: true });
+    } catch (e) {
+      /* best-effort */
+    }
     const args = buildLoginArgs(opts);
 
-    let settled = false, rl = null;
-    function cleanup() { cleanIsolatedKeychain(isoDir, { platform: ctx.platform, run: exec.run }); try { fs.rmSync(isoDir, { recursive: true, force: true }); } catch (e) { /* ignore */ } }
-    function done(fn, arg) { if (settled) return; settled = true; try { if (rl) rl.close(); } catch (e) { /* */ } fn(arg); }
+    let settled = false,
+      rl = null;
+    function cleanup() {
+      cleanIsolatedKeychain(isoDir, { platform: ctx.platform, run: exec.run });
+      try {
+        fs.rmSync(isoDir, { recursive: true, force: true });
+      } catch (e) {
+        /* ignore */
+      }
+    }
+    function done(fn, arg) {
+      if (settled) return;
+      settled = true;
+      try {
+        if (rl) rl.close();
+      } catch (e) {
+        /* */
+      }
+      fn(arg);
+    }
 
     const child = cp.spawn('claude', args, { stdio: ['pipe', 'inherit', 'inherit'], env: env });
-    child.on('error', function (e) { const err = new Error('could not run `claude auth login`: ' + e.message); err.code = 'claude-missing'; cleanup(); done(reject, err); });
+    child.on('error', function (e) {
+      const err = new Error('could not run `claude auth login`: ' + e.message);
+      err.code = 'claude-missing';
+      cleanup();
+      done(reject, err);
+    });
     child.on('exit', function () {
       // The child finished — either the browser callback completed it, or it accepted
       // the code we fed. Capture whatever credential it wrote.
-      try { const res = captureFromIso(ctx, isoDir, env, opts); cleanup(); done(resolve, res); }
-      catch (e) { cleanup(); done(reject, e); }
+      try {
+        const res = captureFromIso(ctx, isoDir, env, opts);
+        cleanup();
+        done(resolve, res);
+      } catch (e) {
+        cleanup();
+        done(reject, e);
+      }
     });
 
     rl = readline.createInterface({ input: process.stdin, output: process.stderr });
-    rl.question('\nSign in in the browser (email code, magic link, whatever). When you see a code — or land on the redirect URL — paste it here and press Enter\n(or just wait if the browser finishes on its own): ', function (line) {
-      try { child.stdin.write(extractCode(line) + '\n'); } catch (e) { /* child may already be gone */ }
-    });
+    rl.question(
+      '\nSign in in the browser (email code, magic link, whatever). When you see a code — or land on the redirect URL — paste it here and press Enter\n(or just wait if the browser finishes on its own): ',
+      function (line) {
+        try {
+          child.stdin.write(extractCode(line) + '\n');
+        } catch (e) {
+          /* child may already be gone */
+        }
+      },
+    );
   });
 }
 
@@ -180,13 +289,39 @@ function performLoginManual(ctx, opts) {
 function cliLogout(ctx) {
   const exec = _exec;
   const claude = _claude;
-  try { exec.run('claude', ['auth', 'logout'], undefined, { timeoutMs: 8000 }); } catch (e) { /* best-effort */ }
-  try { ctx.store.delLive(); } catch (e) { /* already gone */ }
+  try {
+    exec.run('claude', ['auth', 'logout'], undefined, { timeoutMs: 8000 });
+  } catch (e) {
+    /* best-effort */
+  }
+  try {
+    ctx.store.delLive();
+  } catch (e) {
+    /* already gone */
+  }
   try {
     const c = claude.readConfig(ctx.claudeConfigPath);
-    if (c && (c.oauthAccount || c.userID)) { delete c.oauthAccount; delete c.userID; claude.writeConfig(ctx.claudeConfigPath, c); }
-  } catch (e) { /* ignore */ }
+    if (c && (c.oauthAccount || c.userID)) {
+      delete c.oauthAccount;
+      delete c.userID;
+      claude.writeConfig(ctx.claudeConfigPath, c);
+    }
+  } catch (e) {
+    /* ignore */
+  }
   return true;
 }
 
-export { buildLoginArgs, isoKeychainService, validBlob, readIsolatedCredential, parseAuthStatus, cleanIsolatedKeychain, performLogin, performLoginManual, captureFromIso, extractCode, cliLogout };
+export {
+  buildLoginArgs,
+  isoKeychainService,
+  validBlob,
+  readIsolatedCredential,
+  parseAuthStatus,
+  cleanIsolatedKeychain,
+  performLogin,
+  performLoginManual,
+  captureFromIso,
+  extractCode,
+  cliLogout,
+};

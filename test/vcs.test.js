@@ -1,6 +1,6 @@
 // Tests for git-backed versioning (src/vcs.js). Requires the system `git`; skips if absent.
 // This file OWNS the enabled path, so it clears KEYFLIP_VCS (the rest of the suite runs
-// with KEYFLIP_VCS=off from package.json so it doesn't git-init temp dirs).
+// with KEYFLIP_VCS=off, supplied by the CI job env, so it doesn't git-init temp dirs).
 delete process.env.KEYFLIP_VCS;
 
 import test from 'node:test';
@@ -12,7 +12,9 @@ import * as vcs from '../src/vcs.js';
 import { makeCtx } from './helpers.js';
 
 const HAS_GIT = vcs.gitAvailable();
-function tracked(cfg) { return cp.execFileSync('git', ['-C', cfg, 'ls-files'], { encoding: 'utf8' }).trim().split('\n').filter(Boolean); }
+function tracked(cfg) {
+  return cp.execFileSync('git', ['-C', cfg, 'ls-files'], { encoding: 'utf8' }).trim().split('\n').filter(Boolean);
+}
 
 test('ensureRepo inits a repo + managed .gitignore; secrets are NEVER tracked', function (t) {
   if (!HAS_GIT) return t.skip('git not installed');
@@ -51,16 +53,19 @@ test('undo reverts the last change; restore returns to a past ref', function (t)
   if (!HAS_GIT) return t.skip('git not installed');
   const ctx = makeCtx();
   const f = path.join(ctx.configDir, 'v.json');
-  fs.writeFileSync(f, 'ONE'); vcs.ensureRepo(ctx);          // commit ONE
+  fs.writeFileSync(f, 'ONE');
+  vcs.ensureRepo(ctx); // commit ONE
   const first = vcs.log(ctx, 1)[0].ref;
-  fs.writeFileSync(f, 'TWO'); vcs.autoCommit(ctx, 'set two'); // commit TWO
+  fs.writeFileSync(f, 'TWO');
+  vcs.autoCommit(ctx, 'set two'); // commit TWO
   assert.strictEqual(fs.readFileSync(f, 'utf8'), 'TWO');
 
-  assert.strictEqual(vcs.undo(ctx).ok, true);               // undo -> back to ONE
+  assert.strictEqual(vcs.undo(ctx).ok, true); // undo -> back to ONE
   assert.strictEqual(fs.readFileSync(f, 'utf8'), 'ONE');
 
-  fs.writeFileSync(f, 'THREE'); vcs.autoCommit(ctx, 'set three');
-  assert.strictEqual(vcs.restore(ctx, first).ok, true);     // restore original commit
+  fs.writeFileSync(f, 'THREE');
+  vcs.autoCommit(ctx, 'set three');
+  assert.strictEqual(vcs.restore(ctx, first).ok, true); // restore original commit
   assert.strictEqual(fs.readFileSync(f, 'utf8'), 'ONE');
 });
 
@@ -77,8 +82,11 @@ test('KEYFLIP_VCS=off forces versioning off regardless', function (t) {
   if (!HAS_GIT) return t.skip('git not installed');
   const ctx = makeCtx();
   process.env.KEYFLIP_VCS = 'off';
-  try { assert.strictEqual(vcs.isEnabled(ctx), false); }
-  finally { delete process.env.KEYFLIP_VCS; }
+  try {
+    assert.strictEqual(vcs.isEnabled(ctx), false);
+  } finally {
+    delete process.env.KEYFLIP_VCS;
+  }
 });
 
 // SECURITY (review P0 #1/#2, #16): the managed .gitignore is the ONLY thing keeping secrets
@@ -86,19 +94,33 @@ test('KEYFLIP_VCS=off forces versioning off regardless', function (t) {
 test('every secret-bearing path is git-ignored (app oauth cache, cookies, tokens, registry, pre-sync)', function (t) {
   if (!HAS_GIT) return t.skip('git not installed');
   const ctx = makeCtx();
-  const seed = function (rel, body) { const p = path.join(ctx.configDir, rel); fs.mkdirSync(path.dirname(p), { recursive: true }); fs.writeFileSync(p, body); };
-  seed('keep.json', '{"ok":1}');                                  // non-secret metadata -> tracked
-  seed('app/work.json', '{"oauth:tokenCacheV2":"BLOB"}');         // desktop OAuth token cache
-  seed('app/work.cookies', 'SQLITE-sessionKey');                  // claude.ai sessionKey cookie DB
-  seed('pre-sync-backups/pre-sync-1.json', '{"accessToken":"T"}');// raw OAuth tokens
-  seed('mcp-registry.json', '{"srv":{"env":{"API_KEY":"sk"}}}');  // MCP env can hold keys
+  const seed = function (rel, body) {
+    const p = path.join(ctx.configDir, rel);
+    fs.mkdirSync(path.dirname(p), { recursive: true });
+    fs.writeFileSync(p, body);
+  };
+  seed('keep.json', '{"ok":1}'); // non-secret metadata -> tracked
+  seed('app/work.json', '{"oauth:tokenCacheV2":"BLOB"}'); // desktop OAuth token cache
+  seed('app/work.cookies', 'SQLITE-sessionKey'); // claude.ai sessionKey cookie DB
+  seed('pre-sync-backups/pre-sync-1.json', '{"accessToken":"T"}'); // raw OAuth tokens
+  seed('mcp-registry.json', '{"srv":{"env":{"API_KEY":"sk"}}}'); // MCP env can hold keys
   seed('.credentials.json', 'SECRET');
-  seed('a.token', 'SECRET'); seed('a.key', 'SECRET'); seed('a.pem', 'SECRET');
+  seed('a.token', 'SECRET');
+  seed('a.key', 'SECRET');
+  seed('a.pem', 'SECRET');
   assert.strictEqual(vcs.ensureRepo(ctx), true);
   const files = tracked(ctx.configDir);
   assert.ok(files.indexOf('keep.json') !== -1, 'non-secret metadata is versioned');
-  ['app/work.json', 'app/work.cookies', 'pre-sync-backups/pre-sync-1.json', 'mcp-registry.json',
-   '.credentials.json', 'a.token', 'a.key', 'a.pem'].forEach(function (rel) {
+  [
+    'app/work.json',
+    'app/work.cookies',
+    'pre-sync-backups/pre-sync-1.json',
+    'mcp-registry.json',
+    '.credentials.json',
+    'a.token',
+    'a.key',
+    'a.pem',
+  ].forEach(function (rel) {
     assert.strictEqual(files.indexOf(rel), -1, rel + ' must NEVER be committed');
   });
 });
@@ -115,10 +137,25 @@ test('ensureRepo refreshes a stale .gitignore and purges now-ignored files from 
   fs.writeFileSync(path.join(ctx.configDir, 'app', 'work.cookies'), 'sessionKey');
   cp.execFileSync('git', ['-C', ctx.configDir, 'init', '-q']);
   cp.execFileSync('git', ['-C', ctx.configDir, 'add', '-A']);
-  cp.execFileSync('git', ['-C', ctx.configDir, '-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-q', '-m', 'legacy']);
+  cp.execFileSync('git', [
+    '-C',
+    ctx.configDir,
+    '-c',
+    'user.email=t@t',
+    '-c',
+    'user.name=t',
+    'commit',
+    '-q',
+    '-m',
+    'legacy',
+  ]);
   assert.ok(tracked(ctx.configDir).indexOf('app/work.cookies') !== -1, 'precondition: leaked into the old repo');
   // Now a current keyflip runs ensureRepo -> must refresh + purge.
   vcs.ensureRepo(ctx);
-  assert.strictEqual(tracked(ctx.configDir).indexOf('app/work.cookies'), -1, 'the leaked secret is untracked after refresh');
+  assert.strictEqual(
+    tracked(ctx.configDir).indexOf('app/work.cookies'),
+    -1,
+    'the leaked secret is untracked after refresh',
+  );
   assert.ok(fs.existsSync(path.join(ctx.configDir, 'app', 'work.cookies')), 'the working file itself is NOT deleted');
 });

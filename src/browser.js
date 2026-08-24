@@ -18,10 +18,38 @@ import { decryptCookie } from './chat.js';
 function catalog(home) {
   const AS = path.join(home, 'Library', 'Application Support');
   return {
-    chrome: { id: 'chrome', name: 'Chrome', cookies: path.join(AS, 'Google', 'Chrome', 'Default', 'Cookies'), service: 'Chrome Safe Storage', account: 'Chrome', proc: 'Google Chrome' },
-    brave: { id: 'brave', name: 'Brave', cookies: path.join(AS, 'BraveSoftware', 'Brave-Browser', 'Default', 'Cookies'), service: 'Brave Safe Storage', account: 'Brave', proc: 'Brave Browser' },
-    edge: { id: 'edge', name: 'Edge', cookies: path.join(AS, 'Microsoft Edge', 'Default', 'Cookies'), service: 'Microsoft Edge Safe Storage', account: 'Microsoft Edge', proc: 'Microsoft Edge' },
-    arc: { id: 'arc', name: 'Arc', cookies: path.join(AS, 'Arc', 'User Data', 'Default', 'Cookies'), service: 'Arc Safe Storage', account: 'Arc', proc: 'Arc' },
+    chrome: {
+      id: 'chrome',
+      name: 'Chrome',
+      cookies: path.join(AS, 'Google', 'Chrome', 'Default', 'Cookies'),
+      service: 'Chrome Safe Storage',
+      account: 'Chrome',
+      proc: 'Google Chrome',
+    },
+    brave: {
+      id: 'brave',
+      name: 'Brave',
+      cookies: path.join(AS, 'BraveSoftware', 'Brave-Browser', 'Default', 'Cookies'),
+      service: 'Brave Safe Storage',
+      account: 'Brave',
+      proc: 'Brave Browser',
+    },
+    edge: {
+      id: 'edge',
+      name: 'Edge',
+      cookies: path.join(AS, 'Microsoft Edge', 'Default', 'Cookies'),
+      service: 'Microsoft Edge Safe Storage',
+      account: 'Microsoft Edge',
+      proc: 'Microsoft Edge',
+    },
+    arc: {
+      id: 'arc',
+      name: 'Arc',
+      cookies: path.join(AS, 'Arc', 'User Data', 'Default', 'Cookies'),
+      service: 'Arc Safe Storage',
+      account: 'Arc',
+      proc: 'Arc',
+    },
   };
 }
 
@@ -30,7 +58,13 @@ function installed(home, opts) {
   opts = opts || {};
   const exists = opts.exists || fs.existsSync;
   const all = catalog(home);
-  return Object.keys(all).map(function (k) { return all[k]; }).filter(function (b) { return exists(b.cookies); });
+  return Object.keys(all)
+    .map(function (k) {
+      return all[k];
+    })
+    .filter(function (b) {
+      return exists(b.cookies);
+    });
 }
 
 // The browser's cookie-encryption key from the login Keychain (macOS).
@@ -59,30 +93,51 @@ function readClaudeCookies(b, opts) {
   const key = opts.key || safeKey(b, runner);
   if (!key) return null;
   const tmp = path.join(os.tmpdir(), 'keyflip-bck-' + process.pid + '-' + b.id + '.db');
-  try { fs.copyFileSync(b.cookies, tmp); } catch (e) { return null; }
   try {
-    const r = runner('sqlite3', ['-separator', '\x01', 'file:' + tmp + '?mode=ro',
-      "SELECT name,quote(encrypted_value) FROM cookies WHERE host_key LIKE '%claude.ai';"]);
+    fs.copyFileSync(b.cookies, tmp);
+  } catch (e) {
+    return null;
+  }
+  try {
+    const r = runner('sqlite3', [
+      '-separator',
+      '\x01',
+      'file:' + tmp + '?mode=ro',
+      "SELECT name,quote(encrypted_value) FROM cookies WHERE host_key LIKE '%claude.ai';",
+    ]);
     if (!r || r.code !== 0) return null;
     return parseCookieRows(r.stdout, key);
-  } finally { try { fs.rmSync(tmp, { force: true }); } catch (e) { /* ignore */ } }
+  } finally {
+    try {
+      fs.rmSync(tmp, { force: true });
+    } catch (e) {
+      /* ignore */
+    }
+  }
 }
 
 // Parse the sqlite `name\x01X'hex'` rows and decrypt each. Split out for testing.
 function parseCookieRows(stdout, key) {
   const pairs = [];
   let org = null;
-  String(stdout || '').trim().split('\n').forEach(function (line) {
-    const i = line.indexOf('\x01');
-    if (i === -1) return;
-    const name = line.slice(0, i);
-    const hex = line.slice(i + 1).replace(/^X'|'$/g, '');
-    let val = null;
-    try { val = decryptCookie(Buffer.from(hex, 'hex'), key); } catch (e) { val = null; }
-    if (val == null) return;
-    pairs.push(name + '=' + val);
-    if (name === 'lastActiveOrg') org = val;
-  });
+  String(stdout || '')
+    .trim()
+    .split('\n')
+    .forEach(function (line) {
+      const i = line.indexOf('\x01');
+      if (i === -1) return;
+      const name = line.slice(0, i);
+      const hex = line.slice(i + 1).replace(/^X'|'$/g, '');
+      let val = null;
+      try {
+        val = decryptCookie(Buffer.from(hex, 'hex'), key);
+      } catch (e) {
+        val = null;
+      }
+      if (val == null) return;
+      pairs.push(name + '=' + val);
+      if (name === 'lastActiveOrg') org = val;
+    });
   if (!pairs.length) return null;
   return { cookie: pairs.join('; '), org: org };
 }
@@ -95,14 +150,28 @@ function snapshotClaudeCookies(b, opts) {
   opts = opts || {};
   const runner = opts.run || run;
   const tmp = path.join(os.tmpdir(), 'keyflip-snap-' + process.pid + '-' + b.id + '.db');
-  try { fs.copyFileSync(b.cookies, tmp); } catch (e) { return null; }
   try {
-    const r = runner('sqlite3', ['-cmd', '.mode insert cookies', 'file:' + tmp + '?mode=ro',
-      "SELECT * FROM cookies WHERE host_key LIKE '%claude.ai';"]);
+    fs.copyFileSync(b.cookies, tmp);
+  } catch (e) {
+    return null;
+  }
+  try {
+    const r = runner('sqlite3', [
+      '-cmd',
+      '.mode insert cookies',
+      'file:' + tmp + '?mode=ro',
+      "SELECT * FROM cookies WHERE host_key LIKE '%claude.ai';",
+    ]);
     if (!r || r.code !== 0) return null;
     const sql = String(r.stdout || '').trim();
     return sql || null;
-  } finally { try { fs.rmSync(tmp, { force: true }); } catch (e) { /* ignore */ } }
+  } finally {
+    try {
+      fs.rmSync(tmp, { force: true });
+    } catch (e) {
+      /* ignore */
+    }
+  }
 }
 
 // Restore a saved claude.ai session (from snapshotClaudeCookies) into this browser:
@@ -114,7 +183,12 @@ function restoreClaudeCookies(b, sql, opts) {
   if (!sql) return { ok: false, reason: 'no-snapshot' };
   if (!opts.force && isRunning(b, runner)) return { ok: false, reason: 'browser-running' };
   let backup;
-  try { backup = b.cookies + '.keyflip-bak'; fs.copyFileSync(b.cookies, backup); } catch (e) { return { ok: false, reason: 'no-cookies-db' }; }
+  try {
+    backup = b.cookies + '.keyflip-bak';
+    fs.copyFileSync(b.cookies, backup);
+  } catch (e) {
+    return { ok: false, reason: 'no-cookies-db' };
+  }
   const script = "DELETE FROM cookies WHERE host_key LIKE '%claude.ai';\n" + sql + '\n';
   const r = runner('sqlite3', [b.cookies], script);
   if (!r || r.code !== 0) return { ok: false, reason: 'sqlite-failed', detail: r && r.stderr, backup: backup };
@@ -133,7 +207,9 @@ function clearClaudeCookies(b, opts) {
   try {
     backup = b.cookies + '.keyflip-bak';
     fs.copyFileSync(b.cookies, backup);
-  } catch (e) { return { ok: false, reason: 'no-cookies-db' }; }
+  } catch (e) {
+    return { ok: false, reason: 'no-cookies-db' };
+  }
   const r = runner('sqlite3', [b.cookies, "DELETE FROM cookies WHERE host_key LIKE '%claude.ai';"]);
   if (!r || r.code !== 0) return { ok: false, reason: 'sqlite-failed', detail: r && r.stderr, backup: backup };
   return { ok: true, backup: backup };
@@ -151,12 +227,36 @@ function saveSession(configDir, name, b, opts) {
   try {
     fs.mkdirSync(path.dirname(p), { recursive: true });
     fs.writeFileSync(p, sql, { mode: 0o600 });
-    try { fs.chmodSync(p, 0o600); } catch (e) { /* non-POSIX FS */ } // tighten a pre-existing loose file
+    try {
+      fs.chmodSync(p, 0o600);
+    } catch (e) {
+      /* non-POSIX FS */
+    } // tighten a pre-existing loose file
     return true;
-  } catch (e) { return false; }
+  } catch (e) {
+    return false;
+  }
 }
 function loadSession(configDir, name, b) {
-  try { return fs.readFileSync(sessionStorePath(configDir, name, b.id), 'utf8'); } catch (e) { return null; }
+  try {
+    return fs.readFileSync(sessionStorePath(configDir, name, b.id), 'utf8');
+  } catch (e) {
+    return null;
+  }
 }
 
-export { catalog, installed, sessionStorePath, saveSession, loadSession, safeKey, isRunning, quit, readClaudeCookies, parseCookieRows, clearClaudeCookies, snapshotClaudeCookies, restoreClaudeCookies };
+export {
+  catalog,
+  installed,
+  sessionStorePath,
+  saveSession,
+  loadSession,
+  safeKey,
+  isRunning,
+  quit,
+  readClaudeCookies,
+  parseCookieRows,
+  clearClaudeCookies,
+  snapshotClaudeCookies,
+  restoreClaudeCookies,
+};

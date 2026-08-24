@@ -9,35 +9,64 @@ import path from 'path';
 import cp from 'child_process';
 import * as shellhook from '../src/shellhook.js';
 
-function tmp() { return fs.mkdtempSync(path.join(os.tmpdir(), 'kf-shellhook-')); }
+function tmp() {
+  return fs.mkdtempSync(path.join(os.tmpdir(), 'kf-shellhook-'));
+}
 function have(bin, args) {
-  try { cp.execFileSync(bin, args || ['--version'], { stdio: 'ignore' }); return true; }
-  catch (e) { return false; }
+  try {
+    cp.execFileSync(bin, args || ['--version'], { stdio: 'ignore' });
+    return true;
+  } catch (e) {
+    return false;
+  }
 }
 
 // ---- pure string generation (always runs) ----------------------------------
 
 test('supported() lists the three shells and returns a fresh copy', function () {
   assert.deepStrictEqual(shellhook.supported(), ['bash', 'zsh', 'fish']);
-  const a = shellhook.supported(); a.push('nu');
-  assert.deepStrictEqual(shellhook.supported(), ['bash', 'zsh', 'fish'], 'mutating the result does not leak into the module');
+  const a = shellhook.supported();
+  a.push('nu');
+  assert.deepStrictEqual(
+    shellhook.supported(),
+    ['bash', 'zsh', 'fish'],
+    'mutating the result does not leak into the module',
+  );
 });
 
 test('isSupported reflects the list', function () {
-  ['bash', 'zsh', 'fish'].forEach(function (s) { assert.ok(shellhook.isSupported(s)); });
-  ['sh', 'nu', 'powershell', '', null, undefined].forEach(function (s) { assert.ok(!shellhook.isSupported(s)); });
+  ['bash', 'zsh', 'fish'].forEach(function (s) {
+    assert.ok(shellhook.isSupported(s));
+  });
+  ['sh', 'nu', 'powershell', '', null, undefined].forEach(function (s) {
+    assert.ok(!shellhook.isSupported(s));
+  });
 });
 
 test('hook() throws on an unsupported shell', function () {
-  assert.throws(function () { shellhook.hook('sh'); }, /unsupported shell/);
-  assert.throws(function () { shellhook.hook('powershell'); }, /unsupported shell/);
-  assert.throws(function () { shellhook.hook(''); }, /unsupported shell/);
+  assert.throws(function () {
+    shellhook.hook('sh');
+  }, /unsupported shell/);
+  assert.throws(function () {
+    shellhook.hook('powershell');
+  }, /unsupported shell/);
+  assert.throws(function () {
+    shellhook.hook('');
+  }, /unsupported shell/);
 });
 
 test('hook() throws on an unsafe bin name (never interpolate metacharacters into shell source)', function () {
-  ['ke yflip', 'keyflip; rm -rf /', '../keyflip', '/usr/bin/keyflip', '$(evil)', 'key`x`', '-rf', '.hidden'].forEach(function (bad) {
-    assert.throws(function () { shellhook.hook('bash', { bin: bad }); }, /unsafe bin/, 'rejects bin: ' + bad);
-  });
+  ['ke yflip', 'keyflip; rm -rf /', '../keyflip', '/usr/bin/keyflip', '$(evil)', 'key`x`', '-rf', '.hidden'].forEach(
+    function (bad) {
+      assert.throws(
+        function () {
+          shellhook.hook('bash', { bin: bad });
+        },
+        /unsafe bin/,
+        'rejects bin: ' + bad,
+      );
+    },
+  );
 });
 
 test('every shell snippet: validates output, never evals it, quotes the value, exports the marker', function () {
@@ -71,7 +100,10 @@ test('fish snippet binds to PWD changes and evaluates the current dir once', fun
   const f = shellhook.hook('fish');
   assert.ok(f.indexOf('--on-variable PWD') !== -1, 'fish binds to PWD');
   assert.ok(f.indexOf('string match -rq') !== -1, 'fish validates with a regex');
-  assert.ok(/\n__keyflip_hook /.test(f) || f.trimEnd().endsWith('__keyflip_hook') || /__keyflip_hook #/.test(f), 'fish calls the hook once at source time');
+  assert.ok(
+    /\n__keyflip_hook /.test(f) || f.trimEnd().endsWith('__keyflip_hook') || /__keyflip_hook #/.test(f),
+    'fish calls the hook once at source time',
+  );
 });
 
 test('install header carries the right instruction per shell', function () {
@@ -136,11 +168,11 @@ function stage() {
     return d;
   };
   const dirs = {
-    A: mk('A', 'work'),          // valid pin
-    B: mk('B', null),            // unlinked
-    C: mk('C', 'bad name!'),     // invalid: space + !
-    D: mk('D', ';touch PWNED'),  // command-injection attempt
-    E: mk('E', '-rf'),           // leading-dash / option-injection attempt
+    A: mk('A', 'work'), // valid pin
+    B: mk('B', null), // unlinked
+    C: mk('C', 'bad name!'), // invalid: space + !
+    D: mk('D', ';touch PWNED'), // command-injection attempt
+    E: mk('E', '-rf'), // leading-dash / option-injection attempt
   };
   return { base: base, binDir: binDir, dirs: dirs, log: path.join(base, 'switch.log') };
 }
@@ -195,7 +227,10 @@ function assertBehavior(r, shellName) {
   assert.deepStrictEqual(r.log, ['work', 'work'], shellName + ': only the valid pin was ever switched to');
   // the injection never executed
   assert.ok(!fs.existsSync(path.join(r.dirs.D, 'PWNED')), shellName + ': no command injection');
-  assert.ok(r.log.indexOf('-rf') === -1 && r.log.indexOf(';touch PWNED') === -1, shellName + ': no hostile arg reached the CLI');
+  assert.ok(
+    r.log.indexOf('-rf') === -1 && r.log.indexOf(';touch PWNED') === -1,
+    shellName + ': no hostile arg reached the CLI',
+  );
 }
 
 test('bash: emitted hook auto-activates pins and rejects hostile output', { skip: !have('bash') }, function () {

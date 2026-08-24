@@ -35,10 +35,15 @@ test('deepMerge merges nested objects and null deletes a key', function () {
 // ---- #1 provider switching ----
 test('provider add stores metadata on disk and the key in the credential store (not the file)', function () {
   const ctx = ctxWithSettings();
-  provider.add(ctx, 'relay', { baseUrl: 'https://relay.example/v1', key: 'sk-secret', authScheme: 'bearer', models: { default: 'claude-x' } });
+  provider.add(ctx, 'relay', {
+    baseUrl: 'https://relay.example/v1',
+    key: 'sk-secret',
+    authScheme: 'bearer',
+    models: { default: 'claude-x' },
+  });
   const meta = JSON.parse(fs.readFileSync(provider.metaPath(ctx, 'relay'), 'utf8'));
   assert.strictEqual(meta.baseUrl, 'https://relay.example/v1');
-  assert.doesNotMatch(JSON.stringify(meta), /sk-secret/);            // key NOT in the file
+  assert.doesNotMatch(JSON.stringify(meta), /sk-secret/); // key NOT in the file
   assert.strictEqual(ctx.store.getProfile('provider__relay'), 'sk-secret'); // key IS in the store
 });
 
@@ -48,25 +53,30 @@ test('use injects the managed env block; off removes exactly those keys, keeping
   fs.mkdirSync(path.dirname(ctx.claudeSettingsPath), { recursive: true });
   fs.writeFileSync(ctx.claudeSettingsPath, JSON.stringify({ theme: 'dark', env: { MY_VAR: '1' }, hooks: { x: 1 } }));
 
-  provider.add(ctx, 'relay', { baseUrl: 'https://relay.example/v1', key: 'sk-1', authScheme: 'bearer', models: { haiku: 'h-model' } });
+  provider.add(ctx, 'relay', {
+    baseUrl: 'https://relay.example/v1',
+    key: 'sk-1',
+    authScheme: 'bearer',
+    models: { haiku: 'h-model' },
+  });
   provider.use(ctx, 'relay');
   let cfg = JSON.parse(fs.readFileSync(ctx.claudeSettingsPath, 'utf8'));
   assert.strictEqual(cfg.env.ANTHROPIC_BASE_URL, 'https://relay.example/v1');
   assert.strictEqual(cfg.env.ANTHROPIC_AUTH_TOKEN, 'sk-1');
   assert.strictEqual(cfg.env.ANTHROPIC_DEFAULT_HAIKU_MODEL, 'h-model');
-  assert.strictEqual(cfg.env.MY_VAR, '1');       // user env preserved
-  assert.strictEqual(cfg.theme, 'dark');         // user settings preserved
+  assert.strictEqual(cfg.env.MY_VAR, '1'); // user env preserved
+  assert.strictEqual(cfg.theme, 'dark'); // user settings preserved
   assert.deepStrictEqual(cfg.hooks, { x: 1 });
   assert.strictEqual(provider.readActive(ctx).name, 'relay');
 
   provider.useOfficial(ctx);
   cfg = JSON.parse(fs.readFileSync(ctx.claudeSettingsPath, 'utf8'));
   assert.strictEqual(cfg.env && cfg.env.ANTHROPIC_BASE_URL, undefined); // managed keys gone
-  assert.strictEqual(cfg.env.MY_VAR, '1');       // user env still there
+  assert.strictEqual(cfg.env.MY_VAR, '1'); // user env still there
   assert.strictEqual(provider.readActive(ctx), null);
 });
 
-test('switching between two providers does not leak the first one\'s keys', function () {
+test("switching between two providers does not leak the first one's keys", function () {
   const ctx = ctxWithSettings();
   provider.add(ctx, 'a', { baseUrl: 'https://a/v1', key: 'ka', authScheme: 'api-key' });
   provider.add(ctx, 'b', { baseUrl: 'https://b/v1', key: 'kb', authScheme: 'bearer' });
@@ -75,15 +85,20 @@ test('switching between two providers does not leak the first one\'s keys', func
   const cfg = JSON.parse(fs.readFileSync(ctx.claudeSettingsPath, 'utf8'));
   assert.strictEqual(cfg.env.ANTHROPIC_BASE_URL, 'https://b/v1');
   assert.strictEqual(cfg.env.ANTHROPIC_AUTH_TOKEN, 'kb');
-  assert.strictEqual(cfg.env.ANTHROPIC_API_KEY, undefined);   // a's api-key scheme not left behind
+  assert.strictEqual(cfg.env.ANTHROPIC_API_KEY, undefined); // a's api-key scheme not left behind
 });
 
 // ---- #14 speedtest ----
 test('speedtest picks the fastest reachable endpoint and updates base_url', async function () {
   const ctx = ctxWithSettings();
-  provider.add(ctx, 'multi', { baseUrl: 'https://slow/v1', endpointCandidates: ['https://slow/v1', 'https://fast/v1'] });
+  provider.add(ctx, 'multi', {
+    baseUrl: 'https://slow/v1',
+    endpointCandidates: ['https://slow/v1', 'https://fast/v1'],
+  });
   let t = 0;
-  const clock = function () { return t; };
+  const clock = function () {
+    return t;
+  };
   const fetchMock = async function (url) {
     // fast responds after 100ms, slow after 900ms
     t += url.indexOf('fast') !== -1 ? 100 : 900;
@@ -96,10 +111,18 @@ test('speedtest picks the fastest reachable endpoint and updates base_url', asyn
 
 test('speedtest noPersist ranks without mutating base_url (read-only MCP diagnostic)', async function () {
   const ctx = ctxWithSettings();
-  provider.add(ctx, 'multi', { baseUrl: 'https://slow/v1', endpointCandidates: ['https://slow/v1', 'https://fast/v1'] });
+  provider.add(ctx, 'multi', {
+    baseUrl: 'https://slow/v1',
+    endpointCandidates: ['https://slow/v1', 'https://fast/v1'],
+  });
   let t = 0;
-  const clock = function () { return t; };
-  const fetchMock = async function (url) { t += url.indexOf('fast') !== -1 ? 100 : 900; return { ok: true, status: 200 }; };
+  const clock = function () {
+    return t;
+  };
+  const fetchMock = async function (url) {
+    t += url.indexOf('fast') !== -1 ? 100 : 900;
+    return { ok: true, status: 200 };
+  };
   const r = await provider.speedtest(ctx, 'multi', { fetch: fetchMock, clock: clock, noPersist: true });
   assert.strictEqual(r.fastest, 'https://fast/v1', 'still reports the fastest');
   assert.strictEqual(r.persisted, false);
@@ -115,8 +138,15 @@ test('CLI: provider add (key via stdin) -> use -> status -> off', function () {
   fs.writeFileSync(path.join(home, '.claude.json'), JSON.stringify({ oauthAccount: { emailAddress: 'a@x.com' } }));
   function run(args, input) {
     return _child_process.spawnSync(process.execPath, [BIN].concat(args), {
-      encoding: 'utf8', input: input,
-      env: Object.assign({}, process.env, { HOME: home, USERPROFILE: home, XDG_CONFIG_HOME: path.join(home, '.config'), CCSWITCH_TEST_CLAUDE: 'stopped', KEYFLIP_TEST_CLAUDE: 'stopped' }),
+      encoding: 'utf8',
+      input: input,
+      env: Object.assign({}, process.env, {
+        HOME: home,
+        USERPROFILE: home,
+        XDG_CONFIG_HOME: path.join(home, '.config'),
+        CCSWITCH_TEST_CLAUDE: 'stopped',
+        KEYFLIP_TEST_CLAUDE: 'stopped',
+      }),
     });
   }
   let r = run(['provider', 'add', 'relay', '--base-url', 'https://relay.example/v1', '--key-file', '-'], 'sk-piped\n');

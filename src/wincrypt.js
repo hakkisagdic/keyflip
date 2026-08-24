@@ -11,7 +11,15 @@ import * as _exec from './exec.js';
 
 // Decrypt a Chromium/Electron "v10"/"v11" AES-256-GCM value with the 32-byte master key.
 function decryptValue(input, key) {
-  const buf = Buffer.isBuffer(input) ? input : (function () { try { return Buffer.from(String(input), 'base64'); } catch (e) { return Buffer.alloc(0); } })();
+  const buf = Buffer.isBuffer(input)
+    ? input
+    : (function () {
+        try {
+          return Buffer.from(String(input), 'base64');
+        } catch (e) {
+          return Buffer.alloc(0);
+        }
+      })();
   const prefix = buf.slice(0, 3).toString('latin1');
   if (prefix !== 'v10' && prefix !== 'v11') return null;
   if (buf.length < 3 + 12 + 16) return null;
@@ -22,7 +30,9 @@ function decryptValue(input, key) {
     const d = crypto.createDecipheriv('aes-256-gcm', key, nonce);
     d.setAuthTag(tag);
     return Buffer.concat([d.update(ct), d.final()]).toString('utf8');
-  } catch (e) { return null; }
+  } catch (e) {
+    return null;
+  }
 }
 
 // DPAPI CryptUnprotectData (CurrentUser) via PowerShell. Returns the decrypted Buffer or null.
@@ -33,24 +43,46 @@ function dpapiUnprotect(blob, opts) {
   if (opts.unprotect) return opts.unprotect(bytes); // test hook (no PowerShell)
   const run = opts.run || _exec.run;
   const b64 = bytes.toString('base64');
-  const ps = "$ErrorActionPreference='Stop';Add-Type -AssemblyName System.Security;" +
-    "$b=[Convert]::FromBase64String('" + b64 + "');" +
+  const ps =
+    "$ErrorActionPreference='Stop';Add-Type -AssemblyName System.Security;" +
+    "$b=[Convert]::FromBase64String('" +
+    b64 +
+    "');" +
     "$d=[System.Security.Cryptography.ProtectedData]::Unprotect($b,$null,'CurrentUser');" +
-    "[Convert]::ToBase64String($d)";
-  let r; try { r = run('powershell', ['-NoProfile', '-NonInteractive', '-Command', ps]); } catch (e) { return null; }
+    '[Convert]::ToBase64String($d)';
+  let r;
+  try {
+    r = run('powershell', ['-NoProfile', '-NonInteractive', '-Command', ps]);
+  } catch (e) {
+    return null;
+  }
   if (!r || r.code !== 0 || !String(r.stdout || '').trim()) return null;
-  try { return Buffer.from(String(r.stdout).trim(), 'base64'); } catch (e) { return null; }
+  try {
+    return Buffer.from(String(r.stdout).trim(), 'base64');
+  } catch (e) {
+    return null;
+  }
 }
 
 // Extract the AES-256 master key from a Chromium/Electron "Local State" JSON string.
 function masterKey(localStateText, opts) {
-  let ls; try { ls = JSON.parse(localStateText); } catch (e) { return null; }
+  let ls;
+  try {
+    ls = JSON.parse(localStateText);
+  } catch (e) {
+    return null;
+  }
   const enc = ls && ls.os_crypt && ls.os_crypt.encrypted_key;
   if (!enc) return null;
-  let raw; try { raw = Buffer.from(String(enc), 'base64'); } catch (e) { return null; }
+  let raw;
+  try {
+    raw = Buffer.from(String(enc), 'base64');
+  } catch (e) {
+    return null;
+  }
   if (raw.slice(0, 5).toString('latin1') !== 'DPAPI') return null;
   const key = dpapiUnprotect(raw.slice(5), opts);
-  return (Buffer.isBuffer(key) && key.length === 32) ? key : null; // a valid 32-byte key, or null
+  return Buffer.isBuffer(key) && key.length === 32 ? key : null; // a valid 32-byte key, or null
 }
 
 export { decryptValue, dpapiUnprotect, masterKey };

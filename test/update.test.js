@@ -5,7 +5,9 @@ import path from 'path';
 import * as update from '../src/update.js';
 import { tmpdir } from './helpers.js';
 
-function ctxAt(dir) { return { configDir: dir }; }
+function ctxAt(dir) {
+  return { configDir: dir };
+}
 const NOW = 1800000000000;
 
 test('cmpVersions orders semver-ish versions', function () {
@@ -17,7 +19,15 @@ test('cmpVersions orders semver-ish versions', function () {
 test('latestVersion fetches once and then serves the 24h cache', async function () {
   const dir = tmpdir();
   let calls = 0;
-  const f = async function () { calls++; return { ok: true, json: async function () { return { version: '9.9.9' }; } }; };
+  const f = async function () {
+    calls++;
+    return {
+      ok: true,
+      json: async function () {
+        return { version: '9.9.9' };
+      },
+    };
+  };
   assert.strictEqual(await update.latestVersion(ctxAt(dir), { fetch: f, nowMs: NOW }), '9.9.9');
   assert.strictEqual(await update.latestVersion(ctxAt(dir), { fetch: f, nowMs: NOW + 1000 }), '9.9.9');
   assert.strictEqual(calls, 1); // second hit came from cache
@@ -29,15 +39,28 @@ test('latestVersion fetches once and then serves the 24h cache', async function 
 test('maybeNotify prints only when newer, and never throws on network failure', async function () {
   const dir = tmpdir();
   let out = '';
-  const stderr = { write: function (s) { out += s; } };
-  const newer = async function () { return { ok: true, json: async function () { return { version: '99.0.0' }; } }; };
+  const stderr = {
+    write: function (s) {
+      out += s;
+    },
+  };
+  const newer = async function () {
+    return {
+      ok: true,
+      json: async function () {
+        return { version: '99.0.0' };
+      },
+    };
+  };
   const latest = await update.maybeNotify(ctxAt(dir), '1.0.0', { fetch: newer, nowMs: NOW, stderr: stderr });
   assert.strictEqual(latest, '99.0.0');
   assert.match(out, /99\.0\.0 is available/);
 
   const dir2 = tmpdir();
   out = '';
-  const boom = async function () { throw new Error('offline'); };
+  const boom = async function () {
+    throw new Error('offline');
+  };
   const r = await update.maybeNotify(ctxAt(dir2), '1.0.0', { fetch: boom, nowMs: NOW, stderr: stderr });
   assert.strictEqual(r, null);
   assert.strictEqual(out, '');

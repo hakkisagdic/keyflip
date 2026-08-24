@@ -19,7 +19,9 @@ import * as migrate from '../src/migrate.js';
 import * as lantransfer from '../src/lantransfer.js';
 import { createContext } from '../src/context.js';
 
-function tmpdir(tag) { return fs.mkdtempSync(path.join(os.tmpdir(), 'kf-relay-' + (tag || '') + '-')); }
+function tmpdir(tag) {
+  return fs.mkdtempSync(path.join(os.tmpdir(), 'kf-relay-' + (tag || '') + '-'));
+}
 
 // A hermetic ctx whose only portable content is a memory file, so buildBundle
 // produces a real, non-empty bundle without touching a keychain or real home.
@@ -33,8 +35,15 @@ function hermeticCtx() {
     configDir: path.join(home, 'kfcfg'),
     claudeDir: claudeDir,
     appDataDir: null,
-    now: function () { return '2026-07-13T00:00:00.000Z'; },
-    store: { getProfile: function () { return null; }, setProfile: function () {} },
+    now: function () {
+      return '2026-07-13T00:00:00.000Z';
+    },
+    store: {
+      getProfile: function () {
+        return null;
+      },
+      setProfile: function () {},
+    },
   });
 }
 
@@ -50,9 +59,15 @@ test('genPairing mints <rendezvous>-<key>; parsePairing splits it back', functio
 });
 
 test('parsePairing requires both halves', function () {
-  assert.throws(function () { return relay.parsePairing('NODASHERE'); }, /rendezvous.*key|two parts/);
-  assert.throws(function () { return relay.parsePairing('ABCD1234-'); }, /incomplete|rendezvous/);
-  assert.throws(function () { return relay.parsePairing('-KEYONLY'); }, /incomplete|rendezvous/);
+  assert.throws(function () {
+    return relay.parsePairing('NODASHERE');
+  }, /rendezvous.*key|two parts/);
+  assert.throws(function () {
+    return relay.parsePairing('ABCD1234-');
+  }, /incomplete|rendezvous/);
+  assert.throws(function () {
+    return relay.parsePairing('-KEYONLY');
+  }, /incomplete|rendezvous/);
 });
 
 test('slotFor(rendezvous) is deterministic, valid, and NEVER contains the key', function () {
@@ -62,7 +77,11 @@ test('slotFor(rendezvous) is deterministic, valid, and NEVER contains the key', 
   assert.strictEqual(s1, relay.slotFor(p.rendezvous), 'same handle => same slot');
   assert.match(s1, SLOT_RE);
   assert.ok(s1.startsWith('kf-xfer-') && s1.endsWith('.enc'));
-  assert.strictEqual(s1, 'kf-xfer-' + p.rendezvous + '.enc', 'slot is the raw public handle — no hashing of any secret');
+  assert.strictEqual(
+    s1,
+    'kf-xfer-' + p.rendezvous + '.enc',
+    'slot is the raw public handle — no hashing of any secret',
+  );
   // The load-bearing property: the ENCRYPTION KEY must not appear in the published slot.
   assert.strictEqual(s1.indexOf(p.key), -1, 'the key half must never appear in the slot');
   // Different rendezvous => different slot; normCode-insensitive on the handle.
@@ -90,10 +109,18 @@ test('dirBackend round-trips put/get/del and returns null for a missing slot', a
 test('dirBackend REJECTS a path-traversal slot', async function () {
   const dir = tmpdir('trav');
   const be = relay.dirBackend(dir);
-  await assert.rejects(function () { return be.get('..'); }, /escapes the relay dir|invalid relay slot/);
-  await assert.rejects(function () { return be.put('../evil', 'x'); }, /invalid relay slot/);
-  await assert.rejects(function () { return be.put('a/b', 'x'); }, /invalid relay slot/);
-  await assert.rejects(function () { return be.get(''); }, /invalid relay slot/);
+  await assert.rejects(function () {
+    return be.get('..');
+  }, /escapes the relay dir|invalid relay slot/);
+  await assert.rejects(function () {
+    return be.put('../evil', 'x');
+  }, /invalid relay slot/);
+  await assert.rejects(function () {
+    return be.put('a/b', 'x');
+  }, /invalid relay slot/);
+  await assert.rejects(function () {
+    return be.get('');
+  }, /invalid relay slot/);
 });
 
 // ---- push -> pull round-trip through a dir backend ----
@@ -118,7 +145,11 @@ test('push then pull round-trips a real bundle; the relay holds only ciphertext'
   const ok = await relay.pull(ctx, { relay: dir, code: p.code });
   assert.strictEqual(ok.found, true);
   assert.strictEqual(ok.bundle.format, migrate.FORMAT);
-  assert.ok(ok.bundle.memory.some(function (m) { return /portable memory/.test(m.content); }));
+  assert.ok(
+    ok.bundle.memory.some(function (m) {
+      return /portable memory/.test(m.content);
+    }),
+  );
 
   // A different rendezvous (never pushed) simply isn't found — the relay reveals nothing.
   const otherPair = relay.genPairing();
@@ -129,15 +160,23 @@ test('push then pull round-trips a real bundle; the relay holds only ciphertext'
   // generic message as corruption, never leaking that it was specifically a bad key.
   const wrongKey = p.rendezvous + '-' + lantransfer.genCode(12);
   await assert.rejects(
-    function () { return relay.pull(ctx, { relay: dir, code: wrongKey }); },
-    function (e) { return /wrong code or corrupt payload/.test(e.message); }
+    function () {
+      return relay.pull(ctx, { relay: dir, code: wrongKey });
+    },
+    function (e) {
+      return /wrong code or corrupt payload/.test(e.message);
+    },
   );
   // A corrupt/foreign ciphertext at the slot fails the same way.
   const be = relay.dirBackend(dir);
   await be.put(relay.slotFor(p.rendezvous), sync.encrypt('not-json-plaintext', p.key));
   await assert.rejects(
-    function () { return relay.pull(ctx, { relay: dir, code: p.code }); },
-    function (e) { return /wrong code or corrupt payload/.test(e.message); }
+    function () {
+      return relay.pull(ctx, { relay: dir, code: p.code });
+    },
+    function (e) {
+      return /wrong code or corrupt payload/.test(e.message);
+    },
   );
   // restore the real blob for the cleanup assertions below.
   await relay.push(ctx, { relay: dir, code: p.code });
@@ -154,14 +193,23 @@ test('push throws on an empty bundle', async function () {
   const dir = tmpdir('empty');
   const home = tmpdir('emptyhome');
   const ctx = createContext({
-    home: home, configDir: path.join(home, 'kfcfg'), claudeDir: path.join(home, '.claude'),
-    appDataDir: null, now: function () { return 'x'; },
-    store: { getProfile: function () { return null; }, setProfile: function () {} },
+    home: home,
+    configDir: path.join(home, 'kfcfg'),
+    claudeDir: path.join(home, '.claude'),
+    appDataDir: null,
+    now: function () {
+      return 'x';
+    },
+    store: {
+      getProfile: function () {
+        return null;
+      },
+      setProfile: function () {},
+    },
   });
-  await assert.rejects(
-    function () { return relay.push(ctx, { relay: dir, code: relay.genPairing().code }); },
-    /nothing to transfer/
-  );
+  await assert.rejects(function () {
+    return relay.push(ctx, { relay: dir, code: relay.genPairing().code });
+  }, /nothing to transfer/);
 });
 
 // ---- davBackend: addresses the slot as ONE path segment via an injected fetch ----
@@ -176,13 +224,45 @@ test('davBackend PUT/GET/DELETE hit joinUrl(base, slot) with the slot as one seg
   let stored = null;
   const fakeFetch = async function (url, init) {
     calls.push({ url: url, method: init.method, body: init.body, auth: init.headers && init.headers.authorization });
-    if (init.method === 'PUT') { stored = init.body; return { status: 201, async text() { return ''; } }; }
-    if (init.method === 'GET') {
-      if (stored == null) return { status: 404, async text() { return ''; } };
-      return { status: 200, async text() { return stored; } };
+    if (init.method === 'PUT') {
+      stored = init.body;
+      return {
+        status: 201,
+        async text() {
+          return '';
+        },
+      };
     }
-    if (init.method === 'DELETE') { stored = null; return { status: 204, async text() { return ''; } }; }
-    return { status: 500, async text() { return ''; } };
+    if (init.method === 'GET') {
+      if (stored == null)
+        return {
+          status: 404,
+          async text() {
+            return '';
+          },
+        };
+      return {
+        status: 200,
+        async text() {
+          return stored;
+        },
+      };
+    }
+    if (init.method === 'DELETE') {
+      stored = null;
+      return {
+        status: 204,
+        async text() {
+          return '';
+        },
+      };
+    }
+    return {
+      status: 500,
+      async text() {
+        return '';
+      },
+    };
   };
 
   const be = relay.davBackend(base, 'alice', 's3cr3t', fakeFetch);
@@ -200,7 +280,12 @@ test('davBackend PUT/GET/DELETE hit joinUrl(base, slot) with the slot as one seg
     assert.ok(c.url.indexOf('..') === -1);
     assert.match(c.auth || '', /^Basic /, 'Basic auth carried from user/pass');
   });
-  assert.deepStrictEqual(calls.map(function (c) { return c.method; }), ['GET', 'PUT', 'GET', 'DELETE', 'GET']);
+  assert.deepStrictEqual(
+    calls.map(function (c) {
+      return c.method;
+    }),
+    ['GET', 'PUT', 'GET', 'DELETE', 'GET'],
+  );
 });
 
 test('resolveBackend picks dav for http(s) and dir otherwise', function () {
@@ -216,20 +301,47 @@ test('resolveBackend picks dav for http(s) and dir otherwise', function () {
 
 test('awaitPickup resolves pickedUp=true when the blob is deleted (get() -> null)', async function () {
   let n = 0;
-  const backend = { async get() { n++; return n >= 3 ? null : 'still-there'; } };
+  const backend = {
+    async get() {
+      n++;
+      return n >= 3 ? null : 'still-there';
+    },
+  };
   let t = 0;
-  const now = function () { return t; };
-  const sleep = async function (ms) { t += ms; };
-  const r = await relay.awaitPickup(backend, 'ABCD1234-MNBVCXZLKJHG', { pollMs: 1000, ttlMs: 60000, now: now, sleep: sleep });
+  const now = function () {
+    return t;
+  };
+  const sleep = async function (ms) {
+    t += ms;
+  };
+  const r = await relay.awaitPickup(backend, 'ABCD1234-MNBVCXZLKJHG', {
+    pollMs: 1000,
+    ttlMs: 60000,
+    now: now,
+    sleep: sleep,
+  });
   assert.deepStrictEqual(r, { pickedUp: true });
   assert.strictEqual(n, 3, 'stopped as soon as the blob vanished');
 });
 
 test('awaitPickup resolves pickedUp=false at TTL when the blob never leaves', async function () {
-  const backend = { async get() { return 'never-picked-up'; } };
+  const backend = {
+    async get() {
+      return 'never-picked-up';
+    },
+  };
   let t = 0;
-  const now = function () { return t; };
-  const sleep = async function (ms) { t += ms; };
-  const r = await relay.awaitPickup(backend, 'ABCD1234-MNBVCXZLKJHG', { pollMs: 1000, ttlMs: 3000, now: now, sleep: sleep });
+  const now = function () {
+    return t;
+  };
+  const sleep = async function (ms) {
+    t += ms;
+  };
+  const r = await relay.awaitPickup(backend, 'ABCD1234-MNBVCXZLKJHG', {
+    pollMs: 1000,
+    ttlMs: 3000,
+    now: now,
+    sleep: sleep,
+  });
   assert.deepStrictEqual(r, { pickedUp: false });
 });

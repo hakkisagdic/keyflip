@@ -54,8 +54,12 @@ function hmacHex(secret, data) {
 // lengths) is only ever called on equal-length buffers.
 function safeEqualHex(aHex, bHex) {
   let a, b;
-  try { a = Buffer.from(String(aHex), 'hex'); b = Buffer.from(String(bHex), 'hex'); }
-  catch (e) { return false; }
+  try {
+    a = Buffer.from(String(aHex), 'hex');
+    b = Buffer.from(String(bHex), 'hex');
+  } catch (e) {
+    return false;
+  }
   // A non-hex header decodes to a short/empty buffer; length guard rejects it.
   if (a.length === 0 || a.length !== b.length) return false;
   return crypto.timingSafeEqual(a, b);
@@ -63,7 +67,9 @@ function safeEqualHex(aHex, bHex) {
 
 // Coerce a payload field to the exact string that went into the signature. iyzico
 // sends numbers as JSON numbers sometimes; String() reproduces the canonical form.
-function field(v) { return v == null ? '' : String(v); }
+function field(v) {
+  return v == null ? '' : String(v);
+}
 
 // Build the concatenated data string iyzico signed, choosing the HPP variant when
 // a `token` is present (hosted checkout) and the Direct variant otherwise.
@@ -74,19 +80,26 @@ function signedData(secret, body, opts) {
   const parts = [];
   if (Object.prototype.hasOwnProperty.call(body, 'token') && body.token != null && body.token !== '') {
     // HPP / hosted-checkout notification.
-    parts.push(field(body.iyziEventType), field(body.iyziPaymentId), field(body.token),
-      field(body.paymentConversationId), field(body.status));
+    parts.push(
+      field(body.iyziEventType),
+      field(body.iyziPaymentId),
+      field(body.token),
+      field(body.paymentConversationId),
+      field(body.status),
+    );
   } else {
     // Direct API (non-3DS / 3DS) notification.
-    parts.push(field(body.iyziEventType), field(body.paymentId),
-      field(body.paymentConversationId), field(body.status));
+    parts.push(field(body.iyziEventType), field(body.paymentId), field(body.paymentConversationId), field(body.status));
   }
   return prepend + parts.join(sep);
 }
 
 function parseBody(rawBody) {
-  try { return JSON.parse(Buffer.isBuffer(rawBody) ? rawBody.toString('utf8') : String(rawBody || '')); }
-  catch (e) { return null; }
+  try {
+    return JSON.parse(Buffer.isBuffer(rawBody) ? rawBody.toString('utf8') : String(rawBody || ''));
+  } catch (e) {
+    return null;
+  }
 }
 
 // Map an iyziEventType (+status) to our coarse business event kind.
@@ -94,8 +107,8 @@ function parseBody(rawBody) {
 // in) and cancel/refund families (money out). We key off substrings so new but
 // similarly-named events still classify sensibly.
 function eventKind(body) {
-  const t = String(body && body.iyziEventType || '').toUpperCase();
-  const status = String(body && body.status || '').toUpperCase();
+  const t = String((body && body.iyziEventType) || '').toUpperCase();
+  const status = String((body && body.status) || '').toUpperCase();
   if (/REFUND|CANCEL|CHARGEBACK/.test(t)) return 'refund';
   // A payment-family event only counts as a purchase when it actually succeeded.
   if (/PAYMENT|THREE_DS|BALANCE|CHECKOUT|SETTLE/.test(t)) {
@@ -130,12 +143,14 @@ module.exports = {
     if (!body || typeof body !== 'object' || Array.isArray(body)) return null;
     return {
       type: eventKind(body),
-      email: body.email != null ? String(body.email)
-        : (body.buyerEmail != null ? String(body.buyerEmail) : null),
-      product: body.product != null ? String(body.product)
-        : (body.productName != null ? String(body.productName) : null),
-      orderId: body.paymentConversationId != null ? String(body.paymentConversationId)
-        : (body.conversationId != null ? String(body.conversationId) : null),
+      email: body.email != null ? String(body.email) : body.buyerEmail != null ? String(body.buyerEmail) : null,
+      product: body.product != null ? String(body.product) : body.productName != null ? String(body.productName) : null,
+      orderId:
+        body.paymentConversationId != null
+          ? String(body.paymentConversationId)
+          : body.conversationId != null
+            ? String(body.conversationId)
+            : null,
       raw: body,
     };
   },

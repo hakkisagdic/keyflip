@@ -23,7 +23,9 @@ test('parse: extracts the conversation, skips tool-result turns + meta lines', f
 });
 
 test('parse: handles string content and array content; tolerates bad lines', function () {
-  const p = transcript.parse('not json\n{"type":"user","message":{"role":"user","content":"hi"}}\n\n{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"yo"}]}}');
+  const p = transcript.parse(
+    'not json\n{"type":"user","message":{"role":"user","content":"hi"}}\n\n{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"yo"}]}}',
+  );
   assert.strictEqual(p.counts.messages, 2);
   assert.strictEqual(p.messages[0].text, 'hi');
   assert.strictEqual(p.messages[1].text, 'yo');
@@ -45,7 +47,9 @@ test('toMarkdown: renders roles, dedupes tool names, includes counts', function 
 });
 
 test('toHtml: self-contained (no script/fetch), escapes content, preserves newlines', function () {
-  const evil = transcript.parse('{"type":"user","message":{"role":"user","content":"<script>alert(1)</script>\\nline2"}}');
+  const evil = transcript.parse(
+    '{"type":"user","message":{"role":"user","content":"<script>alert(1)</script>\\nline2"}}',
+  );
   const html = transcript.toHtml(evil, { id: 'x' });
   assert.ok(/^<!doctype html>/i.test(html));
   assert.strictEqual(html.indexOf('<script>alert(1)'), -1, 'user content is HTML-escaped (no injection)');
@@ -61,8 +65,14 @@ test('toHtml: user vs assistant get distinct bubble classes', function () {
 
 // SECURITY (review P0): a foreign JSONL sets `role` verbatim — it must not inject HTML.
 test('toHtml sanitizes+escapes an attacker-controlled role (no XSS)', function () {
-  const html = transcript.toHtml(transcript.parse('{"type":"user","message":{"role":"<img src=x onerror=alert(1)>","content":"hi"}}'), { id: 'x' });
+  const html = transcript.toHtml(
+    transcript.parse('{"type":"user","message":{"role":"<img src=x onerror=alert(1)>","content":"hi"}}'),
+    { id: 'x' },
+  );
   const whoDiv = html.match(/<div class="who">([\s\S]*?)<\/div>/)[1].replace(/<span[\s\S]*/, '');
-  assert.ok(whoDiv.indexOf('<') === -1 && whoDiv.indexOf('>') === -1 && whoDiv.indexOf('=') === -1, 'no raw markup/attribute chars survive in the role label');
+  assert.ok(
+    whoDiv.indexOf('<') === -1 && whoDiv.indexOf('>') === -1 && whoDiv.indexOf('=') === -1,
+    'no raw markup/attribute chars survive in the role label',
+  );
   assert.strictEqual(html.indexOf('<img src=x'), -1);
 });

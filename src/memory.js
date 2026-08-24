@@ -6,13 +6,23 @@ import fs from 'fs';
 import path from 'path';
 import * as fsutil from './fsutil.js';
 
-function store(ctx) { return path.join(ctx.configDir, 'memory'); }
-function safeKey(k) { return String(k).replace(/[^A-Za-z0-9._-]/g, '_').slice(0, 120) || 'memory'; }
+function store(ctx) {
+  return path.join(ctx.configDir, 'memory');
+}
+function safeKey(k) {
+  return (
+    String(k)
+      .replace(/[^A-Za-z0-9._-]/g, '_')
+      .slice(0, 120) || 'memory'
+  );
+}
 
 function frontmatter(meta) {
   if (!meta) return '';
   const lines = ['---'];
-  Object.keys(meta).forEach(function (k) { lines.push(k + ': ' + String(meta[k]).replace(/[\r\n]+/g, ' ')); });
+  Object.keys(meta).forEach(function (k) {
+    lines.push(k + ': ' + String(meta[k]).replace(/[\r\n]+/g, ' '));
+  });
   lines.push('---', '');
   return lines.join('\n');
 }
@@ -28,15 +38,56 @@ function save(ctx, key, content, meta) {
 
 function list(ctx) {
   const dir = store(ctx);
-  let files; try { files = fs.readdirSync(dir); } catch (e) { return []; }
-  return files.filter(function (f) { return f.slice(-3) === '.md'; }).map(function (f) {
-    let st; try { st = fs.statSync(path.join(dir, f)); } catch (e) { st = {}; }
-    return { key: f.slice(0, -3), file: path.join(dir, f), bytes: st.size || 0, mtime: st.mtime ? st.mtime.toISOString() : null };
-  }).sort(function (a, b) { return String(b.mtime || '').localeCompare(String(a.mtime || '')); });
+  let files;
+  try {
+    files = fs.readdirSync(dir);
+  } catch (e) {
+    return [];
+  }
+  return files
+    .filter(function (f) {
+      return f.slice(-3) === '.md';
+    })
+    .map(function (f) {
+      let st;
+      try {
+        st = fs.statSync(path.join(dir, f));
+      } catch (e) {
+        st = {};
+      }
+      return {
+        key: f.slice(0, -3),
+        file: path.join(dir, f),
+        bytes: st.size || 0,
+        mtime: st.mtime ? st.mtime.toISOString() : null,
+      };
+    })
+    .sort(function (a, b) {
+      return String(b.mtime || '').localeCompare(String(a.mtime || ''));
+    });
 }
 
-function read(ctx, key) { try { return fs.readFileSync(path.join(store(ctx), safeKey(key) + '.md'), 'utf8'); } catch (e) { return null; } }
-function has(ctx, key) { try { return fs.existsSync(path.join(store(ctx), safeKey(key) + '.md')); } catch (e) { return false; } }
-function remove(ctx, key) { try { fs.rmSync(path.join(store(ctx), safeKey(key) + '.md'), { force: true }); return true; } catch (e) { return false; } }
+function read(ctx, key) {
+  try {
+    return fs.readFileSync(path.join(store(ctx), safeKey(key) + '.md'), 'utf8');
+  } catch (e) {
+    return null;
+  }
+}
+function has(ctx, key) {
+  try {
+    return fs.existsSync(path.join(store(ctx), safeKey(key) + '.md'));
+  } catch (e) {
+    return false;
+  }
+}
+function remove(ctx, key) {
+  try {
+    fs.rmSync(path.join(store(ctx), safeKey(key) + '.md'), { force: true });
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
 
 export { store, safeKey, save, list, read, has, remove };

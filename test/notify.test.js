@@ -5,19 +5,25 @@ import assert from 'node:assert';
 import fs from 'fs';
 import path from 'path';
 import * as notify from '../src/notify.js';
-import { makeCtx } from './helpers.js';
+import { makeCtx, assertPrivateMode } from './helpers.js';
 
 // A fetch double that records every call and returns a canned response.
 function fetchRecorder(response) {
   const calls = [];
-  const fn = async function (url, init) { calls.push({ url: url, init: init }); return response || { ok: true, status: 200 }; };
+  const fn = async function (url, init) {
+    calls.push({ url: url, init: init });
+    return response || { ok: true, status: 200 };
+  };
   fn.calls = calls;
   return fn;
 }
 // An exec.run double (matches src/exec.run's { code, stdout, stderr, error } shape).
 function runRecorder(result) {
   const calls = [];
-  const fn = function (cmd, args, input, opts) { calls.push({ cmd: cmd, args: args, input: input, opts: opts }); return result || { code: 0, stdout: '', stderr: '', error: null }; };
+  const fn = function (cmd, args, input, opts) {
+    calls.push({ cmd: cmd, args: args, input: input, opts: opts });
+    return result || { code: 0, stdout: '', stderr: '', error: null };
+  };
   fn.calls = calls;
   return fn;
 }
@@ -41,8 +47,7 @@ test('setConfig merges patches without dropping other fields, and persists 0600'
   assert.strictEqual(cfg.desktop, true);
   // round-trips through disk
   assert.deepStrictEqual(notify.getConfig(ctx), cfg);
-  const mode = fs.statSync(notify.notifyPath(ctx)).mode & 0o777;
-  assert.strictEqual(mode, 0o600);
+  assertPrivateMode(notify.notifyPath(ctx));
 });
 
 test('setConfig with webhook:null clears the webhook', function () {
@@ -54,16 +59,20 @@ test('setConfig with webhook:null clears the webhook', function () {
 
 test('non-http(s) webhooks are rejected (no file://, data://, javascript:)', function () {
   const ctx = makeCtx();
-  ['file:///etc/passwd', 'data:text/plain,hi', 'javascript:alert(1)', 'ftp://x/y', 'not a url', ''].forEach(function (bad) {
-    const cfg = notify.setConfig(ctx, { webhook: bad });
-    assert.strictEqual(cfg.webhook, null, bad);
-  });
+  ['file:///etc/passwd', 'data:text/plain,hi', 'javascript:alert(1)', 'ftp://x/y', 'not a url', ''].forEach(
+    function (bad) {
+      const cfg = notify.setConfig(ctx, { webhook: bad });
+      assert.strictEqual(cfg.webhook, null, bad);
+    },
+  );
   assert.strictEqual(notify.setConfig(ctx, { webhook: 'http://ok.example/h' }).webhook, 'http://ok.example/h');
 });
 
 test('events are validated + deduped; hostile names dropped', function () {
   const ctx = makeCtx();
-  const cfg = notify.setConfig(ctx, { events: ['quota', 'quota', '__proto__', '../evil', 'has space', '', 'custom-1', 'a'.repeat(200)] });
+  const cfg = notify.setConfig(ctx, {
+    events: ['quota', 'quota', '__proto__', '../evil', 'has space', '', 'custom-1', 'a'.repeat(200)],
+  });
   assert.deepStrictEqual(cfg.events, ['quota', 'custom-1']);
 });
 
@@ -73,7 +82,9 @@ test('getConfig never throws on a corrupt file (returns defaults); setConfig ref
   const cfg = notify.getConfig(ctx);
   assert.strictEqual(cfg.webhook, null);
   assert.deepStrictEqual(cfg.events, notify.KNOWN_EVENTS);
-  assert.throws(function () { notify.setConfig(ctx, { desktop: true }); }, /not valid JSON|refusing/i);
+  assert.throws(function () {
+    notify.setConfig(ctx, { desktop: true });
+  }, /not valid JSON|refusing/i);
 });
 
 // ---- send: enablement gate ----
@@ -126,7 +137,9 @@ test('a non-2xx webhook response counts as a failed delivery', async function ()
 test('a thrown fetch (network error) is caught, not propagated', async function () {
   const ctx = makeCtx();
   notify.setConfig(ctx, { webhook: 'https://hook.example/x', events: ['quota'] });
-  const boom = async function () { throw new Error('ECONNREFUSED'); };
+  const boom = async function () {
+    throw new Error('ECONNREFUSED');
+  };
   const r = await notify.send(ctx, 'quota', { pct: 99 }, { fetch: boom });
   assert.strictEqual(r.sent, false);
   assert.strictEqual(r.channels[0].ok, false);
@@ -155,8 +168,8 @@ test('secret-looking keys are stripped from the payload before it leaves the mac
     assert.strictEqual(rawBody.indexOf(s), -1, 'leaked: ' + s);
   });
   const body = JSON.parse(rawBody);
-  assert.strictEqual(body.payload.account, 'work');       // non-secret retained
-  assert.strictEqual(body.payload.nested.ok, 'keep-me');  // non-secret retained (nested)
+  assert.strictEqual(body.payload.account, 'work'); // non-secret retained
+  assert.strictEqual(body.payload.nested.ok, 'keep-me'); // non-secret retained (nested)
   assert.strictEqual(body.payload.nested.deeper.level, 3);
   assert.strictEqual('accessToken' in body.payload, false);
 });
@@ -171,7 +184,7 @@ test('stripSecrets does not mutate the caller object and neutralizes __proto__ k
   // A JSON.parse'd object can carry an own "__proto__" key — it must not pollute.
   const hostile = JSON.parse('{"__proto__": {"polluted": true}, "safe": 1}');
   const c2 = notify.stripSecrets(hostile);
-  assert.strictEqual(({}).polluted, undefined, 'Object.prototype not polluted');
+  assert.strictEqual({}.polluted, undefined, 'Object.prototype not polluted');
   assert.strictEqual(c2.safe, 1);
 });
 
@@ -204,12 +217,18 @@ test('desktop is skipped (not sent) off macOS', async function () {
 test('with both sinks, a webhook failure still yields sent:true if desktop succeeds', async function () {
   const ctx = makeCtx({ platform: 'darwin' });
   notify.setConfig(ctx, { webhook: 'https://hook.example/x', desktop: true, events: ['quota'] });
-  const boom = async function () { throw new Error('offline'); };
+  const boom = async function () {
+    throw new Error('offline');
+  };
   const run = runRecorder({ code: 0 });
   const r = await notify.send(ctx, 'quota', { pct: 100 }, { fetch: boom, run: run });
   assert.strictEqual(r.sent, true);
   assert.strictEqual(r.channels.length, 2);
-  assert.ok(r.channels.some(function (c) { return c.channel === 'desktop' && c.ok; }));
+  assert.ok(
+    r.channels.some(function (c) {
+      return c.channel === 'desktop' && c.ok;
+    }),
+  );
 });
 
 // ---- test() ----

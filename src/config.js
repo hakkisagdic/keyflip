@@ -20,15 +20,40 @@ const CTRL = /[\u0000-\u001f\u007f]/; // control chars (incl. ANSI ESC / newline
 // collide with an inherited prototype property during a `key in SCHEMA` lookup.
 // Each entry: { type:'int'|'bool'|'string'|'enum', default, min?, max?, values?, help }.
 const SCHEMA = Object.create(null);
-SCHEMA['autoswitch.threshold'] = { type: 'int', default: 90, min: 0, max: 100, help: 'Utilization % at/above which autoswitch rotates to another account.' };
-SCHEMA['autoswitch.strategy'] = { type: 'enum', values: ['best', 'next-available'], default: 'best', help: 'How autoswitch chooses the next account (most headroom vs. first available).' };
-SCHEMA['autoswitch.group'] = { type: 'string', default: '', help: 'Restrict autoswitch/rotation to accounts in this group tag (empty = all accounts).' };
+SCHEMA['autoswitch.threshold'] = {
+  type: 'int',
+  default: 90,
+  min: 0,
+  max: 100,
+  help: 'Utilization % at/above which autoswitch rotates to another account.',
+};
+SCHEMA['autoswitch.strategy'] = {
+  type: 'enum',
+  values: ['best', 'next-available'],
+  default: 'best',
+  help: 'How autoswitch chooses the next account (most headroom vs. first available).',
+};
+SCHEMA['autoswitch.group'] = {
+  type: 'string',
+  default: '',
+  help: 'Restrict autoswitch/rotation to accounts in this group tag (empty = all accounts).',
+};
 SCHEMA['notify.desktop'] = { type: 'bool', default: false, help: 'Show desktop banners on notable events (macOS).' };
 SCHEMA['ui.color'] = { type: 'bool', default: true, help: 'Colorize CLI output.' };
-SCHEMA['usage.cacheTtlSeconds'] = { type: 'int', default: 60, min: 0, max: 3600, help: 'How long to cache per-account usage before refetching.' };
+SCHEMA['usage.cacheTtlSeconds'] = {
+  type: 'int',
+  default: 60,
+  min: 0,
+  max: 3600,
+  help: 'How long to cache per-account usage before refetching.',
+};
 
-function configPath(ctx) { return path.join(ctx.configDir, NAME + '.json'); }
-function hasKey(key) { return typeof key === 'string' && Object.prototype.hasOwnProperty.call(SCHEMA, key); }
+function configPath(ctx) {
+  return path.join(ctx.configDir, NAME + '.json');
+}
+function hasKey(key) {
+  return typeof key === 'string' && Object.prototype.hasOwnProperty.call(SCHEMA, key);
+}
 function schemaFor(key) {
   if (!hasKey(key)) throw new Error("unknown config key: '" + key + "' (see: keyflip config list)");
   return SCHEMA[key];
@@ -50,8 +75,10 @@ function coerce(schema, raw) {
     if (!/^-?\d+$/.test(t)) throw new Error("expected an integer, got '" + s + "'");
     const n = parseInt(t, 10);
     if (!Number.isSafeInteger(n)) throw new Error("integer out of range: '" + s + "'");
-    if (typeof schema.min === 'number' && n < schema.min) throw new Error('must be >= ' + schema.min + ' (got ' + n + ')');
-    if (typeof schema.max === 'number' && n > schema.max) throw new Error('must be <= ' + schema.max + ' (got ' + n + ')');
+    if (typeof schema.min === 'number' && n < schema.min)
+      throw new Error('must be >= ' + schema.min + ' (got ' + n + ')');
+    if (typeof schema.max === 'number' && n > schema.max)
+      throw new Error('must be <= ' + schema.max + ' (got ' + n + ')');
     return n;
   }
   if (schema.type === 'enum') {
@@ -97,17 +124,27 @@ function normalize(parsed) {
 // null-prototype map of STORED overrides only (not merged with defaults).
 function readAll(ctx) {
   let parsed;
-  try { parsed = readJsonForWrite(configPath(ctx)); } catch (e) { return Object.create(null); }
+  try {
+    parsed = readJsonForWrite(configPath(ctx));
+  } catch (e) {
+    return Object.create(null);
+  }
   return normalize(parsed);
 }
 
 // Read-for-write: a MISSING file is empty, but a CORRUPT file THROWS so a
 // read-modify-write never silently clobbers the user's real config.
-function loadForWrite(ctx) { return normalize(readJsonForWrite(configPath(ctx))); }
+function loadForWrite(ctx) {
+  return normalize(readJsonForWrite(configPath(ctx)));
+}
 
 function save(ctx, map) {
   const out = {}; // key-sorted for stable diffs
-  Object.keys(map).sort().forEach(function (k) { out[k] = map[k]; });
+  Object.keys(map)
+    .sort()
+    .forEach(function (k) {
+      out[k] = map[k];
+    });
   atomicWrite(configPath(ctx), JSON.stringify(out, null, 2), 0o600);
 }
 
@@ -146,7 +183,10 @@ function unset(ctx, key) {
   schemaFor(key);
   const map = loadForWrite(ctx);
   const had = Object.prototype.hasOwnProperty.call(map, key);
-  if (had) { delete map[key]; save(ctx, map); }
+  if (had) {
+    delete map[key];
+    save(ctx, map);
+  }
   return had;
 }
 

@@ -65,7 +65,9 @@ test('normalize: aider file yields the unified shape tagged aider', function () 
 });
 
 test('normalize: an unrecognized format throws a clear error', function () {
-  assert.throws(function () { foreign.normalize('notes.txt', 'just prose, not a session'); }, /unrecognized session format/);
+  assert.throws(function () {
+    foreign.normalize('notes.txt', 'just prose, not a session');
+  }, /unrecognized session format/);
 });
 
 test('the normalized shape feeds straight into the transcript exporter', function () {
@@ -84,9 +86,25 @@ import os from 'os';
 import path from 'path';
 import * as _transcript from '../src/transcript.js';
 let HAS_SQLITE = false;
-try { cp.execFileSync('sqlite3', ['--version'], { stdio: 'ignore' }); HAS_SQLITE = true; } catch (e) { HAS_SQLITE = false; }
-function mkdb(sql) { const f = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'kf-fdb-')), 'x.db'); cp.execFileSync('sqlite3', [f], { input: sql }); return fs.readFileSync(f); }
-function j(o) { return JSON.stringify(o).replace(/'/g, "''"); }
+try {
+  cp.execFileSync('sqlite3', ['--version'], { stdio: 'ignore' });
+  HAS_SQLITE = true;
+} catch (e) {
+  HAS_SQLITE = false;
+}
+function mkdb(sql) {
+  const f = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'kf-fdb-')), 'x.db');
+  cp.execFileSync('sqlite3', [f], { input: sql });
+  return fs.readFileSync(f);
+}
+function hasSqlite3() {
+  const probe = cp.spawnSync('sqlite3', ['-version']);
+  return !probe.error && probe.status === 0;
+}
+
+function j(o) {
+  return JSON.stringify(o).replace(/'/g, "''");
+}
 
 test('detect: a SQLite file is recognized as cursor from its magic header', function (t) {
   if (!HAS_SQLITE) return t.skip('sqlite3 CLI not installed');
@@ -96,22 +114,41 @@ test('detect: a SQLite file is recognized as cursor from its magic header', func
 
 test('parseCursor: bubbles ordered by the composer header list; roles from type', function (t) {
   if (!HAS_SQLITE) return t.skip('sqlite3 CLI not installed');
-  const sql = 'CREATE TABLE cursorDiskKV(key TEXT, value TEXT);\n' +
-    "INSERT INTO cursorDiskKV VALUES('composerData:C1','" + j({ fullConversationHeadersOnly: [{ bubbleId: 'b1' }, { bubbleId: 'b2' }, { bubbleId: 'b3' }] }) + "');\n" +
-    "INSERT INTO cursorDiskKV VALUES('bubbleId:C1:b2','" + j({ type: 2, text: 'the fix' }) + "');\n" +
-    "INSERT INTO cursorDiskKV VALUES('bubbleId:C1:b1','" + j({ type: 1, text: 'my bug' }) + "');\n" +
-    "INSERT INTO cursorDiskKV VALUES('bubbleId:C1:b3','" + j({ type: 1, text: 'thanks' }) + "');\n";
+  const sql =
+    'CREATE TABLE cursorDiskKV(key TEXT, value TEXT);\n' +
+    "INSERT INTO cursorDiskKV VALUES('composerData:C1','" +
+    j({ fullConversationHeadersOnly: [{ bubbleId: 'b1' }, { bubbleId: 'b2' }, { bubbleId: 'b3' }] }) +
+    "');\n" +
+    "INSERT INTO cursorDiskKV VALUES('bubbleId:C1:b2','" +
+    j({ type: 2, text: 'the fix' }) +
+    "');\n" +
+    "INSERT INTO cursorDiskKV VALUES('bubbleId:C1:b1','" +
+    j({ type: 1, text: 'my bug' }) +
+    "');\n" +
+    "INSERT INTO cursorDiskKV VALUES('bubbleId:C1:b3','" +
+    j({ type: 1, text: 'thanks' }) +
+    "');\n";
   const n = foreign.normalize('state.vscdb', mkdb(sql));
   assert.strictEqual(n.tool, 'cursor');
-  assert.deepStrictEqual(n.messages.map(function (m) { return m.role + ':' + m.text; }), ['user:my bug', 'assistant:the fix', 'user:thanks'], 'order + roles honored');
+  assert.deepStrictEqual(
+    n.messages.map(function (m) {
+      return m.role + ':' + m.text;
+    }),
+    ['user:my bug', 'assistant:the fix', 'user:thanks'],
+    'order + roles honored',
+  );
 });
 
 test('parseJson: finds the largest array of message-like objects (opencode/generic)', function () {
-  const doc = JSON.stringify({ session: 'ses_x', meta: { model: 'x' }, parts: [
-    { role: 'user', text: 'hello' },
-    { role: 'assistant', content: [{ type: 'text', text: 'hi back' }] },
-    { role: 'user', text: '' },
-  ] });
+  const doc = JSON.stringify({
+    session: 'ses_x',
+    meta: { model: 'x' },
+    parts: [
+      { role: 'user', text: 'hello' },
+      { role: 'assistant', content: [{ type: 'text', text: 'hi back' }] },
+      { role: 'user', text: '' },
+    ],
+  });
   const n = foreign.normalize('storage.json', doc);
   assert.strictEqual(n.tool, 'json');
   assert.strictEqual(n.counts.messages, 2, 'empty-text message dropped');
@@ -127,25 +164,47 @@ test('discover: finds foreign sessions at the known locations, existence-gated',
   const cur = path.join(home, 'Library', 'Application Support', 'Cursor', 'User', 'globalStorage');
   const oc = path.join(home, '.local', 'share', 'opencode', 'project', 'p', 'storage');
   const gm = path.join(home, '.gemini', 'antigravity-cli', 'brain', 'U1');
-  [cur, oc, gm].forEach(function (d) { fs.mkdirSync(d, { recursive: true }); });
+  [cur, oc, gm].forEach(function (d) {
+    fs.mkdirSync(d, { recursive: true });
+  });
   fs.writeFileSync(path.join(cur, 'state.vscdb'), 'SQLite format 3\0');
   fs.writeFileSync(path.join(oc, 'ses_1.json'), '{}');
   fs.writeFileSync(path.join(gm, 'transcript.jsonl'), '{}');
   const found = foreign.discover({ home: home });
-  const tools = found.map(function (f) { return f.tool; }).sort();
+  const tools = found
+    .map(function (f) {
+      return f.tool;
+    })
+    .sort();
   assert.deepStrictEqual(tools, ['cursor', 'gemini', 'opencode']);
-  assert.ok(found.every(function (f) { return f.path && f.mtime; }));
+  assert.ok(
+    found.every(function (f) {
+      return f.path && f.mtime;
+    }),
+  );
 });
 
 test('parseYaml (Copilot/generic): extracts the conversation array from YAML', function () {
-  const y = ['session: abc', 'model: gpt-4o', 'history:',
-    '  - role: user', '    text: reverse a list?',
-    '  - role: assistant', '    text: "use [::-1]"',
-    '  - role: user', '    text: thanks'].join('\n');
+  const y = [
+    'session: abc',
+    'model: gpt-4o',
+    'history:',
+    '  - role: user',
+    '    text: reverse a list?',
+    '  - role: assistant',
+    '    text: "use [::-1]"',
+    '  - role: user',
+    '    text: thanks',
+  ].join('\n');
   const n = foreign.normalize('workspace.yaml', y);
   assert.strictEqual(n.tool, 'copilot');
   assert.strictEqual(n.counts.messages, 3);
-  assert.deepStrictEqual(n.messages.map(function (m) { return m.role; }), ['user', 'assistant', 'user']);
+  assert.deepStrictEqual(
+    n.messages.map(function (m) {
+      return m.role;
+    }),
+    ['user', 'assistant', 'user'],
+  );
   assert.strictEqual(n.messages[1].text, 'use [::-1]');
 });
 
@@ -165,14 +224,23 @@ test('resumeCommand: documented per-tool resume commands (best-effort)', functio
 
 // Post-audit reliability: a WAL-mode Cursor DB keeps recent writes in a sibling -wal file this
 // zero-dep reader can't replay — normalize() must WARN rather than silently drop the newest chats.
-test('foreign: a non-empty -wal sibling triggers a stale-data warning', function () {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kf-wal-'));
-  const db = path.join(dir, 'state.vscdb');
-  cp.execFileSync('sqlite3', [db], { input: "CREATE TABLE cursorDiskKV(key TEXT, value BLOB); INSERT INTO cursorDiskKV VALUES('composerData:x', '" + j({ conversation: [{ type: 1, text: 'hi' }] }) + "');" });
-  const buf = fs.readFileSync(db);
-  assert.strictEqual(foreign.normalize(db, buf).warning, undefined, 'no warning when fully checkpointed');
-  fs.writeFileSync(db + '-wal', Buffer.alloc(5000, 1)); // simulate an unflushed WAL
-  const w = foreign.normalize(db, buf).warning;
-  assert.ok(w && /wal/i.test(w), 'warns about the unflushed WAL');
-  assert.ok(/quit cursor/i.test(w), 'tells the user how to checkpoint it');
-});
+test(
+  'foreign: a non-empty -wal sibling triggers a stale-data warning',
+  { skip: hasSqlite3() ? false : 'the sqlite3 CLI is not on PATH' },
+  function () {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kf-wal-'));
+    const db = path.join(dir, 'state.vscdb');
+    cp.execFileSync('sqlite3', [db], {
+      input:
+        "CREATE TABLE cursorDiskKV(key TEXT, value BLOB); INSERT INTO cursorDiskKV VALUES('composerData:x', '" +
+        j({ conversation: [{ type: 1, text: 'hi' }] }) +
+        "');",
+    });
+    const buf = fs.readFileSync(db);
+    assert.strictEqual(foreign.normalize(db, buf).warning, undefined, 'no warning when fully checkpointed');
+    fs.writeFileSync(db + '-wal', Buffer.alloc(5000, 1)); // simulate an unflushed WAL
+    const w = foreign.normalize(db, buf).warning;
+    assert.ok(w && /wal/i.test(w), 'warns about the unflushed WAL');
+    assert.ok(/quit cursor/i.test(w), 'tells the user how to checkpoint it');
+  },
+);

@@ -15,7 +15,9 @@ function fakeRunner(script) {
 }
 
 test('reads use /usr/bin/security find-generic-password with -w and a timeout', function () {
-  const r = fakeRunner(function () { return { code: 0, stdout: 'SECRET\n', stderr: '', timedOut: false }; });
+  const r = fakeRunner(function () {
+    return { code: 0, stdout: 'SECRET\n', stderr: '', timedOut: false };
+  });
   const s = new KeychainStore({ account: 'me', runner: r });
   assert.strictEqual(s.getLive(), 'SECRET');
   const c = r.calls[0];
@@ -25,49 +27,86 @@ test('reads use /usr/bin/security find-generic-password with -w and a timeout', 
 });
 
 test('exit 44 (not found) reads as null; other failures throw EKEYCHAIN', function () {
-  const notFound = new KeychainStore({ account: 'me', runner: fakeRunner(function () { return { code: 44, stdout: '', stderr: '' }; }) });
+  const notFound = new KeychainStore({
+    account: 'me',
+    runner: fakeRunner(function () {
+      return { code: 44, stdout: '', stderr: '' };
+    }),
+  });
   assert.strictEqual(notFound.getLive(), null);
 
-  const locked = new KeychainStore({ account: 'me', runner: fakeRunner(function () { return { code: 36, stdout: '', stderr: 'SecKeychainSearchCopyNext' }; }) });
-  assert.throws(function () { locked.getLive(); }, function (e) { return e.code === 'EKEYCHAIN'; });
+  const locked = new KeychainStore({
+    account: 'me',
+    runner: fakeRunner(function () {
+      return { code: 36, stdout: '', stderr: 'SecKeychainSearchCopyNext' };
+    }),
+  });
+  assert.throws(
+    function () {
+      locked.getLive();
+    },
+    function (e) {
+      return e.code === 'EKEYCHAIN';
+    },
+  );
 
-  const hung = new KeychainStore({ account: 'me', runner: fakeRunner(function () { return { code: 1, stdout: '', stderr: '', timedOut: true }; }) });
-  assert.throws(function () { hung.getLive(); }, /timed out/);
+  const hung = new KeychainStore({
+    account: 'me',
+    runner: fakeRunner(function () {
+      return { code: 1, stdout: '', stderr: '', timedOut: true };
+    }),
+  });
+  assert.throws(function () {
+    hung.getLive();
+  }, /timed out/);
 });
 
 test('writes go through `security -i` stdin as hex — the secret is never in argv', function () {
-  const r = fakeRunner(function () { return { code: 0, stdout: '', stderr: '' }; });
+  const r = fakeRunner(function () {
+    return { code: 0, stdout: '', stderr: '' };
+  });
   const s = new KeychainStore({ account: 'me', runner: r });
   s.setLive('{"top":"secret"}');
   const c = r.calls[0];
-  assert.deepStrictEqual(c.args, ['-i']);                       // no secret in argv
+  assert.deepStrictEqual(c.args, ['-i']); // no secret in argv
   assert.match(c.input, /^add-generic-password -U -s "Claude Code-credentials" -a "me" -X [0-9a-f]+\n$/);
   const hex = /-X ([0-9a-f]+)/.exec(c.input)[1];
   assert.strictEqual(Buffer.from(hex, 'hex').toString('utf8'), '{"top":"secret"}');
 });
 
 test('a real-size credential goes through stdin (secret never in argv)', function () {
-  const r = fakeRunner(function () { return { code: 0, stdout: '', stderr: '' }; });
+  const r = fakeRunner(function () {
+    return { code: 0, stdout: '', stderr: '' };
+  });
   const s = new KeychainStore({ account: 'me', runner: r });
   const realistic = 'x'.repeat(500); // ~real OAuth blob size (well under the stdin line)
   s.setLive(realistic);
   const c = r.calls[0];
-  assert.deepStrictEqual(c.args, ['-i']);                 // stdin path, secret not in argv
+  assert.deepStrictEqual(c.args, ['-i']); // stdin path, secret not in argv
   assert.match(c.input, /^add-generic-password -U -s "Claude Code-credentials" -a "me" -X [0-9a-f]+\n$/);
 });
 
 test('an oversized blob (never a real credential) falls back to argv, still hex-encoded', function () {
-  const r = fakeRunner(function () { return { code: 0, stdout: '', stderr: '' }; });
+  const r = fakeRunner(function () {
+    return { code: 0, stdout: '', stderr: '' };
+  });
   const s = new KeychainStore({ account: 'me', runner: r });
   const big = 'x'.repeat(4000); // 8000 hex > stdin line budget
   s.setLive(big);
   const c = r.calls[0];
   assert.strictEqual(c.args[0], 'add-generic-password');
-  assert.strictEqual(c.args[c.args.length - 2], '-X');    // hex-encoded, not raw -w
+  assert.strictEqual(c.args[c.args.length - 2], '-X'); // hex-encoded, not raw -w
   assert.strictEqual(c.args[c.args.length - 1], Buffer.from(big).toString('hex'));
 });
 
 test('write failures throw EKEYCHAIN with the stderr detail', function () {
-  const s = new KeychainStore({ account: 'me', runner: fakeRunner(function () { return { code: 51, stdout: '', stderr: 'User interaction is not allowed.' }; }) });
-  assert.throws(function () { s.setLive('x'); }, /User interaction is not allowed/);
+  const s = new KeychainStore({
+    account: 'me',
+    runner: fakeRunner(function () {
+      return { code: 51, stdout: '', stderr: 'User interaction is not allowed.' };
+    }),
+  });
+  assert.throws(function () {
+    s.setLive('x');
+  }, /User interaction is not allowed/);
 });

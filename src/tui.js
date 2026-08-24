@@ -14,8 +14,8 @@ import * as _provider from './provider.js';
 import _readline from 'readline';
 import * as _commands from './commands.js';
 
-const BARW = 12;           // width of a usage bar
-const CSI = '\x1b[';       // ANSI Control Sequence Introducer
+const BARW = 12; // width of a usage bar
+const CSI = '\x1b['; // ANSI Control Sequence Introducer
 
 // ---- keymap (the keys the reducer understands, for the footer + docs) ----
 const KEYMAP = [
@@ -31,28 +31,68 @@ const KEYMAP = [
 
 // The command PALETTE: a searchable index of the whole CLI surface so nothing has to be memorized.
 // commands.js is pure data (no IO); require it lazily + defensively so the TUI never hard-breaks.
-function commandCatalog() { try { return _commands; } catch (e) { return { search: function () { return []; }, CATALOG: [] }; }
+function commandCatalog() {
+  try {
+    return _commands;
+  } catch (e) {
+    return {
+      search: function () {
+        return [];
+      },
+      CATALOG: [],
+    };
+  }
 }
 function paletteResults(state) {
   const q = (state && state.filter) || '';
-  try { return commandCatalog().search(q) || []; } catch (e) { return []; }
+  try {
+    return commandCatalog().search(q) || [];
+  } catch (e) {
+    return [];
+  }
 }
 
 // ---- small pure helpers ----
-function safe(fn, d) { try { return fn(); } catch (e) { return d; } }
-function clamp(i, len) { if (!len || len <= 0) return 0; return Math.max(0, Math.min(i, len - 1)); }
+function safe(fn, d) {
+  try {
+    return fn();
+  } catch (e) {
+    return d;
+  }
+}
+function clamp(i, len) {
+  if (!len || len <= 0) return 0;
+  return Math.max(0, Math.min(i, len - 1));
+}
 // Strip control chars (incl. NUL/ESC/newline) so a semi-trusted string (a peer machine name, a
 // crafted email) can never inject ANSI, spill onto a new row, or corrupt the frame geometry.
-// eslint-disable-next-line no-control-regex
-function scrub(s) { return String(s == null ? '' : s).replace(/[\x00-\x1f\x7f]/g, ' '); }
+function scrub(s) {
+  // eslint-disable-next-line no-control-regex
+  return String(s == null ? '' : s).replace(/[\x00-\x1f\x7f]/g, ' ');
+}
 // Unicode-aware truncate/pad to an exact column count (block glyphs are BMP, but be surrogate-safe).
-function clip(s, width) { const a = Array.from(String(s)); return a.length <= width ? String(s) : a.slice(0, width).join(''); }
-function padEnd(s, width) { const n = Array.from(String(s)).length; return n >= width ? String(s) : s + ' '.repeat(width - n); }
-function inv(s) { return CSI + '7m' + s + CSI + '0m'; }
-function dimc(s) { return CSI + '2m' + s + CSI + '0m'; }
+function clip(s, width) {
+  const a = Array.from(String(s));
+  return a.length <= width ? String(s) : a.slice(0, width).join('');
+}
+function padEnd(s, width) {
+  const n = Array.from(String(s)).length;
+  return n >= width ? String(s) : s + ' '.repeat(width - n);
+}
+function inv(s) {
+  return CSI + '7m' + s + CSI + '0m';
+}
+function dimc(s) {
+  return CSI + '2m' + s + CSI + '0m';
+}
 
-function pctOf(u, win) { const w = u && u.usage && u.usage[win]; return (w && typeof w.pct === 'number') ? w.pct : null; }
-function pctLbl(pct) { return pct == null ? '  ?' : String(Math.round(Math.max(0, Math.min(100, pct)))).padStart(3) + '%'; }
+function pctOf(u, win) {
+  const w = u && u.usage && u.usage[win];
+  return w && typeof w.pct === 'number' ? w.pct : null;
+}
+function pctLbl(pct) {
+  return pct == null ? '  ?' : String(Math.round(Math.max(0, Math.min(100, pct)))).padStart(3) + '%';
+}
 function bar(pct, w) {
   if (pct == null) return '[' + '·'.repeat(w) + ']';
   const p = Math.max(0, Math.min(100, pct));
@@ -63,29 +103,70 @@ function bar(pct, w) {
 // Filtered account list (name/email substring, case-insensitive). Pure over state.
 function visible(state) {
   const list = (state && state.accounts) || [];
-  const f = String((state && state.filter) || '').trim().toLowerCase();
+  const f = String((state && state.filter) || '')
+    .trim()
+    .toLowerCase();
   if (!f) return list;
   return list.filter(function (a) {
-    return String(a.name || '').toLowerCase().indexOf(f) !== -1 ||
-           String(a.email || '').toLowerCase().indexOf(f) !== -1;
+    return (
+      String(a.name || '')
+        .toLowerCase()
+        .indexOf(f) !== -1 ||
+      String(a.email || '')
+        .toLowerCase()
+        .indexOf(f) !== -1
+    );
   });
 }
-function selectedName(state) { const a = visible(state)[state ? state.sel : 0]; return (a && a.name) || null; }
-function firstNonActive(accounts) { for (let i = 0; i < accounts.length; i++) { if (!accounts[i].active) return i; } return 0; }
+function selectedName(state) {
+  const a = visible(state)[state ? state.sel : 0];
+  return (a && a.name) || null;
+}
+function firstNonActive(accounts) {
+  for (let i = 0; i < accounts.length; i++) {
+    if (!accounts[i].active) return i;
+  }
+  return 0;
+}
 
 // ---- UI preferences (persisted as <configDir>/.tui.json, dot-prefixed so profiles.list() never
 // mistakes it for an account — keyflip has no daemon, so this is the only cross-run TUI state) ----
-function prefsPath(ctx) { return path.join(ctx.configDir, '.tui.json'); }
-function sanitizePrefs(p) { const out = {}; if (p && typeof p === 'object' && !Array.isArray(p)) { if (['fleet', 'accounts', 'usage'].indexOf(p.view) !== -1) out.view = p.view; } return out; }
-function loadPrefs(ctx) { try { return sanitizePrefs(readJsonForWrite(prefsPath(ctx))); } catch (e) { return {}; } }
-function savePrefs(ctx, prefs) { try { atomicWrite(prefsPath(ctx), JSON.stringify(sanitizePrefs(prefs), null, 2), 0o600); return true; } catch (e) { return false; } }
+function prefsPath(ctx) {
+  return path.join(ctx.configDir, '.tui.json');
+}
+function sanitizePrefs(p) {
+  const out = {};
+  if (p && typeof p === 'object' && !Array.isArray(p)) {
+    if (['fleet', 'accounts', 'usage'].indexOf(p.view) !== -1) out.view = p.view;
+  }
+  return out;
+}
+function loadPrefs(ctx) {
+  try {
+    return sanitizePrefs(readJsonForWrite(prefsPath(ctx)));
+  } catch (e) {
+    return {};
+  }
+}
+function savePrefs(ctx, prefs) {
+  try {
+    atomicWrite(prefsPath(ctx), JSON.stringify(sanitizePrefs(prefs), null, 2), 0o600);
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
 
 // A local, side-effect-free fleet summary. We read the rendezvous config file DIRECTLY (never
 // fleet.identity(), which would lazily create files + generate keys) so buildState stays cheap and
 // hermetic. Peer detail requires the fleet passphrase, so callers can inject opts.fleet instead.
 function fleetSummary(ctx) {
   let id = {};
-  try { id = JSON.parse(fs.readFileSync(path.join(ctx.configDir, 'fleet.json'), 'utf8')) || {}; } catch (e) { id = {}; }
+  try {
+    id = JSON.parse(fs.readFileSync(path.join(ctx.configDir, 'fleet.json'), 'utf8')) || {};
+  } catch (e) {
+    id = {};
+  }
   return { configured: !!id.dir, name: id.name || null, machineId: id.machineId || null, peers: [] };
 }
 
@@ -103,25 +184,37 @@ function buildState(ctx, opts) {
     return core.listProfiles(ctx).map(function (p) {
       const u = snap[p.name];
       return {
-        name: p.name, email: p.email || null, active: !!p.active,
-        fiveHourPct: pctOf(u, 'fiveHour'), sevenDayPct: pctOf(u, 'sevenDay'),
+        name: p.name,
+        email: p.email || null,
+        active: !!p.active,
+        fiveHourPct: pctOf(u, 'fiveHour'),
+        sevenDayPct: pctOf(u, 'sevenDay'),
         status: (u && u.status) || 'unknown',
       };
     });
   }, []);
 
-  const active = safe(function () { return provider.readActive(ctx); }, null);
+  const active = safe(function () {
+    return provider.readActive(ctx);
+  }, null);
   const providers = safe(function () {
-    return provider.list(ctx).map(function (n) { const m = provider.read(ctx, n) || {}; return { name: n, baseUrl: m.baseUrl || null, active: !!(active && active.name === n) }; });
+    return provider.list(ctx).map(function (n) {
+      const m = provider.read(ctx, n) || {};
+      return { name: n, baseUrl: m.baseUrl || null, active: !!(active && active.name === n) };
+    });
   }, []);
 
   const prefs = loadPrefs(ctx);
   const VIEWS = ['accounts', 'fleet', 'usage'];
-  const view = VIEWS.indexOf(opts.view || prefs.view) !== -1 ? (opts.view || prefs.view) : 'accounts';
+  const view = VIEWS.indexOf(opts.view || prefs.view) !== -1 ? opts.view || prefs.view : 'accounts';
 
   return {
-    now: safe(function () { return ctx.now(); }, null),
-    activeEmail: safe(function () { return core.currentEmail(ctx); }, null),
+    now: safe(function () {
+      return ctx.now();
+    }, null),
+    activeEmail: safe(function () {
+      return core.currentEmail(ctx);
+    }, null),
     activeProvider: (active && active.name) || null,
     accounts: accounts,
     providers: providers,
@@ -134,8 +227,8 @@ function buildState(ctx, opts) {
     view: view,
     filter: '',
     filtering: false,
-    pending: null,   // an effect for run() to perform: {type:'switch',name} | {type:'refresh'}
-    message: null,   // transient status line
+    pending: null, // an effect for run() to perform: {type:'switch',name} | {type:'refresh'}
+    message: null, // transient status line
     quit: false,
   };
 }
@@ -143,12 +236,19 @@ function buildState(ctx, opts) {
 // Proto-safe copy of a name-keyed map (a profile name could be '__proto__'/'constructor').
 function usageLookup(map) {
   const out = Object.create(null);
-  if (map && typeof map === 'object' && !Array.isArray(map)) Object.keys(map).forEach(function (k) { out[k] = map[k]; });
+  if (map && typeof map === 'object' && !Array.isArray(map))
+    Object.keys(map).forEach(function (k) {
+      out[k] = map[k];
+    });
   return out;
 }
 function readUsageCache(ctx) {
-  try { const c = JSON.parse(fs.readFileSync(path.join(ctx.configDir, '.usage-cache.json'), 'utf8')); return (c && typeof c === 'object' && !Array.isArray(c)) ? c : {}; }
-  catch (e) { return {}; }
+  try {
+    const c = JSON.parse(fs.readFileSync(path.join(ctx.configDir, '.usage-cache.json'), 'utf8'));
+    return c && typeof c === 'object' && !Array.isArray(c) ? c : {};
+  } catch (e) {
+    return {};
+  }
 }
 
 // ---- reducer: pure navigation. (state, key) -> next state. Never mutates the input. ----
@@ -157,56 +257,138 @@ function readUsageCache(ctx) {
 // mode: in filter mode single chars are TYPED into the filter, so 'q' does not quit there.
 function reducer(state, key) {
   const s = Object.assign({}, state);
-  s.pending = null;   // effects are consumed each tick
-  s.message = null;   // transient
+  s.pending = null; // effects are consumed each tick
+  s.message = null; // transient
   return state && state.filtering ? reduceFilter(s, key) : reduceNormal(s, key);
 }
 function reduceNormal(s, key) {
   const max = visible(s).length;
-  if (key === 'quit' || key === 'q' || key === 'escape') { s.quit = true; return s; }
-  if (key === 'up' || key === 'k') { s.sel = clamp(s.sel - 1, max); return s; }
-  if (key === 'down' || key === 'j') { s.sel = clamp(s.sel + 1, max); return s; }
-  if (key === 'r') { s.pending = { type: 'refresh' }; return s; }
-  if (key === 'f') { s.view = s.view === 'fleet' ? 'accounts' : 'fleet'; s.sel = 0; return s; }
-  if (key === 'u') { s.view = s.view === 'usage' ? 'accounts' : 'usage'; s.sel = 0; return s; }
-  if (key === 'p' || key === ':') { s.view = 'palette'; s.filtering = true; s.filter = ''; s.sel = 0; return s; }
-  if (key === '/') { s.filtering = true; return s; }
+  if (key === 'quit' || key === 'q' || key === 'escape') {
+    s.quit = true;
+    return s;
+  }
+  if (key === 'up' || key === 'k') {
+    s.sel = clamp(s.sel - 1, max);
+    return s;
+  }
+  if (key === 'down' || key === 'j') {
+    s.sel = clamp(s.sel + 1, max);
+    return s;
+  }
+  if (key === 'r') {
+    s.pending = { type: 'refresh' };
+    return s;
+  }
+  if (key === 'f') {
+    s.view = s.view === 'fleet' ? 'accounts' : 'fleet';
+    s.sel = 0;
+    return s;
+  }
+  if (key === 'u') {
+    s.view = s.view === 'usage' ? 'accounts' : 'usage';
+    s.sel = 0;
+    return s;
+  }
+  if (key === 'p' || key === ':') {
+    s.view = 'palette';
+    s.filtering = true;
+    s.filter = '';
+    s.sel = 0;
+    return s;
+  }
+  if (key === '/') {
+    s.filtering = true;
+    return s;
+  }
   if (key === 'enter') {
     if (s.view !== 'accounts') return s;
     const a = visible(s)[s.sel];
     if (!a) return s;
-    if (a.active) { s.message = "'" + (a.email || a.name) + "' is already active."; return s; }
+    if (a.active) {
+      s.message = "'" + (a.email || a.name) + "' is already active.";
+      return s;
+    }
     s.pending = { type: 'switch', name: a.name };
     return s;
   }
-  if (typeof key === 'string' && /^[0-9]$/.test(key)) { const i = parseInt(key, 10); if (i >= 1 && i <= max) s.sel = i - 1; return s; }
+  if (typeof key === 'string' && /^[0-9]$/.test(key)) {
+    const i = parseInt(key, 10);
+    if (i >= 1 && i <= max) s.sel = i - 1;
+    return s;
+  }
   return s;
 }
 function reduceFilter(s, key) {
   if (s.view === 'palette') return reducePalette(s, key);
-  if (key === 'quit') { s.quit = true; return s; }
-  if (key === 'escape') { s.filtering = false; s.filter = ''; s.sel = 0; return s; }
-  if (key === 'enter') { s.filtering = false; s.sel = clamp(s.sel, visible(s).length); return s; }
-  if (key === 'backspace') { s.filter = String(s.filter || '').slice(0, -1); s.sel = 0; return s; }
-  if (key === 'up') { s.sel = clamp(s.sel - 1, visible(s).length); return s; }
-  if (key === 'down') { s.sel = clamp(s.sel + 1, visible(s).length); return s; }
-  if (typeof key === 'string' && key.length === 1) { s.filter = String(s.filter || '') + key; s.sel = 0; return s; }
+  if (key === 'quit') {
+    s.quit = true;
+    return s;
+  }
+  if (key === 'escape') {
+    s.filtering = false;
+    s.filter = '';
+    s.sel = 0;
+    return s;
+  }
+  if (key === 'enter') {
+    s.filtering = false;
+    s.sel = clamp(s.sel, visible(s).length);
+    return s;
+  }
+  if (key === 'backspace') {
+    s.filter = String(s.filter || '').slice(0, -1);
+    s.sel = 0;
+    return s;
+  }
+  if (key === 'up') {
+    s.sel = clamp(s.sel - 1, visible(s).length);
+    return s;
+  }
+  if (key === 'down') {
+    s.sel = clamp(s.sel + 1, visible(s).length);
+    return s;
+  }
+  if (typeof key === 'string' && key.length === 1) {
+    s.filter = String(s.filter || '') + key;
+    s.sel = 0;
+    return s;
+  }
   return s;
 }
 // Palette mode: type to search the command catalog; ↑/↓ pick; enter = choose (run() surfaces the
 // chosen command to the CLI); esc leaves the palette back to the accounts view.
 function reducePalette(s, key) {
   const res = paletteResults(s);
-  if (key === 'quit' || key === 'escape') { s.view = 'accounts'; s.filtering = false; s.filter = ''; s.sel = 0; return s; }
-  if (key === 'up') { s.sel = clamp(s.sel - 1, res.length); return s; }
-  if (key === 'down') { s.sel = clamp(s.sel + 1, res.length); return s; }
-  if (key === 'backspace') { s.filter = String(s.filter || '').slice(0, -1); s.sel = 0; return s; }
+  if (key === 'quit' || key === 'escape') {
+    s.view = 'accounts';
+    s.filtering = false;
+    s.filter = '';
+    s.sel = 0;
+    return s;
+  }
+  if (key === 'up') {
+    s.sel = clamp(s.sel - 1, res.length);
+    return s;
+  }
+  if (key === 'down') {
+    s.sel = clamp(s.sel + 1, res.length);
+    return s;
+  }
+  if (key === 'backspace') {
+    s.filter = String(s.filter || '').slice(0, -1);
+    s.sel = 0;
+    return s;
+  }
   if (key === 'enter') {
     const cmd = res[clamp(s.sel, res.length)];
     if (cmd) s.pending = { type: 'command', name: cmd.name, safe: !!cmd.safe, usage: cmd.usage || cmd.name };
     return s;
   }
-  if (typeof key === 'string' && key.length === 1) { s.filter = String(s.filter || '') + key; s.sel = 0; return s; }
+  if (typeof key === 'string' && key.length === 1) {
+    s.filter = String(s.filter || '') + key;
+    s.sel = 0;
+    return s;
+  }
   return s;
 }
 
@@ -220,7 +402,9 @@ function render(state, dims) {
 
   const body = [];
   const foot = [];
-  const push = function (arr, sText, hl) { arr.push({ s: sText == null ? '' : sText, hl: hl || null }); };
+  const push = function (arr, sText, hl) {
+    arr.push({ s: sText == null ? '' : sText, hl: hl || null });
+  };
 
   push(body, '⚡ keyflip ui   ·   ' + (state.activeEmail || 'not logged in'));
   push(body, '');
@@ -243,7 +427,10 @@ function render(state, dims) {
 function renderAccounts(state, arr, push) {
   const vis = visible(state);
   if (!vis.length) {
-    push(arr, state.filter ? '  No accounts match "' + state.filter + '".' : '  No saved accounts yet — run `keyflip add`.');
+    push(
+      arr,
+      state.filter ? '  No accounts match "' + state.filter + '".' : '  No saved accounts yet — run `keyflip add`.',
+    );
     return;
   }
   vis.forEach(function (a, i) {
@@ -252,8 +439,18 @@ function renderAccounts(state, arr, push) {
     const dot = a.active ? '●' : ' ';
     const label = (a.email || a.name) + (a.active ? '  (active)' : '');
     push(arr, arrow + ' ' + dot + ' ' + label, selected ? 'sel' : null);
-    push(arr, '     5h ' + bar(a.fiveHourPct, BARW) + ' ' + pctLbl(a.fiveHourPct) +
-              '   7d ' + bar(a.sevenDayPct, BARW) + ' ' + pctLbl(a.sevenDayPct), 'dim');
+    push(
+      arr,
+      '     5h ' +
+        bar(a.fiveHourPct, BARW) +
+        ' ' +
+        pctLbl(a.fiveHourPct) +
+        '   7d ' +
+        bar(a.sevenDayPct, BARW) +
+        ' ' +
+        pctLbl(a.sevenDayPct),
+      'dim',
+    );
   });
 }
 
@@ -261,12 +458,27 @@ function renderFleet(state, arr, push) {
   const f = state.fleet || {};
   push(arr, 'Fleet');
   push(arr, '  This machine: ' + (f.name || '(unnamed)') + (f.machineId ? '  [' + f.machineId + ']' : ''), 'dim');
-  push(arr, '  Rendezvous:   ' + (f.configured ? 'configured' : 'not configured — run `keyflip fleet init --dir <shared-folder>`'), 'dim');
-  const peers = (f.peers || []);
-  if (!peers.length) { push(arr, '  Peers:        none visible (run `keyflip fleet push` / `collect`)', 'dim'); return; }
+  push(
+    arr,
+    '  Rendezvous:   ' +
+      (f.configured ? 'configured' : 'not configured — run `keyflip fleet init --dir <shared-folder>`'),
+    'dim',
+  );
+  const peers = f.peers || [];
+  if (!peers.length) {
+    push(arr, '  Peers:        none visible (run `keyflip fleet push` / `collect`)', 'dim');
+    return;
+  }
   push(arr, '  Peers:', 'dim');
   peers.forEach(function (p) {
-    push(arr, '    • ' + (p.name || p.machineId || '?') + (p.activeEmail ? '  (' + p.activeEmail + ')' : '') + (p.accounts != null ? '  ' + p.accounts + ' acct' : ''), 'dim');
+    push(
+      arr,
+      '    • ' +
+        (p.name || p.machineId || '?') +
+        (p.activeEmail ? '  (' + p.activeEmail + ')' : '') +
+        (p.accounts != null ? '  ' + p.accounts + ' acct' : ''),
+      'dim',
+    );
   });
 }
 
@@ -274,13 +486,26 @@ function renderFleet(state, arr, push) {
 // highlighted; the footer (below) carries the live search box + the run/back keys.
 function renderPalette(state, arr, push) {
   const res = paletteResults(state);
-  push(arr, 'Command palette' + (state.filter ? '  ·  "' + state.filter + '"' : '  ·  type to search all ' + (commandCatalog().CATALOG || []).length + ' commands'));
-  if (!res.length) { push(arr, '  no command matches "' + state.filter + '"', 'dim'); return; }
+  push(
+    arr,
+    'Command palette' +
+      (state.filter
+        ? '  ·  "' + state.filter + '"'
+        : '  ·  type to search all ' + (commandCatalog().CATALOG || []).length + ' commands'),
+  );
+  if (!res.length) {
+    push(arr, '  no command matches "' + state.filter + '"', 'dim');
+    return;
+  }
   const sel = clamp(state.sel, res.length);
   res.slice(0, 12).forEach(function (c, i) {
     const selected = i === sel;
     const arrow = selected ? '❯' : ' ';
-    push(arr, arrow + ' ' + padEnd(c.name, 14) + ' ' + dimc('[' + (c.group || '') + ']') + (c.safe ? ' ' + '↵' : ''), selected ? 'sel' : null);
+    push(
+      arr,
+      arrow + ' ' + padEnd(c.name, 14) + ' ' + dimc('[' + (c.group || '') + ']') + (c.safe ? ' ' + '↵' : ''),
+      selected ? 'sel' : null,
+    );
     if (selected) push(arr, '     ' + (c.usage || c.desc || ''), 'dim');
   });
   if (res.length > 12) push(arr, '  … ' + (res.length - 12) + ' more — keep typing to narrow', 'dim');
@@ -290,20 +515,41 @@ function renderPalette(state, arr, push) {
 function renderUsage(state, arr, push) {
   const list = state.providerUsage || [];
   push(arr, 'Provider usage' + (list.length ? '' : ' — run `keyflip usage --providers` or none detected'));
-  if (!list.length) { push(arr, '  No other AI providers detected on this machine.', 'dim'); return; }
+  if (!list.length) {
+    push(arr, '  No other AI providers detected on this machine.', 'dim');
+    return;
+  }
   list.forEach(function (p) {
     const win = (p.windows || [])[0];
     const pct = win && typeof win.usedPct === 'number' ? win.usedPct : null;
     const st = p.status && p.status !== 'ok' ? '  ' + p.status : '';
-    push(arr, '  ' + padEnd(p.label || p.id, 12) + ' ' + bar(pct, BARW) + ' ' + pctLbl(pct) +
-      (win && win.name ? '  ' + win.name : '') + (win && win.human ? '  ' + win.human : '') + st, null);
+    push(
+      arr,
+      '  ' +
+        padEnd(p.label || p.id, 12) +
+        ' ' +
+        bar(pct, BARW) +
+        ' ' +
+        pctLbl(pct) +
+        (win && win.name ? '  ' + win.name : '') +
+        (win && win.human ? '  ' + win.human : '') +
+        st,
+      null,
+    );
   });
 }
 
 function providersLine(state) {
   const ps = state.providers || [];
   if (!ps.length) return 'Providers: none';
-  return 'Providers: ' + ps.map(function (p) { return (p.active ? '●' : '○') + ' ' + p.name; }).join('   ');
+  return (
+    'Providers: ' +
+    ps
+      .map(function (p) {
+        return (p.active ? '●' : '○') + ' ' + p.name;
+      })
+      .join('   ')
+  );
 }
 function fleetSummaryLine(state) {
   const f = state.fleet || {};
@@ -314,7 +560,9 @@ function fleetSummaryLine(state) {
 function footerLine(state) {
   if (state.view === 'palette') return 'search: ' + (state.filter || '') + '▏   (↑/↓ pick · enter run · esc back)';
   if (state.filtering) return 'filter: ' + (state.filter || '') + '▏   (enter apply · esc cancel)';
-  return KEYMAP.map(function (k) { return k.keys.join('/') + ' ' + k.label; }).join(' · ');
+  return KEYMAP.map(function (k) {
+    return k.keys.join('/') + ' ' + k.label;
+  }).join(' · ');
 }
 
 // Body pinned to the top, footer pinned to the bottom, blank rows between — exactly `height` rows.
@@ -343,7 +591,7 @@ function normalizeKey(str, key) {
   if (key.name === 'return' || key.name === 'enter') return 'enter';
   if (key.name === 'escape') return 'escape';
   if (key.name === 'backspace') return 'backspace';
-  if (key.ctrl || key.meta) return null;          // ignore other chords
+  if (key.ctrl || key.meta) return null; // ignore other chords
   if (typeof str === 'string' && Array.from(str).length === 1) return str; // literal char
   return null;
 }
@@ -353,64 +601,115 @@ function run(ctx, opts) {
   opts = opts || {};
   const input = opts.input || process.stdin;
   const output = opts.output || process.stdout;
-  const write = function (s) { try { output.write(s); } catch (e) { /* stream gone */ } };
+  const write = function (s) {
+    try {
+      output.write(s);
+    } catch (e) {
+      /* stream gone */
+    }
+  };
 
   // No TTY (piped/CI): a full-screen UI is impossible — say so and bail, don't hang on raw mode.
   if (!input.isTTY || typeof input.setRawMode !== 'function') {
-    write('keyflip ui needs an interactive terminal (a TTY).\n' +
-          'Run it directly in your terminal, or try `keyflip menu` / `keyflip list`.\n');
+    write(
+      'keyflip ui needs an interactive terminal (a TTY).\n' +
+        'Run it directly in your terminal, or try `keyflip menu` / `keyflip list`.\n',
+    );
     return Promise.resolve({ tty: false });
   }
 
   const core = _core;
   const readline = _readline;
-  const onSwitch = opts.onSwitch || function (name) { return core.performSwitch(ctx, name); };
+  const onSwitch =
+    opts.onSwitch ||
+    function (name) {
+      return core.performSwitch(ctx, name);
+    };
   let state = buildState(ctx, opts);
 
   return new Promise(function (resolve) {
-    let finished = false, busy = false, chosenCommand = null;
+    let finished = false,
+      busy = false,
+      chosenCommand = null;
 
-    const size = function () { return { width: output.columns || 80, height: output.rows || 24, color: true }; };
-    const draw = function () { write(CSI + 'H' + render(state, size())); };
-    const mergeOpts = function () { return Object.assign({}, opts, { view: state.view }); };
+    const size = function () {
+      return { width: output.columns || 80, height: output.rows || 24, color: true };
+    };
+    const draw = function () {
+      write(CSI + 'H' + render(state, size()));
+    };
+    const mergeOpts = function () {
+      return Object.assign({}, opts, { view: state.view });
+    };
     const mergeNav = function (disp) {
-      disp.view = state.view; disp.filter = state.filter; disp.filtering = state.filtering;
-      disp.sel = clamp(state.sel, visible(disp).length); disp.pending = null; disp.quit = false; disp.message = state.message;
+      disp.view = state.view;
+      disp.filter = state.filter;
+      disp.filtering = state.filtering;
+      disp.sel = clamp(state.sel, visible(disp).length);
+      disp.pending = null;
+      disp.quit = false;
+      disp.message = state.message;
       return disp;
     };
 
     function cleanup() {
-      if (finished) return; finished = true;
-      try { input.setRawMode(false); } catch (e) { /* ignore */ }
+      if (finished) return;
+      finished = true;
+      try {
+        input.setRawMode(false);
+      } catch (e) {
+        /* ignore */
+      }
       if (input.pause) input.pause();
       input.removeListener('keypress', onKey);
       input.removeListener('end', cleanup);
-      try { process.removeListener('SIGWINCH', onResize); } catch (e) { /* ignore */ }
+      try {
+        process.removeListener('SIGWINCH', onResize);
+      } catch (e) {
+        /* ignore */
+      }
       savePrefs(ctx, { view: state.view });
       write(CSI + '?25h' + CSI + '?1049l'); // show cursor, leave alt-screen
       resolve({ tty: true, command: chosenCommand });
     }
-    function onResize() { if (!finished) draw(); }
+    function onResize() {
+      if (!finished) draw();
+    }
 
     async function handleEffect() {
-      const eff = state.pending; state.pending = null;
+      const eff = state.pending;
+      state.pending = null;
       if (!eff) return;
       busy = true;
       if (eff.type === 'switch') {
-        state.message = 'Switching to ' + eff.name + '…'; draw();
-        try { await onSwitch(eff.name); state = mergeNav(buildState(ctx, mergeOpts())); state.message = '✅ Switched to ' + eff.name; }
-        catch (e) { state.message = '❌ ' + ((e && e.message) || e); }
+        state.message = 'Switching to ' + eff.name + '…';
+        draw();
+        try {
+          await onSwitch(eff.name);
+          state = mergeNav(buildState(ctx, mergeOpts()));
+          state.message = '✅ Switched to ' + eff.name;
+        } catch (e) {
+          state.message = '❌ ' + ((e && e.message) || e);
+        }
       } else if (eff.type === 'refresh') {
-        state.message = 'Refreshing…'; draw();
-        try { const disp = opts.onRefresh ? await opts.onRefresh(ctx, state) : buildState(ctx, mergeOpts()); state = mergeNav(disp); state.message = '↻ refreshed'; }
-        catch (e) { state.message = '❌ ' + ((e && e.message) || e); }
+        state.message = 'Refreshing…';
+        draw();
+        try {
+          const disp = opts.onRefresh ? await opts.onRefresh(ctx, state) : buildState(ctx, mergeOpts());
+          state = mergeNav(disp);
+          state.message = '↻ refreshed';
+        } catch (e) {
+          state.message = '❌ ' + ((e && e.message) || e);
+        }
       } else if (eff.type === 'command') {
         // The user picked a command from the palette: leave the TUI and hand it to the CLI, which
         // runs the safe ones and prints the rest ready to paste (with args). Never run blind.
         chosenCommand = { name: eff.name, safe: eff.safe, usage: eff.usage };
-        cleanup(); return;
+        cleanup();
+        return;
       }
-      busy = false; draw();
+      busy = false;
+      draw();
     }
 
     async function onKey(str, key) {
@@ -418,20 +717,47 @@ function run(ctx, opts) {
       const tok = normalizeKey(str, key);
       if (tok == null) return;
       state = reducer(state, tok);
-      if (state.quit) { cleanup(); return; }
+      if (state.quit) {
+        cleanup();
+        return;
+      }
       draw();
       if (state.pending) await handleEffect();
     }
 
-    try { readline.emitKeypressEvents(input); } catch (e) { /* fake stream in tests */ }
-    try { input.setRawMode(true); } catch (e) { /* ignore */ }
+    try {
+      readline.emitKeypressEvents(input);
+    } catch (e) {
+      /* fake stream in tests */
+    }
+    try {
+      input.setRawMode(true);
+    } catch (e) {
+      /* ignore */
+    }
     if (input.resume) input.resume();
     input.on('keypress', onKey);
-    input.once('end', cleanup);           // stdin closed -> exit cleanly
-    try { process.on('SIGWINCH', onResize); } catch (e) { /* ignore */ }
+    input.once('end', cleanup); // stdin closed -> exit cleanly
+    try {
+      process.on('SIGWINCH', onResize);
+    } catch (e) {
+      /* ignore */
+    }
     write(CSI + '?1049h' + CSI + '?25l'); // enter alt-screen, hide cursor
     draw();
   });
 }
 
-export { buildState, render, reducer, run, KEYMAP as keymap, visible, selectedName, normalizeKey, loadPrefs, savePrefs, fleetSummary };
+export {
+  buildState,
+  render,
+  reducer,
+  run,
+  KEYMAP as keymap,
+  visible,
+  selectedName,
+  normalizeKey,
+  loadPrefs,
+  savePrefs,
+  fleetSummary,
+};

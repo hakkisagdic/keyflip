@@ -10,19 +10,36 @@ import path from 'path';
 import * as handoff from '../src/handoff.js';
 import * as secretscan from '../src/secretscan.js';
 
-const NOW = function () { return '2026-07-12T10:00:00.000Z'; };
+const NOW = function () {
+  return '2026-07-12T10:00:00.000Z';
+};
 
 function samplePkg() {
   return {
     schema: 1,
-    project: { name: 'Zirve', providers: ['kiro', 'cursor'], lastProvider: 'claude', description: 'A billing service.' },
+    project: {
+      name: 'Zirve',
+      providers: ['kiro', 'cursor'],
+      lastProvider: 'claude',
+      description: 'A billing service.',
+    },
     decisions: [
-      { title: 'Postgres over Mongo', decision: 'Use PostgreSQL as the primary store', rationale: 'relational invoices' },
+      {
+        title: 'Postgres over Mongo',
+        decision: 'Use PostgreSQL as the primary store',
+        rationale: 'relational invoices',
+      },
       { title: 'No ORM', decision: 'Hand-written SQL only' },
     ],
     tasks: [
       { status: 'done', title: 'scaffold' },
-      { status: 'in_progress', title: 'invoice export', completed: ['schema done'], remaining: ['CSV writer', 'PDF writer'], knownIssues: ['timezone off-by-one'] },
+      {
+        status: 'in_progress',
+        title: 'invoice export',
+        completed: ['schema done'],
+        remaining: ['CSV writer', 'PDF writer'],
+        knownIssues: ['timezone off-by-one'],
+      },
     ],
     env: [{ name: 'DATABASE_URL', description: 'Postgres DSN' }, 'STRIPE_API_KEY'],
     generatedAt: '2026-07-01T00:00:00.000Z',
@@ -30,18 +47,31 @@ function samplePkg() {
 }
 
 test('continuePrompt: happy path — trail, active task, decisions, files, target voice', function () {
-  const md = handoff.continuePrompt(samplePkg(), { target: 'claude', checkpoint: { provider: 'claude', branch: 'feat/export', at: '2026-07-11T09:00:00Z' }, now: NOW });
+  const md = handoff.continuePrompt(samplePkg(), {
+    target: 'claude',
+    checkpoint: { provider: 'claude', branch: 'feat/export', at: '2026-07-11T09:00:00Z' },
+    now: NOW,
+  });
   assert.ok(md.startsWith('# Continue this project — Zirve'), 'titled with project name');
   assert.ok(md.indexOf('Kiro → Cursor → Claude Code') !== -1, 'tool trail rendered with labels');
   assert.ok(md.indexOf('**You are now:** Claude Code') !== -1, 'target label');
   assert.ok(md.indexOf('### invoice export') !== -1, 'active (in_progress) task chosen, not the done one');
   assert.ok(md.indexOf('scaffold') === -1, 'the completed task is not surfaced as active');
   assert.ok(md.indexOf('- [x] schema done') !== -1, 'completed items as checked boxes');
-  assert.ok(md.indexOf('- [ ] CSV writer') !== -1 && md.indexOf('- [ ] PDF writer') !== -1, 'remaining as unchecked boxes');
+  assert.ok(
+    md.indexOf('- [ ] CSV writer') !== -1 && md.indexOf('- [ ] PDF writer') !== -1,
+    'remaining as unchecked boxes',
+  );
   assert.ok(md.indexOf('timezone off-by-one') !== -1, 'known issues surfaced');
-  assert.ok(md.indexOf('**Postgres over Mongo**') !== -1 && md.indexOf('why: relational invoices') !== -1, 'decision + rationale');
+  assert.ok(
+    md.indexOf('**Postgres over Mongo**') !== -1 && md.indexOf('why: relational invoices') !== -1,
+    'decision + rationale',
+  );
   assert.ok(md.indexOf('do NOT change these without explaining') !== -1, 'decisions are marked immutable');
-  assert.ok(md.indexOf('`.keyflip/context.md`') !== -1 && md.indexOf('`.keyflip/checkpoints/latest.json`') !== -1, 'canonical files listed');
+  assert.ok(
+    md.indexOf('`.keyflip/context.md`') !== -1 && md.indexOf('`.keyflip/checkpoints/latest.json`') !== -1,
+    'canonical files listed',
+  );
   assert.ok(md.indexOf('CLAUDE.md') !== -1, 'claude rules hint');
   assert.ok(md.indexOf('You are Claude Code.') !== -1, 'target-specific closing');
   assert.ok(md.indexOf('branch `feat/export`') !== -1, 'checkpoint git branch shown');
@@ -68,7 +98,10 @@ test('targetVariants: per-tool phrasing, alias + unknown handling', function () 
 
 test('targetVariants: returned object is frozen (shared table cannot be mutated)', function () {
   const v = handoff.targetVariants('claude');
-  assert.throws(function () { 'use strict'; v.label = 'hacked'; }, TypeError);
+  assert.throws(function () {
+    'use strict';
+    v.label = 'hacked';
+  }, TypeError);
   assert.strictEqual(handoff.targetVariants('claude').label, 'Claude Code', 'table intact');
 });
 
@@ -103,7 +136,15 @@ test('SECURITY: secrets that slipped into the package are redacted out of the pr
     project: { name: 'Proj ' + LEAKS.anthropic, description: 'db pass leaked: ' + LEAKS.aws },
     summary: 'context with a token ' + LEAKS.github + ' inline',
     decisions: [{ title: 'auth', decision: 'store token ' + LEAKS.google, rationale: 'because ' + LEAKS.anthropic }],
-    tasks: [{ status: 'active', title: 'task ' + LEAKS.github, completed: ['did ' + LEAKS.aws], remaining: ['do ' + LEAKS.google], knownIssues: ['key ' + LEAKS.anthropic] }],
+    tasks: [
+      {
+        status: 'active',
+        title: 'task ' + LEAKS.github,
+        completed: ['did ' + LEAKS.aws],
+        remaining: ['do ' + LEAKS.google],
+        knownIssues: ['key ' + LEAKS.anthropic],
+      },
+    ],
     env: [{ name: 'X', description: 'value is ' + LEAKS.github }],
   };
   const md = handoff.continuePrompt(pkg, { target: 'claude', now: NOW });
@@ -116,7 +157,10 @@ test('SECURITY: secrets that slipped into the package are redacted out of the pr
 });
 
 test('SECURITY: env carries NAMES only — never a value, even if a value field is present', function () {
-  const md = handoff.continuePrompt({ env: [{ name: 'STRIPE_SECRET', value: 'sk_live_ABCDEFGHIJKLMNOP', description: 'billing' }] }, {});
+  const md = handoff.continuePrompt(
+    { env: [{ name: 'STRIPE_SECRET', value: 'sk_live_ABCDEFGHIJKLMNOP', description: 'billing' }] },
+    {},
+  );
   assert.ok(md.indexOf('STRIPE_SECRET') !== -1, 'name kept');
   assert.strictEqual(md.indexOf('sk_live_ABCDEFGHIJKLMNOP'), -1, 'value never emitted');
 });
@@ -142,11 +186,23 @@ function seedProject() {
   const base = path.join(root, '.keyflip');
   fs.mkdirSync(path.join(base, 'checkpoints'), { recursive: true });
   fs.mkdirSync(path.join(base, 'rules'), { recursive: true });
-  fs.writeFileSync(path.join(base, 'project.json'), JSON.stringify({ name: 'Zirve', providers: ['cursor'], lastProvider: 'claude' }));
+  fs.writeFileSync(
+    path.join(base, 'project.json'),
+    JSON.stringify({ name: 'Zirve', providers: ['cursor'], lastProvider: 'claude' }),
+  );
   fs.writeFileSync(path.join(base, 'context.md'), '# Zirve\nbilling');
-  fs.writeFileSync(path.join(base, 'decisions.json'), JSON.stringify([{ title: 'PG', decision: 'Postgres', rationale: 'relational' }]));
-  fs.writeFileSync(path.join(base, 'tasks.json'), JSON.stringify([{ status: 'active', title: 'export', remaining: ['csv'] }]));
-  fs.writeFileSync(path.join(base, 'checkpoints', 'latest.json'), JSON.stringify({ provider: 'claude', branch: 'main' }));
+  fs.writeFileSync(
+    path.join(base, 'decisions.json'),
+    JSON.stringify([{ title: 'PG', decision: 'Postgres', rationale: 'relational' }]),
+  );
+  fs.writeFileSync(
+    path.join(base, 'tasks.json'),
+    JSON.stringify([{ status: 'active', title: 'export', remaining: ['csv'] }]),
+  );
+  fs.writeFileSync(
+    path.join(base, 'checkpoints', 'latest.json'),
+    JSON.stringify({ provider: 'claude', branch: 'main' }),
+  );
   fs.writeFileSync(path.join(base, 'rules', 'style.md'), 'be terse');
   return root;
 }

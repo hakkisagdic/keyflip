@@ -32,8 +32,12 @@ function binOf(opts) {
   return bin;
 }
 
-function supported() { return SUPPORTED.slice(); }
-function isSupported(shell) { return SUPPORTED.indexOf(shell) !== -1; }
+function supported() {
+  return SUPPORTED.slice();
+}
+function isSupported(shell) {
+  return SUPPORTED.indexOf(shell) !== -1;
+}
 
 // Two-line install instruction shown as a comment header on the emitted snippet.
 function installLine(shell, bin) {
@@ -48,7 +52,9 @@ function header(shell, bin) {
     '',
   ].join('\n');
 }
-function rcFile(shell) { return shell === 'zsh' ? '~/.zshrc' : shell === 'fish' ? '~/.config/fish/config.fish' : '~/.bashrc'; }
+function rcFile(shell) {
+  return shell === 'zsh' ? '~/.zshrc' : shell === 'fish' ? '~/.config/fish/config.fish' : '~/.bashrc';
+}
 
 // Shared bash/zsh hook body. Both support `local`, `case` globs, `$( )` and `[ ]`.
 // Guarded on CWD so the (process-spawning) `keyflip link` call runs only when the
@@ -110,7 +116,7 @@ function fish(bin) {
     '    set -g ' + LASTPWD + ' "$PWD"',
     '    set -l __kf_want (' + bin + ' link --porcelain 2>/dev/null)',
     '    set __kf_want $__kf_want[1]',
-    "    if not string match -rq '^[A-Za-z0-9][A-Za-z0-9._-]*$' -- \"$__kf_want\"",
+    '    if not string match -rq \'^[A-Za-z0-9][A-Za-z0-9._-]*$\' -- "$__kf_want"',
     "        set __kf_want ''",
     '    end',
     '    if test "$__kf_want" != "$' + MARKER + '"',
@@ -128,7 +134,8 @@ function fish(bin) {
 // hook(shell[, opts]) -> the shell source to add to the rc file. opts.bin overrides
 // the CLI name ('keyflip'). Throws on an unsupported shell or an unsafe bin.
 function hook(shell, opts) {
-  if (!isSupported(shell)) throw new Error("unsupported shell: '" + shell + "' (supported: " + SUPPORTED.join(', ') + ')');
+  if (!isSupported(shell))
+    throw new Error("unsupported shell: '" + shell + "' (supported: " + SUPPORTED.join(', ') + ')');
   const bin = binOf(opts);
   const body = shell === 'bash' ? bash(bin) : shell === 'zsh' ? zsh(bin) : fish(bin);
   return header(shell, bin) + body;

@@ -28,7 +28,11 @@ test('quotaLabel: shows 5h utilization when ok, hides it when not ok', function 
 });
 
 test('statusView: builds the status-bar text + tooltip', function () {
-  const v = lib.statusView({ cli: { email: 'alice@example.com' }, app: { email: 'alice@example.com' }, provider: 'relay' });
+  const v = lib.statusView({
+    cli: { email: 'alice@example.com' },
+    app: { email: 'alice@example.com' },
+    provider: 'relay',
+  });
   assert.strictEqual(v.text, '$(account) alice');
   assert.ok(v.tooltip.indexOf('CLI: alice@example.com') !== -1);
   assert.ok(v.tooltip.indexOf('Desktop app: alice@example.com') !== -1);
@@ -44,10 +48,27 @@ test('statusView: not-logged-in state', function () {
 });
 
 test('accountItems: marks the active account, shows capture + quota', function () {
-  const items = lib.accountItems({ accounts: [
-    { name: 'work', email: 'w@x.com', cliCaptured: true, appCaptured: false, activeCli: true, usage: { fiveHour: { pct: 30 } }, usageStatus: 'ok' },
-    { name: 'personal', email: 'p@x.com', cliCaptured: true, appCaptured: true, activeCli: false, usageStatus: 'expired' },
-  ] });
+  const items = lib.accountItems({
+    accounts: [
+      {
+        name: 'work',
+        email: 'w@x.com',
+        cliCaptured: true,
+        appCaptured: false,
+        activeCli: true,
+        usage: { fiveHour: { pct: 30 } },
+        usageStatus: 'ok',
+      },
+      {
+        name: 'personal',
+        email: 'p@x.com',
+        cliCaptured: true,
+        appCaptured: true,
+        activeCli: false,
+        usageStatus: 'expired',
+      },
+    ],
+  });
   assert.strictEqual(items.length, 2);
   assert.ok(items[0].label.indexOf('$(check)') !== -1, 'active account is checked');
   assert.strictEqual(items[0].active, true);
@@ -64,10 +85,19 @@ test('accountItems: empty list -> []', function () {
 });
 
 test('accountTreeItems: one row per account, active flagged, quota in the description', function () {
-  const rows = lib.accountTreeItems({ accounts: [
-    { name: 'work', email: 'w@x.com', activeCli: true, cliCaptured: true, appCaptured: true, usage: { fiveHour: { pct: 40 } } },
-    { name: 'home', email: 'h@x.com', activeCli: false, cliCaptured: true, appCaptured: false },
-  ] });
+  const rows = lib.accountTreeItems({
+    accounts: [
+      {
+        name: 'work',
+        email: 'w@x.com',
+        activeCli: true,
+        cliCaptured: true,
+        appCaptured: true,
+        usage: { fiveHour: { pct: 40 } },
+      },
+      { name: 'home', email: 'h@x.com', activeCli: false, cliCaptured: true, appCaptured: false },
+    ],
+  });
   assert.strictEqual(rows.length, 2);
   assert.strictEqual(rows[0].label, 'w@x.com');
   assert.strictEqual(rows[0].active, true);

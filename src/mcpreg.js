@@ -11,18 +11,32 @@ import * as claude from './claude.js';
 import * as profiles from './profiles.js';
 import * as _wsl from './wsl.js';
 
-function regFile(ctx) { return path.join(ctx.configDir, 'mcp-registry.json'); }
-function desktopConfigPath(ctx) { return ctx.appDataDir ? path.join(ctx.appDataDir, 'claude_desktop_config.json') : null; }
+function regFile(ctx) {
+  return path.join(ctx.configDir, 'mcp-registry.json');
+}
+function desktopConfigPath(ctx) {
+  return ctx.appDataDir ? path.join(ctx.appDataDir, 'claude_desktop_config.json') : null;
+}
 
 function readReg(ctx) {
-  try { const o = JSON.parse(fs.readFileSync(regFile(ctx), 'utf8')); return (o && typeof o === 'object') ? o : {}; }
-  catch (e) { return {}; }
+  try {
+    const o = JSON.parse(fs.readFileSync(regFile(ctx), 'utf8'));
+    return o && typeof o === 'object' ? o : {};
+  } catch (e) {
+    return {};
+  }
 }
-function writeReg(ctx, reg) { writeJsonStable(regFile(ctx), reg, 0o600); }
+function writeReg(ctx, reg) {
+  writeJsonStable(regFile(ctx), reg, 0o600);
+}
 
 function list(ctx) {
   const reg = readReg(ctx);
-  return Object.keys(reg).sort().map(function (n) { return Object.assign({ name: n }, reg[n]); });
+  return Object.keys(reg)
+    .sort()
+    .map(function (n) {
+      return Object.assign({ name: n }, reg[n]);
+    });
 }
 
 // Add/update a server definition. def: { command, args, env }.
@@ -40,7 +54,13 @@ function remove(ctx, name) {
   delete reg[name];
   writeReg(ctx, reg);
   // also unhook from both surfaces
-  ['claude-code', 'claude-desktop'].forEach(function (s) { try { setEnabled(ctx, name, s, false); } catch (e) { /* */ } });
+  ['claude-code', 'claude-desktop'].forEach(function (s) {
+    try {
+      setEnabled(ctx, name, s, false);
+    } catch (e) {
+      /* */
+    }
+  });
 }
 
 // The server entry as a target app expects it, applying the Windows cmd-wrap.
@@ -62,7 +82,8 @@ function setEnabled(ctx, name, surface, enabled) {
   if (surface === 'claude-code') {
     const cfg = claude.loadForWrite(ctx.claudeConfigPath); // {} if missing, throws if corrupt
     cfg.mcpServers = cfg.mcpServers || {};
-    if (enabled) cfg.mcpServers[name] = entryFor(ctx, def); else delete cfg.mcpServers[name];
+    if (enabled) cfg.mcpServers[name] = entryFor(ctx, def);
+    else delete cfg.mcpServers[name];
     claude.writeConfig(ctx.claudeConfigPath, cfg);
     return 'applied';
   }
@@ -74,7 +95,8 @@ function setEnabled(ctx, name, surface, enabled) {
     // config must NOT be treated as empty and overwritten — abort instead.
     const cfg = readJsonForWrite(p) || {};
     cfg.mcpServers = cfg.mcpServers || {};
-    if (enabled) cfg.mcpServers[name] = entryFor(ctx, def); else delete cfg.mcpServers[name];
+    if (enabled) cfg.mcpServers[name] = entryFor(ctx, def);
+    else delete cfg.mcpServers[name];
     writeJsonStable(p, cfg, 0o600);
     return 'applied';
   }
@@ -86,13 +108,24 @@ function importLive(ctx) {
   const imported = [];
   const cfg = claude.readConfig(ctx.claudeConfigPath) || {};
   Object.keys(cfg.mcpServers || {}).forEach(function (n) {
-    if (profiles.isValidName(n)) { add(ctx, n, cfg.mcpServers[n]); imported.push(n); }
+    if (profiles.isValidName(n)) {
+      add(ctx, n, cfg.mcpServers[n]);
+      imported.push(n);
+    }
   });
   const p = desktopConfigPath(ctx);
   if (p && fs.existsSync(p)) {
-    let d = {}; try { d = JSON.parse(fs.readFileSync(p, 'utf8')) || {}; } catch (e) { d = {}; }
+    let d = {};
+    try {
+      d = JSON.parse(fs.readFileSync(p, 'utf8')) || {};
+    } catch (e) {
+      d = {};
+    }
     Object.keys(d.mcpServers || {}).forEach(function (n) {
-      if (profiles.isValidName(n) && imported.indexOf(n) === -1) { add(ctx, n, d.mcpServers[n]); imported.push(n); }
+      if (profiles.isValidName(n) && imported.indexOf(n) === -1) {
+        add(ctx, n, d.mcpServers[n]);
+        imported.push(n);
+      }
     });
   }
   return imported;

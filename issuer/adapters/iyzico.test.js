@@ -13,14 +13,17 @@ const SECRET = 'sandbox-qaIiLIxhjMgx3LSKIVvp6j17NunHOFtD';
 // is an independent oracle (not a copy of the module's internals beyond the doc'd
 // contract: secretKey is both the HMAC key AND the data prefix).
 function signDirect(body) {
-  const data = SECRET + String(body.iyziEventType) + String(body.paymentId) +
-    String(body.paymentConversationId) + String(body.status);
+  const data =
+    SECRET +
+    String(body.iyziEventType) +
+    String(body.paymentId) +
+    String(body.paymentConversationId) +
+    String(body.status);
   return crypto.createHmac('sha256', SECRET).update(data, 'utf8').digest('hex');
 }
 
 function directBody() {
-  return { iyziEventType: 'PAYMENT_API', paymentId: '22416032',
-    paymentConversationId: 'order-777', status: 'SUCCESS' };
+  return { iyziEventType: 'PAYMENT_API', paymentId: '22416032', paymentConversationId: 'order-777', status: 'SUCCESS' };
 }
 
 test('valid V3 signature (direct payment) verifies ok', () => {
@@ -64,7 +67,9 @@ test('length-mismatched / non-hex header does not throw and returns ok:false', (
   const raw = Buffer.from(JSON.stringify(body), 'utf8');
   for (const junk of ['', 'zz', 'not-hex!!', 'abcd', signDirect(body) + 'ff']) {
     let r;
-    assert.doesNotThrow(() => { r = iyzico.verifyWebhook(raw, { 'x-iyz-signature-v3': junk }, SECRET); });
+    assert.doesNotThrow(() => {
+      r = iyzico.verifyWebhook(raw, { 'x-iyz-signature-v3': junk }, SECRET);
+    });
     assert.strictEqual(r.ok, false);
   }
 });
@@ -76,10 +81,14 @@ test('missing header / missing secret are reported, not thrown', () => {
 });
 
 test('HPP (token present) uses the token variant of the signed string', () => {
-  const body = { iyziEventType: 'CHECKOUT_FORM_AUTH', iyziPaymentId: '99',
-    token: 'tok_abc', paymentConversationId: 'order-9', status: 'SUCCESS' };
-  const data = SECRET + body.iyziEventType + body.iyziPaymentId + body.token +
-    body.paymentConversationId + body.status;
+  const body = {
+    iyziEventType: 'CHECKOUT_FORM_AUTH',
+    iyziPaymentId: '99',
+    token: 'tok_abc',
+    paymentConversationId: 'order-9',
+    status: 'SUCCESS',
+  };
+  const data = SECRET + body.iyziEventType + body.iyziPaymentId + body.token + body.paymentConversationId + body.status;
   const sig = crypto.createHmac('sha256', SECRET).update(data, 'utf8').digest('hex');
   const raw = Buffer.from(JSON.stringify(body), 'utf8');
   const r = iyzico.verifyWebhook(raw, { 'x-iyz-signature-v3': sig }, SECRET);

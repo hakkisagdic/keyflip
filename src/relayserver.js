@@ -44,8 +44,13 @@ function resolveOpts(opts) {
     maxBlobBytes: opts.maxBlobBytes != null ? opts.maxBlobBytes : 64 * 1024 * 1024,
     maxBlobs: opts.maxBlobs != null ? opts.maxBlobs : 256,
     ttlMs: opts.ttlMs != null ? opts.ttlMs : 24 * 60 * 60 * 1000,
-    now: typeof opts.now === 'function' ? opts.now : function () { return Date.now(); },
-    allowUnauthenticated: !!opts.allowUnauthenticated
+    now:
+      typeof opts.now === 'function'
+        ? opts.now
+        : function () {
+            return Date.now();
+          },
+    allowUnauthenticated: !!opts.allowUnauthenticated,
   };
 }
 
@@ -61,7 +66,9 @@ function isLoopbackHost(host) {
 }
 
 // --- constant-time HTTP Basic check (no length oracle) ---
-function sha(b) { return crypto.createHash('sha256').update(b).digest(); }
+function sha(b) {
+  return crypto.createHash('sha256').update(b).digest();
+}
 function checkAuth(cfg, req) {
   if (!cfg.auth) return true;
   const got = req.headers['authorization'] || '';
@@ -82,7 +89,11 @@ function resolveSlot(cfg, req) {
   const raw = pathname.slice(p.length);
   if (raw.length === 0 || raw.indexOf('/') !== -1) return { error: 'bad slot', code: 400 };
   let slot;
-  try { slot = decodeURIComponent(raw); } catch (e) { return { error: 'bad slot', code: 400 }; }
+  try {
+    slot = decodeURIComponent(raw);
+  } catch (e) {
+    return { error: 'bad slot', code: 400 };
+  }
   if (slot.indexOf('/') !== -1 || slot.indexOf('\\') !== -1) return { error: 'bad slot', code: 400 };
   if (slot.indexOf('\0') !== -1) return { error: 'bad slot', code: 400 };
   if (slot.indexOf('..') !== -1) return { error: 'bad slot', code: 400 };
@@ -101,27 +112,42 @@ function resolveSlot(cfg, req) {
 // Remove blobs whose mtime is older than ttlMs. Best-effort; never throws.
 function sweep(cfg) {
   let names;
-  try { names = fs.readdirSync(cfg.dir); } catch (e) { return; }
+  try {
+    names = fs.readdirSync(cfg.dir);
+  } catch (e) {
+    return;
+  }
   const cutoff = cfg.now() - cfg.ttlMs;
   for (let i = 0; i < names.length; i++) {
     const n = names[i];
-    if (n[0] === '.') { // stale temp files: reap old ones too
+    if (n[0] === '.') {
+      // stale temp files: reap old ones too
       if (n.indexOf('.tmp.') === 0) {
-        try { if (fs.statSync(path.join(cfg.dir, n)).mtimeMs < cutoff) fs.unlinkSync(path.join(cfg.dir, n)); } catch (e) { /* ignore */ }
+        try {
+          if (fs.statSync(path.join(cfg.dir, n)).mtimeMs < cutoff) fs.unlinkSync(path.join(cfg.dir, n));
+        } catch (e) {
+          /* ignore */
+        }
       }
       continue;
     }
     try {
       const st = fs.statSync(path.join(cfg.dir, n));
       if (st.isFile() && st.mtimeMs < cutoff) fs.unlinkSync(path.join(cfg.dir, n));
-    } catch (e) { /* ignore */ }
+    } catch (e) {
+      /* ignore */
+    }
   }
 }
 
 // Count live (non-temp, non-dot) blob files currently in the store.
 function countBlobs(cfg) {
   let names;
-  try { names = fs.readdirSync(cfg.dir); } catch (e) { return 0; }
+  try {
+    names = fs.readdirSync(cfg.dir);
+  } catch (e) {
+    return 0;
+  }
   let n = 0;
   for (let i = 0; i < names.length; i++) if (names[i][0] !== '.') n++;
   return n;
@@ -138,12 +164,20 @@ function handlePut(cfg, req, res, r) {
   const declared = parseInt(req.headers['content-length'], 10);
   if (!isNaN(declared) && declared > cfg.maxBlobBytes) {
     send(res, 413, { 'content-type': 'text/plain' }, 'blob too large\n');
-    try { req.destroy(); } catch (e) { /* ignore */ }
+    try {
+      req.destroy();
+    } catch (e) {
+      /* ignore */
+    }
     return;
   }
   sweep(cfg);
   let existed = false;
-  try { existed = fs.statSync(r.target).isFile(); } catch (e) { existed = false; }
+  try {
+    existed = fs.statSync(r.target).isFile();
+  } catch (e) {
+    existed = false;
+  }
   if (!existed && countBlobs(cfg) >= cfg.maxBlobs) {
     send(res, 507, { 'content-type': 'text/plain' }, 'store full\n');
     // Drain the request body so the connection can be reused/closed cleanly.
@@ -152,26 +186,57 @@ function handlePut(cfg, req, res, r) {
   }
 
   const tmp = path.join(cfg.dir, '.tmp.' + crypto.randomBytes(12).toString('hex'));
-  let received = 0, aborted = false, finished = false;
+  let received = 0,
+    aborted = false,
+    finished = false;
   const ws = fs.createWriteStream(tmp, { mode: 0o600 });
-  function cleanup() { try { fs.unlinkSync(tmp); } catch (e) { /* ignore */ } }
+  function cleanup() {
+    try {
+      fs.unlinkSync(tmp);
+    } catch (e) {
+      /* ignore */
+    }
+  }
   function abort(code, msg) {
-    if (aborted || finished) return; aborted = true;
-    try { ws.destroy(); } catch (e) { /* ignore */ }
+    if (aborted || finished) return;
+    aborted = true;
+    try {
+      ws.destroy();
+    } catch (e) {
+      /* ignore */
+    }
     cleanup();
     if (code && !res.headersSent) send(res, code, { 'content-type': 'text/plain' }, msg);
-    try { req.destroy(); } catch (e) { /* ignore */ } // hard-stop the socket on overflow
+    try {
+      req.destroy();
+    } catch (e) {
+      /* ignore */
+    } // hard-stop the socket on overflow
   }
 
-  ws.on('error', function () { abort(500, 'write error\n'); });
-  req.on('error', function () { abort(0); });
-  req.on('aborted', function () { abort(0); });
+  ws.on('error', function () {
+    abort(500, 'write error\n');
+  });
+  req.on('error', function () {
+    abort(0);
+  });
+  req.on('aborted', function () {
+    abort(0);
+  });
 
   req.on('data', function (chunk) {
     if (aborted) return;
     received += chunk.length;
-    if (received > cfg.maxBlobBytes) { abort(413, 'blob too large\n'); return; }
-    if (!ws.write(chunk)) { req.pause(); ws.once('drain', function () { if (!aborted) req.resume(); }); }
+    if (received > cfg.maxBlobBytes) {
+      abort(413, 'blob too large\n');
+      return;
+    }
+    if (!ws.write(chunk)) {
+      req.pause();
+      ws.once('drain', function () {
+        if (!aborted) req.resume();
+      });
+    }
   });
   req.on('end', function () {
     if (aborted) return;
@@ -181,26 +246,56 @@ function handlePut(cfg, req, res, r) {
       try {
         fs.renameSync(tmp, r.target); // atomic publish
         fs.chmodSync(r.target, 0o600);
-      } catch (e) { cleanup(); send(res, 500, { 'content-type': 'text/plain' }, 'write error\n'); return; }
-      send(res, existed ? 204 : 201, existed ? {} : { 'content-type': 'text/plain' }, existed ? undefined : 'created\n');
+      } catch (e) {
+        cleanup();
+        send(res, 500, { 'content-type': 'text/plain' }, 'write error\n');
+        return;
+      }
+      send(
+        res,
+        existed ? 204 : 201,
+        existed ? {} : { 'content-type': 'text/plain' },
+        existed ? undefined : 'created\n',
+      );
     });
   });
 }
 
 function handleGet(cfg, req, res, r, headOnly) {
   let st;
-  try { st = fs.statSync(r.target); } catch (e) { send(res, 404, { 'content-type': 'text/plain' }, headOnly ? undefined : 'not found\n'); return; }
-  if (!st.isFile()) { send(res, 404, {}, undefined); return; }
+  try {
+    st = fs.statSync(r.target);
+  } catch (e) {
+    send(res, 404, { 'content-type': 'text/plain' }, headOnly ? undefined : 'not found\n');
+    return;
+  }
+  if (!st.isFile()) {
+    send(res, 404, {}, undefined);
+    return;
+  }
   const headers = { 'content-type': 'application/octet-stream', 'content-length': String(st.size) };
-  if (headOnly) { send(res, 200, headers, undefined); return; }
+  if (headOnly) {
+    send(res, 200, headers, undefined);
+    return;
+  }
   res.writeHead(200, headers);
   const rs = fs.createReadStream(r.target);
-  rs.on('error', function () { try { res.destroy(); } catch (e) { /* ignore */ } });
+  rs.on('error', function () {
+    try {
+      res.destroy();
+    } catch (e) {
+      /* ignore */
+    }
+  });
   rs.pipe(res);
 }
 
 function handleDelete(cfg, req, res, r) {
-  try { fs.unlinkSync(r.target); } catch (e) { /* ENOENT => idempotent success */ }
+  try {
+    fs.unlinkSync(r.target);
+  } catch (e) {
+    /* ENOENT => idempotent success */
+  }
   send(res, 204, {}, undefined);
 }
 
@@ -208,30 +303,41 @@ function handleDelete(cfg, req, res, r) {
 function createHandler(opts) {
   const cfg = resolveOpts(opts);
   const handler = function (req, res) {
-    req.on('error', function () { /* client abort — never crash the server */ });
+    req.on('error', function () {
+      /* client abort — never crash the server */
+    });
 
     // OPTIONS is answered globally (any path) so a WebDAV client's discovery probe is
     // satisfied even before it knows a slot.
     if (req.method === 'OPTIONS') {
       if (!checkAuth(cfg, req)) return send(res, 401, { 'www-authenticate': 'Basic realm="keyflip-relay"' }, undefined);
-      return send(res, 200, { 'DAV': '1', 'Allow': ALLOW, 'MS-Author-Via': 'DAV', 'content-length': '0' }, undefined);
+      return send(res, 200, { DAV: '1', Allow: ALLOW, 'MS-Author-Via': 'DAV', 'content-length': '0' }, undefined);
     }
 
     if (['GET', 'HEAD', 'PUT', 'DELETE'].indexOf(req.method) === -1) {
-      return send(res, 405, { 'Allow': ALLOW, 'content-type': 'text/plain' }, 'method not allowed\n');
+      return send(res, 405, { Allow: ALLOW, 'content-type': 'text/plain' }, 'method not allowed\n');
     }
     if (!checkAuth(cfg, req)) {
-      return send(res, 401, { 'www-authenticate': 'Basic realm="keyflip-relay"', 'content-type': 'text/plain' }, 'unauthorized\n');
+      return send(
+        res,
+        401,
+        { 'www-authenticate': 'Basic realm="keyflip-relay"', 'content-type': 'text/plain' },
+        'unauthorized\n',
+      );
     }
 
     const r = resolveSlot(cfg, req);
     if (r.error) return send(res, r.code, { 'content-type': 'text/plain' }, r.error + '\n');
 
     switch (req.method) {
-      case 'PUT': return handlePut(cfg, req, res, r);
-      case 'GET': return handleGet(cfg, req, res, r, false);
-      case 'HEAD': return handleGet(cfg, req, res, r, true);
-      case 'DELETE': return handleDelete(cfg, req, res, r);
+      case 'PUT':
+        return handlePut(cfg, req, res, r);
+      case 'GET':
+        return handleGet(cfg, req, res, r, false);
+      case 'HEAD':
+        return handleGet(cfg, req, res, r, true);
+      case 'DELETE':
+        return handleDelete(cfg, req, res, r);
     }
   };
   handler.cfg = cfg;
@@ -244,11 +350,20 @@ function createRelayServer(opts) {
   const handler = createHandler(opts);
   const cfg = handler.cfg;
   if (!cfg.auth && !isLoopbackHost(cfg.host) && !cfg.allowUnauthenticated) {
-    throw new Error('relay: refusing to expose an unauthenticated, writable blob store on ' +
-      cfg.host + ' — set opts.auth {user,pass}, bind 127.0.0.1, or pass allowUnauthenticated:true to own the risk');
+    throw new Error(
+      'relay: refusing to expose an unauthenticated, writable blob store on ' +
+        cfg.host +
+        ' — set opts.auth {user,pass}, bind 127.0.0.1, or pass allowUnauthenticated:true to own the risk',
+    );
   }
   const server = http.createServer(handler);
-  server.on('clientError', function (err, socket) { try { socket.destroy(); } catch (e) { /* ignore */ } });
+  server.on('clientError', function (err, socket) {
+    try {
+      socket.destroy();
+    } catch (e) {
+      /* ignore */
+    }
+  });
   return { server: server, handler: handler, cfg: cfg };
 }
 
@@ -256,23 +371,57 @@ function createRelayServer(opts) {
 function start(opts) {
   return new Promise(function (resolve, reject) {
     let built;
-    try { built = createRelayServer(opts); } catch (e) { reject(e); return; }
-    const server = built.server, cfg = built.cfg;
+    try {
+      built = createRelayServer(opts);
+    } catch (e) {
+      reject(e);
+      return;
+    }
+    const server = built.server,
+      cfg = built.cfg;
 
     sweep(cfg); // reap stale blobs at startup
-    const timer = setInterval(function () { sweep(cfg); }, Math.max(1000, Math.min(cfg.ttlMs, 60 * 60 * 1000)));
+    const timer = setInterval(
+      function () {
+        sweep(cfg);
+      },
+      Math.max(1000, Math.min(cfg.ttlMs, 60 * 60 * 1000)),
+    );
     if (timer.unref) timer.unref(); // never keep the event loop alive on our account
 
     function close() {
       clearInterval(timer);
-      return new Promise(function (res) { server.close(function () { res(); }); });
+      return new Promise(function (res) {
+        server.close(function () {
+          res();
+        });
+      });
     }
-    server.on('error', function (e) { clearInterval(timer); reject(e); });
+    server.on('error', function (e) {
+      clearInterval(timer);
+      reject(e);
+    });
     server.listen(cfg.port, cfg.host, function () {
       const addr = server.address();
-      resolve({ server: server, handler: built.handler, cfg: cfg, host: cfg.host, port: (addr && addr.port) || cfg.port, close: close });
+      resolve({
+        server: server,
+        handler: built.handler,
+        cfg: cfg,
+        host: cfg.host,
+        port: (addr && addr.port) || cfg.port,
+        close: close,
+      });
     });
   });
 }
 
-export { DEFAULT_PREFIX, SLOT_RE, createHandler, createRelayServer, start, isLoopbackHost, sweep as _sweep, countBlobs as _countBlobs };
+export {
+  DEFAULT_PREFIX,
+  SLOT_RE,
+  createHandler,
+  createRelayServer,
+  start,
+  isLoopbackHost,
+  sweep as _sweep,
+  countBlobs as _countBlobs,
+};

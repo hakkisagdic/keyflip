@@ -28,7 +28,9 @@ function genKeypair() {
 // Default on-disk location of the private key, relative to this file. An optional
 // KEYFLIP_ISSUER_KEY env var relocates it (used by tests to avoid touching the repo);
 // it is a PATH, not a secret, so env is an acceptable source.
-function defaultKeyPath() { return process.env.KEYFLIP_ISSUER_KEY || path.join(__dirname, 'private', 'issuer.key'); }
+function defaultKeyPath() {
+  return process.env.KEYFLIP_ISSUER_KEY || path.join(__dirname, 'private', 'issuer.key');
+}
 
 // Persist a PKCS8 DER private key to `keyPath` at mode 0600, creating the parent
 // directory (also 0700). Refuses to clobber an existing key unless force=true so a
@@ -36,7 +38,11 @@ function defaultKeyPath() { return process.env.KEYFLIP_ISSUER_KEY || path.join(_
 function writePrivateKey(privateKeyDer, keyPath, force) {
   const dir = path.dirname(keyPath);
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-  try { fs.chmodSync(dir, 0o700); } catch (e) { /* best effort on platforms without full chmod */ }
+  try {
+    fs.chmodSync(dir, 0o700);
+  } catch (e) {
+    /* best effort on platforms without full chmod */
+  }
   if (fs.existsSync(keyPath) && !force) {
     const err = new Error('refusing to overwrite existing key at ' + keyPath + ' (pass --force to replace it)');
     err.code = 'EEXIST';
@@ -44,7 +50,11 @@ function writePrivateKey(privateKeyDer, keyPath, force) {
   }
   // wx unless forcing; always 0600. Write raw DER bytes (what loadPrivateKey reads).
   fs.writeFileSync(keyPath, privateKeyDer, { mode: 0o600, flag: force ? 'w' : 'wx' });
-  try { fs.chmodSync(keyPath, 0o600); } catch (e) { /* best effort */ }
+  try {
+    fs.chmodSync(keyPath, 0o600);
+  } catch (e) {
+    /* best effort */
+  }
 }
 
 // ---- CLI ---------------------------------------------------------------------
@@ -64,9 +74,12 @@ function main(argv) {
   // Only the PUBLIC key is ever emitted. The private key never leaves the 0600 file.
   process.stdout.write(
     'Ed25519 issuer keypair generated.\n' +
-    '  private key -> ' + keyPath + ' (mode 0600, keep secret, never commit)\n\n' +
-    'Paste this public key into src/license.js as PUBKEY_B64:\n\n' +
-    kp.publicKeyB64 + '\n'
+      '  private key -> ' +
+      keyPath +
+      ' (mode 0600, keep secret, never commit)\n\n' +
+      'Paste this public key into src/license.js as PUBKEY_B64:\n\n' +
+      kp.publicKeyB64 +
+      '\n',
   );
 }
 

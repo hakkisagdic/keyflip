@@ -13,13 +13,18 @@ import * as vcs from '../src/vcs.js';
 import { makeCtx } from './helpers.js';
 
 const HAS_GIT = vcs.gitAvailable();
-function find(checks, name) { return checks.filter(function (c) { return c.name === name; })[0]; }
+function find(checks, name) {
+  return checks.filter(function (c) {
+    return c.name === name;
+  })[0];
+}
 
 test('secrets in git: clean repo passes', async function (t) {
   if (!HAS_GIT) return t.skip('git not installed');
   const ctx = makeCtx();
   fs.writeFileSync(path.join(ctx.configDir, 'a.json'), '{"name":"a"}');
-  vcs.ensureRepo(ctx); vcs.commit(ctx, 'seed');
+  vcs.ensureRepo(ctx);
+  vcs.commit(ctx, 'seed');
   const r = await doctor.diagnose(ctx);
   const c = find(r.checks, 'secrets in git');
   assert.ok(c && c.ok === true, 'clean repo has no tracked secrets');
@@ -67,7 +72,10 @@ test('a corrupt settings.json FAILS; a valid one stays quiet', async function ()
 
 test('quota pressure warns only when an account is near its limit', async function () {
   const ctx = makeCtx();
-  fs.writeFileSync(path.join(ctx.configDir, '.usage-cache.json'), JSON.stringify({ hot: { usage: { fiveHour: { pct: 97 } } }, cool: { usage: { fiveHour: { pct: 20 } } } }));
+  fs.writeFileSync(
+    path.join(ctx.configDir, '.usage-cache.json'),
+    JSON.stringify({ hot: { usage: { fiveHour: { pct: 97 } } }, cool: { usage: { fiveHour: { pct: 20 } } } }),
+  );
   const r = await doctor.diagnose(ctx);
   const c = find(r.checks, 'quota headroom');
   assert.ok(c && c.ok === 'warn' && /hot/.test(c.detail) && !/cool/.test(c.detail));

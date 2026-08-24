@@ -5,7 +5,7 @@ import os from 'os';
 import path from 'path';
 import crypto from 'crypto';
 import * as license from '../src/license.js';
-import { makeCtx } from './helpers.js';
+import { makeCtx, assertPrivateMode } from './helpers.js';
 
 // A throwaway Ed25519 keypair + its SPKI-DER base64 public key (same encoding
 // the release build embeds). Tests pin it with setPublicKey so the whole
@@ -20,8 +20,12 @@ function freshKeys() {
 }
 
 // Fixed clocks so nothing depends on the wall clock.
-const NOW = function () { return '2026-06-01T00:00:00.000Z'; };
-const FUTURE = function () { return '2031-01-01T00:00:00.000Z'; };
+const NOW = function () {
+  return '2026-06-01T00:00:00.000Z';
+};
+const FUTURE = function () {
+  return '2031-01-01T00:00:00.000Z';
+};
 
 function tmpFile(contents) {
   const p = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'kf-lic-')), 'license.txt');
@@ -34,7 +38,12 @@ function tmpFile(contents) {
 test('mint + verify a genuine license (round-trip)', function () {
   const k = freshKeys();
   license.setPublicKey(k.pubB64);
-  const token = license.makeLicense(k.privateKey, { tier: 'pro', email: 'a@b.co', expiry: '2030-01-01T00:00:00.000Z', issued: '2026-01-01T00:00:00.000Z' });
+  const token = license.makeLicense(k.privateKey, {
+    tier: 'pro',
+    email: 'a@b.co',
+    expiry: '2030-01-01T00:00:00.000Z',
+    issued: '2026-01-01T00:00:00.000Z',
+  });
   const v = license.verify(token, { now: NOW });
   assert.strictEqual(v.valid, true);
   assert.strictEqual(v.tier, 'pro');
@@ -67,7 +76,11 @@ test('a free-tier license is valid but grants nothing paid', function () {
 test('an expired license is invalid but still reports its claimed tier', function () {
   const k = freshKeys();
   license.setPublicKey(k.pubB64);
-  const token = license.makeLicense(k.privateKey, { tier: 'pro', email: 'a@b.co', expiry: '2027-01-01T00:00:00.000Z' }, { now: NOW });
+  const token = license.makeLicense(
+    k.privateKey,
+    { tier: 'pro', email: 'a@b.co', expiry: '2027-01-01T00:00:00.000Z' },
+    { now: NOW },
+  );
   const v = license.verify(token, { now: FUTURE });
   assert.strictEqual(v.valid, false);
   assert.strictEqual(v.reason, 'expired');
@@ -79,7 +92,12 @@ test('a tampered payload fails the signature check', function () {
   license.setPublicKey(k.pubB64);
   const token = license.makeLicense(k.privateKey, { tier: 'pro', email: 'a@b.co', expiry: null }, { now: NOW });
   // Forge an "enterprise" payload but keep the original signature.
-  const forgedPayload = license.canonicalPayload({ tier: 'enterprise', email: 'a@b.co', expiry: null, issued: '2026-01-01T00:00:00.000Z' });
+  const forgedPayload = license.canonicalPayload({
+    tier: 'enterprise',
+    email: 'a@b.co',
+    expiry: null,
+    issued: '2026-01-01T00:00:00.000Z',
+  });
   const forged = Buffer.from(forgedPayload, 'utf8').toString('base64url') + '.' + token.split('.')[1];
   const v = license.verify(forged, { now: NOW });
   assert.strictEqual(v.valid, false);
@@ -134,7 +152,11 @@ test('activate stores a verified license 0600 and status/tier read it back', fun
   const k = freshKeys();
   license.setPublicKey(k.pubB64);
   const ctx = makeCtx({ now: NOW });
-  const token = license.makeLicense(k.privateKey, { tier: 'pro', email: 'a@b.co', expiry: '2030-01-01T00:00:00.000Z' }, { now: NOW });
+  const token = license.makeLicense(
+    k.privateKey,
+    { tier: 'pro', email: 'a@b.co', expiry: '2030-01-01T00:00:00.000Z' },
+    { now: NOW },
+  );
 
   const r = license.activate(ctx, { token: token });
   assert.strictEqual(r.tier, 'pro');
@@ -142,8 +164,7 @@ test('activate stores a verified license 0600 and status/tier read it back', fun
 
   const p = license.licensePath(ctx);
   assert.ok(fs.existsSync(p));
-  const mode = fs.statSync(p).mode & 0o777;
-  assert.strictEqual(mode, 0o600, 'license.json must be 0600, got ' + mode.toString(8));
+  assertPrivateMode(p, 'license.json');
 
   const s = license.status(ctx);
   assert.strictEqual(s.tier, 'pro');
@@ -170,8 +191,14 @@ test('activate refuses an invalid/expired license and writes nothing', function 
   const k = freshKeys();
   license.setPublicKey(k.pubB64);
   const ctx = makeCtx({ now: FUTURE });
-  const token = license.makeLicense(k.privateKey, { tier: 'pro', email: 'a@b.co', expiry: '2027-01-01T00:00:00.000Z' }, { now: NOW });
-  assert.throws(function () { license.activate(ctx, { token: token }); }, /not valid/);
+  const token = license.makeLicense(
+    k.privateKey,
+    { tier: 'pro', email: 'a@b.co', expiry: '2027-01-01T00:00:00.000Z' },
+    { now: NOW },
+  );
+  assert.throws(function () {
+    license.activate(ctx, { token: token });
+  }, /not valid/);
   assert.strictEqual(fs.existsSync(license.licensePath(ctx)), false);
   assert.strictEqual(license.tier(ctx), 'free');
 });
@@ -181,7 +208,11 @@ test('an expired stored license collapses to free (checked at read time)', funct
   license.setPublicKey(k.pubB64);
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'kf-exp-'));
   const ctxNow = makeCtx({ home: home, now: NOW });
-  const token = license.makeLicense(k.privateKey, { tier: 'pro', email: 'a@b.co', expiry: '2030-01-01T00:00:00.000Z' }, { now: NOW });
+  const token = license.makeLicense(
+    k.privateKey,
+    { tier: 'pro', email: 'a@b.co', expiry: '2030-01-01T00:00:00.000Z' },
+    { now: NOW },
+  );
   license.activate(ctxNow, { token: token });
   assert.strictEqual(license.tier(ctxNow), 'pro');
 
@@ -221,43 +252,65 @@ test('gate/requireTier enforce the tier ladder', function () {
   const prevEnv = process.env.KEYFLIP_LICENSING;
   process.env.KEYFLIP_LICENSING = '1';
   try {
+    // free: no license
+    const free = makeCtx({ now: NOW });
+    assert.strictEqual(license.gate(free, 'fleet'), false);
+    assert.strictEqual(license.gate(free, 'nonexistent-free-feature'), true); // unlisted = free
+    assert.throws(
+      function () {
+        license.requireTier(free, 'fleet');
+      },
+      function (e) {
+        return e.code === 'LICENSE_REQUIRED' && /pro plan/.test(e.message) && e.requiredTier === 'pro';
+      },
+    );
 
-  // free: no license
-  const free = makeCtx({ now: NOW });
-  assert.strictEqual(license.gate(free, 'fleet'), false);
-  assert.strictEqual(license.gate(free, 'nonexistent-free-feature'), true); // unlisted = free
-  assert.throws(function () { license.requireTier(free, 'fleet'); }, function (e) {
-    return e.code === 'LICENSE_REQUIRED' && /pro plan/.test(e.message) && e.requiredTier === 'pro';
-  });
+    // pro: unlocks pro features, not team
+    const pro = makeCtx({ now: NOW });
+    license.activate(pro, {
+      token: license.makeLicense(k.privateKey, { tier: 'pro', email: 'a@b.co', expiry: null }, { now: NOW }),
+    });
+    ['fleet', 'cost', 'budget', 'notify', 'autoswitch', 'router', 'cache', 'jobs', 'orchestrator'].forEach(
+      function (f) {
+        assert.strictEqual(license.gate(pro, f), true, 'pro should unlock ' + f);
+      },
+    );
+    ['teampool', 'policy', 'vault', 'swarm'].forEach(function (f) {
+      assert.strictEqual(license.gate(pro, f), false, 'pro must NOT unlock ' + f);
+    });
+    assert.doesNotThrow(function () {
+      license.requireTier(pro, 'fleet');
+    });
+    assert.throws(
+      function () {
+        license.requireTier(pro, 'vault');
+      },
+      function (e) {
+        return e.code === 'LICENSE_REQUIRED' && /team plan/.test(e.message);
+      },
+    );
 
-  // pro: unlocks pro features, not team
-  const pro = makeCtx({ now: NOW });
-  license.activate(pro, { token: license.makeLicense(k.privateKey, { tier: 'pro', email: 'a@b.co', expiry: null }, { now: NOW }) });
-  ['fleet', 'cost', 'budget', 'notify', 'autoswitch', 'router', 'cache', 'jobs', 'orchestrator'].forEach(function (f) {
-    assert.strictEqual(license.gate(pro, f), true, 'pro should unlock ' + f);
-  });
-  ['teampool', 'policy', 'vault', 'swarm'].forEach(function (f) {
-    assert.strictEqual(license.gate(pro, f), false, 'pro must NOT unlock ' + f);
-  });
-  assert.doesNotThrow(function () { license.requireTier(pro, 'fleet'); });
-  assert.throws(function () { license.requireTier(pro, 'vault'); }, function (e) {
-    return e.code === 'LICENSE_REQUIRED' && /team plan/.test(e.message);
-  });
-
-  // enterprise: unlocks everything (above team)
-  const ent = makeCtx({ now: NOW });
-  license.activate(ent, { token: license.makeLicense(k.privateKey, { tier: 'enterprise', email: 'a@b.co', expiry: null }, { now: NOW }) });
-  ['fleet', 'vault', 'policy', 'teampool', 'swarm'].forEach(function (f) {
-    assert.strictEqual(license.gate(ent, f), true, 'enterprise should unlock ' + f);
-  });
-  } finally { if (prevEnv === undefined) delete process.env.KEYFLIP_LICENSING; else process.env.KEYFLIP_LICENSING = prevEnv; }
+    // enterprise: unlocks everything (above team)
+    const ent = makeCtx({ now: NOW });
+    license.activate(ent, {
+      token: license.makeLicense(k.privateKey, { tier: 'enterprise', email: 'a@b.co', expiry: null }, { now: NOW }),
+    });
+    ['fleet', 'vault', 'policy', 'teampool', 'swarm'].forEach(function (f) {
+      assert.strictEqual(license.gate(ent, f), true, 'enterprise should unlock ' + f);
+    });
+  } finally {
+    if (prevEnv === undefined) delete process.env.KEYFLIP_LICENSING;
+    else process.env.KEYFLIP_LICENSING = prevEnv;
+  }
 });
 
 test('unlockedFeatures reflects the effective tier', function () {
   const k = freshKeys();
   license.setPublicKey(k.pubB64);
   const team = makeCtx({ now: NOW });
-  license.activate(team, { token: license.makeLicense(k.privateKey, { tier: 'team', email: 'a@b.co', expiry: null }, { now: NOW }) });
+  license.activate(team, {
+    token: license.makeLicense(k.privateKey, { tier: 'team', email: 'a@b.co', expiry: null }, { now: NOW }),
+  });
   const feats = license.unlockedFeatures(team);
   assert.ok(feats.indexOf('vault') !== -1 && feats.indexOf('fleet') !== -1);
   assert.strictEqual(license.unlockedFeatures(makeCtx({ now: NOW })).length, 0); // free unlocks nothing
@@ -265,13 +318,19 @@ test('unlockedFeatures reflects the effective tier', function () {
 
 // ---- MCP tools ---------------------------------------------------------------
 
-function toolNamed(n) { return license.mcpTools.filter(function (t) { return t.name === n; })[0]; }
+function toolNamed(n) {
+  return license.mcpTools.filter(function (t) {
+    return t.name === n;
+  })[0];
+}
 
 test('MCP license_status is read-only and reports the plan', async function () {
   const k = freshKeys();
   license.setPublicKey(k.pubB64);
   const ctx = makeCtx({ now: NOW });
-  license.activate(ctx, { token: license.makeLicense(k.privateKey, { tier: 'pro', email: 'a@b.co', expiry: null }, { now: NOW }) });
+  license.activate(ctx, {
+    token: license.makeLicense(k.privateKey, { tier: 'pro', email: 'a@b.co', expiry: null }, { now: NOW }),
+  });
   const tool = toolNamed('keyflip_license_status');
   assert.strictEqual(tool.annotations.readOnlyHint, true);
   const out = await tool.run(ctx, {});
@@ -290,7 +349,9 @@ test('MCP license_activate requires confirm and then activates from a file', asy
   assert.strictEqual(tool.annotations.readOnlyHint, false);
   assert.ok(tool.inputSchema.required.indexOf('confirm') !== -1);
 
-  await assert.rejects(function () { return tool.run(ctx, { file: file, confirm: false }); }, /confirmation required/);
+  await assert.rejects(function () {
+    return tool.run(ctx, { file: file, confirm: false });
+  }, /confirmation required/);
   assert.strictEqual(license.tier(ctx), 'free'); // nothing happened without confirm
 
   const out = await tool.run(ctx, { file: file, confirm: true });
@@ -302,7 +363,6 @@ test('MCP license_activate requires confirm and then activates from a file', asy
 // Paywall enforcement is OFF unless KEYFLIP_LICENSING is enabled — shipping the machinery without
 // gating anyone until launch. requireTier must be a pure no-op by default.
 test('paywall is env-gated: requireTier is a no-op unless KEYFLIP_LICENSING is set', function () {
-
   const ctx = makeCtx();
   const prev = process.env.KEYFLIP_LICENSING;
   try {
@@ -312,9 +372,20 @@ test('paywall is env-gated: requireTier is a no-op unless KEYFLIP_LICENSING is s
     assert.strictEqual(license.requireForName(ctx, 'keyflip_fleet_status'), true);
     process.env.KEYFLIP_LICENSING = '1';
     assert.strictEqual(license.enforcementEnabled(), true);
-    assert.throws(function () { license.requireTier(ctx, 'fleet'); }, function (e) { return e.code === 'LICENSE_REQUIRED' && e.requiredTier === 'pro'; }, 'blocks a paid feature on the free tier when enabled');
+    assert.throws(
+      function () {
+        license.requireTier(ctx, 'fleet');
+      },
+      function (e) {
+        return e.code === 'LICENSE_REQUIRED' && e.requiredTier === 'pro';
+      },
+      'blocks a paid feature on the free tier when enabled',
+    );
     assert.strictEqual(license.requireForName(ctx, 'list'), true, 'a free/core command is never gated');
-  } finally { if (prev === undefined) delete process.env.KEYFLIP_LICENSING; else process.env.KEYFLIP_LICENSING = prev; }
+  } finally {
+    if (prev === undefined) delete process.env.KEYFLIP_LICENSING;
+    else process.env.KEYFLIP_LICENSING = prev;
+  }
   assert.strictEqual(license.featureFor('cost'), 'cost');
   assert.strictEqual(license.featureFor('list'), null);
 });

@@ -21,9 +21,19 @@ function build(ctx, resource, name, opts) {
   if (resource === 'provider') {
     const m = provider.read(ctx, name);
     if (!m) throw new Error("no such provider: '" + name + "'");
-    config = { baseUrl: m.baseUrl, authScheme: m.authScheme, models: m.models || {}, endpointCandidates: m.endpointCandidates || [] };
+    config = {
+      baseUrl: m.baseUrl,
+      authScheme: m.authScheme,
+      models: m.models || {},
+      endpointCandidates: m.endpointCandidates || [],
+    };
     if (!opts.noSecrets) {
-      let key = null; try { key = ctx.store.getProfile('provider__' + name); } catch (e) { key = null; }
+      let key = null;
+      try {
+        key = ctx.store.getProfile('provider__' + name);
+      } catch (e) {
+        key = null;
+      }
       if (key) config.key = key;
     }
   } else if (resource === 'account') {
@@ -34,7 +44,14 @@ function build(ctx, resource, name, opts) {
   } else {
     throw new Error('resource must be provider|account');
   }
-  return 'keyflip://v1/import?resource=' + resource + '&name=' + encodeURIComponent(name) + '&config=' + b64urlEncode(JSON.stringify(config));
+  return (
+    'keyflip://v1/import?resource=' +
+    resource +
+    '&name=' +
+    encodeURIComponent(name) +
+    '&config=' +
+    b64urlEncode(JSON.stringify(config))
+  );
 }
 
 // Parse a share URL into { resource, name, config } — throws on anything invalid.
@@ -42,12 +59,21 @@ function parse(url) {
   const m = /^keyflip:\/\/v1\/import\?(.+)$/.exec(String(url).trim());
   if (!m) throw new Error('not a keyflip://v1 import link');
   const params = {};
-  m[1].split('&').forEach(function (kv) { const i = kv.indexOf('='); params[decodeURIComponent(kv.slice(0, i))] = kv.slice(i + 1); });
-  if (['provider', 'account'].indexOf(params.resource) === -1) throw new Error('unsupported resource: ' + params.resource);
+  m[1].split('&').forEach(function (kv) {
+    const i = kv.indexOf('=');
+    params[decodeURIComponent(kv.slice(0, i))] = kv.slice(i + 1);
+  });
+  if (['provider', 'account'].indexOf(params.resource) === -1)
+    throw new Error('unsupported resource: ' + params.resource);
   if (!params.name) throw new Error('missing name');
   let config;
-  try { config = JSON.parse(b64urlDecode(params.config || '')); } catch (e) { throw new Error('config payload is not valid'); }
-  if (!config || typeof config !== 'object' || Array.isArray(config)) throw new Error('config payload must be a JSON object');
+  try {
+    config = JSON.parse(b64urlDecode(params.config || ''));
+  } catch (e) {
+    throw new Error('config payload is not valid');
+  }
+  if (!config || typeof config !== 'object' || Array.isArray(config))
+    throw new Error('config payload must be a JSON object');
   return { resource: params.resource, name: decodeURIComponent(params.name), config: config };
 }
 
@@ -63,13 +89,28 @@ function apply(ctx, parsed) {
   if (parsed.resource === 'provider') {
     const c = parsed.config;
     if (!c.baseUrl) throw new Error('provider link has no baseUrl');
-    provider.add(ctx, parsed.name, { baseUrl: c.baseUrl, authScheme: c.authScheme, key: c.key || null, models: c.models || {}, endpointCandidates: c.endpointCandidates || [] });
+    provider.add(ctx, parsed.name, {
+      baseUrl: c.baseUrl,
+      authScheme: c.authScheme,
+      key: c.key || null,
+      models: c.models || {},
+      endpointCandidates: c.endpointCandidates || [],
+    });
     return { resource: 'provider', name: parsed.name };
   }
   // account pointer: create metadata only (no token — the user logs in / re-adds)
   if (!profiles.isValidName(parsed.name)) throw new Error("invalid account name: '" + parsed.name + "'");
-  profiles.write(ctx.configDir, { name: parsed.name, email: (parsed.config.email || ''), oauthAccount: parsed.config.oauthAccount || {}, importedAt: ctx.now() });
-  return { resource: 'account', name: parsed.name, note: 'pointer only — log into this account and run `keyflip add` to capture its credential' };
+  profiles.write(ctx.configDir, {
+    name: parsed.name,
+    email: parsed.config.email || '',
+    oauthAccount: parsed.config.oauthAccount || {},
+    importedAt: ctx.now(),
+  });
+  return {
+    resource: 'account',
+    name: parsed.name,
+    note: 'pointer only — log into this account and run `keyflip add` to capture its credential',
+  };
 }
 
 export { build, parse, preview, apply, b64urlEncode, b64urlDecode };

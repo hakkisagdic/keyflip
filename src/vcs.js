@@ -14,40 +14,67 @@ import * as secretpaths from './secretpaths.js';
 
 // The secret set comes from the SHARED source of truth (src/secretpaths.js) so vcs and
 // backup can never drift; the rest is non-secret but not worth versioning.
-const GITIGNORE = [
-  '# keyflip: NEVER version secrets — they live in the OS credential store.',
-].concat(secretpaths.gitignoreLines()).concat([
-  '# rebuildable caches / self-referential snapshots (not versioned)',
-  'embeddings.json',
-  '.usage-cache.json',
-  'backups/',
-  'skill-backups/',
-  '# transient runtime junk',
-  '*.pid',
-  '*.sock',
-  'sockets/',
-  '.DS_Store',
-  '',
-]).join('\n');
+const GITIGNORE = ['# keyflip: NEVER version secrets — they live in the OS credential store.']
+  .concat(secretpaths.gitignoreLines())
+  .concat([
+    '# rebuildable caches / self-referential snapshots (not versioned)',
+    'embeddings.json',
+    '.usage-cache.json',
+    'backups/',
+    'skill-backups/',
+    '# transient runtime junk',
+    '*.pid',
+    '*.sock',
+    'sockets/',
+    '.DS_Store',
+    '',
+  ])
+  .join('\n');
 
 const IDENT = ['-c', 'user.email=keyflip@localhost', '-c', 'user.name=keyflip'];
 
-function gitAvailable() { try { const r = run('git', ['--version']); return !!(r && r.code === 0); } catch (e) { return false; } }
+function gitAvailable() {
+  try {
+    const r = run('git', ['--version']);
+    return !!(r && r.code === 0);
+  } catch (e) {
+    return false;
+  }
+}
 
 // Versioning is ON by default; disabled by KEYFLIP_VCS=off (tests/CI), a `.noversion`
 // marker in the config dir (user opt-out), or a missing git binary.
 function isEnabled(ctx) {
   if (process.env.KEYFLIP_VCS === 'off') return false;
-  try { if (fs.existsSync(path.join(ctx.configDir, '.noversion'))) return false; } catch (e) { /* ignore */ }
+  try {
+    if (fs.existsSync(path.join(ctx.configDir, '.noversion'))) return false;
+  } catch (e) {
+    /* ignore */
+  }
   return gitAvailable();
 }
 
-function isRepo(ctx) { try { return fs.existsSync(path.join(ctx.configDir, '.git')); } catch (e) { return false; } }
-function dirExists(ctx) { try { return fs.existsSync(ctx.configDir); } catch (e) { return false; } }
+function isRepo(ctx) {
+  try {
+    return fs.existsSync(path.join(ctx.configDir, '.git'));
+  } catch (e) {
+    return false;
+  }
+}
+function dirExists(ctx) {
+  try {
+    return fs.existsSync(ctx.configDir);
+  } catch (e) {
+    return false;
+  }
+}
 
 function git(ctx, args, input) {
-  try { return run('git', ['-C', ctx.configDir].concat(args), input, { timeoutMs: 20000 }); }
-  catch (e) { return { code: 1, stdout: '', stderr: String(e && e.message) }; }
+  try {
+    return run('git', ['-C', ctx.configDir].concat(args), input, { timeoutMs: 20000 });
+  } catch (e) {
+    return { code: 1, stdout: '', stderr: String(e && e.message) };
+  }
 }
 
 // Init the repo + write the managed .gitignore, idempotently. Does NOT create the config
@@ -60,8 +87,13 @@ function ensureRepo(ctx) {
   let refreshed = false;
   try {
     const cur = fs.existsSync(gi) ? fs.readFileSync(gi, 'utf8') : null;
-    if (cur !== GITIGNORE) { fs.writeFileSync(gi, GITIGNORE); refreshed = true; }
-  } catch (e) { /* ignore */ }
+    if (cur !== GITIGNORE) {
+      fs.writeFileSync(gi, GITIGNORE);
+      refreshed = true;
+    }
+  } catch (e) {
+    /* ignore */
+  }
   if (!isRepo(ctx)) {
     const r = git(ctx, ['init', '-q']);
     if (!r || r.code !== 0) return false;
@@ -81,7 +113,12 @@ function ensureRepo(ctx) {
 function purgeIgnoredFromIndex(ctx) {
   const ls = git(ctx, ['ls-files', '-i', '-c', '--exclude-standard']);
   if (!ls || ls.code !== 0) return;
-  const files = String(ls.stdout || '').split('\n').map(function (s) { return s.trim(); }).filter(Boolean);
+  const files = String(ls.stdout || '')
+    .split('\n')
+    .map(function (s) {
+      return s.trim();
+    })
+    .filter(Boolean);
   if (!files.length) return;
   git(ctx, ['rm', '--cached', '-q', '--'].concat(files));
 }
@@ -103,13 +140,23 @@ function tracked(ctx) {
   if (!isRepo(ctx)) return [];
   const r = git(ctx, ['ls-files']);
   if (!r || r.code !== 0) return [];
-  return String(r.stdout || '').split('\n').map(function (s) { return s.trim(); }).filter(Boolean);
+  return String(r.stdout || '')
+    .split('\n')
+    .map(function (s) {
+      return s.trim();
+    })
+    .filter(Boolean);
 }
 
 // Auto-version hook for the mutation funnel: ensure the repo, then commit with a label.
 function autoCommit(ctx, label) {
-  try { if (!isEnabled(ctx)) return false; ensureRepo(ctx); return commit(ctx, label); }
-  catch (e) { return false; }
+  try {
+    if (!isEnabled(ctx)) return false;
+    ensureRepo(ctx);
+    return commit(ctx, label);
+  } catch (e) {
+    return false;
+  }
 }
 
 // Recent history (newest first): [{ ref, subject, date }].
@@ -117,10 +164,14 @@ function log(ctx, n) {
   if (!isRepo(ctx)) return [];
   const r = git(ctx, ['log', '--pretty=%h\x01%s\x01%cI', '-n', String(n || 20)]);
   if (!r || r.code !== 0) return [];
-  return String(r.stdout || '').trim().split('\n').filter(Boolean).map(function (line) {
-    const p = line.split('\x01');
-    return { ref: p[0], subject: p[1] || '', date: p[2] || '' };
-  });
+  return String(r.stdout || '')
+    .trim()
+    .split('\n')
+    .filter(Boolean)
+    .map(function (line) {
+      const p = line.split('\x01');
+      return { ref: p[0], subject: p[1] || '', date: p[2] || '' };
+    });
 }
 
 // Undo the most recent change (a NEW commit that reverses it — history is preserved).
@@ -144,7 +195,36 @@ function restore(ctx, ref) {
 }
 
 // User opt-out / opt-in (a marker file; git history is kept either way).
-function disable(ctx) { try { fs.mkdirSync(ctx.configDir, { recursive: true }); fs.writeFileSync(path.join(ctx.configDir, '.noversion'), ''); return true; } catch (e) { return false; } }
-function enable(ctx) { try { fs.rmSync(path.join(ctx.configDir, '.noversion'), { force: true }); } catch (e) { /* ignore */ } return ensureRepo(ctx); }
+function disable(ctx) {
+  try {
+    fs.mkdirSync(ctx.configDir, { recursive: true });
+    fs.writeFileSync(path.join(ctx.configDir, '.noversion'), '');
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+function enable(ctx) {
+  try {
+    fs.rmSync(path.join(ctx.configDir, '.noversion'), { force: true });
+  } catch (e) {
+    /* ignore */
+  }
+  return ensureRepo(ctx);
+}
 
-export { GITIGNORE, gitAvailable, isEnabled, isRepo, ensureRepo, commit, autoCommit, log, tracked, undo, restore, disable, enable };
+export {
+  GITIGNORE,
+  gitAvailable,
+  isEnabled,
+  isRepo,
+  ensureRepo,
+  commit,
+  autoCommit,
+  log,
+  tracked,
+  undo,
+  restore,
+  disable,
+  enable,
+};

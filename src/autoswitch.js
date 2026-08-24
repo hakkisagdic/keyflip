@@ -19,12 +19,18 @@ async function tick(ctx, opts) {
   const strategy = opts.strategy || 'next-available';
   const list = core.listProfiles(ctx);
   let activeIdx = -1;
-  list.forEach(function (e, i) { if (e.active) activeIdx = i; });
+  list.forEach(function (e, i) {
+    if (e.active) activeIdx = i;
+  });
   if (activeIdx === -1) return { state: 'no-active', active: null, headroom: null, switchedTo: null };
   const active = list[activeIdx];
 
   const infos = await usage.usageForProfiles(ctx, [active.name], {
-    fetch: opts.fetch, nowMs: opts.nowMs, cacheTtlMs: opts.cacheTtlMs, liveFor: active.name, recordHistory: true,
+    fetch: opts.fetch,
+    nowMs: opts.nowMs,
+    cacheTtlMs: opts.cacheTtlMs,
+    liveFor: active.name,
+    recordHistory: true,
   });
   const h = infos[active.name] ? infos[active.name].headroom : null;
   if (typeof h !== 'number') return { state: 'unknown', active: active, headroom: null, switchedTo: null };
@@ -38,7 +44,11 @@ async function tick(ctx, opts) {
     const e = list[(activeIdx + k) % list.length];
     if (e.active) continue;
     let hasCli = false;
-    try { hasCli = !!ctx.store.getProfile(e.name); } catch (err) { hasCli = false; }
+    try {
+      hasCli = !!ctx.store.getProfile(e.name);
+    } catch (err) {
+      hasCli = false;
+    }
     if (hasCli) candidates.push(e);
   }
   // Optional group scoping (config autoswitch.group / --group): rotate only within a tagged pool.
@@ -46,9 +56,17 @@ async function tick(ctx, opts) {
   if (opts.group) candidates = _groups.filterProfiles(ctx, candidates, opts.group);
   if (!candidates.length) return { state: 'no-candidate', active: active, headroom: h, switchedTo: null };
 
-  const cinfos = await usage.usageForProfiles(ctx, candidates.map(function (e) { return e.name; }), {
-    fetch: opts.fetch, nowMs: opts.nowMs, cacheTtlMs: opts.cacheTtlMs,
-  });
+  const cinfos = await usage.usageForProfiles(
+    ctx,
+    candidates.map(function (e) {
+      return e.name;
+    }),
+    {
+      fetch: opts.fetch,
+      nowMs: opts.nowMs,
+      cacheTtlMs: opts.cacheTtlMs,
+    },
+  );
   const bopts = { nowMs: opts.nowMs };
   // Feed the circuit breaker: an expired token is a real failure signal; a
   // healthy read is a success. (Only definitive signals — throttled/unknown
@@ -63,19 +81,29 @@ async function tick(ctx, opts) {
   const margin = 100 - threshold;
   const pool = candidates.filter(function (c) {
     const info = cinfos[c.name];
-    return info && typeof info.headroom === 'number' && info.headroom > margin &&
-      breaker.isAvailable(ctx, c.name, bopts);
+    return (
+      info && typeof info.headroom === 'number' && info.headroom > margin && breaker.isAvailable(ctx, c.name, bopts)
+    );
   });
   if (!pool.length) return { state: 'no-candidate', active: active, headroom: h, switchedTo: null };
   const picked = usage.pickByStrategy(pool, cinfos, strategy) || pool[0];
   if (!picked) return { state: 'no-candidate', active: active, headroom: h, switchedTo: null };
 
-  const doSwitch = opts.performSwitch || function (name) { return core.performSwitch(ctx, name); };
+  const doSwitch =
+    opts.performSwitch ||
+    function (name) {
+      return core.performSwitch(ctx, name);
+    };
   const did = await doSwitch(picked.name);
   // If nothing actually swapped (no CLI credential), report it rather than
   // claiming a switch — prevents the caller from looping on a phantom success.
   if (did && did.cli === false) return { state: 'no-candidate', active: active, headroom: h, switchedTo: null };
-  history.recordEvent(ctx, { kind: 'autoswitch', from: active.name, to: picked.name, reason: 'usage ' + Math.round(100 - h) + '% >= threshold ' + threshold });
+  history.recordEvent(ctx, {
+    kind: 'autoswitch',
+    from: active.name,
+    to: picked.name,
+    reason: 'usage ' + Math.round(100 - h) + '% >= threshold ' + threshold,
+  });
   return { state: 'switched', active: active, headroom: h, switchedTo: picked };
 }
 

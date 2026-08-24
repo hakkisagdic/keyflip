@@ -14,19 +14,27 @@ import * as fleet from './fleet.js';
 import * as fsutil from './fsutil.js';
 import * as _exec from './exec.js';
 
-const MAX_OUTPUT = 64 * 1024;      // cap each captured stream (anti-DoS / anti-transcript-bloat)
-const MAX_ARGS = 256;              // cap argv length
-const MAX_ARG_LEN = 4096;          // cap each argv token
-const MAX_CMD_LEN = 4096;          // cap the program name
-const DEFAULT_TIMEOUT_MS = 60000;  // per-exec wall clock (injectable via opts.timeoutMs)
+const MAX_OUTPUT = 64 * 1024; // cap each captured stream (anti-DoS / anti-transcript-bloat)
+const MAX_ARGS = 256; // cap argv length
+const MAX_ARG_LEN = 4096; // cap each argv token
+const MAX_CMD_LEN = 4096; // cap the program name
+const DEFAULT_TIMEOUT_MS = 60000; // per-exec wall clock (injectable via opts.timeoutMs)
 const RESULT_SUFFIX = '.result.enc';
 
 // eslint-disable-next-line no-control-regex
-const CTRL = /[\x00-\x1f\x7f]/g;                       // ALL control incl. newline/ESC — short display fields
+const CTRL = /[\x00-\x1f\x7f]/g; // ALL control incl. newline/ESC — short display fields
 // eslint-disable-next-line no-control-regex
-const OUT_CTRL = /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g;  // control EXCEPT \t \n \r — captured command output
-function scrub(s, max) { return String(s == null ? '' : s).replace(CTRL, ' ').slice(0, max || 200); }
-function scrubOut(s, max) { return String(s == null ? '' : s).replace(OUT_CTRL, ' ').slice(0, max || MAX_OUTPUT); }
+const OUT_CTRL = /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g; // control EXCEPT \t \n \r — captured command output
+function scrub(s, max) {
+  return String(s == null ? '' : s)
+    .replace(CTRL, ' ')
+    .slice(0, max || 200);
+}
+function scrubOut(s, max) {
+  return String(s == null ? '' : s)
+    .replace(OUT_CTRL, ' ')
+    .slice(0, max || MAX_OUTPUT);
+}
 
 // ---- argv hygiene (NEVER a shell string) ----
 function normCommand(command) {
@@ -38,24 +46,76 @@ function normArgs(args) {
   if (args == null) return [];
   if (!Array.isArray(args)) throw new Error('exec args must be an ARGV ARRAY, never a shell string (no injection)');
   if (args.length > MAX_ARGS) throw new Error('too many exec args (max ' + MAX_ARGS + ')');
-  return args.map(function (a) { const s = String(a); if (s.length > MAX_ARG_LEN) throw new Error('an exec arg is too long'); return s; });
+  return args.map(function (a) {
+    const s = String(a);
+    if (s.length > MAX_ARG_LEN) throw new Error('an exec arg is too long');
+    return s;
+  });
 }
-function capOutput(s) { return scrubOut(s, MAX_OUTPUT); }
+function capOutput(s) {
+  return scrubOut(s, MAX_OUTPUT);
+}
 
 // ---- state (<configDir>/swarm.json): remembers the last fan-out group so `swarm results` can default to it ----
-function statePath(ctx) { return path.join(ctx.configDir, 'swarm.json'); }
-function readState(ctx) { try { return fsutil.readJsonForWrite(statePath(ctx)) || {}; } catch (e) { return {}; } }
-function writeState(ctx, obj) { try { fsutil.atomicWrite(statePath(ctx), JSON.stringify(obj, null, 2), 0o600); } catch (e) { /* best-effort */ } }
+function statePath(ctx) {
+  return path.join(ctx.configDir, 'swarm.json');
+}
+function readState(ctx) {
+  try {
+    return fsutil.readJsonForWrite(statePath(ctx)) || {};
+  } catch (e) {
+    return {};
+  }
+}
+function writeState(ctx, obj) {
+  try {
+    fsutil.atomicWrite(statePath(ctx), JSON.stringify(obj, null, 2), 0o600);
+  } catch (e) {
+    /* best-effort */
+  }
+}
 
 // EXEC-TRUST allowlist. A sender may run exec on THIS machine ONLY if the operator EXPLICITLY trusted
 // it — never by silent TOFU auto-pinning. Otherwise a rendezvous passphrase-holder could enroll a
 // rogue identity (auto-pinned on first sight) and get RCE on the victim's next consented drain. Exec
 // is the highest-impact command type, so it needs a curated allowlist on top of origin auth + consent.
-function execTrusted(ctx) { const st = readState(ctx); const out = Object.create(null); (Array.isArray(st.execTrust) ? st.execTrust : []).forEach(function (id) { if (fleet.safeId(id)) out[id] = true; }); return out; }
-function isExecTrusted(ctx, machineId) { return execTrusted(ctx)[machineId] === true; }
-function trustExec(ctx, machineId) { if (!fleet.safeId(machineId)) return false; const st = readState(ctx); const list = Array.isArray(st.execTrust) ? st.execTrust.slice() : []; if (list.indexOf(machineId) === -1) list.push(machineId); st.execTrust = list; writeState(ctx, st); return true; }
-function untrustExec(ctx, machineId) { const st = readState(ctx); const before = (Array.isArray(st.execTrust) ? st.execTrust : []); const list = before.filter(function (id) { return id !== machineId; }); const had = before.length !== list.length; st.execTrust = list; writeState(ctx, st); return had; }
-function execTrustList(ctx) { const st = readState(ctx); return (Array.isArray(st.execTrust) ? st.execTrust : []).filter(function (id) { return fleet.safeId(id); }); }
+function execTrusted(ctx) {
+  const st = readState(ctx);
+  const out = Object.create(null);
+  (Array.isArray(st.execTrust) ? st.execTrust : []).forEach(function (id) {
+    if (fleet.safeId(id)) out[id] = true;
+  });
+  return out;
+}
+function isExecTrusted(ctx, machineId) {
+  return execTrusted(ctx)[machineId] === true;
+}
+function trustExec(ctx, machineId) {
+  if (!fleet.safeId(machineId)) return false;
+  const st = readState(ctx);
+  const list = Array.isArray(st.execTrust) ? st.execTrust.slice() : [];
+  if (list.indexOf(machineId) === -1) list.push(machineId);
+  st.execTrust = list;
+  writeState(ctx, st);
+  return true;
+}
+function untrustExec(ctx, machineId) {
+  const st = readState(ctx);
+  const before = Array.isArray(st.execTrust) ? st.execTrust : [];
+  const list = before.filter(function (id) {
+    return id !== machineId;
+  });
+  const had = before.length !== list.length;
+  st.execTrust = list;
+  writeState(ctx, st);
+  return had;
+}
+function execTrustList(ctx) {
+  const st = readState(ctx);
+  return (Array.isArray(st.execTrust) ? st.execTrust : []).filter(function (id) {
+    return fleet.safeId(id);
+  });
+}
 
 // Resolve `to` (a machine name / id / id-prefix) to a list of target machine ids. When `to` is
 // omitted, FAN OUT to every machine currently checked in to the rendezvous (fleet.readFleet).
@@ -63,15 +123,23 @@ function targets(ctx, b, to) {
   const statuses = fleet.readFleet(ctx, b);
   if (to != null && to !== '') {
     const t = String(to);
-    const byName = statuses.filter(function (s) { return s.name === t; });
+    const byName = statuses.filter(function (s) {
+      return s.name === t;
+    });
     if (byName.length === 1) return [byName[0].machineId];
-    const byId = statuses.filter(function (s) { return s.machineId === t || s.machineId.indexOf(t) === 0; });
+    const byId = statuses.filter(function (s) {
+      return s.machineId === t || s.machineId.indexOf(t) === 0;
+    });
     if (byId.length === 1) return [byId[0].machineId];
     if (byName.length > 1 || byId.length > 1) throw new Error("'" + t + "' matches more than one fleet machine");
     if (fleet.safeId(t)) return [t]; // a raw, valid machine id not (yet) in the roster
     throw new Error("no fleet machine named '" + t + "' (run `keyflip fleet status`)");
   }
-  const ids = statuses.map(function (s) { return s.machineId; }).filter(fleet.safeId);
+  const ids = statuses
+    .map(function (s) {
+      return s.machineId;
+    })
+    .filter(fleet.safeId);
   if (!ids.length) throw new Error('no fleet machines have checked in yet (run `keyflip fleet push` on each machine)');
   return ids;
 }
@@ -90,7 +158,10 @@ function queueExec(ctx, b, opts) {
     return { machineId: id, id: cmd.id };
   });
   const st = readState(ctx);
-  st.lastGroup = group; st.lastAt = ctx.now(); st.lastCommand = command; st.pending = commands;
+  st.lastGroup = group;
+  st.lastAt = ctx.now();
+  st.lastCommand = command;
+  st.pending = commands;
   writeState(ctx, st);
   return { group: group, command: command, args: args, commands: commands };
 }
@@ -106,7 +177,7 @@ function ping(ctx, b, url, opts) {
   const timeout = Math.max(1, Math.min(120, parseInt(opts.timeout, 10) || 10));
   const devNull = ctx.platform === 'win32' ? 'NUL' : '/dev/null';
   const args = ['-sS', '-m', String(timeout), '-o', devNull, '-w', '%{http_code}', url];
-  return queueExec(ctx, b, { command: (opts.command || 'curl'), args: args, to: opts.to });
+  return queueExec(ctx, b, { command: opts.command || 'curl', args: args, to: opts.to });
 }
 
 // Apply ONE inbound exec command. CONSENT-GATED: does nothing unless opts.allowExec === true
@@ -118,22 +189,37 @@ function applyExec(ctx, cmd, opts) {
   opts = opts || {};
   if (!cmd || cmd.type !== 'exec') return { ok: false, applied: 'exec', detail: 'not an exec command' };
   // Consent gate — exec is OFF unless the operator explicitly turned it on for this drain.
-  if (opts.allowExec !== true) return { ok: false, applied: 'exec', detail: 'skipped (exec is off by default — pass --allow-exec)', skipped: 'consent' };
+  if (opts.allowExec !== true)
+    return {
+      ok: false,
+      applied: 'exec',
+      detail: 'skipped (exec is off by default — pass --allow-exec)',
+      skipped: 'consent',
+    };
   // Origin authentication is MANDATORY (fail-closed): a signature from the sender's pinned key,
   // addressed to THIS machine. A direct caller MUST pass senderKey; `unverified:true` bypasses ONLY in
   // a context that already verified (never a network default). The drain always passes senderKey.
   if (opts.unverified !== true) {
-    if (!fleet.verifyCommand(cmd, opts.senderKey)) return { ok: false, applied: 'exec', detail: 'unverified origin (rejected)' };
-    if (cmd.to !== fleet.identity(ctx).machineId) return { ok: false, applied: 'exec', detail: 'wrong recipient (rejected)' };
+    if (!fleet.verifyCommand(cmd, opts.senderKey))
+      return { ok: false, applied: 'exec', detail: 'unverified origin (rejected)' };
+    if (cmd.to !== fleet.identity(ctx).machineId)
+      return { ok: false, applied: 'exec', detail: 'wrong recipient (rejected)' };
   }
   const payload = cmd.payload || {};
   let command, args;
-  try { command = normCommand(payload.command); args = normArgs(payload.args); }
-  catch (e) { return { ok: false, applied: 'exec', detail: (e && e.message) || 'bad exec payload' }; }
+  try {
+    command = normCommand(payload.command);
+    args = normArgs(payload.args);
+  } catch (e) {
+    return { ok: false, applied: 'exec', detail: (e && e.message) || 'bad exec payload' };
+  }
   const run = opts.run || _exec.run;
   let r;
-  try { r = run(command, args, undefined, { timeoutMs: opts.timeoutMs || DEFAULT_TIMEOUT_MS }); }
-  catch (e) { return { ok: false, applied: 'exec', detail: 'exec failed: ' + ((e && e.message) || 'error') }; }
+  try {
+    r = run(command, args, undefined, { timeoutMs: opts.timeoutMs || DEFAULT_TIMEOUT_MS });
+  } catch (e) {
+    return { ok: false, applied: 'exec', detail: 'exec failed: ' + ((e && e.message) || 'error') };
+  }
   r = r || {};
   const result = {
     ok: (typeof r.code === 'number' ? r.code === 0 : false) && !r.error,
@@ -143,18 +229,31 @@ function applyExec(ctx, cmd, opts) {
     timedOut: !!r.timedOut,
     command: command,
   };
-  if (opts.bus) { try { publishResult(ctx, opts.bus, cmd, result); } catch (e) { /* best-effort */ } }
+  if (opts.bus) {
+    try {
+      publishResult(ctx, opts.bus, cmd, result);
+    } catch (e) {
+      /* best-effort */
+    }
+  }
   // ok = "we RAN it" (so it is ledgered and never replayed) — the command's own exit is result.ok.
   return { ok: true, applied: 'exec', detail: 'ran ' + command + ' -> code ' + result.code, result: result };
 }
 
-function resultName(id) { if (!fleet.safeId(id)) throw new Error('unsafe result id'); return id + RESULT_SUFFIX; }
+function resultName(id) {
+  if (!fleet.safeId(id)) throw new Error('unsafe result id');
+  return id + RESULT_SUFFIX;
+}
 
 // Publish a signed result back to the initiator, keyed by the command id (unique per fanned command).
 // It is a command-shaped object so fleet.signCommand / fleet.checkOrigin verify it end-to-end.
 function publishResult(ctx, b, cmd, result) {
   const obj = {
-    id: cmd.id, from: b.machineId, to: cmd.from, at: ctx.now(), type: 'exec-result',
+    id: cmd.id,
+    from: b.machineId,
+    to: cmd.from,
+    at: ctx.now(),
+    type: 'exec-result',
     payload: { group: (cmd.payload && cmd.payload.group) || null, result: result },
   };
   fleet.signCommand(ctx, obj); // sign so the initiator can prove WHO ran it
@@ -170,32 +269,72 @@ function drainExec(ctx, b, opts) {
   opts = opts || {};
   const reconcile = opts.reconcile || fleet.reconcileKeys(ctx, fleet.readFleet(ctx, b));
   const inbox = fleet.readInbox(ctx, b);
-  const hadExec = inbox.some(function (c) { return c && c.type === 'exec'; });
+  const hadExec = inbox.some(function (c) {
+    return c && c.type === 'exec';
+  });
   const kept = [];
   const results = [];
   inbox.forEach(function (cmd) {
-    if (!cmd || cmd.type !== 'exec') { kept.push(cmd); return; }
+    if (!cmd || cmd.type !== 'exec') {
+      kept.push(cmd);
+      return;
+    }
     // Replay protection: never re-run a ledgered command; drop stale/far-future ones.
-    if (cmd.id && fleet.wasApplied(ctx, cmd.id)) { results.push({ ok: false, applied: 'exec', detail: 'skipped (already applied)', id: cmd.id }); return; }
-    if (!fleet.commandFresh(ctx, cmd)) { results.push({ ok: false, applied: 'exec', detail: 'skipped (expired)', id: cmd && cmd.id }); return; }
+    if (cmd.id && fleet.wasApplied(ctx, cmd.id)) {
+      results.push({ ok: false, applied: 'exec', detail: 'skipped (already applied)', id: cmd.id });
+      return;
+    }
+    if (!fleet.commandFresh(ctx, cmd)) {
+      results.push({ ok: false, applied: 'exec', detail: 'skipped (expired)', id: cmd && cmd.id });
+      return;
+    }
     // Origin authentication: reject anything not signed by the sender's TOFU-pinned key.
     const origin = fleet.checkOrigin(ctx, cmd, reconcile);
-    if (!origin.ok) { results.push({ ok: false, applied: 'exec', detail: 'rejected: ' + origin.reason, id: cmd.id }); return; }
+    if (!origin.ok) {
+      results.push({ ok: false, applied: 'exec', detail: 'rejected: ' + origin.reason, id: cmd.id });
+      return;
+    }
     // Exec-trust: the sender must be EXPLICITLY trusted for exec (not merely TOFU-pinned). This closes
     // the "passphrase-holder enrolls a rogue identity → auto-pinned → RCE on the next consented drain"
     // path. opts.trustAll bypasses ONLY for tests exercising run mechanics.
     if (opts.trustAll !== true && !isExecTrusted(ctx, cmd.from)) {
       kept.push(cmd);
-      results.push({ ok: false, applied: 'exec', detail: "sender '" + cmd.from + "' is not trusted for exec — run `keyflip swarm trust " + cmd.from + "` after verifying it is really yours", skipped: 'untrusted', id: cmd.id, from: cmd.from });
+      results.push({
+        ok: false,
+        applied: 'exec',
+        detail:
+          "sender '" +
+          cmd.from +
+          "' is not trusted for exec — run `keyflip swarm trust " +
+          cmd.from +
+          '` after verifying it is really yours',
+        skipped: 'untrusted',
+        id: cmd.id,
+        from: cmd.from,
+      });
       return;
     }
-    const r = applyExec(ctx, cmd, { allowExec: opts.allowExec === true, run: opts.run, timeoutMs: opts.timeoutMs, bus: b, senderKey: origin.key });
-    r.id = cmd.id; r.from = cmd.from;
-    if (r.skipped === 'consent') { kept.push(cmd); results.push(r); return; } // keep for a later consented drain
+    const r = applyExec(ctx, cmd, {
+      allowExec: opts.allowExec === true,
+      run: opts.run,
+      timeoutMs: opts.timeoutMs,
+      bus: b,
+      senderKey: origin.key,
+    });
+    r.id = cmd.id;
+    r.from = cmd.from;
+    if (r.skipped === 'consent') {
+      kept.push(cmd);
+      results.push(r);
+      return;
+    } // keep for a later consented drain
     if (r.ok && cmd.id) fleet.markApplied(ctx, cmd.id); // ledger so it is never verbatim-replayed
     results.push(r);
   });
-  if (hadExec) { if (kept.length) b.write(fleet.inboxName(b.machineId), kept); else fleet.clearInbox(ctx, b); }
+  if (hadExec) {
+    if (kept.length) b.write(fleet.inboxName(b.machineId), kept);
+    else fleet.clearInbox(ctx, b);
+  }
   return { results: results, kept: kept };
 }
 
@@ -208,33 +347,82 @@ function aggregate(ctx, b, opts) {
   const reconcile = opts.reconcile || null;
   const wanted = Array.isArray(opts.ids) ? indexList(opts.ids) : null;
   const nameById = Object.create(null);
-  try { fleet.readFleet(ctx, b).forEach(function (s) { nameById[s.machineId] = s.name; }); } catch (e) { /* names are cosmetic */ }
+  try {
+    fleet.readFleet(ctx, b).forEach(function (s) {
+      nameById[s.machineId] = s.name;
+    });
+  } catch (e) {
+    /* names are cosmetic */
+  }
   const out = [];
   b.list(RESULT_SUFFIX).forEach(function (n) {
     const obj = b.read(n);
     if (!obj || obj.type !== 'exec-result' || !fleet.safeId(obj.id)) return;
-    let expect; try { expect = resultName(obj.id); } catch (e) { return; }
-    if (expect !== n) return;                          // filename must match the claimed id (binding)
-    if (obj.to !== selfId) return;                     // only results addressed to us are ours
+    let expect;
+    try {
+      expect = resultName(obj.id);
+    } catch (e) {
+      return;
+    }
+    if (expect !== n) return; // filename must match the claimed id (binding)
+    if (obj.to !== selfId) return; // only results addressed to us are ours
     const group = obj.payload && obj.payload.group;
     if (opts.group && group !== opts.group) return;
     if (wanted && !wanted[obj.id]) return;
     let verified = null;
-    if (reconcile) { verified = fleet.checkOrigin(ctx, obj, reconcile).ok; if (opts.strict && !verified) return; }
+    if (reconcile) {
+      verified = fleet.checkOrigin(ctx, obj, reconcile).ok;
+      if (opts.strict && !verified) return;
+    }
     const r = (obj.payload && obj.payload.result) || {};
     const from = fleet.safeId(obj.from) ? obj.from : null;
     out.push({
-      id: obj.id, machineId: from, machine: (from && nameById[from]) || from,
-      group: group == null ? null : scrub(group, 40), at: scrub(obj.at, 40),
-      ok: !!r.ok, code: typeof r.code === 'number' ? r.code : null,
-      stdout: scrubOut(r.stdout, MAX_OUTPUT + 32), stderr: scrubOut(r.stderr, MAX_OUTPUT + 32),
-      timedOut: !!r.timedOut, command: scrub(r.command, 200), verified: verified,
+      id: obj.id,
+      machineId: from,
+      machine: (from && nameById[from]) || from,
+      group: group == null ? null : scrub(group, 40),
+      at: scrub(obj.at, 40),
+      ok: !!r.ok,
+      code: typeof r.code === 'number' ? r.code : null,
+      stdout: scrubOut(r.stdout, MAX_OUTPUT + 32),
+      stderr: scrubOut(r.stderr, MAX_OUTPUT + 32),
+      timedOut: !!r.timedOut,
+      command: scrub(r.command, 200),
+      verified: verified,
     });
     if (opts.prune) b.remove(n);
   });
   return out;
 }
 // A null-prototype id set — a hostile id ("__proto__"/"constructor") can never pollute a prototype.
-function indexList(ids) { const m = Object.create(null); ids.forEach(function (id) { if (typeof id === 'string') m[id] = 1; }); return m; }
+function indexList(ids) {
+  const m = Object.create(null);
+  ids.forEach(function (id) {
+    if (typeof id === 'string') m[id] = 1;
+  });
+  return m;
+}
 
-export { queueExec, applyExec, drainExec, ping, aggregate, publishResult, resultName, targets, normArgs, normCommand, capOutput, readState, writeState, statePath, execTrusted, isExecTrusted, trustExec, untrustExec, execTrustList, RESULT_SUFFIX, MAX_OUTPUT };
+export {
+  queueExec,
+  applyExec,
+  drainExec,
+  ping,
+  aggregate,
+  publishResult,
+  resultName,
+  targets,
+  normArgs,
+  normCommand,
+  capOutput,
+  readState,
+  writeState,
+  statePath,
+  execTrusted,
+  isExecTrusted,
+  trustExec,
+  untrustExec,
+  execTrustList,
+  RESULT_SUFFIX,
+  MAX_OUTPUT,
+};

@@ -21,58 +21,105 @@ function buildState(ctx) {
   const memory = _memory;
 
   let usageCache = {};
-  try { usageCache = JSON.parse(fs.readFileSync(path.join(ctx.configDir, '.usage-cache.json'), 'utf8')) || {}; } catch (e) { usageCache = {}; }
+  try {
+    usageCache = JSON.parse(fs.readFileSync(path.join(ctx.configDir, '.usage-cache.json'), 'utf8')) || {};
+  } catch (e) {
+    usageCache = {};
+  }
 
   // G5: per-account 5h utilization trend (chronological) from the usage-history log.
   const trendByAccount = {};
   safe(function () {
     _history.readUsage(ctx, 1000).forEach(function (s) {
-      if (s && s.account != null && typeof s.fiveHour === 'number') { (trendByAccount[s.account] = trendByAccount[s.account] || []).push(s.fiveHour); }
+      if (s && s.account != null && typeof s.fiveHour === 'number') {
+        (trendByAccount[s.account] = trendByAccount[s.account] || []).push(s.fiveHour);
+      }
     });
   }, null);
 
   const accounts = safe(function () {
     return core.listProfiles(ctx).map(function (p) {
       const u = usageCache[p.name] && usageCache[p.name].usage;
-      let fiveHour = null, sevenDay = null;
+      let fiveHour = null,
+        sevenDay = null;
       if (u) {
         if (u.fiveHour && typeof u.fiveHour.pct === 'number') fiveHour = u.fiveHour.pct;
         if (u.sevenDay && typeof u.sevenDay.pct === 'number') sevenDay = u.sevenDay.pct;
       }
-      return { name: p.name, email: p.email || null, active: !!p.active, fiveHourPct: fiveHour, sevenDayPct: sevenDay, trend: (trendByAccount[p.name] || []).slice(-24) };
+      return {
+        name: p.name,
+        email: p.email || null,
+        active: !!p.active,
+        fiveHourPct: fiveHour,
+        sevenDayPct: sevenDay,
+        trend: (trendByAccount[p.name] || []).slice(-24),
+      };
     });
   }, []);
 
-  const active = safe(function () { return provider.readActive(ctx); }, null);
+  const active = safe(function () {
+    return provider.readActive(ctx);
+  }, null);
   const providers = safe(function () {
-    return provider.list(ctx).map(function (n) { const m = provider.read(ctx, n) || {}; return { name: n, baseUrl: m.baseUrl || null, active: !!(active && active.name === n) }; });
+    return provider.list(ctx).map(function (n) {
+      const m = provider.read(ctx, n) || {};
+      return { name: n, baseUrl: m.baseUrl || null, active: !!(active && active.name === n) };
+    });
   }, []);
 
   // One enumeration feeds both the recent list AND the activity calendar (G5).
-  const allSessions = safe(function () { return sessions.list(ctx, { limit: 1500 }); }, []);
-  const recent = allSessions.slice(0, 12).map(function (r) { return { sessionId: r.sessionId, cwd: r.cwd || null, mtime: r.mtime, preview: r.preview || '', orphan: !!r.orphan }; });
+  const allSessions = safe(function () {
+    return sessions.list(ctx, { limit: 1500 });
+  }, []);
+  const recent = allSessions.slice(0, 12).map(function (r) {
+    return { sessionId: r.sessionId, cwd: r.cwd || null, mtime: r.mtime, preview: r.preview || '', orphan: !!r.orphan };
+  });
 
   const keepsakes = safe(function () {
-    return memory.list(ctx).slice(0, 12).map(function (m) { return { key: m.key, mtime: m.mtime, bytes: m.bytes }; });
+    return memory
+      .list(ctx)
+      .slice(0, 12)
+      .map(function (m) {
+        return { key: m.key, mtime: m.mtime, bytes: m.bytes };
+      });
   }, []);
 
   return {
-    activeEmail: safe(function () { return core.currentEmail(ctx); }, null),
+    activeEmail: safe(function () {
+      return core.currentEmail(ctx);
+    }, null),
     activeProvider: active && active.name,
     accounts: accounts,
     providers: providers,
     sessions: recent,
     keepsakes: keepsakes,
-    activity: safe(function () { return buildActivity(ctx, allSessions); }, { days: [], max: 0, total: 0, weeks: 26 }),
-    memoryGraph: safe(function () { return buildMemoryGraph(ctx); }, { nodes: [], edges: [] }),
+    activity: safe(
+      function () {
+        return buildActivity(ctx, allSessions);
+      },
+      { days: [], max: 0, total: 0, weeks: 26 },
+    ),
+    memoryGraph: safe(
+      function () {
+        return buildMemoryGraph(ctx);
+      },
+      { nodes: [], edges: [] },
+    ),
   };
 }
-function safe(fn, dflt) { try { return fn(); } catch (e) { return dflt; } }
+function safe(fn, dflt) {
+  try {
+    return fn();
+  } catch (e) {
+    return dflt;
+  }
+}
 
 // G5: GitHub-style session-activity calendar — session counts per UTC day over the last
 // ~26 weeks, Sunday-aligned so the client can chunk the days array into 7-row week columns.
 function buildActivity(ctx, sessionRows) {
-  const DAY = 86400000, WEEKS = 26;
+  const DAY = 86400000,
+    WEEKS = 26;
   const counts = {};
   (sessionRows || []).forEach(function (r) {
     if (!r || !r.mtime) return;
@@ -87,7 +134,8 @@ function buildActivity(ctx, sessionRows) {
   let start = new Date(today.getTime() - (WEEKS * 7 - 1) * DAY);
   start = new Date(start.getTime() - start.getUTCDay() * DAY); // back up to Sunday
   const days = [];
-  let max = 0, total = 0; // total = sessions WITHIN the shown window (matches the label)
+  let max = 0,
+    total = 0; // total = sessions WITHIN the shown window (matches the label)
   for (let t = start.getTime(); t <= today.getTime(); t += DAY) {
     const k = new Date(t).toISOString().slice(0, 10);
     const c = counts[k] || 0;
@@ -104,18 +152,36 @@ function buildActivity(ctx, sessionRows) {
 function buildMemoryGraph(ctx) {
   const memory = _memory;
   const recall = _recall;
-  let list; try { list = memory.list(ctx).slice(0, 24); } catch (e) { return { nodes: [], edges: [] }; }
+  let list;
+  try {
+    list = memory.list(ctx).slice(0, 24);
+  } catch (e) {
+    return { nodes: [], edges: [] };
+  }
   const nodes = list.map(function (m) {
-    let text = ''; try { text = memory.read(ctx, m.key) || ''; } catch (e) { text = ''; }
+    let text = '';
+    try {
+      text = memory.read(ctx, m.key) || '';
+    } catch (e) {
+      text = '';
+    }
     const freq = {};
-    recall.tokenize(text).forEach(function (t) { freq[t] = (freq[t] || 0) + 1; });
-    const top = Object.keys(freq).sort(function (a, b) { return freq[b] - freq[a]; }).slice(0, 6);
+    recall.tokenize(text).forEach(function (t) {
+      freq[t] = (freq[t] || 0) + 1;
+    });
+    const top = Object.keys(freq)
+      .sort(function (a, b) {
+        return freq[b] - freq[a];
+      })
+      .slice(0, 6);
     return { key: m.key, terms: top };
   });
   const edges = [];
   for (let i = 0; i < nodes.length; i++) {
     for (let j = i + 1; j < nodes.length; j++) {
-      const shared = nodes[i].terms.filter(function (t) { return t && nodes[j].terms.indexOf(t) !== -1; });
+      const shared = nodes[i].terms.filter(function (t) {
+        return t && nodes[j].terms.indexOf(t) !== -1;
+      });
       if (shared.length >= 2) edges.push({ a: i, b: j, weight: shared.length });
     }
   }
@@ -135,12 +201,22 @@ function buildSnapshot(ctx, opts) {
     return at > 0 ? e[0] + '…@' + e.slice(at + 1).split('.')[0][0] + '…' : e[0] + '…';
   };
   return {
-    generatedAt: safe(function () { return ctx.now(); }, null),
+    generatedAt: safe(function () {
+      return ctx.now();
+    }, null),
     activeEmail: opts.anon ? null : s.activeEmail,
     accounts: (s.accounts || []).map(function (a, i) {
-      return { label: maskEmail(a.email || a.name, i), active: a.active, fiveHourPct: a.fiveHourPct, sevenDayPct: a.sevenDayPct, trend: a.trend };
+      return {
+        label: maskEmail(a.email || a.name, i),
+        active: a.active,
+        fiveHourPct: a.fiveHourPct,
+        sevenDayPct: a.sevenDayPct,
+        trend: a.trend,
+      };
     }),
-    providers: (s.providers || []).map(function (p, i) { return { name: opts.anon ? 'provider ' + (i + 1) : p.name, active: p.active }; }),
+    providers: (s.providers || []).map(function (p, i) {
+      return { name: opts.anon ? 'provider ' + (i + 1) : p.name, active: p.active };
+    }),
     activity: s.activity,
     anon: !!opts.anon,
   };
@@ -150,59 +226,168 @@ function buildSnapshot(ctx, opts) {
 // no network. Everything (quota bars, sparklines, activity calendar) is rendered server-side
 // as inline SVG, so the file works offline and reveals nothing beyond what's baked in.
 function renderSnapshot(snap) {
-  const esc = function (s) { return String(s == null ? '' : s).replace(/[&<>]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]; }); };
-  const pct = function (p) { return p == null ? '—' : Math.round(p) + '%'; };
-  const barCls = function (p) { return p == null ? 'bar' : p >= 90 ? 'bar crit' : p >= 70 ? 'bar hi' : 'bar'; };
-  const cards = (snap.accounts || []).map(function (a) {
-    const w = a.fiveHourPct == null ? 0 : Math.min(100, a.fiveHourPct);
-    return '<div class="card' + (a.active ? ' active' : '') + '"><div class="email">' + esc(a.label) + (a.active ? ' ✓' : '') + '</div>' +
-      '<div class="' + barCls(a.fiveHourPct) + '"><i style="width:' + w + '%"></i></div>' +
-      '<div class="barlabel"><span>5h ' + pct(a.fiveHourPct) + '</span><span>7d ' + pct(a.sevenDayPct) + '</span></div>' + sparkSvg(a.trend) + '</div>';
-  }).join('') || '<span class="muted">No saved accounts.</span>';
-  const chips = (snap.providers || []).map(function (p) { return '<span class="chip' + (p.active ? ' active' : '') + '">' + esc(p.name) + (p.active ? ' ●' : '') + '</span>'; }).join('') || '<span class="muted">No providers.</span>';
+  const esc = function (s) {
+    return String(s == null ? '' : s).replace(/[&<>]/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c];
+    });
+  };
+  const pct = function (p) {
+    return p == null ? '—' : Math.round(p) + '%';
+  };
+  const barCls = function (p) {
+    return p == null ? 'bar' : p >= 90 ? 'bar crit' : p >= 70 ? 'bar hi' : 'bar';
+  };
+  const cards =
+    (snap.accounts || [])
+      .map(function (a) {
+        const w = a.fiveHourPct == null ? 0 : Math.min(100, a.fiveHourPct);
+        return (
+          '<div class="card' +
+          (a.active ? ' active' : '') +
+          '"><div class="email">' +
+          esc(a.label) +
+          (a.active ? ' ✓' : '') +
+          '</div>' +
+          '<div class="' +
+          barCls(a.fiveHourPct) +
+          '"><i style="width:' +
+          w +
+          '%"></i></div>' +
+          '<div class="barlabel"><span>5h ' +
+          pct(a.fiveHourPct) +
+          '</span><span>7d ' +
+          pct(a.sevenDayPct) +
+          '</span></div>' +
+          sparkSvg(a.trend) +
+          '</div>'
+        );
+      })
+      .join('') || '<span class="muted">No saved accounts.</span>';
+  const chips =
+    (snap.providers || [])
+      .map(function (p) {
+        return (
+          '<span class="chip' + (p.active ? ' active' : '') + '">' + esc(p.name) + (p.active ? ' ●' : '') + '</span>'
+        );
+      })
+      .join('') || '<span class="muted">No providers.</span>';
   const act = snap.activity || { days: [], total: 0, weeks: 26 };
   const when = snap.generatedAt ? String(snap.generatedAt).slice(0, 16).replace('T', ' ') : '';
-  return '<!doctype html><html lang="en"><head><meta charset="utf-8">' +
+  return (
+    '<!doctype html><html lang="en"><head><meta charset="utf-8">' +
     '<meta name="viewport" content="width=device-width,initial-scale=1"><title>keyflip snapshot</title>' +
-    '<style>' + STYLE + '</style></head><body>' +
-    '<header><h1>⚡ keyflip</h1><span class="muted">shared snapshot' + (when ? ' · ' + esc(when) : '') + (snap.anon ? ' · anonymized' : '') + '</span></header>' +
+    '<style>' +
+    STYLE +
+    '</style></head><body>' +
+    '<header><h1>⚡ keyflip</h1><span class="muted">shared snapshot' +
+    (when ? ' · ' + esc(when) : '') +
+    (snap.anon ? ' · anonymized' : '') +
+    '</span></header>' +
     '<main>' +
-    '<section><h2>Accounts</h2><div class="grid">' + cards + '</div></section>' +
-    '<section><h2>Session activity <span class="muted">' + (act.total ? '· ' + act.total + ' session' + (act.total === 1 ? '' : 's') + ', last ' + (act.weeks || 26) + ' weeks' : '') + '</span></h2>' + calendarSvg(act) + '</section>' +
-    '<section><h2>Providers</h2><div class="chips">' + chips + '</div></section>' +
+    '<section><h2>Accounts</h2><div class="grid">' +
+    cards +
+    '</div></section>' +
+    '<section><h2>Session activity <span class="muted">' +
+    (act.total
+      ? '· ' + act.total + ' session' + (act.total === 1 ? '' : 's') + ', last ' + (act.weeks || 26) + ' weeks'
+      : '') +
+    '</span></h2>' +
+    calendarSvg(act) +
+    '</section>' +
+    '<section><h2>Providers</h2><div class="chips">' +
+    chips +
+    '</div></section>' +
     '</main><footer class="muted">Read-only static snapshot · no session content, no secrets.</footer>' +
-    '</body></html>';
+    '</body></html>'
+  );
 }
 
 // Server-side inline SVG builders (mirror the panel client so the static file needs no JS).
 function sparkSvg(v) {
   if (!v || v.length < 2) return '';
-  const w = 200, h = 26, n = v.length;
-  const pts = v.map(function (x, i) { const px = (i / (n - 1)) * w; const py = h - (Math.max(0, Math.min(100, x)) / 100) * (h - 2) - 1; return px.toFixed(1) + ',' + py.toFixed(1); }).join(' ');
-  return '<svg class="spark" viewBox="0 0 ' + w + ' ' + h + '" preserveAspectRatio="none"><polyline points="' + pts + '" /></svg>';
+  const w = 200,
+    h = 26,
+    n = v.length;
+  const pts = v
+    .map(function (x, i) {
+      const px = (i / (n - 1)) * w;
+      const py = h - (Math.max(0, Math.min(100, x)) / 100) * (h - 2) - 1;
+      return px.toFixed(1) + ',' + py.toFixed(1);
+    })
+    .join(' ');
+  return (
+    '<svg class="spark" viewBox="0 0 ' +
+    w +
+    ' ' +
+    h +
+    '" preserveAspectRatio="none"><polyline points="' +
+    pts +
+    '" /></svg>'
+  );
 }
 function calendarSvg(a) {
   const d = (a && a.days) || [];
   if (!d.length) return '<span class="muted">No session activity yet.</span>';
-  const S = 13, cols = Math.ceil(d.length / 7);
-  const lvl = function (c, max) { if (!c) return 0; if (max <= 1) return 4; const r = c / max; return r > 0.75 ? 4 : r > 0.5 ? 3 : r > 0.25 ? 2 : 1; };
-  const esc = function (s) { return String(s).replace(/[<>&]/g, ''); };
-  const cells = d.map(function (x, i) { const col = Math.floor(i / 7), row = i % 7; return '<rect class="l' + lvl(x.count, a.max) + '" x="' + (col * S) + '" y="' + (row * S) + '" width="11" height="11"><title>' + esc(x.date) + ': ' + x.count + '</title></rect>'; }).join('');
-  return '<svg class="cal" viewBox="0 0 ' + (cols * S) + ' ' + (7 * S) + '" preserveAspectRatio="xMinYMin meet">' + cells + '</svg>';
+  const S = 13,
+    cols = Math.ceil(d.length / 7);
+  const lvl = function (c, max) {
+    if (!c) return 0;
+    if (max <= 1) return 4;
+    const r = c / max;
+    return r > 0.75 ? 4 : r > 0.5 ? 3 : r > 0.25 ? 2 : 1;
+  };
+  const esc = function (s) {
+    return String(s).replace(/[<>&]/g, '');
+  };
+  const cells = d
+    .map(function (x, i) {
+      const col = Math.floor(i / 7),
+        row = i % 7;
+      return (
+        '<rect class="l' +
+        lvl(x.count, a.max) +
+        '" x="' +
+        col * S +
+        '" y="' +
+        row * S +
+        '" width="11" height="11"><title>' +
+        esc(x.date) +
+        ': ' +
+        x.count +
+        '</title></rect>'
+      );
+    })
+    .join('');
+  return (
+    '<svg class="cal" viewBox="0 0 ' +
+    cols * S +
+    ' ' +
+    7 * S +
+    '" preserveAspectRatio="xMinYMin meet">' +
+    cells +
+    '</svg>'
+  );
 }
 
 // FLEET dashboard — one screen for every associated machine. Self-contained; fetches
 // /api/fleet (which the fleet server decrypts from the rendezvous) and auto-refreshes.
 function renderFleetPage() {
-  return '<!doctype html><html lang="en"><head><meta charset="utf-8">' +
+  return (
+    '<!doctype html><html lang="en"><head><meta charset="utf-8">' +
     '<meta name="viewport" content="width=device-width,initial-scale=1"><title>keyflip fleet</title>' +
-    '<style>' + STYLE + FLEET_STYLE + '</style></head><body>' +
+    '<style>' +
+    STYLE +
+    FLEET_STYLE +
+    '</style></head><body>' +
     '<header><h1>⚡ keyflip <span class="muted">fleet</span></h1><span id="count" class="muted"></span><button id="refresh">↻</button></header>' +
     '<main>' +
     '<div id="replies"></div>' +
     '<div id="machines" class="grid"></div>' +
     '</main><footer class="muted">Read-only · loopback only · auto-refreshes · <code>Ctrl-C</code> in the terminal to stop.</footer>' +
-    '<script>' + FLEET_SCRIPT + '</script></body></html>';
+    '<script>' +
+    FLEET_SCRIPT +
+    '</script></body></html>'
+  );
 }
 const FLEET_STYLE = [
   '.machine{background:var(--card);border:1px solid var(--bar);border-radius:12px;padding:14px}',
@@ -232,9 +417,12 @@ const FLEET_SCRIPT = [
 
 // The single-page dashboard. Self-contained (inline CSS/JS); fetches /api/state and renders.
 function renderPage() {
-  return '<!doctype html><html lang="en"><head><meta charset="utf-8">' +
+  return (
+    '<!doctype html><html lang="en"><head><meta charset="utf-8">' +
     '<meta name="viewport" content="width=device-width,initial-scale=1"><title>keyflip panel</title>' +
-    '<style>' + STYLE + '</style></head><body>' +
+    '<style>' +
+    STYLE +
+    '</style></head><body>' +
     '<header><h1>⚡ keyflip</h1><span id="active" class="muted"></span><button id="refresh">↻</button></header>' +
     '<main>' +
     '<section><h2>Accounts</h2><div id="accounts" class="grid"></div></section>' +
@@ -244,7 +432,10 @@ function renderPage() {
     '<section><h2>Keepsakes</h2><ul id="keepsakes" class="list"></ul></section>' +
     '<section><h2>Memory constellation</h2><div id="memgraph"></div></section>' +
     '</main><footer class="muted">Read-only · loopback only · <code>Ctrl-C</code> in the terminal to stop.</footer>' +
-    '<script>' + SCRIPT + '</script></body></html>';
+    '<script>' +
+    SCRIPT +
+    '</script></body></html>'
+  );
 }
 
 const STYLE = [
@@ -314,8 +505,16 @@ function serve(ctx, opts) {
   opts = opts || {};
   const host = opts.host || '127.0.0.1';
   const server = http.createServer(function (req, res) {
-    if (!loopbackOk(req)) { res.writeHead(403); res.end('forbidden'); return; }
-    if (req.method !== 'GET') { res.writeHead(405); res.end(); return; }
+    if (!loopbackOk(req)) {
+      res.writeHead(403);
+      res.end('forbidden');
+      return;
+    }
+    if (req.method !== 'GET') {
+      res.writeHead(405);
+      res.end();
+      return;
+    }
     const urlPath = String(req.url || '').split('?')[0]; // ignore any query string
     if (urlPath === '/api/state') {
       res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
@@ -328,7 +527,8 @@ function serve(ctx, opts) {
       res.end(renderPage());
       return;
     }
-    res.writeHead(404); res.end('not found');
+    res.writeHead(404);
+    res.end('not found');
   });
   return new Promise(function (resolve, reject) {
     server.on('error', reject);
@@ -345,16 +545,35 @@ function serveFleet(ctx, opts) {
   opts = opts || {};
   const host = opts.host || '127.0.0.1';
   const server = http.createServer(function (req, res) {
-    if (!loopbackOk(req)) { res.writeHead(403); res.end('forbidden'); return; }
-    if (req.method !== 'GET') { res.writeHead(405); res.end(); return; }
+    if (!loopbackOk(req)) {
+      res.writeHead(403);
+      res.end('forbidden');
+      return;
+    }
+    if (req.method !== 'GET') {
+      res.writeHead(405);
+      res.end();
+      return;
+    }
     const urlPath = String(req.url || '').split('?')[0];
     if (urlPath === '/api/fleet') {
       res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
       let data = { machines: [], newReplies: [] };
-      try { data = opts.getFleet(); } catch (e) { /* serve empty on a transient read error */ }
+      try {
+        data = opts.getFleet();
+      } catch (e) {
+        /* serve empty on a transient read error */
+      }
       // Defence in depth: even though getFleet already projects out creds, never let a secret field
       // reach the wire if a caller forgets to sanitize.
-      if (data && Array.isArray(data.machines)) data.machines = data.machines.map(function (m) { if (m && typeof m === 'object' && m.creds) { m = Object.assign({}, m); delete m.creds; } return m; });
+      if (data && Array.isArray(data.machines))
+        data.machines = data.machines.map(function (m) {
+          if (m && typeof m === 'object' && m.creds) {
+            m = Object.assign({}, m);
+            delete m.creds;
+          }
+          return m;
+        });
       res.end(JSON.stringify(data));
       return;
     }
@@ -363,7 +582,8 @@ function serveFleet(ctx, opts) {
       res.end(renderFleetPage());
       return;
     }
-    res.writeHead(404); res.end('not found');
+    res.writeHead(404);
+    res.end('not found');
   });
   return new Promise(function (resolve, reject) {
     server.on('error', reject);
@@ -374,4 +594,14 @@ function serveFleet(ctx, opts) {
   });
 }
 
-export { buildState, buildActivity, buildMemoryGraph, buildSnapshot, renderSnapshot, renderPage, renderFleetPage, serve, serveFleet };
+export {
+  buildState,
+  buildActivity,
+  buildMemoryGraph,
+  buildSnapshot,
+  renderSnapshot,
+  renderPage,
+  renderFleetPage,
+  serve,
+  serveFleet,
+};

@@ -13,11 +13,22 @@ function encV10(plain, password) {
   const c = crypto.createCipheriv('aes-128-cbc', key, Buffer.alloc(16, 0x20));
   return Buffer.concat([Buffer.from('v10'), c.update(Buffer.from(plain)), c.final()]);
 }
-function row(name, plain, pw) { return name + '\x01X\'' + encV10(plain, pw).toString('hex') + '\''; }
+function row(name, plain, pw) {
+  return name + "\x01X'" + encV10(plain, pw).toString('hex') + "'";
+}
 
 test('installed() returns only browsers whose Cookies DB exists', function () {
-  const got = browser.installed('/Users/x', { exists: function (p) { return p.indexOf('Chrome') !== -1; } });
-  assert.deepStrictEqual(got.map(function (b) { return b.id; }), ['chrome']);
+  const got = browser.installed('/Users/x', {
+    exists: function (p) {
+      return p.indexOf('Chrome') !== -1;
+    },
+  });
+  assert.deepStrictEqual(
+    got.map(function (b) {
+      return b.id;
+    }),
+    ['chrome'],
+  );
 });
 
 test('catalog maps each browser to its Safe Storage Keychain service', function () {
@@ -36,7 +47,12 @@ test('safeKey reads the browser key from the login Keychain', function () {
     return { code: 0, stdout: 'THEKEY\n' };
   });
   assert.strictEqual(key, 'THEKEY');
-  assert.strictEqual(browser.safeKey(b, function () { return { code: 44, stdout: '' }; }), null);
+  assert.strictEqual(
+    browser.safeKey(b, function () {
+      return { code: 44, stdout: '' };
+    }),
+    null,
+  );
 });
 
 test('parseCookieRows decrypts v10 cookies and extracts lastActiveOrg', function () {
@@ -55,26 +71,33 @@ test('parseCookieRows also strips the 32-byte domain-hash prefix (newer Chromium
   const c = crypto.createCipheriv('aes-128-cbc', key, Buffer.alloc(16, 0x20));
   const plain = Buffer.concat([crypto.randomBytes(32), Buffer.from('real-org')]);
   const enc = Buffer.concat([Buffer.from('v10'), c.update(plain), c.final()]);
-  const parsed = browser.parseCookieRows('lastActiveOrg\x01X\'' + enc.toString('hex') + '\'', pw);
+  const parsed = browser.parseCookieRows("lastActiveOrg\x01X'" + enc.toString('hex') + "'", pw);
   assert.strictEqual(parsed.org, 'real-org');
 });
 
 test('parseCookieRows returns null when nothing decrypts', function () {
   assert.strictEqual(browser.parseCookieRows('', 'pw'), null);
-  assert.strictEqual(browser.parseCookieRows('bad\x01X\'00\'', 'pw'), null);
+  assert.strictEqual(browser.parseCookieRows("bad\x01X'00'", 'pw'), null);
 });
 
 test('clearClaudeCookies refuses while the browser is running (guard)', function () {
   const b = browser.catalog('/Users/x').chrome;
   const r = browser.clearClaudeCookies(b, {
-    run: function (cmd) { return cmd.indexOf('pgrep') !== -1 ? { code: 0, stdout: '4242' } : { code: 0 }; },
+    run: function (cmd) {
+      return cmd.indexOf('pgrep') !== -1 ? { code: 0, stdout: '4242' } : { code: 0 };
+    },
   });
   assert.deepStrictEqual(r, { ok: false, reason: 'browser-running' });
 });
 
 test('clearClaudeCookies reports no-cookies-db when the DB is absent', function () {
   const b = { id: 'x', cookies: '/no/such/Cookies', proc: 'X' };
-  const r = browser.clearClaudeCookies(b, { force: true, run: function () { return { code: 0 }; } });
+  const r = browser.clearClaudeCookies(b, {
+    force: true,
+    run: function () {
+      return { code: 0 };
+    },
+  });
   assert.strictEqual(r.ok, false);
   assert.strictEqual(r.reason, 'no-cookies-db');
 });
@@ -82,7 +105,10 @@ test('clearClaudeCookies reports no-cookies-db when the DB is absent', function 
 test('quit issues an osascript "quit" for the browser app', function () {
   const b = browser.catalog('/Users/x').chrome;
   let called = null;
-  browser.quit(b, function (cmd, args) { called = { cmd: cmd, args: args }; return { code: 0 }; });
+  browser.quit(b, function (cmd, args) {
+    called = { cmd: cmd, args: args };
+    return { code: 0 };
+  });
   assert.strictEqual(called.cmd, '/usr/bin/osascript');
   assert.ok(called.args.join(' ').indexOf('tell application "Google Chrome" to quit') !== -1);
 });
@@ -118,13 +144,22 @@ test('snapshotClaudeCookies returns the INSERT SQL sqlite3 emits', function () {
 
 test('snapshotClaudeCookies returns null when the Cookies DB is missing', function () {
   const b = { id: 'chrome', cookies: '/no/such/Cookies', proc: 'Google Chrome' };
-  assert.strictEqual(browser.snapshotClaudeCookies(b, { run: function () { return { code: 0 }; } }), null);
+  assert.strictEqual(
+    browser.snapshotClaudeCookies(b, {
+      run: function () {
+        return { code: 0 };
+      },
+    }),
+    null,
+  );
 });
 
 test('restoreClaudeCookies refuses while the browser runs (unless force)', function () {
   const b = { id: 'chrome', cookies: tmpCookiesFile(), proc: 'Google Chrome' };
   const r = browser.restoreClaudeCookies(b, 'INSERT ...', {
-    run: function (cmd) { return cmd.indexOf('pgrep') !== -1 ? { code: 0, stdout: '99' } : { code: 0 }; },
+    run: function (cmd) {
+      return cmd.indexOf('pgrep') !== -1 ? { code: 0, stdout: '99' } : { code: 0 };
+    },
   });
   assert.deepStrictEqual(r, { ok: false, reason: 'browser-running' });
   fs.rmSync(b.cookies, { force: true });
@@ -135,7 +170,10 @@ test('restoreClaudeCookies (force) backs up, then DELETEs + replays the snapshot
   let script = null;
   const r = browser.restoreClaudeCookies(b, "INSERT INTO cookies VALUES('claude.ai');", {
     force: true,
-    run: function (cmd, args, input) { script = input; return { code: 0 }; },
+    run: function (cmd, args, input) {
+      script = input;
+      return { code: 0 };
+    },
   });
   assert.strictEqual(r.ok, true);
   assert.ok(fs.existsSync(r.backup), 'a backup of the Cookies DB is taken first');
@@ -154,7 +192,9 @@ test('restoreClaudeCookies refuses an empty snapshot', function () {
 test('saveSession then loadSession round-trips a snapshot through the store', function () {
   const cfg = fs.mkdtempSync(path.join(os.tmpdir(), 'keyflip-store-'));
   const b = { id: 'chrome', cookies: tmpCookiesFile(), proc: 'Google Chrome' };
-  const runner = function () { return { code: 0, stdout: "INSERT INTO cookies VALUES('claude.ai');" }; };
+  const runner = function () {
+    return { code: 0, stdout: "INSERT INTO cookies VALUES('claude.ai');" };
+  };
   assert.strictEqual(browser.saveSession(cfg, 'work', b, { run: runner }), true);
   const loaded = browser.loadSession(cfg, 'work', b);
   assert.ok(loaded.indexOf('INSERT INTO cookies') !== -1);

@@ -9,24 +9,42 @@ import { makeCtx, writeClaude } from './helpers.js';
 function mockIO() {
   const input = new EventEmitter();
   input.isTTY = true;
-  input.setRawMode = function () { return input; };
+  input.setRawMode = function () {
+    return input;
+  };
   input.resume = function () {};
   input.pause = function () {};
   let out = '';
-  const output = { write: function (s) { out += s; return true; } };
-  return { input: input, output: output, get: function () { return out; } };
+  const output = {
+    write: function (s) {
+      out += s;
+      return true;
+    },
+  };
+  return {
+    input: input,
+    output: output,
+    get: function () {
+      return out;
+    },
+  };
 }
 
 function login(ctx, email, uid, tok) {
   writeClaude(ctx, { oauthAccount: { emailAddress: email }, userID: uid });
   ctx.store.setLive(tok);
 }
-function lastFrame(s) { const f = s.split('\x1b[2J'); return f[f.length - 1]; }
+function lastFrame(s) {
+  const f = s.split('\x1b[2J');
+  return f[f.length - 1];
+}
 
 function twoAccounts() {
   const ctx = makeCtx(); // platform 'linux' -> canManageApp false, no app interaction
-  login(ctx, 'alice@x.com', 'u1', 'ALICE'); core.addCurrent(ctx);
-  login(ctx, 'bob@x.com', 'u2', 'BOB'); core.addCurrent(ctx); // bob is active
+  login(ctx, 'alice@x.com', 'u1', 'ALICE');
+  core.addCurrent(ctx);
+  login(ctx, 'bob@x.com', 'u2', 'BOB');
+  core.addCurrent(ctx); // bob is active
   return ctx;
 }
 
@@ -35,8 +53,8 @@ test('keys menu pre-selects the first NON-active account (the one you would swit
   const io = mockIO();
   const done = menu.runMenuKeys(ctx, io);
   const f = lastFrame(io.get());
-  assert.match(f, /\x1b\[7m❯ \[1\] alice@x\.com/);   // alice highlighted by default
-  assert.match(f, /\[2\] bob@x\.com  ● cli/);    // bob marked active (CLI), not highlighted
+  assert.match(f, /\x1b\[7m❯ \[1\] alice@x\.com/); // alice highlighted by default
+  assert.match(f, /\[2\] bob@x\.com {2}● cli/); // bob marked active (CLI), not highlighted
   io.input.emit('keypress', 'q', { name: 'q' });
   await done;
 });
@@ -95,7 +113,7 @@ test('keys menu: Ctrl-A is ignored (does NOT open the add flow)', async function
   const io = mockIO();
   const done = menu.runMenuKeys(ctx, io);
   io.input.emit('keypress', undefined, { name: 'a', ctrl: true }); // ignored
-  io.input.emit('keypress', 'q', { name: 'q' });                   // then quit
+  io.input.emit('keypress', 'q', { name: 'q' }); // then quit
   await done;
   assert.doesNotMatch(io.get(), /Current account:|Save as/);
 });

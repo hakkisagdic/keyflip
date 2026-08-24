@@ -71,10 +71,18 @@ function hexEqual(aHex, bHex) {
   if (typeof aHex !== 'string' || typeof bHex !== 'string') return false;
   if (aHex.length !== bHex.length || aHex.length === 0) return false;
   let a, b;
-  try { a = Buffer.from(aHex, 'hex'); b = Buffer.from(bHex, 'hex'); }
-  catch (e) { return false; }
+  try {
+    a = Buffer.from(aHex, 'hex');
+    b = Buffer.from(bHex, 'hex');
+  } catch (e) {
+    return false;
+  }
   if (a.length !== b.length || a.length === 0) return false;
-  try { return crypto.timingSafeEqual(a, b); } catch (e) { return false; }
+  try {
+    return crypto.timingSafeEqual(a, b);
+  } catch (e) {
+    return false;
+  }
 }
 
 function nowMs(opts) {
@@ -102,13 +110,16 @@ function verifyWebhook(rawBody, headers, secret, opts) {
 
   let matched = false;
   for (let i = 0; i < parsed.v1.length; i++) {
-    if (hexEqual(parsed.v1[i], expected)) { matched = true; break; }
+    if (hexEqual(parsed.v1[i], expected)) {
+      matched = true;
+      break;
+    }
   }
   if (!matched) return { ok: false, reason: 'signature-mismatch' };
 
   // Replay window: |now - t| must be within tolerance. Checked only AFTER the
   // signature matches, so a bogus t on a forged request is already rejected.
-  const tolerance = (opts.tolerance == null ? DEFAULT_TOLERANCE_SEC : Number(opts.tolerance));
+  const tolerance = opts.tolerance == null ? DEFAULT_TOLERANCE_SEC : Number(opts.tolerance);
   if (tolerance > 0) {
     const tSec = Number(parsed.t);
     const nowSec = Math.floor(nowMs(opts) / 1000);
@@ -152,8 +163,11 @@ function extractEmail(obj) {
 
 function parseEvent(rawBody /*, headers */) {
   let event;
-  try { event = JSON.parse(asBuffer(rawBody).toString('utf8')); }
-  catch (e) { return null; }
+  try {
+    event = JSON.parse(asBuffer(rawBody).toString('utf8'));
+  } catch (e) {
+    return null;
+  }
   if (!event || typeof event !== 'object') return null;
 
   const obj = event.data && typeof event.data === 'object' ? event.data.object : null;
@@ -162,7 +176,7 @@ function parseEvent(rawBody /*, headers */) {
     type: type,
     email: extractEmail(obj),
     product: extractProduct(obj),
-    orderId: obj && obj.id != null ? String(obj.id) : (event.id != null ? String(event.id) : null),
+    orderId: obj && obj.id != null ? String(obj.id) : event.id != null ? String(event.id) : null,
     raw: event,
   };
 }

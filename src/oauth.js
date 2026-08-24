@@ -3,18 +3,26 @@
 // expiresAt (ms), scopes } }. Anthropic ROTATES the refresh token on every
 // refresh, so a refreshed blob that fails to persist leaves the stored one stale
 // — callers must warn loudly in that case.
+import fs from 'fs';
+
 const OAUTH_TOKEN_URL = 'https://platform.claude.com/v1/oauth/token';
 const OAUTH_CLIENT_ID = '9d1c250a-e61b-44d9-88ed-5944d1962f5e'; // Claude Code's public client id
 const EXPIRY_BUFFER_MS = 5 * 60 * 1000;
 
 let VERSION = '0.0.0';
-try { VERSION = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version; } catch (e) { /* ignore */ }
+try {
+  VERSION = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version;
+} catch (e) {
+  /* ignore */
+}
 
 function parse(blob) {
   try {
     const d = JSON.parse(blob);
     return d && d.claudeAiOauth && typeof d.claudeAiOauth === 'object' ? d : null;
-  } catch (e) { return null; }
+  } catch (e) {
+    return null;
+  }
 }
 
 // Expired or about to expire (within the buffer)? Unknown expiry -> false.
@@ -40,7 +48,10 @@ async function refreshBlob(blob, opts) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'User-Agent': 'keyflip/' + VERSION },
       body: JSON.stringify({ grant_type: 'refresh_token', refresh_token: rt, client_id: OAUTH_CLIENT_ID }),
-      signal: (typeof AbortSignal !== 'undefined' && AbortSignal.timeout) ? AbortSignal.timeout(opts.timeoutMs || 10000) : undefined,
+      signal:
+        typeof AbortSignal !== 'undefined' && AbortSignal.timeout
+          ? AbortSignal.timeout(opts.timeoutMs || 10000)
+          : undefined,
     });
     if (!res || !res.ok) return null;
     const j = await res.json();
@@ -51,7 +62,9 @@ async function refreshBlob(blob, opts) {
     if (j.refresh_token) d.claudeAiOauth.refreshToken = j.refresh_token;
     if (j.scope) d.claudeAiOauth.scopes = String(j.scope).split(' ');
     return JSON.stringify(d);
-  } catch (e) { return null; }
+  } catch (e) {
+    return null;
+  }
 }
 
 // Refresh profile <name>'s stored token if it's expiring — but ONLY when no live
@@ -60,17 +73,32 @@ async function refreshBlob(blob, opts) {
 //   {status:'skipped'|'fresh'|'refreshed'|'refresh-failed'|'persist-failed'}
 async function maybeRefreshProfile(ctx, name, opts) {
   opts = opts || {};
-  const isRunning = opts.isRunning || function () { return false; };
-  const instances = opts.instances || function () { return []; };
+  const isRunning =
+    opts.isRunning ||
+    function () {
+      return false;
+    };
+  const instances =
+    opts.instances ||
+    function () {
+      return [];
+    };
   if (isRunning() || instances().length) return { status: 'skipped' };
   let blob;
-  try { blob = ctx.store.getProfile(name); } catch (e) { return { status: 'skipped' }; }
+  try {
+    blob = ctx.store.getProfile(name);
+  } catch (e) {
+    return { status: 'skipped' };
+  }
   if (!blob) return { status: 'skipped' };
   if (!isExpiring(blob, opts.nowMs)) return { status: 'fresh' };
   const fresh = await refreshBlob(blob, opts);
   if (!fresh) return { status: 'refresh-failed' };
-  try { ctx.store.setProfile(name, fresh); }
-  catch (e) { return { status: 'persist-failed' }; } // stored refresh token is now stale!
+  try {
+    ctx.store.setProfile(name, fresh);
+  } catch (e) {
+    return { status: 'persist-failed' };
+  } // stored refresh token is now stale!
   return { status: 'refreshed' };
 }
 

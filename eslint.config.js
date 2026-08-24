@@ -62,6 +62,19 @@ export default [
     },
   },
   {
-    ignores: ['node_modules/', 'coverage/', '.husky/', 'convert-to-esm.mjs', 'convert-remaining.mjs', 'fix-dirname.mjs'],
+    files: ['issuer/**/*.js'],
+    languageOptions: {
+      sourceType: 'commonjs',
+      globals: {
+        require: 'readonly',
+        module: 'writable',
+        exports: 'writable',
+        __dirname: 'readonly',
+        __filename: 'readonly',
+      },
+    },
+  },
+  {
+    ignores: ['node_modules/', 'coverage/', '.husky/'],
   },
 ];

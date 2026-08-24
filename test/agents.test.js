@@ -42,21 +42,39 @@ test('collect: nothing present → empty (existence-gated)', function () {
 
 test('collect: finds cursor rules, gemini file, codex dir+file', function () {
   const ctx = makeCtx();
-  seedCursor(ctx); seedGemini(ctx); seedCodex(ctx);
+  seedCursor(ctx);
+  seedGemini(ctx);
+  seedCodex(ctx);
   const got = agents.collectAgentMemory(ctx);
-  const byAgent = got.reduce(function (m, x) { (m[x.agent] = m[x.agent] || []).push(x.rel); return m; }, {});
-  assert.ok(byAgent.cursor.some(function (r) { return r.indexOf('style.mdc') !== -1; }));
-  assert.ok(byAgent.gemini.some(function (r) { return r.indexOf('GEMINI.md') !== -1; }));
+  const byAgent = got.reduce(function (m, x) {
+    (m[x.agent] = m[x.agent] || []).push(x.rel);
+    return m;
+  }, {});
+  assert.ok(
+    byAgent.cursor.some(function (r) {
+      return r.indexOf('style.mdc') !== -1;
+    }),
+  );
+  assert.ok(
+    byAgent.gemini.some(function (r) {
+      return r.indexOf('GEMINI.md') !== -1;
+    }),
+  );
   assert.strictEqual(byAgent.codex.length, 2); // AGENTS.md + memories/note.md
   assert.deepStrictEqual(agents.presentAgents(ctx).sort(), ['codex', 'cursor', 'gemini']);
 });
 
 test('collect: --only filters to one agent', function () {
   const ctx = makeCtx();
-  seedCursor(ctx); seedGemini(ctx);
+  seedCursor(ctx);
+  seedGemini(ctx);
   const got = agents.collectAgentMemory(ctx, { only: ['gemini'] });
   assert.ok(got.length >= 1);
-  assert.ok(got.every(function (x) { return x.agent === 'gemini'; }));
+  assert.ok(
+    got.every(function (x) {
+      return x.agent === 'gemini';
+    }),
+  );
 });
 
 test('collect: ignores non-memory files (e.g. secrets/config)', function () {
@@ -68,15 +86,21 @@ test('collect: ignores non-memory files (e.g. secrets/config)', function () {
   fs.writeFileSync(path.join(dir, 'settings.json'), '{}');
   const got = agents.collectAgentMemory(ctx);
   assert.ok(got.length >= 1);
-  assert.ok(got.every(function (x) { return x.rel.indexOf('oauth') === -1 && x.rel.indexOf('settings.json') === -1; }));
+  assert.ok(
+    got.every(function (x) {
+      return x.rel.indexOf('oauth') === -1 && x.rel.indexOf('settings.json') === -1;
+    }),
+  );
 });
 
 test('merge: union — keeps existing, adds new', function () {
-  const src = makeCtx(); seedGemini(src, '# source rules');
+  const src = makeCtx();
+  seedGemini(src, '# source rules');
   const list = agents.collectAgentMemory(src);
   const dst = makeCtx();
   // pre-existing gemini file must NOT be clobbered without force
-  const g = path.join(dst.home, '.gemini'); fs.mkdirSync(g, { recursive: true });
+  const g = path.join(dst.home, '.gemini');
+  fs.mkdirSync(g, { recursive: true });
   fs.writeFileSync(path.join(g, 'GEMINI.md'), '# local rules');
   const r = agents.mergeAgentMemory(dst, list);
   assert.strictEqual(r.kept, 1);
@@ -85,10 +109,12 @@ test('merge: union — keeps existing, adds new', function () {
 });
 
 test('merge: force overwrites', function () {
-  const src = makeCtx(); seedGemini(src, '# source rules');
+  const src = makeCtx();
+  seedGemini(src, '# source rules');
   const list = agents.collectAgentMemory(src);
   const dst = makeCtx();
-  const g = path.join(dst.home, '.gemini'); fs.mkdirSync(g, { recursive: true });
+  const g = path.join(dst.home, '.gemini');
+  fs.mkdirSync(g, { recursive: true });
   fs.writeFileSync(path.join(g, 'GEMINI.md'), '# local rules');
   const r = agents.mergeAgentMemory(dst, list, { force: true });
   assert.strictEqual(r.overwritten, 1);
@@ -96,7 +122,9 @@ test('merge: force overwrites', function () {
 });
 
 test('merge: adds fresh files into new machine', function () {
-  const src = makeCtx(); seedCursor(src); seedCodex(src);
+  const src = makeCtx();
+  seedCursor(src);
+  seedCodex(src);
   const list = agents.collectAgentMemory(src);
   const dst = makeCtx();
   const r = agents.mergeAgentMemory(dst, list);
@@ -124,15 +152,25 @@ test('merge: refuses to write non-memory-shaped paths', function () {
 });
 
 test('bundle: --agents off by default (no agents field content)', function () {
-  const ctx = ctxM(); seedCursor(ctx);
+  const ctx = ctxM();
+  seedCursor(ctx);
   const built = migrate.buildBundle(ctx, {});
   assert.deepStrictEqual(built.bundle.agents, []);
   assert.strictEqual(built.counts.agents, 0);
 });
 
 test('bundle: --agents opts in; applyBundle merges on target', function () {
-  const src = ctxM(); seedCursor(src, '# terse please'); seedGemini(src);
-  const built = migrate.buildBundle(src, { agents: true, noAccounts: true, noSessions: true, noProviders: true, noMemory: true, noConfig: true });
+  const src = ctxM();
+  seedCursor(src, '# terse please');
+  seedGemini(src);
+  const built = migrate.buildBundle(src, {
+    agents: true,
+    noAccounts: true,
+    noSessions: true,
+    noProviders: true,
+    noMemory: true,
+    noConfig: true,
+  });
   assert.ok(built.counts.agents >= 2);
   const dst = ctxM();
   const res = migrate.applyBundle(dst, built.bundle, {});
@@ -142,9 +180,23 @@ test('bundle: --agents opts in; applyBundle merges on target', function () {
 });
 
 test('bundle: agentIds narrows which agents travel', function () {
-  const src = ctxM(); seedCursor(src); seedGemini(src);
-  const built = migrate.buildBundle(src, { agents: true, agentIds: ['gemini'], noAccounts: true, noSessions: true, noProviders: true, noMemory: true, noConfig: true });
-  assert.ok(built.bundle.agents.every(function (x) { return x.agent === 'gemini'; }));
+  const src = ctxM();
+  seedCursor(src);
+  seedGemini(src);
+  const built = migrate.buildBundle(src, {
+    agents: true,
+    agentIds: ['gemini'],
+    noAccounts: true,
+    noSessions: true,
+    noProviders: true,
+    noMemory: true,
+    noConfig: true,
+  });
+  assert.ok(
+    built.bundle.agents.every(function (x) {
+      return x.agent === 'gemini';
+    }),
+  );
 });
 
 // SECURITY (review P1 #7): mergeAgentMemory must not follow a pre-planted symlink out of $HOME.
@@ -156,7 +208,9 @@ test('mergeAgentMemory refuses a symlinked leaf (no clobber through a symlink, e
   fs.writeFileSync(victim, 'ORIGINAL');
   fs.mkdirSync(path.join(dst.home, '.cursor', 'rules'), { recursive: true });
   fs.symlinkSync(victim, path.join(dst.home, '.cursor', 'rules', 'style.mdc'), 'file');
-  const r = agents.mergeAgentMemory(dst, [{ agent: 'cursor', rel: '.cursor/rules/style.mdc', content: 'PWNED' }], { force: true });
+  const r = agents.mergeAgentMemory(dst, [{ agent: 'cursor', rel: '.cursor/rules/style.mdc', content: 'PWNED' }], {
+    force: true,
+  });
   assert.strictEqual(fs.readFileSync(victim, 'utf8'), 'ORIGINAL');
   assert.ok(r.skipped >= 1);
 });
@@ -164,12 +218,23 @@ test('mergeAgentMemory refuses a symlinked leaf (no clobber through a symlink, e
 // ---- J1 config-tier (redacted agent config) ----
 import * as secretscan from '../src/secretscan.js';
 function seedCursorMcp(ctx, body) {
-  const dir = path.join(ctx.home, '.cursor'); fs.mkdirSync(dir, { recursive: true });
+  const dir = path.join(ctx.home, '.cursor');
+  fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(path.join(dir, 'mcp.json'), body);
 }
 test('collectAgentConfig carries config REDACTED (secrets stripped, structure kept)', function () {
   const ctx = makeCtx();
-  seedCursorMcp(ctx, JSON.stringify({ mcpServers: { r: { command: 'node', env: { ANTHROPIC_API_KEY: 'sk-ant-api03-SECRET1234567890abcdefgh', ANTHROPIC_MODEL: 'opus' } } } }));
+  seedCursorMcp(
+    ctx,
+    JSON.stringify({
+      mcpServers: {
+        r: {
+          command: 'node',
+          env: { ANTHROPIC_API_KEY: 'sk-ant-api03-SECRET1234567890abcdefgh', ANTHROPIC_MODEL: 'opus' },
+        },
+      },
+    }),
+  );
   const got = agents.collectAgentConfig(ctx);
   assert.strictEqual(got.length, 1);
   assert.strictEqual(got[0].agent, 'cursor');
@@ -192,7 +257,11 @@ test('mergeAgentConfig re-redacts incoming, refuses unknown paths, unions', func
   // a HOSTILE bundle: an unknown path + a config that still contains a secret (must be re-redacted)
   const r = agents.mergeAgentConfig(dst, [
     { agent: 'evil', rel: '../../etc/evil.json', content: '{"x":1}' },
-    { agent: 'cursor', rel: '.cursor/mcp.json', content: JSON.stringify({ env: { API_KEY: 'sk-ant-api03-STILLSECRET1234567890abcd' } }) },
+    {
+      agent: 'cursor',
+      rel: '.cursor/mcp.json',
+      content: JSON.stringify({ env: { API_KEY: 'sk-ant-api03-STILLSECRET1234567890abcd' } }),
+    },
   ]);
   assert.strictEqual(r.skipped, 1, 'unknown path refused');
   assert.strictEqual(r.added, 1);
@@ -203,8 +272,18 @@ test('mergeAgentConfig re-redacts incoming, refuses unknown paths, unions', func
 
 test('bundle: --agent-config opts in; applyBundle merges redacted config on target', function () {
   const src = ctxM();
-  seedCursorMcp(src, JSON.stringify({ mcpServers: { r: { env: { OPENAI_API_KEY: 'sk-proj-SECRET1234567890abcdefgh' } } } }));
-  const built = migrate.buildBundle(src, { agentConfig: true, noAccounts: true, noSessions: true, noProviders: true, noMemory: true, noConfig: true });
+  seedCursorMcp(
+    src,
+    JSON.stringify({ mcpServers: { r: { env: { OPENAI_API_KEY: 'sk-proj-SECRET1234567890abcdefgh' } } } }),
+  );
+  const built = migrate.buildBundle(src, {
+    agentConfig: true,
+    noAccounts: true,
+    noSessions: true,
+    noProviders: true,
+    noMemory: true,
+    noConfig: true,
+  });
   assert.ok(built.counts.agentConfig >= 1);
   // the secret must already be gone from the BUNDLE itself
   assert.ok(JSON.stringify(built.bundle.agentConfig).indexOf('sk-proj-SECRET') === -1);
@@ -226,27 +305,67 @@ test('collectAgentConfig({redact:false}) carries the REAL keys (opt-in), tagged 
 
 test('mergeAgentConfig honors an intentional secret-carry (redacted:false) but re-redacts the default', function () {
   const dst1 = makeCtx();
-  agents.mergeAgentConfig(dst1, [{ agent: 'cursor', rel: '.cursor/mcp.json', redacted: false, content: JSON.stringify({ env: { API_KEY: 'sk-ant-api03-KEEPME1234567890abcdefg' } }) }]);
-  assert.ok(fs.readFileSync(path.join(dst1.home, '.cursor', 'mcp.json'), 'utf8').indexOf('sk-ant-api03-KEEPME') !== -1, 'opted-in secret written as-is');
+  agents.mergeAgentConfig(dst1, [
+    {
+      agent: 'cursor',
+      rel: '.cursor/mcp.json',
+      redacted: false,
+      content: JSON.stringify({ env: { API_KEY: 'sk-ant-api03-KEEPME1234567890abcdefg' } }),
+    },
+  ]);
+  assert.ok(
+    fs.readFileSync(path.join(dst1.home, '.cursor', 'mcp.json'), 'utf8').indexOf('sk-ant-api03-KEEPME') !== -1,
+    'opted-in secret written as-is',
+  );
 
   const dst2 = makeCtx();
-  agents.mergeAgentConfig(dst2, [{ agent: 'cursor', rel: '.cursor/mcp.json', redacted: true, content: JSON.stringify({ env: { API_KEY: 'sk-ant-api03-STRIPME1234567890abcd' } }) }]);
-  assert.strictEqual(secretscan.scanText(fs.readFileSync(path.join(dst2.home, '.cursor', 'mcp.json'), 'utf8')).length, 0, 'default entry re-redacted');
+  agents.mergeAgentConfig(dst2, [
+    {
+      agent: 'cursor',
+      rel: '.cursor/mcp.json',
+      redacted: true,
+      content: JSON.stringify({ env: { API_KEY: 'sk-ant-api03-STRIPME1234567890abcd' } }),
+    },
+  ]);
+  assert.strictEqual(
+    secretscan.scanText(fs.readFileSync(path.join(dst2.home, '.cursor', 'mcp.json'), 'utf8')).length,
+    0,
+    'default entry re-redacted',
+  );
 });
 
 test('bundle: --agent-config-secrets carries real keys; default redacts', function () {
   const src = ctxM();
   seedCursorMcp(src, JSON.stringify({ env: { OPENAI_API_KEY: 'sk-proj-REALSECRET1234567890abcd' } }));
-  const withKeys = migrate.buildBundle(src, { agentConfig: true, agentConfigSecrets: true, noAccounts: true, noSessions: true, noProviders: true, noMemory: true, noConfig: true });
+  const withKeys = migrate.buildBundle(src, {
+    agentConfig: true,
+    agentConfigSecrets: true,
+    noAccounts: true,
+    noSessions: true,
+    noProviders: true,
+    noMemory: true,
+    noConfig: true,
+  });
   assert.ok(JSON.stringify(withKeys.bundle.agentConfig).indexOf('sk-proj-REALSECRET') !== -1, 'opt-in carries the key');
-  const redacted = migrate.buildBundle(src, { agentConfig: true, noAccounts: true, noSessions: true, noProviders: true, noMemory: true, noConfig: true });
+  const redacted = migrate.buildBundle(src, {
+    agentConfig: true,
+    noAccounts: true,
+    noSessions: true,
+    noProviders: true,
+    noMemory: true,
+    noConfig: true,
+  });
   assert.ok(JSON.stringify(redacted.bundle.agentConfig).indexOf('sk-proj-REALSECRET') === -1, 'default redacts');
 });
 
 test('config-tier: Copilot config (JSON) is collected + redacted', function () {
   const ctx = makeCtx();
-  const dir = path.join(ctx.home, '.copilot'); fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(path.join(dir, 'config.json'), JSON.stringify({ github: { token: 'ghp_SECRET1234567890abcdefghij' }, model: 'gpt-4o' }));
+  const dir = path.join(ctx.home, '.copilot');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(
+    path.join(dir, 'config.json'),
+    JSON.stringify({ github: { token: 'ghp_SECRET1234567890abcdefghij' }, model: 'gpt-4o' }),
+  );
   assert.ok(agents.presentAgentConfig(ctx).indexOf('copilot') !== -1);
   const got = agents.collectAgentConfig(ctx, { only: ['copilot'] });
   assert.ok(got.length >= 1 && got[0].redactions >= 1);
@@ -257,10 +376,18 @@ test('config-tier: Copilot config (JSON) is collected + redacted', function () {
 test('config-tier: opencode (JSON) + aider (YAML) config are detected + redacted', function () {
   const ctx = makeCtx();
   fs.mkdirSync(path.join(ctx.home, '.config', 'opencode'), { recursive: true });
-  fs.writeFileSync(path.join(ctx.home, '.config', 'opencode', 'opencode.json'), JSON.stringify({ apiKey: 'sk-ant-api03-SECRET1234567890abcd', model: 'x' }));
-  fs.writeFileSync(path.join(ctx.home, '.aider.conf.yml'), 'openai-api-key: sk-proj-SECRET1234567890abcd\nmodel: gpt-4o\n');
+  fs.writeFileSync(
+    path.join(ctx.home, '.config', 'opencode', 'opencode.json'),
+    JSON.stringify({ apiKey: 'sk-ant-api03-SECRET1234567890abcd', model: 'x' }),
+  );
+  fs.writeFileSync(
+    path.join(ctx.home, '.aider.conf.yml'),
+    'openai-api-key: sk-proj-SECRET1234567890abcd\nmodel: gpt-4o\n',
+  );
   const present = agents.presentAgentConfig(ctx);
   assert.ok(present.indexOf('opencode') !== -1 && present.indexOf('aider') !== -1);
   const cfg = agents.collectAgentConfig(ctx, { only: ['opencode', 'aider'] });
-  cfg.forEach(function (c) { assert.strictEqual(secretscan.scanText(c.content).length, 0, c.agent + ' redacted'); });
+  cfg.forEach(function (c) {
+    assert.strictEqual(secretscan.scanText(c.content).length, 0, c.agent + ' redacted');
+  });
 });

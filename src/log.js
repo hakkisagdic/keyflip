@@ -13,14 +13,29 @@ function init(configDir, debug) {
 }
 
 function log(msg) {
-  if (state.debug) { try { process.stderr.write('[debug] ' + msg + '\n'); } catch (e) { /* ignore */ } }
+  if (state.debug) {
+    try {
+      process.stderr.write('[debug] ' + msg + '\n');
+    } catch (e) {
+      /* ignore */
+    }
+  }
   if (!state.dir) return;
   try {
-    if (!state.ready) { fs.mkdirSync(state.dir, { recursive: true }); state.ready = true; }
-    fs.appendFileSync(path.join(state.dir, 'keyflip.log'), new Date().toISOString() + ' ' + msg + '\n', { mode: 0o600 });
-  } catch (e) { /* logging must never break the tool */ }
+    if (!state.ready) {
+      fs.mkdirSync(state.dir, { recursive: true });
+      state.ready = true;
+    }
+    fs.appendFileSync(path.join(state.dir, 'keyflip.log'), new Date().toISOString() + ' ' + msg + '\n', {
+      mode: 0o600,
+    });
+  } catch (e) {
+    /* logging must never break the tool */
+  }
 }
 
-function debugEnabled() { return state.debug; }
+function debugEnabled() {
+  return state.debug;
+}
 
 export { init, log, debugEnabled };

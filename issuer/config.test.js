@@ -71,9 +71,9 @@ test('secretEnvFor: returns ENV VAR NAMES only (never a secret value)', function
   assert.deepStrictEqual(cfgMod.secretEnvFor('paytr'), ['PAYTR_MERCHANT_KEY', 'PAYTR_MERCHANT_SALT']);
 
   // Every returned name is an UPPER_SNAKE env-var identifier, not a value.
-  const names = ['stripe', 'lemonsqueezy', 'iyzico', 'paytr']
-    .map(cfgMod.secretEnvFor)
-    .reduce(function (acc, v) { return acc.concat(v); }, []);
+  const names = ['stripe', 'lemonsqueezy', 'iyzico', 'paytr'].map(cfgMod.secretEnvFor).reduce(function (acc, v) {
+    return acc.concat(v);
+  }, []);
   names.forEach(function (n) {
     assert.match(n, /^[A-Z][A-Z0-9_]*$/, n + ' should look like an env var NAME');
   });
@@ -154,9 +154,12 @@ test('validateConfig: rejects a non-positive licenseTtlDaysDefault', function ()
 });
 
 test('loadConfig: a missing file throws a clear BAD_ISSUER_CONFIG error', function () {
-  assert.throws(function () {
-    cfgMod.loadConfig(path.join(__dirname, 'does-not-exist.json'));
-  }, function (e) {
-    return e && e.code === 'BAD_ISSUER_CONFIG' && /cannot read/.test(e.message);
-  });
+  assert.throws(
+    function () {
+      cfgMod.loadConfig(path.join(__dirname, 'does-not-exist.json'));
+    },
+    function (e) {
+      return e && e.code === 'BAD_ISSUER_CONFIG' && /cannot read/.test(e.message);
+    },
+  );
 });

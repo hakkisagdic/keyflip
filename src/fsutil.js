@@ -11,10 +11,18 @@ function atomicWrite(filePath, data, mode) {
   // When the caller doesn't pin a mode, preserve the existing file's permission
   // bits (default 0600 for a new file) rather than silently re-setting them.
   if (mode === undefined || mode === null) {
-    try { mode = fs.statSync(filePath).mode & 0o777; } catch (e) { mode = 0o600; }
+    try {
+      mode = fs.statSync(filePath).mode & 0o777;
+    } catch (e) {
+      mode = 0o600;
+    }
   }
-  const tmp = filePath + '.tmp-' + process.pid + '-' + (seq++); // unique within dir -> never inherits a stale file's mode
-  try { fs.rmSync(tmp, { force: true }); } catch (e) { /* ignore */ }
+  const tmp = filePath + '.tmp-' + process.pid + '-' + seq++; // unique within dir -> never inherits a stale file's mode
+  try {
+    fs.rmSync(tmp, { force: true });
+  } catch (e) {
+    /* ignore */
+  }
   fs.writeFileSync(tmp, data, { mode: mode });
   try {
     fs.renameSync(tmp, filePath);
@@ -23,10 +31,18 @@ function atomicWrite(filePath, data, mode) {
     try {
       fs.writeFileSync(filePath, data, { mode: mode });
     } finally {
-      try { fs.rmSync(tmp, { force: true }); } catch (e2) { /* ignore */ }
+      try {
+        fs.rmSync(tmp, { force: true });
+      } catch (e2) {
+        /* ignore */
+      }
     }
   }
-  try { fs.chmodSync(filePath, mode); } catch (e) { /* best effort (e.g. Windows) */ }
+  try {
+    fs.chmodSync(filePath, mode);
+  } catch (e) {
+    /* best effort (e.g. Windows) */
+  }
 }
 
 // Is `dest` safe to write as a file strictly under `root`, even against symlink escapes
@@ -49,10 +65,24 @@ function safeDestUnder(root, dest) {
   if (resolved !== lroot && resolved.indexOf(lroot + path.sep) !== 0) return { ok: false, reason: 'escape' };
   // The trusted real prefix = realpath of root's deepest EXISTING ancestor. Both anchors are
   // realpath'd, so a symlinked FS root (e.g. macOS /var -> /private/var) doesn't false-positive.
-  let ranchor; try { ranchor = fs.realpathSync(deepestExisting(lroot)); } catch (e) { return { ok: false, reason: 'ancestor' }; }
-  let ranc; try { ranc = fs.realpathSync(deepestExisting(path.dirname(resolved))); } catch (e) { return { ok: false, reason: 'ancestor' }; }
+  let ranchor;
+  try {
+    ranchor = fs.realpathSync(deepestExisting(lroot));
+  } catch (e) {
+    return { ok: false, reason: 'ancestor' };
+  }
+  let ranc;
+  try {
+    ranc = fs.realpathSync(deepestExisting(path.dirname(resolved)));
+  } catch (e) {
+    return { ok: false, reason: 'ancestor' };
+  }
   if (ranc !== ranchor && ranc.indexOf(ranchor + path.sep) !== 0) return { ok: false, reason: 'symlink-dir' };
-  try { if (fs.lstatSync(resolved).isSymbolicLink()) return { ok: false, reason: 'symlink-leaf' }; } catch (e) { /* absent = fine */ }
+  try {
+    if (fs.lstatSync(resolved).isSymbolicLink()) return { ok: false, reason: 'symlink-leaf' };
+  } catch (e) {
+    /* absent = fine */
+  }
   return { ok: true };
 }
 
@@ -62,7 +92,11 @@ function sortKeys(value) {
   if (Array.isArray(value)) return value.map(sortKeys);
   if (value && typeof value === 'object') {
     const out = {};
-    Object.keys(value).sort().forEach(function (k) { out[k] = sortKeys(value[k]); });
+    Object.keys(value)
+      .sort()
+      .forEach(function (k) {
+        out[k] = sortKeys(value[k]);
+      });
     return out;
   }
   return value;
@@ -79,10 +113,17 @@ function writeJsonStable(filePath, obj, mode) {
 // throw, and the caller (usually inside txn.withRollback) aborts without writing.
 function readJsonForWrite(filePath) {
   let raw;
-  try { raw = fs.readFileSync(filePath, 'utf8'); }
-  catch (e) { if (e && e.code === 'ENOENT') return {}; throw e; }
-  try { return JSON.parse(raw); }
-  catch (e) { throw new Error(filePath + ' exists but is not valid JSON — refusing to overwrite it (fix or remove it first)'); }
+  try {
+    raw = fs.readFileSync(filePath, 'utf8');
+  } catch (e) {
+    if (e && e.code === 'ENOENT') return {};
+    throw e;
+  }
+  try {
+    return JSON.parse(raw);
+  } catch (e) {
+    throw new Error(filePath + ' exists but is not valid JSON — refusing to overwrite it (fix or remove it first)');
+  }
 }
 
 export { atomicWrite, sortKeys, writeJsonStable, readJsonForWrite, safeDestUnder };

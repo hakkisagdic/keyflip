@@ -10,7 +10,9 @@ const MAX_BYTES = 256 * 1024; // only ever process the tail of the file (anti-OO
 
 // Absolute path of the audit log for this ctx. (Named logPath internally so the
 // node `path` module stays reachable; exported as `path` per the module API.)
-function logPath(ctx) { return path.join(ctx.configDir, 'logs', 'keyflip.log'); }
+function logPath(ctx) {
+  return path.join(ctx.configDir, 'logs', 'keyflip.log');
+}
 
 // Read at most `maxBytes` from the END of a file WITHOUT loading the whole thing.
 // Returns { text, truncated } or null if the file is missing/unreadable. Never
@@ -18,7 +20,11 @@ function logPath(ctx) { return path.join(ctx.configDir, 'logs', 'keyflip.log'); 
 // first (partial) line must be discarded by the caller.
 function readTailBytes(file, maxBytes) {
   let fd;
-  try { fd = fs.openSync(file, 'r'); } catch (e) { return null; }
+  try {
+    fd = fs.openSync(file, 'r');
+  } catch (e) {
+    return null;
+  }
   try {
     const size = fs.fstatSync(fd).size;
     const start = size > maxBytes ? size - maxBytes : 0;
@@ -32,7 +38,13 @@ function readTailBytes(file, maxBytes) {
       read += n;
     }
     return { text: buf.toString('utf8', 0, read), truncated: start > 0 };
-  } finally { try { fs.closeSync(fd); } catch (e) { /* ignore */ } }
+  } finally {
+    try {
+      fs.closeSync(fd);
+    } catch (e) {
+      /* ignore */
+    }
+  }
 }
 
 // "<ts> <msg>" -> { ts, msg }. Splits on the FIRST space only, so a message that
@@ -47,7 +59,10 @@ function parseLine(line) {
 }
 
 // Epoch ms for an ISO-ish timestamp, or null if it does not parse.
-function parseTs(s) { const t = Date.parse(s); return Number.isNaN(t) ? null : t; }
+function parseTs(s) {
+  const t = Date.parse(s);
+  return Number.isNaN(t) ? null : t;
+}
 
 // Last `opts.limit` (default 50) parsed entries [{ ts, msg }], newest-LAST
 // (append order preserved). Optional filters:
@@ -58,7 +73,7 @@ function parseTs(s) { const t = Date.parse(s); return Number.isNaN(t) ? null : t
 function tail(ctx, opts) {
   opts = opts || {};
   const n = Number(opts.limit);
-  const limit = (Number.isFinite(n) && n > 0) ? Math.floor(n) : 50;
+  const limit = Number.isFinite(n) && n > 0 ? Math.floor(n) : 50;
 
   const chunk = readTailBytes(logPath(ctx), MAX_BYTES);
   if (!chunk) return []; // missing / unreadable
@@ -66,8 +81,8 @@ function tail(ctx, opts) {
   let lines = chunk.text.split('\n');
   if (chunk.truncated && lines.length) lines = lines.slice(1); // drop the partial first line
 
-  const grep = (opts.grep != null && String(opts.grep) !== '') ? String(opts.grep).toLowerCase() : null;
-  const sinceMs = (opts.since != null && opts.since !== '') ? parseTs(opts.since) : null;
+  const grep = opts.grep != null && String(opts.grep) !== '' ? String(opts.grep).toLowerCase() : null;
+  const sinceMs = opts.since != null && opts.since !== '' ? parseTs(opts.since) : null;
 
   const out = [];
   for (let i = 0; i < lines.length; i++) {

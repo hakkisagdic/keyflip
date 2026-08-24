@@ -12,8 +12,14 @@ test('tokenize lowercases, splits, drops stopwords + 1-char tokens', function ()
 
 test('search ranks the keepsake that actually discusses the topic first', function () {
   const ctx = makeCtx();
-  memory.save(ctx, 'sess-a', '# Goal\n- fix the OAuth token refresh and retry backoff\n', { session: 'sess-a', cwd: '/proj/api' });
-  memory.save(ctx, 'sess-b', '# Goal\n- redesign the CSS grid layout for the dashboard\n', { session: 'sess-b', cwd: '/proj/web' });
+  memory.save(ctx, 'sess-a', '# Goal\n- fix the OAuth token refresh and retry backoff\n', {
+    session: 'sess-a',
+    cwd: '/proj/api',
+  });
+  memory.save(ctx, 'sess-b', '# Goal\n- redesign the CSS grid layout for the dashboard\n', {
+    session: 'sess-b',
+    cwd: '/proj/web',
+  });
   memory.save(ctx, 'sess-c', '# Goal\n- add unit tests for the parser\n', { session: 'sess-c' });
 
   const hits = recall.search(ctx, 'oauth token refresh', { limit: 5 });
@@ -22,7 +28,11 @@ test('search ranks the keepsake that actually discusses the topic first', functi
   assert.ok(hits[0].snippet.toLowerCase().indexOf('oauth') !== -1, 'snippet shows the match');
   assert.strictEqual(hits[0].cwd, '/proj/api', 'cwd pulled from frontmatter');
   // the unrelated CSS keepsake should not outrank it (and likely not match at all)
-  assert.ok(!hits.some(function (h) { return h.session === 'sess-b' && h.score >= hits[0].score; }));
+  assert.ok(
+    !hits.some(function (h) {
+      return h.session === 'sess-b' && h.score >= hits[0].score;
+    }),
+  );
 });
 
 test('search returns [] when nothing matches or the corpus is empty', function () {
@@ -34,7 +44,10 @@ test('search returns [] when nothing matches or the corpus is empty', function (
 
 test('answer feeds the top keepsakes to claude -p and returns a cited synthesis', function () {
   const ctx = makeCtx();
-  memory.save(ctx, 'aaaa1111', '# Goal\n- fix OAuth token refresh with backoff\n', { session: 'aaaa1111', cwd: '/api' });
+  memory.save(ctx, 'aaaa1111', '# Goal\n- fix OAuth token refresh with backoff\n', {
+    session: 'aaaa1111',
+    cwd: '/api',
+  });
   memory.save(ctx, 'bbbb2222', '# Goal\n- CSS grid dashboard\n', { session: 'bbbb2222' });
   let seen = null;
   const runner = function (cmd, args, input) {
@@ -52,17 +65,26 @@ test('answer feeds the top keepsakes to claude -p and returns a cited synthesis'
 
 test('answer reports no-matches / claude-not-installed cleanly', function () {
   const ctx = makeCtx();
-  const runner = function () { return { code: 0, stdout: 'claude 1' }; };
+  const runner = function () {
+    return { code: 0, stdout: 'claude 1' };
+  };
   assert.strictEqual(recall.answer(ctx, 'x', { run: runner }).reason, 'no-matches');
   memory.save(ctx, 's', 'about oauth tokens', {});
-  const absent = function () { return { code: 127 }; };
+  const absent = function () {
+    return { code: 127 };
+  };
   assert.strictEqual(recall.answer(ctx, 'oauth', { run: absent }).reason, 'claude-not-installed');
 });
 
 test('rank is a pure BM25 over supplied docs (idf favors the rarer term)', function () {
   const docs = [
     { key: '1', session: '1', text: 'common common common rare', toks: recall.tokenize('common common common rare') },
-    { key: '2', session: '2', text: 'common common common common', toks: recall.tokenize('common common common common') },
+    {
+      key: '2',
+      session: '2',
+      text: 'common common common common',
+      toks: recall.tokenize('common common common common'),
+    },
   ];
   const hits = recall.rank(docs, 'rare', 5);
   assert.strictEqual(hits.length, 1);
@@ -85,7 +107,9 @@ test('semanticSearch embeds query+keepsakes, cosine-ranks, caches vectors', asyn
   let calls = 0;
   const post = function (url, body) {
     calls++;
-    const vecs = body.input.map(function (t) { return [/oauth|token|retr/.test(t) ? 1 : 0, /css|grid|dashboard/.test(t) ? 1 : 0]; });
+    const vecs = body.input.map(function (t) {
+      return [/oauth|token|retr/.test(t) ? 1 : 0, /css|grid|dashboard/.test(t) ? 1 : 0];
+    });
     return Promise.resolve({ embeddings: vecs });
   };
   const r1 = await recall.semanticSearch(ctx, 'how did i handle token refresh', { post: post });
@@ -101,7 +125,9 @@ test('semanticSearch embeds query+keepsakes, cosine-ranks, caches vectors', asyn
 test('semanticSearch reports a clean reason when the endpoint is unreachable', async function () {
   const ctx = makeCtx();
   memory.save(ctx, 's', 'about widgets', {});
-  const post = function () { return Promise.reject(new Error('ECONNREFUSED')); };
+  const post = function () {
+    return Promise.reject(new Error('ECONNREFUSED'));
+  };
   const r = await recall.semanticSearch(ctx, 'widgets', { post: post });
   assert.strictEqual(r.ok, false);
   assert.ok(/ECONNREFUSED/.test(r.reason));

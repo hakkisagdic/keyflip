@@ -34,7 +34,10 @@ test('get on a fresh config is empty', function () {
 test('setLimit persists and get reflects it (file is 0600)', function () {
   const ctx = makeCtx();
   const r = budget.setLimit(ctx, 'work', { fiveHourPct: 80, sevenDayPct: 90 });
-  assert.deepStrictEqual({ fiveHourPct: r.fiveHourPct, sevenDayPct: r.sevenDayPct }, { fiveHourPct: 80, sevenDayPct: 90 });
+  assert.deepStrictEqual(
+    { fiveHourPct: r.fiveHourPct, sevenDayPct: r.sevenDayPct },
+    { fiveHourPct: 80, sevenDayPct: 90 },
+  );
   const cfg = budget.get(ctx);
   assert.strictEqual(cfg.work.fiveHourPct, 80);
   assert.strictEqual(cfg.work.sevenDayPct, 90);
@@ -72,7 +75,9 @@ test('setLimit removing the LAST window drops the whole entry', function () {
 test('setLimit rejects out-of-range / non-number ceilings', function () {
   const ctx = makeCtx();
   [150, -5, NaN, Infinity, 'x', {}].forEach(function (bad) {
-    assert.throws(function () { budget.setLimit(ctx, 'work', { fiveHourPct: bad }); });
+    assert.throws(function () {
+      budget.setLimit(ctx, 'work', { fiveHourPct: bad });
+    });
   });
   // nothing was written for the rejected values
   assert.ok(!('work' in budget.get(ctx)));
@@ -80,7 +85,9 @@ test('setLimit rejects out-of-range / non-number ceilings', function () {
 
 test('setLimit with nothing provided throws', function () {
   const ctx = makeCtx();
-  assert.throws(function () { budget.setLimit(ctx, 'work', {}); }, /nothing to set/);
+  assert.throws(function () {
+    budget.setLimit(ctx, 'work', {});
+  }, /nothing to set/);
 });
 
 test('setLimit accepts the boundary values 0 and 100', function () {
@@ -93,7 +100,9 @@ test('setLimit accepts the boundary values 0 and 100', function () {
 test('setLimit rejects hostile / invalid account names', function () {
   const ctx = makeCtx();
   ['__proto__', 'constructor', 'prototype', 'has space', '-flag', '.dot', '', 'a/b'].forEach(function (bad) {
-    assert.throws(function () { budget.setLimit(ctx, bad, { fiveHourPct: 50 }); }, "expected throw for name: " + bad);
+    assert.throws(function () {
+      budget.setLimit(ctx, bad, { fiveHourPct: 50 });
+    }, 'expected throw for name: ' + bad);
   });
 });
 
@@ -109,7 +118,9 @@ test('clear removes an entry (true), missing entry is false, bad name throws', f
   assert.strictEqual(budget.clear(ctx, 'work'), true);
   assert.ok(!('work' in budget.get(ctx)));
   assert.strictEqual(budget.clear(ctx, 'work'), false);
-  assert.throws(function () { budget.clear(ctx, '__proto__'); });
+  assert.throws(function () {
+    budget.clear(ctx, '__proto__');
+  });
 });
 
 test('limitsFor merges defaults under per-account overrides', function () {
@@ -135,7 +146,14 @@ test('evaluate flags a breach when pct >= limit', function () {
   writeCache(ctx, { work: { fiveHour: 85, sevenDay: 10 } });
   const rows = budget.evaluate(ctx);
   assert.strictEqual(rows.length, 1);
-  assert.deepStrictEqual(rows[0], { name: 'work', metric: 'fiveHour', pct: 85, limit: 80, breached: true, level: 'breach' });
+  assert.deepStrictEqual(rows[0], {
+    name: 'work',
+    metric: 'fiveHour',
+    pct: 85,
+    limit: 80,
+    breached: true,
+    level: 'breach',
+  });
 });
 
 test('evaluate flags a warn within WARN_MARGIN, silent below it', function () {
@@ -202,12 +220,22 @@ test('evaluate orders breaches before warns, then by pct desc', function () {
   budget.setLimit(ctx, '*', { fiveHourPct: 80 });
   writeCache(ctx, {
     a: { fiveHour: 100 }, // breach
-    b: { fiveHour: 85 },  // breach (lower pct)
-    c: { fiveHour: 75 },  // warn
+    b: { fiveHour: 85 }, // breach (lower pct)
+    c: { fiveHour: 75 }, // warn
   });
   const rows = budget.evaluate(ctx);
-  assert.deepStrictEqual(rows.map(function (r) { return r.name; }), ['a', 'b', 'c']);
-  assert.deepStrictEqual(rows.map(function (r) { return r.level; }), ['breach', 'breach', 'warn']);
+  assert.deepStrictEqual(
+    rows.map(function (r) {
+      return r.name;
+    }),
+    ['a', 'b', 'c'],
+  );
+  assert.deepStrictEqual(
+    rows.map(function (r) {
+      return r.level;
+    }),
+    ['breach', 'breach', 'warn'],
+  );
 });
 
 // ---- status -----------------------------------------------------------------
@@ -219,7 +247,9 @@ test('status combines ceilings, current usage, defaults and alerts', function ()
   writeCache(ctx, { work: { fiveHour: 88, sevenDay: 40 } });
   const s = budget.status(ctx);
   assert.deepStrictEqual(s.defaults, { fiveHourPct: null, sevenDayPct: 95 });
-  const work = s.accounts.find(function (a) { return a.name === 'work'; });
+  const work = s.accounts.find(function (a) {
+    return a.name === 'work';
+  });
   assert.strictEqual(work.limits.fiveHourPct, 80);
   assert.strictEqual(work.limits.sevenDayPct, 95); // inherited
   assert.strictEqual(work.usage.fiveHour, 88);
@@ -234,7 +264,9 @@ test('status usage is null when a window has no cached sample', function () {
   budget.setLimit(ctx, 'work', { fiveHourPct: 80 });
   // no cache written at all
   const s = budget.status(ctx);
-  const work = s.accounts.find(function (a) { return a.name === 'work'; });
+  const work = s.accounts.find(function (a) {
+    return a.name === 'work';
+  });
   assert.strictEqual(work.usage.fiveHour, null);
   assert.strictEqual(work.usage.sevenDay, null);
   assert.deepStrictEqual(s.alerts, []);
@@ -252,7 +284,9 @@ test('get tolerates a corrupt budget.json (reads empty)', function () {
 test('setLimit REFUSES to clobber a corrupt budget.json', function () {
   const ctx = makeCtx();
   writeBudgetRaw(ctx, '{ not json');
-  assert.throws(function () { budget.setLimit(ctx, 'work', { fiveHourPct: 50 }); }, /not valid JSON|JSON/);
+  assert.throws(function () {
+    budget.setLimit(ctx, 'work', { fiveHourPct: 50 });
+  }, /not valid JSON|JSON/);
   // the corrupt bytes are still there, untouched
   assert.strictEqual(fs.readFileSync(budget.budgetPath(ctx), 'utf8'), '{ not json');
 });
@@ -264,7 +298,7 @@ test('a tampered budget.json with a real __proto__ key cannot pollute', function
   writeBudgetRaw(ctx, '{"__proto__":{"fiveHourPct":1},"constructor":{"fiveHourPct":2},"work":{"fiveHourPct":80}}');
   const cfg = budget.get(ctx);
   assert.strictEqual(Object.getPrototypeOf(cfg), null, 'config is a null-proto object');
-  assert.strictEqual(({}).fiveHourPct, undefined, 'no prototype pollution');
+  assert.strictEqual({}.fiveHourPct, undefined, 'no prototype pollution');
   assert.deepStrictEqual(Object.keys(cfg), ['work'], 'unsafe keys dropped');
   assert.strictEqual(cfg.work.fiveHourPct, 80);
 });
@@ -280,14 +314,20 @@ test('evaluate ignores junk / hostile cache entries', function () {
   const ctx = makeCtx();
   budget.setLimit(ctx, '*', { fiveHourPct: 1 });
   // Raw literal so "__proto__" is a real key, not prototype-setting sugar.
-  const raw = '{"__proto__":{"usage":{"fiveHour":{"pct":99}}},'
-    + '"scalar":5,'
-    + '"work":{"usage":{"fiveHour":{"pct":"nope"}}},' // non-numeric pct -> ignored
-    + '"home":{"usage":{"fiveHour":{"pct":50}}}}';    // legit -> breach
+  const raw =
+    '{"__proto__":{"usage":{"fiveHour":{"pct":99}}},' +
+    '"scalar":5,' +
+    '"work":{"usage":{"fiveHour":{"pct":"nope"}}},' + // non-numeric pct -> ignored
+    '"home":{"usage":{"fiveHour":{"pct":50}}}}'; // legit -> breach
   fs.writeFileSync(path.join(ctx.configDir, '.usage-cache.json'), raw);
   const rows = budget.evaluate(ctx);
-  assert.strictEqual(({}).usage, undefined, 'no prototype pollution from cache');
-  assert.deepStrictEqual(rows.map(function (r) { return r.name; }), ['home']);
+  assert.strictEqual({}.usage, undefined, 'no prototype pollution from cache');
+  assert.deepStrictEqual(
+    rows.map(function (r) {
+      return r.name;
+    }),
+    ['home'],
+  );
 });
 
 test('budget.json is written as clean JSON (no prototype leakage on round-trip)', function () {

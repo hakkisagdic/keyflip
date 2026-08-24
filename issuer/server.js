@@ -49,7 +49,11 @@ const PROVIDER_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 // 'stripe' -> 'STRIPE_WEBHOOK_SECRET'. Kept deterministic so ops can wire it once.
 // (Fallback only — config.js secretEnvFor is authoritative in production.)
 function secretEnvName(provider) {
-  return String(provider).toUpperCase().replace(/[^A-Z0-9]/g, '_') + '_WEBHOOK_SECRET';
+  return (
+    String(provider)
+      .toUpperCase()
+      .replace(/[^A-Z0-9]/g, '_') + '_WEBHOOK_SECRET'
+  );
 }
 
 // Add N calendar months to an ISO timestamp, returning an ISO string. Used to
@@ -72,15 +76,25 @@ function addMonths(iso, months) {
 // momentarily absent. They are wired to the REAL sign.js / config.js APIs.
 
 // Module + parsed-config caches (built once, on first use).
-let _cfgMod = null;   // the config.js module
-let _cfgData = null;  // the loaded/validated config object
-let _signMod = null;  // the sign.js module
-let _privKey = null;  // the issuer Ed25519 private KeyObject (never logged/serialised)
+let _cfgMod = null; // the config.js module
+let _cfgData = null; // the loaded/validated config object
+let _signMod = null; // the sign.js module
+let _privKey = null; // the issuer Ed25519 private KeyObject (never logged/serialised)
 
-function cfgMod() { return _cfgMod || (_cfgMod = require('./config')); }
-function cfgData() { if (!_cfgData) _cfgData = cfgMod().loadConfig(); return _cfgData; }
-function signMod() { return _signMod || (_signMod = require('./sign')); }
-function privKey() { if (!_privKey) _privKey = signMod().loadPrivateKey(); return _privKey; }
+function cfgMod() {
+  return _cfgMod || (_cfgMod = require('./config'));
+}
+function cfgData() {
+  if (!_cfgData) _cfgData = cfgMod().loadConfig();
+  return _cfgData;
+}
+function signMod() {
+  return _signMod || (_signMod = require('./sign'));
+}
+function privKey() {
+  if (!_privKey) _privKey = signMod().loadPrivateKey();
+  return _privKey;
+}
 
 // Resolve issuer/adapters/<provider>.js after validating the provider name.
 function defaultResolveAdapter(provider) {
@@ -90,7 +104,11 @@ function defaultResolveAdapter(provider) {
   const adaptersDir = path.join(__dirname, 'adapters') + path.sep;
   if (!file.startsWith(adaptersDir)) return null;
   let mod;
-  try { mod = require(file); } catch (e) { return null; }
+  try {
+    mod = require(file);
+  } catch (e) {
+    return null;
+  }
   if (!mod || typeof mod.verifyWebhook !== 'function' || typeof mod.parseEvent !== 'function') return null;
   return mod;
 }
@@ -102,8 +120,11 @@ function defaultResolveAdapter(provider) {
 // from process.env itself.
 function defaultSecretForProvider(provider) {
   let name;
-  try { name = cfgMod().secretEnvFor(provider); }
-  catch (e) { name = secretEnvName(provider); } // fall back to the deterministic name
+  try {
+    name = cfgMod().secretEnvFor(provider);
+  } catch (e) {
+    name = secretEnvName(provider);
+  } // fall back to the deterministic name
   if (!name) return undefined;
   const primary = Array.isArray(name) ? name[0] : name;
   return process.env[primary];
@@ -139,9 +160,17 @@ function defaultDeliverLicense(/* record, token */) {
 function loadLedgerFile(file, ledger) {
   if (!file) return;
   let raw;
-  try { raw = fs.readFileSync(file, 'utf8'); } catch (e) { return; } // absent => empty
+  try {
+    raw = fs.readFileSync(file, 'utf8');
+  } catch (e) {
+    return;
+  } // absent => empty
   let arr;
-  try { arr = JSON.parse(raw); } catch (e) { return; } // corrupt => start fresh (fail closed to empty)
+  try {
+    arr = JSON.parse(raw);
+  } catch (e) {
+    return;
+  } // corrupt => start fresh (fail closed to empty)
   if (!Array.isArray(arr)) return;
   for (const rec of arr) {
     if (rec && typeof rec.orderId === 'string') ledger.set(rec.orderId, rec);
@@ -153,10 +182,20 @@ function persistLedgerFile(file, ledger) {
   const arr = [];
   for (const rec of ledger.values()) {
     // Whitelist non-secret fields only — never persist a token.
-    arr.push({ orderId: rec.orderId, provider: rec.provider, tier: rec.tier, email: rec.email, issuedAt: rec.issuedAt });
+    arr.push({
+      orderId: rec.orderId,
+      provider: rec.provider,
+      tier: rec.tier,
+      email: rec.email,
+      issuedAt: rec.issuedAt,
+    });
   }
   const tmp = file + '.tmp.' + process.pid;
-  try { fs.mkdirSync(path.dirname(file), { recursive: true }); } catch (e) { /* best effort */ }
+  try {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+  } catch (e) {
+    /* best effort */
+  }
   fs.writeFileSync(tmp, JSON.stringify(arr, null, 2), { mode: 0o600 });
   fs.renameSync(tmp, file);
 }
@@ -178,11 +217,26 @@ function readRawBody(req, limit) {
     req.on('data', function (c) {
       if (done) return;
       size += c.length;
-      if (size > limit) { done = true; reject(Object.assign(new Error('payload too large'), { code: 'TOO_LARGE' })); req.destroy(); return; }
+      if (size > limit) {
+        done = true;
+        reject(Object.assign(new Error('payload too large'), { code: 'TOO_LARGE' }));
+        req.destroy();
+        return;
+      }
       chunks.push(c);
     });
-    req.on('end', function () { if (!done) { done = true; resolve(Buffer.concat(chunks)); } });
-    req.on('error', function (e) { if (!done) { done = true; reject(e); } });
+    req.on('end', function () {
+      if (!done) {
+        done = true;
+        resolve(Buffer.concat(chunks));
+      }
+    });
+    req.on('error', function (e) {
+      if (!done) {
+        done = true;
+        reject(e);
+      }
+    });
   });
 }
 
@@ -202,20 +256,42 @@ function createIssuer(deps) {
   const productToTier = deps.productToTier || defaultProductToTier;
   const signLicense = deps.signLicense || defaultSignLicense;
   const deliverLicense = deps.deliverLicense || defaultDeliverLicense;
-  const expiryFor = deps.expiryFor || function () { return null; }; // perpetual by default
-  const now = deps.now || function () { return new Date().toISOString(); };
+  const expiryFor =
+    deps.expiryFor ||
+    function () {
+      return null;
+    }; // perpetual by default
+  const now =
+    deps.now ||
+    function () {
+      return new Date().toISOString();
+    };
   const ledgerFile = deps.ledgerFile || null;
   const ledger = deps.ledger || new Map();
   // Structured, secret-free logger. Only ever receives non-sensitive fields.
-  const log = deps.log || function (obj) { try { process.stdout.write(JSON.stringify(obj) + '\n'); } catch (e) { /* ignore */ } };
+  const log =
+    deps.log ||
+    function (obj) {
+      try {
+        process.stdout.write(JSON.stringify(obj) + '\n');
+      } catch (e) {
+        /* ignore */
+      }
+    };
 
   loadLedgerFile(ledgerFile, ledger);
 
   async function handleWebhook(provider, req, res) {
-    if (!PROVIDER_RE.test(provider)) { sendJson(res, 400, { error: 'bad provider' }); return; }
+    if (!PROVIDER_RE.test(provider)) {
+      sendJson(res, 400, { error: 'bad provider' });
+      return;
+    }
 
     const adapter = resolveAdapter(provider);
-    if (!adapter) { sendJson(res, 404, { error: 'unknown provider' }); return; }
+    if (!adapter) {
+      sendJson(res, 404, { error: 'unknown provider' });
+      return;
+    }
 
     const secret = secretForProvider(provider);
     if (!secret) {
@@ -230,15 +306,21 @@ function createIssuer(deps) {
     try {
       rawBody = await readRawBody(req, MAX_BODY_BYTES);
     } catch (e) {
-      if (e && e.code === 'TOO_LARGE') { sendJson(res, 413, { error: 'payload too large' }); return; }
+      if (e && e.code === 'TOO_LARGE') {
+        sendJson(res, 413, { error: 'payload too large' });
+        return;
+      }
       sendJson(res, 400, { error: 'bad request' });
       return;
     }
 
     // 2) Authenticity check. node lowercases header keys already.
     let v;
-    try { v = adapter.verifyWebhook(rawBody, req.headers, secret); }
-    catch (e) { v = { ok: false, reason: 'verify-threw' }; }
+    try {
+      v = adapter.verifyWebhook(rawBody, req.headers, secret);
+    } catch (e) {
+      v = { ok: false, reason: 'verify-threw' };
+    }
     if (!v || v.ok !== true) {
       // Do NOT log the reason at info if it might echo secret material; adapters
       // return only coarse reasons, so this is safe and useful.
@@ -249,9 +331,15 @@ function createIssuer(deps) {
 
     // 3) Parse the business event (only now that it's authentic).
     let event;
-    try { event = adapter.parseEvent(rawBody, req.headers); }
-    catch (e) { event = null; }
-    if (!event || typeof event !== 'object') { sendJson(res, 400, { error: 'unparseable event' }); return; }
+    try {
+      event = adapter.parseEvent(rawBody, req.headers);
+    } catch (e) {
+      event = null;
+    }
+    if (!event || typeof event !== 'object') {
+      sendJson(res, 400, { error: 'unparseable event' });
+      return;
+    }
 
     if (event.type !== 'purchase') {
       // Refunds/other are acknowledged but mint nothing here (refund handling is
@@ -262,12 +350,23 @@ function createIssuer(deps) {
     }
 
     const orderId = event.orderId;
-    if (!orderId || typeof orderId !== 'string') { sendJson(res, 400, { error: 'missing orderId' }); return; }
+    if (!orderId || typeof orderId !== 'string') {
+      sendJson(res, 400, { error: 'missing orderId' });
+      return;
+    }
 
     // 4) Idempotency: a replay of the same orderId must NOT mint again.
     const existing = ledger.get(orderId);
     if (existing) {
-      log({ evt: 'webhook', provider: provider, status: 200, orderId: orderId, tier: existing.tier, issued: true, idempotent: true });
+      log({
+        evt: 'webhook',
+        provider: provider,
+        status: 200,
+        orderId: orderId,
+        tier: existing.tier,
+        issued: true,
+        idempotent: true,
+      });
       sendJson(res, 200, { issued: true, tier: existing.tier, idempotent: true });
       return;
     }
@@ -276,18 +375,18 @@ function createIssuer(deps) {
     // or a { tier, months } record (config.js). months (when a positive number)
     // drives the expiry; otherwise expiryFor(tier) decides (perpetual by default).
     const mapped = productToTier(event.product);
-    const tier = (mapped && typeof mapped === 'object') ? mapped.tier : mapped;
+    const tier = mapped && typeof mapped === 'object' ? mapped.tier : mapped;
     if (!tier) {
       log({ evt: 'webhook', provider: provider, status: 422, orderId: orderId, reason: 'unmapped-product' });
       sendJson(res, 422, { error: 'product not mapped to a tier' });
       return;
     }
-    const months = (mapped && typeof mapped === 'object') ? mapped.months : undefined;
+    const months = mapped && typeof mapped === 'object' ? mapped.months : undefined;
 
     // 6) MINT exactly once. The token is handed straight to delivery and never
     // stored in the ledger or logged.
     const issuedAt = now();
-    const expiry = (typeof months === 'number' && months > 0) ? addMonths(issuedAt, months) : expiryFor(tier);
+    const expiry = typeof months === 'number' && months > 0 ? addMonths(issuedAt, months) : expiryFor(tier);
     const payload = {
       tier: tier,
       email: event.email == null ? '' : String(event.email),
@@ -307,10 +406,18 @@ function createIssuer(deps) {
 
     const record = { orderId: orderId, provider: provider, tier: tier, email: payload.email, issuedAt: issuedAt };
     ledger.set(orderId, record);
-    try { persistLedgerFile(ledgerFile, ledger); } catch (e) { /* durability best-effort; in-memory guard still holds */ }
+    try {
+      persistLedgerFile(ledgerFile, ledger);
+    } catch (e) {
+      /* durability best-effort; in-memory guard still holds */
+    }
 
     // Out-of-band delivery (stub). Token is scoped to this call only.
-    try { deliverLicense(record, token); } catch (e) { /* delivery failures don't unmint */ }
+    try {
+      deliverLicense(record, token);
+    } catch (e) {
+      /* delivery failures don't unmint */
+    }
     token = null; // drop the reference promptly.
 
     log({ evt: 'webhook', provider: provider, status: 200, orderId: orderId, tier: tier, issued: true });
@@ -319,19 +426,34 @@ function createIssuer(deps) {
 
   const handler = function (req, res) {
     let parsed;
-    try { parsed = new URL(req.url, 'http://localhost'); }
-    catch (e) { sendJson(res, 400, { error: 'bad url' }); return; }
+    try {
+      parsed = new URL(req.url, 'http://localhost');
+    } catch (e) {
+      sendJson(res, 400, { error: 'bad url' });
+      return;
+    }
     const pathname = parsed.pathname;
 
-    if (req.method === 'GET' && pathname === '/health') { sendJson(res, 200, { ok: true }); return; }
+    if (req.method === 'GET' && pathname === '/health') {
+      sendJson(res, 200, { ok: true });
+      return;
+    }
 
     const m = /^\/webhook\/([^/]+)\/?$/.exec(pathname);
     if (m) {
-      if (req.method !== 'POST') { sendJson(res, 405, { error: 'method not allowed' }); return; }
+      if (req.method !== 'POST') {
+        sendJson(res, 405, { error: 'method not allowed' });
+        return;
+      }
       // decodeURIComponent so an encoded provider still validates against the RE
       // (and traversal attempts fail the strict charset check).
       let provider;
-      try { provider = decodeURIComponent(m[1]); } catch (e) { sendJson(res, 400, { error: 'bad provider' }); return; }
+      try {
+        provider = decodeURIComponent(m[1]);
+      } catch (e) {
+        sendJson(res, 400, { error: 'bad provider' });
+        return;
+      }
       handleWebhook(provider, req, res).catch(function () {
         if (!res.headersSent) sendJson(res, 500, { error: 'internal error' });
       });
@@ -359,7 +481,14 @@ function start(deps) {
   return issuer;
 }
 
-module.exports = { createIssuer: createIssuer, start: start, secretEnvName: secretEnvName, MAX_BODY_BYTES: MAX_BODY_BYTES };
+module.exports = {
+  createIssuer: createIssuer,
+  start: start,
+  secretEnvName: secretEnvName,
+  MAX_BODY_BYTES: MAX_BODY_BYTES,
+};
 
 // Run directly: `node issuer/server.js`.
-if (require.main === module) { start(); }
+if (require.main === module) {
+  start();
+}

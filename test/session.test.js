@@ -89,19 +89,29 @@ function mkhome() {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'keyflip-run-'));
   fs.mkdirSync(path.join(home, '.claude'), { recursive: true });
   fs.writeFileSync(path.join(home, '.claude', '.credentials.json'), BLOB);
-  fs.writeFileSync(path.join(home, '.claude.json'), JSON.stringify({ oauthAccount: { emailAddress: 'a@x.com' }, userID: 'u1' }));
+  fs.writeFileSync(
+    path.join(home, '.claude.json'),
+    JSON.stringify({ oauthAccount: { emailAddress: 'a@x.com' }, userID: 'u1' }),
+  );
   return home;
 }
 function run(home, args, extraEnv, input) {
   return _child_process.spawnSync(process.execPath, [BIN].concat(args), {
-    encoding: 'utf8', input: input,
-    env: Object.assign({}, process.env, {
-      HOME: home, USERPROFILE: home,
-      XDG_CONFIG_HOME: path.join(home, '.config'),
-      KEYFLIP_CONFIG_DIR: path.join(home, '.config', 'keyflip'), // deterministic across OSes (Windows uses APPDATA otherwise)
-      APPDATA: path.join(home, 'AppData', 'Roaming'),
-      KEYFLIP_TEST_CLAUDE: 'stopped',
-    }, extraEnv || {}),
+    encoding: 'utf8',
+    input: input,
+    env: Object.assign(
+      {},
+      process.env,
+      {
+        HOME: home,
+        USERPROFILE: home,
+        XDG_CONFIG_HOME: path.join(home, '.config'),
+        KEYFLIP_CONFIG_DIR: path.join(home, '.config', 'keyflip'), // deterministic across OSes (Windows uses APPDATA otherwise)
+        APPDATA: path.join(home, 'AppData', 'Roaming'),
+        KEYFLIP_TEST_CLAUDE: 'stopped',
+      },
+      extraEnv || {},
+    ),
   });
 }
 
@@ -118,12 +128,15 @@ test('run -y launches with CLAUDE_CONFIG_DIR and syncs a rotated token back', fu
   run(home, ['add']);
   // fake `claude`: prints its config dir and rotates the session credential
   const probe = path.join(home, 'probe.js');
-  fs.writeFileSync(probe, [
-    "const fs=require('fs'),path=require('path');",
-    "const d=process.env.CLAUDE_CONFIG_DIR;",
-    "console.log('CFGDIR='+d);",
-    "fs.writeFileSync(path.join(d,'.credentials.json'), JSON.stringify({claudeAiOauth:{accessToken:'ROTATED',refreshToken:'R2'}}));",
-  ].join('\n'));
+  fs.writeFileSync(
+    probe,
+    [
+      "const fs=require('fs'),path=require('path');",
+      'const d=process.env.CLAUDE_CONFIG_DIR;',
+      "console.log('CFGDIR='+d);",
+      "fs.writeFileSync(path.join(d,'.credentials.json'), JSON.stringify({claudeAiOauth:{accessToken:'ROTATED',refreshToken:'R2'}}));",
+    ].join('\n'),
+  );
   const r = run(home, ['run', 'a', '-y', '--', probe], { KEYFLIP_CLAUDE_BIN: process.execPath });
   assert.strictEqual(r.status, 0, r.stderr);
   assert.match(r.stdout, /CFGDIR=.*sessions/);
@@ -141,7 +154,12 @@ test('add --token imports from a file with --force, refuses piped stdin without 
   assert.strictEqual(ok.status, 0, ok.stderr);
   assert.match(run(home, ['list']).stdout, /imp@x\.com/);
 
-  const piped = run(home, ['add', 'other', '--token', '-'], {}, JSON.stringify({ claudeAiOauth: { accessToken: 'X' } }));
+  const piped = run(
+    home,
+    ['add', 'other', '--token', '-'],
+    {},
+    JSON.stringify({ claudeAiOauth: { accessToken: 'X' } }),
+  );
   assert.notStrictEqual(piped.status, 0);
   assert.match(piped.stderr, /--force/);
 

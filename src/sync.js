@@ -21,28 +21,48 @@ function encrypt(plaintext, passphrase) {
   const c = crypto.createCipheriv('aes-256-gcm', key, iv);
   const ct = Buffer.concat([c.update(plaintext, 'utf8'), c.final()]);
   const tag = c.getAuthTag();
-  return JSON.stringify({ magic: MAGIC, v: VERSION, alg: 'aes-256-gcm', salt: salt.toString('base64'), iv: iv.toString('base64'), tag: tag.toString('base64'), ct: ct.toString('base64') });
+  return JSON.stringify({
+    magic: MAGIC,
+    v: VERSION,
+    alg: 'aes-256-gcm',
+    salt: salt.toString('base64'),
+    iv: iv.toString('base64'),
+    tag: tag.toString('base64'),
+    ct: ct.toString('base64'),
+  });
 }
 
 function decrypt(envelope, passphrase) {
   let e;
-  try { e = JSON.parse(envelope); } catch (err) { throw new Error('not a keyflip sync payload'); }
+  try {
+    e = JSON.parse(envelope);
+  } catch (err) {
+    throw new Error('not a keyflip sync payload');
+  }
   if (e.magic !== MAGIC) throw new Error('not a keyflip sync payload');
   const key = crypto.scryptSync(passphrase, Buffer.from(e.salt, 'base64'), 32);
   const d = crypto.createDecipheriv('aes-256-gcm', key, Buffer.from(e.iv, 'base64'));
   d.setAuthTag(Buffer.from(e.tag, 'base64'));
   try {
     return Buffer.concat([d.update(Buffer.from(e.ct, 'base64')), d.final()]).toString('utf8');
-  } catch (err) { throw new Error('decryption failed — wrong passphrase or corrupt payload'); }
+  } catch (err) {
+    throw new Error('decryption failed — wrong passphrase or corrupt payload');
+  }
 }
 
 // --- WebDAV (injectable fetch; Basic auth) ---
-function authHeader(o) { return o.user ? { authorization: 'Basic ' + Buffer.from(o.user + ':' + (o.pass || '')).toString('base64') } : {}; }
+function authHeader(o) {
+  return o.user ? { authorization: 'Basic ' + Buffer.from(o.user + ':' + (o.pass || '')).toString('base64') } : {};
+}
 
 async function davPut(o, body) {
   const doFetch = o.fetch || (typeof fetch !== 'undefined' ? fetch : null);
   if (!doFetch) throw new Error('no fetch available');
-  const res = await doFetch(o.url, { method: 'PUT', headers: Object.assign({ 'content-type': 'application/json' }, authHeader(o)), body: body });
+  const res = await doFetch(o.url, {
+    method: 'PUT',
+    headers: Object.assign({ 'content-type': 'application/json' }, authHeader(o)),
+    body: body,
+  });
   if (!res || res.status >= 300) throw new Error('WebDAV PUT failed (http ' + (res && res.status) + ')');
   return true;
 }
@@ -71,14 +91,22 @@ async function test(o) {
   try {
     const res = await doFetch(o.url, { method: 'HEAD', headers: authHeader(o) });
     return { ok: !!res, httpStatus: res && res.status };
-  } catch (e) { return { ok: false, reason: (e && e.message) || 'network' }; }
+  } catch (e) {
+    return { ok: false, reason: (e && e.message) || 'network' };
+  }
 }
 
 // Push: build the export bundle, wrap with metadata, encrypt, PUT.
 async function push(ctx, o) {
   if (!o.passphrase) throw new Error('sync requires a passphrase (the payload carries secrets)');
   const bundle = transfer.buildExport(ctx).envelope;
-  const wrapped = JSON.stringify({ schema: VERSION, device: o.device || 'this-device', at: ctx.now(), accounts: bundle.accounts.length, bundle: bundle });
+  const wrapped = JSON.stringify({
+    schema: VERSION,
+    device: o.device || 'this-device',
+    at: ctx.now(),
+    accounts: bundle.accounts.length,
+    bundle: bundle,
+  });
   await davPut(o, encrypt(wrapped, o.passphrase));
   return { pushed: bundle.accounts.length };
 }
@@ -89,7 +117,11 @@ async function pull(ctx, o) {
   const raw = await davGet(o);
   if (raw == null) return { found: false };
   const meta = JSON.parse(decrypt(raw, o.passphrase));
-  return { found: true, meta: { schema: meta.schema, device: meta.device, at: meta.at, accounts: meta.accounts }, _bundle: meta.bundle };
+  return {
+    found: true,
+    meta: { schema: meta.schema, device: meta.device, at: meta.at, accounts: meta.accounts },
+    _bundle: meta.bundle,
+  };
 }
 
 // Apply a previously-pulled bundle. Since applyImport (with --force) OVERWRITES
@@ -103,11 +135,14 @@ function apply(ctx, pulled, opts) {
     const dir = path.join(ctx.configDir, 'pre-sync-backups');
     fs.mkdirSync(dir, { recursive: true });
     const stamp = String(ctx.now()).replace(/[-:]/g, '').replace(/\..*$/, '');
-    let file = path.join(dir, 'pre-sync-' + stamp + '.json'), i = 1;
-    while (fs.existsSync(file)) file = path.join(dir, 'pre-sync-' + stamp + '.' + (i++) + '.json');
+    let file = path.join(dir, 'pre-sync-' + stamp + '.json'),
+      i = 1;
+    while (fs.existsSync(file)) file = path.join(dir, 'pre-sync-' + stamp + '.' + i++ + '.json');
     const current = transfer.buildExport(ctx).envelope;
     fs.writeFileSync(file, JSON.stringify(current, null, 2), { mode: 0o600 });
-  } catch (e) { /* best effort — never block the pull on the safety copy */ }
+  } catch (e) {
+    /* best effort — never block the pull on the safety copy */
+  }
   return transfer.applyImport(ctx, pulled._bundle, { force: !!(opts && opts.force) });
 }
 

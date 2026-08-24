@@ -7,7 +7,9 @@ import os from 'os';
 import path from 'path';
 import * as svc from '../src/autoswitchservice.js';
 
-function tmpHome() { return fs.mkdtempSync(path.join(os.tmpdir(), 'kf-autosvc-')); }
+function tmpHome() {
+  return fs.mkdtempSync(path.join(os.tmpdir(), 'kf-autosvc-'));
+}
 // A fake command runner that records calls and returns success for launchctl/crontab.
 function fakeRunner(state) {
   state = state || {};
@@ -16,7 +18,10 @@ function fakeRunner(state) {
     state.calls.push({ cmd: cmd, args: args, stdin: stdin });
     if (cmd === 'which') return { code: 0, stdout: '/usr/local/bin/keyflip\n' };
     if (cmd === 'crontab' && args && args[0] === '-l') return { code: 0, stdout: state.cron || '' };
-    if (cmd === 'crontab' && args && args[0] === '-') { state.cron = stdin; return { code: 0, stdout: '' }; }
+    if (cmd === 'crontab' && args && args[0] === '-') {
+      state.cron = stdin;
+      return { code: 0, stdout: '' };
+    }
     return { code: 0, stdout: '' };
   };
 }
@@ -56,7 +61,9 @@ test('launchd install writes a plist under the injected home and load-cycles it'
   const r = svc.install({ platform: 'darwin' }, { home: home, interval: 300, run: fakeRunner(state) });
   assert.strictEqual(r.ok, true);
   assert.ok(fs.existsSync(svc.plistPath(home)), 'plist written');
-  const cmds = state.calls.map(function (c) { return c.cmd + ' ' + (c.args || [])[0]; });
+  const cmds = state.calls.map(function (c) {
+    return c.cmd + ' ' + (c.args || [])[0];
+  });
   assert.ok(cmds.indexOf('launchctl unload') !== -1 && cmds.indexOf('launchctl load') !== -1, 'idempotent load');
   // uninstall removes it
   const u = svc.uninstall({ platform: 'darwin' }, { home: home, run: fakeRunner() });

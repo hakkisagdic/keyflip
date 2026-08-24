@@ -16,41 +16,96 @@ import * as _transcript from './transcript.js';
 import * as _transfer from './transfer.js';
 import * as _fsutil from './fsutil.js';
 
-function idPath(ctx) { return path.join(ctx.configDir, 'fleet.json'); }
+function idPath(ctx) {
+  return path.join(ctx.configDir, 'fleet.json');
+}
 
-// Stable per-machine identity (hostname + a random suffix), created once. Also holds the
-// configured fleet name + rendezvous dir. The passphrase is NEVER stored (supplied per command).
+// Stable per-machine identity (hostname + a random suffix), minted once and then reused. Also
+// holds the configured fleet name + rendezvous dir. The passphrase is NEVER stored (supplied per
+// command). The id must satisfy safeId() or every bus filename derived from it throws, so it is
+// re-minted when a stored fleet.json carries one that does not.
 function identity(ctx) {
   let id = {};
-  try { id = JSON.parse(fs.readFileSync(idPath(ctx), 'utf8')) || {}; } catch (e) { id = {}; }
+  try {
+    id = JSON.parse(fs.readFileSync(idPath(ctx), 'utf8')) || {};
+  } catch (e) {
+    id = {};
+  }
+  let minted = false;
   if (!id.machineId) {
     const host = safeHost();
     const suffix = crypto.randomBytes(3).toString('hex');
     id.machineId = host + '-' + suffix;
     if (!id.name) id.name = host;
-    try { const fsutil = _fsutil; fsutil.atomicWrite(idPath(ctx), JSON.stringify(id, null, 2), 0o600); } catch (e) { /* best-effort */ }
+    minted = true;
+  }
+  if (!safeId(id.machineId)) {
+    const host = safeHost();
+    id.machineId = host + '-' + crypto.randomBytes(3).toString('hex');
+    if (!id.name) id.name = host;
+    minted = true;
+  }
+  if (minted) {
+    try {
+      const fsutil = _fsutil;
+      fsutil.atomicWrite(idPath(ctx), JSON.stringify(id, null, 2), 0o600);
+    } catch (e) {
+      /* best-effort */
+    }
   }
   return id;
 }
-function safeHost() { try { return String(os.hostname()).split('.')[0].replace(/[^A-Za-z0-9_-]/g, '') || 'machine'; } catch (e) { return 'machine'; } }
+// Capped at 40 chars so hostname + '-' + 6 hex suffix always fits SAFE_ID's 64-char bound.
+function safeHost() {
+  try {
+    return (
+      String(os.hostname())
+        .split('.')[0]
+        .replace(/[^A-Za-z0-9_-]/g, '')
+        .slice(0, 40) || 'machine'
+    );
+  } catch (e) {
+    return 'machine';
+  }
+}
 
 // A machine id must be a single SAFE FILENAME SEGMENT — never a path. Peer-supplied ids reach
 // filenames (<id>.status.enc / <id>.inbox.enc), so an unvalidated '../' would let a hostile peer
 // (the rendezvous folder is only semi-trusted — a shared passphrase + shared write access) write
 // or read OUTSIDE the rendezvous dir. Reject anything that isn't a bounded [A-Za-z0-9._-] token.
 const SAFE_ID = /^[A-Za-z0-9._-]{1,64}$/;
-function safeId(x) { return typeof x === 'string' && SAFE_ID.test(x) && x.indexOf('..') === -1; }
+function safeId(x) {
+  return typeof x === 'string' && SAFE_ID.test(x) && x.indexOf('..') === -1;
+}
 // A bus entry name must be a plain basename (no separators, no traversal) — defence in depth.
-function nameOk(name) { return typeof name === 'string' && name.length > 0 && name.length <= 96 && name.indexOf('/') === -1 && name.indexOf('\\') === -1 && name.indexOf('\0') === -1 && name !== '.' && name !== '..' && path.basename(name) === name; }
+function nameOk(name) {
+  return (
+    typeof name === 'string' &&
+    name.length > 0 &&
+    name.length <= 96 &&
+    name.indexOf('/') === -1 &&
+    name.indexOf('\\') === -1 &&
+    name.indexOf('\0') === -1 &&
+    name !== '.' &&
+    name !== '..' &&
+    path.basename(name) === name
+  );
+}
 const MAX_ENC_BYTES = 8 * 1024 * 1024; // cap a single peer file (anti-DoS: a hostile huge .enc)
-const MAX_STATUS_FILES = 500;          // cap how many peer statuses we process per read
+const MAX_STATUS_FILES = 500; // cap how many peer statuses we process per read
 // eslint-disable-next-line no-control-regex
 const CTRL = /[\x00-\x1f\x7f]/g; // control chars incl. ANSI ESC — strip from peer strings pre-render
-function scrub(s, max) { return String(s == null ? '' : s).replace(CTRL, ' ').slice(0, max || 200); }
+function scrub(s, max) {
+  return String(s == null ? '' : s)
+    .replace(CTRL, ' ')
+    .slice(0, max || 200);
+}
 
 function setConfig(ctx, patch) {
   const id = identity(ctx);
-  Object.keys(patch || {}).forEach(function (k) { if (patch[k] != null) id[k] = patch[k]; });
+  Object.keys(patch || {}).forEach(function (k) {
+    if (patch[k] != null) id[k] = patch[k];
+  });
   _fsutil.atomicWrite(idPath(ctx), JSON.stringify(id, null, 2), 0o600);
   return id;
 }
@@ -62,10 +117,16 @@ function setConfig(ctx, patch) {
 // shared folder, never argv); the PUBLIC key is published in the machine's status. Commands are
 // signed; a receiver verifies the signature against the sender's TOFU-PINNED public key. A pinned
 // key that later CHANGES is flagged as a possible key-substitution attack and the command rejected.
-function keyPath(ctx) { return path.join(ctx.configDir, 'fleet-key.json'); }
+function keyPath(ctx) {
+  return path.join(ctx.configDir, 'fleet-key.json');
+}
 function machineKeys(ctx) {
   let k = null;
-  try { k = JSON.parse(fs.readFileSync(keyPath(ctx), 'utf8')); } catch (e) { k = null; }
+  try {
+    k = JSON.parse(fs.readFileSync(keyPath(ctx), 'utf8'));
+  } catch (e) {
+    k = null;
+  }
   if (!k || !k.privatePem || !k.publicB64) {
     const pair = crypto.generateKeyPairSync('ed25519');
     k = {
@@ -73,20 +134,39 @@ function machineKeys(ctx) {
       publicB64: pair.publicKey.export({ type: 'spki', format: 'der' }).toString('base64'),
       createdAt: ctx.now(),
     };
-    try { _fsutil.atomicWrite(keyPath(ctx), JSON.stringify(k), 0o600); } catch (e) { /* best-effort */ }
+    try {
+      _fsutil.atomicWrite(keyPath(ctx), JSON.stringify(k), 0o600);
+    } catch (e) {
+      /* best-effort */
+    }
   }
   return k;
 }
-function publicKey(ctx) { return machineKeys(ctx).publicB64; }
+function publicKey(ctx) {
+  return machineKeys(ctx).publicB64;
+}
 // A public key travels as single-line base64 DER (spki) — scrub-safe (no newlines) and compact.
-function isPubB64(s) { return typeof s === 'string' && s.length > 0 && s.length <= 2000 && /^[A-Za-z0-9+/=]+$/.test(s); }
-function pubKeyObject(b64) { return crypto.createPublicKey({ key: Buffer.from(b64, 'base64'), format: 'der', type: 'spki' }); }
+function isPubB64(s) {
+  return typeof s === 'string' && s.length > 0 && s.length <= 2000 && /^[A-Za-z0-9+/=]+$/.test(s);
+}
+function pubKeyObject(b64) {
+  return crypto.createPublicKey({ key: Buffer.from(b64, 'base64'), format: 'der', type: 'spki' });
+}
 
 // Canonical bytes we sign/verify: the command's meaning, order-stable. payload round-trips through
 // JSON identically on both machines (our own code produces it), so re-serialising here is stable.
 // `to` (the intended RECIPIENT machine) is signed so a genuine signature can't be replayed into a
 // different machine's inbox — origin auth must prove not just WHO+WHAT but FOR WHOM.
-function signable(cmd) { return JSON.stringify({ id: cmd.id, from: cmd.from, to: cmd.to == null ? null : cmd.to, at: cmd.at, type: cmd.type, payload: cmd.payload === undefined ? null : cmd.payload }); }
+function signable(cmd) {
+  return JSON.stringify({
+    id: cmd.id,
+    from: cmd.from,
+    to: cmd.to == null ? null : cmd.to,
+    at: cmd.at,
+    type: cmd.type,
+    payload: cmd.payload === undefined ? null : cmd.payload,
+  });
+}
 function signCommand(ctx, cmd) {
   const k = machineKeys(ctx);
   const sig = crypto.sign(null, Buffer.from(signable(cmd), 'utf8'), crypto.createPrivateKey(k.privatePem));
@@ -95,60 +175,106 @@ function signCommand(ctx, cmd) {
 }
 function verifyCommand(cmd, pubB64) {
   if (!cmd || typeof cmd.sig !== 'string' || !isPubB64(pubB64)) return false;
-  let sigBuf; try { sigBuf = Buffer.from(cmd.sig, 'base64'); } catch (e) { return false; }
-  try { return crypto.verify(null, Buffer.from(signable(cmd), 'utf8'), pubKeyObject(pubB64), sigBuf); } catch (e) { return false; }
+  let sigBuf;
+  try {
+    sigBuf = Buffer.from(cmd.sig, 'base64');
+  } catch (e) {
+    return false;
+  }
+  try {
+    return crypto.verify(null, Buffer.from(signable(cmd), 'utf8'), pubKeyObject(pubB64), sigBuf);
+  } catch (e) {
+    return false;
+  }
 }
 
 // TOFU key store: machineId -> pinned public key (first one we ever saw for that id). The in-memory
 // map is a NULL-PROTOTYPE object so a peer-controlled machineId (e.g. "__proto__"/"constructor") can
 // never pollute a prototype or shadow an inherited property during lookup.
-function knownPath(ctx) { return path.join(ctx.configDir, 'fleet-known.json'); }
+function knownPath(ctx) {
+  return path.join(ctx.configDir, 'fleet-known.json');
+}
 function knownKeys(ctx) {
   const out = Object.create(null);
-  try { const k = JSON.parse(fs.readFileSync(knownPath(ctx), 'utf8'));
-    if (k && typeof k === 'object' && !Array.isArray(k)) Object.keys(k).forEach(function (id) { if (safeId(id) && isPubB64(k[id])) out[id] = k[id]; });
-  } catch (e) { /* none yet */ }
+  try {
+    const k = JSON.parse(fs.readFileSync(knownPath(ctx), 'utf8'));
+    if (k && typeof k === 'object' && !Array.isArray(k))
+      Object.keys(k).forEach(function (id) {
+        if (safeId(id) && isPubB64(k[id])) out[id] = k[id];
+      });
+  } catch (e) {
+    /* none yet */
+  }
   return out;
 }
-function saveKnown(ctx, map) { try { _fsutil.atomicWrite(knownPath(ctx), JSON.stringify(map), 0o600); } catch (e) { /* best-effort */ } }
+function saveKnown(ctx, map) {
+  try {
+    _fsutil.atomicWrite(knownPath(ctx), JSON.stringify(map), 0o600);
+  } catch (e) {
+    /* best-effort */
+  }
+}
 const MAX_KNOWN = 1000; // cap the TOFU roster (anti-DoS: a passphrase holder flooding distinct ids)
 // Reconcile pinned keys against what peers currently publish. Pins keys on FIRST sight; NEVER
 // overwrites a pinned key — a mismatch is surfaced as a conflict (possible substitution) instead.
 // Returns { keys: {id->pinnedKey}, conflicts: [{machineId,name}], firstSeen: [id] }.
 function reconcileKeys(ctx, statuses) {
   const known = knownKeys(ctx);
-  const conflicts = [], firstSeen = [];
+  const conflicts = [],
+    firstSeen = [];
   let changed = false;
   (Array.isArray(statuses) ? statuses : []).forEach(function (s) {
     if (!s || !safeId(s.machineId) || !isPubB64(s.pubKey)) return;
     const cur = known[s.machineId];
     if (!cur) {
       if (Object.keys(known).length >= MAX_KNOWN) return; // roster full — don't pin new peers
-      known[s.machineId] = s.pubKey; firstSeen.push(s.machineId); changed = true;
-    } else if (cur !== s.pubKey) { conflicts.push({ machineId: s.machineId, name: scrub(s.name, 80) || s.machineId }); }
+      known[s.machineId] = s.pubKey;
+      firstSeen.push(s.machineId);
+      changed = true;
+    } else if (cur !== s.pubKey) {
+      conflicts.push({ machineId: s.machineId, name: scrub(s.name, 80) || s.machineId });
+    }
   });
   if (changed) saveKnown(ctx, known);
   return { keys: known, conflicts: conflicts, firstSeen: firstSeen };
 }
 // Short SHA-256 fingerprint of a public key — shown at trust time so a re-key can be verified
 // out-of-band (compare against the fingerprint the other machine prints).
-function fingerprint(pubB64) { try { return crypto.createHash('sha256').update(Buffer.from(String(pubB64), 'base64')).digest('hex').replace(/(..)/g, '$1:').slice(0, 23); } catch (e) { return '?'; } }
+function fingerprint(pubB64) {
+  try {
+    return crypto
+      .createHash('sha256')
+      .update(Buffer.from(String(pubB64), 'base64'))
+      .digest('hex')
+      .replace(/(..)/g, '$1:')
+      .slice(0, 23);
+  } catch (e) {
+    return '?';
+  }
+}
 // Audit view of the TOFU key store: every pinned/published machine, its fingerprint, and whether the
 // currently-published key still MATCHES the pin (ok / CHANGED = possible substitution / unpinned /
 // offline = pinned but not currently publishing). Read-only — for `fleet keys` and its MCP tool.
 function keyReport(ctx, statuses) {
   const known = knownKeys(ctx);
   const published = Object.create(null);
-  (Array.isArray(statuses) ? statuses : []).forEach(function (s) { if (s && safeId(s.machineId) && isPubB64(s.pubKey)) published[s.machineId] = { key: s.pubKey, name: scrub(s.name, 80) || s.machineId }; });
+  (Array.isArray(statuses) ? statuses : []).forEach(function (s) {
+    if (s && safeId(s.machineId) && isPubB64(s.pubKey))
+      published[s.machineId] = { key: s.pubKey, name: scrub(s.name, 80) || s.machineId };
+  });
   const ids = Object.keys(known);
-  Object.keys(published).forEach(function (id) { if (ids.indexOf(id) === -1) ids.push(id); });
+  Object.keys(published).forEach(function (id) {
+    if (ids.indexOf(id) === -1) ids.push(id);
+  });
   return ids.sort().map(function (id) {
-    const pin = known[id], pub = published[id];
+    const pin = known[id],
+      pub = published[id];
     return {
-      machineId: id, name: (pub && pub.name) || id,
+      machineId: id,
+      name: (pub && pub.name) || id,
       pinned: pin ? fingerprint(pin) : null,
       published: pub ? fingerprint(pub.key) : null,
-      status: !pin ? 'unpinned' : !pub ? 'offline' : (pin === pub.key ? 'ok' : 'CHANGED'),
+      status: !pin ? 'unpinned' : !pub ? 'offline' : pin === pub.key ? 'ok' : 'CHANGED',
     };
   });
 }
@@ -169,11 +295,25 @@ function checkOrigin(ctx, cmd, reconcile) {
   if (!cmd || typeof cmd.sig !== 'string') return { ok: false, reason: 'unsigned command (rejected)' };
   if (!safeId(cmd.from)) return { ok: false, reason: 'command has no valid sender' };
   const selfId = identity(ctx).machineId;
-  if (cmd.to !== selfId) return { ok: false, reason: 'command was not addressed to this machine (rejected — possible cross-inbox replay)' };
-  if ((reconcile.conflicts || []).some(function (c) { return c.machineId === cmd.from; })) return { ok: false, reason: "sender '" + cmd.from + "' key CHANGED since first seen — possible key substitution (rejected)" };
+  if (cmd.to !== selfId)
+    return { ok: false, reason: 'command was not addressed to this machine (rejected — possible cross-inbox replay)' };
+  if (
+    (reconcile.conflicts || []).some(function (c) {
+      return c.machineId === cmd.from;
+    })
+  )
+    return {
+      ok: false,
+      reason: "sender '" + cmd.from + "' key CHANGED since first seen — possible key substitution (rejected)",
+    };
   const key = (reconcile.keys || {})[cmd.from];
-  if (!key) return { ok: false, reason: "no pinned key for sender '" + cmd.from + "' (it must publish `keyflip fleet push` first)" };
-  if (!verifyCommand(cmd, key)) return { ok: false, reason: 'signature does not verify against the pinned sender key (rejected)' };
+  if (!key)
+    return {
+      ok: false,
+      reason: "no pinned key for sender '" + cmd.from + "' (it must publish `keyflip fleet push` first)",
+    };
+  if (!verifyCommand(cmd, key))
+    return { ok: false, reason: 'signature does not verify against the pinned sender key (rejected)' };
   return { ok: true, key: key };
 }
 
@@ -187,16 +327,70 @@ function bus(ctx, opts) {
   if (!opts.passphrase) throw new Error('a fleet passphrase is required (--passphrase-file <f>)');
   const sync = _sync;
   return {
-    dir: dir, machineId: id.machineId, name: id.name,
-    write: function (name, obj) { if (!nameOk(name)) throw new Error('unsafe fleet entry name'); fs.mkdirSync(dir, { recursive: true }); const f = path.join(dir, name); fs.writeFileSync(f, sync.encrypt(JSON.stringify(obj), opts.passphrase), { mode: 0o600 }); try { fs.chmodSync(f, 0o600); } catch (e) { /* non-POSIX */ } },
-    read: function (name) { if (!nameOk(name)) return null; const f = path.join(dir, name); try { if (fs.statSync(f).size > MAX_ENC_BYTES) return null; } catch (e) { return null; } let raw; try { raw = fs.readFileSync(f, 'utf8'); } catch (e) { return null; } try { return JSON.parse(sync.decrypt(raw, opts.passphrase)); } catch (e) { return null; } },
-    list: function (suffix) { let ents = []; try { ents = fs.readdirSync(dir); } catch (e) { return []; } return ents.filter(function (n) { return nameOk(n) && n.slice(-suffix.length) === suffix; }); },
-    remove: function (name) { if (!nameOk(name)) return; try { fs.rmSync(path.join(dir, name), { force: true }); } catch (e) { /* ignore */ } },
+    dir: dir,
+    machineId: id.machineId,
+    name: id.name,
+    write: function (name, obj) {
+      if (!nameOk(name)) throw new Error('unsafe fleet entry name');
+      fs.mkdirSync(dir, { recursive: true });
+      const f = path.join(dir, name);
+      fs.writeFileSync(f, sync.encrypt(JSON.stringify(obj), opts.passphrase), { mode: 0o600 });
+      try {
+        fs.chmodSync(f, 0o600);
+      } catch (e) {
+        /* non-POSIX */
+      }
+    },
+    read: function (name) {
+      if (!nameOk(name)) return null;
+      const f = path.join(dir, name);
+      try {
+        if (fs.statSync(f).size > MAX_ENC_BYTES) return null;
+      } catch (e) {
+        return null;
+      }
+      let raw;
+      try {
+        raw = fs.readFileSync(f, 'utf8');
+      } catch (e) {
+        return null;
+      }
+      try {
+        return JSON.parse(sync.decrypt(raw, opts.passphrase));
+      } catch (e) {
+        return null;
+      }
+    },
+    list: function (suffix) {
+      let ents = [];
+      try {
+        ents = fs.readdirSync(dir);
+      } catch (e) {
+        return [];
+      }
+      return ents.filter(function (n) {
+        return nameOk(n) && n.slice(-suffix.length) === suffix;
+      });
+    },
+    remove: function (name) {
+      if (!nameOk(name)) return;
+      try {
+        fs.rmSync(path.join(dir, name), { force: true });
+      } catch (e) {
+        /* ignore */
+      }
+    },
   };
 }
 
-function statusName(machineId) { if (!safeId(machineId)) throw new Error('unsafe machine id'); return machineId + '.status.enc'; }
-function inboxName(machineId) { if (!safeId(machineId)) throw new Error('unsafe machine id'); return machineId + '.inbox.enc'; }
+function statusName(machineId) {
+  if (!safeId(machineId)) throw new Error('unsafe machine id');
+  return machineId + '.status.enc';
+}
+function inboxName(machineId) {
+  if (!safeId(machineId)) throw new Error('unsafe machine id');
+  return machineId + '.inbox.enc';
+}
 
 // Build this machine's status: accounts (+cached quota), the active account, and recent chat
 // state (last message role -> replied/waiting). withSecrets also carries the account credentials
@@ -205,39 +399,91 @@ function buildStatus(ctx, opts) {
   opts = opts || {};
   const core = _core;
   const id = identity(ctx);
-  let usageCache = {}; try { usageCache = JSON.parse(fs.readFileSync(path.join(ctx.configDir, '.usage-cache.json'), 'utf8')) || {}; } catch (e) { usageCache = {}; }
+  let usageCache = {};
+  try {
+    usageCache = JSON.parse(fs.readFileSync(path.join(ctx.configDir, '.usage-cache.json'), 'utf8')) || {};
+  } catch (e) {
+    usageCache = {};
+  }
   const accounts = safe(function () {
     return core.listProfiles(ctx).map(function (p) {
       const u = usageCache[p.name] && usageCache[p.name].usage;
-      return { name: p.name, email: p.email || null, active: !!p.active,
-        fiveHourPct: (u && u.fiveHour && typeof u.fiveHour.pct === 'number') ? u.fiveHour.pct : null,
-        sevenDayPct: (u && u.sevenDay && typeof u.sevenDay.pct === 'number') ? u.sevenDay.pct : null };
+      return {
+        name: p.name,
+        email: p.email || null,
+        active: !!p.active,
+        fiveHourPct: u && u.fiveHour && typeof u.fiveHour.pct === 'number' ? u.fiveHour.pct : null,
+        sevenDayPct: u && u.sevenDay && typeof u.sevenDay.pct === 'number' ? u.sevenDay.pct : null,
+      };
     });
   }, []);
-  const chats = safe(function () { return recentChats(ctx, 12); }, []);
+  const chats = safe(function () {
+    return recentChats(ctx, 12);
+  }, []);
   const status = {
-    machineId: id.machineId, name: id.name, at: ctx.now(),
-    pubKey: safe(function () { return publicKey(ctx); }, null), // origin-auth: peers TOFU-pin this
-    activeEmail: safe(function () { return core.currentEmail(ctx); }, null),
-    accounts: accounts, chats: chats,
+    machineId: id.machineId,
+    name: id.name,
+    at: ctx.now(),
+    pubKey: safe(function () {
+      return publicKey(ctx);
+    }, null), // origin-auth: peers TOFU-pin this
+    activeEmail: safe(function () {
+      return core.currentEmail(ctx);
+    }, null),
+    accounts: accounts,
+    chats: chats,
   };
   if (opts.withSecrets) {
     const creds = {};
-    safe(function () { _transfer.buildExport(ctx).envelope.accounts.forEach(function (a) { creds[a.name] = { email: a.email, oauthAccount: a.oauthAccount, userID: a.userID, cliCredentials: a.cliCredentials }; }); }, null);
+    safe(function () {
+      _transfer.buildExport(ctx).envelope.accounts.forEach(function (a) {
+        creds[a.name] = {
+          email: a.email,
+          oauthAccount: a.oauthAccount,
+          userID: a.userID,
+          cliCredentials: a.cliCredentials,
+        };
+      });
+    }, null);
     status.creds = creds;
   }
   return status;
 }
-function safe(fn, d) { try { return fn(); } catch (e) { return d; } }
+function safe(fn, d) {
+  try {
+    return fn();
+  } catch (e) {
+    return d;
+  }
+}
 
 // Recent sessions with last-message role (assistant = a reply arrived; user = waiting on Claude).
 function recentChats(ctx, limit) {
   const sessions = _sessions;
   const transcript = _transcript;
   return sessions.list(ctx, { limit: limit }).map(function (r) {
-    let lastRole = null, lastText = null;
-    try { const msgs = transcript.parse(fs.readFileSync(r.file, 'utf8')).messages; const last = msgs[msgs.length - 1]; if (last) { lastRole = last.role; lastText = String(last.text || '').replace(/\s+/g, ' ').slice(0, 80); } } catch (e) { /* ignore */ }
-    return { sessionId: r.sessionId, cwd: r.cwd || null, mtime: r.mtime, lastRole: lastRole, lastText: lastText, replied: lastRole === 'assistant' };
+    let lastRole = null,
+      lastText = null;
+    try {
+      const msgs = transcript.parse(fs.readFileSync(r.file, 'utf8')).messages;
+      const last = msgs[msgs.length - 1];
+      if (last) {
+        lastRole = last.role;
+        lastText = String(last.text || '')
+          .replace(/\s+/g, ' ')
+          .slice(0, 80);
+      }
+    } catch (e) {
+      /* ignore */
+    }
+    return {
+      sessionId: r.sessionId,
+      cwd: r.cwd || null,
+      mtime: r.mtime,
+      lastRole: lastRole,
+      lastText: lastText,
+      replied: lastRole === 'assistant',
+    };
   });
 }
 
@@ -262,34 +508,68 @@ function normalizeStatus(s) {
     at: scrub(s.at, 40),
     pubKey: isPubB64(s.pubKey) ? s.pubKey : null, // public key is single-line base64 — kept verbatim
     activeEmail: s.activeEmail == null ? null : scrub(s.activeEmail, 200),
-    accounts: (Array.isArray(s.accounts) ? s.accounts : []).filter(function (a) { return a && typeof a === 'object'; }).map(function (a) {
-      return { name: scrub(a.name, 80), email: a.email == null ? null : scrub(a.email, 200), active: !!a.active,
-        fiveHourPct: typeof a.fiveHourPct === 'number' ? a.fiveHourPct : null,
-        sevenDayPct: typeof a.sevenDayPct === 'number' ? a.sevenDayPct : null };
-    }),
-    chats: (Array.isArray(s.chats) ? s.chats : []).filter(function (c) { return c && typeof c === 'object'; }).map(function (c) {
-      return { sessionId: scrub(c.sessionId, 120), cwd: c.cwd == null ? null : scrub(c.cwd, 300),
-        mtime: typeof c.mtime === 'number' ? c.mtime : (typeof c.mtime === 'string' ? scrub(c.mtime, 40) : null),
-        lastRole: c.lastRole == null ? null : String(c.lastRole).replace(/[^\w-]/g, '').slice(0, 20),
-        lastText: c.lastText == null ? null : scrub(c.lastText, 120), replied: !!c.replied };
-    }),
+    accounts: (Array.isArray(s.accounts) ? s.accounts : [])
+      .filter(function (a) {
+        return a && typeof a === 'object';
+      })
+      .map(function (a) {
+        return {
+          name: scrub(a.name, 80),
+          email: a.email == null ? null : scrub(a.email, 200),
+          active: !!a.active,
+          fiveHourPct: typeof a.fiveHourPct === 'number' ? a.fiveHourPct : null,
+          sevenDayPct: typeof a.sevenDayPct === 'number' ? a.sevenDayPct : null,
+        };
+      }),
+    chats: (Array.isArray(s.chats) ? s.chats : [])
+      .filter(function (c) {
+        return c && typeof c === 'object';
+      })
+      .map(function (c) {
+        return {
+          sessionId: scrub(c.sessionId, 120),
+          cwd: c.cwd == null ? null : scrub(c.cwd, 300),
+          mtime: typeof c.mtime === 'number' ? c.mtime : typeof c.mtime === 'string' ? scrub(c.mtime, 40) : null,
+          lastRole:
+            c.lastRole == null
+              ? null
+              : String(c.lastRole)
+                  .replace(/[^\w-]/g, '')
+                  .slice(0, 20),
+          lastText: c.lastText == null ? null : scrub(c.lastText, 120),
+          replied: !!c.replied,
+        };
+      }),
   };
   if (s.creds && typeof s.creds === 'object') out.creds = s.creds; // relay only; stripped for display
   return out;
 }
 // Display-safe projection: normalized AND with credentials removed. Every surface that leaves the
 // process (web panel /api/fleet, MCP fleet_status result, `fleet status --json`) MUST use this.
-function sanitizeStatus(s) { const n = normalizeStatus(s); if (n) delete n.creds; return n; }
+function sanitizeStatus(s) {
+  const n = normalizeStatus(s);
+  if (n) delete n.creds;
+  return n;
+}
 
 function readFleet(ctx, b) {
-  return b.list('.status.enc').slice(0, MAX_STATUS_FILES).map(function (n) {
-    const s = normalizeStatus(b.read(n));
-    if (!s) return null;
-    // bind the claimed id to the filename: a status in <id>.status.enc must claim <id> (no spoofing
-    // another machine's identity in the roster, which could misdirect a switch/send-account).
-    let expect; try { expect = statusName(s.machineId); } catch (e) { return null; }
-    return expect === n ? s : null;
-  }).filter(Boolean);
+  return b
+    .list('.status.enc')
+    .slice(0, MAX_STATUS_FILES)
+    .map(function (n) {
+      const s = normalizeStatus(b.read(n));
+      if (!s) return null;
+      // bind the claimed id to the filename: a status in <id>.status.enc must claim <id> (no spoofing
+      // another machine's identity in the roster, which could misdirect a switch/send-account).
+      let expect;
+      try {
+        expect = statusName(s.machineId);
+      } catch (e) {
+        return null;
+      }
+      return expect === n ? s : null;
+    })
+    .filter(Boolean);
 }
 
 // ---- command queue (per-machine inbox) ----
@@ -303,31 +583,52 @@ function queue(ctx, b, targetMachineId, command) {
   b.write(inboxName(targetMachineId), inbox);
   return cmd;
 }
-function readInbox(ctx, b) { const inbox = b.read(inboxName(b.machineId)); return Array.isArray(inbox) ? inbox : []; }
-function clearInbox(ctx, b) { b.remove(inboxName(b.machineId)); }
+function readInbox(ctx, b) {
+  const inbox = b.read(inboxName(b.machineId));
+  return Array.isArray(inbox) ? inbox : [];
+}
+function clearInbox(ctx, b) {
+  b.remove(inboxName(b.machineId));
+}
 
 // ---- replay protection ----
 // The rendezvous is only semi-trusted (shared passphrase + write access). Even though the inbox is
 // cleared after processing, a hostile peer can RE-INJECT a captured command. So we (1) reject
 // commands older than a max age and (2) remember applied command ids and never re-run one. The
 // ledger is a bounded, per-machine file — never an account (see profiles.RESERVED_FILES).
-function appliedPath(ctx) { return path.join(ctx.configDir, 'fleet-applied.json'); }
-function loadApplied(ctx) { try { const a = JSON.parse(fs.readFileSync(appliedPath(ctx), 'utf8')); return (a && Array.isArray(a.ids)) ? a.ids : []; } catch (e) { return []; } }
-function wasApplied(ctx, id) { return !!id && loadApplied(ctx).indexOf(id) !== -1; }
+function appliedPath(ctx) {
+  return path.join(ctx.configDir, 'fleet-applied.json');
+}
+function loadApplied(ctx) {
+  try {
+    const a = JSON.parse(fs.readFileSync(appliedPath(ctx), 'utf8'));
+    return a && Array.isArray(a.ids) ? a.ids : [];
+  } catch (e) {
+    return [];
+  }
+}
+function wasApplied(ctx, id) {
+  return !!id && loadApplied(ctx).indexOf(id) !== -1;
+}
 function markApplied(ctx, id) {
   if (!id) return;
   let ids = loadApplied(ctx);
   if (ids.indexOf(id) !== -1) return;
   ids.push(id);
   if (ids.length > 1000) ids = ids.slice(-1000); // bounded ledger
-  try { _fsutil.atomicWrite(appliedPath(ctx), JSON.stringify({ ids: ids }), 0o600); } catch (e) { /* best-effort */ }
+  try {
+    _fsutil.atomicWrite(appliedPath(ctx), JSON.stringify({ ids: ids }), 0o600);
+  } catch (e) {
+    /* best-effort */
+  }
 }
 const CMD_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000; // ignore inbox commands older than a week
 function commandFresh(ctx, cmd) {
   if (!cmd || !cmd.at) return true; // legacy/undated command — don't block on age
-  const t = Date.parse(cmd.at), now = Date.parse(ctx.now());
+  const t = Date.parse(cmd.at),
+    now = Date.parse(ctx.now());
   if (isNaN(t) || isNaN(now)) return true;
-  return (now - t) <= CMD_MAX_AGE_MS && (t - now) <= CMD_MAX_AGE_MS; // reject stale AND far-future
+  return now - t <= CMD_MAX_AGE_MS && t - now <= CMD_MAX_AGE_MS; // reject stale AND far-future
 }
 
 // Apply a single inbound command. Mutations are gated: opts.allowSwitch / opts.allowSave must be
@@ -338,19 +639,32 @@ function applyCommand(ctx, cmd, opts) {
   // Origin authentication (defence in depth — the CLI/MCP already gate on checkOrigin before the
   // consent prompt): when a sender key is supplied, the signature MUST verify before we mutate.
   if (opts.requireSignature || opts.senderKey) {
-    if (!verifyCommand(cmd, opts.senderKey)) return { ok: false, applied: cmd.type, detail: 'unverified origin (rejected)' };
-    if (cmd.to !== identity(ctx).machineId) return { ok: false, applied: cmd.type, detail: 'wrong recipient (rejected)' };
+    if (!verifyCommand(cmd, opts.senderKey))
+      return { ok: false, applied: cmd.type, detail: 'unverified origin (rejected)' };
+    if (cmd.to !== identity(ctx).machineId)
+      return { ok: false, applied: cmd.type, detail: 'wrong recipient (rejected)' };
   }
-  if (cmd.type === 'note') return { ok: true, applied: 'note', detail: scrub((cmd.payload && cmd.payload.text) || '', 500) };
+  if (cmd.type === 'note')
+    return { ok: true, applied: 'note', detail: scrub((cmd.payload && cmd.payload.text) || '', 500) };
   if (cmd.type === 'save-account') {
     if (!opts.allowSave) return { ok: false, applied: 'save-account', detail: 'skipped (needs consent)' };
     const a = cmd.payload && cmd.payload.account;
     if (!a || !a.name || !a.cliCredentials) return { ok: false, detail: 'no account payload' };
     try {
       const transfer = _transfer;
-      const r = transfer.applyImport(ctx, { format: transfer.FORMAT, version: transfer.VERSION, accounts: [a] }, { force: !!opts.force });
-      return { ok: true, applied: 'save-account', detail: (r.imported[0] ? 'saved ' + r.imported[0] : 'kept existing ' + a.name) };
-    } catch (e) { return { ok: false, applied: 'save-account', detail: (e && e.message) || 'error' }; }
+      const r = transfer.applyImport(
+        ctx,
+        { format: transfer.FORMAT, version: transfer.VERSION, accounts: [a] },
+        { force: !!opts.force },
+      );
+      return {
+        ok: true,
+        applied: 'save-account',
+        detail: r.imported[0] ? 'saved ' + r.imported[0] : 'kept existing ' + a.name,
+      };
+    } catch (e) {
+      return { ok: false, applied: 'save-account', detail: (e && e.message) || 'error' };
+    }
   }
   if (cmd.type === 'switch') {
     if (!opts.allowSwitch) return { ok: false, applied: 'switch', detail: 'skipped (needs consent)' };
@@ -358,8 +672,12 @@ function applyCommand(ctx, cmd, opts) {
     const core = _core;
     const resolved = core.resolveProfile(ctx, name);
     if (!resolved) return { ok: false, applied: 'switch', detail: "no such account: '" + name + "'" };
-    try { core.performSwitch(ctx, resolved); return { ok: true, applied: 'switch', detail: 'switched to ' + resolved }; }
-    catch (e) { return { ok: false, applied: 'switch', detail: (e && e.message) || 'error' }; }
+    try {
+      core.performSwitch(ctx, resolved);
+      return { ok: true, applied: 'switch', detail: 'switched to ' + resolved };
+    } catch (e) {
+      return { ok: false, applied: 'switch', detail: (e && e.message) || 'error' };
+    }
   }
   return { ok: false, detail: 'unknown command type: ' + cmd.type };
 }
@@ -369,13 +687,26 @@ function applyCommand(ctx, cmd, opts) {
 function accountFrom(status, accountName) {
   const c = status && status.creds && status.creds[accountName];
   if (!c || !c.cliCredentials) return null;
-  return { name: accountName, email: c.email || '', oauthAccount: c.oauthAccount || {}, userID: c.userID || '', cliCredentials: c.cliCredentials };
+  return {
+    name: accountName,
+    email: c.email || '',
+    oauthAccount: c.oauthAccount || {},
+    userID: c.userID || '',
+    cliCredentials: c.cliCredentials,
+  };
 }
 
 // Diff the fleet's chats against the last-seen snapshot to spot NEW replies since last check.
-function seenPath(ctx) { return path.join(ctx.configDir, 'fleet-seen.json'); }
+function seenPath(ctx) {
+  return path.join(ctx.configDir, 'fleet-seen.json');
+}
 function newReplies(ctx, statuses) {
-  let seen = {}; try { seen = JSON.parse(fs.readFileSync(seenPath(ctx), 'utf8')) || {}; } catch (e) { seen = {}; }
+  let seen = {};
+  try {
+    seen = JSON.parse(fs.readFileSync(seenPath(ctx), 'utf8')) || {};
+  } catch (e) {
+    seen = {};
+  }
   const fresh = {};
   const out = [];
   (Array.isArray(statuses) ? statuses : []).forEach(function (s) {
@@ -386,11 +717,50 @@ function newReplies(ctx, statuses) {
       const key = String(s.machineId) + '/' + String(c.sessionId);
       fresh[key] = String(c.mtime) + '|' + (c.lastRole || '');
       const prev = seen[key];
-      if (c.replied && prev && prev !== fresh[key] && String(prev).split('|')[0] !== String(c.mtime)) out.push({ machine: s.name, sessionId: c.sessionId, cwd: c.cwd, lastText: c.lastText });
+      if (c.replied && prev && prev !== fresh[key] && String(prev).split('|')[0] !== String(c.mtime))
+        out.push({ machine: s.name, sessionId: c.sessionId, cwd: c.cwd, lastText: c.lastText });
     });
   });
   return { newReplies: out, snapshot: fresh };
 }
-function saveSeen(ctx, snapshot) { try { _fsutil.atomicWrite(seenPath(ctx), JSON.stringify(snapshot), 0o600); } catch (e) { /* ignore */ } }
+function saveSeen(ctx, snapshot) {
+  try {
+    _fsutil.atomicWrite(seenPath(ctx), JSON.stringify(snapshot), 0o600);
+  } catch (e) {
+    /* ignore */
+  }
+}
 
-export { identity, setConfig, bus, buildStatus, publish, readFleet, normalizeStatus, sanitizeStatus, machineKeys, publicKey, signCommand, verifyCommand, knownKeys, reconcileKeys, checkOrigin, trustKey, fingerprint, keyReport, queue, readInbox, clearInbox, applyCommand, wasApplied, markApplied, commandFresh, accountFrom, newReplies, saveSeen, statusName, inboxName, safeId };
+export {
+  identity,
+  setConfig,
+  bus,
+  buildStatus,
+  publish,
+  readFleet,
+  normalizeStatus,
+  sanitizeStatus,
+  machineKeys,
+  publicKey,
+  signCommand,
+  verifyCommand,
+  knownKeys,
+  reconcileKeys,
+  checkOrigin,
+  trustKey,
+  fingerprint,
+  keyReport,
+  queue,
+  readInbox,
+  clearInbox,
+  applyCommand,
+  wasApplied,
+  markApplied,
+  commandFresh,
+  accountFrom,
+  newReplies,
+  saveSeen,
+  statusName,
+  inboxName,
+  safeId,
+};

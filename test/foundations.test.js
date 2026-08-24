@@ -16,7 +16,7 @@ test('atomicWrite preserves an existing file mode when none is given', function 
   const f = path.join(tmpdir(), 'x.json');
   fsutil.atomicWrite(f, 'a', 0o644);
   assert.strictEqual(fs.statSync(f).mode & 0o777, 0o644);
-  fsutil.atomicWrite(f, 'b');                         // no mode -> preserve 0644
+  fsutil.atomicWrite(f, 'b'); // no mode -> preserve 0644
   assert.strictEqual(fs.statSync(f).mode & 0o777, 0o644);
   assert.strictEqual(fs.readFileSync(f, 'utf8'), 'b');
 });
@@ -32,9 +32,9 @@ test('writeJsonStable emits recursively key-sorted, byte-identical JSON', functi
   const a = path.join(tmpdir(), 'a.json');
   const b = path.join(tmpdir(), 'b.json');
   fsutil.writeJsonStable(a, { b: 1, a: { z: 2, y: 3 } });
-  fsutil.writeJsonStable(b, { a: { y: 3, z: 2 }, b: 1 });   // same logical, different key order
+  fsutil.writeJsonStable(b, { a: { y: 3, z: 2 }, b: 1 }); // same logical, different key order
   assert.strictEqual(fs.readFileSync(a, 'utf8'), fs.readFileSync(b, 'utf8'));
-  assert.match(fs.readFileSync(a, 'utf8'), /^\{\n  "a": \{\n    "y": 3,\n    "z": 2/);
+  assert.match(fs.readFileSync(a, 'utf8'), /^\{\n {2}"a": \{\n {4}"y": 3,\n {4}"z": 2/);
 });
 
 // ---- #5 txn rollback ----
@@ -51,13 +51,15 @@ test('withRollback restores every file (recreate + delete) on failure', function
     });
   }, /boom/);
   assert.strictEqual(fs.readFileSync(keep, 'utf8'), 'ORIGINAL'); // restored
-  assert.strictEqual(fs.existsSync(created), false);            // absent again
+  assert.strictEqual(fs.existsSync(created), false); // absent again
 });
 
 test('withRollback keeps changes on success', function () {
   const d = tmpdir();
   const f = path.join(d, 'ok.json');
-  txn.withRollback([f], function () { fs.writeFileSync(f, 'DONE'); });
+  txn.withRollback([f], function () {
+    fs.writeFileSync(f, 'DONE');
+  });
   assert.strictEqual(fs.readFileSync(f, 'utf8'), 'DONE');
 });
 
@@ -83,23 +85,31 @@ test('appDataDir defaults to the Claude Electron userData dir per platform (Linu
   const home = tmpdir();
   assert.strictEqual(
     createContext({ home: home, platform: 'darwin', store: { type: 'memory' } }).appDataDir,
-    path.join(home, 'Library', 'Application Support', 'Claude'));
+    path.join(home, 'Library', 'Application Support', 'Claude'),
+  );
   const savedXdg = process.env.XDG_CONFIG_HOME;
   delete process.env.XDG_CONFIG_HOME;
   try {
     assert.strictEqual(
       createContext({ home: home, platform: 'linux', store: { type: 'memory' } }).appDataDir,
-      path.join(home, '.config', 'Claude'), 'Linux → ~/.config/Claude (enables desktop app-auth)');
+      path.join(home, '.config', 'Claude'),
+      'Linux → ~/.config/Claude (enables desktop app-auth)',
+    );
     process.env.XDG_CONFIG_HOME = path.join(home, 'xdg');
     assert.strictEqual(
       createContext({ home: home, platform: 'linux', store: { type: 'memory' } }).appDataDir,
-      path.join(home, 'xdg', 'Claude'), 'Linux honors $XDG_CONFIG_HOME');
+      path.join(home, 'xdg', 'Claude'),
+      'Linux honors $XDG_CONFIG_HOME',
+    );
   } finally {
-    if (savedXdg === undefined) delete process.env.XDG_CONFIG_HOME; else process.env.XDG_CONFIG_HOME = savedXdg;
+    if (savedXdg === undefined) delete process.env.XDG_CONFIG_HOME;
+    else process.env.XDG_CONFIG_HOME = savedXdg;
   }
   assert.strictEqual(
-    createContext({ home: home, platform: 'freebsd', store: { type: 'memory' } }).appDataDir, null,
-    'unsupported platforms stay null');
+    createContext({ home: home, platform: 'freebsd', store: { type: 'memory' } }).appDataDir,
+    null,
+    'unsupported platforms stay null',
+  );
 });
 
 // ---- #8 per-resource locks ----
@@ -111,7 +121,14 @@ test('different resources lock independently; same resource is exclusive', async
   assert.ok(fs.existsSync(path.join(d, '.lock-claude-cli')));
   assert.ok(fs.existsSync(path.join(d, '.lock-claude-desktop')));
   // the SAME resource is blocked
-  await assert.rejects(function () { return lock.acquire(d, { resource: 'claude-cli', timeoutMs: 200 }); },
-    function (e) { return e.code === 'ELOCKED'; });
-  cli.release(); app.release();
+  await assert.rejects(
+    function () {
+      return lock.acquire(d, { resource: 'claude-cli', timeoutMs: 200 });
+    },
+    function (e) {
+      return e.code === 'ELOCKED';
+    },
+  );
+  cli.release();
+  app.release();
 });

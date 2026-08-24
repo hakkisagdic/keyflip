@@ -8,10 +8,14 @@ import { atomicWrite } from './fsutil.js';
 const RAW_PKG_URL = 'https://raw.githubusercontent.com/hakkisagdic/keyflip/main/package.json';
 const CHECK_EVERY_MS = 24 * 60 * 60 * 1000;
 
-function cachePath(ctx) { return path.join(ctx.configDir, '.update-check.json'); }
+function cachePath(ctx) {
+  return path.join(ctx.configDir, '.update-check.json');
+}
 
-function cmpVersions(a, b) { // 1 if a>b
-  const pa = String(a).split('.').map(Number), pb = String(b).split('.').map(Number);
+function cmpVersions(a, b) {
+  // 1 if a>b
+  const pa = String(a).split('.').map(Number),
+    pb = String(b).split('.').map(Number);
   for (let i = 0; i < 3; i++) {
     if ((pa[i] || 0) > (pb[i] || 0)) return 1;
     if ((pa[i] || 0) < (pb[i] || 0)) return -1;
@@ -26,17 +30,28 @@ async function latestVersion(ctx, opts) {
   try {
     const c = JSON.parse(fs.readFileSync(cachePath(ctx), 'utf8'));
     if (c && c.at && nowMs - c.at < CHECK_EVERY_MS) return c.latest || null;
-  } catch (e) { /* no cache */ }
+  } catch (e) {
+    /* no cache */
+  }
   const doFetch = opts.fetch || (typeof fetch !== 'undefined' ? fetch : null);
   if (!doFetch) return null;
   let latest = null;
   try {
     const res = await doFetch(RAW_PKG_URL, {
-      signal: (typeof AbortSignal !== 'undefined' && AbortSignal.timeout) ? AbortSignal.timeout(opts.timeoutMs || 2000) : undefined,
+      signal:
+        typeof AbortSignal !== 'undefined' && AbortSignal.timeout
+          ? AbortSignal.timeout(opts.timeoutMs || 2000)
+          : undefined,
     });
     if (res && res.ok) latest = (await res.json()).version || null;
-  } catch (e) { latest = null; }
-  try { atomicWrite(cachePath(ctx), JSON.stringify({ at: nowMs, latest: latest }), 0o600); } catch (e) { /* ignore */ }
+  } catch (e) {
+    latest = null;
+  }
+  try {
+    atomicWrite(cachePath(ctx), JSON.stringify({ at: nowMs, latest: latest }), 0o600);
+  } catch (e) {
+    /* ignore */
+  }
   return latest;
 }
 
@@ -48,17 +63,24 @@ async function maybeNotify(ctx, currentVersion, opts) {
     const latest = await latestVersion(ctx, opts);
     if (latest && cmpVersions(latest, currentVersion) > 0) {
       (opts.stderr || process.stderr).write(
-        'ℹ️  keyflip ' + latest + ' is available (you have ' + currentVersion + ') — run: keyflip upgrade\n');
+        'ℹ️  keyflip ' + latest + ' is available (you have ' + currentVersion + ') — run: keyflip upgrade\n',
+      );
       return latest;
     }
-  } catch (e) { /* never block a command on this */ }
+  } catch (e) {
+    /* never block a command on this */
+  }
   return null;
 }
 
 // How was this copy installed? -> 'installer' (install.sh copy) | 'npm' | 'unknown'
 function detectInstallMethod(binPath) {
   let real = binPath;
-  try { real = fs.realpathSync(binPath); } catch (e) { /* keep */ }
+  try {
+    real = fs.realpathSync(binPath);
+  } catch (e) {
+    /* keep */
+  }
   if (real.indexOf(path.join('.local', 'share', 'keyflip')) !== -1) return 'installer';
   if (real.indexOf('node_modules') !== -1) return 'npm';
   return 'unknown';
@@ -81,13 +103,26 @@ function upgradeCommand(method, platform) {
 function upgradeSpawn(method, platform) {
   platform = platform || process.platform;
   if (method === 'npm') {
-    return { cmd: platform === 'win32' ? 'npm.cmd' : 'npm', args: ['install', '-g', 'git+https://github.com/hakkisagdic/keyflip.git'] };
+    return {
+      cmd: platform === 'win32' ? 'npm.cmd' : 'npm',
+      args: ['install', '-g', 'git+https://github.com/hakkisagdic/keyflip.git'],
+    };
   }
   if (method === 'installer') {
     if (platform === 'win32') {
-      return { cmd: 'powershell', args: ['-NoProfile', '-Command', 'irm https://raw.githubusercontent.com/hakkisagdic/keyflip/main/install.ps1 | iex'] };
+      return {
+        cmd: 'powershell',
+        args: [
+          '-NoProfile',
+          '-Command',
+          'irm https://raw.githubusercontent.com/hakkisagdic/keyflip/main/install.ps1 | iex',
+        ],
+      };
     }
-    return { cmd: 'bash', args: ['-lc', 'curl -fsSL https://raw.githubusercontent.com/hakkisagdic/keyflip/main/install.sh | bash'] };
+    return {
+      cmd: 'bash',
+      args: ['-lc', 'curl -fsSL https://raw.githubusercontent.com/hakkisagdic/keyflip/main/install.sh | bash'],
+    };
   }
   return null;
 }

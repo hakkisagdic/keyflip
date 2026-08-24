@@ -6,8 +6,11 @@ import fs from 'fs';
 
 function snapshot(files) {
   return files.map(function (f) {
-    try { return { path: f, existed: true, data: fs.readFileSync(f) }; }
-    catch (e) { return { path: f, existed: false, data: null }; }
+    try {
+      return { path: f, existed: true, data: fs.readFileSync(f) };
+    } catch (e) {
+      return { path: f, existed: false, data: null };
+    }
   });
 }
 
@@ -16,7 +19,9 @@ function restore(snaps) {
     try {
       if (s.existed) fs.writeFileSync(s.path, s.data);
       else fs.rmSync(s.path, { force: true });
-    } catch (e) { /* best effort — restore as much as possible */ }
+    } catch (e) {
+      /* best effort — restore as much as possible */
+    }
   });
 }
 

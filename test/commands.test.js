@@ -26,7 +26,7 @@ test('command names are unique (including aliases)', function () {
   for (const e of CATALOG) {
     assert.ok(!seen.has(e.name), 'duplicate name: ' + e.name);
     seen.add(e.name);
-    for (const a of (e.aliases || [])) {
+    for (const a of e.aliases || []) {
       assert.ok(!seen.has(a), 'duplicate alias/name: ' + a);
       seen.add(a);
     }
@@ -41,16 +41,33 @@ test('GROUPS covers every entry.group', function () {
 });
 
 test('search("session") finds the sessions commands', function () {
-  const names = search('session').map(function (e) { return e.name; });
+  const names = search('session').map(function (e) {
+    return e.name;
+  });
   assert.ok(names.indexOf('sessions') !== -1, 'finds sessions');
   // "session" appears in several descs (send/resume/foreign/…) — the sessions group is covered.
   assert.ok(names.length >= 1);
 });
 
 test('search is case-insensitive and matches name, alias, and desc', function () {
-  assert.ok(search('SWITCH').some(function (e) { return e.name === 'switch'; }), 'name, case-insensitive');
-  assert.ok(search('groups').some(function (e) { return e.name === 'group'; }), 'alias match');
-  assert.ok(search('quota').some(function (e) { return e.name === 'list'; }), 'desc match');
+  assert.ok(
+    search('SWITCH').some(function (e) {
+      return e.name === 'switch';
+    }),
+    'name, case-insensitive',
+  );
+  assert.ok(
+    search('groups').some(function (e) {
+      return e.name === 'group';
+    }),
+    'alias match',
+  );
+  assert.ok(
+    search('quota').some(function (e) {
+      return e.name === 'list';
+    }),
+    'desc match',
+  );
 });
 
 test('empty / whitespace query returns the whole catalog', function () {
@@ -63,7 +80,12 @@ test('search returns a fresh array (does not leak the CATALOG reference)', funct
   const all = search('');
   assert.notStrictEqual(all, CATALOG, 'not the same reference');
   all.push({ name: 'bogus' });
-  assert.ok(!CATALOG.some(function (e) { return e.name === 'bogus'; }), 'CATALOG unmutated');
+  assert.ok(
+    !CATALOG.some(function (e) {
+      return e.name === 'bogus';
+    }),
+    'CATALOG unmutated',
+  );
 });
 
 test('get returns entries by name and by alias', function () {
@@ -97,7 +119,9 @@ test('byGroup buckets entries by group, ordered by GROUPS', function () {
   const grouped = byGroup();
   const keys = Object.keys(grouped);
   // Keys appear in GROUPS order.
-  const expectedOrder = GROUPS.filter(function (g) { return keys.indexOf(g) !== -1; });
+  const expectedOrder = GROUPS.filter(function (g) {
+    return keys.indexOf(g) !== -1;
+  });
   assert.deepStrictEqual(keys, expectedOrder);
   // Every entry is accounted for exactly once.
   let total = 0;
@@ -110,8 +134,21 @@ test('byGroup buckets entries by group, ordered by GROUPS', function () {
 
 test('the whole dispatch surface is covered (key commands present)', function () {
   // Spot-check one command from each group so the palette is genuinely complete.
-  const must = ['add', 'provider', 'sessions', 'context', 'migrate', 'fleet',
-    'run-job', 'cost', 'policy', 'config', 'ui', 'agents', 'doctor'];
+  const must = [
+    'add',
+    'provider',
+    'sessions',
+    'context',
+    'migrate',
+    'fleet',
+    'run-job',
+    'cost',
+    'policy',
+    'config',
+    'ui',
+    'agents',
+    'doctor',
+  ];
   for (const n of must) assert.ok(get(n), 'missing command: ' + n);
   assert.ok(CATALOG.length >= 60, 'catalog covers the bulk of the CLI surface');
 });

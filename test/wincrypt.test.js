@@ -35,10 +35,12 @@ test('masterKey extracts + DPAPI-unprotects the encrypted_key from Local State',
   // Local State stores base64("DPAPI" + <dpapi-encrypted key>). We inject the DPAPI decryptor.
   const dpapiBlob = Buffer.concat([Buffer.from('DPAPI', 'latin1'), Buffer.from('ENCRYPTED-KEY-BYTES')]);
   const localState = JSON.stringify({ os_crypt: { encrypted_key: dpapiBlob.toString('base64') } });
-  const got = win.masterKey(localState, { unprotect: function (blob) {
-    assert.strictEqual(blob.toString(), 'ENCRYPTED-KEY-BYTES', 'the DPAPI prefix is stripped before unprotect');
-    return realKey;
-  } });
+  const got = win.masterKey(localState, {
+    unprotect: function (blob) {
+      assert.strictEqual(blob.toString(), 'ENCRYPTED-KEY-BYTES', 'the DPAPI prefix is stripped before unprotect');
+      return realKey;
+    },
+  });
   assert.ok(Buffer.isBuffer(got) && got.equals(realKey));
 });
 
@@ -46,12 +48,24 @@ test('masterKey returns null on a Local State without an encrypted_key or a bad 
   assert.strictEqual(win.masterKey('{}', {}), null);
   assert.strictEqual(win.masterKey('not json', {}), null);
   const noDpapi = JSON.stringify({ os_crypt: { encrypted_key: Buffer.from('NODPAPIhere').toString('base64') } });
-  assert.strictEqual(win.masterKey(noDpapi, { unprotect: function () { return Buffer.alloc(32); } }), null);
+  assert.strictEqual(
+    win.masterKey(noDpapi, {
+      unprotect: function () {
+        return Buffer.alloc(32);
+      },
+    }),
+    null,
+  );
 });
 
 test('dpapiUnprotect builds a CurrentUser PowerShell CryptUnprotectData call', function () {
   let seen = null;
-  const r = win.dpapiUnprotect(Buffer.from('blob'), { run: function (cmd, args) { seen = { cmd: cmd, args: args }; return { code: 0, stdout: Buffer.from('decrypted').toString('base64') }; } });
+  const r = win.dpapiUnprotect(Buffer.from('blob'), {
+    run: function (cmd, args) {
+      seen = { cmd: cmd, args: args };
+      return { code: 0, stdout: Buffer.from('decrypted').toString('base64') };
+    },
+  });
   assert.strictEqual(seen.cmd, 'powershell');
   const script = seen.args[seen.args.length - 1];
   assert.ok(script.indexOf('ProtectedData]::Unprotect') !== -1 && script.indexOf("'CurrentUser'") !== -1);
@@ -59,11 +73,37 @@ test('dpapiUnprotect builds a CurrentUser PowerShell CryptUnprotectData call', f
 });
 
 test('dpapiUnprotect returns null when PowerShell fails', function () {
-  assert.strictEqual(win.dpapiUnprotect(Buffer.from('x'), { run: function () { return { code: 1, stdout: '' }; } }), null);
+  assert.strictEqual(
+    win.dpapiUnprotect(Buffer.from('x'), {
+      run: function () {
+        return { code: 1, stdout: '' };
+      },
+    }),
+    null,
+  );
 });
 
 test('masterKey returns null for a wrong-length DPAPI result (not the buffer)', function () {
-  const ls = JSON.stringify({ os_crypt: { encrypted_key: Buffer.concat([Buffer.from('DPAPI'), Buffer.from('x')]).toString('base64') } });
-  assert.strictEqual(win.masterKey(ls, { unprotect: function () { return Buffer.alloc(16); } }), null, '16-byte key is rejected');
-  assert.ok(Buffer.isBuffer(win.masterKey(ls, { unprotect: function () { return Buffer.alloc(32); } })), '32-byte key is accepted');
+  const ls = JSON.stringify({
+    os_crypt: { encrypted_key: Buffer.concat([Buffer.from('DPAPI'), Buffer.from('x')]).toString('base64') },
+  });
+  assert.strictEqual(
+    win.masterKey(ls, {
+      unprotect: function () {
+        return Buffer.alloc(16);
+      },
+    }),
+    null,
+    '16-byte key is rejected',
+  );
+  assert.ok(
+    Buffer.isBuffer(
+      win.masterKey(ls, {
+        unprotect: function () {
+          return Buffer.alloc(32);
+        },
+      }),
+    ),
+    '32-byte key is accepted',
+  );
 });

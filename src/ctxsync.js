@@ -32,33 +32,61 @@ const MODES = ['local', 'git', 'encrypted', 'company'];
 const DEFAULT_POLICIES = {
   local: { allowRawConversationSync: true, allowSourceCodeSnippets: true, allowCloudSync: false, allowedProviders: [] },
   git: { allowRawConversationSync: true, allowSourceCodeSnippets: true, allowCloudSync: false, allowedProviders: [] },
-  encrypted: { allowRawConversationSync: true, allowSourceCodeSnippets: true, allowCloudSync: true, allowedProviders: [] },
-  company: { allowRawConversationSync: false, allowSourceCodeSnippets: false, allowCloudSync: true, allowedProviders: [] },
+  encrypted: {
+    allowRawConversationSync: true,
+    allowSourceCodeSnippets: true,
+    allowCloudSync: true,
+    allowedProviders: [],
+  },
+  company: {
+    allowRawConversationSync: false,
+    allowSourceCodeSnippets: false,
+    allowCloudSync: true,
+    allowedProviders: [],
+  },
 };
 
 // ---- paths -------------------------------------------------------------------
-function keyflipDir(projectPath) { return path.join(projectPath || process.cwd(), '.keyflip'); }
-function metaPath(projectPath) { return path.join(keyflipDir(projectPath), 'adapters', 'metadata.json'); }
-function contextDir(projectPath) { return path.join(keyflipDir(projectPath), 'context'); }
+function keyflipDir(projectPath) {
+  return path.join(projectPath || process.cwd(), '.keyflip');
+}
+function metaPath(projectPath) {
+  return path.join(keyflipDir(projectPath), 'adapters', 'metadata.json');
+}
+function contextDir(projectPath) {
+  return path.join(keyflipDir(projectPath), 'context');
+}
 
 // ---- injectable clock --------------------------------------------------------
 function nowFn(opts) {
   if (opts && typeof opts.now === 'function') return opts.now;
   if (opts && typeof opts.clock === 'function') return opts.clock;
-  return function () { return new Date().toISOString(); };
+  return function () {
+    return new Date().toISOString();
+  };
 }
 
 // ---- guarded IO --------------------------------------------------------------
 function readJsonSafe(p) {
-  try { return JSON.parse(fs.readFileSync(p, 'utf8')); } catch (e) { return null; }
+  try {
+    return JSON.parse(fs.readFileSync(p, 'utf8'));
+  } catch (e) {
+    return null;
+  }
 }
 function readFileSafe(p) {
-  try { if (!fs.statSync(p).isFile()) return null; return fs.readFileSync(p, 'utf8'); } catch (e) { return null; }
+  try {
+    if (!fs.statSync(p).isFile()) return null;
+    return fs.readFileSync(p, 'utf8');
+  } catch (e) {
+    return null;
+  }
 }
 
 // ---- validation --------------------------------------------------------------
 function validateMode(mode) {
-  if (MODES.indexOf(mode) === -1) throw new Error('unknown context-sync mode "' + String(mode) + '" (use: ' + MODES.join('|') + ')');
+  if (MODES.indexOf(mode) === -1)
+    throw new Error('unknown context-sync mode "' + String(mode) + '" (use: ' + MODES.join('|') + ')');
   return mode;
 }
 // Coerce an untrusted policy blob into a well-typed policy (booleans + a string array). Never
@@ -66,7 +94,11 @@ function validateMode(mode) {
 function normalizePolicy(policy) {
   policy = policy || {};
   const providers = Array.isArray(policy.allowedProviders)
-    ? policy.allowedProviders.filter(function (p) { return typeof p === 'string' && p; }).map(String)
+    ? policy.allowedProviders
+        .filter(function (p) {
+          return typeof p === 'string' && p;
+        })
+        .map(String)
     : [];
   return {
     allowRawConversationSync: policy.allowRawConversationSync === true,
@@ -82,7 +114,10 @@ function normalizePolicy(policy) {
 function redactText(s, counter) {
   let out = String(s == null ? '' : s);
   secretscan.SECRET_PATTERNS.forEach(function (p) {
-    out = out.replace(new RegExp(p.re.source, 'g'), function () { if (counter) counter.n++; return secretscan.REDACTED; });
+    out = out.replace(new RegExp(p.re.source, 'g'), function () {
+      if (counter) counter.n++;
+      return secretscan.REDACTED;
+    });
   });
   return out;
 }
@@ -91,7 +126,10 @@ function redactText(s, counter) {
 // rebuild also DROPS prototype-pollution keys, so a hostile imported payload cannot poison
 // Object.prototype through this data. Returns fresh PLAIN objects (deepStrictEqual-friendly).
 function scrub(value, counter, key) {
-  if (Array.isArray(value)) return value.map(function (v) { return scrub(v, counter, key); });
+  if (Array.isArray(value))
+    return value.map(function (v) {
+      return scrub(v, counter, key);
+    });
   if (value && typeof value === 'object') {
     const out = {};
     Object.keys(value).forEach(function (k) {
@@ -101,14 +139,19 @@ function scrub(value, counter, key) {
     return out;
   }
   if (typeof value === 'string') {
-    if (key != null && secretscan.isCredentialKey(key) && !secretscan.isEnvRefOrEmpty(value)) { if (counter) counter.n++; return secretscan.REDACTED; }
+    if (key != null && secretscan.isCredentialKey(key) && !secretscan.isEnvRefOrEmpty(value)) {
+      if (counter) counter.n++;
+      return secretscan.REDACTED;
+    }
     return redactText(value, counter);
   }
   return value;
 }
 
 // ---- package shape -----------------------------------------------------------
-function asArray(v) { return Array.isArray(v) ? v : []; }
+function asArray(v) {
+  return Array.isArray(v) ? v : [];
+}
 // Coerce an arbitrary (possibly injected/untrusted) package into the canonical shape. This is a
 // WHITELIST: only known fields survive, everything is String()-coerced, and env-var VALUES are
 // dropped on the floor — the context carries variable NAMES + descriptions, never their values.
@@ -127,7 +170,10 @@ function normalizeInputPkg(pkg) {
         id: String(c.id || ''),
         tool: String(c.tool || ''),
         summary: c.summary != null ? String(c.summary) : null,
-        messages: asArray(c.messages).map(function (m) { m = m || {}; return { role: String(m.role || ''), text: String(m.text || '') }; }),
+        messages: asArray(c.messages).map(function (m) {
+          m = m || {};
+          return { role: String(m.role || ''), text: String(m.text || '') };
+        }),
       };
     }),
     snippets: asArray(pkg.snippets).map(function (s) {
@@ -177,10 +223,19 @@ function buildPackage(projectPath, opts) {
   asArray(opts.sessionFiles).forEach(function (f) {
     const raw = readFileSafe(f);
     if (raw == null) return;
-    let n; try { n = _foreign.normalize(f, raw); } catch (e) { return; }
+    let n;
+    try {
+      n = _foreign.normalize(f, raw);
+    } catch (e) {
+      return;
+    }
     pkg.conversations.push({
-      id: path.basename(f), tool: n.tool || 'unknown', summary: null,
-      messages: (n.messages || []).map(function (m) { return { role: m.role, text: m.text }; }),
+      id: path.basename(f),
+      tool: n.tool || 'unknown',
+      summary: null,
+      messages: (n.messages || []).map(function (m) {
+        return { role: m.role, text: m.text };
+      }),
     });
   });
 
@@ -189,7 +244,14 @@ function buildPackage(projectPath, opts) {
 
 // ---- mode + policy store -----------------------------------------------------
 function defaultMeta() {
-  return { schemaVersion: SCHEMA_VERSION, mode: 'local', policy: normalizePolicy(DEFAULT_POLICIES.local), contentHash: null, parent: null, updatedAt: null };
+  return {
+    schemaVersion: SCHEMA_VERSION,
+    mode: 'local',
+    policy: normalizePolicy(DEFAULT_POLICIES.local),
+    contentHash: null,
+    parent: null,
+    updatedAt: null,
+  };
 }
 // Read the stored mode/policy/checkpoint. A missing/corrupt file is a legit "never configured"
 // state → the local default (fail closed: nothing syncs until a mode is explicitly chosen).
@@ -223,8 +285,12 @@ function setMode(projectPath, mode, opts) {
     policy.allowedProviders = cur.policy.allowedProviders.slice();
   }
   return writeMeta(projectPath, {
-    schemaVersion: SCHEMA_VERSION, mode: mode, policy: policy,
-    contentHash: cur.contentHash || null, parent: cur.parent || null, updatedAt: nowFn(opts)(),
+    schemaVersion: SCHEMA_VERSION,
+    mode: mode,
+    policy: policy,
+    contentHash: cur.contentHash || null,
+    parent: cur.parent || null,
+    updatedAt: nowFn(opts)(),
   });
 }
 
@@ -237,7 +303,9 @@ function filterForSync(pkg, policy, counter) {
   const out = normalizeInputPkg(pkg);
   if (!policy.allowRawConversationSync) {
     // Drop the raw transcript; keep the id/tool/summary so the context still references it.
-    out.conversations = out.conversations.map(function (c) { return { id: c.id, tool: c.tool, summary: c.summary, messages: [] }; });
+    out.conversations = out.conversations.map(function (c) {
+      return { id: c.id, tool: c.tool, summary: c.summary, messages: [] };
+    });
   }
   if (!policy.allowSourceCodeSnippets) out.snippets = [];
   // Defence in depth: a secret must never enter the shared context, even when the policy permits
@@ -248,10 +316,16 @@ function filterForSync(pkg, policy, counter) {
 // only) and snippets are not provider-scoped, so they pass this stage untouched.
 function filterByProviders(pkg, allowedProviders) {
   const set = Object.create(null); // keyed by tool-supplied provider ids
-  (allowedProviders || []).forEach(function (p) { set[p] = true; });
+  (allowedProviders || []).forEach(function (p) {
+    set[p] = true;
+  });
   const out = normalizeInputPkg(pkg);
-  out.rules = out.rules.filter(function (r) { return set[r.tool]; });
-  out.conversations = out.conversations.filter(function (c) { return set[c.tool]; });
+  out.rules = out.rules.filter(function (r) {
+    return set[r.tool];
+  });
+  out.conversations = out.conversations.filter(function (c) {
+    return set[c.tool];
+  });
   return out;
 }
 
@@ -267,7 +341,12 @@ function contentHash(pkg) {
 function gitHead(projectPath, opts) {
   const run = (opts && opts.run) || _exec.run;
   if (typeof run !== 'function') return null;
-  try { const r = run('git', ['-C', projectPath || process.cwd(), 'rev-parse', 'HEAD']); if (r && r.code === 0) return String(r.stdout || '').trim() || null; } catch (e) { /* no git / not a repo */ }
+  try {
+    const r = run('git', ['-C', projectPath || process.cwd(), 'rev-parse', 'HEAD']);
+    if (r && r.code === 0) return String(r.stdout || '').trim() || null;
+  } catch (e) {
+    /* no git / not a repo */
+  }
   return null;
 }
 // Advance the stored checkpoint after a successful sync: the old contentHash becomes the parent
@@ -275,8 +354,12 @@ function gitHead(projectPath, opts) {
 function recordCheckpoint(projectPath, hash, opts) {
   const cur = getMode(projectPath, opts);
   return writeMeta(projectPath, {
-    schemaVersion: SCHEMA_VERSION, mode: cur.mode, policy: cur.policy,
-    contentHash: String(hash), parent: cur.contentHash || null, updatedAt: nowFn(opts)(),
+    schemaVersion: SCHEMA_VERSION,
+    mode: cur.mode,
+    policy: cur.policy,
+    contentHash: String(hash),
+    parent: cur.contentHash || null,
+    updatedAt: nowFn(opts)(),
   });
 }
 
@@ -293,7 +376,10 @@ function exportPackage(projectPath, opts) {
   opts = opts || {};
   const meta = getMode(projectPath, opts);
   const mode = opts.mode ? validateMode(opts.mode) : meta.mode;
-  if (mode === 'local') throw new Error('context-sync mode is "local" — nothing is exported. Switch first: keyflip context sync mode <git|encrypted|company>');
+  if (mode === 'local')
+    throw new Error(
+      'context-sync mode is "local" — nothing is exported. Switch first: keyflip context sync mode <git|encrypted|company>',
+    );
   const policy = normalizePolicy(opts.policy || meta.policy);
 
   let pkg = buildPackage(projectPath, opts);
@@ -306,7 +392,12 @@ function exportPackage(projectPath, opts) {
     magic: MAGIC,
     schemaVersion: SCHEMA_VERSION,
     mode: mode,
-    meta: { contentHash: hash, parent: meta.contentHash || null, updatedAt: nowFn(opts)(), ref: gitHead(projectPath, opts) },
+    meta: {
+      contentHash: hash,
+      parent: meta.contentHash || null,
+      updatedAt: nowFn(opts)(),
+      ref: gitHead(projectPath, opts),
+    },
     policy: policy,
     pkg: filtered,
   };
@@ -314,7 +405,13 @@ function exportPackage(projectPath, opts) {
 
   if (mode === 'encrypted') {
     if (!opts.passphrase) throw new Error('encrypted mode requires a passphrase (--passphrase-file)');
-    return { mode: mode, encrypted: true, contentHash: hash, redactions: counter.n, payload: _sync.encrypt(json, opts.passphrase) };
+    return {
+      mode: mode,
+      encrypted: true,
+      contentHash: hash,
+      redactions: counter.n,
+      payload: _sync.encrypt(json, opts.passphrase),
+    };
   }
   return { mode: mode, encrypted: false, contentHash: hash, redactions: counter.n, payload: json };
 }
@@ -323,9 +420,11 @@ function exportPackage(projectPath, opts) {
 function validateEnvelope(env) {
   if (!env || typeof env !== 'object') throw new Error('not a keyflip context-sync payload');
   if (env.magic !== MAGIC) throw new Error('not a keyflip context-sync payload');
-  if (env.schemaVersion !== SCHEMA_VERSION) throw new Error('unsupported context-sync schema v' + String(env.schemaVersion));
+  if (env.schemaVersion !== SCHEMA_VERSION)
+    throw new Error('unsupported context-sync schema v' + String(env.schemaVersion));
   if (MODES.indexOf(env.mode) === -1) throw new Error('payload has an unknown mode "' + String(env.mode) + '"');
-  if (!env.meta || typeof env.meta !== 'object' || typeof env.meta.contentHash !== 'string') throw new Error('payload is missing its checkpoint metadata');
+  if (!env.meta || typeof env.meta !== 'object' || typeof env.meta.contentHash !== 'string')
+    throw new Error('payload is missing its checkpoint metadata');
   if (!env.pkg || typeof env.pkg !== 'object') throw new Error('payload is missing its context package');
 }
 // Parse/decrypt + validate a payload into { mode, meta, policy, pkg }. Encrypted payloads (the
@@ -334,14 +433,22 @@ function validateEnvelope(env) {
 function importPackage(payload, opts) {
   opts = opts || {};
   let outer;
-  try { outer = JSON.parse(String(payload)); } catch (e) { throw new Error('not a keyflip context-sync payload'); }
+  try {
+    outer = JSON.parse(String(payload));
+  } catch (e) {
+    throw new Error('not a keyflip context-sync payload');
+  }
   let envelope;
   if (outer && outer.magic === MAGIC) {
     envelope = outer;
   } else if (outer && outer.magic === SYNC_MAGIC) {
     if (!opts.passphrase) throw new Error('this payload is encrypted — a passphrase is required to import it');
     const inner = _sync.decrypt(String(payload), opts.passphrase); // throws on wrong passphrase
-    try { envelope = JSON.parse(inner); } catch (e) { throw new Error('decrypted payload is not valid JSON'); }
+    try {
+      envelope = JSON.parse(inner);
+    } catch (e) {
+      throw new Error('decrypted payload is not valid JSON');
+    }
   } else {
     throw new Error('not a keyflip context-sync payload');
   }
@@ -376,23 +483,41 @@ function compareTs(a, b) {
 function detectConflict(localMeta, remoteMeta) {
   localMeta = localMeta || {};
   remoteMeta = remoteMeta || {};
-  const lh = localMeta.contentHash || null, rh = remoteMeta.contentHash || null;
-  const lp = localMeta.parent || null, rp = remoteMeta.parent || null;
+  const lh = localMeta.contentHash || null,
+    rh = remoteMeta.contentHash || null;
+  const lp = localMeta.parent || null,
+    rp = remoteMeta.parent || null;
   const newer = compareTs(localMeta.updatedAt, remoteMeta.updatedAt);
   if (!lh || !rh) return { conflict: false, reason: 'incomplete-checkpoint', newer: newer };
   if (lh === rh) return { conflict: false, reason: 'identical', newer: newer };
-  if (lp && lp === rh) return { conflict: false, reason: 'local-ahead', newer: newer };   // remote is an ancestor of local
-  if (rp && rp === lh) return { conflict: false, reason: 'remote-ahead', newer: newer };   // local is an ancestor of remote
+  if (lp && lp === rh) return { conflict: false, reason: 'local-ahead', newer: newer }; // remote is an ancestor of local
+  if (rp && rp === lh) return { conflict: false, reason: 'remote-ahead', newer: newer }; // local is an ancestor of remote
   if (lp && rp && lp === rp) return { conflict: true, reason: 'diverged-from-common-parent', newer: newer };
-  return { conflict: true, reason: (lp || rp) ? 'divergent-history' : 'no-common-parent', newer: newer };
+  return { conflict: true, reason: lp || rp ? 'divergent-history' : 'no-common-parent', newer: newer };
 }
 // The resolution options a UI/agent can offer when detectConflict reports a conflict.
 function resolutions() {
   return [
-    { id: 'use-new', label: 'Use the incoming version', description: 'Take the remote context and overwrite the local one.' },
-    { id: 'use-old', label: 'Keep the local version', description: 'Discard the incoming context; keep what is on this machine.' },
-    { id: 'merge', label: 'Merge both', description: 'Union the non-conflicting context from both sides into one checkpoint.' },
-    { id: 'two-branches', label: 'Keep both as branches', description: 'Preserve both checkpoints as separate branches to reconcile later.' },
+    {
+      id: 'use-new',
+      label: 'Use the incoming version',
+      description: 'Take the remote context and overwrite the local one.',
+    },
+    {
+      id: 'use-old',
+      label: 'Keep the local version',
+      description: 'Discard the incoming context; keep what is on this machine.',
+    },
+    {
+      id: 'merge',
+      label: 'Merge both',
+      description: 'Union the non-conflicting context from both sides into one checkpoint.',
+    },
+    {
+      id: 'two-branches',
+      label: 'Keep both as branches',
+      description: 'Preserve both checkpoints as separate branches to reconcile later.',
+    },
   ];
 }
 
@@ -411,14 +536,18 @@ function status(projectPath, opts) {
 // without emitting anything. Never throws — build errors are reported in the result.
 function inspect(projectPath, opts) {
   const m = getMode(projectPath, opts);
-  let pkg = null, redactions = 0, error = null;
+  let pkg = null,
+    redactions = 0,
+    error = null;
   try {
     pkg = buildPackage(projectPath, opts);
     if (m.mode === 'company') pkg = filterByProviders(pkg, m.policy.allowedProviders);
     const counter = { n: 0 };
     pkg = filterForSync(pkg, m.policy, counter);
     redactions = counter.n;
-  } catch (e) { error = e.message; }
+  } catch (e) {
+    error = e.message;
+  }
   return {
     mode: m.mode,
     policy: m.policy,
@@ -443,21 +572,45 @@ function cli(rest, opts) {
   rest = rest || [];
   const projectPath = opts.projectPath || process.cwd();
   const lines = [];
-  const emit = function (s) { lines.push(s == null ? '' : String(s)); };
-  const policyLine = function (p) { return 'policy: raw-conversations=' + p.allowRawConversationSync + ' source-snippets=' + p.allowSourceCodeSnippets + ' cloud=' + p.allowCloudSync + (p.allowedProviders.length ? ' providers=' + p.allowedProviders.join(',') : ''); };
+  const emit = function (s) {
+    lines.push(s == null ? '' : String(s));
+  };
+  const policyLine = function (p) {
+    return (
+      'policy: raw-conversations=' +
+      p.allowRawConversationSync +
+      ' source-snippets=' +
+      p.allowSourceCodeSnippets +
+      ' cloud=' +
+      p.allowCloudSync +
+      (p.allowedProviders.length ? ' providers=' + p.allowedProviders.join(',') : '')
+    );
+  };
   const sub = rest[0];
 
   if (sub === undefined || sub === 'status') {
     const s = status(projectPath, opts);
     emit('context-sync mode: ' + s.mode + (s.wouldSync ? '' : '  (nothing syncs — local only)'));
     emit(policyLine(s.policy));
-    emit('checkpoint: ' + (s.checkpoint.contentHash ? s.checkpoint.contentHash.slice(0, 12) + (s.checkpoint.parent ? ' (parent ' + s.checkpoint.parent.slice(0, 12) + ')' : '') : '(none yet)'));
+    emit(
+      'checkpoint: ' +
+        (s.checkpoint.contentHash
+          ? s.checkpoint.contentHash.slice(0, 12) +
+            (s.checkpoint.parent ? ' (parent ' + s.checkpoint.parent.slice(0, 12) + ')' : '')
+          : '(none yet)'),
+    );
     return { code: 0, lines: lines };
   }
   if (sub === 'mode') {
     const target = rest[1];
-    if (!target) { emit('context-sync mode: ' + getMode(projectPath, opts).mode); return { code: 0, lines: lines }; }
-    if (MODES.indexOf(target) === -1) { emit('unknown mode "' + target + '" (use: ' + MODES.join('|') + ')'); return { code: 1, lines: lines }; }
+    if (!target) {
+      emit('context-sync mode: ' + getMode(projectPath, opts).mode);
+      return { code: 0, lines: lines };
+    }
+    if (MODES.indexOf(target) === -1) {
+      emit('unknown mode "' + target + '" (use: ' + MODES.join('|') + ')');
+      return { code: 1, lines: lines };
+    }
     const m = setMode(projectPath, target, opts);
     emit('context-sync mode -> ' + m.mode);
     emit(policyLine(m.policy));
@@ -466,15 +619,38 @@ function cli(rest, opts) {
   if (sub === 'export') {
     try {
       const r = exportPackage(projectPath, opts);
-      emit('# ' + r.mode + ' export' + (r.encrypted ? ' (encrypted)' : '') + ' · ' + r.contentHash.slice(0, 12) + ' · ' + r.redactions + ' secret(s) scrubbed');
+      emit(
+        '# ' +
+          r.mode +
+          ' export' +
+          (r.encrypted ? ' (encrypted)' : '') +
+          ' · ' +
+          r.contentHash.slice(0, 12) +
+          ' · ' +
+          r.redactions +
+          ' secret(s) scrubbed',
+      );
       return { code: 0, lines: lines, stdout: r.payload };
-    } catch (e) { emit(e.message); return { code: 1, lines: lines }; }
+    } catch (e) {
+      emit(e.message);
+      return { code: 1, lines: lines };
+    }
   }
   if (sub === 'check') {
     const ins = inspect(projectPath, opts);
     emit('mode: ' + ins.mode + (ins.wouldSync ? '' : '  (local only — nothing would sync)'));
     emit(policyLine(ins.policy));
-    emit('would share: ' + ins.counts.conversations + ' conversation(s), ' + ins.counts.snippets + ' snippet(s), ' + ins.counts.rules + ' rule file(s), ' + ins.counts.envVars + ' env-var name(s)');
+    emit(
+      'would share: ' +
+        ins.counts.conversations +
+        ' conversation(s), ' +
+        ins.counts.snippets +
+        ' snippet(s), ' +
+        ins.counts.rules +
+        ' rule file(s), ' +
+        ins.counts.envVars +
+        ' env-var name(s)',
+    );
     emit(ins.secretsRedacted + ' secret(s) would be scrubbed before sharing');
     if (ins.error) emit('error: ' + ins.error);
     if (opts.against) {
@@ -482,8 +658,14 @@ function cli(rest, opts) {
         const remote = importPackage(opts.against, opts);
         const c = detectConflict(getMode(projectPath, opts), remote.meta);
         emit('conflict vs incoming: ' + (c.conflict ? 'YES' : 'no') + ' (' + c.reason + ')');
-        if (c.conflict) resolutions().forEach(function (r) { emit('  - ' + r.id + ': ' + r.label); });
-      } catch (e) { emit('could not read the incoming payload: ' + e.message); return { code: 1, lines: lines }; }
+        if (c.conflict)
+          resolutions().forEach(function (r) {
+            emit('  - ' + r.id + ': ' + r.label);
+          });
+      } catch (e) {
+        emit('could not read the incoming payload: ' + e.message);
+        return { code: 1, lines: lines };
+      }
     }
     return { code: ins.error ? 1 : 0, lines: lines };
   }
@@ -491,4 +673,30 @@ function cli(rest, opts) {
   return { code: 1, lines: lines };
 }
 
-export { SCHEMA_VERSION, MAGIC, MODES, DEFAULT_POLICIES, keyflipDir, metaPath, contextDir, validateMode, normalizePolicy, scrub, normalizeInputPkg, buildPackage, getMode, setMode, recordCheckpoint, filterForSync, filterByProviders, contentHash, exportPackage, importPackage, detectConflict, resolutions, status, inspect, cli };
+export {
+  SCHEMA_VERSION,
+  MAGIC,
+  MODES,
+  DEFAULT_POLICIES,
+  keyflipDir,
+  metaPath,
+  contextDir,
+  validateMode,
+  normalizePolicy,
+  scrub,
+  normalizeInputPkg,
+  buildPackage,
+  getMode,
+  setMode,
+  recordCheckpoint,
+  filterForSync,
+  filterByProviders,
+  contentHash,
+  exportPackage,
+  importPackage,
+  detectConflict,
+  resolutions,
+  status,
+  inspect,
+  cli,
+};

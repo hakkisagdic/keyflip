@@ -19,8 +19,10 @@ function login(ctx, email, uid, tok) {
 
 function seeded() {
   const ctx = makeCtx();
-  login(ctx, 'alice@example.com', 'u1', '{"claudeAiOauth":{"accessToken":"A"}}'); core.addCurrent(ctx);
-  login(ctx, 'bob@example.com', 'u2', '{"claudeAiOauth":{"accessToken":"B"}}'); core.addCurrent(ctx);
+  login(ctx, 'alice@example.com', 'u1', '{"claudeAiOauth":{"accessToken":"A"}}');
+  core.addCurrent(ctx);
+  login(ctx, 'bob@example.com', 'u2', '{"claudeAiOauth":{"accessToken":"B"}}');
+  core.addCurrent(ctx);
   return ctx;
 }
 
@@ -40,17 +42,29 @@ test('export/import round-trips accounts onto a fresh machine', function () {
 
 test('import validates everything before writing anything', function () {
   const dst = makeCtx();
-  const bad = { format: 'keyflip-export', version: 1, accounts: [
-    { name: 'ok', email: 'ok@x.com', cliCredentials: '{"a":1}' },
-    { name: 'bad name!', email: 'b@x.com', cliCredentials: '{"a":1}' },
-  ] };
-  assert.throws(function () { transfer.applyImport(dst, bad); }, /invalid name/);
+  const bad = {
+    format: 'keyflip-export',
+    version: 1,
+    accounts: [
+      { name: 'ok', email: 'ok@x.com', cliCredentials: '{"a":1}' },
+      { name: 'bad name!', email: 'b@x.com', cliCredentials: '{"a":1}' },
+    ],
+  };
+  assert.throws(function () {
+    transfer.applyImport(dst, bad);
+  }, /invalid name/);
   assert.strictEqual(dst.store.getProfile('ok'), null); // nothing was written
 
-  assert.throws(function () { transfer.applyImport(dst, { format: 'nope' }); }, /not a keyflip export/);
-  assert.throws(function () { transfer.applyImport(dst, { format: 'keyflip-export', version: 99, accounts: [{}] }); }, /unsupported export version/);
+  assert.throws(function () {
+    transfer.applyImport(dst, { format: 'nope' });
+  }, /not a keyflip export/);
+  assert.throws(function () {
+    transfer.applyImport(dst, { format: 'keyflip-export', version: 99, accounts: [{}] });
+  }, /unsupported export version/);
   const corrupt = { format: 'keyflip-export', version: 1, accounts: [{ name: 'x', cliCredentials: '{"trunc' }] };
-  assert.throws(function () { transfer.applyImport(dst, corrupt); }, /corrupt/);
+  assert.throws(function () {
+    transfer.applyImport(dst, corrupt);
+  }, /corrupt/);
 });
 
 test('import skips existing accounts unless --force', function () {
@@ -70,13 +84,22 @@ test('CLI export writes a 0600 file and import restores it (spawned)', function 
     const home = fs.mkdtempSync(path.join(os.tmpdir(), 'keyflip-xfer-'));
     fs.mkdirSync(path.join(home, '.claude'), { recursive: true });
     fs.writeFileSync(path.join(home, '.claude', '.credentials.json'), '{"live":"T1"}');
-    fs.writeFileSync(path.join(home, '.claude.json'), JSON.stringify({ oauthAccount: { emailAddress: 'a@x.com' }, userID: 'u' }));
+    fs.writeFileSync(
+      path.join(home, '.claude.json'),
+      JSON.stringify({ oauthAccount: { emailAddress: 'a@x.com' }, userID: 'u' }),
+    );
     return home;
   }
   function run(home, args) {
     return _child_process.spawnSync(process.execPath, [BIN].concat(args), {
       encoding: 'utf8',
-      env: Object.assign({}, process.env, { HOME: home, USERPROFILE: home, XDG_CONFIG_HOME: path.join(home, '.config'), APPDATA: path.join(home, 'AppData', 'Roaming'), KEYFLIP_TEST_CLAUDE: 'stopped' }),
+      env: Object.assign({}, process.env, {
+        HOME: home,
+        USERPROFILE: home,
+        XDG_CONFIG_HOME: path.join(home, '.config'),
+        APPDATA: path.join(home, 'AppData', 'Roaming'),
+        KEYFLIP_TEST_CLAUDE: 'stopped',
+      }),
     });
   }
   const A = mkhome();

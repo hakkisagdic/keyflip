@@ -24,9 +24,15 @@ test('evaluate resolves symlinks — a deny rule on the real path applies to a s
   assert.strictEqual(res.allowed, false, 'symlinked cwd resolves to the real path and hits the deny rule');
 });
 
-function ppath(ctx) { return path.join(ctx.configDir, 'policy.json'); }
+function ppath(ctx) {
+  return path.join(ctx.configDir, 'policy.json');
+}
 // membersOf fake: a fixed group->members map, injected so no groups.json is needed.
-function membersOf(map) { return function (g) { return (map && map[g]) || []; }; }
+function membersOf(map) {
+  return function (g) {
+    return (map && map[g]) || [];
+  };
+}
 
 // ---- state + CRUD ----------------------------------------------------------------
 
@@ -37,7 +43,11 @@ test('get: no file -> empty state, default allow', function () {
 
 test('addRule persists, assigns an id, and stores cwdPrefix absolute', function () {
   const ctx = makeCtx();
-  const r = policy.addRule(ctx, { match: { cwdPrefix: '/srv/clients' }, allow: { accounts: ['work'] }, note: 'clients' });
+  const r = policy.addRule(ctx, {
+    match: { cwdPrefix: '/srv/clients' },
+    allow: { accounts: ['work'] },
+    note: 'clients',
+  });
   assert.ok(policy.isValidId(r.id), 'an id is assigned');
   assert.strictEqual(r.match.cwdPrefix, path.resolve('/srv/clients'));
   assert.strictEqual(r.createdAt, ctx.now());
@@ -50,15 +60,25 @@ test('addRule persists, assigns an id, and stores cwdPrefix absolute', function 
 test('addRule: explicit id honored; duplicate id rejected', function () {
   const ctx = makeCtx();
   policy.addRule(ctx, { id: 'clients', match: { cwdPrefix: '/c' }, allow: { accounts: ['work'] } });
-  assert.throws(function () { policy.addRule(ctx, { id: 'clients', match: { cwdPrefix: '/d' }, deny: { accounts: ['x'] } }); }, /already exists/);
+  assert.throws(function () {
+    policy.addRule(ctx, { id: 'clients', match: { cwdPrefix: '/d' }, deny: { accounts: ['x'] } });
+  }, /already exists/);
 });
 
 test('addRule: rejects an empty rule and invalid names/ids', function () {
   const ctx = makeCtx();
-  assert.throws(function () { policy.addRule(ctx, { match: {}, allow: {}, deny: {} }); }, /needs at least/);
-  assert.throws(function () { policy.addRule(ctx, { match: { cwdPrefix: '/c' }, allow: { accounts: ['__proto__'] } }); }, /invalid account name/);
-  assert.throws(function () { policy.addRule(ctx, { match: { cwdPrefix: '/c' }, allow: { groups: ['bad group'] } }); }, /invalid group name/);
-  assert.throws(function () { policy.addRule(ctx, { id: '__proto__', match: { cwdPrefix: '/c' }, allow: { accounts: ['work'] } }); }, /invalid rule id/);
+  assert.throws(function () {
+    policy.addRule(ctx, { match: {}, allow: {}, deny: {} });
+  }, /needs at least/);
+  assert.throws(function () {
+    policy.addRule(ctx, { match: { cwdPrefix: '/c' }, allow: { accounts: ['__proto__'] } });
+  }, /invalid account name/);
+  assert.throws(function () {
+    policy.addRule(ctx, { match: { cwdPrefix: '/c' }, allow: { groups: ['bad group'] } });
+  }, /invalid group name/);
+  assert.throws(function () {
+    policy.addRule(ctx, { id: '__proto__', match: { cwdPrefix: '/c' }, allow: { accounts: ['work'] } });
+  }, /invalid rule id/);
   assert.strictEqual(fs.existsSync(ppath(ctx)), false, 'nothing written on rejection');
 });
 
@@ -74,7 +94,9 @@ test('setDefault flips the fallback and validates', function () {
   const ctx = makeCtx();
   assert.strictEqual(policy.setDefault(ctx, 'deny'), 'deny');
   assert.strictEqual(policy.get(ctx).default, 'deny');
-  assert.throws(function () { policy.setDefault(ctx, 'maybe'); }, /must be 'allow' or 'deny'/);
+  assert.throws(function () {
+    policy.setDefault(ctx, 'maybe');
+  }, /must be 'allow' or 'deny'/);
 });
 
 // ---- evaluate: the decision model -----------------------------------------------
@@ -90,7 +112,12 @@ test('no rules: falls back to default (allow, then deny)', function () {
 
 test('allowlist is EXCLUSIVE: listed account passes, others are denied where the rule matches', function () {
   const ctx = makeCtx();
-  policy.addRule(ctx, { id: 'clients', match: { cwdPrefix: '/srv/clients' }, allow: { accounts: ['work'] }, note: 'client code = work only' });
+  policy.addRule(ctx, {
+    id: 'clients',
+    match: { cwdPrefix: '/srv/clients' },
+    allow: { accounts: ['work'] },
+    note: 'client code = work only',
+  });
   assert.strictEqual(policy.evaluate(ctx, { cwd: '/srv/clients/acme', account: 'work' }).allowed, true);
   const denied = policy.evaluate(ctx, { cwd: '/srv/clients/acme', account: 'personal' });
   assert.strictEqual(denied.allowed, false);
@@ -102,7 +129,12 @@ test('allowlist is EXCLUSIVE: listed account passes, others are denied where the
 
 test('deny beats allow WITHIN a rule', function () {
   const ctx = makeCtx();
-  policy.addRule(ctx, { id: 'r', match: { cwdPrefix: '/c' }, allow: { accounts: ['work', 'personal'] }, deny: { accounts: ['personal'] } });
+  policy.addRule(ctx, {
+    id: 'r',
+    match: { cwdPrefix: '/c' },
+    allow: { accounts: ['work', 'personal'] },
+    deny: { accounts: ['personal'] },
+  });
   assert.strictEqual(policy.evaluate(ctx, { cwd: '/c', account: 'work' }).allowed, true);
   const d = policy.evaluate(ctx, { cwd: '/c', account: 'personal' });
   assert.strictEqual(d.allowed, false);
@@ -152,7 +184,11 @@ test('group membership resolves via real groups.membersOf by default', function 
   const ctx = makeCtx();
   groups.setTags(ctx, 'acme', ['workpool']);
   policy.addRule(ctx, { id: 'g', match: { cwdPrefix: '/c' }, deny: { groups: ['workpool'] } });
-  assert.strictEqual(policy.evaluate(ctx, { cwd: '/c', account: 'acme' }).allowed, false, 'acme is denied via its group');
+  assert.strictEqual(
+    policy.evaluate(ctx, { cwd: '/c', account: 'acme' }).allowed,
+    false,
+    'acme is denied via its group',
+  );
   assert.strictEqual(policy.evaluate(ctx, { cwd: '/c', account: 'other' }).allowed, true);
 });
 
@@ -160,8 +196,16 @@ test('global rule (empty match) applies everywhere and is least specific', funct
   const ctx = makeCtx();
   policy.addRule(ctx, { id: 'global', match: {}, allow: { accounts: ['work'] } });
   policy.addRule(ctx, { id: 'local', match: { cwdPrefix: '/open' }, allow: { accounts: ['work', 'personal'] } });
-  assert.strictEqual(policy.evaluate(ctx, { cwd: '/anywhere', account: 'personal' }).allowed, false, 'global allowlist excludes personal');
-  assert.strictEqual(policy.evaluate(ctx, { cwd: '/open/x', account: 'personal' }).allowed, true, 'more specific local rule permits personal');
+  assert.strictEqual(
+    policy.evaluate(ctx, { cwd: '/anywhere', account: 'personal' }).allowed,
+    false,
+    'global allowlist excludes personal',
+  );
+  assert.strictEqual(
+    policy.evaluate(ctx, { cwd: '/open/x', account: 'personal' }).allowed,
+    true,
+    'more specific local rule permits personal',
+  );
 });
 
 // ---- repo matching ---------------------------------------------------------------
@@ -169,16 +213,27 @@ test('global rule (empty match) applies everywhere and is least specific', funct
 test('repo match: rule keyed on repo; repo passed in the context', function () {
   const ctx = makeCtx();
   policy.addRule(ctx, { id: 'client-repo', match: { repo: 'acme/client' }, allow: { accounts: ['work'] } });
-  assert.strictEqual(policy.evaluate(ctx, { cwd: '/tmp/w', account: 'personal', repo: 'git@github.com:acme/client.git' }).allowed, false);
-  assert.strictEqual(policy.evaluate(ctx, { cwd: '/tmp/w', account: 'work', repo: 'https://github.com/acme/client' }).allowed, true);
-  assert.strictEqual(policy.evaluate(ctx, { cwd: '/tmp/w', account: 'personal', repo: 'acme/other' }).allowed, true, 'a different repo does not match -> default allow');
+  assert.strictEqual(
+    policy.evaluate(ctx, { cwd: '/tmp/w', account: 'personal', repo: 'git@github.com:acme/client.git' }).allowed,
+    false,
+  );
+  assert.strictEqual(
+    policy.evaluate(ctx, { cwd: '/tmp/w', account: 'work', repo: 'https://github.com/acme/client' }).allowed,
+    true,
+  );
+  assert.strictEqual(
+    policy.evaluate(ctx, { cwd: '/tmp/w', account: 'personal', repo: 'acme/other' }).allowed,
+    true,
+    'a different repo does not match -> default allow',
+  );
 });
 
 test('repo resolved from cwd via injected run (no real git)', function () {
   const ctx = makeCtx();
   policy.addRule(ctx, { id: 'r', match: { repo: 'acme/client' }, allow: { accounts: ['work'] } });
   const run = function (cmd, args) {
-    if (args.indexOf('remote.origin.url') !== -1) return { code: 0, stdout: 'git@github.com:acme/client.git\n', stderr: '' };
+    if (args.indexOf('remote.origin.url') !== -1)
+      return { code: 0, stdout: 'git@github.com:acme/client.git\n', stderr: '' };
     return { code: 1, stdout: '', stderr: '' };
   };
   assert.strictEqual(policy.evaluate(ctx, { cwd: '/tmp/w', account: 'personal' }, { run: run }).allowed, false);
@@ -199,7 +254,11 @@ test('normalizeRepo canonicalizes url forms to owner/repo', function () {
 test('cwdPrefix is path-segment aware: /a/b does not match /a/bc', function () {
   const ctx = makeCtx();
   policy.addRule(ctx, { id: 'r', match: { cwdPrefix: '/a/b' }, allow: { accounts: ['work'] } });
-  assert.strictEqual(policy.evaluate(ctx, { cwd: '/a/bc', account: 'personal' }).allowed, true, 'sibling prefix does not match');
+  assert.strictEqual(
+    policy.evaluate(ctx, { cwd: '/a/bc', account: 'personal' }).allowed,
+    true,
+    'sibling prefix does not match',
+  );
   assert.strictEqual(policy.evaluate(ctx, { cwd: '/a/b', account: 'personal' }).allowed, false, 'exact prefix matches');
   assert.strictEqual(policy.evaluate(ctx, { cwd: '/a/b/c', account: 'personal' }).allowed, false, 'descendant matches');
 });
@@ -211,7 +270,11 @@ test('enforce: returns the result when allowed, throws POLICY_DENIED when not', 
   policy.addRule(ctx, { id: 'clients', match: { cwdPrefix: '/c' }, allow: { accounts: ['work'] } });
   assert.strictEqual(policy.enforce(ctx, { cwd: '/c', account: 'work' }).allowed, true);
   let err;
-  try { policy.enforce(ctx, { cwd: '/c', account: 'personal' }); } catch (e) { err = e; }
+  try {
+    policy.enforce(ctx, { cwd: '/c', account: 'personal' });
+  } catch (e) {
+    err = e;
+  }
   assert.ok(err && err.code === 'POLICY_DENIED', 'throws a tagged error');
   assert.match(err.message, /policy denied.*personal.*rule clients/);
   assert.strictEqual(err.policy.allowed, false);
@@ -221,29 +284,52 @@ test('enforce: returns the result when allowed, throws POLICY_DENIED when not', 
 
 test('hostile: a tampered policy.json cannot pollute prototypes and is sanitized', function () {
   const ctx = makeCtx();
-  fs.writeFileSync(ppath(ctx), JSON.stringify({
-    __proto__: { polluted: true },
-    default: 'deny',
-    rules: [
-      { id: '__proto__', match: { cwdPrefix: '/c' }, deny: { accounts: ['x'] } }, // bad id -> dropped
-      { id: 'ok', match: { cwdPrefix: '/c' }, allow: { accounts: ['work', '__proto__', 5], groups: ['bad group', 'good'] } },
-      'not-an-object',
-      { id: 'ok', match: {}, allow: { accounts: ['dup'] } }, // duplicate id -> dropped
-    ],
-  }));
+  fs.writeFileSync(
+    ppath(ctx),
+    JSON.stringify({
+      __proto__: { polluted: true },
+      default: 'deny',
+      rules: [
+        { id: '__proto__', match: { cwdPrefix: '/c' }, deny: { accounts: ['x'] } }, // bad id -> dropped
+        {
+          id: 'ok',
+          match: { cwdPrefix: '/c' },
+          allow: { accounts: ['work', '__proto__', 5], groups: ['bad group', 'good'] },
+        },
+        'not-an-object',
+        { id: 'ok', match: {}, allow: { accounts: ['dup'] } }, // duplicate id -> dropped
+      ],
+    }),
+  );
   const st = policy.get(ctx);
-  assert.strictEqual(({}).polluted, undefined, 'Object.prototype not polluted');
+  assert.strictEqual({}.polluted, undefined, 'Object.prototype not polluted');
   assert.strictEqual(st.default, 'deny');
-  assert.deepStrictEqual(st.rules.map(function (r) { return r.id; }), ['ok'], 'only the first valid rule survives');
-  assert.deepStrictEqual(st.rules[0].allow, { accounts: ['work'], groups: ['good'] }, 'junk accounts/groups stripped, sorted');
+  assert.deepStrictEqual(
+    st.rules.map(function (r) {
+      return r.id;
+    }),
+    ['ok'],
+    'only the first valid rule survives',
+  );
+  assert.deepStrictEqual(
+    st.rules[0].allow,
+    { accounts: ['work'], groups: ['good'] },
+    'junk accounts/groups stripped, sorted',
+  );
 });
 
 test('corrupt policy.json: reads degrade to empty, writes REFUSE to clobber', function () {
   const ctx = makeCtx();
   fs.writeFileSync(ppath(ctx), '{ not json');
   assert.deepStrictEqual(policy.get(ctx), { rules: [], default: 'allow' }, 'read degrades to empty');
-  assert.strictEqual(policy.evaluate(ctx, { cwd: '/x', account: 'work' }).allowed, true, 'evaluate is safe on a corrupt file');
-  assert.throws(function () { policy.addRule(ctx, { match: { cwdPrefix: '/c' }, allow: { accounts: ['work'] } }); }, /not valid JSON/);
+  assert.strictEqual(
+    policy.evaluate(ctx, { cwd: '/x', account: 'work' }).allowed,
+    true,
+    'evaluate is safe on a corrupt file',
+  );
+  assert.throws(function () {
+    policy.addRule(ctx, { match: { cwdPrefix: '/c' }, allow: { accounts: ['work'] } });
+  }, /not valid JSON/);
   assert.strictEqual(fs.readFileSync(ppath(ctx), 'utf8'), '{ not json', 'corrupt file left untouched');
 });
 
@@ -257,8 +343,12 @@ test('policy.json is written 0600', function () {
 
 test('mcp: list + check are read-only and work end to end', async function () {
   const ctx = makeCtx();
-  const list = policy.mcpTools.find(function (t) { return t.name === 'keyflip_policy_list'; });
-  const check = policy.mcpTools.find(function (t) { return t.name === 'keyflip_policy_check'; });
+  const list = policy.mcpTools.find(function (t) {
+    return t.name === 'keyflip_policy_list';
+  });
+  const check = policy.mcpTools.find(function (t) {
+    return t.name === 'keyflip_policy_check';
+  });
   assert.strictEqual(list.annotations.readOnlyHint, true);
   assert.strictEqual(check.annotations.readOnlyHint, true);
   policy.addRule(ctx, { id: 'clients', match: { cwdPrefix: '/c' }, allow: { accounts: ['work'] } });
@@ -269,12 +359,19 @@ test('mcp: list + check are read-only and work end to end', async function () {
 
 test('mcp: add + remove require confirm and are declared mutating', async function () {
   const ctx = makeCtx();
-  const add = policy.mcpTools.find(function (t) { return t.name === 'keyflip_policy_add'; });
-  const remove = policy.mcpTools.find(function (t) { return t.name === 'keyflip_policy_remove'; });
+  const add = policy.mcpTools.find(function (t) {
+    return t.name === 'keyflip_policy_add';
+  });
+  const remove = policy.mcpTools.find(function (t) {
+    return t.name === 'keyflip_policy_remove';
+  });
   assert.strictEqual(add.annotations.readOnlyHint, false);
   assert.ok(add.inputSchema.required.indexOf('confirm') !== -1, 'confirm is required in the schema');
   assert.ok(remove.inputSchema.required.indexOf('confirm') !== -1);
-  await assert.rejects(add.run(ctx, { effect: 'allow', cwd_prefix: '/c', accounts: ['work'] }), /confirmation required/);
+  await assert.rejects(
+    add.run(ctx, { effect: 'allow', cwd_prefix: '/c', accounts: ['work'] }),
+    /confirmation required/,
+  );
   const res = await add.run(ctx, { effect: 'allow', cwd_prefix: '/c', accounts: ['work'], confirm: true });
   assert.ok(res.added && res.added.id);
   assert.strictEqual(policy.get(ctx).rules.length, 1);

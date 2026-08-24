@@ -10,8 +10,8 @@ import path from 'path';
 import * as profiles from './profiles.js';
 import { atomicWrite, readJsonForWrite } from './fsutil.js';
 
-const WARN_MARGIN = 10;    // pct below the ceiling at which we raise a 'warn'
-const DEFAULT_KEY = '*';   // the catch-all defaults entry (applies to every account)
+const WARN_MARGIN = 10; // pct below the ceiling at which we raise a 'warn'
+const DEFAULT_KEY = '*'; // the catch-all defaults entry (applies to every account)
 // The two rate-limit windows the usage cache exposes. `limitKey` is how each ceiling
 // is stored in budget.json; `metric` is how usage.js names the window in the cache.
 const METRICS = [
@@ -19,24 +19,34 @@ const METRICS = [
   { metric: 'sevenDay', limitKey: 'sevenDayPct' },
 ];
 
-function budgetPath(ctx) { return path.join(ctx.configDir, 'budget.json'); }
-function cachePath(ctx) { return path.join(ctx.configDir, '.usage-cache.json'); }
+function budgetPath(ctx) {
+  return path.join(ctx.configDir, 'budget.json');
+}
+function cachePath(ctx) {
+  return path.join(ctx.configDir, '.usage-cache.json');
+}
 
 // A ceiling is a finite percentage in [0,100]. NaN/Infinity/string/negative/>100
 // are not usable limits.
-function validPct(n) { return typeof n === 'number' && isFinite(n) && n >= 0 && n <= 100; }
+function validPct(n) {
+  return typeof n === 'number' && isFinite(n) && n >= 0 && n <= 100;
+}
 
 // A budget key is the '*' defaults sentinel or a real, safe account name.
 // profiles.isValidName rejects '__proto__'/'constructor'/'prototype' + reserved
 // state files, so a hostile key can never pollute a prototype or shadow our files.
-function validKey(name) { return name === DEFAULT_KEY || profiles.isValidName(name); }
+function validKey(name) {
+  return name === DEFAULT_KEY || profiles.isValidName(name);
+}
 
 // Copy one raw entry into a clean null-proto {fiveHourPct?, sevenDayPct?} keeping
 // only valid pcts.
 function cleanEntry(raw) {
   const out = Object.create(null);
   if (!raw || typeof raw !== 'object') return out;
-  METRICS.forEach(function (m) { if (validPct(raw[m.limitKey])) out[m.limitKey] = raw[m.limitKey]; });
+  METRICS.forEach(function (m) {
+    if (validPct(raw[m.limitKey])) out[m.limitKey] = raw[m.limitKey];
+  });
   return out;
 }
 
@@ -58,26 +68,38 @@ function sanitize(parsed) {
 // Read for display/evaluation: TOLERANT — a missing OR corrupt file reads as empty
 // (a read-only command must never throw over a garbage state file).
 function readSafe(ctx) {
-  try { return sanitize(JSON.parse(fs.readFileSync(budgetPath(ctx), 'utf8'))); }
-  catch (e) { return Object.create(null); }
+  try {
+    return sanitize(JSON.parse(fs.readFileSync(budgetPath(ctx), 'utf8')));
+  } catch (e) {
+    return Object.create(null);
+  }
 }
 
 // get(ctx) -> the whole config (null-proto): { <name>: {limits}, '*': {defaults} }.
-function get(ctx) { return readSafe(ctx); }
+function get(ctx) {
+  return readSafe(ctx);
+}
 
 // Effective ceilings for one account = the '*' defaults with the account's own
 // entry layered on top (per-metric override). Returns a null-proto {limits}.
 function mergeLimits(cfg, name) {
   const out = Object.create(null);
   [cfg[DEFAULT_KEY], cfg[name]].forEach(function (src) {
-    if (src) METRICS.forEach(function (m) { if (validPct(src[m.limitKey])) out[m.limitKey] = src[m.limitKey]; });
+    if (src)
+      METRICS.forEach(function (m) {
+        if (validPct(src[m.limitKey])) out[m.limitKey] = src[m.limitKey];
+      });
   });
   return out;
 }
 // Public: effective ceilings for one account, read fresh from disk.
-function limitsFor(ctx, name) { return mergeLimits(readSafe(ctx), name); }
+function limitsFor(ctx, name) {
+  return mergeLimits(readSafe(ctx), name);
+}
 
-function persist(ctx, cfg) { atomicWrite(budgetPath(ctx), JSON.stringify(cfg, null, 2), 0o600); }
+function persist(ctx, cfg) {
+  atomicWrite(budgetPath(ctx), JSON.stringify(cfg, null, 2), 0o600);
+}
 
 // setLimit(ctx, name, limits) — set/merge ceilings for one account (or '*' for the
 // defaults). limits = { fiveHourPct, sevenDayPct }: a number sets that window, null
@@ -91,7 +113,9 @@ function setLimit(ctx, name, limits) {
     const v = limits[m.limitKey];
     if (v !== undefined && v !== null && !validPct(v)) throw new Error(m.limitKey + ' must be a number 0-100');
   });
-  const provided = METRICS.some(function (m) { return limits[m.limitKey] !== undefined; });
+  const provided = METRICS.some(function (m) {
+    return limits[m.limitKey] !== undefined;
+  });
   if (!provided) throw new Error('nothing to set — give a 5h and/or 7d ceiling');
   // read-modify-write via readJsonForWrite so a CORRUPT file THROWS (never clobbered).
   const cfg = sanitize(readJsonForWrite(budgetPath(ctx)));
@@ -101,7 +125,8 @@ function setLimit(ctx, name, limits) {
     if (v === null) delete entry[m.limitKey];
     else if (v !== undefined) entry[m.limitKey] = v;
   });
-  if (Object.keys(entry).length) cfg[name] = entry; else delete cfg[name];
+  if (Object.keys(entry).length) cfg[name] = entry;
+  else delete cfg[name];
   persist(ctx, cfg);
   return cfg[name] ? Object.assign({}, cfg[name]) : null;
 }
@@ -130,22 +155,29 @@ function readUsageCache(ctx) {
         if (e && typeof e === 'object') out[name] = e;
       });
     }
-  } catch (e) { /* missing / corrupt -> no usage known */ }
+  } catch (e) {
+    /* missing / corrupt -> no usage known */
+  }
   return out;
 }
 
 // Current pct for one window from a cache entry, or null if unknown.
 function pctOf(entry, metric) {
   const w = entry && entry.usage && entry.usage[metric];
-  return (w && typeof w.pct === 'number' && isFinite(w.pct)) ? w.pct : null;
+  return w && typeof w.pct === 'number' && isFinite(w.pct) ? w.pct : null;
 }
 
 // The accounts to evaluate: every explicitly-configured one, plus (when a '*'
 // default exists) every account we hold cached usage for. Returns a null-proto set.
 function candidateNames(cfg, cache) {
   const names = Object.create(null);
-  Object.keys(cfg).forEach(function (k) { if (k !== DEFAULT_KEY) names[k] = true; });
-  if (cfg[DEFAULT_KEY]) Object.keys(cache).forEach(function (k) { if (validKey(k) && k !== DEFAULT_KEY) names[k] = true; });
+  Object.keys(cfg).forEach(function (k) {
+    if (k !== DEFAULT_KEY) names[k] = true;
+  });
+  if (cfg[DEFAULT_KEY])
+    Object.keys(cache).forEach(function (k) {
+      if (validKey(k) && k !== DEFAULT_KEY) names[k] = true;
+    });
   return names;
 }
 
@@ -164,17 +196,19 @@ function evaluate(ctx) {
     const entry = cache[name];
     METRICS.forEach(function (m) {
       const limit = limits[m.limitKey];
-      if (!validPct(limit)) return;          // no ceiling for this window
+      if (!validPct(limit)) return; // no ceiling for this window
       const pct = pctOf(entry, m.metric);
-      if (pct === null) return;              // no usage sample -> can't judge
-      if (pct >= limit) out.push({ name: name, metric: m.metric, pct: pct, limit: limit, breached: true, level: 'breach' });
-      else if (pct >= limit - WARN_MARGIN) out.push({ name: name, metric: m.metric, pct: pct, limit: limit, breached: false, level: 'warn' });
+      if (pct === null) return; // no usage sample -> can't judge
+      if (pct >= limit)
+        out.push({ name: name, metric: m.metric, pct: pct, limit: limit, breached: true, level: 'breach' });
+      else if (pct >= limit - WARN_MARGIN)
+        out.push({ name: name, metric: m.metric, pct: pct, limit: limit, breached: false, level: 'warn' });
     });
   });
   out.sort(function (a, b) {
     if (a.breached !== b.breached) return a.breached ? -1 : 1;
     if (b.pct !== a.pct) return b.pct - a.pct;
-    return a.name < b.name ? -1 : (a.name > b.name ? 1 : 0);
+    return a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
   });
   return out;
 }
@@ -188,30 +222,38 @@ function status(ctx) {
   const cache = readUsageCache(ctx);
   const alerts = evaluate(ctx);
   const byName = Object.create(null);
-  alerts.forEach(function (a) { (byName[a.name] || (byName[a.name] = [])).push(a); });
-  const names = candidateNames(cfg, cache);
-  const accounts = Object.keys(names).sort().map(function (name) {
-    const limits = mergeLimits(cfg, name);
-    const entry = cache[name];
-    return {
-      name: name,
-      limits: {
-        fiveHourPct: validPct(limits.fiveHourPct) ? limits.fiveHourPct : null,
-        sevenDayPct: validPct(limits.sevenDayPct) ? limits.sevenDayPct : null,
-      },
-      usage: { fiveHour: pctOf(entry, 'fiveHour'), sevenDay: pctOf(entry, 'sevenDay') },
-      alerts: byName[name] || [],
-    };
+  alerts.forEach(function (a) {
+    (byName[a.name] || (byName[a.name] = [])).push(a);
   });
+  const names = candidateNames(cfg, cache);
+  const accounts = Object.keys(names)
+    .sort()
+    .map(function (name) {
+      const limits = mergeLimits(cfg, name);
+      const entry = cache[name];
+      return {
+        name: name,
+        limits: {
+          fiveHourPct: validPct(limits.fiveHourPct) ? limits.fiveHourPct : null,
+          sevenDayPct: validPct(limits.sevenDayPct) ? limits.sevenDayPct : null,
+        },
+        usage: { fiveHour: pctOf(entry, 'fiveHour'), sevenDay: pctOf(entry, 'sevenDay') },
+        alerts: byName[name] || [],
+      };
+    });
   const def = cfg[DEFAULT_KEY];
   return {
-    defaults: def ? {
-      fiveHourPct: validPct(def.fiveHourPct) ? def.fiveHourPct : null,
-      sevenDayPct: validPct(def.sevenDayPct) ? def.sevenDayPct : null,
-    } : null,
+    defaults: def
+      ? {
+          fiveHourPct: validPct(def.fiveHourPct) ? def.fiveHourPct : null,
+          sevenDayPct: validPct(def.sevenDayPct) ? def.sevenDayPct : null,
+        }
+      : null,
     accounts: accounts,
     alerts: alerts,
-    breached: alerts.some(function (a) { return a.breached; }),
+    breached: alerts.some(function (a) {
+      return a.breached;
+    }),
   };
 }
 

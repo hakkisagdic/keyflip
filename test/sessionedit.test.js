@@ -10,7 +10,7 @@ import path from 'path';
 import zlib from 'zlib';
 import * as sessionedit from '../src/sessionedit.js';
 import * as archive from '../src/archive.js';
-import { makeCtx } from './helpers.js';
+import { makeCtx, assertPrivateMode } from './helpers.js';
 
 // A stand-in for pii.js honouring the { text, counts } contract: redacts emails + phones.
 const fakePii = {
@@ -18,8 +18,14 @@ const fakePii = {
   scrub: function (text, opts) {
     const counts = {};
     let out = String(text)
-      .replace(/[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}/g, function () { counts.email = (counts.email || 0) + 1; return '[EMAIL]'; })
-      .replace(/\b\d{3}[-.\s]?\d{3}[-.\s]?\d{4}\b/g, function () { counts.phone = (counts.phone || 0) + 1; return '[PHONE]'; });
+      .replace(/[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}/g, function () {
+        counts.email = (counts.email || 0) + 1;
+        return '[EMAIL]';
+      })
+      .replace(/\b\d{3}[-.\s]?\d{3}[-.\s]?\d{4}\b/g, function () {
+        counts.phone = (counts.phone || 0) + 1;
+        return '[PHONE]';
+      });
     return { text: out, counts: counts };
   },
 };
@@ -38,8 +44,27 @@ function seed(c, project, id) {
   const file = path.join(dir, id + '.jsonl');
   const lines = [
     JSON.stringify({ type: 'queue-operation', sessionId: id, timestamp: '2026-07-01T00:00:00Z' }),
-    JSON.stringify({ type: 'user', sessionId: id, cwd: '/work/x', timestamp: '2026-07-01T00:00:01Z', message: { role: 'user', content: [{ type: 'text', text: 'Email me at jane.doe@example.com or call 555-123-4567 thanks' }] } }),
-    JSON.stringify({ type: 'assistant', sessionId: id, message: { role: 'assistant', content: [{ type: 'text', text: 'Sure, noted.' }, { type: 'tool_use', id: 'toolu_ABC123', name: 'Read', input: { file_path: '/x' } }] } }),
+    JSON.stringify({
+      type: 'user',
+      sessionId: id,
+      cwd: '/work/x',
+      timestamp: '2026-07-01T00:00:01Z',
+      message: {
+        role: 'user',
+        content: [{ type: 'text', text: 'Email me at jane.doe@example.com or call 555-123-4567 thanks' }],
+      },
+    }),
+    JSON.stringify({
+      type: 'assistant',
+      sessionId: id,
+      message: {
+        role: 'assistant',
+        content: [
+          { type: 'text', text: 'Sure, noted.' },
+          { type: 'tool_use', id: 'toolu_ABC123', name: 'Read', input: { file_path: '/x' } },
+        ],
+      },
+    }),
     JSON.stringify({ type: 'summary', summary: 'Reach bob@corp.io for details', text: 'plain field, no pii here' }),
   ];
   fs.writeFileSync(file, lines.join('\n') + '\n');
@@ -48,7 +73,9 @@ function seed(c, project, id) {
 
 function eachLineIsJson(file) {
   const raw = fs.readFileSync(file, 'utf8');
-  raw.split('\n').forEach(function (l) { if (l.trim()) JSON.parse(l); /* throws if invalid */ });
+  raw.split('\n').forEach(function (l) {
+    if (l.trim()) JSON.parse(l); /* throws if invalid */
+  });
   return raw;
 }
 
@@ -75,13 +102,20 @@ test('deleteSession hard permanently unlinks and does NOT archive', function () 
   assert.strictEqual(r.mode, 'deleted');
   assert.ok(r.bytes > 0);
   assert.strictEqual(fs.existsSync(file), false, 'transcript unlinked');
-  assert.strictEqual(fs.existsSync(path.join(archive.store(c), '-p', 'sess-hard.jsonl.gz')), false, 'no archive copy for a hard delete');
+  assert.strictEqual(
+    fs.existsSync(path.join(archive.store(c), '-p', 'sess-hard.jsonl.gz')),
+    false,
+    'no archive copy for a hard delete',
+  );
 });
 
 test('deleteSession on a missing session returns not-found (no throw)', function () {
   const c = ctx();
   assert.strictEqual(sessionedit.deleteSession(c, { project: '-p', sessionId: 'ghost' }).reason, 'not-found');
-  assert.strictEqual(sessionedit.deleteSession(c, { project: '-p', sessionId: 'ghost', hard: true }).reason, 'not-found');
+  assert.strictEqual(
+    sessionedit.deleteSession(c, { project: '-p', sessionId: 'ghost', hard: true }).reason,
+    'not-found',
+  );
 });
 
 // --- scrub -----------------------------------------------------------------
@@ -105,10 +139,19 @@ test('scrubSession apply also redacts PII inside assistant thinking blocks (regr
   const dir = path.join(c.home, '.claude', 'projects', '-p');
   fs.mkdirSync(dir, { recursive: true });
   const file = path.join(dir, 'think.jsonl');
-  fs.writeFileSync(file, JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [
-    { type: 'thinking', thinking: "the user's email is jane.doe@example.com, note it" },
-    { type: 'text', text: 'Sent to jane.doe@example.com' },
-  ] } }) + '\n');
+  fs.writeFileSync(
+    file,
+    JSON.stringify({
+      type: 'assistant',
+      message: {
+        role: 'assistant',
+        content: [
+          { type: 'thinking', thinking: "the user's email is jane.doe@example.com, note it" },
+          { type: 'text', text: 'Sent to jane.doe@example.com' },
+        ],
+      },
+    }) + '\n',
+  );
   const r = sessionedit.scrubSession(c, { project: '-p', sessionId: 'think', apply: true });
   assert.strictEqual(r.applied, true);
   const after = fs.readFileSync(file, 'utf8');
@@ -118,7 +161,20 @@ test('scrubSession apply also redacts PII inside assistant thinking blocks (regr
   assert.strictEqual(after.indexOf('jane.doe@example.com'), -1, 'email must be gone from BOTH thinking and text');
   assert.strictEqual((after.match(/\[EMAIL\]/g) || []).length, 2, 'both the thinking and text emails redacted');
   assert.strictEqual(r.redactions.email, 2);
-  assert.ok(after.trim().split('\n').every(function (l) { try { JSON.parse(l); return true; } catch (e) { return false; } }), 'still valid JSONL');
+  assert.ok(
+    after
+      .trim()
+      .split('\n')
+      .every(function (l) {
+        try {
+          JSON.parse(l);
+          return true;
+        } catch (e) {
+          return false;
+        }
+      }),
+    'still valid JSONL',
+  );
 });
 
 test('scrubSession apply redacts visible text, keeps every line valid JSON, preserves structure, and backs up', function () {
@@ -131,7 +187,7 @@ test('scrubSession apply redacts visible text, keeps every line valid JSON, pres
   // backup exists, is the original, and is 0600
   assert.ok(r.backup && fs.existsSync(r.backup), 'backup written');
   assert.strictEqual(fs.readFileSync(r.backup, 'utf8'), original, 'backup is the original bytes');
-  assert.strictEqual(fs.statSync(r.backup).mode & 0o777, 0o600, 'backup not world/group readable');
+  assertPrivateMode(r.backup, 'backup not world/group readable');
   // every line still valid JSON
   const raw = eachLineIsJson(file);
   // PII gone from visible text, placeholders in
@@ -143,12 +199,15 @@ test('scrubSession apply redacts visible text, keeps every line valid JSON, pres
   assert.ok(raw.indexOf('toolu_ABC123') !== -1, 'tool_use id preserved');
   assert.ok(raw.indexOf('"file_path":"/x"') !== -1, 'tool input json preserved');
   // written file is 0600
-  assert.strictEqual(fs.statSync(file).mode & 0o777, 0o600);
+  assertPrivateMode(file);
 });
 
 test('scrubSession on a missing session returns not-found', function () {
   const c = ctx();
-  assert.strictEqual(sessionedit.scrubSession(c, { project: '-p', sessionId: 'nope', apply: true }).reason, 'not-found');
+  assert.strictEqual(
+    sessionedit.scrubSession(c, { project: '-p', sessionId: 'nope', apply: true }).reason,
+    'not-found',
+  );
 });
 
 // --- edit ------------------------------------------------------------------
@@ -156,13 +215,21 @@ test('scrubSession on a missing session returns not-found', function () {
 test('editSession delete-message drops the Nth event line and keeps valid JSONL', function () {
   const c = ctx();
   const file = seed(c, '-p', 'edit-del');
-  const dry = sessionedit.editSession(c, { project: '-p', sessionId: 'edit-del', op: { type: 'delete-message', index: 0 } });
+  const dry = sessionedit.editSession(c, {
+    project: '-p',
+    sessionId: 'edit-del',
+    op: { type: 'delete-message', index: 0 },
+  });
   assert.strictEqual(dry.applied, false);
   assert.strictEqual(dry.before, 4);
   assert.strictEqual(dry.after, 3);
   assert.strictEqual(fs.readFileSync(file, 'utf8').split('\n').filter(Boolean).length, 4, 'dry-run wrote nothing');
 
-  const r = sessionedit.editSession(c, { project: '-p', sessionId: 'edit-del', op: { type: 'delete-message', index: 0, apply: true } });
+  const r = sessionedit.editSession(c, {
+    project: '-p',
+    sessionId: 'edit-del',
+    op: { type: 'delete-message', index: 0, apply: true },
+  });
   assert.strictEqual(r.ok, true);
   assert.strictEqual(r.applied, true);
   assert.ok(fs.existsSync(r.backup), 'backed up before mutate');
@@ -174,7 +241,11 @@ test('editSession delete-message drops the Nth event line and keeps valid JSONL'
 test('editSession redact-message replaces visible text only, keeps structure + valid JSONL', function () {
   const c = ctx();
   const file = seed(c, '-p', 'edit-red');
-  const r = sessionedit.editSession(c, { project: '-p', sessionId: 'edit-red', op: { type: 'redact-message', index: 1, apply: true } });
+  const r = sessionedit.editSession(c, {
+    project: '-p',
+    sessionId: 'edit-red',
+    op: { type: 'redact-message', index: 1, apply: true },
+  });
   assert.strictEqual(r.ok, true);
   assert.ok(fs.existsSync(r.backup));
   const raw = eachLineIsJson(file);
@@ -190,7 +261,11 @@ test('editSession redact-message replaces visible text only, keeps structure + v
 test('editSession redact-message honours a custom replacement', function () {
   const c = ctx();
   const file = seed(c, '-p', 'edit-red2');
-  sessionedit.editSession(c, { project: '-p', sessionId: 'edit-red2', op: { type: 'redact-message', index: 3, replacement: 'XX', apply: true } });
+  sessionedit.editSession(c, {
+    project: '-p',
+    sessionId: 'edit-red2',
+    op: { type: 'redact-message', index: 3, replacement: 'XX', apply: true },
+  });
   const raw = eachLineIsJson(file);
   const sumLine = JSON.parse(raw.split('\n').filter(Boolean)[3]);
   assert.strictEqual(sumLine.summary, 'XX');
@@ -200,7 +275,11 @@ test('editSession redact-message honours a custom replacement', function () {
 test('editSession truncate-after drops every event past N and keeps valid JSONL', function () {
   const c = ctx();
   const file = seed(c, '-p', 'edit-trunc');
-  const r = sessionedit.editSession(c, { project: '-p', sessionId: 'edit-trunc', op: { type: 'truncate-after', index: 1, apply: true } });
+  const r = sessionedit.editSession(c, {
+    project: '-p',
+    sessionId: 'edit-trunc',
+    op: { type: 'truncate-after', index: 1, apply: true },
+  });
   assert.strictEqual(r.ok, true);
   assert.strictEqual(r.after, 2);
   assert.ok(fs.existsSync(r.backup));
@@ -214,9 +293,20 @@ test('editSession truncate-after drops every event past N and keeps valid JSONL'
 test('editSession rejects a bad op and an out-of-range index', function () {
   const c = ctx();
   seed(c, '-p', 'edit-bad');
-  assert.strictEqual(sessionedit.editSession(c, { project: '-p', sessionId: 'edit-bad', op: { type: 'nope', index: 0 } }).reason, 'bad-op');
-  assert.strictEqual(sessionedit.editSession(c, { project: '-p', sessionId: 'edit-bad', op: { type: 'delete-message', index: 99 } }).reason, 'index-out-of-range');
-  assert.strictEqual(sessionedit.editSession(c, { project: '-p', sessionId: 'edit-bad', op: { type: 'delete-message', index: -1 } }).reason, 'index-out-of-range');
+  assert.strictEqual(
+    sessionedit.editSession(c, { project: '-p', sessionId: 'edit-bad', op: { type: 'nope', index: 0 } }).reason,
+    'bad-op',
+  );
+  assert.strictEqual(
+    sessionedit.editSession(c, { project: '-p', sessionId: 'edit-bad', op: { type: 'delete-message', index: 99 } })
+      .reason,
+    'index-out-of-range',
+  );
+  assert.strictEqual(
+    sessionedit.editSession(c, { project: '-p', sessionId: 'edit-bad', op: { type: 'delete-message', index: -1 } })
+      .reason,
+    'index-out-of-range',
+  );
 });
 
 // --- security --------------------------------------------------------------
@@ -232,7 +322,15 @@ test('path-traversal in project or sessionId is refused', function () {
   ];
   bad.forEach(function (args) {
     assert.strictEqual(sessionedit.deleteSession(c, args).ok, false, JSON.stringify(args));
-    assert.strictEqual(sessionedit.scrubSession(c, Object.assign({ apply: true }, args)).ok, false, JSON.stringify(args));
-    assert.strictEqual(sessionedit.editSession(c, Object.assign({ op: { type: 'delete-message', index: 0, apply: true } }, args)).ok, false, JSON.stringify(args));
+    assert.strictEqual(
+      sessionedit.scrubSession(c, Object.assign({ apply: true }, args)).ok,
+      false,
+      JSON.stringify(args),
+    );
+    assert.strictEqual(
+      sessionedit.editSession(c, Object.assign({ op: { type: 'delete-message', index: 0, apply: true } }, args)).ok,
+      false,
+      JSON.stringify(args),
+    );
   });
 });

@@ -14,12 +14,15 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const BIN = path.join(__dirname, '..', 'bin', 'keyflip.js');
-function tmp() { return fs.mkdtempSync(path.join(os.tmpdir(), 'keyflip-consol-')); }
+function tmp() {
+  return fs.mkdtempSync(path.join(os.tmpdir(), 'keyflip-consol-'));
+}
 function run(home, args) {
   return _child_process.spawnSync(process.execPath, [BIN].concat(args), {
     encoding: 'utf8',
     env: Object.assign({}, process.env, {
-      HOME: home, USERPROFILE: home,
+      HOME: home,
+      USERPROFILE: home,
       XDG_CONFIG_HOME: path.join(home, '.config'),
       APPDATA: path.join(home, 'AppData', 'Roaming'),
       KEYFLIP_CONFIG_DIR: path.join(home, 'kfcfg'),
@@ -42,7 +45,10 @@ test('consolidate --json returns a consolidated object, or the platform guard', 
     assert.notStrictEqual(r.status, 0);
     return;
   }
-  if (/macOS\/Windows-only/.test(out)) { assert.notStrictEqual(r.status, 0); return; }
+  if (/macOS\/Windows-only/.test(out)) {
+    assert.notStrictEqual(r.status, 0);
+    return;
+  }
   // otherwise it ran: stdout carries exactly one JSON object with a consolidated field
   const line = r.stdout.trim().split('\n').filter(Boolean).pop();
   const obj = JSON.parse(line);

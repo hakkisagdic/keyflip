@@ -9,8 +9,12 @@ import _path from 'path';
 
 let _testStopped = false;
 
-function plat(p) { return p || process.platform; }
-function testMode() { return process.env.KEYFLIP_TEST_CLAUDE; }
+function plat(p) {
+  return p || process.platform;
+}
+function testMode() {
+  return process.env.KEYFLIP_TEST_CLAUDE;
+}
 
 function isClaudeRunning(p) {
   const t = testMode();
@@ -19,8 +23,10 @@ function isClaudeRunning(p) {
   if (p === 'darwin') {
     // Include "Claude Helper" processes: the network service may outlive the main
     // binary by a moment while flushing the cookie DB — never write during that.
-    const r = run('sh', ['-c',
-      "ps -Axo command | grep -v grep | grep -Ec 'Claude\\.app/Contents/MacOS/Claude|Claude Helper|/claude-code/[^ ]*/claude|(^|/)claude( |$)'"]);
+    const r = run('sh', [
+      '-c',
+      "ps -Axo command | grep -v grep | grep -Ec 'Claude\\.app/Contents/MacOS/Claude|Claude Helper|/claude-code/[^ ]*/claude|(^|/)claude( |$)'",
+    ]);
     return (parseInt((r.stdout || '0').trim(), 10) || 0) > 0;
   }
   if (p === 'win32') {
@@ -40,24 +46,43 @@ function isDesktopAppRunning(p) {
   if (t) return t === 'running' && !_testStopped;
   p = plat(p);
   if (p !== 'darwin') return false;
-  const r = run('sh', ['-c',
-    "ps -Axo command | grep -v grep | grep -Ec 'Claude\\.app/Contents/MacOS/Claude|Claude Helper'"]);
+  const r = run('sh', [
+    '-c',
+    "ps -Axo command | grep -v grep | grep -Ec 'Claude\\.app/Contents/MacOS/Claude|Claude Helper'",
+  ]);
   return (parseInt((r.stdout || '0').trim(), 10) || 0) > 0;
 }
 
 function quitClaude(p) {
-  if (testMode()) { _testStopped = true; return true; }
+  if (testMode()) {
+    _testStopped = true;
+    return true;
+  }
   p = plat(p);
-  if (p === 'darwin') { run('osascript', ['-e', 'tell application "Claude" to quit']); return true; }
-  if (p === 'win32') { run('taskkill', ['/IM', 'Claude.exe', '/F']); return true; }
+  if (p === 'darwin') {
+    run('osascript', ['-e', 'tell application "Claude" to quit']);
+    return true;
+  }
+  if (p === 'win32') {
+    run('taskkill', ['/IM', 'Claude.exe', '/F']);
+    return true;
+  }
   return false; // no managed desktop app elsewhere
 }
 
 function openClaude(p) {
-  if (testMode()) { return true; }
+  if (testMode()) {
+    return true;
+  }
   p = plat(p);
-  if (p === 'darwin') { run('open', ['-a', 'Claude']); return true; }
-  if (p === 'win32') { run('cmd', ['/c', 'start', '', 'Claude']); return true; }
+  if (p === 'darwin') {
+    run('open', ['-a', 'Claude']);
+    return true;
+  }
+  if (p === 'win32') {
+    run('cmd', ['/c', 'start', '', 'Claude']);
+    return true;
+  }
   return false;
 }
 
@@ -65,15 +90,23 @@ function openClaude(p) {
 // itself writes (~/.claude/sessions/<pid>.json) — tells us WHICH instances are
 // running (pid, cwd, entrypoint) with real liveness, unlike ps|grep.
 function pidAlive(pid) {
-  try { process.kill(pid, 0); return true; }
-  catch (e) { return e && e.code === 'EPERM'; }
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return e && e.code === 'EPERM';
+  }
 }
 function claudeInstances(home) {
   const fs = _fs;
   const path = _path;
   const dir = path.join(home, '.claude', 'sessions');
   let files;
-  try { files = fs.readdirSync(dir); } catch (e) { return []; }
+  try {
+    files = fs.readdirSync(dir);
+  } catch (e) {
+    return [];
+  }
   const out = [];
   files.forEach(function (f) {
     if (!/^[0-9]+\.json$/.test(f)) return;
@@ -82,7 +115,9 @@ function claudeInstances(home) {
       if (j && j.pid && pidAlive(j.pid)) {
         out.push({ pid: j.pid, cwd: j.cwd || null, entrypoint: j.entrypoint || 'cli', kind: j.kind || null });
       }
-    } catch (e) { /* skip unreadable */ }
+    } catch (e) {
+      /* skip unreadable */
+    }
   });
   return out;
 }

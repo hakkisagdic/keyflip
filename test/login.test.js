@@ -12,14 +12,22 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-function tmp() { return fs.mkdtempSync(path.join(os.tmpdir(), 'keyflip-login-')); }
+function tmp() {
+  return fs.mkdtempSync(path.join(os.tmpdir(), 'keyflip-login-'));
+}
 
 test('buildLoginArgs wires --sso / --console / --email into `claude auth login` (#7)', function () {
   assert.deepStrictEqual(login.buildLoginArgs({}), ['auth', 'login', '--claudeai']);
   assert.deepStrictEqual(login.buildLoginArgs({ sso: true }), ['auth', 'login', '--claudeai', '--sso']);
   assert.deepStrictEqual(login.buildLoginArgs({ useConsole: true }), ['auth', 'login', '--console']);
-  assert.deepStrictEqual(login.buildLoginArgs({ sso: true, useConsole: true, email: 'you@corp.com' }),
-    ['auth', 'login', '--console', '--sso', '--email', 'you@corp.com']);
+  assert.deepStrictEqual(login.buildLoginArgs({ sso: true, useConsole: true, email: 'you@corp.com' }), [
+    'auth',
+    'login',
+    '--console',
+    '--sso',
+    '--email',
+    'you@corp.com',
+  ]);
   // no --sso unless asked — guards against the flag silently drifting off
   assert.strictEqual(login.buildLoginArgs({ email: 'a@b.c' }).indexOf('--sso'), -1);
 });
@@ -40,7 +48,10 @@ test('validBlob accepts a real OAuth blob, rejects junk and empty tokens', funct
 
 test('readIsolatedCredential reads the isolated .credentials.json; null when absent', function () {
   const d = tmp();
-  fs.writeFileSync(path.join(d, '.credentials.json'), JSON.stringify({ claudeAiOauth: { accessToken: 'tok123', refreshToken: 'r' } }));
+  fs.writeFileSync(
+    path.join(d, '.credentials.json'),
+    JSON.stringify({ claudeAiOauth: { accessToken: 'tok123', refreshToken: 'r' } }),
+  );
   const got = login.readIsolatedCredential(d, { platform: 'linux' });
   assert.ok(got && JSON.parse(got).claudeAiOauth.accessToken === 'tok123');
   assert.strictEqual(login.readIsolatedCredential(tmp(), { platform: 'linux' }), null);
@@ -61,7 +72,9 @@ test('readIsolatedCredential falls back to the hashed Keychain on macOS', functi
 });
 
 test('parseAuthStatus extracts identity fields', function () {
-  const st = login.parseAuthStatus(JSON.stringify({ loggedIn: true, email: 'a@x.com', orgId: 'o1', orgName: 'Org', subscriptionType: 'max' }));
+  const st = login.parseAuthStatus(
+    JSON.stringify({ loggedIn: true, email: 'a@x.com', orgId: 'o1', orgName: 'Org', subscriptionType: 'max' }),
+  );
   assert.deepStrictEqual(st, { email: 'a@x.com', orgId: 'o1', orgName: 'Org', plan: 'max', loggedIn: true });
   assert.strictEqual(login.parseAuthStatus('garbage'), null);
 });
@@ -76,6 +89,9 @@ test('`keyflip login` refuses in --json mode (interactive/browser)', function ()
 test('extractCode pulls the OAuth code from a bare code or a redirect URL', function () {
   assert.strictEqual(login.extractCode('ABC123'), 'ABC123');
   assert.strictEqual(login.extractCode('  spaced-code  '), 'spaced-code');
-  assert.strictEqual(login.extractCode('https://platform.claude.com/oauth/code/callback?code=XYZ%2F789&state=s'), 'XYZ/789');
+  assert.strictEqual(
+    login.extractCode('https://platform.claude.com/oauth/code/callback?code=XYZ%2F789&state=s'),
+    'XYZ/789',
+  );
   assert.strictEqual(login.extractCode('https://x/cb?state=s&code=CODE9&foo=1'), 'CODE9');
 });

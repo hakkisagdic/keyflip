@@ -64,8 +64,12 @@ function parseBody(rawBody) {
   if (!s) return {};
   const trimmed = s.trimStart();
   if (trimmed[0] === '{') {
-    try { const o = JSON.parse(trimmed); if (o && typeof o === 'object' && !Array.isArray(o)) return o; }
-    catch (e) { /* fall through to form parsing */ }
+    try {
+      const o = JSON.parse(trimmed);
+      if (o && typeof o === 'object' && !Array.isArray(o)) return o;
+    } catch (e) {
+      /* fall through to form parsing */
+    }
   }
   const out = {};
   const params = new URLSearchParams(s);

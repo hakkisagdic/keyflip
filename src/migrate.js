@@ -31,17 +31,27 @@ function isMemoryRel(rel) {
   return false;
 }
 const VERSION = 1;
-const PROVIDER_KEY = function (name) { return 'provider__' + name; };
+const PROVIDER_KEY = function (name) {
+  return 'provider__' + name;
+};
 
-function projectsDir(ctx) { return path.join(ctx.claudeDir, 'projects'); }
+function projectsDir(ctx) {
+  return path.join(ctx.claudeDir, 'projects');
+}
 
 // A single path segment that must stay under projects/ — reject traversal from an
 // untrusted bundle (no separators, no '..', no NUL).
 function isSafeSegment(s) {
-  return typeof s === 'string' && s.length > 0 &&
-    s.indexOf('/') === -1 && s.indexOf('\\') === -1 && s.indexOf('\0') === -1 &&
+  return (
+    typeof s === 'string' &&
+    s.length > 0 &&
+    s.indexOf('/') === -1 &&
+    s.indexOf('\\') === -1 &&
+    s.indexOf('\0') === -1 &&
     s.indexOf(':') === -1 && // Windows drive letter / NTFS alternate-data-stream
-    s !== '..' && s !== '.';
+    s !== '..' &&
+    s !== '.'
+  );
 }
 
 // Collect every Claude Code transcript as { project, sessionId, content }.
@@ -49,16 +59,35 @@ function collectTranscripts(ctx) {
   const out = [];
   const root = projectsDir(ctx);
   let projects;
-  try { projects = fs.readdirSync(root); } catch (e) { return out; }
+  try {
+    projects = fs.readdirSync(root);
+  } catch (e) {
+    return out;
+  }
   projects.forEach(function (proj) {
     const dir = path.join(root, proj);
-    let stat; try { stat = fs.statSync(dir); } catch (e) { return; }
+    let stat;
+    try {
+      stat = fs.statSync(dir);
+    } catch (e) {
+      return;
+    }
     if (!stat.isDirectory()) return;
-    let files; try { files = fs.readdirSync(dir); } catch (e) { return; }
+    let files;
+    try {
+      files = fs.readdirSync(dir);
+    } catch (e) {
+      return;
+    }
     files.forEach(function (f) {
       if (f.slice(-6) !== '.jsonl') return;
       const sessionId = f.slice(0, -6);
-      let content; try { content = fs.readFileSync(path.join(dir, f), 'utf8'); } catch (e) { return; }
+      let content;
+      try {
+        content = fs.readFileSync(path.join(dir, f), 'utf8');
+      } catch (e) {
+        return;
+      }
       out.push({ project: proj, sessionId: sessionId, content: content });
     });
   });
@@ -69,37 +98,59 @@ function collectTranscripts(ctx) {
 // search, or age. No filter set → all of them (collectTranscripts). Filters compose (AND).
 function collectTranscriptsFiltered(ctx, opts) {
   opts = opts || {};
-  const ids = (opts.sessions && opts.sessions.length) ? opts.sessions : null;
+  const ids = opts.sessions && opts.sessions.length ? opts.sessions : null;
   const hasFilter = ids || opts.search || opts.newerThanDays || opts.olderThanDays;
   if (!hasFilter) return collectTranscripts(ctx);
   const sessions = _sessions;
   const now = opts.now || Date.now();
   const rows = sessions.list(ctx, { search: opts.search, limit: 100000 }).filter(function (r) {
-    if (ids && !ids.some(function (p) { return r.sessionId === p || r.sessionId.indexOf(p) === 0; })) return false;
+    if (
+      ids &&
+      !ids.some(function (p) {
+        return r.sessionId === p || r.sessionId.indexOf(p) === 0;
+      })
+    )
+      return false;
     if (opts.newerThanDays && r.mtimeMs < now - opts.newerThanDays * 86400000) return false;
     if (opts.olderThanDays && r.mtimeMs >= now - opts.olderThanDays * 86400000) return false;
     return true;
   });
   const out = [];
   rows.forEach(function (r) {
-    let content; try { content = fs.readFileSync(r.file, 'utf8'); } catch (e) { return; }
+    let content;
+    try {
+      content = fs.readFileSync(r.file, 'utf8');
+    } catch (e) {
+      return;
+    }
     out.push({ project: r.project, sessionId: r.sessionId, content: content });
   });
   return out;
 }
 
-function claudeDir(ctx) { return ctx.claudeDir || path.join(ctx.home, '.claude'); }
+function claudeDir(ctx) {
+  return ctx.claudeDir || path.join(ctx.home, '.claude');
+}
 
 // Enumerate files under a dir (bounded), returning absolute paths.
 function walkFiles(dir, budget) {
-  const out = []; let left = budget || 300;
+  const out = [];
+  let left = budget || 300;
   (function rec(d) {
     if (left <= 0) return;
-    let ents; try { ents = fs.readdirSync(d, { withFileTypes: true }); } catch (e) { return; }
+    let ents;
+    try {
+      ents = fs.readdirSync(d, { withFileTypes: true });
+    } catch (e) {
+      return;
+    }
     for (let i = 0; i < ents.length && left > 0; i++) {
       const p = path.join(d, ents[i].name);
       if (ents[i].isDirectory()) rec(p);
-      else if (ents[i].isFile()) { out.push(p); left--; }
+      else if (ents[i].isFile()) {
+        out.push(p);
+        left--;
+      }
     }
   })(dir);
   return out;
@@ -112,14 +163,39 @@ function collectMemory(ctx) {
   const root = claudeDir(ctx);
   const out = [];
   const push = function (abs) {
-    let content; try { content = fs.readFileSync(abs, 'utf8'); } catch (e) { return; }
+    let content;
+    try {
+      content = fs.readFileSync(abs, 'utf8');
+    } catch (e) {
+      return;
+    }
     out.push({ rel: path.relative(root, abs), content: content });
   };
-  let top; try { top = fs.readdirSync(root); } catch (e) { top = []; }
-  top.forEach(function (f) { if (f.slice(-3) === '.md') { try { if (fs.statSync(path.join(root, f)).isFile()) push(path.join(root, f)); } catch (e) { /* ignore */ } } });
+  let top;
+  try {
+    top = fs.readdirSync(root);
+  } catch (e) {
+    top = [];
+  }
+  top.forEach(function (f) {
+    if (f.slice(-3) === '.md') {
+      try {
+        if (fs.statSync(path.join(root, f)).isFile()) push(path.join(root, f));
+      } catch (e) {
+        /* ignore */
+      }
+    }
+  });
   const proj = path.join(root, 'projects');
-  let dirs; try { dirs = fs.readdirSync(proj); } catch (e) { dirs = []; }
-  dirs.forEach(function (d) { walkFiles(path.join(proj, d, 'memory'), 200).forEach(push); });
+  let dirs;
+  try {
+    dirs = fs.readdirSync(proj);
+  } catch (e) {
+    dirs = [];
+  }
+  dirs.forEach(function (d) {
+    walkFiles(path.join(proj, d, 'memory'), 200).forEach(push);
+  });
   return out;
 }
 
@@ -128,32 +204,64 @@ function collectMemory(ctx) {
 function mergeMemory(ctx, list, opts) {
   opts = opts || {};
   const root = claudeDir(ctx);
-  let added = 0, kept = 0, overwritten = 0, skipped = 0;
+  let added = 0,
+    kept = 0,
+    overwritten = 0,
+    skipped = 0;
   (list || []).forEach(function (m) {
-    if (!m || typeof m.content !== 'string' || typeof m.rel !== 'string') { skipped++; return; }
-    if (!isMemoryRel(m.rel)) { skipped++; return; } // only legitimate memory locations (no config injection)
+    if (!m || typeof m.content !== 'string' || typeof m.rel !== 'string') {
+      skipped++;
+      return;
+    }
+    if (!isMemoryRel(m.rel)) {
+      skipped++;
+      return;
+    } // only legitimate memory locations (no config injection)
     const dest = path.resolve(root, m.rel);
-    if (!fsutil.safeDestUnder(root, dest).ok) { skipped++; return; } // lexical + symlink escape guard
+    if (!fsutil.safeDestUnder(root, dest).ok) {
+      skipped++;
+      return;
+    } // lexical + symlink escape guard
     const exists = fs.existsSync(dest);
-    if (exists && !opts.force) { kept++; return; }
-    try { fsutil.atomicWrite(dest, m.content); if (exists) overwritten++; else added++; }
-    catch (e) { skipped++; }
+    if (exists && !opts.force) {
+      kept++;
+      return;
+    }
+    try {
+      fsutil.atomicWrite(dest, m.content);
+      if (exists) overwritten++;
+      else added++;
+    } catch (e) {
+      skipped++;
+    }
   });
   return { added: added, kept: kept, overwritten: overwritten, skipped: skipped, total: (list || []).length };
 }
 
-function readFileOrNull(p) { try { return fs.readFileSync(p, 'utf8'); } catch (e) { return null; } }
+function readFileOrNull(p) {
+  try {
+    return fs.readFileSync(p, 'utf8');
+  } catch (e) {
+    return null;
+  }
+}
 
 // J2/J3: portable CONFIG that makes a new machine ready — keyflip's MCP registry
 // (command/args/env per server; env may hold secrets, so the bundle must be encrypted),
 // Claude Code's settings.json/settings.local.json, and Claude Desktop's MCP config.
 function collectConfig(ctx) {
   const cfg = {};
-  const reg = readFileOrNull(path.join(ctx.configDir, 'mcp-registry.json')); if (reg) cfg.mcpRegistry = reg;
+  const reg = readFileOrNull(path.join(ctx.configDir, 'mcp-registry.json'));
+  if (reg) cfg.mcpRegistry = reg;
   const cd = claudeDir(ctx);
-  const s = readFileOrNull(path.join(cd, 'settings.json')); if (s) cfg.claudeSettings = s;
-  const sl = readFileOrNull(path.join(cd, 'settings.local.json')); if (sl) cfg.claudeSettingsLocal = sl;
-  if (ctx.appDataDir) { const dc = readFileOrNull(path.join(ctx.appDataDir, 'claude_desktop_config.json')); if (dc) cfg.desktopMcp = dc; }
+  const s = readFileOrNull(path.join(cd, 'settings.json'));
+  if (s) cfg.claudeSettings = s;
+  const sl = readFileOrNull(path.join(cd, 'settings.local.json'));
+  if (sl) cfg.claudeSettingsLocal = sl;
+  if (ctx.appDataDir) {
+    const dc = readFileOrNull(path.join(ctx.appDataDir, 'claude_desktop_config.json'));
+    if (dc) cfg.desktopMcp = dc;
+  }
   return cfg;
 }
 
@@ -167,18 +275,46 @@ function mergeConfig(ctx, config, opts) {
     if (content == null) return;
     if (!fsutil.safeDestUnder(path.dirname(abs), abs).ok) return; // never follow a symlinked config leaf
     const exists = fs.existsSync(abs);
-    if (exists && !opts.force) { out.kept.push(label); return; }
-    try { fsutil.atomicWrite(abs, content, 0o600); out.written.push(label); }
-    catch (e) { /* skip */ }
+    if (exists && !opts.force) {
+      out.kept.push(label);
+      return;
+    }
+    try {
+      fsutil.atomicWrite(abs, content, 0o600);
+      out.written.push(label);
+    } catch (e) {
+      /* skip */
+    }
   };
   if (config.mcpRegistry != null) {
     const dest = path.join(ctx.configDir, 'mcp-registry.json');
-    let merged = {}; try { merged = JSON.parse(fs.readFileSync(dest, 'utf8')) || {}; } catch (e) { merged = {}; }
-    let incoming = {}; try { incoming = JSON.parse(config.mcpRegistry) || {}; } catch (e) { incoming = {}; }
+    let merged = {};
+    try {
+      merged = JSON.parse(fs.readFileSync(dest, 'utf8')) || {};
+    } catch (e) {
+      merged = {};
+    }
+    let incoming = {};
+    try {
+      incoming = JSON.parse(config.mcpRegistry) || {};
+    } catch (e) {
+      incoming = {};
+    }
     let added = 0;
-    Object.keys(incoming).forEach(function (k) { if (!merged[k] || opts.force) { merged[k] = incoming[k]; added++; } });
-    if (added && fsutil.safeDestUnder(path.dirname(dest), dest).ok) { try { fsutil.atomicWrite(dest, JSON.stringify(merged, null, 2), 0o600); out.written.push('mcp-registry(+' + added + ')'); } catch (e) { /* skip */ } }
-    else out.kept.push('mcp-registry');
+    Object.keys(incoming).forEach(function (k) {
+      if (!merged[k] || opts.force) {
+        merged[k] = incoming[k];
+        added++;
+      }
+    });
+    if (added && fsutil.safeDestUnder(path.dirname(dest), dest).ok) {
+      try {
+        fsutil.atomicWrite(dest, JSON.stringify(merged, null, 2), 0o600);
+        out.written.push('mcp-registry(+' + added + ')');
+      } catch (e) {
+        /* skip */
+      }
+    } else out.kept.push('mcp-registry');
   }
   const cd = claudeDir(ctx);
   put(path.join(cd, 'settings.json'), config.claudeSettings, 'claude-settings');
@@ -192,7 +328,11 @@ function collectProviders(ctx) {
   return provider.list(ctx).map(function (name) {
     const meta = provider.read(ctx, name) || {};
     let key = null;
-    try { key = ctx.store.getProfile(PROVIDER_KEY(name)); } catch (e) { key = null; }
+    try {
+      key = ctx.store.getProfile(PROVIDER_KEY(name));
+    } catch (e) {
+      key = null;
+    }
     return { name: name, meta: meta, key: key };
   });
 }
@@ -201,13 +341,15 @@ function collectProviders(ctx) {
 function buildBundle(ctx, opts) {
   opts = opts || {};
   const ex = transfer.buildExport(ctx);
-  const accounts = opts.noAccounts ? [] : ex.envelope.accounts;                 // E2: --only-* filters
+  const accounts = opts.noAccounts ? [] : ex.envelope.accounts; // E2: --only-* filters
   const transcripts = opts.noSessions ? [] : collectTranscriptsFiltered(ctx, opts);
   const providers = opts.noProviders ? [] : collectProviders(ctx);
   const memory = opts.noMemory ? [] : collectMemory(ctx);
   const config = opts.noConfig ? {} : collectConfig(ctx);
   const agents = opts.agents ? _agents.collectAgentMemory(ctx, { only: opts.agentIds }) : []; // J1: opt-in
-  const agentConfig = opts.agentConfig ? _agents.collectAgentConfig(ctx, { only: opts.agentIds, redact: !opts.agentConfigSecrets }) : []; // J1 config-tier (redacted unless opted in)
+  const agentConfig = opts.agentConfig
+    ? _agents.collectAgentConfig(ctx, { only: opts.agentIds, redact: !opts.agentConfigSecrets })
+    : []; // J1 config-tier (redacted unless opted in)
   const bundle = {
     format: FORMAT,
     version: VERSION,
@@ -223,7 +365,15 @@ function buildBundle(ctx, opts) {
   return {
     bundle: bundle,
     skippedAccounts: opts.noAccounts ? [] : ex.skipped,
-    counts: { accounts: accounts.length, providers: providers.length, transcripts: transcripts.length, memory: memory.length, config: Object.keys(config).length, agents: agents.length, agentConfig: agentConfig.length },
+    counts: {
+      accounts: accounts.length,
+      providers: providers.length,
+      transcripts: transcripts.length,
+      memory: memory.length,
+      config: Object.keys(config).length,
+      agents: agents.length,
+      agentConfig: agentConfig.length,
+    },
   };
 }
 
@@ -232,18 +382,33 @@ function buildBundle(ctx, opts) {
 function mergeTranscripts(ctx, list, opts) {
   opts = opts || {};
   const root = projectsDir(ctx);
-  let added = 0, kept = 0, overwritten = 0, skipped = 0;
+  let added = 0,
+    kept = 0,
+    overwritten = 0,
+    skipped = 0;
   (list || []).forEach(function (t) {
-    if (!t || typeof t.content !== 'string' || !isSafeSegment(t.project) || !isSafeSegment(t.sessionId)) { skipped++; return; }
+    if (!t || typeof t.content !== 'string' || !isSafeSegment(t.project) || !isSafeSegment(t.sessionId)) {
+      skipped++;
+      return;
+    }
     const dir = path.join(root, t.project);
     const file = path.join(dir, t.sessionId + '.jsonl');
-    if (!fsutil.safeDestUnder(root, file).ok) { skipped++; return; } // symlinked-project-dir escape guard
+    if (!fsutil.safeDestUnder(root, file).ok) {
+      skipped++;
+      return;
+    } // symlinked-project-dir escape guard
     const exists = fs.existsSync(file);
-    if (exists && !opts.force) { kept++; return; }
+    if (exists && !opts.force) {
+      kept++;
+      return;
+    }
     try {
       fsutil.atomicWrite(file, t.content);
-      if (exists) overwritten++; else added++;
-    } catch (e) { skipped++; }
+      if (exists) overwritten++;
+      else added++;
+    } catch (e) {
+      skipped++;
+    }
   });
   return { added: added, kept: kept, overwritten: overwritten, skipped: skipped, total: (list || []).length };
 }
@@ -253,7 +418,10 @@ function mergeTranscripts(ctx, list, opts) {
 function applyBundle(ctx, bundle, opts) {
   opts = opts || {};
   if (!bundle || bundle.format !== FORMAT) throw new Error('not a keyflip migrate bundle');
-  if (bundle.version !== VERSION) throw new Error('unsupported migrate bundle version ' + bundle.version + ' (this keyflip understands v' + VERSION + ')');
+  if (bundle.version !== VERSION)
+    throw new Error(
+      'unsupported migrate bundle version ' + bundle.version + ' (this keyflip understands v' + VERSION + ')',
+    );
 
   // Accounts: reuse transfer.applyImport's union semantics + validation by wrapping
   // them in an export envelope. Empty is allowed for a sessions-only migration.
@@ -263,16 +431,28 @@ function applyBundle(ctx, bundle, opts) {
   let accounts = { imported: [], skipped: [] };
   if (Array.isArray(bundle.accounts) && bundle.accounts.length) {
     try {
-      accounts = transfer.applyImport(ctx, {
-        format: transfer.FORMAT, version: transfer.VERSION, accounts: bundle.accounts,
-      }, { force: opts.force });
+      accounts = transfer.applyImport(
+        ctx,
+        {
+          format: transfer.FORMAT,
+          version: transfer.VERSION,
+          accounts: bundle.accounts,
+        },
+        { force: opts.force },
+      );
     } catch (e) {
       bundle.accounts.forEach(function (a) {
         try {
-          const r = transfer.applyImport(ctx, { format: transfer.FORMAT, version: transfer.VERSION, accounts: [a] }, { force: opts.force });
+          const r = transfer.applyImport(
+            ctx,
+            { format: transfer.FORMAT, version: transfer.VERSION, accounts: [a] },
+            { force: opts.force },
+          );
           accounts.imported.push.apply(accounts.imported, r.imported);
           accounts.skipped.push.apply(accounts.skipped, r.skipped);
-        } catch (e2) { accounts.skipped.push((a && a.name) || '(invalid account)'); }
+        } catch (e2) {
+          accounts.skipped.push((a && a.name) || '(invalid account)');
+        }
       });
     }
   }
@@ -280,8 +460,13 @@ function applyBundle(ctx, bundle, opts) {
   // Providers: add-or-skip (union); overwrite only with force.
   const providers = { imported: [], skipped: [] };
   (bundle.providers || []).forEach(function (p) {
-    if (!p || !p.name || !p.meta || !p.meta.baseUrl) { return; }
-    if (provider.exists(ctx, p.name) && !opts.force) { providers.skipped.push(p.name); return; }
+    if (!p || !p.name || !p.meta || !p.meta.baseUrl) {
+      return;
+    }
+    if (provider.exists(ctx, p.name) && !opts.force) {
+      providers.skipped.push(p.name);
+      return;
+    }
     try {
       provider.add(ctx, p.name, {
         baseUrl: p.meta.baseUrl,
@@ -291,7 +476,9 @@ function applyBundle(ctx, bundle, opts) {
         key: p.key || undefined,
       });
       providers.imported.push(p.name);
-    } catch (e) { providers.skipped.push(p.name); }
+    } catch (e) {
+      providers.skipped.push(p.name);
+    }
   });
 
   // Transcripts: the actual session MERGE.
@@ -301,15 +488,25 @@ function applyBundle(ctx, bundle, opts) {
   // Portable config (MCP registry + Claude/Desktop settings).
   const config = mergeConfig(ctx, bundle.config, opts);
   // J1: other agents' home-level memory (only if the bundle carried any).
-  const agents = (bundle.agents && bundle.agents.length)
-    ? _agents.mergeAgentMemory(ctx, bundle.agents, opts)
-    : { added: 0, kept: 0, overwritten: 0, skipped: 0, total: 0 };
+  const agents =
+    bundle.agents && bundle.agents.length
+      ? _agents.mergeAgentMemory(ctx, bundle.agents, opts)
+      : { added: 0, kept: 0, overwritten: 0, skipped: 0, total: 0 };
   // J1 config-tier: other agents' redacted config (re-redacted on the way in).
-  const agentConfig = (bundle.agentConfig && bundle.agentConfig.length)
-    ? _agents.mergeAgentConfig(ctx, bundle.agentConfig, opts)
-    : { added: 0, kept: 0, overwritten: 0, skipped: 0, total: 0 };
+  const agentConfig =
+    bundle.agentConfig && bundle.agentConfig.length
+      ? _agents.mergeAgentConfig(ctx, bundle.agentConfig, opts)
+      : { added: 0, kept: 0, overwritten: 0, skipped: 0, total: 0 };
 
-  return { accounts: accounts, providers: providers, transcripts: transcripts, memory: memory, config: config, agents: agents, agentConfig: agentConfig };
+  return {
+    accounts: accounts,
+    providers: providers,
+    transcripts: transcripts,
+    memory: memory,
+    config: config,
+    agents: agents,
+    agentConfig: agentConfig,
+  };
 }
 
 // --- cloud relay (option c): move the bundle over WebDAV, reusing sync's
@@ -319,7 +516,16 @@ async function pushBundle(ctx, o) {
   if (!o.passphrase) throw new Error('a passphrase is required (the bundle carries login secrets)');
   const sync = _sync;
   const built = buildBundle(ctx, o);
-  if (!built.counts.accounts && !built.counts.transcripts && !built.counts.providers && !built.counts.memory && !built.counts.config && !built.counts.agents && !built.counts.agentConfig) throw new Error('nothing to migrate (no accounts, providers, transcripts, or memory found)');
+  if (
+    !built.counts.accounts &&
+    !built.counts.transcripts &&
+    !built.counts.providers &&
+    !built.counts.memory &&
+    !built.counts.config &&
+    !built.counts.agents &&
+    !built.counts.agentConfig
+  )
+    throw new Error('nothing to migrate (no accounts, providers, transcripts, or memory found)');
   await sync.davPut(o, sync.encrypt(JSON.stringify(built.bundle), o.passphrase));
   return built.counts;
 }
@@ -330,8 +536,28 @@ async function pullBundle(ctx, o) {
   const raw = await sync.davGet(o);
   if (raw == null) return { found: false };
   let bundle;
-  try { bundle = JSON.parse(sync.decrypt(raw, o.passphrase)); } catch (e) { throw new Error(e.message); }
+  try {
+    bundle = JSON.parse(sync.decrypt(raw, o.passphrase));
+  } catch (e) {
+    throw new Error(e.message);
+  }
   return { found: true, bundle: bundle };
 }
 
-export { FORMAT, VERSION, buildBundle, applyBundle, pushBundle, pullBundle, mergeTranscripts, collectTranscripts, collectTranscriptsFiltered, collectProviders, collectMemory, mergeMemory, collectConfig, mergeConfig, isSafeSegment };
+export {
+  FORMAT,
+  VERSION,
+  buildBundle,
+  applyBundle,
+  pushBundle,
+  pullBundle,
+  mergeTranscripts,
+  collectTranscripts,
+  collectTranscriptsFiltered,
+  collectProviders,
+  collectMemory,
+  mergeMemory,
+  collectConfig,
+  mergeConfig,
+  isSafeSegment,
+};

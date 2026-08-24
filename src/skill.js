@@ -10,14 +10,25 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-function sourceDir() { return path.join(__dirname, '..', 'skills', 'keyflip'); }
-function installDir(ctx) { return path.join(ctx.home, '.claude', 'skills', 'keyflip'); }
-function backupsDir(ctx) { return path.join(ctx.configDir, 'skill-backups'); }
+function sourceDir() {
+  return path.join(__dirname, '..', 'skills', 'keyflip');
+}
+function installDir(ctx) {
+  return path.join(ctx.home, '.claude', 'skills', 'keyflip');
+}
+function backupsDir(ctx) {
+  return path.join(ctx.configDir, 'skill-backups');
+}
 
 function walk(dir, base, acc) {
-  base = base || dir; acc = acc || [];
+  base = base || dir;
+  acc = acc || [];
   let entries = [];
-  try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch (e) { return acc; }
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch (e) {
+    return acc;
+  }
   entries.forEach(function (e) {
     if (e.name[0] === '.') return; // skip hidden
     const p = path.join(dir, e.name);
@@ -31,14 +42,25 @@ function walk(dir, base, acc) {
 function fingerprint(dir) {
   const h = crypto.createHash('sha256');
   walk(dir).forEach(function (rel) {
-    h.update(rel); h.update('\0');
-    try { h.update(fs.readFileSync(path.join(dir, rel))); } catch (e) { /* */ }
+    h.update(rel);
+    h.update('\0');
+    try {
+      h.update(fs.readFileSync(path.join(dir, rel)));
+    } catch (e) {
+      /* */
+    }
     h.update('\0');
   });
   return h.digest('hex');
 }
 
-function isInstalled(ctx) { try { return fs.existsSync(path.join(installDir(ctx), 'SKILL.md')); } catch (e) { return false; } }
+function isInstalled(ctx) {
+  try {
+    return fs.existsSync(path.join(installDir(ctx), 'SKILL.md'));
+  } catch (e) {
+    return false;
+  }
+}
 
 // 'current' | 'stale' | 'absent'
 function status(ctx) {
@@ -51,12 +73,25 @@ function backupExisting(ctx) {
   if (!fs.existsSync(dest)) return null;
   fs.mkdirSync(backupsDir(ctx), { recursive: true });
   const b = path.join(backupsDir(ctx), 'keyflip-' + String(ctx.now()).replace(/[-:]/g, '').replace(/\..*$/, ''));
-  try { fs.cpSync(dest, b, { recursive: true }); } catch (e) { /* best effort */ }
+  try {
+    fs.cpSync(dest, b, { recursive: true });
+  } catch (e) {
+    /* best effort */
+  }
   // keep 20 most recent
   try {
-    const all = fs.readdirSync(backupsDir(ctx)).filter(function (n) { return n.indexOf('keyflip-') === 0; }).sort();
-    all.slice(0, Math.max(0, all.length - 20)).forEach(function (n) { fs.rmSync(path.join(backupsDir(ctx), n), { recursive: true, force: true }); });
-  } catch (e) { /* */ }
+    const all = fs
+      .readdirSync(backupsDir(ctx))
+      .filter(function (n) {
+        return n.indexOf('keyflip-') === 0;
+      })
+      .sort();
+    all.slice(0, Math.max(0, all.length - 20)).forEach(function (n) {
+      fs.rmSync(path.join(backupsDir(ctx), n), { recursive: true, force: true });
+    });
+  } catch (e) {
+    /* */
+  }
   return b;
 }
 
@@ -68,10 +103,18 @@ function install(ctx) {
   const dest = installDir(ctx);
   backupExisting(ctx);
   fs.mkdirSync(path.dirname(dest), { recursive: true });
-  try { fs.rmSync(dest, { recursive: true, force: true }); } catch (e) { /* */ }
+  try {
+    fs.rmSync(dest, { recursive: true, force: true });
+  } catch (e) {
+    /* */
+  }
   let mode = 'symlink';
-  try { fs.symlinkSync(src, dest, 'dir'); }
-  catch (e) { fs.cpSync(src, dest, { recursive: true }); mode = 'copy'; }
+  try {
+    fs.symlinkSync(src, dest, 'dir');
+  } catch (e) {
+    fs.cpSync(src, dest, { recursive: true });
+    mode = 'copy';
+  }
   return { dest: dest, mode: mode };
 }
 

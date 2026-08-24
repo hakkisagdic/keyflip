@@ -59,12 +59,16 @@ test('serve → pull round-trips the bundle over loopback with the right code', 
   seedTranscript(src, '-p', 's1', 'HELLO\n');
 
   const h = lan.serve(src, { host: '127.0.0.1', port: 0, discovery: false, ttlMs: 10000 });
-  await new Promise(function (r) { setTimeout(r, 50); }); // let it bind (port 0 -> real port)
+  await new Promise(function (r) {
+    setTimeout(r, 50);
+  }); // let it bind (port 0 -> real port)
   try {
     const bundle = await lan.pull({ host: '127.0.0.1:' + h.port, code: h.code });
     assert.strictEqual(bundle.accounts[0].cliCredentials, '{"token":"AAA"}');
     assert.strictEqual(bundle.transcripts[0].content, 'HELLO\n');
-  } finally { h.close('test-done'); }
+  } finally {
+    h.close('test-done');
+  }
   const done = await h.wait;
   assert.ok(done.reason === 'transferred' || done.reason === 'test-done');
 });
@@ -73,15 +77,23 @@ test('pull with the WRONG code is rejected', async function () {
   const src = ctxWithClaude();
   seedAccount(src, 'work', 'a@x.com', '{"token":"AAA"}');
   const h = lan.serve(src, { host: '127.0.0.1', port: 0, discovery: false, ttlMs: 10000 });
-  await new Promise(function (r) { setTimeout(r, 50); });
+  await new Promise(function (r) {
+    setTimeout(r, 50);
+  });
   try {
-    await assert.rejects(function () { return lan.pull({ host: '127.0.0.1:' + h.port, code: 'WRONGCOD' }); }, /rejected/);
-  } finally { h.close('test-done'); }
+    await assert.rejects(function () {
+      return lan.pull({ host: '127.0.0.1:' + h.port, code: 'WRONGCOD' });
+    }, /rejected/);
+  } finally {
+    h.close('test-done');
+  }
 });
 
 test('serve refuses when there is nothing to transfer', function () {
   const empty = ctxWithClaude();
-  assert.throws(function () { lan.serve(empty, { host: '127.0.0.1', port: 0, discovery: false }); }, /nothing to transfer/);
+  assert.throws(function () {
+    lan.serve(empty, { host: '127.0.0.1', port: 0, discovery: false });
+  }, /nothing to transfer/);
 });
 
 test('serve accepts an agents-ONLY bundle (regression: empty-check must include agents)', async function () {
@@ -90,14 +102,32 @@ test('serve accepts an agents-ONLY bundle (regression: empty-check must include 
   const rules = path.join(src.home, '.cursor', 'rules');
   fs.mkdirSync(rules, { recursive: true });
   fs.writeFileSync(path.join(rules, 'style.mdc'), '# be terse');
-  const h = lan.serve(src, { host: '127.0.0.1', port: 0, discovery: false, ttlMs: 10000,
-    agents: true, noAccounts: true, noSessions: true, noProviders: true, noMemory: true, noConfig: true });
-  await new Promise(function (r) { setTimeout(r, 50); });
+  const h = lan.serve(src, {
+    host: '127.0.0.1',
+    port: 0,
+    discovery: false,
+    ttlMs: 10000,
+    agents: true,
+    noAccounts: true,
+    noSessions: true,
+    noProviders: true,
+    noMemory: true,
+    noConfig: true,
+  });
+  await new Promise(function (r) {
+    setTimeout(r, 50);
+  });
   try {
     assert.ok(h.counts.agents >= 1, 'the served bundle carries the agent memory');
     const bundle = await lan.pull({ host: '127.0.0.1:' + h.port, code: h.code });
-    assert.ok((bundle.agents || []).some(function (a) { return a.rel.indexOf('style.mdc') !== -1; }));
-  } finally { h.close('test-done'); }
+    assert.ok(
+      (bundle.agents || []).some(function (a) {
+        return a.rel.indexOf('style.mdc') !== -1;
+      }),
+    );
+  } finally {
+    h.close('test-done');
+  }
 });
 
 test('serve fingerprint is a RANDOM per-serve nonce, not derived from the code', function () {
@@ -109,32 +139,71 @@ test('serve fingerprint is a RANDOM per-serve nonce, not derived from the code',
   try {
     assert.notStrictEqual(a.fingerprint, lan.fingerprint('FIXEDCOD'), 'fp must not be the code digest');
     assert.notStrictEqual(a.fingerprint, b.fingerprint, 'two serves with the same code get different fps');
-  } finally { a.close('t'); b.close('t'); }
+  } finally {
+    a.close('t');
+    b.close('t');
+  }
 });
 
 // ---- E3: push -> serveReceive (reverse direction) ----
 
 test('E3: push -> serveReceive round-trips a bundle over loopback', async function () {
   let received = null;
-  const h = lan.serveReceive({}, { host: '127.0.0.1', port: 0, discovery: false, ttlMs: 10000,
-    onBundle: function (b) { received = b; return { accounts: (b.accounts || []).length, transcripts: 0, memory: 0 }; } });
-  await new Promise(function (r) { setTimeout(r, 60); });
+  const h = lan.serveReceive(
+    {},
+    {
+      host: '127.0.0.1',
+      port: 0,
+      discovery: false,
+      ttlMs: 10000,
+      onBundle: function (b) {
+        received = b;
+        return { accounts: (b.accounts || []).length, transcripts: 0, memory: 0 };
+      },
+    },
+  );
+  await new Promise(function (r) {
+    setTimeout(r, 60);
+  });
   try {
-    const resp = await lan.push({ host: '127.0.0.1:' + h.port, code: h.code, bundle: { format: 'keyflip-migrate', accounts: [{ name: 'work' }], transcripts: [] } });
+    const resp = await lan.push({
+      host: '127.0.0.1:' + h.port,
+      code: h.code,
+      bundle: { format: 'keyflip-migrate', accounts: [{ name: 'work' }], transcripts: [] },
+    });
     assert.strictEqual(resp.ok, true);
     assert.strictEqual(resp.summary.accounts, 1);
     assert.ok(received && received.accounts[0].name === 'work', 'the receiver got the pushed bundle');
-  } finally { h.close('test-done'); }
+  } finally {
+    h.close('test-done');
+  }
   const done = await h.wait;
   assert.ok(done.reason === 'received' || done.reason === 'test-done');
 });
 
 test('E3: push with the WRONG code is rejected', async function () {
-  const h = lan.serveReceive({}, { host: '127.0.0.1', port: 0, discovery: false, ttlMs: 10000, onBundle: function () { return {}; } });
-  await new Promise(function (r) { setTimeout(r, 60); });
+  const h = lan.serveReceive(
+    {},
+    {
+      host: '127.0.0.1',
+      port: 0,
+      discovery: false,
+      ttlMs: 10000,
+      onBundle: function () {
+        return {};
+      },
+    },
+  );
+  await new Promise(function (r) {
+    setTimeout(r, 60);
+  });
   try {
-    await assert.rejects(function () { return lan.push({ host: '127.0.0.1:' + h.port, code: 'WRONGCOD', bundle: {} }); }, /rejected/);
-  } finally { h.close('t'); }
+    await assert.rejects(function () {
+      return lan.push({ host: '127.0.0.1:' + h.port, code: 'WRONGCOD', bundle: {} });
+    }, /rejected/);
+  } finally {
+    h.close('t');
+  }
 });
 
 // SECURITY (review #15): the maxAttempts rate-limiter is the online-guessing defense. Exercise
@@ -143,9 +212,15 @@ test('serve shuts down after maxAttempts bad codes (blunts online code guessing)
   const src = ctxWithClaude();
   seedAccount(src, 'work', 'a@x.com', '{"token":"AAA"}');
   const h = lan.serve(src, { host: '127.0.0.1', port: 0, discovery: false, ttlMs: 10000, maxAttempts: 2 });
-  await new Promise(function (r) { setTimeout(r, 50); });
-  await assert.rejects(function () { return lan.pull({ host: '127.0.0.1:' + h.port, code: 'BADCODE1' }); }, /rejected/);
-  await assert.rejects(function () { return lan.pull({ host: '127.0.0.1:' + h.port, code: 'BADCODE2' }); }, /rejected/);
+  await new Promise(function (r) {
+    setTimeout(r, 50);
+  });
+  await assert.rejects(function () {
+    return lan.pull({ host: '127.0.0.1:' + h.port, code: 'BADCODE1' });
+  }, /rejected/);
+  await assert.rejects(function () {
+    return lan.pull({ host: '127.0.0.1:' + h.port, code: 'BADCODE2' });
+  }, /rejected/);
   const done = await h.wait;
   assert.strictEqual(done.reason, 'too many bad codes');
 });
@@ -158,13 +233,31 @@ test('the served bundle is encrypted on the wire (raw body never contains the pl
   const src = ctxWithClaude();
   seedAccount(src, 'work', 'a@x.com', '{"token":"SUPERSECRET-OAUTH"}');
   const h = lan.serve(src, { host: '127.0.0.1', port: 0, discovery: false, ttlMs: 10000 });
-  await new Promise(function (r) { setTimeout(r, 50); });
+  await new Promise(function (r) {
+    setTimeout(r, 50);
+  });
   const raw = await new Promise(function (resolve, reject) {
     const payload = JSON.stringify({ code: h.code });
-    const req = http.request({ host: '127.0.0.1', port: h.port, path: '/pull', method: 'POST',
-      headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(payload) } },
-      function (res) { let b = ''; res.on('data', function (d) { b += d; }); res.on('end', function () { resolve(b); }); });
-    req.on('error', reject); req.end(payload);
+    const req = http.request(
+      {
+        host: '127.0.0.1',
+        port: h.port,
+        path: '/pull',
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(payload) },
+      },
+      function (res) {
+        let b = '';
+        res.on('data', function (d) {
+          b += d;
+        });
+        res.on('end', function () {
+          resolve(b);
+        });
+      },
+    );
+    req.on('error', reject);
+    req.end(payload);
   });
   assert.strictEqual(raw.indexOf('SUPERSECRET-OAUTH'), -1, 'the secret must NOT appear in cleartext on the wire');
   assert.strictEqual(raw.indexOf('AAA'), -1);
@@ -174,8 +267,13 @@ test('the served bundle is encrypted on the wire (raw body never contains the pl
 
 // G6: pairing URL that the QR encodes for `transfer serve --qr`.
 test('pairingUrl builds a keyflip://transfer link with host, port, code and fingerprint', function () {
-  assert.strictEqual(lan.pairingUrl('10.0.0.9', 8899, 'K7Q29FMR', 'A3F2'),
-    'keyflip://transfer?host=10.0.0.9:8899&code=K7Q29FMR&fp=A3F2');
-  assert.strictEqual(lan.pairingUrl('10.0.0.9', 8899, 'K7Q29FMR'),
-    'keyflip://transfer?host=10.0.0.9:8899&code=K7Q29FMR', 'fp is optional');
+  assert.strictEqual(
+    lan.pairingUrl('10.0.0.9', 8899, 'K7Q29FMR', 'A3F2'),
+    'keyflip://transfer?host=10.0.0.9:8899&code=K7Q29FMR&fp=A3F2',
+  );
+  assert.strictEqual(
+    lan.pairingUrl('10.0.0.9', 8899, 'K7Q29FMR'),
+    'keyflip://transfer?host=10.0.0.9:8899&code=K7Q29FMR',
+    'fp is optional',
+  );
 });

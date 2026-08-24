@@ -10,8 +10,11 @@ import os from 'os';
 import path from 'path';
 
 import * as relay from '../src/relayserver.js';
+import { assertPrivateMode } from './helpers.js';
 
-function tmpDir() { return fs.mkdtempSync(path.join(os.tmpdir(), 'kf-relay-')); }
+function tmpDir() {
+  return fs.mkdtempSync(path.join(os.tmpdir(), 'kf-relay-'));
+}
 
 // Minimal raw HTTP client. `rawPath` is sent verbatim (so traversal paths aren't
 // normalized by a URL builder). Body may be a Buffer/string.
@@ -20,23 +23,37 @@ function req(opts) {
     const headers = Object.assign({}, opts.headers);
     let body = opts.body;
     if (body != null && headers['content-length'] == null) headers['content-length'] = Buffer.byteLength(body);
-    const r = http.request({ host: '127.0.0.1', port: opts.port, method: opts.method, path: opts.path, headers: headers },
+    const r = http.request(
+      { host: '127.0.0.1', port: opts.port, method: opts.method, path: opts.path, headers: headers },
       function (res) {
         const chunks = [];
-        res.on('data', function (d) { chunks.push(d); });
-        res.on('end', function () { resolve({ status: res.statusCode, headers: res.headers, body: Buffer.concat(chunks) }); });
-      });
-    r.on('error', function (e) { reject(e); });
+        res.on('data', function (d) {
+          chunks.push(d);
+        });
+        res.on('end', function () {
+          resolve({ status: res.statusCode, headers: res.headers, body: Buffer.concat(chunks) });
+        });
+      },
+    );
+    r.on('error', function (e) {
+      reject(e);
+    });
     if (body != null) r.write(body);
     r.end();
   });
 }
 
-function basic(user, pass) { return 'Basic ' + Buffer.from(user + ':' + pass).toString('base64'); }
+function basic(user, pass) {
+  return 'Basic ' + Buffer.from(user + ':' + pass).toString('base64');
+}
 
 async function withServer(opts, fn) {
   const h = await relay.start(opts);
-  try { return await fn(h); } finally { await h.close(); }
+  try {
+    return await fn(h);
+  } finally {
+    await h.close();
+  }
 }
 
 test('PUT then GET round-trips the exact bytes', async function () {
@@ -49,8 +66,7 @@ test('PUT then GET round-trips the exact bytes', async function () {
     assert.strictEqual(get.status, 200);
     assert.ok(get.body.equals(payload), 'GET returns the identical bytes');
     // stored 0600 and inside the dir
-    const st = fs.statSync(path.join(dir, 'abc123'));
-    assert.strictEqual(st.mode & 0o777, 0o600);
+    assertPrivateMode(path.join(dir, 'abc123'));
     // overwrite -> 204
     const put2 = await req({ port: h.port, method: 'PUT', path: '/kf/abc123', body: Buffer.from('again') });
     assert.strictEqual(put2.status, 204);
@@ -127,7 +143,7 @@ test('path-traversal slots are rejected and write nothing outside the dir', asyn
     '/kf/%2e%2e%2fescape',
     '/kf/' + bigSlot,
     '/kf/', // empty slot
-    '/kf/sub%2fdir'
+    '/kf/sub%2fdir',
   ];
   await withServer({ dir: dir, host: '127.0.0.1', port: 0 }, async function (h) {
     for (let i = 0; i < attempts.length; i++) {
@@ -138,7 +154,9 @@ test('path-traversal slots are rejected and write nothing outside the dir', asyn
     // nothing escaped, and the store holds no blobs
     assert.strictEqual(fs.existsSync(sentinel), false, 'no file escaped the storage dir');
     assert.strictEqual(fs.existsSync('/tmp/PWNED'), false);
-    const live = fs.readdirSync(dir).filter(function (n) { return n[0] !== '.'; });
+    const live = fs.readdirSync(dir).filter(function (n) {
+      return n[0] !== '.';
+    });
     assert.deepStrictEqual(live, [], 'no blob was written for any traversal attempt');
   });
 });
@@ -177,18 +195,32 @@ test('oversized PUT is refused (both declared and streamed)', async function () 
 
     // streamed over the cap with a lying content-length -> socket destroyed, no file
     const err = await new Promise(function (resolve) {
-      const r = http.request({ host: '127.0.0.1', port: h.port, method: 'PUT', path: '/kf/big2',
-        headers: { 'content-length': '4' } }, function (res) { resolve({ status: res.statusCode }); });
-      r.on('error', function (e) { resolve({ error: e.code || e.message }); });
+      const r = http.request(
+        { host: '127.0.0.1', port: h.port, method: 'PUT', path: '/kf/big2', headers: { 'content-length': '4' } },
+        function (res) {
+          resolve({ status: res.statusCode });
+        },
+      );
+      r.on('error', function (e) {
+        resolve({ error: e.code || e.message });
+      });
       // write far more than 4 bytes / the cap; the server should kill the socket
       r.write(Buffer.alloc(64, 2));
       // give the server a beat to react, then try to finish
-      setTimeout(function () { try { r.end(); } catch (e) { /* ignore */ } }, 30);
+      setTimeout(function () {
+        try {
+          r.end();
+        } catch (e) {
+          /* ignore */
+        }
+      }, 30);
     });
     assert.ok(err.status === 413 || err.error, 'streamed overflow is 413 or a killed socket');
     assert.strictEqual(fs.existsSync(path.join(dir, 'big2')), false);
     // no temp files left behind either
-    const tmps = fs.readdirSync(dir).filter(function (n) { return n.indexOf('.tmp.') === 0; });
+    const tmps = fs.readdirSync(dir).filter(function (n) {
+      return n.indexOf('.tmp.') === 0;
+    });
     assert.deepStrictEqual(tmps, []);
   });
 });
@@ -210,24 +242,55 @@ test('maxBlobs cap returns 507 when the store is full', async function () {
 // AUTH — HTTP Basic, constant-time, no length oracle / no throw on mismatch.
 test('Basic auth: no creds -> 401, wrong creds -> 401, right creds -> 2xx', async function () {
   const dir = tmpDir();
-  await withServer({ dir: dir, host: '127.0.0.1', port: 0, auth: { user: 'relay', pass: 's3cret' } }, async function (h) {
-    const none = await req({ port: h.port, method: 'PUT', path: '/kf/x', body: 'z' });
-    assert.strictEqual(none.status, 401);
-    assert.ok(/Basic/.test(none.headers['www-authenticate']));
+  await withServer(
+    { dir: dir, host: '127.0.0.1', port: 0, auth: { user: 'relay', pass: 's3cret' } },
+    async function (h) {
+      const none = await req({ port: h.port, method: 'PUT', path: '/kf/x', body: 'z' });
+      assert.strictEqual(none.status, 401);
+      assert.ok(/Basic/.test(none.headers['www-authenticate']));
 
-    // wrong pass AND a different-length credential must both just 401 (no crash/throw)
-    const wrong = await req({ port: h.port, method: 'PUT', path: '/kf/x', body: 'z', headers: { authorization: basic('relay', 'nope') } });
-    assert.strictEqual(wrong.status, 401);
-    const wrongLen = await req({ port: h.port, method: 'PUT', path: '/kf/x', body: 'z', headers: { authorization: basic('a', 'b') } });
-    assert.strictEqual(wrongLen.status, 401, 'length mismatch does not throw, just fails');
-    const garbage = await req({ port: h.port, method: 'GET', path: '/kf/x', headers: { authorization: 'Basic not-base64!!' } });
-    assert.strictEqual(garbage.status, 401);
+      // wrong pass AND a different-length credential must both just 401 (no crash/throw)
+      const wrong = await req({
+        port: h.port,
+        method: 'PUT',
+        path: '/kf/x',
+        body: 'z',
+        headers: { authorization: basic('relay', 'nope') },
+      });
+      assert.strictEqual(wrong.status, 401);
+      const wrongLen = await req({
+        port: h.port,
+        method: 'PUT',
+        path: '/kf/x',
+        body: 'z',
+        headers: { authorization: basic('a', 'b') },
+      });
+      assert.strictEqual(wrongLen.status, 401, 'length mismatch does not throw, just fails');
+      const garbage = await req({
+        port: h.port,
+        method: 'GET',
+        path: '/kf/x',
+        headers: { authorization: 'Basic not-base64!!' },
+      });
+      assert.strictEqual(garbage.status, 401);
 
-    const ok = await req({ port: h.port, method: 'PUT', path: '/kf/x', body: 'z', headers: { authorization: basic('relay', 's3cret') } });
-    assert.strictEqual(ok.status, 201);
-    const okGet = await req({ port: h.port, method: 'GET', path: '/kf/x', headers: { authorization: basic('relay', 's3cret') } });
-    assert.strictEqual(okGet.status, 200);
-  });
+      const ok = await req({
+        port: h.port,
+        method: 'PUT',
+        path: '/kf/x',
+        body: 'z',
+        headers: { authorization: basic('relay', 's3cret') },
+      });
+      assert.strictEqual(ok.status, 201);
+      const okGet = await req({
+        port: h.port,
+        method: 'GET',
+        path: '/kf/x',
+        headers: { authorization: basic('relay', 's3cret') },
+      });
+      assert.strictEqual(okGet.status, 200);
+    },
+  );
 });
 
 // SAFE-BY-DEFAULT: refuse an open, writable store on a non-loopback interface.
@@ -250,7 +313,9 @@ test('refuses to bind a non-loopback host with no auth (unless allowUnauthentica
 test('TTL sweep removes blobs older than ttlMs (using the injectable clock)', async function () {
   const dir = tmpDir();
   let clock = 1000000;
-  const now = function () { return clock; };
+  const now = function () {
+    return clock;
+  };
   await withServer({ dir: dir, host: '127.0.0.1', port: 0, ttlMs: 1000, now: now }, async function (h) {
     await req({ port: h.port, method: 'PUT', path: '/kf/fresh', body: 'x' });
     // backdate the file well past the TTL
@@ -269,9 +334,13 @@ test('start() reports the actual ephemeral port and binds loopback', async funct
   try {
     assert.ok(h.port > 0 && h.port < 65536, 'a real bound port is reported');
     assert.strictEqual(h.host, '127.0.0.1');
-  } finally { await h.close(); }
+  } finally {
+    await h.close();
+  }
 });
 
 test('createHandler requires a storage dir', function () {
-  assert.throws(function () { relay.createHandler({}); }, /dir/);
+  assert.throws(function () {
+    relay.createHandler({});
+  }, /dir/);
 });

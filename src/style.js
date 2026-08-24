@@ -13,7 +13,9 @@ function make(stream, opts) {
   let on = colorEnabled(stream);
   if (opts && opts.color === false) on = false;
   const wrap = function (code) {
-    return function (s) { return on ? '\x1b[' + code + 'm' + s + '\x1b[0m' : String(s); };
+    return function (s) {
+      return on ? '\x1b[' + code + 'm' + s + '\x1b[0m' : String(s);
+    };
   };
   return {
     enabled: on,

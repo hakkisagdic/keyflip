@@ -44,7 +44,11 @@ function assertSecretReachedStdin(run) {
   const found = run.calls.some(function (c) {
     if (typeof c.input !== 'string' || !c.input) return false;
     if (c.input.indexOf(TOKEN) !== -1) return true;
-    try { return Buffer.from(c.input, 'base64').toString('utf8').indexOf(TOKEN) !== -1; } catch (e) { return false; }
+    try {
+      return Buffer.from(c.input, 'base64').toString('utf8').indexOf(TOKEN) !== -1;
+    } catch (e) {
+      return false;
+    }
   });
   assert.ok(found, 'the secret was delivered on stdin');
 }
@@ -73,10 +77,17 @@ function opEmu() {
     if (a[0] === 'item' && a[1] === 'delete') {
       const name = a[2].slice('keyflip/'.length);
       if (!Object.prototype.hasOwnProperty.call(store, name)) return { code: 1, stderr: 'not found' };
-      delete store[name]; return {};
+      delete store[name];
+      return {};
     }
     if (a[0] === 'item' && a[1] === 'list') {
-      return { stdout: JSON.stringify(Object.keys(store).map(function (n) { return { title: 'keyflip/' + n }; })) };
+      return {
+        stdout: JSON.stringify(
+          Object.keys(store).map(function (n) {
+            return { title: 'keyflip/' + n };
+          }),
+        ),
+      };
     }
     return { code: 1, stderr: 'unexpected op call' };
   });
@@ -101,7 +112,7 @@ function bwEmu() {
     if (a[0] === 'create' && a[1] === 'item') {
       const tmpl = JSON.parse(Buffer.from(call.input, 'base64').toString('utf8')); // secret on stdin (base64)
       const name = tmpl.name.slice('keyflip/'.length);
-      store[name] = { id: 'id-' + (++seq), notes: tmpl.notes };
+      store[name] = { id: 'id-' + ++seq, notes: tmpl.notes };
       return {};
     }
     if (a[0] === 'edit' && a[1] === 'item') {
@@ -111,12 +122,20 @@ function bwEmu() {
       return {};
     }
     if (a[0] === 'delete' && a[1] === 'item') {
-      const name = Object.keys(store).filter(function (n) { return store[n].id === a[2]; })[0];
+      const name = Object.keys(store).filter(function (n) {
+        return store[n].id === a[2];
+      })[0];
       if (name) delete store[name];
       return {};
     }
     if (a[0] === 'list' && a[1] === 'items') {
-      return { stdout: JSON.stringify(Object.keys(store).map(function (n) { return { name: 'keyflip/' + n }; })) };
+      return {
+        stdout: JSON.stringify(
+          Object.keys(store).map(function (n) {
+            return { name: 'keyflip/' + n };
+          }),
+        ),
+      };
     }
     return { code: 1, stderr: 'unexpected bw call' };
   });
@@ -129,7 +148,8 @@ function vaultEmu() {
     if (a[0] === 'version') return { stdout: 'Vault v1.15.0\n' };
     if (a[0] === 'kv' && a[1] === 'get') {
       const name = a[3].slice('secret/keyflip/'.length);
-      if (!Object.prototype.hasOwnProperty.call(store, name)) return { code: 2, stderr: 'No value found at secret/keyflip/' + name };
+      if (!Object.prototype.hasOwnProperty.call(store, name))
+        return { code: 2, stderr: 'No value found at secret/keyflip/' + name };
       return { stdout: store[name] + '\n' };
     }
     if (a[0] === 'kv' && a[1] === 'put') {
@@ -140,7 +160,8 @@ function vaultEmu() {
     }
     if (a[0] === 'kv' && a[1] === 'delete') {
       const name = a[2].slice('secret/keyflip/'.length);
-      delete store[name]; return {};
+      delete store[name];
+      return {};
     }
     if (a[0] === 'kv' && a[1] === 'list') {
       const names = Object.keys(store);
@@ -164,7 +185,9 @@ test('detect returns the available backends, in canonical order', function () {
 });
 
 test('probe reports absent vs available with a reason', function () {
-  const run = makeRun(function (call) { return call.cmd === 'op' ? { code: 0, stdout: '2.30.0' } : { code: 1, error: { code: 'ENOENT' } }; });
+  const run = makeRun(function (call) {
+    return call.cmd === 'op' ? { code: 0, stdout: '2.30.0' } : { code: 1, error: { code: 'ENOENT' } };
+  });
   assert.deepStrictEqual(vault.probe('op', { run: run }), { ok: true, version: '2.30.0' });
   const bad = vault.probe('bw', { run: run });
   assert.strictEqual(bad.ok, false);
@@ -221,20 +244,35 @@ test('locked/unauthenticated vault throws a clear EVAULT error (never a silent m
     vault: { code: 2, stderr: 'Error making API request. Code: 503. Errors: * Vault is sealed' },
   };
   ['op', 'bw', 'vault'].forEach(function (prov) {
-    const run = makeRun(function () { return locked[prov]; });
+    const run = makeRun(function () {
+      return locked[prov];
+    });
     const store = vault.makeStore(makeCtx(), { provider: prov, run: run });
-    assert.throws(function () { store.get('work'); }, function (e) {
-      return e.code === 'EVAULT' && /locked or not authenticated/i.test(e.message);
-    }, prov + ' get on a locked vault must throw');
+    assert.throws(
+      function () {
+        store.get('work');
+      },
+      function (e) {
+        return e.code === 'EVAULT' && /locked or not authenticated/i.test(e.message);
+      },
+      prov + ' get on a locked vault must throw',
+    );
   });
 });
 
 test('absent CLI throws an install hint (not ENOENT)', function () {
-  const run = makeRun(function () { return { code: 1, error: { code: 'ENOENT' } }; });
-  const store = vault.makeStore(makeCtx(), { provider: 'op', run: run });
-  assert.throws(function () { store.get('work'); }, function (e) {
-    return e.code === 'EVAULT' && /not found/.test(e.message) && /install/.test(e.message);
+  const run = makeRun(function () {
+    return { code: 1, error: { code: 'ENOENT' } };
   });
+  const store = vault.makeStore(makeCtx(), { provider: 'op', run: run });
+  assert.throws(
+    function () {
+      store.get('work');
+    },
+    function (e) {
+      return e.code === 'EVAULT' && /not found/.test(e.message) && /install/.test(e.message);
+    },
+  );
 });
 
 test('missing item is null on get, false on del, [] on list — not an error', function () {
@@ -255,8 +293,16 @@ test('invalid / prototype-polluting names are rejected before any spawn', functi
   const run = EMUS.op();
   const store = vault.makeStore(makeCtx(), { provider: 'op', run: run });
   ['__proto__', 'constructor', '../escape', 'has space', '-flag', '', 'a/b'].forEach(function (bad) {
-    assert.throws(function () { store.get(bad); }, /invalid credential name/, 'get rejects ' + JSON.stringify(bad));
-    assert.throws(function () { store.set(bad, SECRET); }, /invalid credential name/);
+    assert.throws(
+      function () {
+        store.get(bad);
+      },
+      /invalid credential name/,
+      'get rejects ' + JSON.stringify(bad),
+    );
+    assert.throws(function () {
+      store.set(bad, SECRET);
+    }, /invalid credential name/);
   });
   assert.strictEqual(run.calls.length, 0, 'no CLI was ever spawned for a bad name');
 });
@@ -264,7 +310,9 @@ test('invalid / prototype-polluting names are rejected before any spawn', functi
 test('a hostile item title cannot pollute list() output', function () {
   const run = makeRun(function (call) {
     if (call.args[0] === 'item' && call.args[1] === 'list') {
-      return { stdout: JSON.stringify([{ title: 'keyflip/__proto__' }, { title: 'keyflip/good' }, { title: 'unrelated' }]) };
+      return {
+        stdout: JSON.stringify([{ title: 'keyflip/__proto__' }, { title: 'keyflip/good' }, { title: 'unrelated' }]),
+      };
     }
     return {};
   });
@@ -273,23 +321,37 @@ test('a hostile item title cannot pollute list() output', function () {
 });
 
 test('makeStore rejects an unknown provider and empty blobs', function () {
-  assert.throws(function () { vault.makeStore(makeCtx(), { provider: 'lastpass' }); }, /unknown vault backend/);
-  assert.throws(function () { vault.makeStore(makeCtx(), { provider: '__proto__' }); }, /unknown vault backend/);
+  assert.throws(function () {
+    vault.makeStore(makeCtx(), { provider: 'lastpass' });
+  }, /unknown vault backend/);
+  assert.throws(function () {
+    vault.makeStore(makeCtx(), { provider: '__proto__' });
+  }, /unknown vault backend/);
   const store = vault.makeStore(makeCtx(), { provider: 'op', run: EMUS.op() });
-  assert.throws(function () { store.set('work', null); }, /empty credential blob/);
+  assert.throws(function () {
+    store.set('work', null);
+  }, /empty credential blob/);
 });
 
 test('live-credential ops are unsupported on the vault backend', function () {
   const store = vault.makeStore(makeCtx(), { provider: 'vault', run: EMUS.vault() });
-  assert.throws(function () { store.getLive(); }, /stores saved profiles only/);
-  assert.throws(function () { store.setLive('x'); }, /stores saved profiles only/);
-  assert.throws(function () { store.delLive(); }, /stores saved profiles only/);
+  assert.throws(function () {
+    store.getLive();
+  }, /stores saved profiles only/);
+  assert.throws(function () {
+    store.setLive('x');
+  }, /stores saved profiles only/);
+  assert.throws(function () {
+    store.delLive();
+  }, /stores saved profiles only/);
 });
 
 // ---- state file (use / off / status) ---------------------------------------
 test('use records the backend to <configDir>/vault.json; status reflects it', function () {
   const ctx = makeCtx();
-  const run = makeRun(function () { return { code: 0, stdout: 'v' }; }); // everything available
+  const run = makeRun(function () {
+    return { code: 0, stdout: 'v' };
+  }); // everything available
   const r = vault.use(ctx, 'op', { run: run });
   assert.strictEqual(r.backend, 'op');
   assert.strictEqual(r.updatedAt, '2026-01-01T00:00:00.000Z', 'uses injected ctx.now()');
@@ -303,22 +365,33 @@ test('use records the backend to <configDir>/vault.json; status reflects it', fu
 
 test('use refuses an unavailable backend unless forced', function () {
   const ctx = makeCtx();
-  const run = makeRun(function () { return { code: 1, error: { code: 'ENOENT' } }; });
-  assert.throws(function () { vault.use(ctx, 'bw', { run: run }); }, function (e) {
-    return e.code === 'EVAULT' && /not available/.test(e.message);
+  const run = makeRun(function () {
+    return { code: 1, error: { code: 'ENOENT' } };
   });
+  assert.throws(
+    function () {
+      vault.use(ctx, 'bw', { run: run });
+    },
+    function (e) {
+      return e.code === 'EVAULT' && /not available/.test(e.message);
+    },
+  );
   assert.strictEqual(vault.readState(ctx).backend, null, 'nothing recorded on failure');
   const r = vault.use(ctx, 'bw', { run: run, force: true });
   assert.strictEqual(r.backend, 'bw', 'force records it anyway');
 });
 
 test('use rejects an unknown provider', function () {
-  assert.throws(function () { vault.use(makeCtx(), 'keychain', { force: true }); }, /unknown vault backend/);
+  assert.throws(function () {
+    vault.use(makeCtx(), 'keychain', { force: true });
+  }, /unknown vault backend/);
 });
 
 test('off clears the backend but leaves stored secrets untouched', function () {
   const ctx = makeCtx();
-  const run = makeRun(function () { return { code: 0, stdout: 'v' }; });
+  const run = makeRun(function () {
+    return { code: 0, stdout: 'v' };
+  });
   vault.use(ctx, 'vault', { run: run });
   const r = vault.off(ctx);
   assert.strictEqual(r.backend, null);
@@ -340,7 +413,9 @@ test('readState survives a missing and a corrupt state file', function () {
 // ---- CLI dispatch ----------------------------------------------------------
 test('cli status / use / off return printable lines with no secrets', function () {
   const ctx = makeCtx();
-  const run = makeRun(function () { return { code: 0, stdout: 'v' }; });
+  const run = makeRun(function () {
+    return { code: 0, stdout: 'v' };
+  });
   let out = vault.cli(ctx, ['status'], { run: run });
   assert.strictEqual(out.action, 'status');
   assert.match(out.lines.join('\n'), /OFF/);
@@ -351,14 +426,20 @@ test('cli status / use / off return printable lines with no secrets', function (
   assert.strictEqual(out.data.backend, null);
   out = vault.cli(ctx, [], { run: run });
   assert.strictEqual(out.action, 'status', 'default subcommand is status');
-  assert.throws(function () { vault.cli(ctx, ['use'], { run: run }); }, /usage: keyflip vault use/);
-  assert.throws(function () { vault.cli(ctx, ['bogus'], { run: run }); }, /unknown: keyflip vault/);
+  assert.throws(function () {
+    vault.cli(ctx, ['use'], { run: run });
+  }, /usage: keyflip vault use/);
+  assert.throws(function () {
+    vault.cli(ctx, ['bogus'], { run: run });
+  }, /unknown: keyflip vault/);
 });
 
 // ---- MCP tools -------------------------------------------------------------
 test('MCP tools: status is RO; use/off are MUT and gated on confirm', function () {
   const byName = Object.create(null);
-  vault.tools.forEach(function (t) { byName[t.name] = t; });
+  vault.tools.forEach(function (t) {
+    byName[t.name] = t;
+  });
   assert.ok(byName.keyflip_vault_status && byName.keyflip_vault_use && byName.keyflip_vault_off);
   assert.strictEqual(byName.keyflip_vault_status.annotations.readOnlyHint, true);
   assert.strictEqual(byName.keyflip_vault_use.annotations.readOnlyHint, false);
@@ -368,9 +449,15 @@ test('MCP tools: status is RO; use/off are MUT and gated on confirm', function (
 
 test('MCP keyflip_vault_use requires confirm=true, then records the backend (ctx.run injected)', async function () {
   const ctx = makeCtx();
-  ctx.run = makeRun(function () { return { code: 0, stdout: 'v' }; }); // op looks installed
-  const useTool = vault.tools.filter(function (t) { return t.name === 'keyflip_vault_use'; })[0];
-  await assert.rejects(function () { return useTool.run(ctx, { provider: 'op' }); }, /confirmation required/);
+  ctx.run = makeRun(function () {
+    return { code: 0, stdout: 'v' };
+  }); // op looks installed
+  const useTool = vault.tools.filter(function (t) {
+    return t.name === 'keyflip_vault_use';
+  })[0];
+  await assert.rejects(function () {
+    return useTool.run(ctx, { provider: 'op' });
+  }, /confirmation required/);
   assert.strictEqual(vault.readState(ctx).backend, null, 'nothing recorded without confirm');
   const r = await useTool.run(ctx, { provider: 'op', confirm: true });
   assert.strictEqual(r.backend, 'op');
@@ -379,18 +466,28 @@ test('MCP keyflip_vault_use requires confirm=true, then records the backend (ctx
 
 test('MCP keyflip_vault_off requires confirm=true', async function () {
   const ctx = makeCtx();
-  ctx.run = makeRun(function () { return { code: 0, stdout: 'v' }; });
-  const offTool = vault.tools.filter(function (t) { return t.name === 'keyflip_vault_off'; })[0];
-  await assert.rejects(function () { return offTool.run(ctx, {}); }, /confirmation required/);
+  ctx.run = makeRun(function () {
+    return { code: 0, stdout: 'v' };
+  });
+  const offTool = vault.tools.filter(function (t) {
+    return t.name === 'keyflip_vault_off';
+  })[0];
+  await assert.rejects(function () {
+    return offTool.run(ctx, {});
+  }, /confirmation required/);
   const r = await offTool.run(ctx, { confirm: true });
   assert.strictEqual(r.backend, null);
 });
 
 test('MCP keyflip_vault_status returns the recorded backend (ctx.run injected — no real spawn)', async function () {
   const ctx = makeCtx();
-  ctx.run = makeRun(function (call) { return call.cmd === 'vault' ? { code: 0, stdout: 'Vault v1' } : { code: 1, error: { code: 'ENOENT' } }; });
+  ctx.run = makeRun(function (call) {
+    return call.cmd === 'vault' ? { code: 0, stdout: 'Vault v1' } : { code: 1, error: { code: 'ENOENT' } };
+  });
   vault.writeState(ctx, { backend: 'vault', settings: { vault: 'Private', mount: 'secret' }, updatedAt: ctx.now() });
-  const statusTool = vault.tools.filter(function (t) { return t.name === 'keyflip_vault_status'; })[0];
+  const statusTool = vault.tools.filter(function (t) {
+    return t.name === 'keyflip_vault_status';
+  })[0];
   const s = await statusTool.run(ctx, {});
   assert.strictEqual(s.backend, 'vault');
   assert.strictEqual(s.configured, true);

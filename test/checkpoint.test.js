@@ -9,7 +9,9 @@ import path from 'path';
 import * as checkpoint from '../src/checkpoint.js';
 import * as secretscan from '../src/secretscan.js';
 
-function tmpProject() { return fs.mkdtempSync(path.join(os.tmpdir(), 'keyflip-cp-')); }
+function tmpProject() {
+  return fs.mkdtempSync(path.join(os.tmpdir(), 'keyflip-cp-'));
+}
 
 // A fake `git` runner: canned branch/commit/dirty, no real subprocess.
 function fakeGit(over) {
@@ -19,20 +21,34 @@ function fakeGit(over) {
     const sub = (args || []).join(' ');
     if (/rev-parse --abbrev-ref HEAD/.test(sub)) return { code: 0, stdout: (over.branch || 'main') + '\n', stderr: '' };
     if (/rev-parse --short HEAD/.test(sub)) return { code: 0, stdout: (over.commit || 'a1b2c3d') + '\n', stderr: '' };
-    if (/status --porcelain/.test(sub)) return { code: 0, stdout: over.status != null ? over.status : ' M src/app.js\n?? new.txt\n', stderr: '' };
+    if (/status --porcelain/.test(sub))
+      return { code: 0, stdout: over.status != null ? over.status : ' M src/app.js\n?? new.txt\n', stderr: '' };
     return { code: 1, stdout: '', stderr: 'unknown' };
   };
 }
 // A runner for a directory that is NOT a git repo: everything fails.
-function noGit() { return function () { return { code: 128, stdout: '', stderr: 'not a git repository' }; }; }
+function noGit() {
+  return function () {
+    return { code: 128, stdout: '', stderr: 'not a git repository' };
+  };
+}
 
-const clockAt = function (iso) { return function () { return iso; }; };
+const clockAt = function (iso) {
+  return function () {
+    return iso;
+  };
+};
 
 test('create: records git state, redacts summary, writes <id>.json + latest.json', function () {
   const proj = tmpProject();
-  const cp = checkpoint.create(proj, { summary: 'wrapped up auth work', provider: 'work-account' }, {
-    run: fakeGit(), now: clockAt('2026-07-12T10:00:00.000Z'),
-  });
+  const cp = checkpoint.create(
+    proj,
+    { summary: 'wrapped up auth work', provider: 'work-account' },
+    {
+      run: fakeGit(),
+      now: clockAt('2026-07-12T10:00:00.000Z'),
+    },
+  );
 
   assert.strictEqual(cp.git.branch, 'main');
   assert.strictEqual(cp.git.commit, 'a1b2c3d');
@@ -63,14 +79,20 @@ test('parent chain: each checkpoint links to the previous latest, list is newest
   const proj = tmpProject();
   const c1 = checkpoint.create(proj, { summary: 'one' }, { run: fakeGit(), now: clockAt('2026-07-12T10:00:00.000Z') });
   const c2 = checkpoint.create(proj, { summary: 'two' }, { run: fakeGit(), now: clockAt('2026-07-12T11:00:00.000Z') });
-  const c3 = checkpoint.create(proj, { summary: 'three' }, { run: fakeGit(), now: clockAt('2026-07-12T12:00:00.000Z') });
+  const c3 = checkpoint.create(
+    proj,
+    { summary: 'three' },
+    { run: fakeGit(), now: clockAt('2026-07-12T12:00:00.000Z') },
+  );
 
   assert.strictEqual(c2.parent, c1.id);
   assert.strictEqual(c3.parent, c2.id);
   assert.notStrictEqual(c1.id, c2.id);
 
   assert.strictEqual(checkpoint.latest(proj).id, c3.id);
-  const ids = checkpoint.list(proj).map(function (c) { return c.id; });
+  const ids = checkpoint.list(proj).map(function (c) {
+    return c.id;
+  });
   assert.deepStrictEqual(ids, [c3.id, c2.id, c1.id], 'newest first');
 });
 
@@ -103,7 +125,11 @@ test('missing project: list/latest/get degrade to empty, never throw', function 
 
 test('non-git project: branch/commit null, dirty empty — still checkpoints', function () {
   const proj = tmpProject();
-  const cp = checkpoint.create(proj, { summary: 'not a repo' }, { run: noGit(), now: clockAt('2026-07-12T10:00:00.000Z') });
+  const cp = checkpoint.create(
+    proj,
+    { summary: 'not a repo' },
+    { run: noGit(), now: clockAt('2026-07-12T10:00:00.000Z') },
+  );
   assert.strictEqual(cp.git.branch, null);
   assert.strictEqual(cp.git.commit, null);
   assert.deepStrictEqual(cp.git.dirty, []);
@@ -111,21 +137,37 @@ test('non-git project: branch/commit null, dirty empty — still checkpoints', f
 
 test('rename entries in porcelain keep the new path', function () {
   const proj = tmpProject();
-  const cp = checkpoint.create(proj, { summary: 'x' }, {
-    run: fakeGit({ status: 'R  old.js -> src/renamed.js\n M keep.js\n' }),
-    now: clockAt('2026-07-12T10:00:00.000Z'),
-  });
+  const cp = checkpoint.create(
+    proj,
+    { summary: 'x' },
+    {
+      run: fakeGit({ status: 'R  old.js -> src/renamed.js\n M keep.js\n' }),
+      now: clockAt('2026-07-12T10:00:00.000Z'),
+    },
+  );
   assert.deepStrictEqual(cp.git.dirty, ['src/renamed.js', 'keep.js']);
 });
 
 test('contentHash is canonical: identical body -> identical hash, changed body -> changed hash', function () {
   const proj1 = tmpProject();
   const proj2 = tmpProject();
-  const a = checkpoint.create(proj1, { summary: 'same', provider: 'p' }, { run: fakeGit(), now: clockAt('2026-07-12T10:00:00.000Z') });
-  const b = checkpoint.create(proj2, { summary: 'same', provider: 'p' }, { run: fakeGit(), now: clockAt('2026-07-12T10:00:00.000Z') });
+  const a = checkpoint.create(
+    proj1,
+    { summary: 'same', provider: 'p' },
+    { run: fakeGit(), now: clockAt('2026-07-12T10:00:00.000Z') },
+  );
+  const b = checkpoint.create(
+    proj2,
+    { summary: 'same', provider: 'p' },
+    { run: fakeGit(), now: clockAt('2026-07-12T10:00:00.000Z') },
+  );
   assert.strictEqual(a.contentHash, b.contentHash, 'same body -> same hash (both parent=null)');
 
-  const c = checkpoint.create(proj1, { summary: 'DIFFERENT', provider: 'p' }, { run: fakeGit(), now: clockAt('2026-07-12T10:00:00.000Z') });
+  const c = checkpoint.create(
+    proj1,
+    { summary: 'DIFFERENT', provider: 'p' },
+    { run: fakeGit(), now: clockAt('2026-07-12T10:00:00.000Z') },
+  );
   assert.notStrictEqual(a.contentHash, c.contentHash, 'changed summary -> changed hash');
 });
 
@@ -135,14 +177,18 @@ const GH = 'ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
 
 test('secret leakage: summary prose, provider, and nested task fields are all redacted', function () {
   const proj = tmpProject();
-  const cp = checkpoint.create(proj, {
-    summary: 'shipped it; leaked key ' + ANTHROPIC + ' oops',
-    provider: 'relay ' + GH,
-    tasksSnapshot: [
-      { id: 't1', title: 'deploy', api_key: ANTHROPIC, note: 'token is ' + GH + ' keep' },
-      { id: 't2', title: 'ok', env: { NAME: 'ANTHROPIC_API_KEY' } }, // env VAR NAME must survive
-    ],
-  }, { run: fakeGit(), now: clockAt('2026-07-12T10:00:00.000Z') });
+  const cp = checkpoint.create(
+    proj,
+    {
+      summary: 'shipped it; leaked key ' + ANTHROPIC + ' oops',
+      provider: 'relay ' + GH,
+      tasksSnapshot: [
+        { id: 't1', title: 'deploy', api_key: ANTHROPIC, note: 'token is ' + GH + ' keep' },
+        { id: 't2', title: 'ok', env: { NAME: 'ANTHROPIC_API_KEY' } }, // env VAR NAME must survive
+      ],
+    },
+    { run: fakeGit(), now: clockAt('2026-07-12T10:00:00.000Z') },
+  );
 
   // the returned object
   const asText = JSON.stringify(cp);
@@ -168,10 +214,14 @@ test('secret leakage: summary prose, provider, and nested task fields are all re
 
 test('secret leakage: a secret in a git dirty path is redacted too', function () {
   const proj = tmpProject();
-  const cp = checkpoint.create(proj, { summary: 'x' }, {
-    run: fakeGit({ status: ' M creds-' + ANTHROPIC + '.txt\n' }),
-    now: clockAt('2026-07-12T10:00:00.000Z'),
-  });
+  const cp = checkpoint.create(
+    proj,
+    { summary: 'x' },
+    {
+      run: fakeGit({ status: ' M creds-' + ANTHROPIC + '.txt\n' }),
+      now: clockAt('2026-07-12T10:00:00.000Z'),
+    },
+  );
   assert.strictEqual(JSON.stringify(cp.git.dirty).indexOf(ANTHROPIC), -1, 'secret in a filename is masked');
 });
 
@@ -180,10 +230,18 @@ test('secret leakage: credential-keyed ARRAY values are redacted, not just strin
   // else a plaintext secret stored as an array element under a credential-shaped key slips through
   // (it is not token-SHAPED, so only the credential-KEY rule can catch it).
   const proj = tmpProject();
-  const cp = checkpoint.create(proj, {
-    summary: 'x',
-    tasksSnapshot: { password: ['hunter2'], api_key: ['AKIA-plaintext'], nested: { access_token: ['tok-plain'], secret: ['sk-plain'] } },
-  }, { run: fakeGit(), now: clockAt('2026-07-12T10:00:00.000Z') });
+  const cp = checkpoint.create(
+    proj,
+    {
+      summary: 'x',
+      tasksSnapshot: {
+        password: ['hunter2'],
+        api_key: ['AKIA-plaintext'],
+        nested: { access_token: ['tok-plain'], secret: ['sk-plain'] },
+      },
+    },
+    { run: fakeGit(), now: clockAt('2026-07-12T10:00:00.000Z') },
+  );
 
   const j = JSON.stringify(cp.tasksSnapshot);
   ['hunter2', 'AKIA-plaintext', 'tok-plain', 'sk-plain'].forEach(function (leak) {
@@ -196,6 +254,10 @@ test('secret leakage: credential-keyed ARRAY values are redacted, not just strin
 test('prototype-pollution: a __proto__ key in tasksSnapshot cannot pollute Object.prototype', function () {
   const proj = tmpProject();
   const hostile = JSON.parse('{"tasks":[{"__proto__":{"polluted":true},"title":"ok"}]}');
-  checkpoint.create(proj, { summary: 'x', tasksSnapshot: hostile }, { run: fakeGit(), now: clockAt('2026-07-12T10:00:00.000Z') });
+  checkpoint.create(
+    proj,
+    { summary: 'x', tasksSnapshot: hostile },
+    { run: fakeGit(), now: clockAt('2026-07-12T10:00:00.000Z') },
+  );
   assert.strictEqual({}.polluted, undefined, 'Object.prototype not polluted');
 });

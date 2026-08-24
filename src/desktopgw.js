@@ -21,13 +21,21 @@ function configDirs(ctx) {
   if (ctx.platform === 'darwin') dirs.push(ctx.appDataDir + '-3p'); // "Claude-3p"
   return dirs;
 }
-function cfgPath(dir) { return path.join(dir, 'claude_desktop_config.json'); }
-function profilePath(dir) { return path.join(dir, 'configLibrary', KEYFLIP_PROFILE_ID + '.json'); }
-function metaPath(ctx) { return path.join(ctx.configDir, META); }
+function cfgPath(dir) {
+  return path.join(dir, 'claude_desktop_config.json');
+}
+function profilePath(dir) {
+  return path.join(dir, 'configLibrary', KEYFLIP_PROFILE_ID + '.json');
+}
+function metaPath(ctx) {
+  return path.join(ctx.configDir, META);
+}
 
 // Missing -> {}; exists-but-corrupt -> throw (the txn wrapper then restores the
 // original bytes instead of clobbering the user's desktop config with {}).
-function readJson(p) { return readJsonForWrite(p) || {}; }
+function readJson(p) {
+  return readJsonForWrite(p) || {};
+}
 
 // Switch the desktop app to provider <name>'s gateway.
 function use(ctx, name) {
@@ -35,25 +43,38 @@ function use(ctx, name) {
   if (!meta) throw new Error("no such provider: '" + name + "'");
   const dirs = configDirs(ctx);
   if (!dirs.length) throw new Error('the Claude desktop app is only manageable on macOS/Windows');
-  let key = null; try { key = ctx.store.getProfile('provider__' + name); } catch (e) { key = null; }
+  let key = null;
+  try {
+    key = ctx.store.getProfile('provider__' + name);
+  } catch (e) {
+    key = null;
+  }
 
   const touched = [];
-  dirs.forEach(function (d) { touched.push(cfgPath(d), profilePath(d)); });
+  dirs.forEach(function (d) {
+    touched.push(cfgPath(d), profilePath(d));
+  });
   touched.push(metaPath(ctx));
 
   txn.withRollback(touched, function () {
     dirs.forEach(function (d) {
       fs.mkdirSync(path.join(d, 'configLibrary'), { recursive: true });
       // gateway profile
-      writeJsonStable(profilePath(d), {
-        id: KEYFLIP_PROFILE_ID,
-        inferenceProvider: 'gateway',
-        inferenceGatewayBaseUrl: meta.baseUrl,
-        inferenceGatewayApiKey: key || '',
-        inferenceGatewayAuthScheme: meta.authScheme === 'api-key' ? 'api-key' : 'bearer',
-        inferenceModels: Object.keys(meta.models || {}).map(function (k) { return meta.models[k]; }),
-        managedBy: 'keyflip',
-      }, 0o600);
+      writeJsonStable(
+        profilePath(d),
+        {
+          id: KEYFLIP_PROFILE_ID,
+          inferenceProvider: 'gateway',
+          inferenceGatewayBaseUrl: meta.baseUrl,
+          inferenceGatewayApiKey: key || '',
+          inferenceGatewayAuthScheme: meta.authScheme === 'api-key' ? 'api-key' : 'bearer',
+          inferenceModels: Object.keys(meta.models || {}).map(function (k) {
+            return meta.models[k];
+          }),
+          managedBy: 'keyflip',
+        },
+        0o600,
+      );
       // config: deploymentMode 3p + point at our profile
       const cfg = readJson(cfgPath(d));
       cfg.deploymentMode = '3p';
@@ -69,20 +90,37 @@ function use(ctx, name) {
 function restore(ctx) {
   const dirs = configDirs(ctx);
   if (!dirs.length) return { restored: false };
-  const touched = dirs.map(cfgPath).concat(dirs.map(profilePath)).concat([metaPath(ctx)]);
+  const touched = dirs
+    .map(cfgPath)
+    .concat(dirs.map(profilePath))
+    .concat([metaPath(ctx)]);
   txn.withRollback(touched, function () {
     dirs.forEach(function (d) {
       const cfg = readJson(cfgPath(d));
       cfg.deploymentMode = '1p';
-      if (cfg.enterpriseConfig) { delete cfg.enterpriseConfig.activeConfigId; if (!Object.keys(cfg.enterpriseConfig).length) delete cfg.enterpriseConfig; }
+      if (cfg.enterpriseConfig) {
+        delete cfg.enterpriseConfig.activeConfigId;
+        if (!Object.keys(cfg.enterpriseConfig).length) delete cfg.enterpriseConfig;
+      }
       writeJsonStable(cfgPath(d), cfg, 0o600);
-      try { fs.rmSync(profilePath(d), { force: true }); } catch (e) { /* */ }
+      try {
+        fs.rmSync(profilePath(d), { force: true });
+      } catch (e) {
+        /* */
+      }
     });
-    try { fs.rmSync(metaPath(ctx), { force: true }); } catch (e) { /* */ }
+    try {
+      fs.rmSync(metaPath(ctx), { force: true });
+    } catch (e) {
+      /* */
+    }
   });
   return { restored: true };
 }
 
-function active(ctx) { const m = readJson(metaPath(ctx)); return m && m.provider ? m : null; }
+function active(ctx) {
+  const m = readJson(metaPath(ctx));
+  return m && m.provider ? m : null;
+}
 
 export { use, restore, active, configDirs, KEYFLIP_PROFILE_ID };

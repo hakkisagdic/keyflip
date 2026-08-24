@@ -29,45 +29,73 @@ const SCHEMA_VERSION = 1;
 // The tool ids mirror keyflip's agent registry (src/agents.js) so this stays in lockstep with the
 // rest of the tool surface; 'claude'/'agents'/'generic' extend it with the project-level names.
 const RULE_SOURCES = [
-  { tool: 'claude',   files: ['CLAUDE.md', '.claude/CLAUDE.md'] },
-  { tool: 'cursor',   files: ['.cursorrules'], dirs: [{ base: '.cursor/rules', match: /\.(?:mdc|md)$/i }] },
-  { tool: 'agents',   files: ['AGENTS.md', '.codex/AGENTS.md'] },
-  { tool: 'gemini',   files: ['GEMINI.md', '.gemini/GEMINI.md'] },
-  { tool: 'copilot',  files: ['.github/copilot-instructions.md'] },
+  { tool: 'claude', files: ['CLAUDE.md', '.claude/CLAUDE.md'] },
+  { tool: 'cursor', files: ['.cursorrules'], dirs: [{ base: '.cursor/rules', match: /\.(?:mdc|md)$/i }] },
+  { tool: 'agents', files: ['AGENTS.md', '.codex/AGENTS.md'] },
+  { tool: 'gemini', files: ['GEMINI.md', '.gemini/GEMINI.md'] },
+  { tool: 'copilot', files: ['.github/copilot-instructions.md'] },
   { tool: 'opencode', files: ['.opencode/rules.md'] },
-  { tool: 'aider',    files: ['CONVENTIONS.md'] },
+  { tool: 'aider', files: ['CONVENTIONS.md'] },
 ];
 
 // Emit targets: which single-tool file a model can be rendered back into. Filenames are fixed and
 // always land INSIDE the project (guarded on write) — the target string can never pick the path.
 const EMIT_TARGETS = Object.create(null);
-EMIT_TARGETS.claude  = { filename: 'CLAUDE.md',    title: 'Project Rules', forTool: 'Claude Code' };
-EMIT_TARGETS.cursor  = { filename: '.cursorrules', title: 'Project Rules', forTool: 'Cursor' };
-EMIT_TARGETS.agents  = { filename: 'AGENTS.md',    title: 'Project Rules', forTool: 'AGENTS.md-compatible agents (Codex, opencode)' };
-EMIT_TARGETS.gemini  = { filename: 'GEMINI.md',    title: 'Project Rules', forTool: 'Gemini CLI' };
-EMIT_TARGETS.generic = { filename: 'RULES.md',     title: 'Project Rules', forTool: 'any AI assistant' };
+EMIT_TARGETS.claude = { filename: 'CLAUDE.md', title: 'Project Rules', forTool: 'Claude Code' };
+EMIT_TARGETS.cursor = { filename: '.cursorrules', title: 'Project Rules', forTool: 'Cursor' };
+EMIT_TARGETS.agents = {
+  filename: 'AGENTS.md',
+  title: 'Project Rules',
+  forTool: 'AGENTS.md-compatible agents (Codex, opencode)',
+};
+EMIT_TARGETS.gemini = { filename: 'GEMINI.md', title: 'Project Rules', forTool: 'Gemini CLI' };
+EMIT_TARGETS.generic = { filename: 'RULES.md', title: 'Project Rules', forTool: 'any AI assistant' };
 
 // Classification order = tie-break priority: security wins ties (fail safe), then architecture,
 // workflow, coding; anything without a signal is 'general'. Heading matches count triple (a
 // heading is a strong topic signal). Regexes carry /g and are only used with String.match (which
 // ignores lastIndex), so they are safe to share across calls.
 const KIND_ORDER = ['general', 'architecture', 'coding', 'security', 'workflow'];
-const KIND_LABEL = { general: 'General', architecture: 'Architecture', coding: 'Coding & Style', security: 'Security', workflow: 'Workflow & Process' };
+const KIND_LABEL = {
+  general: 'General',
+  architecture: 'Architecture',
+  coding: 'Coding & Style',
+  security: 'Security',
+  workflow: 'Workflow & Process',
+};
 const KIND_RULES = [
-  { kind: 'security', re: /\b(?:secret|secrets|password|passwd|credential|credentials|api[ _-]?key|access[ _-]?token|auth|authentication|authorization|oauth|encrypt|encryption|decrypt|sanitiz\w*|injection|xss|csrf|ssrf|vulnerab\w*|exploit|threat|owasp|pii|privacy|redact\w*|leak\w*)\b/gi },
-  { kind: 'architecture', re: /\b(?:architect\w*|directory structure|folder structure|module\w*|package structure|layer\w*|design pattern\w*|data model|schema|component\w*|boundary|boundaries|dependency injection|monorepo|microservice\w*|api design|interface\w*)\b/gi },
-  { kind: 'workflow', re: /\b(?:workflow\w*|commit\w*|pull request\w*|PRs?|merge|branch\w*|rebase|ci\/cd|pipeline\w*|deploy\w*|release\w*|changelog|code review\w*|semver|versioning)\b/gi },
-  { kind: 'coding', re: /\b(?:coding|code style|style guide|lint\w*|eslint|prettier|format\w*|naming|indent\w*|whitespace|semicolon\w*|typescript|docstring\w*|jsdoc|convention\w*|camel[ _-]?case|snake[ _-]?case|kebab[ _-]?case)\b/gi },
+  {
+    kind: 'security',
+    re: /\b(?:secret|secrets|password|passwd|credential|credentials|api[ _-]?key|access[ _-]?token|auth|authentication|authorization|oauth|encrypt|encryption|decrypt|sanitiz\w*|injection|xss|csrf|ssrf|vulnerab\w*|exploit|threat|owasp|pii|privacy|redact\w*|leak\w*)\b/gi,
+  },
+  {
+    kind: 'architecture',
+    re: /\b(?:architect\w*|directory structure|folder structure|module\w*|package structure|layer\w*|design pattern\w*|data model|schema|component\w*|boundary|boundaries|dependency injection|monorepo|microservice\w*|api design|interface\w*)\b/gi,
+  },
+  {
+    kind: 'workflow',
+    re: /\b(?:workflow\w*|commit\w*|pull request\w*|PRs?|merge|branch\w*|rebase|ci\/cd|pipeline\w*|deploy\w*|release\w*|changelog|code review\w*|semver|versioning)\b/gi,
+  },
+  {
+    kind: 'coding',
+    re: /\b(?:coding|code style|style guide|lint\w*|eslint|prettier|format\w*|naming|indent\w*|whitespace|semicolon\w*|typescript|docstring\w*|jsdoc|convention\w*|camel[ _-]?case|snake[ _-]?case|kebab[ _-]?case)\b/gi,
+  },
 ];
 
 function toolLabelMap() {
   const m = Object.create(null);
-  agents.REGISTRY.forEach(function (a) { m[a.id] = a.label; });
+  agents.REGISTRY.forEach(function (a) {
+    m[a.id] = a.label;
+  });
   return m;
 }
 const AGENT_LABEL = toolLabelMap();
 function toolLabel(tool) {
-  return AGENT_LABEL[tool] || ({ claude: 'Claude Code', agents: 'AGENTS.md / Codex', generic: 'Generic' })[tool] || String(tool);
+  return (
+    AGENT_LABEL[tool] ||
+    { claude: 'Claude Code', agents: 'AGENTS.md / Codex', generic: 'Generic' }[tool] ||
+    String(tool)
+  );
 }
 
 // ---- redaction (defence in depth over free-form rule text) --------------------------------------
@@ -80,7 +108,10 @@ function redactText(text) {
   let count = 0;
   secretscan.SECRET_PATTERNS.forEach(function (p) {
     const re = new RegExp(p.re.source, 'g');
-    s = s.replace(re, function () { count++; return secretscan.REDACTED; });
+    s = s.replace(re, function () {
+      count++;
+      return secretscan.REDACTED;
+    });
   });
   const lined = secretscan.redactLines(s); // credential-keyed lines whose value isn't a token shape
   return { text: lined.text, count: count + lined.count };
@@ -89,11 +120,19 @@ function redactText(text) {
 // ---- source collection --------------------------------------------------------------------------
 function walkRules(dir, matchRe, budget, out) {
   if (budget.left <= 0) return;
-  let ents; try { ents = fs.readdirSync(dir, { withFileTypes: true }); } catch (e) { return; }
+  let ents;
+  try {
+    ents = fs.readdirSync(dir, { withFileTypes: true });
+  } catch (e) {
+    return;
+  }
   for (let i = 0; i < ents.length && budget.left > 0; i++) {
     const p = path.join(dir, ents[i].name);
     if (ents[i].isDirectory()) walkRules(p, matchRe, budget, out);
-    else if (ents[i].isFile() && matchRe.test(ents[i].name)) { out.push(p); budget.left--; }
+    else if (ents[i].isFile() && matchRe.test(ents[i].name)) {
+      out.push(p);
+      budget.left--;
+    }
   }
 }
 
@@ -106,7 +145,13 @@ function collectSources(base, opts) {
   RULE_SOURCES.forEach(function (src) {
     (src.files || []).forEach(function (rel) {
       const abs = path.join(base, rel);
-      let text; try { if (!fs.statSync(abs).isFile()) return; text = fs.readFileSync(abs, 'utf8'); } catch (e) { return; }
+      let text;
+      try {
+        if (!fs.statSync(abs).isFile()) return;
+        text = fs.readFileSync(abs, 'utf8');
+      } catch (e) {
+        return;
+      }
       out.push({ tool: src.tool, rel: rel, abs: abs, text: text });
     });
     (src.dirs || []).forEach(function (d) {
@@ -114,7 +159,12 @@ function collectSources(base, opts) {
       walkRules(path.join(base, d.base), d.match, budget, found);
       found.sort();
       found.forEach(function (abs) {
-        let text; try { text = fs.readFileSync(abs, 'utf8'); } catch (e) { return; }
+        let text;
+        try {
+          text = fs.readFileSync(abs, 'utf8');
+        } catch (e) {
+          return;
+        }
         out.push({ tool: src.tool, rel: path.relative(base, abs), abs: abs, text: text });
       });
     });
@@ -128,11 +178,16 @@ function collectSources(base, opts) {
 function classify(text, heading) {
   const body = String(text || '');
   const head = String(heading || '');
-  let best = 'general', bestScore = 0;
+  let best = 'general',
+    bestScore = 0;
   KIND_RULES.forEach(function (r) {
-    const b = body.match(r.re); const h = head.match(r.re);
+    const b = body.match(r.re);
+    const h = head.match(r.re);
     const score = (b ? b.length : 0) + (h ? h.length * 3 : 0);
-    if (score > bestScore) { bestScore = score; best = r.kind; }
+    if (score > bestScore) {
+      bestScore = score;
+      best = r.kind;
+    }
   });
   return best;
 }
@@ -144,14 +199,32 @@ function splitSections(text) {
   const headRe = /^#{1,6}\s+(.+?)\s*$/;
   const sections = [];
   let cur = { heading: null, lines: [] };
-  const flush = function () { if (cur.heading !== null || cur.lines.some(function (l) { return l.trim(); })) sections.push(cur); };
+  const flush = function () {
+    if (
+      cur.heading !== null ||
+      cur.lines.some(function (l) {
+        return l.trim();
+      })
+    )
+      sections.push(cur);
+  };
   lines.forEach(function (line) {
     const m = line.match(headRe);
-    if (m) { flush(); cur = { heading: m[1], lines: [] }; }
-    else cur.lines.push(line);
+    if (m) {
+      flush();
+      cur = { heading: m[1], lines: [] };
+    } else cur.lines.push(line);
   });
   flush();
-  return sections.map(function (s) { return { heading: s.heading, body: s.lines.join('\n').replace(/\n{3,}/g, '\n\n').trim() }; });
+  return sections.map(function (s) {
+    return {
+      heading: s.heading,
+      body: s.lines
+        .join('\n')
+        .replace(/\n{3,}/g, '\n\n')
+        .trim(),
+    };
+  });
 }
 
 // ---- import: files -> common model --------------------------------------------------------------
@@ -167,7 +240,13 @@ function importRules(projectPath, opts) {
     sourceList.push({ tool: src.tool, rel: src.rel, redactions: red.count });
     splitSections(red.text).forEach(function (sec) {
       if (!sec.body && !sec.heading) return;
-      sections.push({ kind: classify(sec.body, sec.heading), from: src.tool, rel: src.rel, heading: sec.heading, text: sec.body });
+      sections.push({
+        kind: classify(sec.body, sec.heading),
+        from: src.tool,
+        rel: src.rel,
+        heading: sec.heading,
+        text: sec.body,
+      });
     });
   });
   return { schemaVersion: SCHEMA_VERSION, generatedAt: now, sources: sourceList, sections: sections };
@@ -181,7 +260,9 @@ function detectRuleFiles(projectPath, opts) {
   collectSources(base, opts || {}).forEach(function (src) {
     (byTool[src.tool] = byTool[src.tool] || []).push(src.rel);
   });
-  return Object.keys(byTool).map(function (t) { return { tool: t, label: toolLabel(t), files: byTool[t], count: byTool[t].length }; });
+  return Object.keys(byTool).map(function (t) {
+    return { tool: t, label: toolLabel(t), files: byTool[t], count: byTool[t].length };
+  });
 }
 
 // ---- runtime shape validation -------------------------------------------------------------------
@@ -203,17 +284,24 @@ function emit(model, target, opts) {
   const t = EMIT_TARGETS[target];
   if (!t) throw new Error("unknown emit target: '" + target + "' (use claude|cursor|agents|gemini|generic)");
   const byKind = Object.create(null);
-  KIND_ORDER.forEach(function (k) { byKind[k] = []; });
+  KIND_ORDER.forEach(function (k) {
+    byKind[k] = [];
+  });
   (model.sections || []).forEach(function (s) {
-    const k = (s && KIND_ORDER.indexOf(s.kind) !== -1) ? s.kind : 'general';
+    const k = s && KIND_ORDER.indexOf(s.kind) !== -1 ? s.kind : 'general';
     byKind[k].push(s);
   });
-  const srcNames = (model.sources || []).map(function (x) { return x.rel; });
+  const srcNames = (model.sources || []).map(function (x) {
+    return x.rel;
+  });
   const out = [];
   out.push('# ' + t.title + ' — for ' + t.forTool);
   out.push('');
-  out.push('<!-- Generated by `keyflip rules emit`' + (srcNames.length ? ' from: ' + srcNames.join(', ') : '') +
-    '. Secrets are redacted — never paste credentials here; reference them by env-var name (${VAR}). -->');
+  out.push(
+    '<!-- Generated by `keyflip rules emit`' +
+      (srcNames.length ? ' from: ' + srcNames.join(', ') : '') +
+      '. Secrets are redacted — never paste credentials here; reference them by env-var name (${VAR}). -->',
+  );
   KIND_ORDER.forEach(function (k) {
     const list = byKind[k];
     if (!list.length) return;
@@ -222,17 +310,29 @@ function emit(model, target, opts) {
     list.forEach(function (s) {
       out.push('');
       const prov = '<!-- source: ' + (s.from || 'unknown') + (s.rel ? ' (' + s.rel + ')' : '') + ' -->';
-      out.push(s.heading ? ('### ' + s.heading + ' ' + prov) : prov);
-      if (s.text) { out.push(''); out.push(s.text); }
+      out.push(s.heading ? '### ' + s.heading + ' ' + prov : prov);
+      if (s.text) {
+        out.push('');
+        out.push(s.text);
+      }
     });
   });
-  const content = out.join('\n').replace(/\n{3,}/g, '\n\n').replace(/[ \t]+$/gm, '').trimEnd() + '\n';
+  const content =
+    out
+      .join('\n')
+      .replace(/\n{3,}/g, '\n\n')
+      .replace(/[ \t]+$/gm, '')
+      .trimEnd() + '\n';
   return redactText(content).text; // defence in depth: never emit a secret even if one slipped in
 }
 
 // ---- project `.keyflip/` state (cached model) ---------------------------------------------------
-function rulesDir(projectPath) { return path.join(projectPath || process.cwd(), '.keyflip'); }
-function rulesFile(projectPath) { return path.join(rulesDir(projectPath), 'rules.json'); }
+function rulesDir(projectPath) {
+  return path.join(projectPath || process.cwd(), '.keyflip');
+}
+function rulesFile(projectPath) {
+  return path.join(rulesDir(projectPath), 'rules.json');
+}
 
 /** saveModel(projectPath, model, opts?) -> absolute path written (0600, atomic, mkdir -p). */
 function saveModel(projectPath, model, opts) {
@@ -244,9 +344,23 @@ function saveModel(projectPath, model, opts) {
 
 /** loadModel(projectPath) -> RulesModel | null (guarded parse; a corrupt cache yields null). */
 function loadModel(projectPath) {
-  let raw; try { raw = fs.readFileSync(rulesFile(projectPath), 'utf8'); } catch (e) { return null; }
-  let m; try { m = JSON.parse(raw); } catch (e) { return null; }
-  try { assertModel(m); } catch (e) { return null; }
+  let raw;
+  try {
+    raw = fs.readFileSync(rulesFile(projectPath), 'utf8');
+  } catch (e) {
+    return null;
+  }
+  let m;
+  try {
+    m = JSON.parse(raw);
+  } catch (e) {
+    return null;
+  }
+  try {
+    assertModel(m);
+  } catch (e) {
+    return null;
+  }
   return m;
 }
 
@@ -263,4 +377,23 @@ function writeTarget(projectPath, target, content, opts) {
   return { path: dest, bytes: Buffer.byteLength(content, 'utf8') };
 }
 
-export { SCHEMA_VERSION, RULE_SOURCES, EMIT_TARGETS, KIND_ORDER, redactText, classify, splitSections, collectSources, importRules, detectRuleFiles, emit, assertModel, toolLabel, rulesDir, rulesFile, saveModel, loadModel, writeTarget };
+export {
+  SCHEMA_VERSION,
+  RULE_SOURCES,
+  EMIT_TARGETS,
+  KIND_ORDER,
+  redactText,
+  classify,
+  splitSections,
+  collectSources,
+  importRules,
+  detectRuleFiles,
+  emit,
+  assertModel,
+  toolLabel,
+  rulesDir,
+  rulesFile,
+  saveModel,
+  loadModel,
+  writeTarget,
+};

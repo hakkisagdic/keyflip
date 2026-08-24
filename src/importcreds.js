@@ -51,15 +51,19 @@ function parseValue(raw) {
   const s = String(raw).replace(/^[ \t]+/, ''); // strip spaces just after '='
   const q = s[0];
   if (q === '"' || q === "'") {
-    let buf = '', closed = false;
+    let buf = '',
+      closed = false;
     for (let i = 1; i < s.length; i++) {
       const c = s[i];
       if (q === '"' && c === '\\' && i + 1 < s.length) {
         const n = s[++i];
-        buf += (n === 'n') ? '\n' : (n === 't') ? '\t' : (n === 'r') ? '\r' : n; // \\ \" -> literal char
+        buf += n === 'n' ? '\n' : n === 't' ? '\t' : n === 'r' ? '\r' : n; // \\ \" -> literal char
         continue;
       }
-      if (c === q) { closed = true; break; }
+      if (c === q) {
+        closed = true;
+        break;
+      }
       buf += c;
     }
     if (!closed) return null; // unterminated quote
@@ -85,14 +89,21 @@ function pick(vars, k) {
 // A provider name derived from user input must pass profiles.isValidName (it keys
 // <configDir>/providers/<name>.json), else fall back.
 function safeName(candidate, fallback) {
-  const n = String(candidate || '').toLowerCase()
-    .replace(/[^a-z0-9._-]+/g, '-').replace(/-+/g, '-')
-    .replace(/^[-.]+/, '').replace(/[.-]+$/, '');
+  const n = String(candidate || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^[-.]+/, '')
+    .replace(/[.-]+$/, '');
   return profiles.isValidName(n) ? n : fallback;
 }
 function nameFromUrl(u, fallback) {
   let host = '';
-  try { host = new URL(u).hostname; } catch (e) { host = ''; }
+  try {
+    host = new URL(u).hostname;
+  } catch (e) {
+    host = '';
+  }
   return safeName(host, fallback);
 }
 
@@ -110,7 +121,8 @@ function detect(vars) {
     // Custom Anthropic endpoint: a bearer AUTH_TOKEN wins over a plain API_KEY.
     const bearer = !!aTok;
     out.push({
-      kind: 'provider', vendor: 'anthropic',
+      kind: 'provider',
+      vendor: 'anthropic',
       name: nameFromUrl(aBase, 'anthropic'),
       baseUrl: aBase,
       authScheme: bearer ? 'bearer' : 'api-key',
@@ -121,7 +133,8 @@ function detect(vars) {
     // A bare Anthropic credential with no custom base -> the official API endpoint.
     const bearer = !aKey && !!aTok; // prefer api-key semantics when a key is present
     out.push({
-      kind: 'provider', vendor: 'anthropic',
+      kind: 'provider',
+      vendor: 'anthropic',
       name: 'anthropic-key',
       baseUrl: ANTHROPIC_DEFAULT_BASE,
       authScheme: bearer ? 'bearer' : 'api-key',
@@ -134,7 +147,8 @@ function detect(vars) {
   if (oKey) {
     const oBase = pick(vars, 'OPENAI_BASE_URL');
     out.push({
-      kind: 'provider', vendor: 'openai',
+      kind: 'provider',
+      vendor: 'openai',
       name: oBase ? nameFromUrl(oBase, 'openai') : 'openai',
       baseUrl: oBase || OPENAI_DEFAULT_BASE,
       authScheme: 'bearer', // OpenAI + OpenAI-compatible gateways use `Authorization: Bearer`
@@ -156,9 +170,13 @@ function redactKey(key) {
 function summarize(candidates) {
   return (Array.isArray(candidates) ? candidates : []).map(function (c) {
     return {
-      kind: c.kind, vendor: c.vendor, name: c.name,
-      baseUrl: c.baseUrl, authScheme: c.authScheme,
-      key: redactKey(c.key), envKeys: c.envKeys || [],
+      kind: c.kind,
+      vendor: c.vendor,
+      name: c.name,
+      baseUrl: c.baseUrl,
+      authScheme: c.authScheme,
+      key: redactKey(c.key),
+      envKeys: c.envKeys || [],
     };
   });
 }
@@ -170,8 +188,9 @@ function fromFile(ctx, filePath) {
   let p = filePath || '.env';
   if (p.slice(0, 2) === '~/' && ctx && ctx.home) p = path.join(ctx.home, p.slice(2));
   let text;
-  try { text = fs.readFileSync(p, 'utf8'); }
-  catch (e) {
+  try {
+    text = fs.readFileSync(p, 'utf8');
+  } catch (e) {
     if (e && e.code === 'ENOENT') throw new Error('no env file at ' + p);
     throw new Error('cannot read env file ' + p + ': ' + e.message);
   }
@@ -199,4 +218,14 @@ function apply(ctx, candidates, opts) {
   return { imported: imported };
 }
 
-export { parseEnv, detect, fromFile, fromEnv, apply, summarize, redactKey, ANTHROPIC_DEFAULT_BASE, OPENAI_DEFAULT_BASE };
+export {
+  parseEnv,
+  detect,
+  fromFile,
+  fromEnv,
+  apply,
+  summarize,
+  redactKey,
+  ANTHROPIC_DEFAULT_BASE,
+  OPENAI_DEFAULT_BASE,
+};

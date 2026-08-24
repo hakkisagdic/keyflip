@@ -18,8 +18,14 @@ function tmpCtx() {
   fs.mkdirSync(configDir, { recursive: true });
   return { configDir: configDir };
 }
-function labels(text, opts) { return pii.detect(text, opts).map(function (m) { return m.label; }); }
-function redacted(text, opts) { return pii.scrub(text, opts).text; }
+function labels(text, opts) {
+  return pii.detect(text, opts).map(function (m) {
+    return m.label;
+  });
+}
+function redacted(text, opts) {
+  return pii.scrub(text, opts).text;
+}
 
 // ---- per-category positive + negative ---------------------------------------------------
 
@@ -39,9 +45,9 @@ test('phone: E.164 + Turkish mobile/landline positive; short number negative', f
 });
 
 test('tckn: valid checksum redacts; wrong checksum is NOT flagged', function () {
-  assert.ok(labels('TC 10000000146').indexOf('tckn') !== -1);          // valid checksum
-  assert.strictEqual(labels('TC 12345678901').indexOf('tckn'), -1);    // 11 digits, bad checksum
-  assert.strictEqual(labels('TC 00000000000').indexOf('tckn'), -1);    // leading zero rejected
+  assert.ok(labels('TC 10000000146').indexOf('tckn') !== -1); // valid checksum
+  assert.strictEqual(labels('TC 12345678901').indexOf('tckn'), -1); // 11 digits, bad checksum
+  assert.strictEqual(labels('TC 00000000000').indexOf('tckn'), -1); // leading zero rejected
 });
 
 test('passport: uppercase alnum positive; lowercase look-alike negative', function () {
@@ -59,11 +65,16 @@ test('creditCard: Luhn-valid redacts (with spaces); non-Luhn 16-digit is NOT fla
 test('creditCard: a valid card preceded by an IPv4 / lone digit / dash is STILL redacted (regression)', function () {
   // The old matcher anchored on a stray leading digit and ran Luhn over the over-match, so a real
   // card next to an IP or a small quantity leaked. Each of these must fully redact the card.
-  ['192.168.1.1 4111111111111111', 'row 7 4111111111111111 total', '192.168.1.1 5555555555554444'].forEach(function (t) {
-    const out = pii.scrub(t, {}).text;
-    assert.ok(out.indexOf('4111111111111111') === -1 && out.indexOf('5555555555554444') === -1, 'card leaked in: ' + t);
-    assert.ok(out.indexOf('[REDACTED:creditCard]') !== -1, 'card not redacted in: ' + t);
-  });
+  ['192.168.1.1 4111111111111111', 'row 7 4111111111111111 total', '192.168.1.1 5555555555554444'].forEach(
+    function (t) {
+      const out = pii.scrub(t, {}).text;
+      assert.ok(
+        out.indexOf('4111111111111111') === -1 && out.indexOf('5555555555554444') === -1,
+        'card leaked in: ' + t,
+      );
+      assert.ok(out.indexOf('[REDACTED:creditCard]') !== -1, 'card not redacted in: ' + t);
+    },
+  );
 });
 
 test('iban: mod-97-valid redacts; broken checksum is NOT flagged', function () {
@@ -98,13 +109,16 @@ test('address is OFF by default and ON only when explicitly enabled', function (
 
 test('loadCustom merges validated custom patterns and ignores malformed entries', function () {
   const ctx = tmpCtx();
-  fs.writeFileSync(path.join(ctx.configDir, 'pii-patterns.json'), JSON.stringify([
-    { label: 'employee-id', regex: 'EMP-\\d{4}', flags: 'i' }, // valid
-    { label: 'bad label!!', regex: 'x' },                       // invalid label -> ignored
-    { label: 'toolong', regex: 'a'.repeat(400) },               // regex too long -> ignored
-    { label: 'broken', regex: '([' },                           // won't compile -> ignored
-    { label: 'badflags', regex: 'x', flags: 'z' },              // bad flags -> ignored
-  ]));
+  fs.writeFileSync(
+    path.join(ctx.configDir, 'pii-patterns.json'),
+    JSON.stringify([
+      { label: 'employee-id', regex: 'EMP-\\d{4}', flags: 'i' }, // valid
+      { label: 'bad label!!', regex: 'x' }, // invalid label -> ignored
+      { label: 'toolong', regex: 'a'.repeat(400) }, // regex too long -> ignored
+      { label: 'broken', regex: '([' }, // won't compile -> ignored
+      { label: 'badflags', regex: 'x', flags: 'z' }, // bad flags -> ignored
+    ]),
+  );
   const custom = pii.loadCustom(ctx);
   assert.strictEqual(custom.length, 1);
   assert.strictEqual(custom[0].label, 'employee-id');
@@ -118,13 +132,25 @@ test('loadCustom refuses ReDoS-prone nested quantifiers and caps the pattern cou
   const ctx = tmpCtx();
   const many = [];
   for (let i = 0; i < 200; i++) many.push({ label: 'p' + i, regex: 'z' + i });
-  fs.writeFileSync(path.join(ctx.configDir, 'pii-patterns.json'), JSON.stringify(
-    [{ label: 'evil1', regex: '(a+)+$' }, { label: 'evil2', regex: '(\\d*)*' }, { label: 'evil3', regex: '(x{1,})+' },
-     { label: 'ok', regex: '(abc)+' }].concat(many)));
+  fs.writeFileSync(
+    path.join(ctx.configDir, 'pii-patterns.json'),
+    JSON.stringify(
+      [
+        { label: 'evil1', regex: '(a+)+$' },
+        { label: 'evil2', regex: '(\\d*)*' },
+        { label: 'evil3', regex: '(x{1,})+' },
+        { label: 'ok', regex: '(abc)+' },
+      ].concat(many),
+    ),
+  );
   const custom = pii.loadCustom(ctx);
   assert.ok(custom.length <= 64, 'pattern count capped: ' + custom.length);
-  const labelsLoaded = custom.map(function (c) { return c.label; });
-  ['evil1', 'evil2', 'evil3'].forEach(function (l) { assert.strictEqual(labelsLoaded.indexOf(l), -1, l + ' (ReDoS) must be refused'); });
+  const labelsLoaded = custom.map(function (c) {
+    return c.label;
+  });
+  ['evil1', 'evil2', 'evil3'].forEach(function (l) {
+    assert.strictEqual(labelsLoaded.indexOf(l), -1, l + ' (ReDoS) must be refused');
+  });
   assert.ok(labelsLoaded.indexOf('ok') !== -1, 'a benign quantified group is still accepted');
   // and a catastrophic pattern that slipped in could not wedge scrub — prove the guard holds:
   const start = Date.now();
@@ -182,7 +208,12 @@ test('scrubViaLLM applies returned spans via an injected fake fetch', async func
     const body = JSON.parse(init.body);
     assert.strictEqual(body.text, text);
     const start = text.indexOf('007');
-    return Promise.resolve({ ok: true, json: function () { return Promise.resolve({ spans: [{ start: start, end: start + 3, label: 'codename' }] }); } });
+    return Promise.resolve({
+      ok: true,
+      json: function () {
+        return Promise.resolve({ spans: [{ start: start, end: start + 3, label: 'codename' }] });
+      },
+    });
   };
   const out = await pii.scrubViaLLM(text, { url: 'http://localhost:11434/redact', fetch: fakeFetch, model: 'llama3' });
   assert.strictEqual(out, 'secret agent [REDACTED:codename] lives here');
@@ -191,7 +222,12 @@ test('scrubViaLLM applies returned spans via an injected fake fetch', async func
 test('scrubViaLLM applies the {redactions:[{text}]} substring contract', async function () {
   const text = 'name Jane Roe here';
   const fakeFetch = function () {
-    return Promise.resolve({ ok: true, json: function () { return Promise.resolve({ redactions: [{ text: 'Jane Roe', label: 'name' }] }); } });
+    return Promise.resolve({
+      ok: true,
+      json: function () {
+        return Promise.resolve({ redactions: [{ text: 'Jane Roe', label: 'name' }] });
+      },
+    });
   };
   const out = await pii.scrubViaLLM(text, { url: 'http://x', fetch: fakeFetch });
   assert.strictEqual(out, 'name [REDACTED:name] here');
@@ -199,23 +235,45 @@ test('scrubViaLLM applies the {redactions:[{text}]} substring contract', async f
 
 test('scrubViaLLM is a strict no-op when url is unset (never calls fetch)', async function () {
   let called = false;
-  const fetchSpy = function () { called = true; return Promise.resolve({ ok: true, json: function () { return Promise.resolve({ spans: [] }); } }); };
+  const fetchSpy = function () {
+    called = true;
+    return Promise.resolve({
+      ok: true,
+      json: function () {
+        return Promise.resolve({ spans: [] });
+      },
+    });
+  };
   const out = await pii.scrubViaLLM('untouched text', { fetch: fetchSpy });
   assert.strictEqual(out, 'untouched text');
   assert.strictEqual(called, false, 'fetch must NOT be called without a url');
 });
 
 test('scrubViaLLM fails open (returns original) when the fetch throws or times out', async function () {
-  const boom = function () { return Promise.reject(new Error('connection refused')); };
+  const boom = function () {
+    return Promise.reject(new Error('connection refused'));
+  };
   assert.strictEqual(await pii.scrubViaLLM('keep me', { url: 'http://x', fetch: boom }), 'keep me');
-  const notOk = function () { return Promise.resolve({ ok: false }); };
+  const notOk = function () {
+    return Promise.resolve({ ok: false });
+  };
   assert.strictEqual(await pii.scrubViaLLM('keep me too', { url: 'http://x', fetch: notOk }), 'keep me too');
 });
 
 test('scrubViaLLM ignores out-of-range or malformed spans', async function () {
   const text = 'short';
   const fakeFetch = function () {
-    return Promise.resolve({ ok: true, json: function () { return Promise.resolve({ spans: [{ start: 0, end: 999 }, { start: 3, end: 2 }] }); } });
+    return Promise.resolve({
+      ok: true,
+      json: function () {
+        return Promise.resolve({
+          spans: [
+            { start: 0, end: 999 },
+            { start: 3, end: 2 },
+          ],
+        });
+      },
+    });
   };
   assert.strictEqual(await pii.scrubViaLLM(text, { url: 'http://x', fetch: fakeFetch }), 'short');
 });
