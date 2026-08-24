@@ -607,7 +607,7 @@ You don't need to own every OS. Two layers:
    npm test
    ```
 
-2. **GitHub Actions matrix** (`.github/workflows/ci.yml`) runs the suite on **`ubuntu-latest` + `macos-latest` + `windows-latest`** across **Node 18 / 20 / 22** — real different OSes and versions, on every push. That is the "simulate different versions" part, for free.
+2. **GitHub Actions matrix** (`.github/workflows/ci.yml`) runs the suite on **`ubuntu-latest` + `macos-latest` + `windows-latest`** across **Node 20 / 22** — real different OSes and versions, on every push. That is the "simulate different versions" part, for free.
 
 Add more Node versions or OS images by editing the `matrix` in the workflow.
 
