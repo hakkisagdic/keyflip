@@ -18,7 +18,9 @@ test('backup snapshots metadata (not creds), lists, prunes, and restores with a 
   fs.writeFileSync(path.join(ctx.configDir, 'creds', 'alice.cred'), 'SECRET');
 
   let n = 0;
-  ctx.now = function () { return '2026-07-02T09:00:0' + (n++) + '.000Z'; }; // distinct stamps
+  ctx.now = function () {
+    return '2026-07-02T09:00:0' + n++ + '.000Z';
+  }; // distinct stamps
   const b1 = backup.create(ctx);
   assert.ok(b1.files >= 1);
   // creds must NOT be in the backup (secrets excluded)
@@ -29,16 +31,25 @@ test('backup snapshots metadata (not creds), lists, prunes, and restores with a 
   assert.ok(list.length >= 1);
 
   // mutate then restore
-  fs.rmSync(profiles.metaPath ? profiles.metaPath(ctx.configDir, 'alice') : path.join(ctx.configDir, 'alice.json'), { force: true });
+  fs.rmSync(profiles.metaPath ? profiles.metaPath(ctx.configDir, 'alice') : path.join(ctx.configDir, 'alice.json'), {
+    force: true,
+  });
   const r = backup.restore(ctx, 1);
-  assert.ok(fs.existsSync(path.join(ctx.configDir, 'alice.json')));      // restored
-  assert.ok(backup.list(ctx).some(function (b) { return /pre-restore/.test(b.name); })); // safety backup taken
+  assert.ok(fs.existsSync(path.join(ctx.configDir, 'alice.json'))); // restored
+  assert.ok(
+    backup.list(ctx).some(function (b) {
+      return /pre-restore/.test(b.name);
+    }),
+  ); // safety backup taken
 });
 
 test('backup prune keeps only the newest N', function () {
   const ctx = makeCtx();
   profiles.write(ctx.configDir, { name: 'a', email: 'a@x.com' });
-  let n = 0; ctx.now = function () { return '2026-07-02T10:00:' + String(n++).padStart(2, '0') + '.000Z'; };
+  let n = 0;
+  ctx.now = function () {
+    return '2026-07-02T10:00:' + String(n++).padStart(2, '0') + '.000Z';
+  };
   for (let i = 0; i < 5; i++) backup.create(ctx, { keep: 100 });
   backup.prune(ctx, 2);
   assert.strictEqual(backup.list(ctx).length, 2);
@@ -47,13 +58,18 @@ test('backup prune keeps only the newest N', function () {
 // ---- #11 share ----
 test('share build->parse round-trips a provider; preview redacts the key', function () {
   const ctx = makeCtx();
-  provider.add(ctx, 'relay', { baseUrl: 'https://relay/v1', key: 'sk-abcd1234', authScheme: 'bearer', models: { default: 'm' } });
+  provider.add(ctx, 'relay', {
+    baseUrl: 'https://relay/v1',
+    key: 'sk-abcd1234',
+    authScheme: 'bearer',
+    models: { default: 'm' },
+  });
   const url = share.build(ctx, 'provider', 'relay');
   assert.match(url, /^keyflip:\/\/v1\/import\?resource=provider&name=relay&config=/);
   const parsed = share.parse(url);
   assert.strictEqual(parsed.config.baseUrl, 'https://relay/v1');
   assert.strictEqual(parsed.config.key, 'sk-abcd1234');
-  assert.match(share.preview(parsed), /\*\*\*1234/);       // redacted in preview
+  assert.match(share.preview(parsed), /\*\*\*1234/); // redacted in preview
   assert.doesNotMatch(share.preview(parsed), /sk-abcd1234/);
 });
 
@@ -78,8 +94,12 @@ test('account share is pointer-only (never carries the OAuth token)', function (
 });
 
 test('parse rejects a non-keyflip or malformed link', function () {
-  assert.throws(function () { share.parse('https://evil/'); }, /keyflip/);
-  assert.throws(function () { share.parse('keyflip://v1/import?resource=bogus&name=x&config=e30'); }, /resource/);
+  assert.throws(function () {
+    share.parse('https://evil/');
+  }, /keyflip/);
+  assert.throws(function () {
+    share.parse('keyflip://v1/import?resource=bogus&name=x&config=e30');
+  }, /resource/);
 });
 
 // ---- #10 skill freshness ----

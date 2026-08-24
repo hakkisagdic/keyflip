@@ -22,7 +22,8 @@ test('encodeCwd replaces both "/" and "." with "-" (matches Claude Code)', funct
 
 test('rebind copies transcripts to the new folder key and rewrites the old cwd inside', function () {
   const ctx = makeCtx();
-  const OLD = '/Users/x/Documents/OpenTraycer', NEW = '/Users/x/Documents/Plansmith';
+  const OLD = '/Users/x/Documents/OpenTraycer',
+    NEW = '/Users/x/Documents/Plansmith';
   seedTranscript(ctx, OLD, 'sess-1', '{"cwd":"' + OLD + '","type":"user"}\n{"cwd":"' + OLD + '/apps"}\n');
 
   const r = sessions.rebind(ctx, OLD, NEW, {});
@@ -45,7 +46,8 @@ test('rebind refuses when the old project has no history / same path', function 
 
 test('rebind --purge-old disables the old copies (reversible .disabled)', function () {
   const ctx = makeCtx();
-  const OLD = '/Users/x/Old', NEW = '/Users/x/New';
+  const OLD = '/Users/x/Old',
+    NEW = '/Users/x/New';
   const oldDir = seedTranscript(ctx, OLD, 's', '{"cwd":"' + OLD + '"}\n');
   sessions.rebind(ctx, OLD, NEW, { purgeOld: true });
   assert.strictEqual(fs.existsSync(path.join(oldDir, 's.jsonl')), false);
@@ -54,13 +56,17 @@ test('rebind --purge-old disables the old copies (reversible .disabled)', functi
 
 test('rebind does not overwrite an existing dest unless --force', function () {
   const ctx = makeCtx();
-  const OLD = '/Users/x/O', NEW = '/Users/x/N';
+  const OLD = '/Users/x/O',
+    NEW = '/Users/x/N';
   seedTranscript(ctx, OLD, 's', 'OLDBODY ' + OLD + '\n');
   seedTranscript(ctx, NEW, 's', 'EXISTING\n'); // a session already at the new key
   const r1 = sessions.rebind(ctx, OLD, NEW, {});
   assert.strictEqual(r1.moved, 0);
   assert.strictEqual(r1.skipped, 1);
-  assert.strictEqual(fs.readFileSync(path.join(sessions.projectsDir(ctx), sessions.encodeCwd(NEW), 's.jsonl'), 'utf8'), 'EXISTING\n');
+  assert.strictEqual(
+    fs.readFileSync(path.join(sessions.projectsDir(ctx), sessions.encodeCwd(NEW), 's.jsonl'), 'utf8'),
+    'EXISTING\n',
+  );
   const r2 = sessions.rebind(ctx, OLD, NEW, { force: true });
   assert.strictEqual(r2.moved, 1);
 });
@@ -69,7 +75,8 @@ test('rebind does not overwrite an existing dest unless --force', function () {
 
 test('findMatch returns a context snippet on a content hit, null on a miss', function () {
   const ctx = makeCtx();
-  const dir = path.join(sessions.projectsDir(ctx), '-p'); fs.mkdirSync(dir, { recursive: true });
+  const dir = path.join(sessions.projectsDir(ctx), '-p');
+  fs.mkdirSync(dir, { recursive: true });
   const file = path.join(dir, 's.jsonl');
   fs.writeFileSync(file, '{"type":"user","text":"please fix the OAuth refresh bug today"}\n');
   const snip = sessions.findMatch(file, 'oauth refresh');
@@ -79,8 +86,12 @@ test('findMatch returns a context snippet on a content hit, null on a miss', fun
 
 test('list --search matches transcript CONTENT and attaches a match snippet', function () {
   const ctx = makeCtx();
-  const dir = path.join(sessions.projectsDir(ctx), '-Users-x-proj'); fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(path.join(dir, 'aaaa1111.jsonl'), '{"cwd":"/Users/x/proj","text":"discussing the widget pipeline design"}\n');
+  const dir = path.join(sessions.projectsDir(ctx), '-Users-x-proj');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(
+    path.join(dir, 'aaaa1111.jsonl'),
+    '{"cwd":"/Users/x/proj","text":"discussing the widget pipeline design"}\n',
+  );
   fs.writeFileSync(path.join(dir, 'bbbb2222.jsonl'), '{"cwd":"/Users/x/proj","text":"unrelated chatter"}\n');
   const rows = sessions.list(ctx, { search: 'widget pipeline', limit: 40 });
   assert.strictEqual(rows.length, 1);
@@ -92,13 +103,18 @@ test('list --search matches transcript CONTENT and attaches a match snippet', fu
 
 test('list flags a session whose cwd no longer exists (orphan)', function () {
   const ctx = makeCtx();
-  const dir = path.join(sessions.projectsDir(ctx), '-gone'); fs.mkdirSync(dir, { recursive: true });
+  const dir = path.join(sessions.projectsDir(ctx), '-gone');
+  fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(path.join(dir, 'cccc3333.jsonl'), '{"cwd":"/no/such/dir/anymore","text":"hi"}\n');
   const live = path.join(dir, 'dddd4444.jsonl');
   fs.writeFileSync(live, '{"cwd":"' + ctx.home + '","text":"hi"}\n'); // ctx.home exists
   const rows = sessions.list(ctx, { limit: 40 });
-  const orphan = rows.filter(function (r) { return r.sessionId === 'cccc3333'; })[0];
-  const ok = rows.filter(function (r) { return r.sessionId === 'dddd4444'; })[0];
+  const orphan = rows.filter(function (r) {
+    return r.sessionId === 'cccc3333';
+  })[0];
+  const ok = rows.filter(function (r) {
+    return r.sessionId === 'dddd4444';
+  })[0];
   assert.strictEqual(orphan.orphan, true, 'missing cwd -> orphan');
   assert.strictEqual(ok.orphan, false, 'existing cwd -> not orphan');
 });
@@ -147,10 +163,14 @@ test('compactTranscript is a no-op with nothing bulky, and keeps unparseable lin
 test('rebindAppRegistry rewrites cwd/originCwd and clears transcriptUnavailable', function () {
   const ctx = makeCtx();
   ctx.appDataDir = path.join(ctx.home, 'appdata');
-  const OLD = '/Users/x/Old', NEW = '/Users/x/New';
+  const OLD = '/Users/x/Old',
+    NEW = '/Users/x/New';
   const dir = path.join(ctx.appDataDir, 'claude-code-sessions', 'acct', 'org');
   fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(path.join(dir, 'local_1.json'), JSON.stringify({ cwd: OLD, originCwd: OLD + '/sub', transcriptUnavailable: true, cliSessionId: 'abc' }));
+  fs.writeFileSync(
+    path.join(dir, 'local_1.json'),
+    JSON.stringify({ cwd: OLD, originCwd: OLD + '/sub', transcriptUnavailable: true, cliSessionId: 'abc' }),
+  );
   fs.writeFileSync(path.join(dir, 'local_2.json'), JSON.stringify({ cwd: '/unrelated' })); // untouched
 
   const reg = sessions.rebindAppRegistry(ctx, OLD, NEW);
@@ -169,13 +189,17 @@ test('rebindAppRegistry rewrites cwd/originCwd and clears transcriptUnavailable'
 test('rebindAppRegistry restores a DROPPED cliSessionId from the transcript under the new key', function () {
   const ctx = makeCtx();
   ctx.appDataDir = path.join(ctx.home, 'appdata');
-  const OLD = '/Users/x/OpenTraycer', NEW = '/Users/x/Plansmith';
+  const OLD = '/Users/x/OpenTraycer',
+    NEW = '/Users/x/Plansmith';
   // the transcript now lives under the NEW encoded key
   seedTranscript(ctx, NEW, '79c67835-dc34', '{"cwd":"' + NEW + '","type":"user"}\n');
   const dir = path.join(ctx.appDataDir, 'claude-code-sessions', 'acct', 'org');
   fs.mkdirSync(dir, { recursive: true });
   // the app dropped the link: no cliSessionId, transcriptUnavailable set, cwd still old
-  fs.writeFileSync(path.join(dir, 'local_f338.json'), JSON.stringify({ cwd: OLD, originCwd: OLD, transcriptUnavailable: true }));
+  fs.writeFileSync(
+    path.join(dir, 'local_f338.json'),
+    JSON.stringify({ cwd: OLD, originCwd: OLD, transcriptUnavailable: true }),
+  );
 
   const reg = sessions.rebindAppRegistry(ctx, OLD, NEW);
   assert.strictEqual(reg.patched, 1);

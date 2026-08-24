@@ -12,12 +12,22 @@ import * as sync from '../src/sync.js';
 import { makeCtx } from './helpers.js';
 
 const PASS = 'team-pool-secret-passphrase';
-function sharedDir() { return fs.mkdtempSync(path.join(os.tmpdir(), 'kf-pool-')); }
+function sharedDir() {
+  return fs.mkdtempSync(path.join(os.tmpdir(), 'kf-pool-'));
+}
 function seed(ctx, name, email, blob) {
   ctx.store.setProfile(name, blob);
-  profiles.write(ctx.configDir, { name: name, email: email, oauthAccount: { organizationUuid: 'org-' + name }, userID: 'u-' + name, savedAt: ctx.now() });
+  profiles.write(ctx.configDir, {
+    name: name,
+    email: email,
+    oauthAccount: { organizationUuid: 'org-' + name },
+    userID: 'u-' + name,
+    savedAt: ctx.now(),
+  });
 }
-function opts(dir, extra) { return Object.assign({ dir: dir, pool: 'acme', passphrase: PASS }, extra || {}); }
+function opts(dir, extra) {
+  return Object.assign({ dir: dir, pool: 'acme', passphrase: PASS }, extra || {});
+}
 
 // ---------------------------------------------------------------------------------------
 // Happy path
@@ -60,7 +70,11 @@ test('pull imports the visible accounts onto a fresh machine, reusing applyImpor
   const r = teampool.pull(B, opts(dir, { asRole: 'member' }));
   assert.deepStrictEqual(r.imported.sort(), ['home', 'work']);
   assert.deepStrictEqual(r.visible.sort(), ['home', 'work']);
-  assert.strictEqual(B.store.getProfile('work'), '{"claudeAiOauth":{"accessToken":"CRED-W"}}', 'credential restored on the teammate');
+  assert.strictEqual(
+    B.store.getProfile('work'),
+    '{"claudeAiOauth":{"accessToken":"CRED-W"}}',
+    'credential restored on the teammate',
+  );
   assert.strictEqual(profiles.email(B.configDir, 'home'), 'h@x.com', 'metadata restored too');
 
   // Re-pull skips existing accounts unless force.
@@ -121,16 +135,34 @@ test('members: add / list / remove; re-publish PRESERVES the roster', function (
 
   // addMember upserts (changes a role, no duplicate).
   teampool.addMember(A, opts(dir, { id: 'bob@x.com', role: 'owner' }));
-  assert.strictEqual(teampool.members(A, opts(dir)).find(function (m) { return m.id === 'bob@x.com'; }).role, 'owner');
+  assert.strictEqual(
+    teampool.members(A, opts(dir)).find(function (m) {
+      return m.id === 'bob@x.com';
+    }).role,
+    'owner',
+  );
 
   // Re-publishing the accounts must keep the roster intact.
   seed(A, 'extra', 'e@x.com', '{"t":2}');
   teampool.publish(A, opts(dir));
   assert.strictEqual(teampool.members(A, opts(dir)).length, 3, 're-publish preserves members');
-  assert.deepStrictEqual(teampool.read(A, opts(dir)).accounts.map(function (a) { return a.name; }).sort(), ['extra', 'work']);
+  assert.deepStrictEqual(
+    teampool
+      .read(A, opts(dir))
+      .accounts.map(function (a) {
+        return a.name;
+      })
+      .sort(),
+    ['extra', 'work'],
+  );
 
   const left = teampool.removeMember(A, opts(dir, { id: 'bob@x.com' }));
-  assert.ok(!left.some(function (m) { return m.id === 'bob@x.com'; }), 'bob was removed');
+  assert.ok(
+    !left.some(function (m) {
+      return m.id === 'bob@x.com';
+    }),
+    'bob was removed',
+  );
 });
 
 test('members: cannot remove the last owner, and removing a non-member errors', function () {
@@ -139,8 +171,12 @@ test('members: cannot remove the last owner, and removing a non-member errors', 
   seed(A, 'work', 'w@x.com', '{"t":1}');
   teampool.publish(A, opts(dir, { owner: 'solo@x.com' }));
   teampool.addMember(A, opts(dir, { id: 'guest@x.com', role: 'member' }));
-  assert.throws(function () { teampool.removeMember(A, opts(dir, { id: 'solo@x.com' })); }, /last owner/);
-  assert.throws(function () { teampool.removeMember(A, opts(dir, { id: 'ghost@x.com' })); }, /no such member/);
+  assert.throws(function () {
+    teampool.removeMember(A, opts(dir, { id: 'solo@x.com' }));
+  }, /last owner/);
+  assert.throws(function () {
+    teampool.removeMember(A, opts(dir, { id: 'ghost@x.com' }));
+  }, /no such member/);
 });
 
 // ---------------------------------------------------------------------------------------
@@ -150,9 +186,15 @@ test('an unsafe pool name is rejected (path traversal / separators)', function (
   const dir = sharedDir();
   const A = makeCtx();
   seed(A, 'work', 'w@x.com', '{"t":1}');
-  assert.throws(function () { teampool.publish(A, opts(dir, { pool: '../evil' })); }, /invalid pool name/);
-  assert.throws(function () { teampool.poolFile(dir, 'a/b'); }, /invalid pool name/);
-  assert.throws(function () { teampool.poolFile(dir, '..'); }, /invalid pool name/);
+  assert.throws(function () {
+    teampool.publish(A, opts(dir, { pool: '../evil' }));
+  }, /invalid pool name/);
+  assert.throws(function () {
+    teampool.poolFile(dir, 'a/b');
+  }, /invalid pool name/);
+  assert.throws(function () {
+    teampool.poolFile(dir, '..');
+  }, /invalid pool name/);
   assert.strictEqual(teampool.isValidPool('acme.1_x-2'), true);
   assert.strictEqual(teampool.isValidPool('../x'), false);
   assert.strictEqual(teampool.isValidPool('a/b'), false);
@@ -163,10 +205,14 @@ test('a wrong passphrase cannot read and never clobbers the pool on re-publish',
   const A = makeCtx();
   seed(A, 'work', 'w@x.com', '{"claudeAiOauth":{"accessToken":"KEEP-ME"}}');
   teampool.publish(A, opts(dir));
-  assert.throws(function () { teampool.read(A, opts(dir, { passphrase: 'WRONG' })); }, /decrypt|passphrase/i);
+  assert.throws(function () {
+    teampool.read(A, opts(dir, { passphrase: 'WRONG' }));
+  }, /decrypt|passphrase/i);
   // Re-publishing with the wrong passphrase must fail rather than overwrite the pool.
   seed(A, 'work', 'w@x.com', '{"claudeAiOauth":{"accessToken":"NEW"}}');
-  assert.throws(function () { teampool.publish(A, opts(dir, { passphrase: 'WRONG' })); }, /decrypt|passphrase/i);
+  assert.throws(function () {
+    teampool.publish(A, opts(dir, { passphrase: 'WRONG' }));
+  }, /decrypt|passphrase/i);
   // The original pool (right passphrase) is intact.
   const raw = teampool.pull(makeCtx(), opts(dir, { asRole: 'owner' }));
   assert.deepStrictEqual(raw.visible, ['work']);
@@ -176,9 +222,15 @@ test('a missing passphrase throws everywhere (the pool carries secrets)', functi
   const dir = sharedDir();
   const A = makeCtx();
   seed(A, 'work', 'w@x.com', '{"t":1}');
-  assert.throws(function () { teampool.publish(A, { dir: dir, pool: 'acme' }); }, /passphrase/);
-  assert.throws(function () { teampool.read(A, { dir: dir, pool: 'acme' }); }, /passphrase/);
-  assert.throws(function () { teampool.pull(A, { dir: dir, pool: 'acme' }); }, /passphrase/);
+  assert.throws(function () {
+    teampool.publish(A, { dir: dir, pool: 'acme' });
+  }, /passphrase/);
+  assert.throws(function () {
+    teampool.read(A, { dir: dir, pool: 'acme' });
+  }, /passphrase/);
+  assert.throws(function () {
+    teampool.pull(A, { dir: dir, pool: 'acme' });
+  }, /passphrase/);
 });
 
 test('invalid member id / role are rejected before any write', function () {
@@ -186,10 +238,18 @@ test('invalid member id / role are rejected before any write', function () {
   const A = makeCtx();
   seed(A, 'work', 'w@x.com', '{"t":1}');
   teampool.publish(A, opts(dir));
-  assert.throws(function () { teampool.addMember(A, opts(dir, { id: '../evil', role: 'member' })); }, /invalid member id/);
-  assert.throws(function () { teampool.addMember(A, opts(dir, { id: '__proto__', role: 'member' })); }, /invalid member id/);
-  assert.throws(function () { teampool.addMember(A, opts(dir, { id: 'ok@x.com', role: 'admin' })); }, /invalid role/);
-  assert.throws(function () { teampool.publish(A, opts(dir, { accounts: { work: 'superuser' } })); }, /invalid role/);
+  assert.throws(function () {
+    teampool.addMember(A, opts(dir, { id: '../evil', role: 'member' }));
+  }, /invalid member id/);
+  assert.throws(function () {
+    teampool.addMember(A, opts(dir, { id: '__proto__', role: 'member' }));
+  }, /invalid member id/);
+  assert.throws(function () {
+    teampool.addMember(A, opts(dir, { id: 'ok@x.com', role: 'admin' }));
+  }, /invalid role/);
+  assert.throws(function () {
+    teampool.publish(A, opts(dir, { accounts: { work: 'superuser' } }));
+  }, /invalid role/);
   assert.strictEqual(teampool.isValidMember('a.b_c@x.com'), true);
   assert.strictEqual(teampool.isValidMember('constructor'), false);
 });
@@ -198,9 +258,13 @@ test('publish of an unknown local account fails cleanly; empty selection is refu
   const dir = sharedDir();
   const A = makeCtx();
   seed(A, 'work', 'w@x.com', '{"t":1}');
-  assert.throws(function () { teampool.publish(A, opts(dir, { accounts: ['work', 'ghost'] })); }, /no such local account/);
+  assert.throws(function () {
+    teampool.publish(A, opts(dir, { accounts: ['work', 'ghost'] }));
+  }, /no such local account/);
   const Empty = makeCtx();
-  assert.throws(function () { teampool.publish(Empty, opts(dir)); }, /no accounts to publish/);
+  assert.throws(function () {
+    teampool.publish(Empty, opts(dir));
+  }, /no accounts to publish/);
 });
 
 test('a decrypted pool coerces hostile shapes: bad account names dropped, unknown role tags RESTRICT', function () {
@@ -209,8 +273,15 @@ test('a decrypted pool coerces hostile shapes: bad account names dropped, unknow
   // Hand-craft a malicious plaintext pool and encrypt it with the real passphrase (models a
   // teammate/attacker who holds the shared passphrase and writes directly to the folder).
   const evil = {
-    format: 'keyflip-pool', version: 1, pool: 'acme',
-    members: [{ id: 'ok@x.com', role: 'owner' }, { id: '../evil', role: 'owner' }, { id: 'dup@x.com', role: 'member' }, { id: 'dup@x.com', role: 'owner' }],
+    format: 'keyflip-pool',
+    version: 1,
+    pool: 'acme',
+    members: [
+      { id: 'ok@x.com', role: 'owner' },
+      { id: '../evil', role: 'owner' },
+      { id: 'dup@x.com', role: 'member' },
+      { id: 'dup@x.com', role: 'owner' },
+    ],
     accounts: {
       good: { email: 'g@x.com', role: 'member', cliCredentials: '{"t":1}' },
       __proto__: { email: 'p@x.com', role: 'member', cliCredentials: '{"t":2}' },
@@ -224,10 +295,26 @@ test('a decrypted pool coerces hostile shapes: bad account names dropped, unknow
 
   const view = teampool.read(A, opts(dir));
   assert.strictEqual({}.polluted, undefined, 'Object.prototype is not polluted by a "__proto__" account key');
-  const names = view.accounts.map(function (a) { return a.name; });
+  const names = view.accounts.map(function (a) {
+    return a.name;
+  });
   assert.deepStrictEqual(names.sort(), ['good', 'tampered'], 'reserved/invalid/creds-less accounts are dropped');
-  assert.strictEqual(view.accounts.find(function (a) { return a.name === 'tampered'; }).role, 'owner', 'an unknown role tag is clamped to owner (restrict, never over-share)');
-  assert.deepStrictEqual(view.members.map(function (m) { return m.id; }).sort(), ['dup@x.com', 'ok@x.com'], 'unsafe member id dropped, duplicate collapsed');
+  assert.strictEqual(
+    view.accounts.find(function (a) {
+      return a.name === 'tampered';
+    }).role,
+    'owner',
+    'an unknown role tag is clamped to owner (restrict, never over-share)',
+  );
+  assert.deepStrictEqual(
+    view.members
+      .map(function (m) {
+        return m.id;
+      })
+      .sort(),
+    ['dup@x.com', 'ok@x.com'],
+    'unsafe member id dropped, duplicate collapsed',
+  );
 
   // A member therefore sees the 'good' account but NOT the clamped 'tampered' one.
   const member = makeCtx();

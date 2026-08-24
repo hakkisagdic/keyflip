@@ -86,7 +86,10 @@ test('verifyWebhook: no secret -> ok:false', function () {
 test('parseEvent: order_created -> purchase (email, first_order_item variant id, order id)', function () {
   const body = JSON.stringify({
     meta: { event_name: 'order_created' },
-    data: { id: '12345', attributes: { user_email: 'buyer@x.com', first_order_item: { variant_id: 555, product_id: 111 } } },
+    data: {
+      id: '12345',
+      attributes: { user_email: 'buyer@x.com', first_order_item: { variant_id: 555, product_id: 111 } },
+    },
   });
   const ev = ls.parseEvent(Buffer.from(body));
   assert.strictEqual(ev.type, 'purchase');
@@ -107,7 +110,10 @@ test('parseEvent: subscription_created -> purchase (variant on attributes)', fun
 });
 
 test('parseEvent: refund -> refund', function () {
-  const body = JSON.stringify({ meta: { event_name: 'refund' }, data: { id: 'r1', attributes: { user_email: 'r@x.com' } } });
+  const body = JSON.stringify({
+    meta: { event_name: 'refund' },
+    data: { id: 'r1', attributes: { user_email: 'r@x.com' } },
+  });
   const ev = ls.parseEvent(Buffer.from(body));
   assert.strictEqual(ev.type, 'refund');
   assert.strictEqual(ev.email, 'r@x.com');

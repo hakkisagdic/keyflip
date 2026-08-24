@@ -40,7 +40,9 @@ test('mcpreg desktop enable is skipped when the app config does not exist', func
 });
 
 test('entryFor wraps npx as cmd /c on Windows (not under WSL)', function () {
-  const ctx = makeCtx(); ctx.platform = 'win32'; ctx.claudeDir = 'C:\\Users\\me\\.claude';
+  const ctx = makeCtx();
+  ctx.platform = 'win32';
+  ctx.claudeDir = 'C:\\Users\\me\\.claude';
   const e = mcpreg.entryFor(ctx, { command: 'npx', args: ['-y', 'foo'] });
   assert.strictEqual(e.command, 'cmd');
   assert.deepStrictEqual(e.args, ['/c', 'npx', '-y', 'foo']);
@@ -82,9 +84,11 @@ test('gateway use sets 3p in both dirs + writes profile; restore flips back to 1
 // ---- #18 encrypted sync ----
 test('encrypt/decrypt round-trips; wrong passphrase fails', function () {
   const blob = sync.encrypt('{"hello":"world"}', 'correct horse');
-  assert.doesNotMatch(blob, /hello/);                       // ciphertext, not plaintext
+  assert.doesNotMatch(blob, /hello/); // ciphertext, not plaintext
   assert.strictEqual(sync.decrypt(blob, 'correct horse'), '{"hello":"world"}');
-  assert.throws(function () { sync.decrypt(blob, 'wrong'); }, /decryption failed/);
+  assert.throws(function () {
+    sync.decrypt(blob, 'wrong');
+  }, /decryption failed/);
 });
 
 test('sync push encrypts the bundle to WebDAV; pull decrypts + previews', async function () {
@@ -96,13 +100,25 @@ test('sync push encrypts the bundle to WebDAV; pull decrypts + previews', async 
 
   let stored = null;
   const fetchMock = async function (url, opt) {
-    if (opt.method === 'PUT') { stored = opt.body; return { status: 201 }; }
-    if (opt.method === 'GET') { return stored == null ? { status: 404 } : { status: 200, text: async function () { return stored; } }; }
+    if (opt.method === 'PUT') {
+      stored = opt.body;
+      return { status: 201 };
+    }
+    if (opt.method === 'GET') {
+      return stored == null
+        ? { status: 404 }
+        : {
+            status: 200,
+            text: async function () {
+              return stored;
+            },
+          };
+    }
     return { status: 200 };
   };
   const o = { url: 'https://dav/keyflip.enc', passphrase: 'pw', fetch: fetchMock, device: 'macbook' };
   await sync.push(ctx, o);
-  assert.doesNotMatch(stored, /SECRET/);                    // token never stored in clear
+  assert.doesNotMatch(stored, /SECRET/); // token never stored in clear
   const pulled = await sync.pull(makeCtx(), Object.assign({}, o, { fetch: fetchMock }));
   assert.strictEqual(pulled.found, true);
   assert.strictEqual(pulled.meta.accounts, 1);

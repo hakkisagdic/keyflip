@@ -26,7 +26,12 @@ function darwinCtx() {
   return ctx;
 }
 function saveProfile(ctx, name, org) {
-  profiles.write(ctx.configDir, { name: name, email: name + '@x.com', oauthAccount: org ? { organizationUuid: org } : {}, savedAt: ctx.now() });
+  profiles.write(ctx.configDir, {
+    name: name,
+    email: name + '@x.com',
+    oauthAccount: org ? { organizationUuid: org } : {},
+    savedAt: ctx.now(),
+  });
 }
 
 test('risk=true when the running app is on a different account than the switch target', function () {

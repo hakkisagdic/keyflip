@@ -13,7 +13,8 @@ import os from 'os';
 // CodexBar's schema — better to lose a harmless field than to leak a token.
 // Credential-shaped field NAMES — note the bare canonical names (key/value/pin/pwd), the single
 // most common way a per-provider token is stored, which a substring list would miss.
-const SECRET_KEY_RE = /(api[-_ ]?key|secret|token|password|passwd|bearer|credential|auth|cookie|session[-_ ]?id|private[-_ ]?key|access[-_ ]?key|^key$|^val(?:ue)?$|^pin$|^pwd$)/i;
+const SECRET_KEY_RE =
+  /(api[-_ ]?key|secret|token|password|passwd|bearer|credential|auth|cookie|session[-_ ]?id|private[-_ ]?key|access[-_ ]?key|^key$|^val(?:ue)?$|^pin$|^pwd$)/i;
 import * as secretscan from './secretscan.js';
 import * as _provusage from './provusage.js';
 import * as _surface from './surface.js';
@@ -30,7 +31,7 @@ function configPath(ctx) {
   ctx = ctx || {};
   const env = envOf(ctx);
   const xdg = env.XDG_CONFIG_HOME;
-  const base = (typeof xdg === 'string' && xdg) ? xdg : path.join(ctx.home || os.homedir(), '.config');
+  const base = typeof xdg === 'string' && xdg ? xdg : path.join(ctx.home || os.homedir(), '.config');
   return path.join(base, 'codexbar', 'config.json');
 }
 
@@ -41,7 +42,11 @@ function platformOf(ctx) {
 
 // Best-effort, never-throws existence check.
 function exists(p) {
-  try { return fs.existsSync(p); } catch (e) { return false; }
+  try {
+    return fs.existsSync(p);
+  } catch (e) {
+    return false;
+  }
 }
 
 // detect -> { present, configPath, hasApp? }. `present` iff the config file exists. `hasApp` is a
@@ -61,7 +66,9 @@ function detect(ctx) {
 function scrub(val, depth) {
   if (depth > 8) return null;
   if (Array.isArray(val)) {
-    return val.map(function (v) { return scrub(v, depth + 1); });
+    return val.map(function (v) {
+      return scrub(v, depth + 1);
+    });
   }
   if (val && typeof val === 'object') {
     const out = {};
@@ -100,7 +107,10 @@ function readConfig(ctx) {
 // Normalize a provider entry into an id string (or null). Accepts a bare string id or an object
 // with an id/name/provider field. Ignores anything else.
 function idOf(entry) {
-  if (typeof entry === 'string') { const s = entry.trim(); return s || null; }
+  if (typeof entry === 'string') {
+    const s = entry.trim();
+    return s || null;
+  }
   if (entry && typeof entry === 'object') {
     const cand = entry.id || entry.name || entry.provider || entry.slug;
     if (typeof cand === 'string' && cand.trim()) return cand.trim();
@@ -130,8 +140,8 @@ function collect(container) {
     for (let i = 0; i < keys.length; i++) {
       const k = keys[i];
       const v = container[k];
-      if (v === false) continue;                 // { openai: false }
-      if (!isEnabled(v)) continue;               // { openai: { enabled: false } }
+      if (v === false) continue; // { openai: false }
+      if (!isEnabled(v)) continue; // { openai: { enabled: false } }
       const s = String(k).trim();
       if (s) ids.push(s);
     }
@@ -146,8 +156,13 @@ function trackedProviders(ctx) {
   if (!cfg || typeof cfg !== 'object') return [];
   // Look at the common places a monitor might list what it tracks, in priority order.
   const containers = [
-    cfg.trackedProviders, cfg.tracked, cfg.enabledProviders,
-    cfg.providers, cfg.services, cfg.monitors, cfg.usage,
+    cfg.trackedProviders,
+    cfg.tracked,
+    cfg.enabledProviders,
+    cfg.providers,
+    cfg.services,
+    cfg.monitors,
+    cfg.usage,
   ];
   const seen = Object.create(null);
   const out = [];
@@ -155,7 +170,10 @@ function trackedProviders(ctx) {
     const ids = collect(containers[i]);
     for (let j = 0; j < ids.length; j++) {
       const id = ids[j];
-      if (!seen[id]) { seen[id] = true; out.push(id); }
+      if (!seen[id]) {
+        seen[id] = true;
+        out.push(id);
+      }
     }
   }
   return out;
@@ -185,18 +203,29 @@ function align(ctx, deps) {
   const cbList = trackedProviders(ctx);
   const kfSet = Object.create(null);
   const kf = [];
-  registryIds(provusage, 'PROVIDERS').concat(registryIds(surface, 'SURFACES')).forEach(function (id) {
-    if (!kfSet[id]) { kfSet[id] = true; kf.push(id); }
-  });
+  registryIds(provusage, 'PROVIDERS')
+    .concat(registryIds(surface, 'SURFACES'))
+    .forEach(function (id) {
+      if (!kfSet[id]) {
+        kfSet[id] = true;
+        kf.push(id);
+      }
+    });
 
   const cbSet = Object.create(null);
-  cbList.forEach(function (id) { cbSet[id] = true; });
+  cbList.forEach(function (id) {
+    cbSet[id] = true;
+  });
 
   const both = [];
   const onlyCodexbar = [];
   const onlyKeyflip = [];
-  cbList.forEach(function (id) { (kfSet[id] ? both : onlyCodexbar).push(id); });
-  kf.forEach(function (id) { if (!cbSet[id]) onlyKeyflip.push(id); });
+  cbList.forEach(function (id) {
+    (kfSet[id] ? both : onlyCodexbar).push(id);
+  });
+  kf.forEach(function (id) {
+    if (!cbSet[id]) onlyKeyflip.push(id);
+  });
 
   return {
     codexbar: cbList,

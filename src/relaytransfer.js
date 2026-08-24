@@ -30,7 +30,9 @@ import * as lantransfer from './lantransfer.js';
 // The same slot grammar the relay server enforces: a single, harmless path segment.
 const SLOT_RE = /^[A-Za-z0-9._-]{1,128}$/;
 
-function normCode(code) { return lantransfer.normCode(code); }
+function normCode(code) {
+  return lantransfer.normCode(code);
+}
 
 // Mint a fresh pairing: a random public rendezvous handle + a random secret key,
 // shown to the user as one dash-joined string. rendezvous is 8 base32 chars (a handle
@@ -90,12 +92,20 @@ function dirBackend(dir) {
     },
     async get(slot) {
       const p = pathFor(slot);
-      try { return fs.readFileSync(p, 'utf8'); }
-      catch (e) { if (e && e.code === 'ENOENT') return null; throw e; }
+      try {
+        return fs.readFileSync(p, 'utf8');
+      } catch (e) {
+        if (e && e.code === 'ENOENT') return null;
+        throw e;
+      }
     },
     async del(slot) {
       const p = pathFor(slot);
-      try { fs.unlinkSync(p); } catch (e) { if (!(e && e.code === 'ENOENT')) throw e; }
+      try {
+        fs.unlinkSync(p);
+      } catch (e) {
+        if (!(e && e.code === 'ENOENT')) throw e;
+      }
       return true;
     },
   };
@@ -115,9 +125,15 @@ function davBackend(baseUrl, user, pass, doFetch) {
     return { url: joinUrl(baseUrl, slot), user: user, pass: pass, fetch: doFetch };
   }
   return {
-    async put(slot, data) { return sync.davPut(opt(slot), data); },
-    async get(slot) { return sync.davGet(opt(slot)); },
-    async del(slot) { return sync.davDelete(opt(slot)); },
+    async put(slot, data) {
+      return sync.davPut(opt(slot), data);
+    },
+    async get(slot) {
+      return sync.davGet(opt(slot));
+    },
+    async del(slot) {
+      return sync.davDelete(opt(slot));
+    },
   };
 }
 
@@ -141,7 +157,7 @@ async function push(ctx, opts) {
     throw new Error('nothing to transfer');
   }
   const enc = sync.encrypt(JSON.stringify(built.bundle), pair.key); // encrypt with the KEY half only
-  const slot = slotFor(pair.rendezvous);                           // store at the PUBLIC handle
+  const slot = slotFor(pair.rendezvous); // store at the PUBLIC handle
   await backend.put(slot, enc);
   return { slot: slot, counts: c };
 }
@@ -161,12 +177,17 @@ async function pull(ctx, opts) {
   const enc = await backend.get(slot);
   if (enc == null) return { found: false };
   let bundle;
-  try { bundle = JSON.parse(sync.decrypt(enc, pair.key)); }
-  catch (e) { throw new Error('wrong code or corrupt payload'); }
+  try {
+    bundle = JSON.parse(sync.decrypt(enc, pair.key));
+  } catch (e) {
+    throw new Error('wrong code or corrupt payload');
+  }
   return {
     found: true,
     bundle: bundle,
-    cleanup: async function () { return backend.del(slot); },
+    cleanup: async function () {
+      return backend.del(slot);
+    },
   };
 }
 
@@ -178,7 +199,13 @@ async function awaitPickup(backend, code, opts) {
   const pollMs = opts.pollMs != null ? opts.pollMs : 2000;
   const ttlMs = opts.ttlMs != null ? opts.ttlMs : 300000;
   const now = opts.now || Date.now;
-  const sleep = opts.sleep || function (ms) { return new Promise(function (r) { setTimeout(r, ms); }); };
+  const sleep =
+    opts.sleep ||
+    function (ms) {
+      return new Promise(function (r) {
+        setTimeout(r, ms);
+      });
+    };
   const slot = slotFor(parsePairing(code).rendezvous);
   const start = now();
   for (;;) {
@@ -189,4 +216,16 @@ async function awaitPickup(backend, code, opts) {
   }
 }
 
-export { push, pull, awaitPickup, genPairing, parsePairing, slotFor, resolveBackend, dirBackend, davBackend, joinUrl, normCode };
+export {
+  push,
+  pull,
+  awaitPickup,
+  genPairing,
+  parsePairing,
+  slotFor,
+  resolveBackend,
+  dirBackend,
+  davBackend,
+  joinUrl,
+  normCode,
+};

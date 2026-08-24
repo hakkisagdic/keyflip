@@ -73,9 +73,9 @@ test('refreshCurrent re-saves the active account before switching away', functio
   core.addCurrent(ctx);
 
   // Back on alice; her token rotates before we switch to bob.
-  core.doSwitch(ctx, 'alice');       // live becomes ALICE-OLD
-  ctx.store.setLive('ALICE-NEW');    // simulate rotation while alice active
-  core.doSwitch(ctx, 'bob');         // should re-save alice as ALICE-NEW first
+  core.doSwitch(ctx, 'alice'); // live becomes ALICE-OLD
+  ctx.store.setLive('ALICE-NEW'); // simulate rotation while alice active
+  core.doSwitch(ctx, 'bob'); // should re-save alice as ALICE-NEW first
 
   assert.strictEqual(ctx.store.getProfile('alice'), 'ALICE-NEW');
   assert.strictEqual(ctx.store.getLive(), 'BOB');
@@ -83,8 +83,10 @@ test('refreshCurrent re-saves the active account before switching away', functio
 
 test('resolveProfile accepts exact names and 1-based numbers', function () {
   const ctx = makeCtx();
-  login(ctx, 'alice@example.com', 'u1', 'A'); core.addCurrent(ctx);
-  login(ctx, 'bob@example.com', 'u2', 'B'); core.addCurrent(ctx);
+  login(ctx, 'alice@example.com', 'u1', 'A');
+  core.addCurrent(ctx);
+  login(ctx, 'bob@example.com', 'u2', 'B');
+  core.addCurrent(ctx);
   // sorted: [alice, bob]
   assert.strictEqual(core.resolveProfile(ctx, 'bob'), 'bob');
   assert.strictEqual(core.resolveProfile(ctx, '1'), 'alice');
@@ -95,18 +97,25 @@ test('resolveProfile accepts exact names and 1-based numbers', function () {
 
 test('listProfiles marks the active account', function () {
   const ctx = makeCtx();
-  login(ctx, 'alice@example.com', 'u1', 'A'); core.addCurrent(ctx);
-  login(ctx, 'bob@example.com', 'u2', 'B'); core.addCurrent(ctx); // bob now active
+  login(ctx, 'alice@example.com', 'u1', 'A');
+  core.addCurrent(ctx);
+  login(ctx, 'bob@example.com', 'u2', 'B');
+  core.addCurrent(ctx); // bob now active
   const list = core.listProfiles(ctx);
-  const bob = list.find(function (e) { return e.name === 'bob'; });
-  const alice = list.find(function (e) { return e.name === 'alice'; });
+  const bob = list.find(function (e) {
+    return e.name === 'bob';
+  });
+  const alice = list.find(function (e) {
+    return e.name === 'alice';
+  });
   assert.strictEqual(bob.active, true);
   assert.strictEqual(alice.active, false);
 });
 
 test('removeProfile deletes metadata and stored credentials', function () {
   const ctx = makeCtx();
-  login(ctx, 'alice@example.com', 'u1', 'A'); core.addCurrent(ctx);
+  login(ctx, 'alice@example.com', 'u1', 'A');
+  core.addCurrent(ctx);
   core.removeProfile(ctx, 'alice');
   assert.strictEqual(profiles.exists(ctx.configDir, 'alice'), false);
   assert.strictEqual(ctx.store.getProfile('alice'), null);
@@ -115,21 +124,29 @@ test('removeProfile deletes metadata and stored credentials', function () {
 test('saveAs rejects invalid names and refuses when not logged in', function () {
   const ctx = makeCtx();
   ctx.store.setLive('X');
-  assert.throws(function () { core.saveAs(ctx, 'bad name'); }, /invalid profile name/);
+  assert.throws(function () {
+    core.saveAs(ctx, 'bad name');
+  }, /invalid profile name/);
   const ctx2 = makeCtx();
-  assert.throws(function () { core.saveAs(ctx2, 'ok'); }, /No live Claude session/);
+  assert.throws(function () {
+    core.saveAs(ctx2, 'ok');
+  }, /No live Claude session/);
 });
 
 test('addCurrent throws when no account is logged in', function () {
   const ctx = makeCtx();
   ctx.store.setLive('X');
-  assert.throws(function () { core.addCurrent(ctx); }, /No logged-in account/);
+  assert.throws(function () {
+    core.addCurrent(ctx);
+  }, /No logged-in account/);
 });
 
 test('addCurrent uniquifies instead of overwriting a different account on a double collision', function () {
   const ctx = makeCtx();
-  login(ctx, 'alice@example.com', 'u1', 'A'); core.addCurrent(ctx); // -> 'alice'
-  login(ctx, 'alice@other.org', 'u2', 'B'); core.addCurrent(ctx);   // -> 'alice-other'
+  login(ctx, 'alice@example.com', 'u1', 'A');
+  core.addCurrent(ctx); // -> 'alice'
+  login(ctx, 'alice@other.org', 'u2', 'B');
+  core.addCurrent(ctx); // -> 'alice-other'
   login(ctx, 'alice@other.net', 'u3', 'C');
   const r = core.addCurrent(ctx);
   assert.notStrictEqual(r.name, 'alice');
@@ -144,18 +161,24 @@ test('addCurrent uniquifies instead of overwriting a different account on a doub
 
 test('addCurrent rejects an explicit name already used by a different account', function () {
   const ctx = makeCtx();
-  login(ctx, 'alice@example.com', 'u1', 'A'); core.addCurrent(ctx);
+  login(ctx, 'alice@example.com', 'u1', 'A');
+  core.addCurrent(ctx);
   login(ctx, 'bob@example.com', 'u2', 'B');
-  assert.throws(function () { core.addCurrent(ctx, 'alice'); }, /already exists/);
+  assert.throws(function () {
+    core.addCurrent(ctx, 'alice');
+  }, /already exists/);
 });
 
 test('switching away from an unsaved account auto-saves it so its token is not lost', function () {
   const ctx = makeCtx();
-  login(ctx, 'alice@example.com', 'u1', 'ALICE'); core.addCurrent(ctx);
+  login(ctx, 'alice@example.com', 'u1', 'ALICE');
+  core.addCurrent(ctx);
   login(ctx, 'charlie@example.com', 'u3', 'CHARLIE'); // never saved
   core.doSwitch(ctx, 'alice');
   const names = profiles.list(ctx.configDir);
-  const charlie = names.filter(function (n) { return profiles.email(ctx.configDir, n) === 'charlie@example.com'; })[0];
+  const charlie = names.filter(function (n) {
+    return profiles.email(ctx.configDir, n) === 'charlie@example.com';
+  })[0];
   assert.ok(charlie, 'charlie should have been auto-saved');
   assert.strictEqual(ctx.store.getProfile(charlie), 'CHARLIE');
   assert.strictEqual(ctx.store.getLive(), 'ALICE');
@@ -163,7 +186,8 @@ test('switching away from an unsaved account auto-saves it so its token is not l
 
 test('applyProfile creates ~/.claude.json when it is missing', function () {
   const ctx = makeCtx();
-  login(ctx, 'alice@example.com', 'u1', 'ALICE'); core.addCurrent(ctx);
+  login(ctx, 'alice@example.com', 'u1', 'ALICE');
+  core.addCurrent(ctx);
   fs.rmSync(ctx.claudeConfigPath, { force: true });
   core.applyProfile(ctx, 'alice');
   assert.strictEqual(claude.readConfig(ctx.claudeConfigPath).oauthAccount.emailAddress, 'alice@example.com');
@@ -171,33 +195,45 @@ test('applyProfile creates ~/.claude.json when it is missing', function () {
 
 test('applyProfile refuses to overwrite a corrupt ~/.claude.json (no data loss)', function () {
   const ctx = makeCtx();
-  login(ctx, 'alice@example.com', 'u1', 'ALICE'); core.addCurrent(ctx);
+  login(ctx, 'alice@example.com', 'u1', 'ALICE');
+  core.addCurrent(ctx);
   fs.writeFileSync(ctx.claudeConfigPath, '{ "mcpServers": {}, broken');
-  assert.throws(function () { core.applyProfile(ctx, 'alice'); }, /not valid JSON/);
+  assert.throws(function () {
+    core.applyProfile(ctx, 'alice');
+  }, /not valid JSON/);
   // the corrupt file is left intact, not clobbered
   assert.strictEqual(fs.readFileSync(ctx.claudeConfigPath, 'utf8'), '{ "mcpServers": {}, broken');
 });
 
 test('applyProfile refuses a corrupt/truncated credential blob', function () {
   const ctx = makeCtx();
-  login(ctx, 'alice@example.com', 'u1', 'ALICE'); core.addCurrent(ctx);
+  login(ctx, 'alice@example.com', 'u1', 'ALICE');
+  core.addCurrent(ctx);
   ctx.store.setProfile('alice', '{"claudeAiOauth":{"accessToken":"tru'); // truncated JSON
-  assert.throws(function () { core.applyProfile(ctx, 'alice'); }, /unreadable|corrupt/);
+  assert.throws(function () {
+    core.applyProfile(ctx, 'alice');
+  }, /unreadable|corrupt/);
   ctx.store.setProfile('alice', '   ');
-  assert.throws(function () { core.applyProfile(ctx, 'alice'); }, /empty/);
+  assert.throws(function () {
+    core.applyProfile(ctx, 'alice');
+  }, /empty/);
 });
 
 test('a failed pointer write rolls the live credential back (no half-switch)', function () {
   const ctx = makeCtx();
-  login(ctx, 'alice@example.com', 'u1', 'ALICE'); core.addCurrent(ctx);
-  login(ctx, 'bob@example.com', 'u2', 'BOB'); core.addCurrent(ctx); // bob active, live=BOB
+  login(ctx, 'alice@example.com', 'u1', 'ALICE');
+  core.addCurrent(ctx);
+  login(ctx, 'bob@example.com', 'u2', 'BOB');
+  core.addCurrent(ctx); // bob active, live=BOB
   // Credential is written first, then the pointer; make the pointer write fail
   // by pointing to an invalid path (a directory instead of a file).
   const realPath = ctx.claudeConfigPath;
   const badDir = realPath + '.d';
   fs.mkdirSync(badDir, { recursive: true });
   ctx.claudeConfigPath = badDir; // writeConfig will fail on a directory
-  assert.throws(function () { core.applyProfile(ctx, 'alice'); });
+  assert.throws(function () {
+    core.applyProfile(ctx, 'alice');
+  });
   ctx.claudeConfigPath = realPath;
   // live credential restored to bob's — no half-switch
   assert.strictEqual(ctx.store.getLive(), 'BOB');
@@ -205,23 +241,33 @@ test('a failed pointer write rolls the live credential back (no half-switch)', f
 
 test('a setLive failure surfaces cleanly (nothing half-written)', function () {
   const ctx = makeCtx();
-  login(ctx, 'alice@example.com', 'u1', 'ALICE'); core.addCurrent(ctx);
-  login(ctx, 'bob@example.com', 'u2', 'BOB'); core.addCurrent(ctx);
+  login(ctx, 'alice@example.com', 'u1', 'ALICE');
+  core.addCurrent(ctx);
+  login(ctx, 'bob@example.com', 'u2', 'BOB');
+  core.addCurrent(ctx);
   const realSetLive = ctx.store.setLive.bind(ctx.store);
-  ctx.store.setLive = function () { const e = new Error('keychain locked'); e.code = 'EKEYCHAIN'; throw e; };
-  assert.throws(function () { core.applyProfile(ctx, 'alice'); }, /keychain locked/);
+  ctx.store.setLive = function () {
+    const e = new Error('keychain locked');
+    e.code = 'EKEYCHAIN';
+    throw e;
+  };
+  assert.throws(function () {
+    core.applyProfile(ctx, 'alice');
+  }, /keychain locked/);
   ctx.store.setLive = realSetLive;
   assert.strictEqual(core.currentEmail(ctx), 'bob@example.com'); // pointer untouched
 });
 
 test('resolveProfile treats a number as the menu index, not a digit-named profile', function () {
   const ctx = makeCtx();
-  login(ctx, 'z@example.com', 'u1', 'Z'); core.saveAs(ctx, '2');
-  login(ctx, 'a@example.com', 'u2', 'A'); core.saveAs(ctx, 'aaa');
+  login(ctx, 'z@example.com', 'u1', 'Z');
+  core.saveAs(ctx, '2');
+  login(ctx, 'a@example.com', 'u2', 'A');
+  core.saveAs(ctx, 'aaa');
   // sorted names: ['2','aaa'] -> menu shows [1]=2, [2]=aaa
   assert.strictEqual(core.resolveProfile(ctx, '1'), '2');
   assert.strictEqual(core.resolveProfile(ctx, '2'), 'aaa'); // index 2, NOT the profile literally named "2"
-  assert.strictEqual(core.resolveProfile(ctx, '3'), null);  // out of range
+  assert.strictEqual(core.resolveProfile(ctx, '3'), null); // out of range
 });
 
 test('autoName never collides across accounts with the same email local-part', function () {

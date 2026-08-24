@@ -5,11 +5,16 @@ import fs from 'fs';
 import path from 'path';
 import { atomicWrite } from './fsutil.js';
 
-function linksPath(ctx) { return path.join(ctx.configDir, 'links.json'); }
+function linksPath(ctx) {
+  return path.join(ctx.configDir, 'links.json');
+}
 
 function readAll(ctx) {
-  try { return JSON.parse(fs.readFileSync(linksPath(ctx), 'utf8')) || {}; }
-  catch (e) { return {}; }
+  try {
+    return JSON.parse(fs.readFileSync(linksPath(ctx), 'utf8')) || {};
+  } catch (e) {
+    return {};
+  }
 }
 
 function set(ctx, dir, name) {

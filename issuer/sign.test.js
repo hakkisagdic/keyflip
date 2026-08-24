@@ -15,7 +15,9 @@ const sign = require('./sign');
 const keygen = require('./keygen');
 const license = require('../src/license');
 
-const NOW = function () { return '2026-06-01T00:00:00.000Z'; };
+const NOW = function () {
+  return '2026-06-01T00:00:00.000Z';
+};
 
 // A throwaway issuer keypair pinned into license.js for the whole offline path.
 function pinFreshKeys() {
@@ -30,7 +32,10 @@ function pinFreshKeys() {
 
 test('round-trip: a signed token verifies GREEN in src/license.js', function () {
   const k = pinFreshKeys();
-  const token = sign.signLicense({ tier: 'pro', email: 'a@b.co', expiry: '2030-01-01T00:00:00.000Z', issued: '2026-01-01T00:00:00.000Z' }, k.priv);
+  const token = sign.signLicense(
+    { tier: 'pro', email: 'a@b.co', expiry: '2030-01-01T00:00:00.000Z', issued: '2026-01-01T00:00:00.000Z' },
+    k.priv,
+  );
   const v = license.verify(token, { now: NOW });
   assert.strictEqual(v.valid, true);
   assert.strictEqual(v.tier, 'pro');
@@ -52,7 +57,10 @@ test('signLicense canonical bytes match src/license.js exactly', function () {
 
 test('tampering ANY field flips verify to invalid (bad-signature)', function () {
   const k = pinFreshKeys();
-  const token = sign.signLicense({ tier: 'pro', email: 'a@b.co', expiry: null, issued: '2026-01-01T00:00:00.000Z' }, k.priv);
+  const token = sign.signLicense(
+    { tier: 'pro', email: 'a@b.co', expiry: null, issued: '2026-01-01T00:00:00.000Z' },
+    k.priv,
+  );
   const parts = token.split('.');
   const payload = JSON.parse(Buffer.from(parts[0], 'base64url').toString('utf8'));
 
@@ -73,7 +81,10 @@ test('tampering ANY field flips verify to invalid (bad-signature)', function () 
 
 test('an expired expiry yields valid=false in src/license.js', function () {
   const k = pinFreshKeys();
-  const token = sign.signLicense({ tier: 'pro', email: 'a@b.co', expiry: '2026-01-01T00:00:00.000Z', issued: '2025-01-01T00:00:00.000Z' }, k.priv);
+  const token = sign.signLicense(
+    { tier: 'pro', email: 'a@b.co', expiry: '2026-01-01T00:00:00.000Z', issued: '2025-01-01T00:00:00.000Z' },
+    k.priv,
+  );
   const v = license.verify(token, { now: NOW }); // NOW (2026-06) is past the 2026-01 expiry
   assert.strictEqual(v.valid, false);
   assert.strictEqual(v.reason, 'expired');
@@ -89,7 +100,10 @@ test('loadPrivateKey round-trips the on-disk key and signs a verifiable token', 
 
   const key = sign.loadPrivateKey(keyPath);
   assert.strictEqual(key.asymmetricKeyType, 'ed25519');
-  const token = sign.signLicense({ tier: 'pro', email: 'd@e.f', expiry: null, issued: '2026-01-01T00:00:00.000Z' }, key);
+  const token = sign.signLicense(
+    { tier: 'pro', email: 'd@e.f', expiry: null, issued: '2026-01-01T00:00:00.000Z' },
+    key,
+  );
   assert.strictEqual(license.verify(token, { now: NOW }).valid, true);
 });
 
@@ -101,10 +115,21 @@ test('CLI reads the key from disk (not argv) and prints only the token', functio
   license.setPublicKey(kp.publicKeyB64);
 
   const env = Object.assign({}, process.env, { KEYFLIP_ISSUER_KEY: keyPath });
-  const out = require('child_process').execFileSync(process.execPath, [
-    path.join(__dirname, 'sign.js'), '--tier', 'pro', '--email', 'cli@e.co',
-    '--expiry', '2030-01-01T00:00:00.000Z', '--issued', '2026-01-01T00:00:00.000Z',
-  ], { cwd: dir, encoding: 'utf8', env: env });
+  const out = require('child_process').execFileSync(
+    process.execPath,
+    [
+      path.join(__dirname, 'sign.js'),
+      '--tier',
+      'pro',
+      '--email',
+      'cli@e.co',
+      '--expiry',
+      '2030-01-01T00:00:00.000Z',
+      '--issued',
+      '2026-01-01T00:00:00.000Z',
+    ],
+    { cwd: dir, encoding: 'utf8', env: env },
+  );
 
   const token = out.trim();
   assert.ok(/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(token), 'stdout must be exactly one token');

@@ -22,28 +22,51 @@ import * as _usage from './usage.js';
 const notify = _notify; // reuse stripSecrets + sanitizeWebhook (same discipline)
 
 let VERSION = '0.0.0';
-try { VERSION = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version; } catch (e) { /* ignore */ }
+try {
+  VERSION = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version;
+} catch (e) {
+  /* ignore */
+}
 
 // eslint-disable-next-line no-control-regex
 const CTRL = /[\x00-\x1f\x7f]/g; // strip control chars (newlines / ANSI ESC) from any rendered text
-function scrub(s, max) { return String(s == null ? '' : s).replace(CTRL, ' ').slice(0, max || 300); }
+function scrub(s, max) {
+  return String(s == null ? '' : s)
+    .replace(CTRL, ' ')
+    .slice(0, max || 300);
+}
 // Escape the three characters Slack treats specially inside mrkdwn text.
-function mrkdwn(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
-function isIso(s) { return typeof s === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(s); }
-function safeCall(fn, d) { try { return fn(); } catch (e) { return d; } }
+function mrkdwn(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+function isIso(s) {
+  return typeof s === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(s);
+}
+function safeCall(fn, d) {
+  try {
+    return fn();
+  } catch (e) {
+    return d;
+  }
+}
 
 // Per-event presentation. NULL-PROTOTYPE so a user-supplied event name (e.g.
 // '__proto__' / 'constructor') can never reach a prototype during lookup — an
 // unknown key just falls through to the default.
 const EVENTS = Object.create(null);
-EVENTS.quota = { emoji: '📊', title: 'Quota alert', color: 0xE01E5A };      // 📊
-EVENTS.switch = { emoji: '🔀', title: 'Account switched', color: 0x2EB67D }; // 🔀
-EVENTS['fleet-reply'] = { emoji: '💬', title: 'Fleet reply', color: 0x36C5F0 }; // 💬
-EVENTS.status = { emoji: '🔑', title: 'keyflip status', color: 0x5865F2 };   // 🔑
-EVENTS.test = { emoji: '🧪', title: 'keyflip test', color: 0x99AAB5 };       // 🧪
-EVENTS.note = { emoji: '📝', title: 'keyflip', color: 0x99AAB5 };            // 📝
-const DEFAULT_COLOR = 0x5865F2;
-function metaFor(event) { return EVENTS[event] || null; }
+EVENTS.quota = { emoji: '📊', title: 'Quota alert', color: 0xe01e5a }; // 📊
+EVENTS.switch = { emoji: '🔀', title: 'Account switched', color: 0x2eb67d }; // 🔀
+EVENTS['fleet-reply'] = { emoji: '💬', title: 'Fleet reply', color: 0x36c5f0 }; // 💬
+EVENTS.status = { emoji: '🔑', title: 'keyflip status', color: 0x5865f2 }; // 🔑
+EVENTS.test = { emoji: '🧪', title: 'keyflip test', color: 0x99aab5 }; // 🧪
+EVENTS.note = { emoji: '📝', title: 'keyflip', color: 0x99aab5 }; // 📝
+const DEFAULT_COLOR = 0x5865f2;
+function metaFor(event) {
+  return EVENTS[event] || null;
+}
 function titleFor(event) {
   const m = metaFor(event);
   return scrub(m ? m.emoji + ' ' + m.title : '🔔 ' + (event || 'notification'), 240); // 🔔
@@ -55,10 +78,19 @@ function titleFor(event) {
 // (incl. ptb./canary. subdomains). Anything else — or an unparseable URL — is generic.
 function detect(url) {
   let host = '';
-  try { host = new URL(String(url)).hostname.toLowerCase(); } catch (e) { return 'generic'; }
+  try {
+    host = new URL(String(url)).hostname.toLowerCase();
+  } catch (e) {
+    return 'generic';
+  }
   if (host === 'slack.com' || host.slice(-10) === '.slack.com') return 'slack';
-  if (host === 'discord.com' || host.slice(-12) === '.discord.com' ||
-      host === 'discordapp.com' || host.slice(-15) === '.discordapp.com') return 'discord';
+  if (
+    host === 'discord.com' ||
+    host.slice(-12) === '.discord.com' ||
+    host === 'discordapp.com' ||
+    host.slice(-15) === '.discordapp.com'
+  )
+    return 'discord';
   return 'generic';
 }
 
@@ -107,8 +139,15 @@ function formatSlack(event, payload, at) {
   });
   if (fields.length) blocks.push({ type: 'section', fields: fields });
   const when = at || (safe && typeof safe === 'object' && safe.at) || null;
-  blocks.push({ type: 'context', elements: [{ type: 'mrkdwn',
-    text: 'keyflip' + (event ? ' • ' + mrkdwn(event) : '') + (when ? ' • ' + mrkdwn(String(when)) : '') }] });
+  blocks.push({
+    type: 'context',
+    elements: [
+      {
+        type: 'mrkdwn',
+        text: 'keyflip' + (event ? ' • ' + mrkdwn(event) : '') + (when ? ' • ' + mrkdwn(String(when)) : ''),
+      },
+    ],
+  });
   return { blocks: blocks };
 }
 
@@ -124,7 +163,7 @@ function formatDiscord(event, payload, at) {
   const summary = summaryOf(safe);
   if (summary) embed.description = summary.slice(0, 4000);
   const fields = fieldsOf(safe, 25).map(function (f) {
-    return { name: (f.name.slice(0, 256) || '—'), value: (f.value.slice(0, 1024) || '—'), inline: true };
+    return { name: f.name.slice(0, 256) || '—', value: f.value.slice(0, 1024) || '—', inline: true };
   });
   if (fields.length) embed.fields = fields;
   embed.footer = { text: scrub('keyflip' + (event ? ' • ' + event : ''), 2000) };
@@ -137,11 +176,17 @@ function formatDiscord(event, payload, at) {
 // Persisted at <configDir>/integrations.json: only platform/event/status/time — never
 // the webhook URL, never the payload. Bounded ring so it can't grow unboundedly.
 const MAX_LOG = 50;
-function statePath(ctx) { return path.join(ctx.configDir, 'integrations.json'); }
+function statePath(ctx) {
+  return path.join(ctx.configDir, 'integrations.json');
+}
 function normalizeState(raw) {
-  const r = (raw && typeof raw === 'object' && !Array.isArray(raw)) ? raw : {};
+  const r = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
   const deliveries = Array.isArray(r.deliveries)
-    ? r.deliveries.filter(function (d) { return d && typeof d === 'object' && !Array.isArray(d); }).slice(0, MAX_LOG)
+    ? r.deliveries
+        .filter(function (d) {
+          return d && typeof d === 'object' && !Array.isArray(d);
+        })
+        .slice(0, MAX_LOG)
     : [];
   return { deliveries: deliveries };
 }
@@ -157,7 +202,11 @@ function record(ctx, entry) {
 // Read-only, never throws — safe for a status/diagnostic read.
 function history(ctx) {
   let raw = null;
-  try { raw = JSON.parse(fs.readFileSync(statePath(ctx), 'utf8')); } catch (e) { raw = null; }
+  try {
+    raw = JSON.parse(fs.readFileSync(statePath(ctx), 'utf8'));
+  } catch (e) {
+    raw = null;
+  }
   return normalizeState(raw).deliveries;
 }
 
@@ -194,19 +243,44 @@ async function post(ctx, spec, opts) {
         method: 'POST',
         headers: { 'content-type': 'application/json', 'user-agent': 'keyflip/' + VERSION },
         body: JSON.stringify(body),
-        signal: (typeof AbortSignal !== 'undefined' && AbortSignal.timeout) ? AbortSignal.timeout(opts.timeoutMs || 5000) : undefined,
+        signal:
+          typeof AbortSignal !== 'undefined' && AbortSignal.timeout
+            ? AbortSignal.timeout(opts.timeoutMs || 5000)
+            : undefined,
       });
       const status = res && typeof res.status === 'number' ? res.status : null;
       const ok = !!(res && (res.ok || (status != null && status < 400)));
-      result = { ok: ok, sent: ok, platform: platform, httpStatus: status, at: at,
-        reason: ok ? undefined : (status != null ? 'http-' + status : 'no-response') };
+      result = {
+        ok: ok,
+        sent: ok,
+        platform: platform,
+        httpStatus: status,
+        at: at,
+        reason: ok ? undefined : status != null ? 'http-' + status : 'no-response',
+      };
     } catch (e) {
-      result = { ok: false, sent: false, platform: platform, httpStatus: null, at: at, reason: (e && e.message) || 'network-error' };
+      result = {
+        ok: false,
+        sent: false,
+        platform: platform,
+        httpStatus: null,
+        at: at,
+        reason: (e && e.message) || 'network-error',
+      };
     }
   }
   // NON-SECRET delivery log (no url, no payload) — best-effort, never fatal.
-  try { record(ctx, { at: at, platform: platform, event: scrub(event, 64), ok: !!result.ok, httpStatus: result.httpStatus == null ? null : result.httpStatus }); }
-  catch (e) { /* corrupt/locked log — skip, never clobber */ }
+  try {
+    record(ctx, {
+      at: at,
+      platform: platform,
+      event: scrub(event, 64),
+      ok: !!result.ok,
+      httpStatus: result.httpStatus == null ? null : result.httpStatus,
+    });
+  } catch (e) {
+    /* corrupt/locked log — skip, never clobber */
+  }
   return result;
 }
 
@@ -217,14 +291,22 @@ async function post(ctx, spec, opts) {
 function statusMessage(ctx) {
   const core = _core;
   const usage = _usage;
-  const list = safeCall(function () { return core.listProfiles(ctx); }, []);
-  const active = list.filter(function (p) { return p.active; })[0] || null;
+  const list = safeCall(function () {
+    return core.listProfiles(ctx);
+  }, []);
+  const active =
+    list.filter(function (p) {
+      return p.active;
+    })[0] || null;
   let cache = {};
   try {
     const parsed = JSON.parse(fs.readFileSync(path.join(ctx.configDir, '.usage-cache.json'), 'utf8'));
     if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) cache = parsed;
-  } catch (e) { cache = {}; }
-  let headroomPct = null, usageStr = null;
+  } catch (e) {
+    cache = {};
+  }
+  let headroomPct = null,
+    usageStr = null;
   const c = active && Object.prototype.hasOwnProperty.call(cache, active.name) ? cache[active.name] : null;
   if (c && c.usage) {
     const h = usage.headroom(c.usage);
@@ -232,7 +314,7 @@ function statusMessage(ctx) {
     usageStr = usage.fmt(c.usage);
   }
   return {
-    active: active ? (active.email || active.name) : null,
+    active: active ? active.email || active.name : null,
     activeName: active ? active.name : null,
     accounts: list.length,
     headroomPct: headroomPct,
@@ -246,7 +328,10 @@ function statusMessage(ctx) {
 // posts. Default (and with --status) posts the current status; --message posts a
 // one-line note. Returns the post result plus a human `text` line. The parent wires
 // this to `keyflip post` and prints text (or the object under --json).
-function flagVal(argv, flag) { const i = argv.indexOf(flag); return (i !== -1 && i + 1 < argv.length) ? argv[i + 1] : null; }
+function flagVal(argv, flag) {
+  const i = argv.indexOf(flag);
+  return i !== -1 && i + 1 < argv.length ? argv[i + 1] : null;
+}
 async function cli(ctx, argv, opts) {
   argv = argv || [];
   const to = flagVal(argv, '--to');
@@ -254,11 +339,19 @@ async function cli(ctx, argv, opts) {
   const eventArg = flagVal(argv, '--event');
   const messageArg = flagVal(argv, '--message');
   if (!to) {
-    return { ok: false, error: 'usage: keyflip post --to <webhook-url> [--status] [--event <name>] [--message <text>]' };
+    return {
+      ok: false,
+      error: 'usage: keyflip post --to <webhook-url> [--status] [--event <name>] [--message <text>]',
+    };
   }
   let event, payload;
-  if (messageArg && !wantStatus) { event = eventArg || 'note'; payload = { message: messageArg }; }
-  else { event = eventArg || 'status'; payload = statusMessage(ctx); }
+  if (messageArg && !wantStatus) {
+    event = eventArg || 'note';
+    payload = { message: messageArg };
+  } else {
+    event = eventArg || 'status';
+    payload = statusMessage(ctx);
+  }
   const r = await post(ctx, { url: to, event: event, payload: payload }, opts || {});
   const platform = r.platform || detect(to);
   r.text = r.ok
@@ -275,11 +368,15 @@ const mcpTools = [
   {
     name: 'keyflip_post_status',
     title: 'Post keyflip status to Slack/Discord',
-    description: 'Post the current keyflip status (active account, number of saved accounts, remaining quota headroom) to a Slack or Discord incoming webhook, richly formatted for that platform. The payload is a NON-SECRET summary and is secret-stripped before sending. This sends data to an external service — ask the user before calling, then set confirm=true.',
+    description:
+      'Post the current keyflip status (active account, number of saved accounts, remaining quota headroom) to a Slack or Discord incoming webhook, richly formatted for that platform. The payload is a NON-SECRET summary and is secret-stripped before sending. This sends data to an external service — ask the user before calling, then set confirm=true.',
     inputSchema: {
       type: 'object',
       properties: {
-        url: { type: 'string', description: 'The Slack/Discord (or generic) incoming-webhook URL to post to (http(s) only).' },
+        url: {
+          type: 'string',
+          description: 'The Slack/Discord (or generic) incoming-webhook URL to post to (http(s) only).',
+        },
         confirm: { type: 'boolean', description: 'Must be true — set it only after the user has agreed to post.' },
       },
       required: ['url', 'confirm'],
@@ -296,7 +393,10 @@ const mcpTools = [
       const status = statusMessage(ctx);
       const r = await post(ctx, { url: url, event: 'status', payload: status }, {});
       if (!r.ok) throw new Error('post failed (' + platform + '): ' + (r.reason || 'unknown'));
-      return { posted: { platform: platform, httpStatus: r.httpStatus == null ? null : r.httpStatus, at: r.at }, status: status };
+      return {
+        posted: { platform: platform, httpStatus: r.httpStatus == null ? null : r.httpStatus, at: r.at },
+        status: status,
+      };
     },
   },
 ];

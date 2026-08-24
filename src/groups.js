@@ -13,9 +13,13 @@ import { atomicWrite, readJsonForWrite } from './fsutil.js';
 // — which becomes a KEY in the derived group index — can never shadow a prototype.
 const TAG_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const RESERVED = ['__proto__', 'prototype', 'constructor'];
-function isValidTag(t) { return typeof t === 'string' && t.length <= 64 && TAG_RE.test(t) && RESERVED.indexOf(t) === -1; }
+function isValidTag(t) {
+  return typeof t === 'string' && t.length <= 64 && TAG_RE.test(t) && RESERVED.indexOf(t) === -1;
+}
 
-function groupsPath(ctx) { return path.join(ctx.configDir, 'groups.json'); }
+function groupsPath(ctx) {
+  return path.join(ctx.configDir, 'groups.json');
+}
 
 // Coerce parsed JSON into a null-prototype { validName: [validTags(sorted,deduped)] }.
 // Drops junk keys/values (bad names, non-arrays, bad tags) and entries with no tags,
@@ -28,7 +32,9 @@ function normalize(parsed) {
     const tags = parsed[name];
     if (!Array.isArray(tags)) return;
     const clean = [];
-    tags.forEach(function (t) { if (isValidTag(t) && clean.indexOf(t) === -1) clean.push(t); });
+    tags.forEach(function (t) {
+      if (isValidTag(t) && clean.indexOf(t) === -1) clean.push(t);
+    });
     if (clean.length) out[name] = clean.sort();
   });
   return out;
@@ -38,17 +44,27 @@ function normalize(parsed) {
 // accessor. Returns a null-prototype map.
 function readAll(ctx) {
   let parsed;
-  try { parsed = readJsonForWrite(groupsPath(ctx)); } catch (e) { return Object.create(null); }
+  try {
+    parsed = readJsonForWrite(groupsPath(ctx));
+  } catch (e) {
+    return Object.create(null);
+  }
   return normalize(parsed);
 }
 
 // Read-for-write: a MISSING file is empty ({}), but a CORRUPT file THROWS so a
 // read-modify-write never silently clobbers the user's real state.
-function loadForWrite(ctx) { return normalize(readJsonForWrite(groupsPath(ctx))); }
+function loadForWrite(ctx) {
+  return normalize(readJsonForWrite(groupsPath(ctx)));
+}
 
 function save(ctx, map) {
   const out = {};
-  Object.keys(map).sort().forEach(function (k) { out[k] = map[k].slice().sort(); });
+  Object.keys(map)
+    .sort()
+    .forEach(function (k) {
+      out[k] = map[k].slice().sort();
+    });
   atomicWrite(groupsPath(ctx), JSON.stringify(out, null, 2), 0o600);
 }
 
@@ -69,7 +85,8 @@ function setTags(ctx, name, tags) {
     if (clean.indexOf(t) === -1) clean.push(t);
   });
   const map = loadForWrite(ctx);
-  if (clean.length) map[name] = clean.sort(); else delete map[name];
+  if (clean.length) map[name] = clean.sort();
+  else delete map[name];
   save(ctx, map);
   return clean.slice();
 }
@@ -88,8 +105,11 @@ function addTag(ctx, name, tag) {
 function removeTag(ctx, name, tag) {
   if (!profiles.isValidName(name)) throw new Error("invalid account name: '" + name + "'");
   const map = loadForWrite(ctx);
-  const cur = (map[name] || []).filter(function (t) { return t !== tag; });
-  if (cur.length) map[name] = cur.sort(); else delete map[name];
+  const cur = (map[name] || []).filter(function (t) {
+    return t !== tag;
+  });
+  if (cur.length) map[name] = cur.sort();
+  else delete map[name];
   save(ctx, map);
   return cur.slice();
 }
@@ -105,21 +125,29 @@ function listGroups(ctx) {
       if (out[tag].indexOf(name) === -1) out[tag].push(name);
     });
   });
-  Object.keys(out).forEach(function (g) { out[g].sort(); });
+  Object.keys(out).forEach(function (g) {
+    out[g].sort();
+  });
   return out;
 }
 
 function membersOf(ctx, group) {
   if (!isValidTag(group)) return [];
   const all = readAll(ctx);
-  return Object.keys(all).filter(function (name) { return all[name].indexOf(group) !== -1; }).sort();
+  return Object.keys(all)
+    .filter(function (name) {
+      return all[name].indexOf(group) !== -1;
+    })
+    .sort();
 }
 
 // Subset of a PROFILES ARRAY (order preserved — rotation order matters) whose
 // .name is tagged `group`. Membership is checked via a null-proto set.
 function filterProfiles(ctx, profs, group) {
   const set = Object.create(null);
-  membersOf(ctx, group).forEach(function (m) { set[m] = true; });
+  membersOf(ctx, group).forEach(function (m) {
+    set[m] = true;
+  });
   return (Array.isArray(profs) ? profs : []).filter(function (p) {
     return p && typeof p.name === 'string' && set[p.name] === true;
   });

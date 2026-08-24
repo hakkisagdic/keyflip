@@ -17,7 +17,9 @@ const __dirname = path.dirname(__filename);
 const LABEL = 'com.keyflip.autoswitch';
 const CRON_MARK = '# keyflip-autoswitch (managed by keyflip)';
 
-function xmlEsc(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+function xmlEsc(s) {
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
 
 // Resolve the `keyflip` entrypoint the same way dream's scheduler does: the installed binary if
 // on PATH, else this checkout's bin/keyflip.js under the current node.
@@ -36,34 +38,53 @@ function autoswitchCommand(opts) {
   if (!isNaN(th)) args.push('--threshold', String(Math.min(100, Math.max(50, th))));
   if (opts.strategy === 'best' || opts.strategy === 'next-available') args.push('--strategy', opts.strategy);
   if (opts.group && /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(opts.group)) args.push('--group', opts.group);
-  return bin.slice(-3) === '.js'
-    ? { exec: process.execPath, args: [bin].concat(args) }
-    : { exec: bin, args: args };
+  return bin.slice(-3) === '.js' ? { exec: process.execPath, args: [bin].concat(args) } : { exec: bin, args: args };
 }
 
 // Interval in seconds, clamped so a runaway config can't hammer the endpoint (min 60s) or drift
 // uselessly long (max 6h). launchd wants seconds; cron gets whole minutes (min 1).
-function intervalSec(opts) { return Math.min(21600, Math.max(60, parseInt(opts && opts.interval, 10) || 300)); }
+function intervalSec(opts) {
+  return Math.min(21600, Math.max(60, parseInt(opts && opts.interval, 10) || 300));
+}
 
 // ---- macOS launchd (StartInterval) ----
-function plistPath(home) { return path.join(home || os.homedir(), 'Library', 'LaunchAgents', LABEL + '.plist'); }
+function plistPath(home) {
+  return path.join(home || os.homedir(), 'Library', 'LaunchAgents', LABEL + '.plist');
+}
 function buildPlist(opts) {
   const c = autoswitchCommand(opts);
-  const prog = [c.exec].concat(c.args).map(function (a) { return '      <string>' + xmlEsc(a) + '</string>'; }).join('\n');
-  return '<?xml version="1.0" encoding="UTF-8"?>\n' +
+  const prog = [c.exec]
+    .concat(c.args)
+    .map(function (a) {
+      return '      <string>' + xmlEsc(a) + '</string>';
+    })
+    .join('\n');
+  return (
+    '<?xml version="1.0" encoding="UTF-8"?>\n' +
     '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n' +
     '<plist version="1.0">\n  <dict>\n' +
-    '    <key>Label</key><string>' + LABEL + '</string>\n' +
-    '    <key>ProgramArguments</key>\n    <array>\n' + prog + '\n    </array>\n' +
-    '    <key>StartInterval</key><integer>' + intervalSec(opts) + '</integer>\n' +
-    '    <key>RunAtLoad</key><true/>\n  </dict>\n</plist>\n';
+    '    <key>Label</key><string>' +
+    LABEL +
+    '</string>\n' +
+    '    <key>ProgramArguments</key>\n    <array>\n' +
+    prog +
+    '\n    </array>\n' +
+    '    <key>StartInterval</key><integer>' +
+    intervalSec(opts) +
+    '</integer>\n' +
+    '    <key>RunAtLoad</key><true/>\n  </dict>\n</plist>\n'
+  );
 }
 function installLaunchd(opts) {
   opts = opts || {};
   const runner = opts.run || run;
   const p = plistPath(opts.home);
-  try { fs.mkdirSync(path.dirname(p), { recursive: true }); fs.writeFileSync(p, buildPlist(opts)); }
-  catch (e) { return { ok: false, reason: 'write-failed', detail: e.message }; }
+  try {
+    fs.mkdirSync(path.dirname(p), { recursive: true });
+    fs.writeFileSync(p, buildPlist(opts));
+  } catch (e) {
+    return { ok: false, reason: 'write-failed', detail: e.message };
+  }
   runner('launchctl', ['unload', p]); // idempotent
   const r = runner('launchctl', ['load', p]);
   return { ok: !r || r.code === 0, path: p, intervalSec: intervalSec(opts) };
@@ -74,7 +95,11 @@ function uninstallLaunchd(opts) {
   const p = plistPath(opts.home);
   const existed = fs.existsSync(p);
   runner('launchctl', ['unload', p]);
-  try { fs.rmSync(p, { force: true }); } catch (e) { /* ignore */ }
+  try {
+    fs.rmSync(p, { force: true });
+  } catch (e) {
+    /* ignore */
+  }
   return { ok: true, path: p, existed: existed };
 }
 
@@ -82,14 +107,22 @@ function uninstallLaunchd(opts) {
 function cronLine(opts) {
   const c = autoswitchCommand(opts);
   const everyMin = Math.max(1, Math.round(intervalSec(opts) / 60));
-  const spec = everyMin >= 60 ? '0 */' + Math.min(23, Math.round(everyMin / 60)) + ' * * *' : '*/' + everyMin + ' * * * *';
+  const spec =
+    everyMin >= 60 ? '0 */' + Math.min(23, Math.round(everyMin / 60)) + ' * * *' : '*/' + everyMin + ' * * * *';
   return spec + ' ' + [c.exec].concat(c.args).join(' ') + '  ' + CRON_MARK;
 }
-function readCron(runner) { const r = runner('crontab', ['-l']); return r && r.code === 0 ? String(r.stdout || '') : ''; }
+function readCron(runner) {
+  const r = runner('crontab', ['-l']);
+  return r && r.code === 0 ? String(r.stdout || '') : '';
+}
 function installCron(opts) {
   opts = opts || {};
   const runner = opts.run || run;
-  const kept = readCron(runner).split('\n').filter(function (l) { return l.trim() && l.indexOf(CRON_MARK) === -1; });
+  const kept = readCron(runner)
+    .split('\n')
+    .filter(function (l) {
+      return l.trim() && l.indexOf(CRON_MARK) === -1;
+    });
   kept.push(cronLine(opts));
   const r = runner('crontab', ['-'], kept.join('\n') + '\n');
   return { ok: !!(r && r.code === 0), intervalSec: intervalSec(opts) };
@@ -98,8 +131,12 @@ function uninstallCron(opts) {
   opts = opts || {};
   const runner = opts.run || run;
   const all = readCron(runner).split('\n');
-  const kept = all.filter(function (l) { return l.trim() && l.indexOf(CRON_MARK) === -1; });
-  const existed = all.some(function (l) { return l.indexOf(CRON_MARK) !== -1; });
+  const kept = all.filter(function (l) {
+    return l.trim() && l.indexOf(CRON_MARK) === -1;
+  });
+  const existed = all.some(function (l) {
+    return l.indexOf(CRON_MARK) !== -1;
+  });
   const r = runner('crontab', ['-'], kept.length ? kept.join('\n') + '\n' : '');
   return { ok: !!(r && r.code === 0), existed: existed };
 }
@@ -120,9 +157,29 @@ function uninstall(ctx, opts) {
 function status(ctx, opts) {
   opts = opts || {};
   const runner = opts.run || run;
-  if (ctx.platform === 'darwin') { const p = plistPath(opts.home); return { kind: 'launchd', installed: fs.existsSync(p), path: p }; }
-  if (ctx.platform === 'linux') { return { kind: 'cron', installed: readCron(runner).indexOf(CRON_MARK) !== -1 }; }
+  if (ctx.platform === 'darwin') {
+    const p = plistPath(opts.home);
+    return { kind: 'launchd', installed: fs.existsSync(p), path: p };
+  }
+  if (ctx.platform === 'linux') {
+    return { kind: 'cron', installed: readCron(runner).indexOf(CRON_MARK) !== -1 };
+  }
   return { kind: 'unsupported', installed: false };
 }
 
-export { LABEL, CRON_MARK, autoswitchCommand, intervalSec, buildPlist, cronLine, plistPath, installLaunchd, uninstallLaunchd, installCron, uninstallCron, install, uninstall, status };
+export {
+  LABEL,
+  CRON_MARK,
+  autoswitchCommand,
+  intervalSec,
+  buildPlist,
+  cronLine,
+  plistPath,
+  installLaunchd,
+  uninstallLaunchd,
+  installCron,
+  uninstallCron,
+  install,
+  uninstall,
+  status,
+};

@@ -15,10 +15,11 @@ test('claudeInstances reads live sessions from ~/.claude/sessions/<pid>.json', f
   const home = tmpdir();
   const dir = path.join(home, '.claude', 'sessions');
   fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(path.join(dir, process.pid + '.json'),
-    JSON.stringify({ pid: process.pid, cwd: '/tmp/x', entrypoint: 'cli' }));
-  fs.writeFileSync(path.join(dir, '999999.json'),
-    JSON.stringify({ pid: 999999, cwd: '/tmp/dead', entrypoint: 'cli' })); // dead pid
+  fs.writeFileSync(
+    path.join(dir, process.pid + '.json'),
+    JSON.stringify({ pid: process.pid, cwd: '/tmp/x', entrypoint: 'cli' }),
+  );
+  fs.writeFileSync(path.join(dir, '999999.json'), JSON.stringify({ pid: 999999, cwd: '/tmp/dead', entrypoint: 'cli' })); // dead pid
   fs.writeFileSync(path.join(dir, 'junk.txt'), 'ignore');
   const live = platform.claudeInstances(home);
   assert.strictEqual(live.length, 1);
@@ -32,7 +33,9 @@ test('claudeInstances is empty without a sessions dir', function () {
 
 // ---- HybridStore learned fallback ----
 function lockedRunner() {
-  return function () { return { code: 36, stdout: '', stderr: 'keychain locked', timedOut: false }; };
+  return function () {
+    return { code: 36, stdout: '', stderr: 'keychain locked', timedOut: false };
+  };
 }
 function okRunner(value) {
   return function (cmd, args) {
@@ -44,19 +47,37 @@ function okRunner(value) {
 test('HybridStore falls back to the file store for profiles when the keychain is locked', function () {
   const home = tmpdir();
   const kc = new KeychainStore({ account: 'me', runner: lockedRunner() });
-  const file = new FileStore({ credsFilePath: path.join(home, 'creds.json'), profileCredDir: path.join(home, 'creds') });
+  const file = new FileStore({
+    credsFilePath: path.join(home, 'creds.json'),
+    profileCredDir: path.join(home, 'creds'),
+  });
   const s = new HybridStore(kc, file);
-  s.setProfile('alice', 'BLOB');            // keychain throws EKEYCHAIN -> file fallback
+  s.setProfile('alice', 'BLOB'); // keychain throws EKEYCHAIN -> file fallback
   assert.strictEqual(s.fallback, true);
   assert.strictEqual(s.getProfile('alice'), 'BLOB');
   // the live item must NOT silently fall back — Claude reads it from the keychain
-  assert.throws(function () { s.setLive('X'); }, function (e) { return e.code === 'EKEYCHAIN'; });
+  assert.throws(
+    function () {
+      s.setLive('X');
+    },
+    function (e) {
+      return e.code === 'EKEYCHAIN';
+    },
+  );
 });
 
 test('HybridStore reads file-stored profiles even when the keychain works but has no item', function () {
   const home = tmpdir();
-  const kc = new KeychainStore({ account: 'me', runner: function () { return { code: 44, stdout: '', stderr: '' }; } });
-  const file = new FileStore({ credsFilePath: path.join(home, 'creds.json'), profileCredDir: path.join(home, 'creds') });
+  const kc = new KeychainStore({
+    account: 'me',
+    runner: function () {
+      return { code: 44, stdout: '', stderr: '' };
+    },
+  });
+  const file = new FileStore({
+    credsFilePath: path.join(home, 'creds.json'),
+    profileCredDir: path.join(home, 'creds'),
+  });
   file.setProfile('bob', 'FILE-BLOB');
   const s = new HybridStore(kc, file);
   assert.strictEqual(s.getProfile('bob'), 'FILE-BLOB');
@@ -65,7 +86,10 @@ test('HybridStore reads file-stored profiles even when the keychain works but ha
 // ---- reconciliation ----
 test('reconcileStaleKeychain deletes the live Keychain item after a file-backend write', function () {
   const calls = [];
-  const runner = function (cmd, args) { calls.push(args); return { code: 0, stdout: '', stderr: '' }; };
+  const runner = function (cmd, args) {
+    calls.push(args);
+    return { code: 0, stdout: '', stderr: '' };
+  };
   const ctx = { platform: 'darwin', account: 'me', keychainRunner: runner, store: { type: 'file' } };
   assert.strictEqual(reconcileStaleKeychain(ctx), true);
   assert.strictEqual(calls[0][0], 'delete-generic-password');

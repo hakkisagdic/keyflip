@@ -16,12 +16,15 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const BIN = path.join(__dirname, '..', 'bin', 'keyflip.js');
-function tmp() { return fs.mkdtempSync(path.join(os.tmpdir(), 'keyflip-migcli-')); }
+function tmp() {
+  return fs.mkdtempSync(path.join(os.tmpdir(), 'keyflip-migcli-'));
+}
 function run(home, args) {
   return _child_process.spawnSync(process.execPath, [BIN].concat(args), {
     encoding: 'utf8',
     env: Object.assign({}, process.env, {
-      HOME: home, USERPROFILE: home,
+      HOME: home,
+      USERPROFILE: home,
       XDG_CONFIG_HOME: path.join(home, '.config'),
       KEYFLIP_CONFIG_DIR: path.join(home, 'kfcfg'),
       CLAUDE_CONFIG_DIR: path.join(home, '.claude'),
@@ -44,16 +47,17 @@ test('positionals skips value-flags and their values, keeps `-` as positional', 
   assert.deepStrictEqual(positionals(['--passphrase-file', 'p.txt'], VF), []);
   assert.deepStrictEqual(positionals(['bundle.json', '--passphrase-file', 'p.txt'], VF), ['bundle.json']);
   assert.deepStrictEqual(positionals(['--passphrase-file', 'p.txt', 'bundle.json'], VF), ['bundle.json']);
-  assert.deepStrictEqual(positionals(['--code', 'ABCD2345'], VF), []);      // code is a flag value, not the host
+  assert.deepStrictEqual(positionals(['--code', 'ABCD2345'], VF), []); // code is a flag value, not the host
   assert.deepStrictEqual(positionals(['1.2.3.4:8787', '--code', 'X'], VF), ['1.2.3.4:8787']);
   assert.deepStrictEqual(positionals(['-', '--passphrase-file', 'p'], VF), ['-']); // `-` stays a positional
-  assert.deepStrictEqual(positionals(['--force', 'file'], VF), ['file']);   // non-value flag consumes nothing
+  assert.deepStrictEqual(positionals(['--force', 'file'], VF), ['file']); // non-value flag consumes nothing
 });
 
 // ---- CLI: migrate export never clobbers the passphrase file ----
 
 test('migrate export --passphrase-file <f> (no output arg) does NOT overwrite <f>', function () {
-  const home = tmp(); seed(home);
+  const home = tmp();
+  seed(home);
   const pf = path.join(home, 'pass.txt');
   fs.writeFileSync(pf, 'MYSECRETPASS\n');
   const r = run(home, ['migrate', 'export', '--passphrase-file', pf]);
@@ -61,12 +65,17 @@ test('migrate export --passphrase-file <f> (no output arg) does NOT overwrite <f
   const bundle = path.join(process.cwd(), 'keyflip-migrate.json'); // default lands in cwd
   // The default bundle may land in cwd; assert the command succeeded and the passphrase survived.
   assert.strictEqual(r.status, 0);
-  try { fs.rmSync(bundle, { force: true }); } catch (e) { /* ignore */ }
+  try {
+    fs.rmSync(bundle, { force: true });
+  } catch (e) {
+    /* ignore */
+  }
   fs.rmSync(home, { recursive: true, force: true });
 });
 
 test('migrate export with an UNREADABLE passphrase file fails and writes no plaintext', function () {
-  const home = tmp(); seed(home);
+  const home = tmp();
+  seed(home);
   const out = path.join(home, 'out.json');
   const r = run(home, ['migrate', 'export', out, '--passphrase-file', path.join(home, 'nope', 'missing')]);
   assert.notStrictEqual(r.status, 0);
@@ -76,8 +85,10 @@ test('migrate export with an UNREADABLE passphrase file fails and writes no plai
 });
 
 test('migrate export - writes ONLY the bundle to stdout (notes go to stderr)', function () {
-  const home = tmp(); seed(home);
-  const pf = path.join(home, 'pass.txt'); fs.writeFileSync(pf, 'pw\n');
+  const home = tmp();
+  seed(home);
+  const pf = path.join(home, 'pass.txt');
+  fs.writeFileSync(pf, 'pw\n');
   const r = run(home, ['migrate', 'export', '-', '--passphrase-file', pf]);
   assert.strictEqual(r.status, 0);
   const obj = JSON.parse(r.stdout); // must be pure JSON, no human notes mixed in
@@ -88,7 +99,8 @@ test('migrate export - writes ONLY the bundle to stdout (notes go to stderr)', f
 // ---- CLI: transfer pull --code (no host) runs discovery, not code-as-host ----
 
 test('transfer pull --code X (no host) attempts LAN discovery instead of dialing the code', function () {
-  const home = tmp(); seed(home);
+  const home = tmp();
+  seed(home);
   const r = run(home, ['transfer', 'pull', '--code', 'ABCD2345']);
   const out = r.stdout + r.stderr;
   assert.match(out, /Looking for a keyflip transfer|no peer found/);

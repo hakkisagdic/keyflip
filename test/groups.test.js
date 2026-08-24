@@ -9,7 +9,9 @@ import path from 'path';
 import * as groups from '../src/groups.js';
 import { makeCtx } from './helpers.js';
 
-function gpath(ctx) { return path.join(ctx.configDir, 'groups.json'); }
+function gpath(ctx) {
+  return path.join(ctx.configDir, 'groups.json');
+}
 
 test('tagsFor is empty for an untagged account', function () {
   const ctx = makeCtx();
@@ -76,31 +78,48 @@ test('filterProfiles keeps only tagged names and PRESERVES input order', functio
   assert.deepStrictEqual(groups.filterProfiles(ctx, profs, 'work'), [{ name: 'c' }, { name: 'a' }]);
   assert.deepStrictEqual(groups.filterProfiles(ctx, profs, 'ghost'), []);
   assert.deepStrictEqual(groups.filterProfiles(ctx, null, 'work'), [], 'non-array input is safe');
-  assert.deepStrictEqual(groups.filterProfiles(ctx, [{ nope: 1 }, 'x', null], 'work'), [], 'junk profile entries dropped');
+  assert.deepStrictEqual(
+    groups.filterProfiles(ctx, [{ nope: 1 }, 'x', null], 'work'),
+    [],
+    'junk profile entries dropped',
+  );
 });
 
 test('hostile: invalid account name or tag throws (no write)', function () {
   const ctx = makeCtx();
-  assert.throws(function () { groups.addTag(ctx, '__proto__', 'work'); }, /invalid account name/);
-  assert.throws(function () { groups.addTag(ctx, 'acme', '__proto__'); }, /invalid group tag/);
-  assert.throws(function () { groups.addTag(ctx, 'acme', 'has space'); }, /invalid group tag/);
-  assert.throws(function () { groups.addTag(ctx, 'acme', 'a/b'); }, /invalid group tag/);
-  assert.throws(function () { groups.setTags(ctx, 'acme', ['ok', 'bad tag']); }, /invalid group tag/);
+  assert.throws(function () {
+    groups.addTag(ctx, '__proto__', 'work');
+  }, /invalid account name/);
+  assert.throws(function () {
+    groups.addTag(ctx, 'acme', '__proto__');
+  }, /invalid group tag/);
+  assert.throws(function () {
+    groups.addTag(ctx, 'acme', 'has space');
+  }, /invalid group tag/);
+  assert.throws(function () {
+    groups.addTag(ctx, 'acme', 'a/b');
+  }, /invalid group tag/);
+  assert.throws(function () {
+    groups.setTags(ctx, 'acme', ['ok', 'bad tag']);
+  }, /invalid group tag/);
   assert.strictEqual(fs.existsSync(gpath(ctx)), false, 'nothing was written on rejection');
 });
 
 test('hostile: a tampered groups.json cannot pollute prototypes and is sanitized', function () {
   const ctx = makeCtx();
-  fs.writeFileSync(gpath(ctx), JSON.stringify({
-    __proto__: { polluted: true },
-    constructor: ['x'],
-    good: ['work', 'work', 'bad tag', 5, 'billing'],
-    empty: [],
-    scalar: 'nope',
-  }));
+  fs.writeFileSync(
+    gpath(ctx),
+    JSON.stringify({
+      __proto__: { polluted: true },
+      constructor: ['x'],
+      good: ['work', 'work', 'bad tag', 5, 'billing'],
+      empty: [],
+      scalar: 'nope',
+    }),
+  );
   const all = groups.readAll(ctx);
   assert.strictEqual(Object.getPrototypeOf(all), null, 'readAll returns a null-proto map');
-  assert.strictEqual(({}).polluted, undefined, 'Object.prototype was not polluted');
+  assert.strictEqual({}.polluted, undefined, 'Object.prototype was not polluted');
   assert.deepStrictEqual(Object.keys(all), ['good'], 'only the valid account survives');
   assert.deepStrictEqual(all.good, ['billing', 'work'], 'bad/duplicate tags stripped, rest sorted');
   assert.deepStrictEqual(groups.listGroups(ctx).work, ['good']);
@@ -111,7 +130,13 @@ test('corrupt groups.json: reads degrade to empty, but writes REFUSE to clobber'
   fs.writeFileSync(gpath(ctx), '{ this is not json');
   assert.deepStrictEqual(groups.readAll(ctx), Object.create(null), 'read degrades to empty');
   assert.deepStrictEqual(groups.tagsFor(ctx, 'acme'), []);
-  assert.throws(function () { groups.addTag(ctx, 'acme', 'work'); }, /not valid JSON/, 'write refuses to overwrite corrupt file');
+  assert.throws(
+    function () {
+      groups.addTag(ctx, 'acme', 'work');
+    },
+    /not valid JSON/,
+    'write refuses to overwrite corrupt file',
+  );
   assert.strictEqual(fs.readFileSync(gpath(ctx), 'utf8'), '{ this is not json', 'the corrupt file is left untouched');
 });
 

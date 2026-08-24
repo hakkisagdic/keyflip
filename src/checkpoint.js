@@ -54,10 +54,15 @@ function deepRedact(val, key) {
   // credential-shaped key (e.g. { password: ['hunter2'] }) must still hit the credential-key drop,
   // not just token-shaped masking. Matches secretscan.redactValue. Losing the key here (deepRedact(x,
   // null)) would write arbitrary plaintext secrets verbatim into the checkpoint + its contentHash.
-  if (Array.isArray(val)) return val.map(function (x) { return deepRedact(x, key); });
+  if (Array.isArray(val))
+    return val.map(function (x) {
+      return deepRedact(x, key);
+    });
   if (val && typeof val === 'object') {
     const out = Object.create(null);
-    Object.keys(val).forEach(function (k) { out[k] = deepRedact(val[k], k); });
+    Object.keys(val).forEach(function (k) {
+      out[k] = deepRedact(val[k], k);
+    });
     return out;
   }
   if (typeof val === 'string') {
@@ -70,8 +75,11 @@ function deepRedact(val, key) {
 // ---- git (best-effort, fully injected — never throws) -----------------------
 
 function safeRun(run, projectPath, args) {
-  try { return run('git', ['-C', projectPath].concat(args), null, { timeoutMs: 20000 }); }
-  catch (e) { return { code: 1, stdout: '', stderr: String(e && e.message) }; }
+  try {
+    return run('git', ['-C', projectPath].concat(args), null, { timeoutMs: 20000 });
+  } catch (e) {
+    return { code: 1, stdout: '', stderr: String(e && e.message) };
+  }
 }
 // Single-line git output (branch / short commit), or null when git is absent / not a repo.
 function gitOut(run, projectPath, args) {
@@ -83,19 +91,22 @@ function gitOut(run, projectPath, args) {
 // Parse `git status --porcelain` into the list of changed paths. Handles the `orig -> new` rename
 // form (keeps the new path) and git's quoting of paths with special characters.
 function parseDirty(porcelain) {
-  return String(porcelain || '').split('\n').map(function (line) {
-    if (!line || line.length < 4) return null;
-    let p = line.slice(3); // strip the 2-char XY status + its trailing space
-    const arrow = p.indexOf(' -> ');
-    if (arrow !== -1) p = p.slice(arrow + 4);
-    return p.replace(/^"|"$/g, '').trim();
-  }).filter(Boolean);
+  return String(porcelain || '')
+    .split('\n')
+    .map(function (line) {
+      if (!line || line.length < 4) return null;
+      let p = line.slice(3); // strip the 2-char XY status + its trailing space
+      const arrow = p.indexOf(' -> ');
+      if (arrow !== -1) p = p.slice(arrow + 4);
+      return p.replace(/^"|"$/g, '').trim();
+    })
+    .filter(Boolean);
 }
 function readGit(run, projectPath) {
   const branch = gitOut(run, projectPath, ['rev-parse', '--abbrev-ref', 'HEAD']);
   const commit = gitOut(run, projectPath, ['rev-parse', '--short', 'HEAD']);
   const st = safeRun(run, projectPath, ['status', '--porcelain']);
-  const dirty = (st && st.code === 0) ? parseDirty(st.stdout) : [];
+  const dirty = st && st.code === 0 ? parseDirty(st.stdout) : [];
   return { branch: branch, commit: commit, dirty: dirty };
 }
 
@@ -108,22 +119,38 @@ function stableStringify(v) {
   if (v === null || typeof v !== 'object') return JSON.stringify(v);
   if (Array.isArray(v)) return '[' + v.map(stableStringify).join(',') + ']';
   const keys = Object.keys(v).sort();
-  return '{' + keys.map(function (k) { return JSON.stringify(k) + ':' + stableStringify(v[k]); }).join(',') + '}';
+  return (
+    '{' +
+    keys
+      .map(function (k) {
+        return JSON.stringify(k) + ':' + stableStringify(v[k]);
+      })
+      .join(',') +
+    '}'
+  );
 }
-function sha256(s) { return crypto.createHash('sha256').update(String(s)).digest('hex'); }
+function sha256(s) {
+  return crypto.createHash('sha256').update(String(s)).digest('hex');
+}
 
 // Compact, sortable, filesystem-safe prefix from an ISO timestamp (2026-07-12T10:00:00.000Z ->
 // 20260712T100000). Falls back to 'cp' for a non-ISO clock.
 function compactStamp(iso) {
-  const s = String(iso).replace(/[-:]/g, '').replace(/\..*$/, '').replace(/[^0-9A-Za-z]/g, '');
+  const s = String(iso)
+    .replace(/[-:]/g, '')
+    .replace(/\..*$/, '')
+    .replace(/[^0-9A-Za-z]/g, '');
   return s.slice(0, 16) || 'cp';
 }
 
 // ---- reads (READ-ONLY, guarded) ---------------------------------------------
 
 function readJson(file) {
-  try { return JSON.parse(fs.readFileSync(file, 'utf8')); }
-  catch (e) { return null; } // absent or corrupt -> treat as "not present"
+  try {
+    return JSON.parse(fs.readFileSync(file, 'utf8'));
+  } catch (e) {
+    return null;
+  } // absent or corrupt -> treat as "not present"
 }
 
 // The most recent checkpoint (the pointer at latest.json), or null.
@@ -143,14 +170,20 @@ function get(projectPath, id) {
 function list(projectPath) {
   const dir = checkpointsDir(projectPath);
   let files;
-  try { files = fs.readdirSync(dir); } catch (e) { return []; }
+  try {
+    files = fs.readdirSync(dir);
+  } catch (e) {
+    return [];
+  }
   const out = [];
   files.forEach(function (f) {
     if (f === 'latest.json' || f.slice(-5) !== '.json') return;
     const cp = readJson(path.join(dir, f));
     if (cp && cp.id) out.push(cp);
   });
-  out.sort(function (a, b) { return String(b.at || '').localeCompare(String(a.at || '')); });
+  out.sort(function (a, b) {
+    return String(b.at || '').localeCompare(String(a.at || ''));
+  });
   return out;
 }
 
@@ -171,9 +204,14 @@ function create(projectPath, data, opts) {
   data = data || {};
   opts = opts || {};
   const run = opts.run || _exec.run;
-  const nowFn = typeof opts.now === 'function' ? opts.now
-    : (typeof opts.clock === 'function' ? opts.clock
-      : function () { return new Date().toISOString(); });
+  const nowFn =
+    typeof opts.now === 'function'
+      ? opts.now
+      : typeof opts.clock === 'function'
+        ? opts.clock
+        : function () {
+            return new Date().toISOString();
+          };
   const at = String(nowFn());
 
   const prev = latest(projectPath);
@@ -195,7 +233,16 @@ function create(projectPath, data, opts) {
   const contentHash = sha256(stableStringify(body));
   const id = compactStamp(at) + '-' + contentHash.slice(0, 8);
 
-  const cp = { id: id, at: at, provider: provider, git: git, summary: summary, tasksSnapshot: tasksSnapshot, contentHash: contentHash, parent: parent };
+  const cp = {
+    id: id,
+    at: at,
+    provider: provider,
+    git: git,
+    summary: summary,
+    tasksSnapshot: tasksSnapshot,
+    contentHash: contentHash,
+    parent: parent,
+  };
 
   const dir = checkpointsDir(projectPath);
   const json = JSON.stringify(cp, null, 2) + '\n';

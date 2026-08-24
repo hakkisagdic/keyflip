@@ -9,9 +9,9 @@
 // Directories (relative to configDir) that hold secrets or per-account secret snapshots.
 // NEVER git-versioned, NEVER copied into a metadata backup.
 const SECRET_DIRS = [
-  'creds',            // *.cred OS-credential-store fallbacks
+  'creds', // *.cred OS-credential-store fallbacks
   'browser-sessions', // captured browser cookie DBs (*.sql)
-  'app',              // desktop-app oauth token cache (app/<name>.json) + cookies (app/<name>.cookies)
+  'app', // desktop-app oauth token cache (app/<name>.json) + cookies (app/<name>.cookies)
   'pre-sync-backups', // pre-overwrite snapshots that contain raw OAuth access/refresh tokens
 ];
 // Secret-shaped files, by extension (no leading dot).
@@ -32,8 +32,14 @@ function isSecretFile(name) {
 
 // gitignore glob lines for the secret set: dirs as `d/`, extensions as `*.e`, names verbatim.
 function gitignoreLines() {
-  return SECRET_DIRS.map(function (d) { return d + '/'; })
-    .concat(SECRET_FILE_EXTS.map(function (e) { return '*.' + e; }))
+  return SECRET_DIRS.map(function (d) {
+    return d + '/';
+  })
+    .concat(
+      SECRET_FILE_EXTS.map(function (e) {
+        return '*.' + e;
+      }),
+    )
     .concat(SECRET_FILE_NAMES);
 }
 

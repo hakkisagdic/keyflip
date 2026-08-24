@@ -40,10 +40,18 @@ function hexEqual(aHex, bHex) {
   if (typeof aHex !== 'string' || typeof bHex !== 'string') return false;
   if (aHex.length !== bHex.length || aHex.length === 0) return false;
   let a, b;
-  try { a = Buffer.from(aHex, 'hex'); b = Buffer.from(bHex, 'hex'); }
-  catch (e) { return false; }
+  try {
+    a = Buffer.from(aHex, 'hex');
+    b = Buffer.from(bHex, 'hex');
+  } catch (e) {
+    return false;
+  }
   if (a.length !== b.length || a.length === 0) return false;
-  try { return crypto.timingSafeEqual(a, b); } catch (e) { return false; }
+  try {
+    return crypto.timingSafeEqual(a, b);
+  } catch (e) {
+    return false;
+  }
 }
 
 function verifyWebhook(rawBody, headers, secret /*, opts */) {
@@ -85,8 +93,11 @@ function extractProduct(attrs) {
 
 function parseEvent(rawBody /*, headers */) {
   let body;
-  try { body = JSON.parse(asBuffer(rawBody).toString('utf8')); }
-  catch (e) { return null; }
+  try {
+    body = JSON.parse(asBuffer(rawBody).toString('utf8'));
+  } catch (e) {
+    return null;
+  }
   if (!body || typeof body !== 'object') return null;
 
   const meta = body.meta && typeof body.meta === 'object' ? body.meta : {};

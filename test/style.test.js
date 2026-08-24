@@ -6,9 +6,16 @@ import * as style from '../src/style.js';
 
 function withCleanEnv(fn) {
   const saved = { NO_COLOR: process.env.NO_COLOR, FORCE_COLOR: process.env.FORCE_COLOR, TERM: process.env.TERM };
-  delete process.env.NO_COLOR; delete process.env.FORCE_COLOR; process.env.TERM = 'xterm';
-  try { fn(); } finally {
-    Object.keys(saved).forEach(function (k) { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]; });
+  delete process.env.NO_COLOR;
+  delete process.env.FORCE_COLOR;
+  process.env.TERM = 'xterm';
+  try {
+    fn();
+  } finally {
+    Object.keys(saved).forEach(function (k) {
+      if (saved[k] === undefined) delete process.env[k];
+      else process.env[k] = saved[k];
+    });
   }
 }
 
@@ -37,6 +44,7 @@ test('NO_COLOR still wins regardless of opts', function () {
   try {
     assert.strictEqual(style.make({ isTTY: true }, { color: true }).enabled, false, 'NO_COLOR forces off');
   } finally {
-    if (saved === undefined) delete process.env.NO_COLOR; else process.env.NO_COLOR = saved;
+    if (saved === undefined) delete process.env.NO_COLOR;
+    else process.env.NO_COLOR = saved;
   }
 });

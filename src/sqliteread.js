@@ -5,12 +5,17 @@
 // conversation values are large JSON that spills off the leaf page). NOT a general SQLite engine:
 // no indexes, no WAL, no writes. Verified against sqlite3-CLI-produced fixtures in test/.
 
-function u16(b, o) { return (b[o] << 8) | b[o + 1]; }
-function u32(b, o) { return (b[o] * 0x1000000) + (b[o + 1] << 16) + (b[o + 2] << 8) + b[o + 3]; }
+function u16(b, o) {
+  return (b[o] << 8) | b[o + 1];
+}
+function u32(b, o) {
+  return b[o] * 0x1000000 + (b[o + 1] << 16) + (b[o + 2] << 8) + b[o + 3];
+}
 
 // SQLite varint: 1–9 bytes, big-endian, high bit = "more"; the 9th byte contributes all 8 bits.
 function varint(b, o) {
-  let result = 0, i = 0;
+  let result = 0,
+    i = 0;
   for (; i < 8; i++) {
     const byte = b[o + i];
     result = result * 128 + (byte & 0x7f);
@@ -37,23 +42,45 @@ function parseRecord(payload) {
   const headerEnd = Math.min(hdr.value, payload.length);
   const types = [];
   let p = hdr.len;
-  while (p < headerEnd && p < payload.length) { const v = varint(payload, p); types.push(v.value); p += (v.len || 1); }
+  while (p < headerEnd && p < payload.length) {
+    const v = varint(payload, p);
+    types.push(v.value);
+    p += v.len || 1;
+  }
   const values = [];
   let body = headerEnd;
   types.forEach(function (t) {
-    if (t === 0) { values.push(null); }
-    else if (t >= 1 && t <= 6) { const n = [0, 1, 2, 3, 4, 6, 8][t]; values.push(readInt(payload, body, n)); body += n; }
-    else if (t === 7) { values.push(payload.readDoubleBE(body)); body += 8; }
-    else if (t === 8) { values.push(0); }
-    else if (t === 9) { values.push(1); }
-    else if (t >= 12 && t % 2 === 0) { const n = (t - 12) / 2; values.push(payload.slice(body, body + n)); body += n; } // BLOB
-    else { const n = (t - 13) / 2; values.push(payload.toString('utf8', body, body + n)); body += n; } // TEXT
+    if (t === 0) {
+      values.push(null);
+    } else if (t >= 1 && t <= 6) {
+      const n = [0, 1, 2, 3, 4, 6, 8][t];
+      values.push(readInt(payload, body, n));
+      body += n;
+    } else if (t === 7) {
+      values.push(payload.readDoubleBE(body));
+      body += 8;
+    } else if (t === 8) {
+      values.push(0);
+    } else if (t === 9) {
+      values.push(1);
+    } else if (t >= 12 && t % 2 === 0) {
+      const n = (t - 12) / 2;
+      values.push(payload.slice(body, body + n));
+      body += n;
+    } // BLOB
+    else {
+      const n = (t - 13) / 2;
+      values.push(payload.toString('utf8', body, body + n));
+      body += n;
+    } // TEXT
   });
   return values;
 }
-function readInt(b, o, n) { // big-endian two's-complement signed integer of n bytes
+function readInt(b, o, n) {
+  // big-endian two's-complement signed integer of n bytes
   if (n === 0) return 0;
-  let v = 0; for (let i = 0; i < n; i++) v = v * 256 + b[o + i];
+  let v = 0;
+  for (let i = 0; i < n; i++) v = v * 256 + b[o + i];
   const max = Math.pow(2, n * 8);
   if (v >= max / 2) v -= max;
   return v;
@@ -89,15 +116,19 @@ function walkTable(buf, rootPage, cx, cb) {
   const seen = {};
   while (stack.length) {
     const pageNum = stack.pop();
-    if (seen[pageNum]) continue; seen[pageNum] = 1;
+    if (seen[pageNum]) continue;
+    seen[pageNum] = 1;
     const base = (pageNum - 1) * cx.pageSize;
-    const hoff = pageNum === 1 ? 100 : 0;       // page 1 carries the 100-byte db header
+    const hoff = pageNum === 1 ? 100 : 0; // page 1 carries the 100-byte db header
     const type = buf[base + hoff];
     if (type !== 0x0d && type !== 0x05) continue; // only table leaf/interior
     const numCells = u16(buf, base + hoff + 3);
     const interior = type === 0x05;
     const cellPtrBase = base + hoff + (interior ? 12 : 8);
-    if (interior) { const right = u32(buf, base + hoff + 8); stack.push(right); }
+    if (interior) {
+      const right = u32(buf, base + hoff + 8);
+      stack.push(right);
+    }
     for (let i = 0; i < numCells; i++) {
       const cellOff = base + u16(buf, cellPtrBase + i * 2);
       if (interior) {
@@ -128,7 +159,9 @@ function readTable(buf, tableName) {
   const root = rootPageOf(buf, cx, tableName);
   if (root < 0) throw new Error('no such table: ' + tableName);
   const rows = [];
-  walkTable(buf, root, cx, function (rec) { rows.push(rec); });
+  walkTable(buf, root, cx, function (rec) {
+    rows.push(rec);
+  });
   return rows;
 }
 

@@ -18,8 +18,9 @@ class HybridStore {
   }
   _profileOp(op, args) {
     if (this.fallback) return this.file[op].apply(this.file, args);
-    try { return this.kc[op].apply(this.kc, args); }
-    catch (e) {
+    try {
+      return this.kc[op].apply(this.kc, args);
+    } catch (e) {
       if (e && e.code === 'EKEYCHAIN') {
         this.fallback = true;
         return this.file[op].apply(this.file, args);
@@ -27,19 +28,37 @@ class HybridStore {
       throw e;
     }
   }
-  getLive() { return this.kc.getLive(); }
-  setLive(blob) { return this.kc.setLive(blob); }
-  delLive() { return this.kc.delLive(); }
+  getLive() {
+    return this.kc.getLive();
+  }
+  setLive(blob) {
+    return this.kc.setLive(blob);
+  }
+  delLive() {
+    return this.kc.delLive();
+  }
   getProfile(name) {
     const v = this._profileOp('getProfile', [name]);
     // A profile saved during an earlier fallback lives in the file store.
-    if (v === null && !this.fallback) { try { return this.file.getProfile(name); } catch (e) { return null; } }
+    if (v === null && !this.fallback) {
+      try {
+        return this.file.getProfile(name);
+      } catch (e) {
+        return null;
+      }
+    }
     return v;
   }
-  setProfile(name, blob) { return this._profileOp('setProfile', [name, blob]); }
+  setProfile(name, blob) {
+    return this._profileOp('setProfile', [name, blob]);
+  }
   delProfile(name) {
     this._profileOp('delProfile', [name]);
-    try { this.file.delProfile(name); } catch (e) { /* ignore */ }
+    try {
+      this.file.delProfile(name);
+    } catch (e) {
+      /* ignore */
+    }
   }
 }
 
@@ -54,7 +73,11 @@ function createStore(opts) {
   const fileOpts = { credsFilePath: opts.credsFilePath, profileCredDir: profileCredDir };
 
   let credsFileExists = false;
-  try { credsFileExists = fs.existsSync(opts.credsFilePath); } catch (e) { credsFileExists = false; }
+  try {
+    credsFileExists = fs.existsSync(opts.credsFilePath);
+  } catch (e) {
+    credsFileExists = false;
+  }
 
   if (credsFileExists) return new FileStore(fileOpts);
   if (platform === 'darwin') {
@@ -71,7 +94,9 @@ function reconcileStaleKeychain(ctx) {
   try {
     new KeychainStore({ account: ctx.account, runner: ctx.keychainRunner }).delLive();
     return true;
-  } catch (e) { return false; }
+  } catch (e) {
+    return false;
+  }
 }
 
 // In-memory store for tests (no filesystem, no Keychain).
@@ -81,14 +106,24 @@ class MemoryStore {
     this.live = null;
     this.profiles = Object.create(null);
   }
-  getLive() { return this.live; }
-  setLive(blob) { this.live = blob; }
-  delLive() { this.live = null; }
+  getLive() {
+    return this.live;
+  }
+  setLive(blob) {
+    this.live = blob;
+  }
+  delLive() {
+    this.live = null;
+  }
   getProfile(name) {
     return Object.prototype.hasOwnProperty.call(this.profiles, name) ? this.profiles[name] : null;
   }
-  setProfile(name, blob) { this.profiles[name] = blob; }
-  delProfile(name) { delete this.profiles[name]; }
+  setProfile(name, blob) {
+    this.profiles[name] = blob;
+  }
+  delProfile(name) {
+    delete this.profiles[name];
+  }
 }
 
 export { createStore, MemoryStore, KeychainStore, FileStore, HybridStore, reconcileStaleKeychain };

@@ -13,8 +13,15 @@ import { makeCtx } from './helpers.js';
 // name, baseUrl, authScheme, key(hidden), route-now.
 function driver(answers) {
   const q = answers.slice();
-  const ask = function () { return Promise.resolve(q.length ? q.shift() : ''); };
-  const rl = { question: function (_prompt, cb) { cb(q.length ? q.shift() : ''); }, _writeToOutput: null };
+  const ask = function () {
+    return Promise.resolve(q.length ? q.shift() : '');
+  };
+  const rl = {
+    question: function (_prompt, cb) {
+      cb(q.length ? q.shift() : '');
+    },
+    _writeToOutput: null,
+  };
   return { ask: ask, rl: rl };
 }
 function ctxForProviders() {

@@ -19,17 +19,23 @@ function setupHome() {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'keyflip-notif-'));
   fs.mkdirSync(path.join(home, '.claude'), { recursive: true });
   fs.writeFileSync(path.join(home, '.claude', '.credentials.json'), '{"live":"TOKEN-1"}');
-  fs.writeFileSync(path.join(home, '.claude.json'),
-    JSON.stringify({ oauthAccount: { emailAddress: 'alice@example.com' }, userID: 'u1' }));
+  fs.writeFileSync(
+    path.join(home, '.claude.json'),
+    JSON.stringify({ oauthAccount: { emailAddress: 'alice@example.com' }, userID: 'u1' }),
+  );
   return home;
 }
 function loginAs(home, email, userID, token) {
   fs.writeFileSync(path.join(home, '.claude', '.credentials.json'), JSON.stringify({ live: token }));
-  fs.writeFileSync(path.join(home, '.claude.json'), JSON.stringify({ oauthAccount: { emailAddress: email }, userID: userID }));
+  fs.writeFileSync(
+    path.join(home, '.claude.json'),
+    JSON.stringify({ oauthAccount: { emailAddress: email }, userID: userID }),
+  );
 }
 function childEnv(home) {
   return Object.assign({}, process.env, {
-    HOME: home, USERPROFILE: home,
+    HOME: home,
+    USERPROFILE: home,
     XDG_CONFIG_HOME: path.join(home, '.config'),
     APPDATA: path.join(home, 'AppData', 'Roaming'),
     KEYFLIP_TEST_CLAUDE: 'stopped',
@@ -44,10 +50,17 @@ function run(home, args) {
 function runAsync(home, args) {
   return new Promise(function (resolve) {
     const cp = _child_process.spawn(process.execPath, [BIN].concat(args), { env: childEnv(home) });
-    let out = '', err = '';
-    cp.stdout.on('data', function (d) { out += d; });
-    cp.stderr.on('data', function (d) { err += d; });
-    cp.on('close', function (code) { resolve({ status: code, stdout: out, stderr: err }); });
+    let out = '',
+      err = '';
+    cp.stdout.on('data', function (d) {
+      out += d;
+    });
+    cp.stderr.on('data', function (d) {
+      err += d;
+    });
+    cp.on('close', function (code) {
+      resolve({ status: code, stdout: out, stderr: err });
+    });
   });
 }
 // A loopback sink that records every POSTed webhook body. start() -> {url, hits, close}.
@@ -55,20 +68,34 @@ function startSink() {
   const hits = [];
   const server = http.createServer(function (req, res) {
     let body = '';
-    req.on('data', function (c) { body += c; });
-    req.on('end', function () { hits.push({ method: req.method, body: body }); res.writeHead(200); res.end('ok'); });
+    req.on('data', function (c) {
+      body += c;
+    });
+    req.on('end', function () {
+      hits.push({ method: req.method, body: body });
+      res.writeHead(200);
+      res.end('ok');
+    });
   });
   return new Promise(function (resolve) {
     server.listen(0, '127.0.0.1', function () {
       const port = server.address().port;
-      resolve({ url: 'http://127.0.0.1:' + port + '/hook', hits: hits, close: function () { return new Promise(function (r) { server.close(r); }); } });
+      resolve({
+        url: 'http://127.0.0.1:' + port + '/hook',
+        hits: hits,
+        close: function () {
+          return new Promise(function (r) {
+            server.close(r);
+          });
+        },
+      });
     });
   });
 }
 function twoAccounts(home) {
-  run(home, ['add']);                                 // save alice (current)
+  run(home, ['add']); // save alice (current)
   loginAs(home, 'bob@example.com', 'u2', 'TOKEN-2');
-  run(home, ['add']);                                 // save bob (current)
+  run(home, ['add']); // save bob (current)
 }
 
 test('a configured webhook receives a switch event when the account is switched', async function () {

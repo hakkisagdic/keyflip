@@ -10,7 +10,7 @@ test('GF(256) multiply matches known values', function () {
   assert.strictEqual(qr.gfMul(0, 5), 0);
   assert.strictEqual(qr.gfMul(1, 5), 5);
   assert.strictEqual(qr.gfMul(2, 2), 4);
-  assert.strictEqual(qr.gfMul(3, 7), 9);   // α^25 · α^198 = α^223 = 9
+  assert.strictEqual(qr.gfMul(3, 7), 9); // α^25 · α^198 = α^223 = 9
 });
 
 test('Reed-Solomon generator polynomials have the right shape + known small case', function () {
@@ -32,13 +32,22 @@ test('rsEncode produces codewords divisible by the generator (valid Reed-Solomon
     }
     return res.slice(res.length - (genHiLo.length - 1));
   }
-  [[[0x10, 0x20, 0x0c, 0x56, 0x61, 0x80], 10], [[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11], 16]].forEach(function (tc) {
-    const data = tc[0], ecLen = tc[1];
+  [
+    [[0x10, 0x20, 0x0c, 0x56, 0x61, 0x80], 10],
+    [[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11], 16],
+  ].forEach(function (tc) {
+    const data = tc[0],
+      ecLen = tc[1];
     const ec = qr.rsEncode(data, ecLen);
     assert.strictEqual(ec.length, ecLen);
     const genHiLo = qr.rsGenerator(ecLen).slice().reverse(); // -> leading coeff 1 first
     const rem = remainder(data.concat(ec), genHiLo);
-    assert.ok(rem.every(function (x) { return x === 0; }), 'message polynomial is divisible by the generator');
+    assert.ok(
+      rem.every(function (x) {
+        return x === 0;
+      }),
+      'message polynomial is divisible by the generator',
+    );
   });
 });
 
@@ -58,9 +67,9 @@ test('versionInfo matches the published 18-bit strings', function () {
 
 // ---- capacity / version selection ----
 test('pickVersion chooses the smallest version that fits (byte mode)', function () {
-  assert.strictEqual(qr.pickVersion('M', 14, 1), 1);   // v1-M byte capacity = 14
-  assert.strictEqual(qr.pickVersion('M', 15, 1), 2);   // spills to v2
-  assert.strictEqual(qr.pickVersion('L', 17, 1), 1);   // v1-L capacity = 17
+  assert.strictEqual(qr.pickVersion('M', 14, 1), 1); // v1-M byte capacity = 14
+  assert.strictEqual(qr.pickVersion('M', 15, 1), 2); // spills to v2
+  assert.strictEqual(qr.pickVersion('L', 17, 1), 1); // v1-L capacity = 17
   assert.strictEqual(qr.pickVersion('M', 5000, 1), -1); // beyond v10
 });
 
@@ -71,8 +80,14 @@ test('encode produces a correctly-sized matrix with three finder patterns', func
   const m = q.modules;
   // a finder pattern is a 7x7 with a dark border + 3x3 dark centre; check all three corners
   function isFinder(r0, c0) {
-    return m[r0][c0] === 1 && m[r0 + 6][c0] === 1 && m[r0][c0 + 6] === 1 &&
-      m[r0 + 3][c0 + 3] === 1 && m[r0 + 1][c0 + 1] === 0 && m[r0 + 2][c0 + 2] === 1;
+    return (
+      m[r0][c0] === 1 &&
+      m[r0 + 6][c0] === 1 &&
+      m[r0][c0 + 6] === 1 &&
+      m[r0 + 3][c0 + 3] === 1 &&
+      m[r0 + 1][c0 + 1] === 0 &&
+      m[r0 + 2][c0 + 2] === 1
+    );
   }
   assert.ok(isFinder(0, 0), 'top-left finder');
   assert.ok(isFinder(0, q.size - 7), 'top-right finder');
@@ -88,14 +103,27 @@ test('encode produces a correctly-sized matrix with three finder patterns', func
 // Reverses the zigzag placement + mask to recover the interleaved codewords; for a
 // single-block version those ARE the data codewords, so we can read mode+count+bytes back.
 function selfDecode(q) {
-  const m = q.modules, size = q.size;
+  const m = q.modules,
+    size = q.size;
   const reserved = reservedMask(q.version, size);
   function mask(r, c) {
     switch (q.mask) {
-      case 0: return (r + c) % 2 === 0; case 1: return r % 2 === 0; case 2: return c % 3 === 0;
-      case 3: return (r + c) % 3 === 0; case 4: return (Math.floor(r / 2) + Math.floor(c / 3)) % 2 === 0;
-      case 5: return ((r * c) % 2) + ((r * c) % 3) === 0; case 6: return (((r * c) % 2) + ((r * c) % 3)) % 2 === 0;
-      case 7: return (((r + c) % 2) + ((r * c) % 3)) % 2 === 0;
+      case 0:
+        return (r + c) % 2 === 0;
+      case 1:
+        return r % 2 === 0;
+      case 2:
+        return c % 3 === 0;
+      case 3:
+        return (r + c) % 3 === 0;
+      case 4:
+        return (Math.floor(r / 2) + Math.floor(c / 3)) % 2 === 0;
+      case 5:
+        return ((r * c) % 2) + ((r * c) % 3) === 0;
+      case 6:
+        return (((r * c) % 2) + ((r * c) % 3)) % 2 === 0;
+      case 7:
+        return (((r + c) % 2) + ((r * c) % 3)) % 2 === 0;
     }
   }
   const bits = [];
@@ -112,7 +140,11 @@ function selfDecode(q) {
     }
     up = !up;
   }
-  const read = function (off, len) { let v = 0; for (let i = 0; i < len; i++) v = (v << 1) | bits[off + i]; return v; };
+  const read = function (off, len) {
+    let v = 0;
+    for (let i = 0; i < len; i++) v = (v << 1) | bits[off + i];
+    return v;
+  };
   const mode = read(0, 4);
   const cb = q.version < 10 ? 8 : 16;
   const len = read(4, cb);
@@ -122,19 +154,47 @@ function selfDecode(q) {
 }
 // Rebuild the reserved-area map the same way the encoder does (function/format/version zones).
 function reservedMask(version, size) {
-  const res = []; for (let r = 0; r < size; r++) res.push(new Array(size).fill(false));
-  function block(r0, c0, r1, c1) { for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) if (r >= 0 && r < size && c >= 0 && c < size) res[r][c] = true; }
-  block(0, 0, 7, 7); block(0, 8, 8, 8); block(8, 0, 8, 7);                 // TL finder + separators + format
-  block(0, size - 8, 7, size - 1); block(8, size - 8, 8, size - 1);        // TR finder + separators + format
-  block(size - 8, 0, size - 1, 7); block(size - 8, 8, size - 1, 8);        // BL finder + separators + format
-  for (let i = 0; i < size; i++) { res[6][i] = true; res[i][6] = true; }   // timing
-  const ALIGN = [null, [], [6, 18], [6, 22], [6, 26], [6, 30], [6, 34], [6, 22, 38], [6, 24, 42], [6, 26, 46], [6, 28, 50]][version];
-  for (let i = 0; i < ALIGN.length; i++) for (let j = 0; j < ALIGN.length; j++) {
-    const r0 = ALIGN[i], c0 = ALIGN[j];
-    if ((r0 <= 7 && c0 <= 7) || (r0 <= 7 && c0 >= size - 8) || (r0 >= size - 8 && c0 <= 7)) continue;
-    block(r0 - 2, c0 - 2, r0 + 2, c0 + 2);
+  const res = [];
+  for (let r = 0; r < size; r++) res.push(new Array(size).fill(false));
+  function block(r0, c0, r1, c1) {
+    for (let r = r0; r <= r1; r++)
+      for (let c = c0; c <= c1; c++) if (r >= 0 && r < size && c >= 0 && c < size) res[r][c] = true;
   }
-  if (version >= 7) { block(0, size - 11, 5, size - 9); block(size - 11, 0, size - 9, 5); }
+  block(0, 0, 7, 7);
+  block(0, 8, 8, 8);
+  block(8, 0, 8, 7); // TL finder + separators + format
+  block(0, size - 8, 7, size - 1);
+  block(8, size - 8, 8, size - 1); // TR finder + separators + format
+  block(size - 8, 0, size - 1, 7);
+  block(size - 8, 8, size - 1, 8); // BL finder + separators + format
+  for (let i = 0; i < size; i++) {
+    res[6][i] = true;
+    res[i][6] = true;
+  } // timing
+  const ALIGN = [
+    null,
+    [],
+    [6, 18],
+    [6, 22],
+    [6, 26],
+    [6, 30],
+    [6, 34],
+    [6, 22, 38],
+    [6, 24, 42],
+    [6, 26, 46],
+    [6, 28, 50],
+  ][version];
+  for (let i = 0; i < ALIGN.length; i++)
+    for (let j = 0; j < ALIGN.length; j++) {
+      const r0 = ALIGN[i],
+        c0 = ALIGN[j];
+      if ((r0 <= 7 && c0 <= 7) || (r0 <= 7 && c0 >= size - 8) || (r0 >= size - 8 && c0 <= 7)) continue;
+      block(r0 - 2, c0 - 2, r0 + 2, c0 + 2);
+    }
+  if (version >= 7) {
+    block(0, size - 11, 5, size - 9);
+    block(size - 11, 0, size - 9, 5);
+  }
   return res;
 }
 
@@ -161,20 +221,25 @@ test('round-trip works with ECC level L too', function () {
 test('format info is placed in the exact sequence a decoder reads (horizontal copy)', function () {
   ['M', 'L'].forEach(function (ecc) {
     const q = qr.encode('keyflip', { ecc: ecc });
-    const m = q.modules, size = q.size;
+    const m = q.modules,
+      size = q.size;
     let fmt = 0;
     for (let i = 0; i < 15; i++) {
       let bit;
-      if (i < 8) bit = m[8][size - 1 - i]; else if (i === 8) bit = m[8][7]; else bit = m[8][14 - i];
-      fmt |= (bit << i);
+      if (i < 8) bit = m[8][size - 1 - i];
+      else if (i === 8) bit = m[8][7];
+      else bit = m[8][14 - i];
+      fmt |= bit << i;
     }
     assert.strictEqual(fmt, qr.formatInfo(q.ecc, q.mask), ecc + ': format info reads back correctly');
     // and the vertical copy must carry the identical value
     let fmt2 = 0;
     for (let i = 0; i < 15; i++) {
       let bit;
-      if (i < 6) bit = m[i][8]; else if (i < 8) bit = m[i + 1][8]; else bit = m[size - 15 + i][8];
-      fmt2 |= (bit << i);
+      if (i < 6) bit = m[i][8];
+      else if (i < 8) bit = m[i + 1][8];
+      else bit = m[size - 15 + i][8];
+      fmt2 |= bit << i;
     }
     assert.strictEqual(fmt2, fmt, 'both format-info copies agree');
   });
@@ -198,5 +263,7 @@ test('toText renders half-block rows with a quiet zone and never throws', functi
 });
 
 test('payload too large throws rather than emitting a broken QR', function () {
-  assert.throws(function () { qr.encode('x'.repeat(500), { ecc: 'M' }); }, /too large/);
+  assert.throws(function () {
+    qr.encode('x'.repeat(500), { ecc: 'M' });
+  }, /too large/);
 });

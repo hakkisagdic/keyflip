@@ -44,12 +44,17 @@ test('unarchiveSession restores byte-exact and removes the archived copy', funct
   assert.strictEqual(r.ok, true);
   const back = path.join(ctx.claudeDir, 'projects', '-proj', 'xyz.jsonl');
   assert.strictEqual(fs.readFileSync(back, 'utf8'), body);
-  assert.strictEqual(fs.existsSync(path.join(archive.store(ctx), '-proj', 'xyz.jsonl.gz')), false, 'archived copy removed');
+  assert.strictEqual(
+    fs.existsSync(path.join(archive.store(ctx), '-proj', 'xyz.jsonl.gz')),
+    false,
+    'archived copy removed',
+  );
 });
 
 test('listArchived + findArchived enumerate and resolve by prefix', function () {
   const ctx = ctxWithClaude();
-  seed(ctx, '-a', 'aaaa1111', 'x\n'); seed(ctx, '-b', 'bbbb2222', 'y\n');
+  seed(ctx, '-a', 'aaaa1111', 'x\n');
+  seed(ctx, '-b', 'bbbb2222', 'y\n');
   archive.archiveSession(ctx, '-a', 'aaaa1111');
   archive.archiveSession(ctx, '-b', 'bbbb2222');
   const all = archive.listArchived(ctx);

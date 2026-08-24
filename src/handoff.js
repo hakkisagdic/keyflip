@@ -20,43 +20,62 @@ import * as _secretscan from './secretscan.js';
 // Prototype-pollution safe: these maps are keyed by tool/provider ids that can originate from a
 // synced package or a CLI/MCP argument, so they must have a null prototype.
 const PROVIDER_LABELS = Object.assign(Object.create(null), {
-  claude: 'Claude Code', cursor: 'Cursor', kiro: 'Kiro', opencode: 'opencode',
-  windsurf: 'Windsurf', gemini: 'Gemini CLI', copilot: 'GitHub Copilot',
-  codex: 'Codex CLI', aider: 'Aider', generic: 'your AI tool',
+  claude: 'Claude Code',
+  cursor: 'Cursor',
+  kiro: 'Kiro',
+  opencode: 'opencode',
+  windsurf: 'Windsurf',
+  gemini: 'Gemini CLI',
+  copilot: 'GitHub Copilot',
+  codex: 'Codex CLI',
+  aider: 'Aider',
+  generic: 'your AI tool',
 });
 const TARGETS = ['claude', 'cursor', 'kiro', 'opencode', 'windsurf', 'generic'];
 // Per-target phrasing. `rulesHint` names where THIS tool expects its rules (re-emitted from
 // .keyflip/rules/); `closing` is the final "how to proceed" instruction in the tool's own voice.
 const VARIANTS = Object.assign(Object.create(null), {
   claude: {
-    id: 'claude', label: 'Claude Code',
+    id: 'claude',
+    label: 'Claude Code',
     rulesHint: '`CLAUDE.md` at the repo root and `.keyflip/rules/`',
-    closing: 'You are Claude Code. Load CLAUDE.md, adopt the ACTIVE task and the locked decisions above, and continue from where the last tool stopped — do NOT re-read the whole repository or re-litigate settled decisions. If a decision blocks you, explain the trade-off to the user before changing it.',
+    closing:
+      'You are Claude Code. Load CLAUDE.md, adopt the ACTIVE task and the locked decisions above, and continue from where the last tool stopped — do NOT re-read the whole repository or re-litigate settled decisions. If a decision blocks you, explain the trade-off to the user before changing it.',
   },
   cursor: {
-    id: 'cursor', label: 'Cursor',
+    id: 'cursor',
+    label: 'Cursor',
     rulesHint: '`.cursor/rules/` (re-emitted from `.keyflip/rules/`)',
-    closing: 'You are Cursor. Apply the project rules, pick up the ACTIVE task, and respect the locked decisions. Keep edits scoped to the remaining items and surface — do not silently change — any decision you need to revisit.',
+    closing:
+      'You are Cursor. Apply the project rules, pick up the ACTIVE task, and respect the locked decisions. Keep edits scoped to the remaining items and surface — do not silently change — any decision you need to revisit.',
   },
   kiro: {
-    id: 'kiro', label: 'Kiro',
+    id: 'kiro',
+    label: 'Kiro',
     rulesHint: 'the steering docs under `.kiro/steering/` (from `.keyflip/rules/`)',
-    closing: 'You are Kiro. Treat the decisions below as steering constraints, resume the ACTIVE task from where it stopped, and flag — never silently rewrite — any locked decision.',
+    closing:
+      'You are Kiro. Treat the decisions below as steering constraints, resume the ACTIVE task from where it stopped, and flag — never silently rewrite — any locked decision.',
   },
   opencode: {
-    id: 'opencode', label: 'opencode',
+    id: 'opencode',
+    label: 'opencode',
     rulesHint: '`AGENTS.md` (from `.keyflip/rules/`)',
-    closing: 'You are opencode. Read AGENTS.md and the context, take the ACTIVE task\'s remaining items, and hold the locked decisions unless the user agrees to change one.',
+    closing:
+      "You are opencode. Read AGENTS.md and the context, take the ACTIVE task's remaining items, and hold the locked decisions unless the user agrees to change one.",
   },
   windsurf: {
-    id: 'windsurf', label: 'Windsurf',
+    id: 'windsurf',
+    label: 'Windsurf',
     rulesHint: '`.windsurf/rules/` (from `.keyflip/rules/`)',
-    closing: 'You are Windsurf. Load the workspace rules, continue the ACTIVE task, and keep the locked decisions intact unless you first justify a change to the user.',
+    closing:
+      'You are Windsurf. Load the workspace rules, continue the ACTIVE task, and keep the locked decisions intact unless you first justify a change to the user.',
   },
   generic: {
-    id: 'generic', label: 'your AI tool',
+    id: 'generic',
+    label: 'your AI tool',
     rulesHint: 'the files under `.keyflip/rules/`',
-    closing: 'Continue from the ACTIVE task above using the referenced files. Follow the project rules, keep the locked decisions unless you explain why one must change, and do NOT restart the project from scratch.',
+    closing:
+      'Continue from the ACTIVE task above using the referenced files. Follow the project rules, keep the locked decisions unless you explain why one must change, and do NOT restart the project from scratch.',
   },
 });
 
@@ -70,10 +89,20 @@ const DEFAULT_FILES = [
 ];
 
 // ---- small pure helpers ------------------------------------------------------------------------
-function str(x) { return x == null ? '' : String(x); }
-function clip(s, n) { s = str(s).replace(/\r/g, ''); return s.length > n ? s.slice(0, n - 1).trimEnd() + '…' : s; }
-function asArray(x) { return Array.isArray(x) ? x : (x == null ? [] : [x]); }
-function firstDefined() { for (let i = 0; i < arguments.length; i++) if (arguments[i] != null && arguments[i] !== '') return arguments[i]; return undefined; }
+function str(x) {
+  return x == null ? '' : String(x);
+}
+function clip(s, n) {
+  s = str(s).replace(/\r/g, '');
+  return s.length > n ? s.slice(0, n - 1).trimEnd() + '…' : s;
+}
+function asArray(x) {
+  return Array.isArray(x) ? x : x == null ? [] : [x];
+}
+function firstDefined() {
+  for (let i = 0; i < arguments.length; i++) if (arguments[i] != null && arguments[i] !== '') return arguments[i];
+  return undefined;
+}
 
 // Coerce a list ITEM (string | { text|title|name|label|summary } | anything) into one clean line.
 function lineOf(item) {
@@ -82,7 +111,11 @@ function lineOf(item) {
   if (typeof item === 'object') {
     const v = firstDefined(item.text, item.title, item.name, item.label, item.summary, item.description);
     if (v != null) return lineOf(v);
-    try { return JSON.stringify(item); } catch (e) { return ''; }
+    try {
+      return JSON.stringify(item);
+    } catch (e) {
+      return '';
+    }
   }
   return str(item).trim();
 }
@@ -95,15 +128,25 @@ function redactText(s, scan) {
   scan = scan || _secretscan;
   let out = str(s);
   if (!out) return '';
-  try { out = scan.redactLines(out).text; } catch (e) { /* line pass is best-effort */ }
+  try {
+    out = scan.redactLines(out).text;
+  } catch (e) {
+    /* line pass is best-effort */
+  }
   const pats = scan.SECRET_PATTERNS || [];
   for (let i = 0; i < pats.length; i++) {
-    try { out = out.replace(new RegExp(pats[i].re.source, 'g'), scan.REDACTED); } catch (e) { /* skip a bad pattern */ }
+    try {
+      out = out.replace(new RegExp(pats[i].re.source, 'g'), scan.REDACTED);
+    } catch (e) {
+      /* skip a bad pattern */
+    }
   }
   return out;
 }
 // Redact + collapse + clip in one step (list lines / titles).
-function safeLine(x, scan, max) { return clip(redactText(lineOf(x), scan), max || 500); }
+function safeLine(x, scan, max) {
+  return clip(redactText(lineOf(x), scan), max || 500);
+}
 
 // ---- extraction (tolerant of several upstream field shapes) ------------------------------------
 function normalizeTarget(t) {
@@ -134,32 +177,60 @@ function projectName(pkg, scan) {
 // The ordered list of tools the project has moved across + the most recent one. Sources (in order
 // of trust): the checkpoint's own history, then the package's, then a single lastProvider/current.
 function providerTrail(pkg, checkpoint) {
-  pkg = pkg || {}; checkpoint = checkpoint || {};
+  pkg = pkg || {};
+  checkpoint = checkpoint || {};
   const proj = pkg.project || {};
   const raw = []
     .concat(asArray(checkpoint.providers), asArray(checkpoint.history), asArray(checkpoint.trail))
     .concat(asArray(pkg.providers), asArray(proj.providers), asArray(pkg.toolHistory))
-    .map(function (x) { return str(typeof x === 'object' && x ? firstDefined(x.provider, x.tool, x.id, x.name) : x).toLowerCase().trim(); })
+    .map(function (x) {
+      return str(typeof x === 'object' && x ? firstDefined(x.provider, x.tool, x.id, x.name) : x)
+        .toLowerCase()
+        .trim();
+    })
     .filter(Boolean);
-  const last = str(firstDefined(
-    checkpoint.provider, checkpoint.tool, checkpoint.lastProvider,
-    pkg.lastProvider, proj.lastProvider, proj.currentProvider, raw[raw.length - 1]
-  )).toLowerCase().trim();
+  const last = str(
+    firstDefined(
+      checkpoint.provider,
+      checkpoint.tool,
+      checkpoint.lastProvider,
+      pkg.lastProvider,
+      proj.lastProvider,
+      proj.currentProvider,
+      raw[raw.length - 1],
+    ),
+  )
+    .toLowerCase()
+    .trim();
   if (last) raw.push(last);
-  const seen = Object.create(null); const trail = [];
-  raw.forEach(function (id) { if (id && !seen[id]) { seen[id] = 1; trail.push(id); } });
+  const seen = Object.create(null);
+  const trail = [];
+  raw.forEach(function (id) {
+    if (id && !seen[id]) {
+      seen[id] = 1;
+      trail.push(id);
+    }
+  });
   return { trail: trail, last: last || (trail.length ? trail[trail.length - 1] : '') };
 }
 
 // The single ACTIVE task, normalized to { title, completed[], remaining[], knownIssues[] } or null.
 function activeTask(pkg, checkpoint) {
-  pkg = pkg || {}; checkpoint = checkpoint || {};
+  pkg = pkg || {};
+  checkpoint = checkpoint || {};
   let t = checkpoint.task || null;
   const tasks = pkg.tasks;
   if (!t && tasks) {
     if (Array.isArray(tasks)) {
-      t = tasks.find(function (x) { return x && /^(active|in[_-]?progress|current|doing|wip)$/i.test(str(x.status || x.state)); })
-        || tasks.find(function (x) { return x && (x.active === true); }) || tasks[0] || null;
+      t =
+        tasks.find(function (x) {
+          return x && /^(active|in[_-]?progress|current|doing|wip)$/i.test(str(x.status || x.state));
+        }) ||
+        tasks.find(function (x) {
+          return x && x.active === true;
+        }) ||
+        tasks[0] ||
+        null;
     } else if (typeof tasks === 'object') {
       t = tasks.active || tasks.current || (Array.isArray(tasks.list) ? tasks.list[0] : null) || null;
     }
@@ -178,26 +249,37 @@ function collectDecisions(pkg) {
   pkg = pkg || {};
   let list = pkg.decisions;
   if (list && !Array.isArray(list) && Array.isArray(list.decisions)) list = list.decisions;
-  return asArray(list).map(function (d) {
-    if (typeof d === 'string') return { title: '', decision: d, rationale: '' };
-    d = d || {};
-    return {
-      title: firstDefined(d.title, d.name, d.id, d.summary, ''),
-      decision: firstDefined(d.decision, d.what, d.text, d.summary, d.title, ''),
-      rationale: firstDefined(d.rationale, d.why, d.reason, d.because, ''),
-    };
-  }).filter(function (d) { return lineOf(d.decision) || lineOf(d.title); });
+  return asArray(list)
+    .map(function (d) {
+      if (typeof d === 'string') return { title: '', decision: d, rationale: '' };
+      d = d || {};
+      return {
+        title: firstDefined(d.title, d.name, d.id, d.summary, ''),
+        decision: firstDefined(d.decision, d.what, d.text, d.summary, d.title, ''),
+        rationale: firstDefined(d.rationale, d.why, d.reason, d.because, ''),
+      };
+    })
+    .filter(function (d) {
+      return lineOf(d.decision) || lineOf(d.title);
+    });
 }
 
 // Env is carried as NAMES + descriptions ONLY — never values. Drop anything value-shaped defensively.
 function collectEnv(pkg) {
   pkg = pkg || {};
-  const src = firstDefined(pkg.env, pkg.envVars, (pkg.project && pkg.project.env), []);
-  return asArray(src).map(function (e) {
-    if (typeof e === 'string') return { name: e, description: '' };
-    e = e || {};
-    return { name: firstDefined(e.name, e.key, e.var, ''), description: firstDefined(e.description, e.desc, e.note, '') };
-  }).filter(function (e) { return lineOf(e.name); });
+  const src = firstDefined(pkg.env, pkg.envVars, pkg.project && pkg.project.env, []);
+  return asArray(src)
+    .map(function (e) {
+      if (typeof e === 'string') return { name: e, description: '' };
+      e = e || {};
+      return {
+        name: firstDefined(e.name, e.key, e.var, ''),
+        description: firstDefined(e.description, e.desc, e.note, ''),
+      };
+    })
+    .filter(function (e) {
+      return lineOf(e.name);
+    });
 }
 
 // ---- the prompt (PURE) -------------------------------------------------------------------------
@@ -223,7 +305,9 @@ function continuePrompt(pkg, opts) {
 
   L.push('# Continue this project — ' + name);
   L.push('');
-  L.push('> Portable project memory generated by keyflip. You are picking up work that moved between AI tools — do NOT start over or re-read the whole codebase.');
+  L.push(
+    '> Portable project memory generated by keyflip. You are picking up work that moved between AI tools — do NOT start over or re-read the whole codebase.',
+  );
   L.push('');
 
   // Who / where.
@@ -240,7 +324,15 @@ function continuePrompt(pkg, opts) {
   const branch = cp && firstDefined(cp.branch, cp.gitBranch);
   const commit = cp && firstDefined(cp.commit, cp.gitCommit, cp.sha);
   if (branch || commit) {
-    L.push('**Git state at last checkpoint:** ' + [branch ? 'branch `' + safeLine(branch, scan, 80) + '`' : '', commit ? 'commit `' + safeLine(commit, scan, 40) + '`' : ''].filter(Boolean).join(', '));
+    L.push(
+      '**Git state at last checkpoint:** ' +
+        [
+          branch ? 'branch `' + safeLine(branch, scan, 80) + '`' : '',
+          commit ? 'commit `' + safeLine(commit, scan, 40) + '`' : '',
+        ]
+          .filter(Boolean)
+          .join(', '),
+    );
   }
   L.push('');
 
@@ -255,9 +347,21 @@ function continuePrompt(pkg, opts) {
   // 1. Files to read.
   L.push('## 1. Read these first (instead of re-reading the repo)');
   L.push('The portable memory lives in `.keyflip/`. Read, in order:');
-  const files = Array.isArray(pkg.files) && pkg.files.length
-    ? pkg.files.map(function (f) { return typeof f === 'string' ? { path: f, note: '' } : { path: firstDefined(f && f.path, f && f.name, ''), note: firstDefined(f && f.note, f && f.description, '') }; }).filter(function (f) { return f.path; })
-    : DEFAULT_FILES;
+  const files =
+    Array.isArray(pkg.files) && pkg.files.length
+      ? pkg.files
+          .map(function (f) {
+            return typeof f === 'string'
+              ? { path: f, note: '' }
+              : {
+                  path: firstDefined(f && f.path, f && f.name, ''),
+                  note: firstDefined(f && f.note, f && f.description, ''),
+                };
+          })
+          .filter(function (f) {
+            return f.path;
+          })
+      : DEFAULT_FILES;
   files.forEach(function (f) {
     const p = safeLine(f.path, scan, 200);
     const note = f.note ? ' — ' + safeLine(f.note, scan, 160) : '';
@@ -271,13 +375,45 @@ function continuePrompt(pkg, opts) {
   const task = activeTask(pkg, cp);
   if (task) {
     L.push('### ' + safeLine(task.title, scan, 200));
-    const done = task.completed.map(function (x) { return safeLine(x, scan); }).filter(Boolean);
-    const rem = task.remaining.map(function (x) { return safeLine(x, scan); }).filter(Boolean);
-    const iss = task.knownIssues.map(function (x) { return safeLine(x, scan); }).filter(Boolean);
-    if (done.length) { L.push(''); L.push('**Done so far:**'); done.forEach(function (x) { L.push('- [x] ' + x); }); }
-    if (rem.length) { L.push(''); L.push('**Remaining:**'); rem.forEach(function (x) { L.push('- [ ] ' + x); }); }
-    else if (!done.length) { L.push(''); L.push('_No sub-items recorded — see `.keyflip/tasks.json`._'); }
-    if (iss.length) { L.push(''); L.push('**Known issues / watch out:**'); iss.forEach(function (x) { L.push('- ' + x); }); }
+    const done = task.completed
+      .map(function (x) {
+        return safeLine(x, scan);
+      })
+      .filter(Boolean);
+    const rem = task.remaining
+      .map(function (x) {
+        return safeLine(x, scan);
+      })
+      .filter(Boolean);
+    const iss = task.knownIssues
+      .map(function (x) {
+        return safeLine(x, scan);
+      })
+      .filter(Boolean);
+    if (done.length) {
+      L.push('');
+      L.push('**Done so far:**');
+      done.forEach(function (x) {
+        L.push('- [x] ' + x);
+      });
+    }
+    if (rem.length) {
+      L.push('');
+      L.push('**Remaining:**');
+      rem.forEach(function (x) {
+        L.push('- [ ] ' + x);
+      });
+    } else if (!done.length) {
+      L.push('');
+      L.push('_No sub-items recorded — see `.keyflip/tasks.json`._');
+    }
+    if (iss.length) {
+      L.push('');
+      L.push('**Known issues / watch out:**');
+      iss.forEach(function (x) {
+        L.push('- ' + x);
+      });
+    }
   } else {
     L.push('_No active task recorded. Read `.keyflip/tasks.json` and ask the user what to pick up._');
   }
@@ -287,7 +423,9 @@ function continuePrompt(pkg, opts) {
   L.push('## 3. Architecture decisions — do NOT change these without explaining why');
   const decisions = collectDecisions(pkg);
   if (decisions.length) {
-    L.push('These were decided deliberately. If you need to change one, STOP and explain the trade-off to the user first.');
+    L.push(
+      'These were decided deliberately. If you need to change one, STOP and explain the trade-off to the user first.',
+    );
     decisions.forEach(function (d) {
       const title = safeLine(d.title, scan, 160);
       const what = safeLine(d.decision, scan, 600);
@@ -320,23 +458,48 @@ function continuePrompt(pkg, opts) {
 
   const stamp = (typeof opts.now === 'function' && opts.now()) || pkg.generatedAt || (cp && cp.at) || null;
   L.push('---');
-  L.push('_Generated by keyflip context layer' + (stamp ? ' · ' + safeLine(stamp, scan, 40) : '') + ' · target: ' + v.id + '._');
+  L.push(
+    '_Generated by keyflip context layer' +
+      (stamp ? ' · ' + safeLine(stamp, scan, 40) : '') +
+      ' · target: ' +
+      v.id +
+      '._',
+  );
 
   return L.join('\n') + '\n';
 }
 
 // ---- filesystem read for CLI + MCP -------------------------------------------------------------
 function readJsonSafe(p) {
-  let raw; try { raw = fs.readFileSync(p, 'utf8'); } catch (e) { return null; }
-  try { return JSON.parse(raw); } catch (e) { return null; }
+  let raw;
+  try {
+    raw = fs.readFileSync(p, 'utf8');
+  } catch (e) {
+    return null;
+  }
+  try {
+    return JSON.parse(raw);
+  } catch (e) {
+    return null;
+  }
 }
-function readTextSafe(p) { try { return fs.readFileSync(p, 'utf8'); } catch (e) { return ''; }
+function readTextSafe(p) {
+  try {
+    return fs.readFileSync(p, 'utf8');
+  } catch (e) {
+    return '';
+  }
 }
 function listRules(dir) {
   const out = [];
   (function walk(d, depth) {
     if (depth > 4) return;
-    let ents; try { ents = fs.readdirSync(d, { withFileTypes: true }); } catch (e) { return; }
+    let ents;
+    try {
+      ents = fs.readdirSync(d, { withFileTypes: true });
+    } catch (e) {
+      return;
+    }
     for (let i = 0; i < ents.length && out.length < 200; i++) {
       const p = path.join(d, ents[i].name);
       if (ents[i].isDirectory()) walk(p, depth + 1);
@@ -362,7 +525,12 @@ function readProject(projectPath, opts) {
   const present = [];
   DEFAULT_FILES.forEach(function (f) {
     const abs = path.join(root, f.path);
-    let ok = false; try { ok = fs.existsSync(abs); } catch (e) { ok = false; }
+    let ok = false;
+    try {
+      ok = fs.existsSync(abs);
+    } catch (e) {
+      ok = false;
+    }
     if (ok) present.push(f.path);
   });
   const pkg = {
@@ -376,7 +544,9 @@ function readProject(projectPath, opts) {
     env: firstDefined(env, project.env),
     providers: firstDefined(project.providers, project.toolHistory),
     lastProvider: firstDefined(project.lastProvider, project.currentProvider),
-    rules: rulesFiles.map(function (p) { return path.relative(root, p); }),
+    rules: rulesFiles.map(function (p) {
+      return path.relative(root, p);
+    }),
     generatedAt: project.generatedAt,
   };
   return { pkg: pkg, checkpoint: checkpoint, files: present, root: root };
@@ -389,12 +559,19 @@ function handoff(projectPath, opts) {
   const loaded = readProject(projectPath, opts);
   const target = normalizeTarget(firstDefined(opts.target, opts.to, 'generic'));
   const text = continuePrompt(loaded.pkg, {
-    checkpoint: loaded.checkpoint, target: target, now: opts.now, secretscan: opts.secretscan,
+    checkpoint: loaded.checkpoint,
+    target: target,
+    now: opts.now,
+    secretscan: opts.secretscan,
   });
   const trail = providerTrail(loaded.pkg, loaded.checkpoint);
   return {
-    text: text, target: target, providers: trail.trail, last: trail.last,
-    files: loaded.files, project: projectName(loaded.pkg, opts.secretscan),
+    text: text,
+    target: target,
+    providers: trail.trail,
+    last: trail.last,
+    files: loaded.files,
+    project: projectName(loaded.pkg, opts.secretscan),
   };
 }
 
@@ -404,17 +581,48 @@ const mcpTools = [
   {
     name: 'keyflip_handoff',
     title: 'Generate a CONTINUE-PROMPT to resume this project in another AI tool',
-    description: 'Turn the portable `.keyflip/` project memory (context.md, tasks.json, decisions.json, rules/, checkpoints/latest.json) into a single markdown CONTINUE-PROMPT so a NEW AI tool can resume work WITHOUT re-reading the whole codebase. It states which tools the project moved across, the files to read, the active task (done/remaining/known issues), the locked architecture decisions, and a target-appropriate closing instruction. `to` tailors the phrasing (claude|cursor|kiro|opencode|windsurf|generic). Read-only: reads .keyflip/ and returns the prompt text; carries only env-var NAMES, never secret values.',
-    inputSchema: { type: 'object', properties: {
-      to: { type: 'string', enum: TARGETS, description: 'Target AI tool the prompt is written FOR (default generic).' },
-      projectPath: { type: 'string', description: 'Project root holding .keyflip/ (default: server cwd).' },
-    }, additionalProperties: false },
+    description:
+      'Turn the portable `.keyflip/` project memory (context.md, tasks.json, decisions.json, rules/, checkpoints/latest.json) into a single markdown CONTINUE-PROMPT so a NEW AI tool can resume work WITHOUT re-reading the whole codebase. It states which tools the project moved across, the files to read, the active task (done/remaining/known issues), the locked architecture decisions, and a target-appropriate closing instruction. `to` tailors the phrasing (claude|cursor|kiro|opencode|windsurf|generic). Read-only: reads .keyflip/ and returns the prompt text; carries only env-var NAMES, never secret values.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        to: {
+          type: 'string',
+          enum: TARGETS,
+          description: 'Target AI tool the prompt is written FOR (default generic).',
+        },
+        projectPath: { type: 'string', description: 'Project root holding .keyflip/ (default: server cwd).' },
+      },
+      additionalProperties: false,
+    },
     annotations: RO,
     run: async function (ctx, args) {
       const r = handoff((args && args.projectPath) || process.cwd(), { target: args && args.to, now: ctx && ctx.now });
-      return { target: r.target, providers: r.providers, last: r.last, files: r.files, project: r.project, prompt: r.text };
+      return {
+        target: r.target,
+        providers: r.providers,
+        last: r.last,
+        files: r.files,
+        project: r.project,
+        prompt: r.text,
+      };
     },
   },
 ];
 
-export { continuePrompt, targetVariants, providerTrail, activeTask, collectDecisions, collectEnv, redactText, normalizeTarget, readProject, handoff, mcpTools, TARGETS, DEFAULT_FILES, PROVIDER_LABELS };
+export {
+  continuePrompt,
+  targetVariants,
+  providerTrail,
+  activeTask,
+  collectDecisions,
+  collectEnv,
+  redactText,
+  normalizeTarget,
+  readProject,
+  handoff,
+  mcpTools,
+  TARGETS,
+  DEFAULT_FILES,
+  PROVIDER_LABELS,
+};

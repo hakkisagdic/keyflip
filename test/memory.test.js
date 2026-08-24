@@ -45,10 +45,16 @@ test('llm.summarize builds `claude -p <instr>`, pipes text on stdin, returns out
 });
 
 test('llm.summarize reports claude-not-installed / failure / empty cleanly', function () {
-  const absent = function () { return { code: 127, stdout: '' }; };
+  const absent = function () {
+    return { code: 127, stdout: '' };
+  };
   assert.strictEqual(llm.summarize('x', 'y', { run: absent }).reason, 'claude-not-installed');
-  const failing = function (cmd, args) { return args[0] === '--version' ? { code: 0 } : { code: 1, stderr: 'boom' }; };
+  const failing = function (cmd, args) {
+    return args[0] === '--version' ? { code: 0 } : { code: 1, stderr: 'boom' };
+  };
   assert.strictEqual(llm.summarize('x', 'y', { run: failing }).reason, 'claude-failed');
-  const empty = function (cmd, args) { return args[0] === '--version' ? { code: 0 } : { code: 0, stdout: '   ' }; };
+  const empty = function (cmd, args) {
+    return args[0] === '--version' ? { code: 0 } : { code: 0, stdout: '   ' };
+  };
   assert.strictEqual(llm.summarize('x', 'y', { run: empty }).reason, 'empty-output');
 });

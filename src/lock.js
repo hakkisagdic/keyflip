@@ -9,11 +9,19 @@ import fs from 'fs';
 import path from 'path';
 
 function pidAlive(pid) {
-  try { process.kill(pid, 0); return true; }
-  catch (e) { return e && e.code === 'EPERM'; } // EPERM = alive but not ours
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return e && e.code === 'EPERM';
+  } // EPERM = alive but not ours
 }
 
-function delay(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+function delay(ms) {
+  return new Promise(function (r) {
+    setTimeout(r, ms);
+  });
+}
 
 function makeToken() {
   return process.pid + '-' + Date.now() + '-' + Math.random().toString(36).slice(2, 10);
@@ -42,7 +50,9 @@ async function acquire(configDir, opts) {
     try {
       const info = JSON.parse(fs.readFileSync(file, 'utf8'));
       if (info && info.token === token) fs.rmSync(file, { force: true });
-    } catch (e) { /* gone, or unreadable — leave it for stale-reclaim */ }
+    } catch (e) {
+      /* gone, or unreadable — leave it for stale-reclaim */
+    }
   }
 
   for (;;) {
@@ -56,21 +66,39 @@ async function acquire(configDir, opts) {
       // Clean up a partially-created lock (fd left open / zero-byte file) if the
       // write, not the exclusive-create, is what failed (e.g. ENOSPC).
       if (fd !== null) {
-        try { fs.closeSync(fd); } catch (e2) { /* ignore */ }
-        try { fs.rmSync(file, { force: true }); } catch (e2) { /* ignore */ }
+        try {
+          fs.closeSync(fd);
+        } catch (e2) {
+          /* ignore */
+        }
+        try {
+          fs.rmSync(file, { force: true });
+        } catch (e2) {
+          /* ignore */
+        }
         throw e; // this was our own file op failing, not contention
       }
       if (!e || e.code !== 'EEXIST') throw e;
       let info = null;
-      try { info = JSON.parse(fs.readFileSync(file, 'utf8')); } catch (e2) { /* unreadable = stale */ }
+      try {
+        info = JSON.parse(fs.readFileSync(file, 'utf8'));
+      } catch (e2) {
+        /* unreadable = stale */
+      }
       const dead = !info || !info.pid || !pidAlive(info.pid);
-      const ancient = info && (Date.now() - (info.at || 0) > staleMs);
+      const ancient = info && Date.now() - (info.at || 0) > staleMs;
       if (dead || ancient) {
-        try { fs.rmSync(file, { force: true }); } catch (e2) { /* raced */ }
+        try {
+          fs.rmSync(file, { force: true });
+        } catch (e2) {
+          /* raced */
+        }
         continue;
       }
       if (Date.now() - start >= timeoutMs) {
-        const err = new Error('another keyflip is running (lock held by pid ' + (info && info.pid) + ') — try again in a moment');
+        const err = new Error(
+          'another keyflip is running (lock held by pid ' + (info && info.pid) + ') — try again in a moment',
+        );
         err.code = 'ELOCKED';
         throw err;
       }

@@ -15,25 +15,35 @@ function setupHome() {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'keyflip-flags-'));
   fs.mkdirSync(path.join(home, '.claude'), { recursive: true });
   fs.writeFileSync(path.join(home, '.claude', '.credentials.json'), '{"live":"TOKEN-1"}');
-  fs.writeFileSync(path.join(home, '.claude.json'),
-    JSON.stringify({ oauthAccount: { emailAddress: 'alice@example.com' }, userID: 'u1' }));
+  fs.writeFileSync(
+    path.join(home, '.claude.json'),
+    JSON.stringify({ oauthAccount: { emailAddress: 'alice@example.com' }, userID: 'u1' }),
+  );
   return home;
 }
 function loginAs(home, email, userID, token) {
   fs.writeFileSync(path.join(home, '.claude', '.credentials.json'), JSON.stringify({ live: token }));
-  fs.writeFileSync(path.join(home, '.claude.json'),
-    JSON.stringify({ oauthAccount: { emailAddress: email }, userID: userID }));
+  fs.writeFileSync(
+    path.join(home, '.claude.json'),
+    JSON.stringify({ oauthAccount: { emailAddress: email }, userID: userID }),
+  );
 }
 function run(home, args, extraEnv) {
   return _child_process.spawnSync(process.execPath, [BIN].concat(args), {
     encoding: 'utf8',
-    env: Object.assign({}, process.env, {
-      HOME: home, USERPROFILE: home,
-      XDG_CONFIG_HOME: path.join(home, '.config'),
-      KEYFLIP_CONFIG_DIR: path.join(home, '.config', 'keyflip'), // deterministic across OSes (Windows uses APPDATA otherwise)
-      APPDATA: path.join(home, 'AppData', 'Roaming'),
-      KEYFLIP_TEST_CLAUDE: 'stopped',
-    }, extraEnv || {}),
+    env: Object.assign(
+      {},
+      process.env,
+      {
+        HOME: home,
+        USERPROFILE: home,
+        XDG_CONFIG_HOME: path.join(home, '.config'),
+        KEYFLIP_CONFIG_DIR: path.join(home, '.config', 'keyflip'), // deterministic across OSes (Windows uses APPDATA otherwise)
+        APPDATA: path.join(home, 'AppData', 'Roaming'),
+        KEYFLIP_TEST_CLAUDE: 'stopped',
+      },
+      extraEnv || {},
+    ),
   });
 }
 
@@ -78,14 +88,14 @@ test('switch --json reports what was switched; errors become {error} with exit 1
 
 test('next rotates to the other account (wrap-around)', function () {
   const home = setupHome();
-  run(home, ['add']);                                   // alice
+  run(home, ['add']); // alice
   loginAs(home, 'bob@example.com', 'u2', 'TOKEN-2');
-  run(home, ['add']);                                   // bob (active)
+  run(home, ['add']); // bob (active)
   let r = run(home, ['next', '--force']);
   assert.strictEqual(r.status, 0, r.stderr);
   assert.match(run(home, ['status']).stdout, /alice@example\.com/); // bob -> alice
   r = run(home, ['next', '--force']);
-  assert.match(run(home, ['status']).stdout, /bob@example\.com/);   // alice -> bob (wrap)
+  assert.match(run(home, ['status']).stdout, /bob@example\.com/); // alice -> bob (wrap)
 });
 
 test('next with fewer than 2 accounts fails cleanly', function () {

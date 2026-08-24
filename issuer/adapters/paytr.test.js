@@ -7,7 +7,7 @@ const assert = require('node:assert');
 const crypto = require('crypto');
 const paytr = require('./paytr');
 
-const MERCHANT_KEY = 'test_merchant_key_ABC';   // -> `secret` param
+const MERCHANT_KEY = 'test_merchant_key_ABC'; // -> `secret` param
 const MERCHANT_SALT = 'test_merchant_salt_XYZ'; // -> opts.salt (env in prod)
 
 // Independent oracle for the documented hash:
@@ -74,14 +74,19 @@ test('length-mismatched / garbage hash does not throw and returns ok:false', () 
   for (const junk of ['', 'AAAA', 'not base64 %%%', paytrHash(f) + 'AA']) {
     const body = Object.assign({}, f, { hash: junk });
     let r;
-    assert.doesNotThrow(() => { r = paytr.verifyWebhook(formBody(body), {}, MERCHANT_KEY, { salt: MERCHANT_SALT }); });
+    assert.doesNotThrow(() => {
+      r = paytr.verifyWebhook(formBody(body), {}, MERCHANT_KEY, { salt: MERCHANT_SALT });
+    });
     assert.strictEqual(r.ok, false);
   }
 });
 
 test('missing hash / secret / salt are reported, not thrown', () => {
   const f = successFields();
-  assert.strictEqual(paytr.verifyWebhook(formBody(f), {}, MERCHANT_KEY, { salt: MERCHANT_SALT }).reason, 'missing-hash');
+  assert.strictEqual(
+    paytr.verifyWebhook(formBody(f), {}, MERCHANT_KEY, { salt: MERCHANT_SALT }).reason,
+    'missing-hash',
+  );
   f.hash = paytrHash(f);
   assert.strictEqual(paytr.verifyWebhook(formBody(f), {}, '', { salt: MERCHANT_SALT }).reason, 'no-secret');
   assert.strictEqual(paytr.verifyWebhook(formBody(f), {}, MERCHANT_KEY, { salt: '' }).reason, 'no-salt');

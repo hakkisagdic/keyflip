@@ -15,16 +15,26 @@ const SKIP = secretpaths.SECRET_DIRS.concat(['backups', 'logs', 'skill-backups']
 // *.pem/*.sql, .credentials.json, mcp-registry.json, stray *credentials.json) or a volatile
 // cache/lock, wherever it sits.
 const VOLATILE_FILE = /^\.lock|^\.usage-cache\.json$|^\.update-check\.json$/i;
-function skipFile(name) { return VOLATILE_FILE.test(name) || secretpaths.isSecretFile(name); }
+function skipFile(name) {
+  return VOLATILE_FILE.test(name) || secretpaths.isSecretFile(name);
+}
 
-function backupsDir(ctx) { return path.join(ctx.configDir, 'backups'); }
+function backupsDir(ctx) {
+  return path.join(ctx.configDir, 'backups');
+}
 
 // stamp like 20260702T093015 from ctx.now() (ISO); filename-safe, sortable.
-function stamp(ctx) { return String(ctx.now()).replace(/[-:]/g, '').replace(/\..*$/, '').replace('T', 'T'); }
+function stamp(ctx) {
+  return String(ctx.now()).replace(/[-:]/g, '').replace(/\..*$/, '').replace('T', 'T');
+}
 
 function copyInto(srcDir, destDir) {
   let entries = [];
-  try { entries = fs.readdirSync(srcDir, { withFileTypes: true }); } catch (e) { return 0; }
+  try {
+    entries = fs.readdirSync(srcDir, { withFileTypes: true });
+  } catch (e) {
+    return 0;
+  }
   let n = 0;
   entries.forEach(function (ent) {
     if (ent.isDirectory()) {
@@ -47,7 +57,9 @@ function dirSize(dir) {
       const p = path.join(dir, e.name);
       total += e.isDirectory() ? dirSize(p) : fs.statSync(p).size;
     });
-  } catch (e) { /* ignore */ }
+  } catch (e) {
+    /* ignore */
+  }
   return total;
 }
 
@@ -56,8 +68,13 @@ function create(ctx, opts) {
   // Guarantee a unique dir even for two backups in the same second (stamp has
   // 1s resolution) so retention/history never silently merge two snapshots.
   const base = 'backup-' + stamp(ctx) + (opts.suffix ? '-' + opts.suffix : '');
-  let name = base, dest = path.join(backupsDir(ctx), name), n = 1;
-  while (fs.existsSync(dest)) { name = base + '.' + (n++); dest = path.join(backupsDir(ctx), name); }
+  let name = base,
+    dest = path.join(backupsDir(ctx), name),
+    n = 1;
+  while (fs.existsSync(dest)) {
+    name = base + '.' + n++;
+    dest = path.join(backupsDir(ctx), name);
+  }
   fs.mkdirSync(dest, { recursive: true });
   const files = copyInto(ctx.configDir, dest);
   // keep:Infinity skips pruning (used by the pre-restore safety snapshot so it
@@ -69,11 +86,25 @@ function create(ctx, opts) {
 
 function list(ctx) {
   let entries = [];
-  try { entries = fs.readdirSync(backupsDir(ctx)); } catch (e) { return []; }
-  return entries.filter(function (n) { return n.indexOf('backup-') === 0; }).sort().reverse()
+  try {
+    entries = fs.readdirSync(backupsDir(ctx));
+  } catch (e) {
+    return [];
+  }
+  return entries
+    .filter(function (n) {
+      return n.indexOf('backup-') === 0;
+    })
+    .sort()
+    .reverse()
     .map(function (n) {
       const p = path.join(backupsDir(ctx), n);
-      let mtime = null; try { mtime = fs.statSync(p).mtime.toISOString(); } catch (e) { /* */ }
+      let mtime = null;
+      try {
+        mtime = fs.statSync(p).mtime.toISOString();
+      } catch (e) {
+        /* */
+      }
       return { name: n, path: p, sizeBytes: dirSize(p), mtime: mtime };
     });
 }
@@ -81,7 +112,13 @@ function list(ctx) {
 function prune(ctx, keep) {
   if (keep === undefined) keep = DEFAULT_KEEP;
   const all = list(ctx); // newest first
-  all.slice(keep).forEach(function (b) { try { fs.rmSync(b.path, { recursive: true, force: true }); } catch (e) { /* */ } });
+  all.slice(keep).forEach(function (b) {
+    try {
+      fs.rmSync(b.path, { recursive: true, force: true });
+    } catch (e) {
+      /* */
+    }
+  });
   return all.length - Math.min(all.length, keep);
 }
 
@@ -91,7 +128,10 @@ function restore(ctx, nameOrIndex) {
   const all = list(ctx);
   let target = null;
   if (/^[0-9]+$/.test(String(nameOrIndex))) target = all[parseInt(nameOrIndex, 10) - 1];
-  else target = all.filter(function (b) { return b.name === nameOrIndex; })[0];
+  else
+    target = all.filter(function (b) {
+      return b.name === nameOrIndex;
+    })[0];
   if (!target) throw new Error('no such backup: ' + nameOrIndex + ' (see: keyflip backup list)');
   const before = dirSize(target.path);
   create(ctx, { suffix: 'pre-restore', keep: Infinity }); // safety net that never prunes the target

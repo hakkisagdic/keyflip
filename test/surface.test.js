@@ -14,7 +14,9 @@ function write(ctx, rel, data) {
 
 // ---- registry shape ----
 test('SURFACES covers exactly the CONFIG_REGISTRY tools, each with the required shape', function () {
-  const ids = surface.SURFACES.map(function (s) { return s.id; }).sort();
+  const ids = surface.SURFACES.map(function (s) {
+    return s.id;
+  }).sort();
   assert.deepStrictEqual(ids, ['aider', 'codex', 'copilot', 'cursor', 'gemini', 'opencode']);
   surface.SURFACES.forEach(function (s) {
     assert.strictEqual(typeof s.id, 'string');
@@ -43,7 +45,11 @@ test('pristine home -> every surface present:false, no active account, not switc
 // ---- gemini happy path: active account read from the NON-SECRET identity file ----
 test('gemini: reads active account + old accounts from google_accounts.json', function () {
   const ctx = makeCtx();
-  write(ctx, '.gemini/google_accounts.json', JSON.stringify({ active: 'me@gmail.com', old: ['old1@gmail.com', 'old2@gmail.com'] }));
+  write(
+    ctx,
+    '.gemini/google_accounts.json',
+    JSON.stringify({ active: 'me@gmail.com', old: ['old1@gmail.com', 'old2@gmail.com'] }),
+  );
   const s = surface.detectOne(ctx, 'gemini');
   assert.strictEqual(s.present, true);
   assert.strictEqual(s.kind, 'file');
@@ -63,7 +69,11 @@ test('gemini: reads active account + old accounts from google_accounts.json', fu
 test('gemini: never reads or leaks the secret oauth_creds.json', function () {
   const ctx = makeCtx();
   write(ctx, '.gemini/google_accounts.json', JSON.stringify({ active: 'me@gmail.com', old: [] }));
-  write(ctx, '.gemini/oauth_creds.json', JSON.stringify({ access_token: 'SECRET-TOKEN-XYZ', refresh_token: 'SECRET-REFRESH' }));
+  write(
+    ctx,
+    '.gemini/oauth_creds.json',
+    JSON.stringify({ access_token: 'SECRET-TOKEN-XYZ', refresh_token: 'SECRET-REFRESH' }),
+  );
   const s = surface.detectOne(ctx, 'gemini');
   assert.strictEqual(s.store.exists, true); // now the creds file exists (stat sees it)…
   assert.doesNotMatch(JSON.stringify(s), /SECRET-TOKEN|SECRET-REFRESH/); // …but its contents never appear
@@ -108,11 +118,21 @@ test('gemini: a __proto__ key in the identity file cannot pollute Object.prototy
 
 test('gemini: control chars in the account are STRIPPED (no terminal-escape injection into the render/MCP result)', function () {
   const ctx = makeCtx();
-  write(ctx, '.gemini/google_accounts.json', JSON.stringify({ active: 'me\x1b[2J\x07@gmail.com', old: ['ok\x1bx@g.com'] }));
+  write(
+    ctx,
+    '.gemini/google_accounts.json',
+    JSON.stringify({ active: 'me\x1b[2J\x07@gmail.com', old: ['ok\x1bx@g.com'] }),
+  );
   const s = surface.detectOne(ctx, 'gemini');
-  assert.strictEqual(/[\x00-\x1f\x7f]/.test(s.activeAccount || ''), false, 'no control chars survive into the active account');
+  assert.strictEqual(
+    /[\x00-\x1f\x7f]/.test(s.activeAccount || ''),
+    false,
+    'no control chars survive into the active account',
+  );
   assert.strictEqual(s.activeAccount, 'me[2J@gmail.com');
-  s.accounts.forEach(function (a) { assert.strictEqual(/[\x00-\x1f\x7f]/.test(a), false); });
+  s.accounts.forEach(function (a) {
+    assert.strictEqual(/[\x00-\x1f\x7f]/.test(a), false);
+  });
 });
 
 // ---- opaque / secret-store surfaces: present but no identity, and secrets never read ----
@@ -149,12 +169,16 @@ test('aider: env-kind surface detected from its config file', function () {
 // ---- switch seam ----
 test('switch() throws "not supported for <surface>" for a known surface', function () {
   const ctx = makeCtx();
-  assert.throws(function () { surface.switch(ctx, 'gemini', 'me@gmail.com'); }, /switch not supported for gemini/);
+  assert.throws(function () {
+    surface.switch(ctx, 'gemini', 'me@gmail.com');
+  }, /switch not supported for gemini/);
 });
 
 test('switch() throws "unknown surface" for an unregistered id', function () {
   const ctx = makeCtx();
-  assert.throws(function () { surface.switch(ctx, 'nope', 'x'); }, /unknown surface/);
+  assert.throws(function () {
+    surface.switch(ctx, 'nope', 'x');
+  }, /unknown surface/);
 });
 
 test('detectOne returns null for an unknown surface id', function () {
@@ -177,7 +201,9 @@ test('keyflip_surfaces MCP tool is read-only and returns detection with no secre
   assert.strictEqual(tool.annotations.destructiveHint, false);
   const out = await tool.run(ctx, {});
   assert.ok(Array.isArray(out.surfaces));
-  const g = out.surfaces.filter(function (s) { return s.id === 'gemini'; })[0];
+  const g = out.surfaces.filter(function (s) {
+    return s.id === 'gemini';
+  })[0];
   assert.strictEqual(g.activeAccount, 'me@gmail.com');
   assert.doesNotMatch(JSON.stringify(out), /sk-SECRET/);
 });

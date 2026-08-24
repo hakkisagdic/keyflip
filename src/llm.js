@@ -6,7 +6,14 @@
 // goes on stdin so it never hits argv limits.
 import { run } from './exec.js';
 
-function available(runner) { try { const r = (runner || run)('claude', ['--version']); return !!(r && r.code === 0); } catch (e) { return false; } }
+function available(runner) {
+  try {
+    const r = (runner || run)('claude', ['--version']);
+    return !!(r && r.code === 0);
+  } catch (e) {
+    return false;
+  }
+}
 
 // Summarize `text` with `instruction`. Returns { ok:true, text } or { ok:false, reason }.
 function summarize(instruction, text, opts) {

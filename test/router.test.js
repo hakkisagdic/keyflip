@@ -27,7 +27,9 @@ test('route picks the cheapest provider that serves the model (injected priceFor
   const ctx = makeCtx();
   addProv(ctx, 'cheap', 'https://cheap/v1', { opus: 'claude-opus-4-8' });
   addProv(ctx, 'pricey', 'https://pricey/v1', { opus: 'claude-opus-4-8' });
-  const priceFor = function (name) { return name === 'cheap' ? 1 : 9; };
+  const priceFor = function (name) {
+    return name === 'cheap' ? 1 : 9;
+  };
   const r = router.route(ctx, { model: 'claude-opus-4-8' }, { priceFor: priceFor });
   assert.strictEqual(r.provider, 'cheap');
   assert.strictEqual(r.baseUrl, 'https://cheap/v1');
@@ -57,7 +59,9 @@ test('route honors an explicit pin when arbitrage is off (even over a cheaper pe
   addProv(ctx, 'cheap', 'https://cheap/v1', { opus: 'M' });
   addProv(ctx, 'fav', 'https://fav/v1', { opus: 'M' });
   router.setRoute(ctx, 'M', 'fav');
-  const priceFor = function (name) { return name === 'cheap' ? 1 : 100; };
+  const priceFor = function (name) {
+    return name === 'cheap' ? 1 : 100;
+  };
   const r = router.route(ctx, { model: 'M' }, { priceFor: priceFor });
   assert.strictEqual(r.provider, 'fav');
   assert.match(r.reason, /pinned route/);
@@ -69,7 +73,9 @@ test('arbitrage mode ignores the pin and takes the cheapest', function () {
   addProv(ctx, 'fav', 'https://fav/v1', { opus: 'M' });
   router.setRoute(ctx, 'M', 'fav');
   router.setArbitrage(ctx, true);
-  const priceFor = function (name) { return name === 'cheap' ? 1 : 100; };
+  const priceFor = function (name) {
+    return name === 'cheap' ? 1 : 100;
+  };
   const r = router.route(ctx, { model: 'M' }, { priceFor: priceFor });
   assert.strictEqual(r.provider, 'cheap');
   assert.match(r.reason, /^arbitrage:/);
@@ -97,14 +103,22 @@ test('route returns provider:null when nothing serves the model', function () {
 
 test('route throws on an invalid / hostile model name', function () {
   const ctx = makeCtx();
-  assert.throws(function () { router.route(ctx, { model: '__proto__' }); });
-  assert.throws(function () { router.route(ctx, { model: '' }); });
-  assert.throws(function () { router.route(ctx, {}); });
+  assert.throws(function () {
+    router.route(ctx, { model: '__proto__' });
+  });
+  assert.throws(function () {
+    router.route(ctx, { model: '' });
+  });
+  assert.throws(function () {
+    router.route(ctx, {});
+  });
 });
 
 test('setRoute rejects a provider that is not configured', function () {
   const ctx = makeCtx();
-  assert.throws(function () { router.setRoute(ctx, 'M', 'ghost'); }, /no such provider/);
+  assert.throws(function () {
+    router.setRoute(ctx, 'M', 'ghost');
+  }, /no such provider/);
 });
 
 test('setRoute / clearRoute / get round-trip and persist to router.json', function () {
@@ -122,22 +136,28 @@ test('setRoute / clearRoute / get round-trip and persist to router.json', functi
 
 test('a hand-tampered router.json (bad names / prototype keys) is normalized away', function () {
   const ctx = makeCtx();
-  fs.writeFileSync(router.routerPath(ctx), JSON.stringify({
-    routes: { '__proto__': 'evil', 'good-model': 'p', 'bad model!': 'p', ok: 42 }, arbitrage: 'yes',
-  }));
+  fs.writeFileSync(
+    router.routerPath(ctx),
+    JSON.stringify({
+      routes: { __proto__: 'evil', 'good-model': 'p', 'bad model!': 'p', ok: 42 },
+      arbitrage: 'yes',
+    }),
+  );
   addProv(ctx, 'p', 'https://p/v1', { default: 'good-model' });
   const g = router.get(ctx);
   assert.deepStrictEqual(g.routes, { 'good-model': 'p' }); // junk dropped
-  assert.strictEqual(g.arbitrage, false);                  // non-true coerced to false
+  assert.strictEqual(g.arbitrage, false); // non-true coerced to false
   assert.strictEqual(Object.getPrototypeOf(g.routes) === Object.prototype, true);
-  assert.strictEqual({}.polluted, undefined);              // no prototype pollution
+  assert.strictEqual({}.polluted, undefined); // no prototype pollution
 });
 
 test('a corrupt router.json throws on write (never silently clobbers)', function () {
   const ctx = makeCtx();
   addProv(ctx, 'p', 'https://p/v1', { opus: 'M' });
   fs.writeFileSync(router.routerPath(ctx), '{not json');
-  assert.throws(function () { router.setRoute(ctx, 'M', 'p'); }, /not valid JSON/);
+  assert.throws(function () {
+    router.setRoute(ctx, 'M', 'p');
+  }, /not valid JSON/);
   // but the read-only path stays quiet
   assert.deepStrictEqual(router.get(ctx).routes, {});
 });
@@ -170,7 +190,10 @@ test('cacheGet respects the TTL (default 24h) using the injectable clock', funct
   // 25h later: expired under default TTL
   assert.strictEqual(router.cacheGet(ctx, { model: 'M', prompt: 'p' }, { now: '2026-01-02T01:00:00.000Z' }), null);
   // a tiny custom TTL expires almost immediately
-  assert.strictEqual(router.cacheGet(ctx, { model: 'M', prompt: 'p' }, { now: '2026-01-01T00:00:01.000Z', ttlMs: 100 }), null);
+  assert.strictEqual(
+    router.cacheGet(ctx, { model: 'M', prompt: 'p' }, { now: '2026-01-01T00:00:01.000Z', ttlMs: 100 }),
+    null,
+  );
 });
 
 test('secrets in the response are stripped before they touch disk', function () {
@@ -178,7 +201,7 @@ test('secrets in the response are stripped before they touch disk', function () 
   const leaky = 'here is your key sk-ant-api03-ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 keep it safe';
   router.cachePut(ctx, { model: 'M', prompt: 'p', response: leaky });
   const raw = fs.readFileSync(router.cacheFile(ctx, 'M', 'p'), 'utf8');
-  assert.doesNotMatch(raw, /sk-ant-api03/);          // the token is gone from disk
+  assert.doesNotMatch(raw, /sk-ant-api03/); // the token is gone from disk
   assert.match(raw, new RegExp(secretscan.REDACTED)); // replaced with the redaction marker
   const hit = router.cacheGet(ctx, { model: 'M', prompt: 'p' });
   assert.doesNotMatch(hit.response, /sk-ant-api03/);
@@ -196,7 +219,11 @@ test('the cache dir is bounded — oldest entries are evicted past the cap', fun
   const ctx = makeCtx();
   // write 5 entries with increasing timestamps, cap of 3
   for (let i = 0; i < 5; i++) {
-    router.cachePut(ctx, { model: 'M', prompt: 'p' + i, response: 'r' + i }, { now: '2026-01-01T00:00:0' + i + '.000Z', maxFiles: 3 });
+    router.cachePut(
+      ctx,
+      { model: 'M', prompt: 'p' + i, response: 'r' + i },
+      { now: '2026-01-01T00:00:0' + i + '.000Z', maxFiles: 3 },
+    );
   }
   assert.strictEqual(router.cacheStatus(ctx).count, 3);
   // the two oldest (p0, p1) were evicted; the three newest survive
@@ -224,7 +251,9 @@ test('cacheGet is null-safe on a missing / hostile model and empty prompt', func
   const ctx = makeCtx();
   assert.strictEqual(router.cacheGet(ctx, { model: '__proto__', prompt: 'x' }), null);
   assert.strictEqual(router.cacheGet(ctx, { model: 'M', prompt: '' }), null);
-  assert.throws(function () { router.cachePut(ctx, { model: 'M', prompt: '', response: 'r' }); });
+  assert.throws(function () {
+    router.cachePut(ctx, { model: 'M', prompt: '', response: 'r' });
+  });
 });
 
 test('cacheStatus reports count, cap and the timestamp range', function () {

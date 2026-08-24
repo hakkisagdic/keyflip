@@ -17,27 +17,36 @@ function setupHome() {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'keyflip-cli-'));
   fs.mkdirSync(path.join(home, '.claude'), { recursive: true });
   fs.writeFileSync(path.join(home, '.claude', '.credentials.json'), '{"live":"TOKEN-1"}'); // forces FileStore
-  fs.writeFileSync(path.join(home, '.claude.json'),
-    JSON.stringify({ oauthAccount: { emailAddress: 'alice@example.com' }, userID: 'u1' }));
+  fs.writeFileSync(
+    path.join(home, '.claude.json'),
+    JSON.stringify({ oauthAccount: { emailAddress: 'alice@example.com' }, userID: 'u1' }),
+  );
   return home;
 }
 
 function loginAs(home, email, userID, token) {
   fs.writeFileSync(path.join(home, '.claude', '.credentials.json'), JSON.stringify({ live: token }));
-  fs.writeFileSync(path.join(home, '.claude.json'),
-    JSON.stringify({ oauthAccount: { emailAddress: email }, userID: userID }));
+  fs.writeFileSync(
+    path.join(home, '.claude.json'),
+    JSON.stringify({ oauthAccount: { emailAddress: email }, userID: userID }),
+  );
 }
 
 function run(home, args, extraEnv) {
   return _child_process.spawnSync(process.execPath, [BIN].concat(args), {
     encoding: 'utf8',
-    env: Object.assign({}, process.env, {
-      HOME: home,
-      USERPROFILE: home, // Windows homedir
-      XDG_CONFIG_HOME: path.join(home, '.config'),
-      APPDATA: path.join(home, 'AppData', 'Roaming'),
-      KEYFLIP_TEST_CLAUDE: 'stopped', // never touch a real app; deterministic across machines
-    }, extraEnv || {}),
+    env: Object.assign(
+      {},
+      process.env,
+      {
+        HOME: home,
+        USERPROFILE: home, // Windows homedir
+        XDG_CONFIG_HOME: path.join(home, '.config'),
+        APPDATA: path.join(home, 'AppData', 'Roaming'),
+        KEYFLIP_TEST_CLAUDE: 'stopped', // never touch a real app; deterministic across machines
+      },
+      extraEnv || {},
+    ),
   });
 }
 
@@ -52,9 +61,9 @@ test('add detects & saves the logged-in account, list shows it', function () {
 
 test('switch changes the active account (via CLI, --force)', function () {
   const home = setupHome();
-  run(home, ['add']);                                  // save alice
+  run(home, ['add']); // save alice
   loginAs(home, 'bob@example.com', 'u2', 'TOKEN-2');
-  run(home, ['add']);                                  // save bob
+  run(home, ['add']); // save bob
   const sw = run(home, ['alice', '--force']); // --force: Claude may be running on dev machines
   assert.strictEqual(sw.status, 0, sw.stderr);
   const cur = run(home, ['list']);
@@ -113,8 +122,8 @@ test('reset --force (factory) deletes all saved keyflip data', function () {
   const r = run(home, ['reset', '--force']);
   assert.strictEqual(r.status, 0, r.stderr);
   const list = run(home, ['list']).stdout;
-  assert.match(list, /none yet/);          // saved profiles gone
-  assert.doesNotMatch(list, /\[1\]/);      // no numbered entries
+  assert.match(list, /none yet/); // saved profiles gone
+  assert.doesNotMatch(list, /\[1\]/); // no numbered entries
   assert.match(list, /Claude Code: alice@example\.com/); // live login untouched
 });
 
@@ -194,13 +203,13 @@ test('version prints and exits 0', function () {
 
 test('switch refuses to auto-close a running Claude without confirmation (non-interactive)', function () {
   const home = setupHome();
-  run(home, ['add']);                                   // save alice (current)
+  run(home, ['add']); // save alice (current)
   loginAs(home, 'bob@example.com', 'u2', 'TOKEN-2');
-  run(home, ['add']);                                   // save bob (current = bob)
+  run(home, ['add']); // save bob (current = bob)
   const r = run(home, ['alice'], { KEYFLIP_TEST_CLAUDE: 'running' });
-  assert.notStrictEqual(r.status, 0);                   // must not silently close/switch
+  assert.notStrictEqual(r.status, 0); // must not silently close/switch
   const cur = run(home, ['list'], { KEYFLIP_TEST_CLAUDE: 'running' });
-  assert.match(cur.stdout, /bob@example\.com/);         // still on bob — nothing changed
+  assert.match(cur.stdout, /bob@example\.com/); // still on bob — nothing changed
 });
 
 test('switch --restart proceeds while Claude is running (closes/reopens, or swaps where it cannot)', function () {
@@ -243,7 +252,8 @@ test('menu survives EOF during a sub-prompt (no crash)', function () {
     encoding: 'utf8',
     input: 'a\n', // enter "save current", then stdin closes mid sub-prompt
     env: Object.assign({}, process.env, {
-      HOME: home, USERPROFILE: home,
+      HOME: home,
+      USERPROFILE: home,
       XDG_CONFIG_HOME: path.join(home, '.config'),
       APPDATA: path.join(home, 'AppData', 'Roaming'),
     }),
@@ -274,18 +284,23 @@ function seedApp(home, cfg, tree, signedOut) {
 test('status recovers the desktop account from config when the token cannot be decrypted', function (t) {
   if (process.platform !== 'darwin') return t.skip('the desktop app store is macOS-only');
   const home = setupHome();
-  const ORG = '11111111-2222-3333-4444-555555555555', ACCT = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+  const ORG = '11111111-2222-3333-4444-555555555555',
+    ACCT = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
   const cfg = { 'oauth:tokenCacheV2': 'not-a-v10-blob' };
   cfg['dxt:allowlistLastUpdated:' + ORG] = '2026-07-05T00:00:00.000Z';
   seedApp(home, cfg, [
     { dir: path.join('claude-code-sessions', ACCT, ORG) },
-    { dir: path.join('local-agent-mode-sessions', ACCT, ORG), file: 's.json', content: JSON.stringify({ oauthAccount: { emailAddress: 'desktopuser@x.com' } }) },
+    {
+      dir: path.join('local-agent-mode-sessions', ACCT, ORG),
+      file: 's.json',
+      content: JSON.stringify({ oauthAccount: { emailAddress: 'desktopuser@x.com' } }),
+    },
   ]);
   const r = run(home, ['status', '--json']);
   const app = JSON.parse(r.stdout).app;
   assert.ok(app, 'app block present');
   assert.strictEqual(app.email, 'desktopuser@x.com'); // recovered despite no decryptable token
-  assert.strictEqual(app.saved, false);               // marked as an unsaved account
+  assert.strictEqual(app.saved, false); // marked as an unsaved account
   // Human output shows the email, not "unknown".
   assert.match(run(home, ['status']).stdout, /desktopuser@x\.com/);
 });
@@ -304,7 +319,11 @@ test('remove is confirm-gated: refuses non-interactively without --force, but --
   const home = setupHome();
   run(home, ['add']); // saves "alice"
   const refused = run(home, ['remove', 'alice']);
-  assert.match((refused.stderr || '') + (refused.stdout || ''), /refusing to delete|--force/i, 'refuses without a flag');
+  assert.match(
+    (refused.stderr || '') + (refused.stdout || ''),
+    /refusing to delete|--force/i,
+    'refuses without a flag',
+  );
   assert.doesNotMatch(run(home, ['list']).stdout, /none yet/i, 'account still saved after a refused delete');
   const forced = run(home, ['remove', 'alice', '--force']);
   assert.strictEqual(forced.status, 0);
@@ -316,7 +335,11 @@ test('logout verb exists, is confirm-gated, and KEEPS saved accounts', function 
   const home = setupHome();
   run(home, ['add']); // "alice"
   const refused = run(home, ['logout']);
-  assert.match((refused.stderr || '') + (refused.stdout || ''), /refusing to log out|-y/i, 'refuses non-interactively without -y');
+  assert.match(
+    (refused.stderr || '') + (refused.stdout || ''),
+    /refusing to log out|-y/i,
+    'refuses non-interactively without -y',
+  );
   const done = run(home, ['logout', '-y']);
   assert.strictEqual(done.status, 0, 'logout -y succeeds');
   assert.match(run(home, ['list']).stdout, /alice/, 'saved account is kept after logout');

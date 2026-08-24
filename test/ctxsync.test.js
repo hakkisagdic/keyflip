@@ -10,10 +10,16 @@ import path from 'path';
 import * as ctxsync from '../src/ctxsync.js';
 import * as secretscan from '../src/secretscan.js';
 
-function tmpProject() { return fs.mkdtempSync(path.join(os.tmpdir(), 'keyflip-ctxsync-')); }
-const CLOCK = function () { return '2026-07-12T00:00:00.000Z'; };
+function tmpProject() {
+  return fs.mkdtempSync(path.join(os.tmpdir(), 'keyflip-ctxsync-'));
+}
+const CLOCK = function () {
+  return '2026-07-12T00:00:00.000Z';
+};
 // Injected runner so exportPackage's git-head annotation never spawns a subprocess.
-const NORUN = function () { return { code: 1, stdout: '', stderr: '' }; };
+const NORUN = function () {
+  return { code: 1, stdout: '', stderr: '' };
+};
 
 // Real-shaped secrets planted in EVERY text field.
 const ANT = 'sk-ant-api03-ABCDEFGHIJKLMNOPqrstuvwx0123456789';
@@ -24,7 +30,12 @@ function secretPkg() {
     project: 'demo',
     rules: [{ tool: 'cursor', rel: '.cursor/mcp.json', content: '{"apiKey":"' + ANT + '"}' }],
     conversations: [
-      { id: 'c1', tool: 'cursor', summary: 'set up auth with ' + GH, messages: [{ role: 'user', text: 'my key is ' + ANT }] },
+      {
+        id: 'c1',
+        tool: 'cursor',
+        summary: 'set up auth with ' + GH,
+        messages: [{ role: 'user', text: 'my key is ' + ANT }],
+      },
       { id: 'c2', tool: 'gemini', summary: 'notes', messages: [{ role: 'assistant', text: 'all good' }] },
     ],
     snippets: [{ path: 'a.js', lang: 'js', code: 'const k = "' + ANT + '";' }],
@@ -61,7 +72,9 @@ test('setMode: persists to .keyflip/adapters/metadata.json (0600) and round-trip
 
 test('setMode: rejects an unknown mode', function () {
   const p = tmpProject();
-  assert.throws(function () { ctxsync.setMode(p, 'public', { now: CLOCK }); }, /unknown context-sync mode/);
+  assert.throws(function () {
+    ctxsync.setMode(p, 'public', { now: CLOCK });
+  }, /unknown context-sync mode/);
 });
 
 test('setMode: company preserves an approved provider list across a re-flip', function () {
@@ -75,7 +88,9 @@ test('setMode: company preserves an approved provider list across a re-flip', fu
 test('filterForSync: company policy strips raw conversations + source snippets', function () {
   const out = ctxsync.filterForSync(secretPkg(), ctxsync.DEFAULT_POLICIES.company);
   assert.deepStrictEqual(out.snippets, [], 'snippets removed when source sharing is off');
-  out.conversations.forEach(function (c) { assert.deepStrictEqual(c.messages, [], 'raw messages stripped'); });
+  out.conversations.forEach(function (c) {
+    assert.deepStrictEqual(c.messages, [], 'raw messages stripped');
+  });
   assert.strictEqual(out.conversations.length, 2, 'conversation metadata (id/tool/summary) is kept');
 });
 
@@ -99,7 +114,9 @@ test('normalizeInputPkg: env-var VALUES are dropped — only name + description 
 test('exportPackage: local mode refuses to emit anything', function () {
   const p = tmpProject();
   ctxsync.setMode(p, 'local', { now: CLOCK });
-  assert.throws(function () { ctxsync.exportPackage(p, { pkg: secretPkg(), now: CLOCK, run: NORUN }); }, /local/);
+  assert.throws(function () {
+    ctxsync.exportPackage(p, { pkg: secretPkg(), now: CLOCK, run: NORUN });
+  }, /local/);
 });
 
 test('exportPackage: git mode emits plain, valid, secret-free JSON', function () {
@@ -117,7 +134,9 @@ test('exportPackage: git mode emits plain, valid, secret-free JSON', function ()
 test('exportPackage: encrypted mode requires + uses a passphrase, and never leaks', function () {
   const p = tmpProject();
   ctxsync.setMode(p, 'encrypted', { now: CLOCK });
-  assert.throws(function () { ctxsync.exportPackage(p, { pkg: secretPkg(), now: CLOCK, run: NORUN }); }, /passphrase/);
+  assert.throws(function () {
+    ctxsync.exportPackage(p, { pkg: secretPkg(), now: CLOCK, run: NORUN });
+  }, /passphrase/);
   const r = ctxsync.exportPackage(p, { pkg: secretPkg(), now: CLOCK, run: NORUN, passphrase: 'hunter2' });
   assert.strictEqual(r.encrypted, true);
   assertNoSecret(r.payload); // ciphertext obviously, but assert the plaintext token isn't present
@@ -131,7 +150,9 @@ test('exportPackage: company mode keeps only approved providers', function () {
   ctxsync.setMode(p, 'company', { now: CLOCK, policy: { allowedProviders: ['cursor'] } });
   const r = ctxsync.exportPackage(p, { pkg: secretPkg(), now: CLOCK, run: NORUN });
   const env = JSON.parse(r.payload);
-  const tools = env.pkg.conversations.map(function (c) { return c.tool; });
+  const tools = env.pkg.conversations.map(function (c) {
+    return c.tool;
+  });
   assert.deepStrictEqual(tools, ['cursor'], 'gemini conversation dropped (not approved)');
   assert.strictEqual(env.pkg.rules.length, 1, 'only the cursor rule survives');
   assertNoSecret(r.payload);
@@ -140,7 +161,10 @@ test('exportPackage: company mode keeps only approved providers', function () {
 test('exportPackage: NO secret reaches ANY syncing mode (security invariant)', function () {
   ['git', 'encrypted', 'company'].forEach(function (mode) {
     const p = tmpProject();
-    ctxsync.setMode(p, mode, { now: CLOCK, policy: { allowRawConversationSync: true, allowSourceCodeSnippets: true, allowedProviders: ['cursor', 'gemini'] } });
+    ctxsync.setMode(p, mode, {
+      now: CLOCK,
+      policy: { allowRawConversationSync: true, allowSourceCodeSnippets: true, allowedProviders: ['cursor', 'gemini'] },
+    });
     const r = ctxsync.exportPackage(p, { pkg: secretPkg(), now: CLOCK, run: NORUN, passphrase: 'pw' });
     if (r.encrypted) {
       assertNoSecret(r.payload);
@@ -154,38 +178,61 @@ test('exportPackage: NO secret reaches ANY syncing mode (security invariant)', f
 
 // ---- import ------------------------------------------------------------------
 test('importPackage: rejects garbage and wrong passphrases', function () {
-  assert.throws(function () { ctxsync.importPackage('not json at all'); }, /not a keyflip context-sync payload/);
-  assert.throws(function () { ctxsync.importPackage('{"magic":"nope"}'); }, /not a keyflip context-sync payload/);
+  assert.throws(function () {
+    ctxsync.importPackage('not json at all');
+  }, /not a keyflip context-sync payload/);
+  assert.throws(function () {
+    ctxsync.importPackage('{"magic":"nope"}');
+  }, /not a keyflip context-sync payload/);
   const p = tmpProject();
   ctxsync.setMode(p, 'encrypted', { now: CLOCK });
   const r = ctxsync.exportPackage(p, { pkg: secretPkg(), now: CLOCK, run: NORUN, passphrase: 'right' });
-  assert.throws(function () { ctxsync.importPackage(r.payload); }, /encrypted/);
-  assert.throws(function () { ctxsync.importPackage(r.payload, { passphrase: 'wrong' }); }, /decryption failed|wrong passphrase/);
+  assert.throws(function () {
+    ctxsync.importPackage(r.payload);
+  }, /encrypted/);
+  assert.throws(function () {
+    ctxsync.importPackage(r.payload, { passphrase: 'wrong' });
+  }, /decryption failed|wrong passphrase/);
 });
 
 test('importPackage: neutralizes a prototype-pollution attempt', function () {
   const evil = JSON.stringify({
-    magic: 'keyflip-ctxsync', schemaVersion: 1, mode: 'git',
-    meta: { contentHash: 'abc' }, policy: {},
+    magic: 'keyflip-ctxsync',
+    schemaVersion: 1,
+    mode: 'git',
+    meta: { contentHash: 'abc' },
+    policy: {},
     pkg: { project: 'p', rules: [{ tool: 'x', rel: 'y', z: 1 }], conversations: [], snippets: [], envVars: [] },
   }).replace('"project":"p"', '"project":"p","__proto__":{"polluted":true}');
   const out = ctxsync.importPackage(evil);
-  assert.strictEqual(({}).polluted, undefined, 'Object.prototype not polluted');
+  assert.strictEqual({}.polluted, undefined, 'Object.prototype not polluted');
   assert.strictEqual(out.pkg.polluted, undefined);
 });
 
 // ---- conflict detection ------------------------------------------------------
 test('detectConflict: identical / fast-forward / divergence', function () {
-  assert.strictEqual(ctxsync.detectConflict({ contentHash: 'a', parent: 'p' }, { contentHash: 'a', parent: 'p' }).conflict, false);
+  assert.strictEqual(
+    ctxsync.detectConflict({ contentHash: 'a', parent: 'p' }, { contentHash: 'a', parent: 'p' }).conflict,
+    false,
+  );
   const same = ctxsync.detectConflict({ contentHash: 'x', parent: 'base' }, { contentHash: 'y', parent: 'base' });
   assert.strictEqual(same.conflict, true);
   assert.strictEqual(same.reason, 'diverged-from-common-parent');
   // local built on top of the remote's hash → local is ahead, no conflict
-  assert.strictEqual(ctxsync.detectConflict({ contentHash: 'b', parent: 'a' }, { contentHash: 'a', parent: 'root' }).conflict, false);
+  assert.strictEqual(
+    ctxsync.detectConflict({ contentHash: 'b', parent: 'a' }, { contentHash: 'a', parent: 'root' }).conflict,
+    false,
+  );
   // remote built on top of the local's hash → remote is ahead, no conflict
-  assert.strictEqual(ctxsync.detectConflict({ contentHash: 'a', parent: 'root' }, { contentHash: 'b', parent: 'a' }).conflict, false);
+  assert.strictEqual(
+    ctxsync.detectConflict({ contentHash: 'a', parent: 'root' }, { contentHash: 'b', parent: 'a' }).conflict,
+    false,
+  );
   // unrelated histories → conflict
-  assert.strictEqual(ctxsync.detectConflict({ contentHash: 'a', parent: null }, { contentHash: 'b', parent: null }).conflict, true);
+  assert.strictEqual(
+    ctxsync.detectConflict({ contentHash: 'a', parent: null }, { contentHash: 'b', parent: null }).conflict,
+    true,
+  );
   // no checkpoint yet → cannot conflict
   assert.strictEqual(ctxsync.detectConflict({}, { contentHash: 'a' }).conflict, false);
 });
@@ -193,12 +240,15 @@ test('detectConflict: identical / fast-forward / divergence', function () {
 test('detectConflict: newer hint from updatedAt', function () {
   const c = ctxsync.detectConflict(
     { contentHash: 'x', parent: 'base', updatedAt: '2026-07-12T10:00:00Z' },
-    { contentHash: 'y', parent: 'base', updatedAt: '2026-07-12T09:00:00Z' });
+    { contentHash: 'y', parent: 'base', updatedAt: '2026-07-12T09:00:00Z' },
+  );
   assert.strictEqual(c.newer, 'local');
 });
 
 test('resolutions: offers use-new / use-old / merge / two-branches', function () {
-  const ids = ctxsync.resolutions().map(function (r) { return r.id; });
+  const ids = ctxsync.resolutions().map(function (r) {
+    return r.id;
+  });
   assert.deepStrictEqual(ids, ['use-new', 'use-old', 'merge', 'two-branches']);
 });
 
@@ -206,7 +256,8 @@ test('contentHash: stable + order-independent, changes with content', function (
   const a = ctxsync.contentHash(secretPkg());
   const b = ctxsync.contentHash(secretPkg());
   assert.strictEqual(a, b, 'deterministic');
-  const mutated = secretPkg(); mutated.project = 'other';
+  const mutated = secretPkg();
+  mutated.project = 'other';
   assert.notStrictEqual(a, ctxsync.contentHash(mutated), 'sensitive to content');
 });
 
@@ -214,11 +265,11 @@ test('contentHash: stable + order-independent, changes with content', function (
 test('recordCheckpoint: advances lineage (old hash becomes the new parent)', function () {
   const p = tmpProject();
   ctxsync.setMode(p, 'git', { now: CLOCK });
-  ctxsync.recordCheckpoint(p, 'base-hash', { now: CLOCK });     // first checkpoint: parent = null
+  ctxsync.recordCheckpoint(p, 'base-hash', { now: CLOCK }); // first checkpoint: parent = null
   let m = ctxsync.getMode(p);
   assert.strictEqual(m.contentHash, 'base-hash');
   assert.strictEqual(m.parent, null);
-  ctxsync.recordCheckpoint(p, 'next-hash', { now: CLOCK });     // second: parent = the prior hash
+  ctxsync.recordCheckpoint(p, 'next-hash', { now: CLOCK }); // second: parent = the prior hash
   m = ctxsync.getMode(p);
   assert.strictEqual(m.contentHash, 'next-hash');
   assert.strictEqual(m.parent, 'base-hash');
@@ -245,7 +296,9 @@ test('buildPackage: reads a project rule file via CONFIG_REGISTRY and redacts se
   fs.mkdirSync(path.join(p, '.cursor'), { recursive: true });
   fs.writeFileSync(path.join(p, '.cursor', 'mcp.json'), '{"apiKey":"' + ANT + '"}');
   const pkg = ctxsync.buildPackage(p, { now: CLOCK });
-  const rule = pkg.rules.filter(function (r) { return r.rel.indexOf('mcp.json') !== -1; })[0];
+  const rule = pkg.rules.filter(function (r) {
+    return r.rel.indexOf('mcp.json') !== -1;
+  })[0];
   assert.ok(rule, 'cursor rule discovered under the project');
   assertNoSecret(rule.content);
 });
@@ -253,12 +306,17 @@ test('buildPackage: reads a project rule file via CONFIG_REGISTRY and redacts se
 test('buildPackage: normalizes a foreign session file into a conversation', function () {
   const p = tmpProject();
   const jf = path.join(p, 'session.jsonl');
-  fs.writeFileSync(jf, [
-    '{"type":"user","cwd":"/x","message":{"role":"user","content":"my token ' + GH + '"}}',
-    '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"noted"}]}}',
-  ].join('\n'));
+  fs.writeFileSync(
+    jf,
+    [
+      '{"type":"user","cwd":"/x","message":{"role":"user","content":"my token ' + GH + '"}}',
+      '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"noted"}]}}',
+    ].join('\n'),
+  );
   const pkg = ctxsync.buildPackage(p, { now: CLOCK, sessionFiles: [jf] });
-  const conv = pkg.conversations.filter(function (c) { return c.id === 'session.jsonl'; })[0];
+  const conv = pkg.conversations.filter(function (c) {
+    return c.id === 'session.jsonl';
+  })[0];
   assert.ok(conv, 'foreign session imported');
   assert.strictEqual(conv.messages.length, 2);
 });

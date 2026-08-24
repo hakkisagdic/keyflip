@@ -17,23 +17,32 @@ const __dirname = path.dirname(__filename);
 
 const BIN = path.join(__dirname, '..', 'bin', 'keyflip.js');
 
-function tmp() { return fs.mkdtempSync(path.join(os.tmpdir(), 'keyflip-uninst-')); }
+function tmp() {
+  return fs.mkdtempSync(path.join(os.tmpdir(), 'keyflip-uninst-'));
+}
 
 // keyflip's default config dir differs by OS (XDG vs %APPDATA%); pin it explicitly
 // so the tests read/write the same place everywhere, including Windows CI.
-function cfgOf(home) { return path.join(home, 'kfcfg'); }
+function cfgOf(home) {
+  return path.join(home, 'kfcfg');
+}
 
 function run(home, args, extraEnv) {
   return _child_process.spawnSync(process.execPath, [BIN].concat(args), {
     encoding: 'utf8',
-    env: Object.assign({}, process.env, {
-      HOME: home,
-      USERPROFILE: home,
-      XDG_CONFIG_HOME: path.join(home, '.config'),
-      APPDATA: path.join(home, 'AppData', 'Roaming'),
-      KEYFLIP_CONFIG_DIR: cfgOf(home),
-      KEYFLIP_TEST_CLAUDE: 'stopped',
-    }, extraEnv || {}),
+    env: Object.assign(
+      {},
+      process.env,
+      {
+        HOME: home,
+        USERPROFILE: home,
+        XDG_CONFIG_HOME: path.join(home, '.config'),
+        APPDATA: path.join(home, 'AppData', 'Roaming'),
+        KEYFLIP_CONFIG_DIR: cfgOf(home),
+        KEYFLIP_TEST_CLAUDE: 'stopped',
+      },
+      extraEnv || {},
+    ),
   });
 }
 
@@ -53,16 +62,27 @@ test('profiles.list excludes keyflip state files, keeps real profiles', function
 // ---- classifyInstall ---------------------------------------------------------
 
 test('classifyInstall detects installer / npm / dev', function () {
-  assert.strictEqual(uninstall.classifyInstall(path.join('/Users/x', '.local', 'share', 'keyflip', 'bin', 'keyflip.js')), 'installer');
-  assert.strictEqual(uninstall.classifyInstall(path.join('/usr', 'lib', 'node_modules', 'keyflip', 'bin', 'keyflip.js')), 'npm');
-  assert.strictEqual(uninstall.classifyInstall(path.join('/Users/x', 'Documents', 'keyflip', 'bin', 'keyflip.js')), 'dev');
+  assert.strictEqual(
+    uninstall.classifyInstall(path.join('/Users/x', '.local', 'share', 'keyflip', 'bin', 'keyflip.js')),
+    'installer',
+  );
+  assert.strictEqual(
+    uninstall.classifyInstall(path.join('/usr', 'lib', 'node_modules', 'keyflip', 'bin', 'keyflip.js')),
+    'npm',
+  );
+  assert.strictEqual(
+    uninstall.classifyInstall(path.join('/Users/x', 'Documents', 'keyflip', 'bin', 'keyflip.js')),
+    'dev',
+  );
 });
 
 // ---- planUninstall -----------------------------------------------------------
 
 test('planUninstall (installer) lists symlink, program dir; app only on macOS', function () {
   const mac = uninstall.planUninstall({ method: 'installer', home: '/h', platform: 'darwin' });
-  const labels = mac.files.map(function (f) { return f.label; });
+  const labels = mac.files.map(function (f) {
+    return f.label;
+  });
   assert.ok(labels.indexOf('CLI symlink') !== -1);
   assert.ok(labels.indexOf('program files') !== -1);
   assert.ok(labels.indexOf('launcher app') !== -1);
@@ -70,7 +90,13 @@ test('planUninstall (installer) lists symlink, program dir; app only on macOS', 
   assert.ok(mac.files[mac.files.length - 1].self === true);
 
   const lin = uninstall.planUninstall({ method: 'installer', home: '/h', platform: 'linux' });
-  assert.ok(lin.files.map(function (f) { return f.label; }).indexOf('launcher app') === -1);
+  assert.ok(
+    lin.files
+      .map(function (f) {
+        return f.label;
+      })
+      .indexOf('launcher app') === -1,
+  );
   assert.ok(lin.pathNote && /keyflip PATH/.test(lin.pathNote));
 });
 
@@ -96,8 +122,16 @@ test('installerArtifacts honors KEYFLIP_* env overrides and the removal loop cle
   fs.writeFileSync(path.join(binDir, 'keyflip'), '#!/bin/sh\n');
   fs.writeFileSync(path.join(shareDir, 'marker'), 'x');
 
-  const items = uninstall.installerArtifacts({ home: base, platform: 'darwin', shareDir: shareDir, binDir: binDir, appDir: appDir });
-  items.forEach(function (f) { fs.rmSync(f.path, { recursive: true, force: true }); });
+  const items = uninstall.installerArtifacts({
+    home: base,
+    platform: 'darwin',
+    shareDir: shareDir,
+    binDir: binDir,
+    appDir: appDir,
+  });
+  items.forEach(function (f) {
+    fs.rmSync(f.path, { recursive: true, force: true });
+  });
   assert.ok(!fs.existsSync(path.join(binDir, 'keyflip')));
   assert.ok(!fs.existsSync(shareDir));
   assert.ok(!fs.existsSync(path.join(appDir, 'Keyflip.app')));
@@ -106,12 +140,16 @@ test('installerArtifacts honors KEYFLIP_* env overrides and the removal loop cle
 test('derivedStatePaths are all under configDir and name the runtime files', function () {
   const cfg = path.join(os.tmpdir(), 'kf-cfg'); // OS-native separators
   const paths = uninstall.derivedStatePaths({ configDir: cfg });
-  const names = paths.map(function (p) { return p.name; });
+  const names = paths.map(function (p) {
+    return p.name;
+  });
   ['usage-history.jsonl', 'proxy.json', 'breakers.json', 'events.jsonl', 'logs'].forEach(function (n) {
     assert.ok(names.indexOf(n) !== -1, 'expected ' + n);
   });
   // each entry is a direct child of configDir (OS-agnostic: compare via dirname)
-  paths.forEach(function (p) { assert.strictEqual(path.dirname(p.path), cfg); });
+  paths.forEach(function (p) {
+    assert.strictEqual(path.dirname(p.path), cfg);
+  });
   // never touches account/provider/backup data
   assert.ok(names.indexOf('providers') === -1);
   assert.ok(names.indexOf('backups') === -1);
@@ -177,7 +215,10 @@ test('reset --soft --logout --no-desktop signs out the CLI but keeps saved accou
   const cfg = seed(home);
   fs.mkdirSync(path.join(home, '.claude'), { recursive: true });
   fs.writeFileSync(path.join(home, '.claude', '.credentials.json'), '{"live":"TOK"}');
-  fs.writeFileSync(path.join(home, '.claude.json'), JSON.stringify({ oauthAccount: { emailAddress: 'x@y.com' }, userID: 'u' }));
+  fs.writeFileSync(
+    path.join(home, '.claude.json'),
+    JSON.stringify({ oauthAccount: { emailAddress: 'x@y.com' }, userID: 'u' }),
+  );
   const r = run(home, ['reset', '--soft', '--logout', '--no-desktop', '--force']);
   assert.strictEqual(r.status, 0, r.stderr);
   const claudeCfg = JSON.parse(fs.readFileSync(path.join(home, '.claude.json'), 'utf8'));

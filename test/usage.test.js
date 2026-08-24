@@ -7,13 +7,20 @@ import * as _config from '../src/config.js';
 function apiFetch(fiveHour, sevenDay, calls) {
   return async function (url, opts) {
     if (calls) calls.push({ url: url, auth: opts.headers.Authorization });
-    return { ok: true, json: async function () {
-      return { five_hour: { utilization: fiveHour, resets_at: '2026-07-02T10:00:00Z' },
-               seven_day: { utilization: sevenDay, resets_at: null } };
-    } };
+    return {
+      ok: true,
+      json: async function () {
+        return {
+          five_hour: { utilization: fiveHour, resets_at: '2026-07-02T10:00:00Z' },
+          seven_day: { utilization: sevenDay, resets_at: null },
+        };
+      },
+    };
   };
 }
-function blobWithToken(tok) { return JSON.stringify({ claudeAiOauth: { accessToken: tok } }); }
+function blobWithToken(tok) {
+  return JSON.stringify({ claudeAiOauth: { accessToken: tok } });
+}
 
 test('fetchUsage normalizes the usage API response', async function () {
   const calls = [];
@@ -26,7 +33,14 @@ test('fetchUsage normalizes the usage API response', async function () {
 });
 
 test('fetchUsage returns null on failure and headroom handles unknowns', async function () {
-  assert.strictEqual(await usage.fetchUsage('TOK', { fetch: async function () { return { ok: false }; } }), null);
+  assert.strictEqual(
+    await usage.fetchUsage('TOK', {
+      fetch: async function () {
+        return { ok: false };
+      },
+    }),
+    null,
+  );
   assert.strictEqual(usage.headroom(null), null);
   assert.strictEqual(usage.headroom({ fiveHour: { pct: 70 }, sevenDay: { pct: 90 } }), 10); // binding window
 });
@@ -36,7 +50,15 @@ test('usageForProfiles reports sentinels and serves the cache', async function (
   ctx.store.setProfile('ok', blobWithToken('T1'));
   ctx.store.setProfile('notoken', '{"claudeAiOauth":{}}');
   let calls = 0;
-  const f = async function () { calls++; return { ok: true, json: async function () { return { five_hour: { utilization: 50 } }; } }; };
+  const f = async function () {
+    calls++;
+    return {
+      ok: true,
+      json: async function () {
+        return { five_hour: { utilization: 50 } };
+      },
+    };
+  };
   const NOW = 1800000000000;
   const r1 = await usage.usageForProfiles(ctx, ['ok', 'notoken', 'missing'], { fetch: f, nowMs: NOW });
   assert.strictEqual(r1.ok.status, 'ok');
@@ -54,7 +76,15 @@ test('usageForProfiles honors config usage.cacheTtlSeconds for the default TTL',
     const ctx = makeCtx();
     ctx.store.setProfile('ok', blobWithToken('T1'));
     let calls = 0;
-    const f = async function () { calls++; return { ok: true, json: async function () { return { five_hour: { utilization: 50 } }; } }; };
+    const f = async function () {
+      calls++;
+      return {
+        ok: true,
+        json: async function () {
+          return { five_hour: { utilization: 50 } };
+        },
+      };
+    };
     _config.set(ctx, 'usage.cacheTtlSeconds', '5'); // 5-second cache
     const NOW = 1800000000000;
     await usage.usageForProfiles(ctx, ['ok'], { fetch: f, nowMs: NOW });
@@ -69,7 +99,9 @@ test('usageForProfiles honors config usage.cacheTtlSeconds for the default TTL',
 test('a 401 from the usage API surfaces as the "expired" sentinel', async function () {
   const ctx = makeCtx();
   ctx.store.setProfile('stale', blobWithToken('DEAD'));
-  const f401 = async function () { return { ok: false, status: 401 }; };
+  const f401 = async function () {
+    return { ok: false, status: 401 };
+  };
   const r = await usage.usageForProfiles(ctx, ['stale'], { fetch: f401, nowMs: 1800000000000 });
   assert.strictEqual(r.stale.status, 'expired');
 });
@@ -77,7 +109,9 @@ test('a 401 from the usage API surfaces as the "expired" sentinel', async functi
 test('a 429 (endpoint throttle) surfaces as throttled/unknown — never auto-skipped', async function () {
   const ctx = makeCtx();
   ctx.store.setProfile('busy', blobWithToken('T'));
-  const f429 = async function () { return { ok: false, status: 429 }; };
+  const f429 = async function () {
+    return { ok: false, status: 429 };
+  };
   const r = await usage.usageForProfiles(ctx, ['busy'], { fetch: f429, nowMs: 1800000000000 });
   assert.strictEqual(r.busy.status, 'throttled');
   assert.strictEqual(r.busy.headroom, null); // unknown, not "account exhausted"
@@ -90,7 +124,13 @@ test('the active account uses the LIVE credential for usage (liveFor)', async fu
   const seen = [];
   const f = async function (url, opts) {
     seen.push(opts.headers.Authorization);
-    return { ok: true, status: 200, json: async function () { return { five_hour: { utilization: 1 } }; } };
+    return {
+      ok: true,
+      status: 200,
+      json: async function () {
+        return { five_hour: { utilization: 1 } };
+      },
+    };
   };
   await usage.usageForProfiles(ctx, ['me'], { fetch: f, nowMs: 1800000000000, liveFor: 'me' });
   assert.deepStrictEqual(seen, ['Bearer LIVE-TOK']);

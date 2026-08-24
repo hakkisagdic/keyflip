@@ -15,8 +15,10 @@ function login(ctx, email, uid, tok) {
 }
 function twoAccounts() {
   const ctx = makeCtx();
-  login(ctx, 'a@x.com', 'u1', 'TA'); core.addCurrent(ctx);
-  login(ctx, 'b@x.com', 'u2', 'TB'); core.addCurrent(ctx); // b active
+  login(ctx, 'a@x.com', 'u1', 'TA');
+  core.addCurrent(ctx);
+  login(ctx, 'b@x.com', 'u2', 'TB');
+  core.addCurrent(ctx); // b active
   return ctx;
 }
 function usageFetch(pctByToken) {
@@ -24,14 +26,23 @@ function usageFetch(pctByToken) {
     const tok = opts.headers.Authorization.replace('Bearer ', '');
     const pct = pctByToken[tok];
     if (pct === undefined) return { ok: false, status: 401 };
-    return { ok: true, status: 200, json: async function () { return { five_hour: { utilization: pct } }; } };
+    return {
+      ok: true,
+      status: 200,
+      json: async function () {
+        return { five_hour: { utilization: pct } };
+      },
+    };
   };
 }
 function threeAccounts() {
   const ctx = makeCtx();
-  login(ctx, 'a@x.com', 'u1', 'TA'); core.addCurrent(ctx);
-  login(ctx, 'b@x.com', 'u2', 'TB'); core.addCurrent(ctx);
-  login(ctx, 'c@x.com', 'u3', 'TC'); core.addCurrent(ctx); // c active
+  login(ctx, 'a@x.com', 'u1', 'TA');
+  core.addCurrent(ctx);
+  login(ctx, 'b@x.com', 'u2', 'TB');
+  core.addCurrent(ctx);
+  login(ctx, 'c@x.com', 'u3', 'TC');
+  core.addCurrent(ctx); // c active
   return ctx;
 }
 
@@ -52,7 +63,13 @@ test('autoswitch tick switches when the threshold is crossed', async function ()
 
 test('autoswitch tick reports no-candidate when every alternative is exhausted', async function () {
   const ctx = twoAccounts();
-  const r = await autosw.tick(ctx, { threshold: 90, strategy: 'best', fetch: usageFetch({ TB: 99 }), nowMs: 1, cacheTtlMs: 0 });
+  const r = await autosw.tick(ctx, {
+    threshold: 90,
+    strategy: 'best',
+    fetch: usageFetch({ TB: 99 }),
+    nowMs: 1,
+    cacheTtlMs: 0,
+  });
   // candidate 'a' returns 401 -> unknown -> 'best' finds nothing
   assert.strictEqual(r.state, 'no-candidate');
   assert.strictEqual(core.currentEmail(ctx), 'b@x.com');
@@ -62,22 +79,41 @@ test('autoswitch tick with a group scopes rotation to the tagged pool (overrides
   const ctx = threeAccounts();
   _groups.addTag(ctx, 'a', 'work'); // only 'a' is in group 'work'
   // 'best' alone would prefer b (5% used, most headroom), but group 'work' restricts the pool to a.
-  const r = await autosw.tick(ctx, { threshold: 90, strategy: 'best', group: 'work', fetch: usageFetch({ TC: 95, TA: 40, TB: 5 }), nowMs: 1, cacheTtlMs: 0 });
+  const r = await autosw.tick(ctx, {
+    threshold: 90,
+    strategy: 'best',
+    group: 'work',
+    fetch: usageFetch({ TC: 95, TA: 40, TB: 5 }),
+    nowMs: 1,
+    cacheTtlMs: 0,
+  });
   assert.strictEqual(r.state, 'switched');
-  assert.strictEqual(r.switchedTo.name, 'a', 'switched to the in-group account, not the higher-headroom out-of-group one');
+  assert.strictEqual(
+    r.switchedTo.name,
+    'a',
+    'switched to the in-group account, not the higher-headroom out-of-group one',
+  );
   assert.strictEqual(core.currentEmail(ctx), 'a@x.com');
 });
 
 test('autoswitch tick with an empty/unknown group reports no-candidate (nothing switched)', async function () {
   const ctx = threeAccounts();
-  const r = await autosw.tick(ctx, { threshold: 90, group: 'nobody', fetch: usageFetch({ TC: 95, TA: 10, TB: 10 }), nowMs: 1, cacheTtlMs: 0 });
+  const r = await autosw.tick(ctx, {
+    threshold: 90,
+    group: 'nobody',
+    fetch: usageFetch({ TC: 95, TA: 10, TB: 10 }),
+    nowMs: 1,
+    cacheTtlMs: 0,
+  });
   assert.strictEqual(r.state, 'no-candidate');
   assert.strictEqual(core.currentEmail(ctx), 'c@x.com'); // unchanged
 });
 
 test('autoswitch tick treats throttled/unknown usage as unknown (never switches blind)', async function () {
   const ctx = twoAccounts();
-  const f429 = async function () { return { ok: false, status: 429 }; };
+  const f429 = async function () {
+    return { ok: false, status: 429 };
+  };
   const r = await autosw.tick(ctx, { threshold: 90, fetch: f429, nowMs: 1, cacheTtlMs: 0 });
   assert.strictEqual(r.state, 'unknown');
 });
@@ -91,8 +127,8 @@ test('autoswitch does NOT ping-pong when the only alternative is also over thres
 });
 
 test('autoswitch reports no-candidate when the alternative is app-only (no CLI creds)', async function () {
-  const ctx = twoAccounts();               // a and b both have CLI creds
-  ctx.store.delProfile('a');               // make 'a' app-only (no CLI credential)
+  const ctx = twoAccounts(); // a and b both have CLI creds
+  ctx.store.delProfile('a'); // make 'a' app-only (no CLI credential)
   const r = await autosw.tick(ctx, { threshold: 90, fetch: usageFetch({ TB: 99, TA: 5 }), nowMs: 1, cacheTtlMs: 0 });
   assert.strictEqual(r.state, 'no-candidate'); // a is filtered out; no other candidate
   assert.strictEqual(core.currentEmail(ctx), 'b@x.com');
@@ -105,7 +141,7 @@ test('link set/lookup resolves through ancestors; remove unlinks', function () {
   const deep = path.join(repo, 'src', 'lib');
   fs.mkdirSync(deep, { recursive: true });
   links.set(ctx, repo, 'work');
-  assert.strictEqual(links.lookup(ctx, deep).name, 'work');   // ancestor walk
+  assert.strictEqual(links.lookup(ctx, deep).name, 'work'); // ancestor walk
   assert.strictEqual(links.lookup(ctx, repo).name, 'work');
   assert.strictEqual(links.lookup(ctx, tmpdir()), null);
   assert.strictEqual(links.remove(ctx, repo), true);
@@ -117,7 +153,8 @@ test('run --share-history shares projects/ into the session (opt-in)', function 
   if (process.platform === 'win32') return t.skip('symlink semantics differ on Windows');
   const session = _session;
   const ctx = makeCtx();
-  login(ctx, 'a@x.com', 'u1', 'TA'); core.addCurrent(ctx);
+  login(ctx, 'a@x.com', 'u1', 'TA');
+  core.addCurrent(ctx);
   fs.mkdirSync(path.join(ctx.home, '.claude', 'projects'), { recursive: true });
   const plain = session.prepareSession(ctx, 'a', { share: true });
   assert.ok(!fs.existsSync(path.join(plain, 'projects')), 'projects NOT shared by default');

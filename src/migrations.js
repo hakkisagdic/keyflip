@@ -23,17 +23,26 @@ const MIGRATIONS = [
   },
 ];
 
-function stampPath(ctx) { return path.join(ctx.configDir, '.migrations.json'); }
+function stampPath(ctx) {
+  return path.join(ctx.configDir, '.migrations.json');
+}
 
 function readApplied(ctx) {
-  try { return JSON.parse(fs.readFileSync(stampPath(ctx), 'utf8')).applied || []; }
-  catch (e) { return []; }
+  try {
+    return JSON.parse(fs.readFileSync(stampPath(ctx), 'utf8')).applied || [];
+  } catch (e) {
+    return [];
+  }
 }
 
 // Returns the ids applied in this run. Never throws.
 function runMigrations(ctx) {
   let applied;
-  try { applied = readApplied(ctx); } catch (e) { applied = []; }
+  try {
+    applied = readApplied(ctx);
+  } catch (e) {
+    applied = [];
+  }
   const ranNow = [];
   for (let i = 0; i < MIGRATIONS.length; i++) {
     const m = MIGRATIONS[i];
@@ -47,8 +56,11 @@ function runMigrations(ctx) {
     }
   }
   if (ranNow.length) {
-    try { atomicWrite(stampPath(ctx), JSON.stringify({ applied: applied }, null, 2), 0o600); }
-    catch (e) { /* best effort */ }
+    try {
+      atomicWrite(stampPath(ctx), JSON.stringify({ applied: applied }, null, 2), 0o600);
+    } catch (e) {
+      /* best effort */
+    }
   }
   return ranNow;
 }

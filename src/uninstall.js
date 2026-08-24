@@ -11,13 +11,13 @@ import path from 'path';
 // links.json, mcp-registry.json, installed-skills.json, .migrations.json.
 // (Plain `keyflip reset` deletes ALL of it — a factory reset.)
 const DERIVED = [
-  'usage-history.jsonl',   // usage trend history
-  'proxy.json',            // failover-proxy state (pid/port/wired)
-  'proxy-usage.jsonl',     // per-account proxy token totals
-  'breakers.json',         // circuit-breaker open/closed state
-  'events.jsonl',          // autoswitch/failover event log
-  '.usage-cache.json',     // cached usage probe
-  '.update-check.json',    // "new version?" throttle stamp
+  'usage-history.jsonl', // usage trend history
+  'proxy.json', // failover-proxy state (pid/port/wired)
+  'proxy-usage.jsonl', // per-account proxy token totals
+  'breakers.json', // circuit-breaker open/closed state
+  'events.jsonl', // autoswitch/failover event log
+  '.usage-cache.json', // cached usage probe
+  '.update-check.json', // "new version?" throttle stamp
   { name: 'logs', dir: true },
 ];
 
@@ -40,9 +40,7 @@ function installerArtifacts(opts) {
   const shareDir = opts.shareDir || process.env.KEYFLIP_DIR || path.join(home, '.local', 'share', 'keyflip');
   const binDir = opts.binDir || process.env.KEYFLIP_BIN_DIR || path.join(home, '.local', 'bin');
   const appDir = opts.appDir || process.env.KEYFLIP_APP_DIR || path.join(home, 'Applications');
-  const items = [
-    { path: path.join(binDir, 'keyflip'), label: 'CLI symlink', dir: false },
-  ];
+  const items = [{ path: path.join(binDir, 'keyflip'), label: 'CLI symlink', dir: false }];
   if (platform === 'darwin') items.push({ path: path.join(appDir, 'Keyflip.app'), label: 'launcher app', dir: true });
   items.push({ path: shareDir, label: 'program files', dir: true, self: true });
   return items;
@@ -57,7 +55,7 @@ function planUninstall(opts) {
   const method = opts.method;
   const platform = opts.platform || process.platform;
   const plan = { method: method, npm: null, files: [], pathNote: null };
-  if (method === 'dev') return plan;                 // running from a checkout: remove nothing
+  if (method === 'dev') return plan; // running from a checkout: remove nothing
   if (method === 'npm') {
     plan.npm = { cmd: platform === 'win32' ? 'npm.cmd' : 'npm', args: ['uninstall', '-g', 'keyflip'] };
     return plan;

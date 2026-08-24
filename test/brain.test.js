@@ -21,8 +21,9 @@ async function withBrainEnv(value, fn) {
   const prev = process.env.KEYFLIP_BRAIN;
   if (value === undefined) delete process.env.KEYFLIP_BRAIN;
   else process.env.KEYFLIP_BRAIN = value;
-  try { return await fn(); }
-  finally {
+  try {
+    return await fn();
+  } finally {
     if (prev === undefined) delete process.env.KEYFLIP_BRAIN;
     else process.env.KEYFLIP_BRAIN = prev;
   }
@@ -116,7 +117,15 @@ test('enabled() reads the key from the environment when no dep is injected', asy
 test('propose() returns enabled:false and does NOTHING when the brain is off', async function () {
   await withBrainEnv(undefined, async function () {
     let fetchCalled = false;
-    const fetchFn = async function () { fetchCalled = true; return { status: 200, json: async function () { return {}; } }; };
+    const fetchFn = async function () {
+      fetchCalled = true;
+      return {
+        status: 200,
+        json: async function () {
+          return {};
+        },
+      };
+    };
     const r = await brain.propose({}, 'switch me to work', { apiKey: API_KEY, fetch: fetchFn });
     assert.strictEqual(r.enabled, false);
     assert.strictEqual(r.ok, false);
@@ -134,12 +143,19 @@ test('propose() validates the plan: fabricated commands dropped, real ones kept 
     assert.strictEqual(r.ok, true);
     assert.strictEqual(r.enabled, true);
 
-    const names = r.plan.map(function (s) { return s.command; });
+    const names = r.plan.map(function (s) {
+      return s.command;
+    });
     assert.deepStrictEqual(names, ['status', 'switch', 'reset'], 'fabricated command removed, order preserved');
-    assert.ok(Array.isArray(r.dropped) && r.dropped.indexOf('rm-rf-everything') !== -1, 'fabricated command recorded as dropped');
+    assert.ok(
+      Array.isArray(r.dropped) && r.dropped.indexOf('rm-rf-everything') !== -1,
+      'fabricated command recorded as dropped',
+    );
 
     const byName = {};
-    r.plan.forEach(function (s) { byName[s.command] = s; });
+    r.plan.forEach(function (s) {
+      byName[s.command] = s;
+    });
     assert.strictEqual(byName.status.safe, true);
     assert.strictEqual(byName.status.mutating, false, 'status is read-only');
     assert.strictEqual(byName.switch.mutating, true, 'switch is mutating');
@@ -153,9 +169,17 @@ test('propose(): a catalog-safe command carrying ARGS is downgraded to mutating 
   // `cache`/`config` are catalog-`safe` in their bare form, but `cache purge` / `config set` mutate.
   // A model that attaches args to a safe command must NOT yield a step tagged safe.
   await withBrainEnv('1', async function () {
-    const plan = JSON.stringify({ plan: [{ command: 'cache', args: 'purge', rationale: 'x' }, { command: 'status', rationale: 'read' }] });
+    const plan = JSON.stringify({
+      plan: [
+        { command: 'cache', args: 'purge', rationale: 'x' },
+        { command: 'status', rationale: 'read' },
+      ],
+    });
     const r = await brain.propose({}, 'clean the cache', { apiKey: API_KEY, fetch: fakeFetchReturning(plan) });
-    const byName = {}; r.plan.forEach(function (s) { byName[s.command] = s; });
+    const byName = {};
+    r.plan.forEach(function (s) {
+      byName[s.command] = s;
+    });
     assert.strictEqual(byName.cache.safe, false, 'cache purge is NOT safe (it has args)');
     assert.strictEqual(byName.cache.mutating, true);
     assert.strictEqual(byName.status.safe, true, 'a no-arg safe command stays safe');
@@ -173,13 +197,17 @@ test('redactOutbound(): a non-shape secret under a credential KEY in a JSON stri
 test('propose() marks mutating/safe from the CATALOG, not from what the model claims', async function () {
   await withBrainEnv('1', async function () {
     // Model lies: claims status is mutating and switch is safe. We ignore that.
-    const text = JSON.stringify({ plan: [
-      { command: 'status', safe: false, mutating: true, rationale: 'x' },
-      { command: 'switch', safe: true, mutating: false, rationale: 'y' },
-    ] });
+    const text = JSON.stringify({
+      plan: [
+        { command: 'status', safe: false, mutating: true, rationale: 'x' },
+        { command: 'switch', safe: true, mutating: false, rationale: 'y' },
+      ],
+    });
     const r = await brain.propose({}, 'do stuff', { apiKey: API_KEY, fetch: fakeFetchReturning(text) });
     const byName = {};
-    r.plan.forEach(function (s) { byName[s.command] = s; });
+    r.plan.forEach(function (s) {
+      byName[s.command] = s;
+    });
     assert.strictEqual(byName.status.mutating, false);
     assert.strictEqual(byName.switch.mutating, true);
   });
@@ -187,14 +215,21 @@ test('propose() marks mutating/safe from the CATALOG, not from what the model cl
 
 test('propose() drops a hostile inherited-key command name (__proto__)', async function () {
   await withBrainEnv('1', async function () {
-    const text = JSON.stringify({ plan: [
-      { command: '__proto__', rationale: 'prototype pollution attempt' },
-      { command: 'constructor', rationale: 'nope' },
-      { command: 'status', rationale: 'ok' },
-    ] });
+    const text = JSON.stringify({
+      plan: [
+        { command: '__proto__', rationale: 'prototype pollution attempt' },
+        { command: 'constructor', rationale: 'nope' },
+        { command: 'status', rationale: 'ok' },
+      ],
+    });
     const r = await brain.propose({}, 'x', { apiKey: API_KEY, fetch: fakeFetchReturning(text) });
     assert.strictEqual(r.ok, true);
-    assert.deepStrictEqual(r.plan.map(function (s) { return s.command; }), ['status']);
+    assert.deepStrictEqual(
+      r.plan.map(function (s) {
+        return s.command;
+      }),
+      ['status'],
+    );
   });
 });
 
@@ -202,7 +237,10 @@ test('propose() drops a hostile inherited-key command name (__proto__)', async f
 
 test('propose() returns ok:false (never throws) on prose with no JSON', async function () {
   await withBrainEnv('1', async function () {
-    const r = await brain.propose({}, 'x', { apiKey: API_KEY, fetch: fakeFetchReturning('I cannot help with that, sorry!') });
+    const r = await brain.propose({}, 'x', {
+      apiKey: API_KEY,
+      fetch: fakeFetchReturning('I cannot help with that, sorry!'),
+    });
     assert.strictEqual(r.ok, false);
     assert.strictEqual(r.enabled, true);
     assert.deepStrictEqual(r.plan, []);
@@ -228,7 +266,10 @@ test('propose() returns ok:false when fetch throws (timeout/network)', async fun
 
 test('propose() returns ok:false on a malformed body (no candidates)', async function () {
   await withBrainEnv('1', async function () {
-    const r = await brain.propose({}, 'x', { apiKey: API_KEY, fetch: fakeFetchReturning('', { rawBody: { nope: true } }) });
+    const r = await brain.propose({}, 'x', {
+      apiKey: API_KEY,
+      fetch: fakeFetchReturning('', { rawBody: { nope: true } }),
+    });
     assert.strictEqual(r.ok, false);
     assert.deepStrictEqual(r.plan, []);
   });
@@ -254,10 +295,18 @@ test('propose() returns ok:false when every step is invalid', async function () 
 
 test('propose() extracts JSON embedded in surrounding prose / code fences', async function () {
   await withBrainEnv('1', async function () {
-    const embedded = 'Sure! Here is your plan:\n```json\n' + JSON.stringify({ plan: [{ command: 'list' }] }) + '\n```\nHope that helps.';
+    const embedded =
+      'Sure! Here is your plan:\n```json\n' +
+      JSON.stringify({ plan: [{ command: 'list' }] }) +
+      '\n```\nHope that helps.';
     const r = await brain.propose({}, 'x', { apiKey: API_KEY, fetch: fakeFetchReturning(embedded) });
     assert.strictEqual(r.ok, true);
-    assert.deepStrictEqual(r.plan.map(function (s) { return s.command; }), ['list']);
+    assert.deepStrictEqual(
+      r.plan.map(function (s) {
+        return s.command;
+      }),
+      ['list'],
+    );
   });
 });
 
@@ -267,7 +316,10 @@ test('propose() caps the plan length at MAX_STEPS', async function () {
   await withBrainEnv('1', async function () {
     const steps = [];
     for (let i = 0; i < 40; i++) steps.push({ command: 'status', rationale: 'r' + i });
-    const r = await brain.propose({}, 'x', { apiKey: API_KEY, fetch: fakeFetchReturning(JSON.stringify({ plan: steps })) });
+    const r = await brain.propose({}, 'x', {
+      apiKey: API_KEY,
+      fetch: fakeFetchReturning(JSON.stringify({ plan: steps })),
+    });
     assert.strictEqual(r.ok, true);
     assert.ok(r.plan.length <= brain.MAX_STEPS, 'plan capped at MAX_STEPS');
     assert.strictEqual(r.plan.length, brain.MAX_STEPS);
@@ -278,7 +330,10 @@ test('propose() caps the plan length at MAX_STEPS', async function () {
 
 test('the API key never appears in the returned plan object', async function () {
   await withBrainEnv('1', async function () {
-    const r = await brain.propose({}, 'switch to work', { apiKey: API_KEY, fetch: fakeFetchReturning(validPlanText()) });
+    const r = await brain.propose({}, 'switch to work', {
+      apiKey: API_KEY,
+      fetch: fakeFetchReturning(validPlanText()),
+    });
     const serialized = JSON.stringify(r);
     assert.strictEqual(serialized.indexOf(API_KEY), -1, 'key absent from the whole result');
   });
@@ -286,7 +341,10 @@ test('the API key never appears in the returned plan object', async function () 
 
 test('the API key never appears in formatPlan output', async function () {
   await withBrainEnv('1', async function () {
-    const r = await brain.propose({}, 'switch to work', { apiKey: API_KEY, fetch: fakeFetchReturning(validPlanText()) });
+    const r = await brain.propose({}, 'switch to work', {
+      apiKey: API_KEY,
+      fetch: fakeFetchReturning(validPlanText()),
+    });
     const rendered = brain.formatPlan(r.plan);
     assert.strictEqual(rendered.indexOf(API_KEY), -1, 'key absent from formatPlan');
     assert.ok(rendered.indexOf('keyflip status') !== -1, 'renders the safe step');
@@ -309,7 +367,10 @@ test('the API key rides only the request URL, never a returned/logged field', as
 // ---- outbound scrubbing ------------------------------------------------------
 
 test('redactOutbound scrubs a token embedded in caller state (object)', function () {
-  const state = { account: 'work', creds: { api_key: 'sk-ant-abcdef....', note: 'my token is sk-ant-1234567890ABCDEFGH' } };
+  const state = {
+    account: 'work',
+    creds: { api_key: 'sk-ant-abcdef....', note: 'my token is sk-ant-1234567890ABCDEFGH' },
+  };
   const scrubbed = brain.redactOutbound(state);
   const s = JSON.stringify(scrubbed);
   assert.strictEqual(s.indexOf('sk-ant-1234567890ABCDEFGH'), -1, 'anthropic token gone');
@@ -362,7 +423,15 @@ test('callGemini uses the default model in the URL, overridable via deps.model',
 test('propose() rejects an empty intent without a network call', async function () {
   await withBrainEnv('1', async function () {
     let called = false;
-    const fetchFn = async function () { called = true; return { status: 200, json: async function () { return {}; } }; };
+    const fetchFn = async function () {
+      called = true;
+      return {
+        status: 200,
+        json: async function () {
+          return {};
+        },
+      };
+    };
     const r = await brain.propose({}, '   ', { apiKey: API_KEY, fetch: fetchFn });
     assert.strictEqual(r.ok, false);
     assert.strictEqual(r.enabled, true);
@@ -374,7 +443,9 @@ test('propose() rejects an empty intent without a network call', async function 
 // ---- extractFirstJsonObject: brace matching is string/escape aware ----------
 
 test('extractFirstJsonObject ignores braces inside JSON strings', function () {
-  const parsed = brain.extractFirstJsonObject('noise {"plan":[{"command":"status","rationale":"a } b \\" c"}]} trailing');
+  const parsed = brain.extractFirstJsonObject(
+    'noise {"plan":[{"command":"status","rationale":"a } b \\" c"}]} trailing',
+  );
   assert.ok(parsed && Array.isArray(parsed.plan));
   assert.strictEqual(parsed.plan[0].rationale, 'a } b " c');
 });

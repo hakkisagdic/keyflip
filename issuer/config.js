@@ -73,8 +73,13 @@ function validateConfig(raw) {
   const seen = Object.create(null);
   active.forEach(function (p) {
     if (typeof p !== 'string' || KNOWN_PROVIDERS.indexOf(p) === -1) {
-      throw fail('"activeProviders" contains unknown provider ' + JSON.stringify(p) +
-        ' (known: ' + KNOWN_PROVIDERS.join(', ') + ')');
+      throw fail(
+        '"activeProviders" contains unknown provider ' +
+          JSON.stringify(p) +
+          ' (known: ' +
+          KNOWN_PROVIDERS.join(', ') +
+          ')',
+      );
     }
     if (seen[p]) throw fail('"activeProviders" lists ' + JSON.stringify(p) + ' more than once');
     seen[p] = true;
@@ -93,8 +98,9 @@ function validateConfig(raw) {
       throw fail('"regionRouting.' + region + '" must be a provider id string');
     }
     if (active.indexOf(prov) === -1) {
-      throw fail('"regionRouting.' + region + '" routes to ' + JSON.stringify(prov) +
-        ' which is not in activeProviders');
+      throw fail(
+        '"regionRouting.' + region + '" routes to ' + JSON.stringify(prov) + ' which is not in activeProviders',
+      );
     }
   });
 
@@ -148,8 +154,7 @@ function loadConfig(configPath) {
 function providerForRegion(cfg, regionCode) {
   const routing = (cfg && cfg.regionRouting) || {};
   const code = regionCode == null ? '' : String(regionCode);
-  if (code && code !== 'default' &&
-      Object.prototype.hasOwnProperty.call(routing, code)) {
+  if (code && code !== 'default' && Object.prototype.hasOwnProperty.call(routing, code)) {
     return routing[code];
   }
   return routing.default;

@@ -28,7 +28,9 @@ const { createIssuer } = require('./server');
 const license = require('../src/license');
 
 // ---- crypto contract helpers (mirror src/license.js EXACTLY) -----------------
-function b64u(buf) { return Buffer.from(buf).toString('base64url'); }
+function b64u(buf) {
+  return Buffer.from(buf).toString('base64url');
+}
 
 // canonicalPayload — same fixed key order + coercion as license.js.
 function canonicalPayload(p) {
@@ -83,49 +85,76 @@ function makeHmacAdapter() {
 function buildHarness(overrides) {
   overrides = overrides || {};
   const kp = overrides.kp || makeKeypair();
-  const secret = overrides.secret || ('whsec_test_' + crypto.randomBytes(6).toString('hex'));
+  const secret = overrides.secret || 'whsec_test_' + crypto.randomBytes(6).toString('hex');
   const state = { mintCount: 0, lastToken: null, lastPayload: null };
 
-  const issuer = createIssuer(Object.assign({
-    resolveAdapter: function () { return makeHmacAdapter(); },
-    secretForProvider: function () { return secret; },
-    productToTier: function (product) { return ({ 'plan-pro': 'pro', 'plan-team': 'team' })[product] || null; },
-    signLicense: function (payload) {
-      state.mintCount++;
-      state.lastPayload = payload;
-      const token = signToContract(kp.privateKey, payload);
-      state.lastToken = token;
-      return token;
-    },
-    log: function () { /* silence */ },
-    ledgerFile: overrides.ledgerFile || null,
-  }, overrides.deps || {}));
+  const issuer = createIssuer(
+    Object.assign(
+      {
+        resolveAdapter: function () {
+          return makeHmacAdapter();
+        },
+        secretForProvider: function () {
+          return secret;
+        },
+        productToTier: function (product) {
+          return { 'plan-pro': 'pro', 'plan-team': 'team' }[product] || null;
+        },
+        signLicense: function (payload) {
+          state.mintCount++;
+          state.lastPayload = payload;
+          const token = signToContract(kp.privateKey, payload);
+          state.lastToken = token;
+          return token;
+        },
+        log: function () {
+          /* silence */
+        },
+        ledgerFile: overrides.ledgerFile || null,
+      },
+      overrides.deps || {},
+    ),
+  );
 
   return { issuer: issuer, secret: secret, state: state, kp: kp };
 }
 
 function listen(server) {
   return new Promise(function (resolve) {
-    server.listen(0, '127.0.0.1', function () { resolve(server.address().port); });
+    server.listen(0, '127.0.0.1', function () {
+      resolve(server.address().port);
+    });
   });
 }
 
 function request(port, method, urlPath, body, headers) {
   return new Promise(function (resolve, reject) {
     const data = body == null ? null : Buffer.from(body);
-    const req = http.request({
-      host: '127.0.0.1', port: port, method: method, path: urlPath,
-      headers: Object.assign(data ? { 'content-length': data.length } : {}, headers || {}),
-    }, function (res) {
-      const chunks = [];
-      res.on('data', function (c) { chunks.push(c); });
-      res.on('end', function () {
-        const raw = Buffer.concat(chunks).toString('utf8');
-        let json = null;
-        try { json = JSON.parse(raw); } catch (e) { /* leave null */ }
-        resolve({ status: res.statusCode, json: json, raw: raw });
-      });
-    });
+    const req = http.request(
+      {
+        host: '127.0.0.1',
+        port: port,
+        method: method,
+        path: urlPath,
+        headers: Object.assign(data ? { 'content-length': data.length } : {}, headers || {}),
+      },
+      function (res) {
+        const chunks = [];
+        res.on('data', function (c) {
+          chunks.push(c);
+        });
+        res.on('end', function () {
+          const raw = Buffer.concat(chunks).toString('utf8');
+          let json = null;
+          try {
+            json = JSON.parse(raw);
+          } catch (e) {
+            /* leave null */
+          }
+          resolve({ status: res.statusCode, json: json, raw: raw });
+        });
+      },
+    );
     req.on('error', reject);
     if (data) req.write(data);
     req.end();
@@ -141,7 +170,9 @@ function hmacHex(secret, raw) {
 test('GET /health -> 200 {ok:true}', async function (t) {
   const h = buildHarness();
   const port = await listen(h.issuer.server);
-  t.after(function () { h.issuer.server.close(); });
+  t.after(function () {
+    h.issuer.server.close();
+  });
 
   const res = await request(port, 'GET', '/health');
   assert.strictEqual(res.status, 200);
@@ -151,7 +182,9 @@ test('GET /health -> 200 {ok:true}', async function (t) {
 test('POST with a BAD signature -> 401 and nothing minted', async function (t) {
   const h = buildHarness();
   const port = await listen(h.issuer.server);
-  t.after(function () { h.issuer.server.close(); });
+  t.after(function () {
+    h.issuer.server.close();
+  });
 
   const body = JSON.stringify({ type: 'purchase', email: 'a@b.co', product: 'plan-pro', orderId: 'ord_bad_1' });
   const res = await request(port, 'POST', '/webhook/stub', body, { 'x-stub-signature': 'deadbeef' });
@@ -164,7 +197,9 @@ test('POST with a BAD signature -> 401 and nothing minted', async function (t) {
 test('POST with a GOOD signature -> 200 {issued:true, tier} and minted once', async function (t) {
   const h = buildHarness();
   const port = await listen(h.issuer.server);
-  t.after(function () { h.issuer.server.close(); });
+  t.after(function () {
+    h.issuer.server.close();
+  });
 
   const body = JSON.stringify({ type: 'purchase', email: 'buyer@x.io', product: 'plan-pro', orderId: 'ord_good_1' });
   const sig = hmacHex(h.secret, body);
@@ -179,7 +214,9 @@ test('POST with a GOOD signature -> 200 {issued:true, tier} and minted once', as
 test('REPLAY of the same orderId -> 200 but not minted twice', async function (t) {
   const h = buildHarness();
   const port = await listen(h.issuer.server);
-  t.after(function () { h.issuer.server.close(); });
+  t.after(function () {
+    h.issuer.server.close();
+  });
 
   const body = JSON.stringify({ type: 'purchase', email: 'buyer@x.io', product: 'plan-team', orderId: 'ord_replay_1' });
   const sig = hmacHex(h.secret, body);
@@ -223,9 +260,17 @@ test('CRYPTO ROUND-TRIP: a minted token verifies green in src/license.js', async
 });
 
 test('unknown provider -> 404 and no mint', async function (t) {
-  const h = buildHarness({ deps: { resolveAdapter: function () { return null; } } });
+  const h = buildHarness({
+    deps: {
+      resolveAdapter: function () {
+        return null;
+      },
+    },
+  });
   const port = await listen(h.issuer.server);
-  t.after(function () { h.issuer.server.close(); });
+  t.after(function () {
+    h.issuer.server.close();
+  });
 
   const body = JSON.stringify({ type: 'purchase', product: 'plan-pro', orderId: 'ord_x' });
   const res = await request(port, 'POST', '/webhook/nope', body, { 'x-stub-signature': 'x' });
@@ -235,9 +280,17 @@ test('unknown provider -> 404 and no mint', async function (t) {
 
 test('a path-traversal provider name is rejected (400) before any adapter load', async function (t) {
   // resolveAdapter throws if reached — proves the router rejects on charset first.
-  const h = buildHarness({ deps: { resolveAdapter: function () { throw new Error('resolveAdapter must not be called'); } } });
+  const h = buildHarness({
+    deps: {
+      resolveAdapter: function () {
+        throw new Error('resolveAdapter must not be called');
+      },
+    },
+  });
   const port = await listen(h.issuer.server);
-  t.after(function () { h.issuer.server.close(); });
+  t.after(function () {
+    h.issuer.server.close();
+  });
 
   const res = await request(port, 'POST', '/webhook/..%2F..%2Fetc', '{}', { 'x-stub-signature': 'x' });
   assert.strictEqual(res.status, 400);
@@ -247,7 +300,9 @@ test('a path-traversal provider name is rejected (400) before any adapter load',
 test('non-purchase event is acknowledged without minting', async function (t) {
   const h = buildHarness();
   const port = await listen(h.issuer.server);
-  t.after(function () { h.issuer.server.close(); });
+  t.after(function () {
+    h.issuer.server.close();
+  });
 
   const body = JSON.stringify({ type: 'refund', product: 'plan-pro', orderId: 'ord_refund_1' });
   const sig = hmacHex(h.secret, body);
@@ -260,7 +315,9 @@ test('non-purchase event is acknowledged without minting', async function (t) {
 test('ledger.json persists metadata (not the token) and dedups across restart', async function (t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'keyflip-ledger-'));
   const ledgerFile = path.join(dir, 'ledger.json');
-  t.after(function () { fs.rmSync(dir, { recursive: true, force: true }); });
+  t.after(function () {
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
 
   const kp = makeKeypair();
   const sharedSecret = 'whsec_persist_' + crypto.randomBytes(6).toString('hex');
@@ -282,7 +339,9 @@ test('ledger.json persists metadata (not the token) and dedups across restart', 
   // A fresh issuer sharing the same file must refuse to re-mint the same order.
   const h2 = buildHarness({ kp: kp, secret: sharedSecret, ledgerFile: ledgerFile });
   const port2 = await listen(h2.issuer.server);
-  t.after(function () { h2.issuer.server.close(); });
+  t.after(function () {
+    h2.issuer.server.close();
+  });
   const r2 = await request(port2, 'POST', '/webhook/stub', body, { 'x-stub-signature': sig });
   assert.strictEqual(r2.status, 200);
   assert.strictEqual(r2.json.idempotent, true);

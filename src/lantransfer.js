@@ -27,10 +27,16 @@ const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // base32, no 0/O/1/I
 
 // base32-encode a Buffer using CODE_ALPHABET.
 function b32(buf) {
-  let bits = 0, val = 0, out = '';
+  let bits = 0,
+    val = 0,
+    out = '';
   for (let i = 0; i < buf.length; i++) {
-    val = (val << 8) | buf[i]; bits += 8;
-    while (bits >= 5) { out += CODE_ALPHABET[(val >>> (bits - 5)) & 31]; bits -= 5; }
+    val = (val << 8) | buf[i];
+    bits += 8;
+    while (bits >= 5) {
+      out += CODE_ALPHABET[(val >>> (bits - 5)) & 31];
+      bits -= 5;
+    }
   }
   if (bits > 0) out += CODE_ALPHABET[(val << (5 - bits)) & 31];
   return out;
@@ -38,23 +44,35 @@ function b32(buf) {
 // Default 8 chars = 40 bits (a short-lived, rate-limited LAN move). Pass more chars for the
 // internet RELAY path (12 = ~60 bits), where the ciphertext may sit on a server and an offline
 // scrypt guess is the threat model. bytes = ceil(chars*5/8) of entropy, base32-encoded.
-function genCode(chars) { chars = chars || 8; return b32(crypto.randomBytes(Math.ceil(chars * 5 / 8))).slice(0, chars); }
+function genCode(chars) {
+  chars = chars || 8;
+  return b32(crypto.randomBytes(Math.ceil((chars * 5) / 8))).slice(0, chars);
+}
 // Normalize user-typed codes: uppercase, drop spaces/dashes/confusables handling.
-function normCode(s) { return String(s || '').toUpperCase().replace(/[^A-Z2-9]/g, ''); }
+function normCode(s) {
+  return String(s || '')
+    .toUpperCase()
+    .replace(/[^A-Z2-9]/g, '');
+}
 function codeEqual(a, b) {
-  const x = Buffer.from(normCode(a)), y = Buffer.from(normCode(b));
+  const x = Buffer.from(normCode(a)),
+    y = Buffer.from(normCode(b));
   if (x.length !== y.length || x.length === 0) return false;
   return crypto.timingSafeEqual(x, y);
 }
 // A short non-secret fingerprint of the code, so the user can confirm the peer.
-function fingerprint(code) { return crypto.createHash('sha256').update(normCode(code)).digest('hex').slice(0, 4).toUpperCase(); }
+function fingerprint(code) {
+  return crypto.createHash('sha256').update(normCode(code)).digest('hex').slice(0, 4).toUpperCase();
+}
 
 // This machine's non-internal IPv4 addresses (what a peer would dial).
 function lanAddresses() {
   const out = [];
   const ifs = os.networkInterfaces();
   Object.keys(ifs).forEach(function (name) {
-    (ifs[name] || []).forEach(function (a) { if (a.family === 'IPv4' && !a.internal) out.push(a.address); });
+    (ifs[name] || []).forEach(function (a) {
+      if (a.family === 'IPv4' && !a.internal) out.push(a.address);
+    });
   });
   return out;
 }
@@ -68,7 +86,15 @@ function serve(ctx, opts) {
   const host = opts.host || '0.0.0.0';
   const maxAttempts = opts.maxAttempts || 5;
   const built = migrate.buildBundle(ctx, opts);
-  if (!built.counts.accounts && !built.counts.transcripts && !built.counts.providers && !built.counts.memory && !built.counts.config && !built.counts.agents && !built.counts.agentConfig) {
+  if (
+    !built.counts.accounts &&
+    !built.counts.transcripts &&
+    !built.counts.providers &&
+    !built.counts.memory &&
+    !built.counts.config &&
+    !built.counts.agents &&
+    !built.counts.agentConfig
+  ) {
     throw new Error('nothing to transfer (no accounts, providers, transcripts, or memory found)');
   }
   const enc = sync.encrypt(JSON.stringify(built.bundle), code); // encrypted with the code
@@ -79,11 +105,17 @@ function serve(ctx, opts) {
 
   let attempts = 0;
   let resolveWait;
-  const wait = new Promise(function (r) { resolveWait = r; });
-  let beacon = null, ttlTimer = null, closed = false;
+  const wait = new Promise(function (r) {
+    resolveWait = r;
+  });
+  let beacon = null,
+    ttlTimer = null,
+    closed = false;
 
   const server = http.createServer(function (req, res) {
-    req.on('error', function () { /* client abort / socket error — ignore, don't crash */ });
+    req.on('error', function () {
+      /* client abort / socket error — ignore, don't crash */
+    });
     if (req.method === 'GET' && req.url === '/ping') {
       // Liveness only — do NOT leak counts or anything account-identifying to a LAN prober.
       res.writeHead(200, { 'content-type': 'application/json' });
@@ -92,45 +124,85 @@ function serve(ctx, opts) {
     }
     if (req.method === 'POST' && req.url === '/pull') {
       let body = '';
-      req.on('data', function (d) { body += d; if (body.length > 8192) req.destroy(); });
+      req.on('data', function (d) {
+        body += d;
+        if (body.length > 8192) req.destroy();
+      });
       req.on('end', function () {
-        let j = {}; try { j = JSON.parse(body); } catch (e) { j = {}; }
+        let j = {};
+        try {
+          j = JSON.parse(body);
+        } catch (e) {
+          j = {};
+        }
         if (!codeEqual(j.code, code)) {
           attempts++;
-          res.writeHead(403, { 'content-type': 'application/json' }); res.end(JSON.stringify({ error: 'bad code' }));
+          res.writeHead(403, { 'content-type': 'application/json' });
+          res.end(JSON.stringify({ error: 'bad code' }));
           if (attempts >= maxAttempts) close('too many bad codes');
           return;
         }
-        res.writeHead(200, { 'content-type': 'application/json' }); res.end(enc);
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(enc);
         // one-shot: close after the successful transfer flushes
-        res.on('finish', function () { close('transferred'); });
+        res.on('finish', function () {
+          close('transferred');
+        });
       });
       return;
     }
-    res.writeHead(404); res.end();
+    res.writeHead(404);
+    res.end();
   });
 
   function close(reason) {
-    if (closed) return; closed = true;
+    if (closed) return;
+    closed = true;
     if (ttlTimer) clearTimeout(ttlTimer);
-    if (beacon) { try { beacon.stop(); } catch (e) { /* ignore */ } }
-    try { server.close(); } catch (e) { /* ignore */ }
+    if (beacon) {
+      try {
+        beacon.stop();
+      } catch (e) {
+        /* ignore */
+      }
+    }
+    try {
+      server.close();
+    } catch (e) {
+      /* ignore */
+    }
     resolveWait({ reason: reason });
   }
 
-  server.on('error', function (e) { close('server error: ' + (e && e.message)); });
+  server.on('error', function (e) {
+    close('server error: ' + (e && e.message));
+  });
   server.listen(port, host, function () {
     const actualPort = server.address() && server.address().port;
     handle.port = actualPort || port;
     if (opts.discovery !== false && host !== '127.0.0.1') {
-      try { beacon = startBeacon(handle.port, fp, opts.name || os.hostname()); } catch (e) { beacon = null; }
+      try {
+        beacon = startBeacon(handle.port, fp, opts.name || os.hostname());
+      } catch (e) {
+        beacon = null;
+      }
     }
     const ttl = opts.ttlMs || 120000;
-    ttlTimer = setTimeout(function () { close('expired'); }, ttl);
+    ttlTimer = setTimeout(function () {
+      close('expired');
+    }, ttl);
     if (ttlTimer.unref) ttlTimer.unref();
   });
 
-  const handle = { code: code, fingerprint: fp, port: port, addresses: lanAddresses(), counts: built.counts, wait: wait, close: close };
+  const handle = {
+    code: code,
+    fingerprint: fp,
+    port: port,
+    addresses: lanAddresses(),
+    counts: built.counts,
+    wait: wait,
+    close: close,
+  };
   return handle;
 }
 
@@ -145,44 +217,111 @@ function serveReceive(ctx, opts) {
   const host = opts.host || '0.0.0.0';
   const maxAttempts = opts.maxAttempts || 5;
   const fp = opts.fp || b32(crypto.randomBytes(3)).slice(0, 4);
-  const onBundle = opts.onBundle || function () { return {}; };
+  const onBundle =
+    opts.onBundle ||
+    function () {
+      return {};
+    };
 
-  let attempts = 0, resolveWait, beacon = null, ttlTimer = null, closed = false;
-  const wait = new Promise(function (r) { resolveWait = r; });
+  let attempts = 0,
+    resolveWait,
+    beacon = null,
+    ttlTimer = null,
+    closed = false;
+  const wait = new Promise(function (r) {
+    resolveWait = r;
+  });
 
   const server = http.createServer(function (req, res) {
-    req.on('error', function () { /* client abort — ignore */ });
-    if (req.method === 'GET' && req.url === '/ping') { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify({ keyflip: 'transfer-receive', fp: fp })); return; }
+    req.on('error', function () {
+      /* client abort — ignore */
+    });
+    if (req.method === 'GET' && req.url === '/ping') {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ keyflip: 'transfer-receive', fp: fp }));
+      return;
+    }
     if (req.method === 'POST' && req.url === '/receive') {
-      let body = ''; const capB = opts.maxBytes || (1 << 30);
-      req.on('data', function (d) { body += d; if (body.length > capB) req.destroy(); });
+      let body = '';
+      const capB = opts.maxBytes || 1 << 30;
+      req.on('data', function (d) {
+        body += d;
+        if (body.length > capB) req.destroy();
+      });
       req.on('end', function () {
-        let j = {}; try { j = JSON.parse(body); } catch (e) { j = {}; }
+        let j = {};
+        try {
+          j = JSON.parse(body);
+        } catch (e) {
+          j = {};
+        }
         let bundle = null;
-        try { bundle = JSON.parse(sync.decrypt(String(j.enc || ''), code)); } catch (e) { bundle = null; }
+        try {
+          bundle = JSON.parse(sync.decrypt(String(j.enc || ''), code));
+        } catch (e) {
+          bundle = null;
+        }
         if (!bundle) {
           attempts++;
-          res.writeHead(403, { 'content-type': 'application/json' }); res.end(JSON.stringify({ error: 'bad code or payload' }));
+          res.writeHead(403, { 'content-type': 'application/json' });
+          res.end(JSON.stringify({ error: 'bad code or payload' }));
           if (attempts >= maxAttempts) close('too many bad attempts');
           return;
         }
         let summary;
-        try { summary = onBundle(bundle); }
-        catch (e) { res.writeHead(500, { 'content-type': 'application/json' }); res.end(JSON.stringify({ error: 'apply failed' })); close('apply-failed'); return; }
-        res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify({ ok: true, summary: summary }));
-        res.on('finish', function () { close('received'); });
+        try {
+          summary = onBundle(bundle);
+        } catch (e) {
+          res.writeHead(500, { 'content-type': 'application/json' });
+          res.end(JSON.stringify({ error: 'apply failed' }));
+          close('apply-failed');
+          return;
+        }
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ ok: true, summary: summary }));
+        res.on('finish', function () {
+          close('received');
+        });
       });
       return;
     }
-    res.writeHead(404); res.end();
+    res.writeHead(404);
+    res.end();
   });
 
-  function close(reason) { if (closed) return; closed = true; if (ttlTimer) clearTimeout(ttlTimer); if (beacon) { try { beacon.stop(); } catch (e) { /* ignore */ } } try { server.close(); } catch (e) { /* ignore */ } resolveWait({ reason: reason }); }
-  server.on('error', function (e) { close('server error: ' + (e && e.message)); });
+  function close(reason) {
+    if (closed) return;
+    closed = true;
+    if (ttlTimer) clearTimeout(ttlTimer);
+    if (beacon) {
+      try {
+        beacon.stop();
+      } catch (e) {
+        /* ignore */
+      }
+    }
+    try {
+      server.close();
+    } catch (e) {
+      /* ignore */
+    }
+    resolveWait({ reason: reason });
+  }
+  server.on('error', function (e) {
+    close('server error: ' + (e && e.message));
+  });
   server.listen(port, host, function () {
     handle.port = (server.address() && server.address().port) || port;
-    if (opts.discovery !== false && host !== '127.0.0.1') { try { beacon = startBeacon(handle.port, fp, opts.name || os.hostname()); } catch (e) { beacon = null; } }
-    ttlTimer = setTimeout(function () { close('expired'); }, opts.ttlMs || 120000);
+    if (opts.discovery !== false && host !== '127.0.0.1') {
+      try {
+        beacon = startBeacon(handle.port, fp, opts.name || os.hostname());
+      } catch (e) {
+        beacon = null;
+      }
+    }
+    ttlTimer = setTimeout(function () {
+      close('expired');
+    }, opts.ttlMs || 120000);
     if (ttlTimer.unref) ttlTimer.unref();
   });
   const handle = { code: code, fingerprint: fp, port: port, addresses: lanAddresses(), wait: wait, close: close };
@@ -197,20 +336,41 @@ function push(opts) {
   const code = normCode(opts.code);
   const payload = JSON.stringify({ enc: sync.encrypt(JSON.stringify(opts.bundle), code) });
   return new Promise(function (resolve, reject) {
-    const req = http.request({ host: hp.host, port: hp.port, path: '/receive', method: 'POST',
-      headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(payload) }, timeout: opts.timeoutMs || 30000 },
+    const req = http.request(
+      {
+        host: hp.host,
+        port: hp.port,
+        path: '/receive',
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(payload) },
+        timeout: opts.timeoutMs || 30000,
+      },
       function (res) {
-        let body = ''; const cap = 4 * 1024 * 1024;
-        res.on('data', function (d) { body += d; if (body.length > cap) req.destroy(new Error('oversized response')); });
+        let body = '';
+        const cap = 4 * 1024 * 1024;
+        res.on('data', function (d) {
+          body += d;
+          if (body.length > cap) req.destroy(new Error('oversized response'));
+        });
         res.on('end', function () {
           if (res.statusCode === 403) return reject(new Error('the code was rejected by the peer'));
           if (res.statusCode !== 200) return reject(new Error('peer returned http ' + res.statusCode));
-          let j; try { j = JSON.parse(body); } catch (e) { j = { ok: true }; }
+          let j;
+          try {
+            j = JSON.parse(body);
+          } catch (e) {
+            j = { ok: true };
+          }
           resolve(j);
         });
-      });
-    req.on('timeout', function () { req.destroy(new Error('timed out contacting the peer')); });
-    req.on('error', function (e) { reject(new Error('could not reach the peer: ' + (e && e.message))); });
+      },
+    );
+    req.on('timeout', function () {
+      req.destroy(new Error('timed out contacting the peer'));
+    });
+    req.on('error', function (e) {
+      reject(new Error('could not reach the peer: ' + (e && e.message)));
+    });
     req.end(payload);
   });
 }
@@ -230,15 +390,41 @@ function startBeacon(port, fp, name) {
   let timer = null;
   // Without this, an async socket error (network down mid-serve) is an unhandled
   // 'error' event that would CRASH the foreground `transfer serve` process.
-  sock.on('error', function () { if (timer) clearInterval(timer); try { sock.close(); } catch (e) { /* ignore */ } });
+  sock.on('error', function () {
+    if (timer) clearInterval(timer);
+    try {
+      sock.close();
+    } catch (e) {
+      /* ignore */
+    }
+  });
   sock.bind(function () {
-    try { sock.setBroadcast(true); } catch (e) { /* ignore */ }
-    const tick = function () { try { sock.send(msg, 0, msg.length, MCAST_PORT, MCAST_ADDR); } catch (e) { /* ignore */ } };
+    try {
+      sock.setBroadcast(true);
+    } catch (e) {
+      /* ignore */
+    }
+    const tick = function () {
+      try {
+        sock.send(msg, 0, msg.length, MCAST_PORT, MCAST_ADDR);
+      } catch (e) {
+        /* ignore */
+      }
+    };
     tick();
     timer = setInterval(tick, 1000);
     if (timer.unref) timer.unref();
   });
-  return { stop: function () { if (timer) clearInterval(timer); try { sock.close(); } catch (e) { /* ignore */ } } };
+  return {
+    stop: function () {
+      if (timer) clearInterval(timer);
+      try {
+        sock.close();
+      } catch (e) {
+        /* ignore */
+      }
+    },
+  };
 }
 
 // Listen for beacons for `timeoutMs`, return the peers seen (deduped host:port).
@@ -247,14 +433,49 @@ function discover(timeoutMs) {
     const sock = dgram.createSocket({ type: 'udp4', reuseAddr: true });
     const peers = {};
     sock.on('message', function (buf, rinfo) {
-      try { const j = JSON.parse(buf); if (j && j.keyflip === 'transfer' && j.port) peers[rinfo.address + ':' + j.port] = { host: rinfo.address, port: j.port, fp: j.fp || null, name: j.name || null }; }
-      catch (e) { /* ignore */ }
+      try {
+        const j = JSON.parse(buf);
+        if (j && j.keyflip === 'transfer' && j.port)
+          peers[rinfo.address + ':' + j.port] = {
+            host: rinfo.address,
+            port: j.port,
+            fp: j.fp || null,
+            name: j.name || null,
+          };
+      } catch (e) {
+        /* ignore */
+      }
     });
-    sock.on('error', function () { try { sock.close(); } catch (e) {} resolve([]); });
+    sock.on('error', function () {
+      try {
+        sock.close();
+      } catch (e) {}
+      resolve([]);
+    });
     try {
-      sock.bind(MCAST_PORT, function () { try { sock.addMembership(MCAST_ADDR); } catch (e) { /* multicast may be unavailable */ } });
-    } catch (e) { resolve([]); return; }
-    setTimeout(function () { try { sock.close(); } catch (e) { /* ignore */ } resolve(Object.keys(peers).map(function (k) { return peers[k]; })); }, timeoutMs || 3000);
+      sock.bind(MCAST_PORT, function () {
+        try {
+          sock.addMembership(MCAST_ADDR);
+        } catch (e) {
+          /* multicast may be unavailable */
+        }
+      });
+    } catch (e) {
+      resolve([]);
+      return;
+    }
+    setTimeout(function () {
+      try {
+        sock.close();
+      } catch (e) {
+        /* ignore */
+      }
+      resolve(
+        Object.keys(peers).map(function (k) {
+          return peers[k];
+        }),
+      );
+    }, timeoutMs || 3000);
   });
 }
 
@@ -273,25 +494,59 @@ function pull(opts) {
   const code = normCode(opts.code);
   const payload = JSON.stringify({ code: code });
   return new Promise(function (resolve, reject) {
-    const req = http.request({ host: hp.host, port: hp.port, path: '/pull', method: 'POST',
-      headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(payload) }, timeout: opts.timeoutMs || 15000 },
+    const req = http.request(
+      {
+        host: hp.host,
+        port: hp.port,
+        path: '/pull',
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(payload) },
+        timeout: opts.timeoutMs || 15000,
+      },
       function (res) {
         let body = '';
-        const cap = opts.maxBytes || (1 << 30); // 1 GiB — generous for any real bundle, bounds a rogue peer
-        res.on('data', function (d) { body += d; if (body.length > cap) { req.destroy(new Error('peer response exceeded ' + cap + ' bytes')); } });
+        const cap = opts.maxBytes || 1 << 30; // 1 GiB — generous for any real bundle, bounds a rogue peer
+        res.on('data', function (d) {
+          body += d;
+          if (body.length > cap) {
+            req.destroy(new Error('peer response exceeded ' + cap + ' bytes'));
+          }
+        });
         res.on('end', function () {
           if (res.statusCode === 403) return reject(new Error('the code was rejected by the peer'));
           if (res.statusCode !== 200) return reject(new Error('peer returned http ' + res.statusCode));
           let bundle;
-          try { bundle = JSON.parse(sync.decrypt(body, code)); }
-          catch (e) { return reject(new Error('could not decrypt the bundle — wrong code?')); }
+          try {
+            bundle = JSON.parse(sync.decrypt(body, code));
+          } catch (e) {
+            return reject(new Error('could not decrypt the bundle — wrong code?'));
+          }
           resolve(bundle);
         });
-      });
-    req.on('timeout', function () { req.destroy(new Error('timed out contacting the peer')); });
-    req.on('error', function (e) { reject(new Error('could not reach the peer: ' + (e && e.message))); });
+      },
+    );
+    req.on('timeout', function () {
+      req.destroy(new Error('timed out contacting the peer'));
+    });
+    req.on('error', function (e) {
+      reject(new Error('could not reach the peer: ' + (e && e.message)));
+    });
     req.end(payload);
   });
 }
 
-export { DEFAULT_PORT, pairingUrl, serve, serveReceive, pull, push, discover, genCode, normCode, codeEqual, fingerprint, splitHostPort, lanAddresses };
+export {
+  DEFAULT_PORT,
+  pairingUrl,
+  serve,
+  serveReceive,
+  pull,
+  push,
+  discover,
+  genCode,
+  normCode,
+  codeEqual,
+  fingerprint,
+  splitHostPort,
+  lanAddresses,
+};

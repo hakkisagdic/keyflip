@@ -21,20 +21,27 @@ import { atomicWrite, readJsonForWrite } from './fsutil.js';
 const PUBKEY_B64 = 'REPLACE_AT_RELEASE_WITH_ED25519_SPKI_DER_BASE64';
 
 let PUBLIC_KEY_B64 = PUBKEY_B64;
-let _pubCache = null;      // cached KeyObject
-let _pubCacheFor = null;   // the b64 it was built from (invalidate on change)
+let _pubCache = null; // cached KeyObject
+let _pubCacheFor = null; // the b64 it was built from (invalidate on change)
 
 // Swap the verifying key (release build patches PUBKEY_B64; tests inject a
 // throwaway public key so they can mint + verify with their own keypair).
-function setPublicKey(b64) { PUBLIC_KEY_B64 = String(b64 == null ? '' : b64); _pubCache = null; _pubCacheFor = null; }
-function getPublicKeyB64() { return PUBLIC_KEY_B64; }
+function setPublicKey(b64) {
+  PUBLIC_KEY_B64 = String(b64 == null ? '' : b64);
+  _pubCache = null;
+  _pubCacheFor = null;
+}
+function getPublicKeyB64() {
+  return PUBLIC_KEY_B64;
+}
 
 // Build (and cache) the Ed25519 public KeyObject. Throws when the embedded key is
 // still the placeholder / otherwise unparseable — callers treat that as "no key".
 function publicKeyObject() {
   if (_pubCache && _pubCacheFor === PUBLIC_KEY_B64) return _pubCache;
   const obj = crypto.createPublicKey({ key: Buffer.from(PUBLIC_KEY_B64, 'base64'), format: 'der', type: 'spki' });
-  _pubCache = obj; _pubCacheFor = PUBLIC_KEY_B64;
+  _pubCache = obj;
+  _pubCacheFor = PUBLIC_KEY_B64;
   return obj;
 }
 
@@ -44,8 +51,12 @@ function publicKeyObject() {
 // (e.g. '__proto__') can never resolve to an inherited, truthy rank.
 const TIER_ORDER = ['free', 'pro', 'team', 'enterprise'];
 const TIER_RANK = Object.create(null);
-TIER_ORDER.forEach(function (t, i) { TIER_RANK[t] = i; });
-function rankOf(t) { return TIER_RANK[t] == null ? -1 : TIER_RANK[t]; }
+TIER_ORDER.forEach(function (t, i) {
+  TIER_RANK[t] = i;
+});
+function rankOf(t) {
+  return TIER_RANK[t] == null ? -1 : TIER_RANK[t];
+}
 
 // Feature -> minimum tier. Null-proto so gate('__proto__') can't inherit a value
 // and mis-report a non-feature as gated. Anything NOT listed here is a free
@@ -71,18 +82,46 @@ const FEATURES = Object.assign(Object.create(null), {
 // Paywall enforcement is OFF unless KEYFLIP_LICENSING is explicitly enabled. So requireTier() and the
 // central CLI/MCP gates are no-ops by default — shipping the machinery WITHOUT gating anyone until the
 // product launches. Flip it on with `KEYFLIP_LICENSING=1` (env) once the issuer/checkout are live.
-function enforcementEnabled() { const v = process.env.KEYFLIP_LICENSING; return v === '1' || v === 'true' || v === 'on'; }
+function enforcementEnabled() {
+  const v = process.env.KEYFLIP_LICENSING;
+  return v === '1' || v === 'true' || v === 'on';
+}
 
 // Map a CLI command OR an MCP tool name to the paywalled feature it belongs to (null = free/core).
 const CMD_FEATURE = Object.assign(Object.create(null), {
-  fleet: 'fleet', 'run-job': 'orchestrator', jobs: 'orchestrator', fanout: 'orchestrator', 'fan-out': 'orchestrator',
-  cost: 'cost', budget: 'budget', notify: 'notify', autoswitch: 'autoswitch', route: 'router', cache: 'router', post: 'notify',
-  team: 'teampool', policy: 'policy', vault: 'vault', swarm: 'swarm',
+  fleet: 'fleet',
+  'run-job': 'orchestrator',
+  jobs: 'orchestrator',
+  fanout: 'orchestrator',
+  'fan-out': 'orchestrator',
+  cost: 'cost',
+  budget: 'budget',
+  notify: 'notify',
+  autoswitch: 'autoswitch',
+  route: 'router',
+  cache: 'router',
+  post: 'notify',
+  team: 'teampool',
+  policy: 'policy',
+  vault: 'vault',
+  swarm: 'swarm',
 });
 const AREA_FEATURE = Object.assign(Object.create(null), {
-  fleet: 'fleet', job: 'orchestrator', jobs: 'orchestrator', fanout: 'orchestrator', cost: 'cost', budget: 'budget',
-  notify: 'notify', autoswitch: 'autoswitch', route: 'router', cache: 'router', post: 'notify', team: 'teampool',
-  policy: 'policy', vault: 'vault', swarm: 'swarm',
+  fleet: 'fleet',
+  job: 'orchestrator',
+  jobs: 'orchestrator',
+  fanout: 'orchestrator',
+  cost: 'cost',
+  budget: 'budget',
+  notify: 'notify',
+  autoswitch: 'autoswitch',
+  route: 'router',
+  cache: 'router',
+  post: 'notify',
+  team: 'teampool',
+  policy: 'policy',
+  vault: 'vault',
+  swarm: 'swarm',
 });
 function featureFor(name) {
   const n = String(name || '');
@@ -92,8 +131,12 @@ function featureFor(name) {
 }
 
 // ---- token codec -------------------------------------------------------------
-function b64uEnc(buf) { return Buffer.from(buf).toString('base64url'); }
-function b64uDec(s) { return Buffer.from(String(s), 'base64url'); }
+function b64uEnc(buf) {
+  return Buffer.from(buf).toString('base64url');
+}
+function b64uDec(s) {
+  return Buffer.from(String(s), 'base64url');
+}
 
 // The exact bytes that get signed/verified: a fixed-key-order JSON of the four
 // meaningful fields, with every field coerced deterministically so signer and
@@ -124,7 +167,9 @@ function nowIso(opts) {
 //   * valid is true only for a genuine, known-tier, unexpired license.
 // Never touches the network or the real clock (now is injected).
 function verify(token, opts) {
-  const untrusted = function (reason) { return { valid: false, tier: 'free', reason: reason, expiry: null, email: null, issued: null }; };
+  const untrusted = function (reason) {
+    return { valid: false, tier: 'free', reason: reason, expiry: null, email: null, issued: null };
+  };
   if (typeof token !== 'string') return untrusted('malformed');
   const parts = token.trim().split('.');
   if (parts.length !== 2 || !parts[0] || !parts[1]) return untrusted('malformed');
@@ -133,17 +178,31 @@ function verify(token, opts) {
   try {
     canonical = b64uDec(parts[0]).toString('utf8');
     sig = b64uDec(parts[1]);
-  } catch (e) { return untrusted('malformed'); }
-  try { payload = JSON.parse(canonical); } catch (e) { return untrusted('malformed'); }
+  } catch (e) {
+    return untrusted('malformed');
+  }
+  try {
+    payload = JSON.parse(canonical);
+  } catch (e) {
+    return untrusted('malformed');
+  }
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return untrusted('malformed');
 
   let pub;
-  try { pub = publicKeyObject(); } catch (e) { return untrusted('no-pubkey'); }
+  try {
+    pub = publicKeyObject();
+  } catch (e) {
+    return untrusted('no-pubkey');
+  }
 
   // Re-serialize to the canonical form and verify the signature over THAT — so a
   // reordered/reencoded transport still checks, and a tampered field flips it.
   let ok = false;
-  try { ok = crypto.verify(null, Buffer.from(canonicalPayload(payload), 'utf8'), pub, sig); } catch (e) { ok = false; }
+  try {
+    ok = crypto.verify(null, Buffer.from(canonicalPayload(payload), 'utf8'), pub, sig);
+  } catch (e) {
+    ok = false;
+  }
   if (!ok) return untrusted('bad-signature');
 
   const email = payload.email == null ? null : String(payload.email);
@@ -156,7 +215,8 @@ function verify(token, opts) {
   }
   if (expiry !== null) {
     const expMs = Date.parse(expiry);
-    if (isNaN(expMs)) return { valid: false, tier: payload.tier, reason: 'bad-expiry', expiry: expiry, email: email, issued: issued };
+    if (isNaN(expMs))
+      return { valid: false, tier: payload.tier, reason: 'bad-expiry', expiry: expiry, email: email, issued: issued };
     const nowMs = Date.parse(nowIso(opts));
     if (!isNaN(nowMs) && nowMs > expMs) {
       return { valid: false, tier: payload.tier, reason: 'expired', expiry: expiry, email: email, issued: issued };
@@ -166,13 +226,19 @@ function verify(token, opts) {
 }
 
 // ---- state (activate / status / effective tier) ------------------------------
-function licensePath(ctx) { return path.join(ctx.configDir, 'license.json'); }
+function licensePath(ctx) {
+  return path.join(ctx.configDir, 'license.json');
+}
 
 // The stored record, or null when absent/corrupt (corrupt = treat as no license
 // so a mangled file fails closed to 'free' rather than throwing on every gate).
 function readStored(ctx) {
   let rec;
-  try { rec = readJsonForWrite(licensePath(ctx)); } catch (e) { return null; }
+  try {
+    rec = readJsonForWrite(licensePath(ctx));
+  } catch (e) {
+    return null;
+  }
   if (!rec || typeof rec !== 'object' || Array.isArray(rec) || typeof rec.token !== 'string') return null;
   return rec;
 }
@@ -184,7 +250,13 @@ function extractToken(raw) {
   const s = String(raw == null ? '' : raw).trim();
   if (!s) return '';
   if (s[0] === '{') {
-    try { const o = JSON.parse(s); const t = o && (o.token || o.license || o.key); if (t) return String(t).trim(); } catch (e) { /* fall through to raw */ }
+    try {
+      const o = JSON.parse(s);
+      const t = o && (o.token || o.license || o.key);
+      if (t) return String(t).trim();
+    } catch (e) {
+      /* fall through to raw */
+    }
   }
   return s.split(/\s+/)[0];
 }
@@ -197,17 +269,28 @@ function activate(ctx, opts) {
   let token = opts.token;
   if (!token && opts.file) {
     let raw;
-    try { raw = fs.readFileSync(opts.file, 'utf8'); }
-    catch (e) { throw new Error('cannot read license file ' + opts.file + ': ' + ((e && e.message) || e)); }
+    try {
+      raw = fs.readFileSync(opts.file, 'utf8');
+    } catch (e) {
+      throw new Error('cannot read license file ' + opts.file + ': ' + ((e && e.message) || e));
+    }
     token = extractToken(raw);
   }
-  if (typeof token !== 'string' || !token.trim()) throw new Error('no license token provided (pass a token or a license file)');
+  if (typeof token !== 'string' || !token.trim())
+    throw new Error('no license token provided (pass a token or a license file)');
   token = token.trim();
 
   const v = verify(token, { now: ctx.now });
   if (!v.valid) throw new Error('this license is not valid (' + v.reason + ') — nothing was activated');
 
-  const rec = { token: token, tier: v.tier, email: v.email, expiry: v.expiry, issued: v.issued, activatedAt: ctx.now() };
+  const rec = {
+    token: token,
+    tier: v.tier,
+    email: v.email,
+    expiry: v.expiry,
+    issued: v.issued,
+    activatedAt: ctx.now(),
+  };
   atomicWrite(licensePath(ctx), JSON.stringify(rec, null, 2), 0o600);
   return { tier: v.tier, email: v.email, expiry: v.expiry, valid: true };
 }
@@ -215,7 +298,11 @@ function activate(ctx, opts) {
 // Remove any stored license (back to free). Returns whether one existed.
 function deactivate(ctx) {
   const had = !!readStored(ctx);
-  try { fs.rmSync(licensePath(ctx), { force: true }); } catch (e) { /* best effort */ }
+  try {
+    fs.rmSync(licensePath(ctx), { force: true });
+  } catch (e) {
+    /* best effort */
+  }
   return had;
 }
 
@@ -264,7 +351,11 @@ function requireTier(ctx, feature) {
 // Feature names unlocked at the current effective tier (handy for status UIs).
 function unlockedFeatures(ctx) {
   const cur = rankOf(tier(ctx));
-  return Object.keys(FEATURES).filter(function (f) { return cur >= rankOf(FEATURES[f]); }).sort();
+  return Object.keys(FEATURES)
+    .filter(function (f) {
+      return cur >= rankOf(FEATURES[f]);
+    })
+    .sort();
 }
 
 // ---- test helper -------------------------------------------------------------
@@ -281,7 +372,7 @@ function makeLicense(privKey, payload, opts) {
     issued: payload.issued != null ? payload.issued : nowIso(opts),
   };
   const canonical = canonicalPayload(p);
-  const key = (typeof privKey === 'string' || Buffer.isBuffer(privKey)) ? crypto.createPrivateKey(privKey) : privKey;
+  const key = typeof privKey === 'string' || Buffer.isBuffer(privKey) ? crypto.createPrivateKey(privKey) : privKey;
   const sig = crypto.sign(null, Buffer.from(canonical, 'utf8'), key);
   return b64uEnc(Buffer.from(canonical, 'utf8')) + '.' + b64uEnc(sig);
 }
@@ -293,18 +384,28 @@ const mcpTools = [
   {
     name: 'keyflip_license_status',
     title: 'License / plan status',
-    description: 'Show the machine\'s keyflip license: effective plan (free|pro|team|enterprise), the licensed email, expiry, whether it is currently valid, and which paid features are unlocked. Fully offline (no phone-home). Read-only.',
+    description:
+      "Show the machine's keyflip license: effective plan (free|pro|team|enterprise), the licensed email, expiry, whether it is currently valid, and which paid features are unlocked. Fully offline (no phone-home). Read-only.",
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
     annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     run: async function (ctx) {
       const s = status(ctx);
-      return { plan: tier(ctx), tier: s.tier, email: s.email, expiry: s.expiry, valid: s.valid, reason: s.reason, features: unlockedFeatures(ctx) };
+      return {
+        plan: tier(ctx),
+        tier: s.tier,
+        email: s.email,
+        expiry: s.expiry,
+        valid: s.valid,
+        reason: s.reason,
+        features: unlockedFeatures(ctx),
+      };
     },
   },
   {
     name: 'keyflip_license_activate',
     title: 'Activate a license file',
-    description: 'Verify a license FILE offline and, if valid, store it as this machine\'s license (unlocking its plan). Pass the path to the license file. Mutating — ask the user first, then set confirm=true.',
+    description:
+      "Verify a license FILE offline and, if valid, store it as this machine's license (unlocking its plan). Pass the path to the license file. Mutating — ask the user first, then set confirm=true.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -316,13 +417,38 @@ const mcpTools = [
     },
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     run: async function (ctx, args) {
-      if (!args || args.confirm !== true) throw new Error('confirmation required: ask the user first, then call again with confirm=true');
+      if (!args || args.confirm !== true)
+        throw new Error('confirmation required: ask the user first, then call again with confirm=true');
       const r = activate(ctx, { file: String(args.file) });
       return { activated: true, tier: r.tier, email: r.email, expiry: r.expiry };
     },
   },
 ];
 
-function requireForName(ctx, name) { return requireTier(ctx, featureFor(name)); }
+function requireForName(ctx, name) {
+  return requireTier(ctx, featureFor(name));
+}
 
-export { makeLicense, makeLicense as signCommandForTest, setPublicKey, getPublicKeyB64, PUBKEY_B64, deactivate, status, tier, licensePath, requireTier, enforcementEnabled, featureFor, unlockedFeatures, FEATURES, TIER_ORDER, requireForName, verify, canonicalPayload, activate, gate, mcpTools };
+export {
+  makeLicense,
+  makeLicense as signCommandForTest,
+  setPublicKey,
+  getPublicKeyB64,
+  PUBKEY_B64,
+  deactivate,
+  status,
+  tier,
+  licensePath,
+  requireTier,
+  enforcementEnabled,
+  featureFor,
+  unlockedFeatures,
+  FEATURES,
+  TIER_ORDER,
+  requireForName,
+  verify,
+  canonicalPayload,
+  activate,
+  gate,
+  mcpTools,
+};

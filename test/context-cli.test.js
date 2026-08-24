@@ -26,7 +26,8 @@ function run(env, args) {
     cwd: env.proj,
     encoding: 'utf8',
     env: Object.assign({}, process.env, {
-      HOME: env.home, USERPROFILE: env.home,
+      HOME: env.home,
+      USERPROFILE: env.home,
       XDG_CONFIG_HOME: path.join(env.home, '.config'),
       KEYFLIP_CONFIG_DIR: path.join(env.home, '.config', 'keyflip'),
       APPDATA: path.join(env.home, 'AppData', 'Roaming'),
@@ -49,7 +50,17 @@ test('context decision add: a leading value-flag does not steal the title', func
 test('context decision add: title before flags still works', function () {
   const env = tmpEnv();
   run(env, ['context', 'init']);
-  const r = run(env, ['context', 'decision', 'add', 'Use Postgres', '--rationale', 'ACID', '--do-not', 'SQLite in prod', '--json']);
+  const r = run(env, [
+    'context',
+    'decision',
+    'add',
+    'Use Postgres',
+    '--rationale',
+    'ACID',
+    '--do-not',
+    'SQLite in prod',
+    '--json',
+  ]);
   const o = JSON.parse(r.stdout.trim());
   assert.strictEqual(o.title, 'Use Postgres');
 });

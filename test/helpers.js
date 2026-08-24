@@ -23,7 +23,11 @@ function makeCtx(overrides) {
     credsFilePath: credsFilePath,
     account: 'tester',
     store: overrides.store || new MemoryStore(),
-    now: overrides.now || function () { return '2026-01-01T00:00:00.000Z'; },
+    now:
+      overrides.now ||
+      function () {
+        return '2026-01-01T00:00:00.000Z';
+      },
   };
 }
 

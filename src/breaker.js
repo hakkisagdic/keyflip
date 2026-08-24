@@ -9,12 +9,24 @@ import { writeJsonStable } from './fsutil.js';
 
 const DEFAULTS = { failureThreshold: 4, recoveryMs: 60 * 1000, successesToClose: 2 };
 
-function file(ctx) { return path.join(ctx.configDir, 'breakers.json'); }
-function readAll(ctx) {
-  try { const o = JSON.parse(fs.readFileSync(file(ctx), 'utf8')); return (o && typeof o === 'object') ? o : {}; }
-  catch (e) { return {}; }
+function file(ctx) {
+  return path.join(ctx.configDir, 'breakers.json');
 }
-function writeAll(ctx, all) { try { writeJsonStable(file(ctx), all, 0o600); } catch (e) { /* best effort */ } }
+function readAll(ctx) {
+  try {
+    const o = JSON.parse(fs.readFileSync(file(ctx), 'utf8'));
+    return o && typeof o === 'object' ? o : {};
+  } catch (e) {
+    return {};
+  }
+}
+function writeAll(ctx, all) {
+  try {
+    writeJsonStable(file(ctx), all, 0o600);
+  } catch (e) {
+    /* best effort */
+  }
+}
 
 function entry(all, name) {
   if (!all[name]) all[name] = { state: 'closed', failures: 0, successes: 0, openedAt: 0 };
@@ -25,24 +37,31 @@ function entry(all, name) {
 // recoveryMs has elapsed). Does not mutate.
 function state(ctx, name, opts) {
   opts = Object.assign({}, DEFAULTS, opts);
-  const now = (opts && opts.nowMs !== undefined) ? opts.nowMs : Date.now();
+  const now = opts && opts.nowMs !== undefined ? opts.nowMs : Date.now();
   const e = readAll(ctx)[name];
   if (!e || e.state === 'closed') return 'closed';
-  if (e.state === 'open') return (now - (e.openedAt || 0) >= opts.recoveryMs) ? 'half-open' : 'open';
+  if (e.state === 'open') return now - (e.openedAt || 0) >= opts.recoveryMs ? 'half-open' : 'open';
   return e.state; // half-open
 }
 
 // Is this account eligible to be switched to right now?
-function isAvailable(ctx, name, opts) { return state(ctx, name, opts) !== 'open'; }
+function isAvailable(ctx, name, opts) {
+  return state(ctx, name, opts) !== 'open';
+}
 
 function recordFailure(ctx, name, opts) {
   opts = Object.assign({}, DEFAULTS, opts);
   const now = opts.nowMs !== undefined ? opts.nowMs : Date.now();
-  const all = readAll(ctx); const e = entry(all, name);
-  e.failures = (e.failures || 0) + 1; e.successes = 0;
+  const all = readAll(ctx);
+  const e = entry(all, name);
+  e.failures = (e.failures || 0) + 1;
+  e.successes = 0;
   // Trip open (or RE-ARM the recovery window) on any failure at/over threshold —
   // a failed half-open trial restarts the cooldown instead of staying eligible.
-  if (e.failures >= opts.failureThreshold) { e.state = 'open'; e.openedAt = now; }
+  if (e.failures >= opts.failureThreshold) {
+    e.state = 'open';
+    e.openedAt = now;
+  }
   writeAll(ctx, all);
   return e.state;
 }
@@ -50,21 +69,36 @@ function recordFailure(ctx, name, opts) {
 function recordSuccess(ctx, name, opts) {
   opts = Object.assign({}, DEFAULTS, opts);
   const now = opts.nowMs !== undefined ? opts.nowMs : Date.now();
-  const all = readAll(ctx); const e = entry(all, name);
-  if (!e || e.state === 'closed') { e.failures = 0; writeAll(ctx, all); return 'closed'; }
+  const all = readAll(ctx);
+  const e = entry(all, name);
+  if (!e || e.state === 'closed') {
+    e.failures = 0;
+    writeAll(ctx, all);
+    return 'closed';
+  }
   // A success only counts toward closing once the recovery window has elapsed
   // (effective half-open). While still cooling (open), a success is IGNORED —
   // a passive usage poll must never force-close a breaker inside its cooldown.
-  const cooling = e.state === 'open' && (now - (e.openedAt || 0) < opts.recoveryMs);
-  if (cooling) { writeAll(ctx, all); return 'open'; }
+  const cooling = e.state === 'open' && now - (e.openedAt || 0) < opts.recoveryMs;
+  if (cooling) {
+    writeAll(ctx, all);
+    return 'open';
+  }
   e.successes = (e.successes || 0) + 1;
-  if (e.successes >= opts.successesToClose) { e.state = 'closed'; e.failures = 0; e.successes = 0; e.openedAt = 0; }
+  if (e.successes >= opts.successesToClose) {
+    e.state = 'closed';
+    e.failures = 0;
+    e.successes = 0;
+    e.openedAt = 0;
+  }
   writeAll(ctx, all);
   return e.state;
 }
 
 function reset(ctx, name) {
-  const all = readAll(ctx); delete all[name]; writeAll(ctx, all);
+  const all = readAll(ctx);
+  delete all[name];
+  writeAll(ctx, all);
 }
 
 export { state, isAvailable, recordFailure, recordSuccess, reset, readAll, DEFAULTS };

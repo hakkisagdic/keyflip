@@ -137,11 +137,17 @@ test('detect: OpenAI key without base -> default base, name openai', function ()
 
 test('detect: multiple vendors in one env -> multiple candidates', function () {
   const c = imp.detect({
-    ANTHROPIC_BASE_URL: 'https://relay.io', ANTHROPIC_AUTH_TOKEN: 'A',
+    ANTHROPIC_BASE_URL: 'https://relay.io',
+    ANTHROPIC_AUTH_TOKEN: 'A',
     OPENAI_API_KEY: 'O',
   });
   assert.strictEqual(c.length, 2);
-  assert.deepStrictEqual(c.map(function (x) { return x.vendor; }), ['anthropic', 'openai']);
+  assert.deepStrictEqual(
+    c.map(function (x) {
+      return x.vendor;
+    }),
+    ['anthropic', 'openai'],
+  );
 });
 
 test('detect: unparseable base URL falls back to a valid name', function () {
@@ -191,7 +197,9 @@ test('fromFile: reads and detects, keeping the real key on the candidate', funct
 });
 
 test('fromFile: missing file throws a clear error', function () {
-  assert.throws(function () { imp.fromFile(makeCtx(), '/no/such/dir/.env'); }, /no env file at/);
+  assert.throws(function () {
+    imp.fromFile(makeCtx(), '/no/such/dir/.env');
+  }, /no env file at/);
 });
 
 test('fromFile: expands a leading ~/ against ctx.home', function () {
@@ -213,7 +221,8 @@ test('fromEnv: detects from a supplied environment object', function () {
 test('apply: persists provider meta to disk and the key to ctx.store', function () {
   const ctx = makeCtx();
   const { candidates } = imp.fromEnv(ctx, {
-    ANTHROPIC_BASE_URL: 'https://relay.example.com', ANTHROPIC_AUTH_TOKEN: 'real-token',
+    ANTHROPIC_BASE_URL: 'https://relay.example.com',
+    ANTHROPIC_AUTH_TOKEN: 'real-token',
   });
   const res = imp.apply(ctx, candidates);
   assert.strictEqual(res.imported.length, 1);
@@ -232,10 +241,15 @@ test('apply: round-trips multiple candidates via injected add fn', function () {
   const ctx = makeCtx();
   const calls = [];
   const { candidates } = imp.fromEnv(ctx, {
-    ANTHROPIC_BASE_URL: 'https://a.io', ANTHROPIC_API_KEY: 'K1',
+    ANTHROPIC_BASE_URL: 'https://a.io',
+    ANTHROPIC_API_KEY: 'K1',
     OPENAI_API_KEY: 'K2',
   });
-  const res = imp.apply(ctx, candidates, { add: function (c, name, opts) { calls.push({ name: name, opts: opts }); } });
+  const res = imp.apply(ctx, candidates, {
+    add: function (c, name, opts) {
+      calls.push({ name: name, opts: opts });
+    },
+  });
   assert.strictEqual(calls.length, 2);
   assert.strictEqual(calls[0].name, 'a.io');
   assert.strictEqual(calls[0].opts.key, 'K1');
@@ -248,13 +262,21 @@ test('apply: round-trips multiple candidates via injected add fn', function () {
 test('apply: skips malformed / non-provider candidates', function () {
   const ctx = makeCtx();
   const calls = [];
-  const res = imp.apply(ctx, [
-    { kind: 'provider', name: 'ok', baseUrl: 'https://ok.io', authScheme: 'bearer', key: 'k' },
-    { kind: 'other', name: 'x', baseUrl: 'https://x.io' },
-    { kind: 'provider', name: '', baseUrl: 'https://y.io' },
-    { kind: 'provider', name: 'z' }, // no baseUrl
-    null,
-  ], { add: function (c, name) { calls.push(name); } });
+  const res = imp.apply(
+    ctx,
+    [
+      { kind: 'provider', name: 'ok', baseUrl: 'https://ok.io', authScheme: 'bearer', key: 'k' },
+      { kind: 'other', name: 'x', baseUrl: 'https://x.io' },
+      { kind: 'provider', name: '', baseUrl: 'https://y.io' },
+      { kind: 'provider', name: 'z' }, // no baseUrl
+      null,
+    ],
+    {
+      add: function (c, name) {
+        calls.push(name);
+      },
+    },
+  );
   assert.deepStrictEqual(calls, ['ok']);
   assert.strictEqual(res.imported.length, 1);
 });

@@ -10,7 +10,9 @@ import * as auditview from '../src/auditview.js';
 import * as logmod from '../src/log.js';
 import { makeCtx } from './helpers.js';
 
-function logDir(ctx) { return path.join(ctx.configDir, 'logs'); }
+function logDir(ctx) {
+  return path.join(ctx.configDir, 'logs');
+}
 
 // Write raw log lines EXACTLY as log.js would ("<ts> <msg>\n"), joined by `sep`.
 function writeLog(ctx, lines, sep) {
@@ -84,10 +86,7 @@ test('grep: case-insensitive substring, matches the MESSAGE only', function () {
 
 test('grep is a literal substring, not a regex', function () {
   const ctx = makeCtx();
-  writeLog(ctx, [
-    '2026-01-01T00:00:01.000Z plain message',
-    '2026-01-01T00:00:02.000Z has .* literal',
-  ]);
+  writeLog(ctx, ['2026-01-01T00:00:01.000Z plain message', '2026-01-01T00:00:02.000Z has .* literal']);
   const m = auditview.tail(ctx, { grep: '.*' });
   assert.strictEqual(m.length, 1);
   assert.strictEqual(m[0].msg, 'has .* literal');
@@ -95,13 +94,15 @@ test('grep is a literal substring, not a regex', function () {
 
 test('since: inclusive at/after; unparseable since is ignored', function () {
   const ctx = makeCtx();
-  writeLog(ctx, [
-    '2026-01-01T00:00:01.000Z one',
-    '2026-01-01T00:00:02.000Z two',
-    '2026-01-01T00:00:03.000Z three',
-  ]);
+  writeLog(ctx, ['2026-01-01T00:00:01.000Z one', '2026-01-01T00:00:02.000Z two', '2026-01-01T00:00:03.000Z three']);
   const m = auditview.tail(ctx, { since: '2026-01-01T00:00:02.000Z' });
-  assert.deepStrictEqual(m.map(function (e) { return e.msg; }), ['two', 'three'], 'boundary is inclusive');
+  assert.deepStrictEqual(
+    m.map(function (e) {
+      return e.msg;
+    }),
+    ['two', 'three'],
+    'boundary is inclusive',
+  );
   assert.strictEqual(auditview.tail(ctx, { since: '2026-01-01T00:00:04.000Z' }).length, 0);
   // a since that Date.parse cannot read must NOT hide everything
   assert.strictEqual(auditview.tail(ctx, { since: 'not-a-date' }).length, 3);
@@ -110,10 +111,7 @@ test('since: inclusive at/after; unparseable since is ignored', function () {
 
 test('since accepts a looser ISO form (numeric compare, not string compare)', function () {
   const ctx = makeCtx();
-  writeLog(ctx, [
-    '2026-01-01T00:00:01.000Z one',
-    '2026-01-01T00:00:03.000Z three',
-  ]);
+  writeLog(ctx, ['2026-01-01T00:00:01.000Z one', '2026-01-01T00:00:03.000Z three']);
   // date-only since -> midnight; both entries are after it
   assert.strictEqual(auditview.tail(ctx, { since: '2026-01-01' }).length, 2);
 });
@@ -133,13 +131,7 @@ test('grep + since + limit compose', function () {
 
 test('hostile input: blank lines, whitespace-only lines, and a line with no space', function () {
   const ctx = makeCtx();
-  writeLog(ctx, [
-    '',
-    '   ',
-    '2026-01-01T00:00:01.000Z real entry',
-    'no-space-line',
-    '',
-  ]);
+  writeLog(ctx, ['', '   ', '2026-01-01T00:00:01.000Z real entry', 'no-space-line', '']);
   const out = auditview.tail(ctx, {});
   assert.strictEqual(out.length, 2, 'blank/whitespace lines skipped');
   assert.deepStrictEqual(out[0], { ts: '2026-01-01T00:00:01.000Z', msg: 'real entry' });
@@ -148,10 +140,7 @@ test('hostile input: blank lines, whitespace-only lines, and a line with no spac
 
 test('CRLF line endings: trailing \\r is stripped from the message', function () {
   const ctx = makeCtx();
-  writeLog(ctx, [
-    '2026-01-01T00:00:01.000Z alpha',
-    '2026-01-01T00:00:02.000Z beta',
-  ], '\r\n');
+  writeLog(ctx, ['2026-01-01T00:00:01.000Z alpha', '2026-01-01T00:00:02.000Z beta'], '\r\n');
   const out = auditview.tail(ctx, {});
   assert.strictEqual(out.length, 2);
   assert.strictEqual(out[1].msg, 'beta', 'no trailing carriage return');
@@ -171,7 +160,9 @@ test('huge file: reads only the tail, drops the partial first line, no corruptio
   assert.strictEqual(out[0].msg, 'entry ' + (total - 5));
   // Every returned entry must be a cleanly-parsed row (no mid-line byte garbage
   // from the tail cut leaking into a ts).
-  out.forEach(function (e) { assert.strictEqual(Number.isNaN(Date.parse(e.ts)), false, 'ts parses: ' + e.ts); });
+  out.forEach(function (e) {
+    assert.strictEqual(Number.isNaN(Date.parse(e.ts)), false, 'ts parses: ' + e.ts);
+  });
 });
 
 test('reading never mutates the file', function () {

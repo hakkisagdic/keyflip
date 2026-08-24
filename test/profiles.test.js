@@ -8,7 +8,13 @@ import { tmpdir } from './helpers.js';
 test('write/read/exists/email round-trip', function () {
   const dir = tmpdir();
   assert.strictEqual(profiles.exists(dir, 'alice'), false);
-  profiles.write(dir, { name: 'alice', email: 'alice@example.com', userID: 'u1', oauthAccount: { emailAddress: 'alice@example.com' }, savedAt: 't' });
+  profiles.write(dir, {
+    name: 'alice',
+    email: 'alice@example.com',
+    userID: 'u1',
+    oauthAccount: { emailAddress: 'alice@example.com' },
+    savedAt: 't',
+  });
   assert.strictEqual(profiles.exists(dir, 'alice'), true);
   const m = profiles.read(dir, 'alice');
   assert.strictEqual(m.email, 'alice@example.com');
@@ -45,8 +51,9 @@ test('metadata files are written with 0600 permissions (non-Windows)', function 
 });
 
 test('isValidName rejects reserved, traversal, and flag-like names', function () {
-
-  ['alice', 'a.b_c-1', 'Bob2'].forEach(function (n) { assert.strictEqual(profiles.isValidName(n), true, n); });
+  ['alice', 'a.b_c-1', 'Bob2'].forEach(function (n) {
+    assert.strictEqual(profiles.isValidName(n), true, n);
+  });
   ['__proto__', 'prototype', 'constructor', '..', '.hidden', '-y', '--force', '', 'a/b', 'a b'].forEach(function (n) {
     assert.strictEqual(profiles.isValidName(n), false, n);
   });

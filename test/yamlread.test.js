@@ -21,17 +21,19 @@ test('nested mappings via indentation', function () {
 });
 
 test('block sequences of scalars and of inline mappings', function () {
-  const o = yaml.parse([
-    'list:',
-    '  - one',
-    '  - two',
-    'servers:',
-    '  - name: relay',
-    '    url: https://x.y',
-    '    enabled: false',
-    '  - name: spare',
-    '    url: https://z.w',
-  ].join('\n'));
+  const o = yaml.parse(
+    [
+      'list:',
+      '  - one',
+      '  - two',
+      'servers:',
+      '  - name: relay',
+      '    url: https://x.y',
+      '    enabled: false',
+      '  - name: spare',
+      '    url: https://z.w',
+    ].join('\n'),
+  );
   assert.deepStrictEqual(o.list, ['one', 'two']);
   assert.strictEqual(o.servers.length, 2);
   assert.deepStrictEqual(o.servers[0], { name: 'relay', url: 'https://x.y', enabled: false });
@@ -68,12 +70,15 @@ test('a top-level sequence parses to an array', function () {
 // SECURITY (review): a hostile __proto__ key must not touch any prototype; deep nesting must not crash.
 test('__proto__ key becomes an own property, not a prototype mutation', function () {
   const o = yaml.parse('__proto__: pwned\nok: 1');
-  assert.strictEqual(({}).pwned, undefined, 'Object.prototype not polluted');
+  assert.strictEqual({}.pwned, undefined, 'Object.prototype not polluted');
   assert.strictEqual(o.ok, 1);
   assert.ok(Object.prototype.hasOwnProperty.call(o, '__proto__'), '__proto__ stored as an own prop');
   assert.notStrictEqual(Object.getPrototypeOf(o), null, 'the parsed object keeps a normal prototype');
 });
 test('deeply-nested YAML is depth-capped, never a stack overflow', function () {
-  let deep = ''; for (let i = 0; i < 600; i++) deep += ' '.repeat(i) + 'k:\n';
-  assert.doesNotThrow(function () { yaml.parse(deep); });
+  let deep = '';
+  for (let i = 0; i < 600; i++) deep += ' '.repeat(i) + 'k:\n';
+  assert.doesNotThrow(function () {
+    yaml.parse(deep);
+  });
 });

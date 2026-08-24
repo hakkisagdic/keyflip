@@ -14,16 +14,19 @@ import * as secretscan from './secretscan.js';
 // ---- Built-in patterns (kept NON-global; collect() clones them with the /g flag) ----------
 
 // email — conservative local@domain.tld.
-const EMAIL = /[A-Za-z0-9._%+\-]+@[A-Za-z0-9](?:[A-Za-z0-9\-]*[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9\-]*[A-Za-z0-9])?)*\.[A-Za-z]{2,24}/;
+const EMAIL =
+  /[A-Za-z0-9._%+\-]+@[A-Za-z0-9](?:[A-Za-z0-9\-]*[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9\-]*[A-Za-z0-9])?)*\.[A-Za-z]{2,24}/;
 
 // phone — Turkish mobile (+90 5xx / 0(5xx)), Turkish landline (0(2xx)-(5xx)) and generic E.164.
 // Turkish alternatives come first so E.164 never eats a partial national number. Separators
 // allowed between groups: space, dot, dash, and parens around the area/operator code.
-const PHONE = new RegExp([
-  '\\+90[\\s.\\-]*\\(?5\\d{2}\\)?[\\s.\\-]*\\d{3}[\\s.\\-]*\\d{2}[\\s.\\-]*\\d{2}', // +90 5xx xxx xx xx
-  '0\\s*\\(?[2-5]\\d{2}\\)?[\\s.\\-]*\\d{3}[\\s.\\-]*\\d{2}[\\s.\\-]*\\d{2}',        // 0(5xx)/0(2xx) ...
-  '\\+[1-9]\\d{7,14}',                                                                // E.164
-].join('|'));
+const PHONE = new RegExp(
+  [
+    '\\+90[\\s.\\-]*\\(?5\\d{2}\\)?[\\s.\\-]*\\d{3}[\\s.\\-]*\\d{2}[\\s.\\-]*\\d{2}', // +90 5xx xxx xx xx
+    '0\\s*\\(?[2-5]\\d{2}\\)?[\\s.\\-]*\\d{3}[\\s.\\-]*\\d{2}[\\s.\\-]*\\d{2}', // 0(5xx)/0(2xx) ...
+    '\\+[1-9]\\d{7,14}', // E.164
+  ].join('|'),
+);
 
 // tckn — an 11-digit candidate (first digit non-zero); validated by validateTckn().
 const TCKN = /\b[1-9]\d{10}\b/;
@@ -49,22 +52,25 @@ const IBAN = /\b[A-Z]{2}\d{2}(?:\s?[A-Z0-9]){11,30}\b/;
 const IPV4 = /\b(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)\b/;
 
 // ipv6 — full, compressed (::) and boundary forms.
-const IPV6 = new RegExp([
-  '(?:[A-Fa-f0-9]{1,4}:){7}[A-Fa-f0-9]{1,4}',
-  '(?:[A-Fa-f0-9]{1,4}:){1,7}:',
-  '(?:[A-Fa-f0-9]{1,4}:){1,6}:[A-Fa-f0-9]{1,4}',
-  '(?:[A-Fa-f0-9]{1,4}:){1,5}(?::[A-Fa-f0-9]{1,4}){1,2}',
-  '(?:[A-Fa-f0-9]{1,4}:){1,4}(?::[A-Fa-f0-9]{1,4}){1,3}',
-  '(?:[A-Fa-f0-9]{1,4}:){1,3}(?::[A-Fa-f0-9]{1,4}){1,4}',
-  '(?:[A-Fa-f0-9]{1,4}:){1,2}(?::[A-Fa-f0-9]{1,4}){1,5}',
-  '[A-Fa-f0-9]{1,4}:(?::[A-Fa-f0-9]{1,4}){1,6}',
-  ':(?:(?::[A-Fa-f0-9]{1,4}){1,7}|:)',
-].join('|'));
+const IPV6 = new RegExp(
+  [
+    '(?:[A-Fa-f0-9]{1,4}:){7}[A-Fa-f0-9]{1,4}',
+    '(?:[A-Fa-f0-9]{1,4}:){1,7}:',
+    '(?:[A-Fa-f0-9]{1,4}:){1,6}:[A-Fa-f0-9]{1,4}',
+    '(?:[A-Fa-f0-9]{1,4}:){1,5}(?::[A-Fa-f0-9]{1,4}){1,2}',
+    '(?:[A-Fa-f0-9]{1,4}:){1,4}(?::[A-Fa-f0-9]{1,4}){1,3}',
+    '(?:[A-Fa-f0-9]{1,4}:){1,3}(?::[A-Fa-f0-9]{1,4}){1,4}',
+    '(?:[A-Fa-f0-9]{1,4}:){1,2}(?::[A-Fa-f0-9]{1,4}){1,5}',
+    '[A-Fa-f0-9]{1,4}:(?::[A-Fa-f0-9]{1,4}){1,6}',
+    ':(?:(?::[A-Fa-f0-9]{1,4}){1,7}|:)',
+  ].join('|'),
+);
 
 // address — BEST-EFFORT, LOW-CONFIDENCE, OFF BY DEFAULT. Street-number + name + a street-type
 // keyword (EN + a few TR). It WILL both over-match ("12 Angry Men Street" in prose) and
 // under-match (any address it has no keyword for). Enable only via opts.categories:['address'].
-const ADDRESS = /\b\d{1,5}\s+(?:[A-Z][A-Za-z.]+\s+){1,4}(?:Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd|Lane|Ln|Drive|Dr|Court|Ct|Way|Square|Sq|Cadde(?:si)?|Cad|Sokak|Sok|Mahalle(?:si)?|Mah|Bulvar(?:ı)?)\b\.?/;
+const ADDRESS =
+  /\b\d{1,5}\s+(?:[A-Z][A-Za-z.]+\s+){1,4}(?:Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd|Lane|Ln|Drive|Dr|Court|Ct|Way|Square|Sq|Cadde(?:si)?|Cad|Sokak|Sok|Mahalle(?:si)?|Mah|Bulvar(?:ı)?)\b\.?/;
 
 const BUILTIN = {
   email: { re: EMAIL },
@@ -81,7 +87,9 @@ const BUILTIN = {
 // Full list of built-in category names. 'secret' is delegated to secretscan.SECRET_PATTERNS.
 const CATEGORIES = ['email', 'phone', 'tckn', 'passport', 'creditCard', 'iban', 'ipv4', 'ipv6', 'secret', 'address'];
 // Enabled by default = everything except the noisy, opt-in 'address'.
-const DEFAULT_CATEGORIES = CATEGORIES.filter(function (c) { return c !== 'address'; });
+const DEFAULT_CATEGORIES = CATEGORIES.filter(function (c) {
+  return c !== 'address';
+});
 
 // ---- Validators -------------------------------------------------------------------------
 
@@ -109,7 +117,10 @@ function luhnValid(s) {
   let alt = false;
   for (let i = digits.length - 1; i >= 0; i--) {
     let n = digits.charCodeAt(i) - 48;
-    if (alt) { n *= 2; if (n > 9) n -= 9; }
+    if (alt) {
+      n *= 2;
+      if (n > 9) n -= 9;
+    }
     sum += n;
     alt = !alt;
   }
@@ -125,7 +136,7 @@ function validateIban(s) {
   let rem = 0;
   for (let i = 0; i < re.length; i++) {
     const c = re.charCodeAt(i);
-    const chunk = (c >= 48 && c <= 57) ? String(c - 48) : String(c - 55); // '0'..'9' or A=10..Z=35
+    const chunk = c >= 48 && c <= 57 ? String(c - 48) : String(c - 55); // '0'..'9' or A=10..Z=35
     for (let j = 0; j < chunk.length; j++) rem = (rem * 10 + (chunk.charCodeAt(j) - 48)) % 97;
   }
   return rem === 1;
@@ -141,7 +152,10 @@ function collect(text, re, label, validate) {
   let m;
   while ((m = g.exec(text)) !== null) {
     const match = m[0];
-    if (match === '') { g.lastIndex++; continue; } // never spin on a zero-width match
+    if (match === '') {
+      g.lastIndex++;
+      continue;
+    } // never spin on a zero-width match
     if (validate && !validate(match, m)) continue;
     out.push({ start: m.index, end: m.index + match.length, label: label, match: match });
   }
@@ -171,7 +185,9 @@ function detect(text, opts) {
       Array.prototype.push.apply(matches, collect(s, c.re, c.label));
     }
   });
-  matches.sort(function (a, b) { return a.start - b.start || b.end - a.end; });
+  matches.sort(function (a, b) {
+    return a.start - b.start || b.end - a.end;
+  });
   return matches;
 }
 
@@ -181,11 +197,16 @@ function detect(text, opts) {
 // sorted by (start asc, end desc): accept a span only if it starts at/after the last accepted
 // span's end. A nested or partially-overlapping shorter span is dropped.
 function resolve(matches) {
-  const sorted = matches.slice().sort(function (a, b) { return a.start - b.start || b.end - a.end; });
+  const sorted = matches.slice().sort(function (a, b) {
+    return a.start - b.start || b.end - a.end;
+  });
   const kept = [];
   let lastEnd = -1;
   for (let i = 0; i < sorted.length; i++) {
-    if (sorted[i].start >= lastEnd) { kept.push(sorted[i]); lastEnd = sorted[i].end; }
+    if (sorted[i].start >= lastEnd) {
+      kept.push(sorted[i]);
+      lastEnd = sorted[i].end;
+    }
   }
   return kept;
 }
@@ -252,7 +273,11 @@ function loadCustom(ctx) {
       if (!SAFE_FLAGS.test(flags)) continue;
       if (flags.indexOf('g') === -1) flags += 'g';
       let re;
-      try { re = new RegExp(item.regex, flags); } catch (e) { continue; }
+      try {
+        re = new RegExp(item.regex, flags);
+      } catch (e) {
+        continue;
+      }
       out.push({ label: item.label, re: re });
     }
     return out;
@@ -263,7 +288,9 @@ function loadCustom(ctx) {
 
 // ---- Optional local-LLM redaction hook --------------------------------------------------
 
-function safeLabel(l) { return (typeof l === 'string' && SAFE_LABEL.test(l)) ? l : 'pii'; }
+function safeLabel(l) {
+  return typeof l === 'string' && SAFE_LABEL.test(l) ? l : 'pii';
+}
 
 // Turn an LLM response into spans and redact. Documented contract — the endpoint returns JSON
 // with EITHER of:
@@ -275,8 +302,14 @@ function applyLLMResult(text, data) {
   const matches = [];
   if (Array.isArray(data.spans)) {
     data.spans.forEach(function (sp) {
-      if (sp && Number.isInteger(sp.start) && Number.isInteger(sp.end) &&
-          sp.start >= 0 && sp.end <= text.length && sp.end > sp.start) {
+      if (
+        sp &&
+        Number.isInteger(sp.start) &&
+        Number.isInteger(sp.end) &&
+        sp.start >= 0 &&
+        sp.end <= text.length &&
+        sp.end > sp.start
+      ) {
         matches.push({ start: sp.start, end: sp.end, label: safeLabel(sp.label), match: text.slice(sp.start, sp.end) });
       }
     });
@@ -316,7 +349,9 @@ function scrubViaLLM(text, opts) {
       if (typeof AbortController !== 'undefined') {
         const ac = new AbortController();
         signal = ac.signal;
-        timer = setTimeout(function () { ac.abort(); }, timeoutMs);
+        timer = setTimeout(function () {
+          ac.abort();
+        }, timeoutMs);
         if (timer && timer.unref) timer.unref();
       }
       let res;
@@ -339,4 +374,15 @@ function scrubViaLLM(text, opts) {
   })();
 }
 
-export { CATEGORIES, DEFAULT_CATEGORIES, detect, scrub, redactString, loadCustom, scrubViaLLM, validateTckn, luhnValid, validateIban };
+export {
+  CATEGORIES,
+  DEFAULT_CATEGORIES,
+  detect,
+  scrub,
+  redactString,
+  loadCustom,
+  scrubViaLLM,
+  validateTckn,
+  luhnValid,
+  validateIban,
+};

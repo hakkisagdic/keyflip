@@ -89,7 +89,7 @@ test('verifyWebhook: no secret -> ok:false', function () {
 test('verifyWebhook: timestamp too old (beyond 300s tolerance) -> ok:false', function () {
   const body = JSON.stringify({ id: 'evt_1', type: 'checkout.session.completed' });
   const { header } = sign(body, T, SECRET); // signed at T (genuine signature)
-  const lateNow = () => (T + 301) * 1000;    // but "now" is 301s later
+  const lateNow = () => (T + 301) * 1000; // but "now" is 301s later
   const r = stripe.verifyWebhook(Buffer.from(body), { 'stripe-signature': header }, SECRET, { now: lateNow });
   assert.strictEqual(r.ok, false);
   assert.strictEqual(r.reason, 'timestamp-out-of-tolerance');
@@ -98,21 +98,27 @@ test('verifyWebhook: timestamp too old (beyond 300s tolerance) -> ok:false', fun
 test('verifyWebhook: timestamp just inside tolerance -> ok', function () {
   const body = JSON.stringify({ id: 'evt_1', type: 'invoice.paid' });
   const { header } = sign(body, T, SECRET);
-  const r = stripe.verifyWebhook(Buffer.from(body), { 'stripe-signature': header }, SECRET, { now: () => (T + 299) * 1000 });
+  const r = stripe.verifyWebhook(Buffer.from(body), { 'stripe-signature': header }, SECRET, {
+    now: () => (T + 299) * 1000,
+  });
   assert.strictEqual(r.ok, true, r.reason);
 });
 
 test('verifyWebhook: custom tolerance:0 disables recency, still verifies signature', function () {
   const body = JSON.stringify({ id: 'evt_1', type: 'invoice.paid' });
   const { header } = sign(body, T, SECRET);
-  const r = stripe.verifyWebhook(Buffer.from(body), { 'stripe-signature': header }, SECRET, { now: () => (T + 99999) * 1000, tolerance: 0 });
+  const r = stripe.verifyWebhook(Buffer.from(body), { 'stripe-signature': header }, SECRET, {
+    now: () => (T + 99999) * 1000,
+    tolerance: 0,
+  });
   assert.strictEqual(r.ok, true, r.reason);
 });
 
 // ---- parseEvent --------------------------------------------------------------
 test('parseEvent: checkout.session.completed -> purchase (customer_details.email)', function () {
   const body = JSON.stringify({
-    id: 'evt_x', type: 'checkout.session.completed',
+    id: 'evt_x',
+    type: 'checkout.session.completed',
     data: { object: { id: 'cs_123', customer_details: { email: 'a@b.com' }, metadata: { product: 'keyflip-pro' } } },
   });
   const ev = stripe.parseEvent(Buffer.from(body));
@@ -124,7 +130,8 @@ test('parseEvent: checkout.session.completed -> purchase (customer_details.email
 
 test('parseEvent: invoice.paid -> purchase (customer_email fallback, line price.product)', function () {
   const body = JSON.stringify({
-    id: 'evt_y', type: 'invoice.paid',
+    id: 'evt_y',
+    type: 'invoice.paid',
     data: { object: { id: 'in_9', customer_email: 'c@d.com', lines: { data: [{ price: { product: 'prod_ABC' } }] } } },
   });
   const ev = stripe.parseEvent(Buffer.from(body));
@@ -136,7 +143,8 @@ test('parseEvent: invoice.paid -> purchase (customer_email fallback, line price.
 
 test('parseEvent: charge.refunded -> refund', function () {
   const body = JSON.stringify({
-    id: 'evt_z', type: 'charge.refunded',
+    id: 'evt_z',
+    type: 'charge.refunded',
     data: { object: { id: 'ch_5', billing_details: { email: 'e@f.com' } } },
   });
   const ev = stripe.parseEvent(Buffer.from(body));

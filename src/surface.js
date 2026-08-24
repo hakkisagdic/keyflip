@@ -8,9 +8,23 @@
 import fs from 'fs';
 import path from 'path';
 
-function safe(fn, d) { try { return fn(); } catch (e) { return d; } }
-function pathExists(ctx, rel) { try { return fs.existsSync(path.join(ctx.home, rel)); } catch (e) { return false; } }
-function tildify(rel) { return '~/' + String(rel).replace(/\\/g, '/'); }
+function safe(fn, d) {
+  try {
+    return fn();
+  } catch (e) {
+    return d;
+  }
+}
+function pathExists(ctx, rel) {
+  try {
+    return fs.existsSync(path.join(ctx.home, rel));
+  } catch (e) {
+    return false;
+  }
+}
+function tildify(rel) {
+  return '~/' + String(rel).replace(/\\/g, '/');
+}
 
 // ---- per-tool identity readers (READ-first: only ever parse a NON-SECRET, plain-text file) ----
 // Gemini CLI records the signed-in Google account in ~/.gemini/google_accounts.json — a small,
@@ -22,15 +36,21 @@ function tildify(rel) { return '~/' + String(rel).replace(/\\/g, '/'); }
 // (cmdSurfaces) and an MCP result, so control chars are stripped and length is capped (like fleet/tui).
 // eslint-disable-next-line no-control-regex
 const CTRL = /[\x00-\x1f\x7f]/g;
-function scrubId(s) { return (typeof s === 'string' && s) ? s.replace(CTRL, '').slice(0, 200) || null : null; }
+function scrubId(s) {
+  return typeof s === 'string' && s ? s.replace(CTRL, '').slice(0, 200) || null : null;
+}
 function geminiIdentity(ctx) {
-  const obj = safe(function () { return JSON.parse(fs.readFileSync(path.join(ctx.home, '.gemini', 'google_accounts.json'), 'utf8')); }, null);
+  const obj = safe(function () {
+    return JSON.parse(fs.readFileSync(path.join(ctx.home, '.gemini', 'google_accounts.json'), 'utf8'));
+  }, null);
   if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return null;
   const active = scrubId(obj.active);
   const old = Array.isArray(obj.old) ? obj.old.map(scrubId).filter(Boolean) : [];
   const accounts = [];
   if (active) accounts.push(active);
-  old.forEach(function (e) { if (accounts.indexOf(e) === -1) accounts.push(e); });
+  old.forEach(function (e) {
+    if (accounts.indexOf(e) === -1) accounts.push(e);
+  });
   return { active: active, accounts: accounts };
 }
 
@@ -42,38 +62,65 @@ function geminiIdentity(ctx) {
 //               opaque store (then we report present + switch-not-supported rather than guessing).
 const SPECS = [
   {
-    id: 'cursor', label: 'Cursor', kind: 'keychain',
+    id: 'cursor',
+    label: 'Cursor',
+    kind: 'keychain',
     presence: ['.cursor', '.cursor/mcp.json'],
     store: { kind: 'keychain', secret: true, location: 'OS keychain / Cursor app state (opaque)' },
     readIdentity: null,
   },
   {
-    id: 'gemini', label: 'Gemini CLI', kind: 'file',
+    id: 'gemini',
+    label: 'Gemini CLI',
+    kind: 'file',
     presence: ['.gemini', '.gemini/settings.json', '.gemini/google_accounts.json', '.gemini/oauth_creds.json'],
     store: { kind: 'file', secret: true, path: '.gemini/oauth_creds.json' },
     readIdentity: geminiIdentity,
   },
   {
-    id: 'codex', label: 'Codex CLI', kind: 'file',
+    id: 'codex',
+    label: 'Codex CLI',
+    kind: 'file',
     presence: ['.codex', '.codex/config.toml', '.codex/auth.json'],
     // identity is inside the 0600 auth.json (a JWT id_token / OPENAI_API_KEY) — a secret; never read.
     store: { kind: 'file', secret: true, path: '.codex/auth.json' },
     readIdentity: null,
   },
   {
-    id: 'copilot', label: 'GitHub Copilot', kind: 'file',
-    presence: ['.copilot', '.copilot/config.json', '.config/github-copilot', '.config/github-copilot/hosts.json', '.config/github-copilot/apps.json'],
-    store: { kind: 'file', secret: true, location: '~/.copilot/config.json or ~/.config/github-copilot/hosts.json (opaque/secret)' },
+    id: 'copilot',
+    label: 'GitHub Copilot',
+    kind: 'file',
+    presence: [
+      '.copilot',
+      '.copilot/config.json',
+      '.config/github-copilot',
+      '.config/github-copilot/hosts.json',
+      '.config/github-copilot/apps.json',
+    ],
+    store: {
+      kind: 'file',
+      secret: true,
+      location: '~/.copilot/config.json or ~/.config/github-copilot/hosts.json (opaque/secret)',
+    },
     readIdentity: null,
   },
   {
-    id: 'opencode', label: 'opencode', kind: 'file',
-    presence: ['.config/opencode', '.config/opencode/opencode.json', '.local/share/opencode', '.local/share/opencode/auth.json'],
+    id: 'opencode',
+    label: 'opencode',
+    kind: 'file',
+    presence: [
+      '.config/opencode',
+      '.config/opencode/opencode.json',
+      '.local/share/opencode',
+      '.local/share/opencode/auth.json',
+    ],
     store: { kind: 'file', secret: true, path: '.local/share/opencode/auth.json' },
     readIdentity: null,
   },
   {
-    id: 'aider', label: 'Aider', kind: 'env',
+    id: 'aider',
+    label: 'Aider',
+    kind: 'env',
     presence: ['.aider.conf.yml', '.aider.conf.yaml', '.aider'],
     store: { kind: 'env', secret: true, location: 'environment (OPENAI_API_KEY / ANTHROPIC_API_KEY / …) or .env' },
     readIdentity: null,
@@ -83,35 +130,63 @@ const SPECS = [
 function resolveStore(ctx, spec) {
   const s = spec.store || {};
   const out = { kind: s.kind || spec.kind, secret: !!s.secret };
-  if (s.path) { out.location = tildify(s.path); out.exists = pathExists(ctx, s.path); } // stat only — never read
-  else { out.location = s.location || null; out.exists = null; }
+  if (s.path) {
+    out.location = tildify(s.path);
+    out.exists = pathExists(ctx, s.path);
+  } // stat only — never read
+  else {
+    out.location = s.location || null;
+    out.exists = null;
+  }
   return out;
 }
 
 // Detect one surface -> { id, label, kind, present, activeAccount|null, accounts, switchable, store, note }.
 function detectSpec(ctx, spec, opts) {
-  const present = spec.presence.some(function (rel) { return pathExists(ctx, rel); });
-  let activeAccount = null, accounts = [];
+  const present = spec.presence.some(function (rel) {
+    return pathExists(ctx, rel);
+  });
+  let activeAccount = null,
+    accounts = [];
   if (present && typeof spec.readIdentity === 'function') {
-    const ident = safe(function () { return spec.readIdentity(ctx); }, null);
-    if (ident) { activeAccount = ident.active || null; accounts = Array.isArray(ident.accounts) ? ident.accounts : []; }
+    const ident = safe(function () {
+      return spec.readIdentity(ctx);
+    }, null);
+    if (ident) {
+      activeAccount = ident.active || null;
+      accounts = Array.isArray(ident.accounts) ? ident.accounts : [];
+    }
   }
   let note;
   if (!present) note = 'not detected';
   else if (activeAccount) note = 'active account detected (switch not supported yet)';
   else note = 'present; account is in an opaque/secret store — switch not supported yet';
   return {
-    id: spec.id, label: spec.label, kind: spec.kind,
-    present: present, activeAccount: activeAccount, accounts: accounts,
-    switchable: false, store: resolveStore(ctx, spec), note: note,
+    id: spec.id,
+    label: spec.label,
+    kind: spec.kind,
+    present: present,
+    activeAccount: activeAccount,
+    accounts: accounts,
+    switchable: false,
+    store: resolveStore(ctx, spec),
+    note: note,
   };
 }
 
 function makeSurface(spec) {
   return {
-    id: spec.id, label: spec.label, kind: spec.kind, store: spec.store, switchable: false,
-    detect: function (ctx, opts) { return detectSpec(ctx, spec, opts); },
-    list: function (ctx) { return detectSpec(ctx, spec).accounts; },
+    id: spec.id,
+    label: spec.label,
+    kind: spec.kind,
+    store: spec.store,
+    switchable: false,
+    detect: function (ctx, opts) {
+      return detectSpec(ctx, spec, opts);
+    },
+    list: function (ctx) {
+      return detectSpec(ctx, spec).accounts;
+    },
   };
 }
 
@@ -119,11 +194,22 @@ const SURFACES = SPECS.map(makeSurface);
 // id -> surface. NULL-PROTOTYPE map so a lookup key like '__proto__'/'constructor' can never reach
 // or shadow an inherited property (the ids are our own constants, but keep the invariant anyway).
 const BY_ID = Object.create(null);
-SURFACES.forEach(function (s) { BY_ID[s.id] = s; });
+SURFACES.forEach(function (s) {
+  BY_ID[s.id] = s;
+});
 
-function get(id) { return (typeof id === 'string' && BY_ID[id]) ? BY_ID[id] : null; }
-function detectAll(ctx, opts) { return SURFACES.map(function (s) { return s.detect(ctx, opts); }); }
-function detectOne(ctx, id, opts) { const s = get(id); return s ? s.detect(ctx, opts) : null; }
+function get(id) {
+  return typeof id === 'string' && BY_ID[id] ? BY_ID[id] : null;
+}
+function detectAll(ctx, opts) {
+  return SURFACES.map(function (s) {
+    return s.detect(ctx, opts);
+  });
+}
+function detectOne(ctx, id, opts) {
+  const s = get(id);
+  return s ? s.detect(ctx, opts) : null;
+}
 
 // The SWITCH SEAM. v1 is detection-only: no non-Claude surface can be switched safely yet (doing so
 // would move secrets keyflip does not handle in v1). Claude itself is switched by keyflip core, not
@@ -139,11 +225,14 @@ const RO = { readOnlyHint: true, destructiveHint: false, openWorldHint: false };
 const mcpTools = [
   {
     name: 'keyflip_surfaces',
-    title: 'Detect other AI tools\' accounts',
-    description: 'Detect which other AI coding tools (Cursor, Gemini CLI, Codex CLI, GitHub Copilot, opencode, Aider) are present on this machine and, where the identity is in a readable NON-SECRET file, which account is active. Read-only: never reads, decrypts, or moves any secret/token. Switching non-Claude tools is not supported yet (Claude itself is managed by the other keyflip tools).',
+    title: "Detect other AI tools' accounts",
+    description:
+      'Detect which other AI coding tools (Cursor, Gemini CLI, Codex CLI, GitHub Copilot, opencode, Aider) are present on this machine and, where the identity is in a readable NON-SECRET file, which account is active. Read-only: never reads, decrypts, or moves any secret/token. Switching non-Claude tools is not supported yet (Claude itself is managed by the other keyflip tools).',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
     annotations: RO,
-    run: async function (ctx) { return { surfaces: detectAll(ctx) }; },
+    run: async function (ctx) {
+      return { surfaces: detectAll(ctx) };
+    },
   },
 ];
 

@@ -11,7 +11,12 @@ function seedSession(ctx, project, id, cwd, firstUserText, mtimeMs) {
   const file = path.join(dir, id + '.jsonl');
   const lines = [
     JSON.stringify({ type: 'queue-operation', sessionId: id, timestamp: '2026-07-01T00:00:00Z' }),
-    JSON.stringify({ type: 'user', sessionId: id, cwd: cwd, message: { role: 'user', content: [{ type: 'text', text: firstUserText }] } }),
+    JSON.stringify({
+      type: 'user',
+      sessionId: id,
+      cwd: cwd,
+      message: { role: 'user', content: [{ type: 'text', text: firstUserText }] },
+    }),
   ];
   fs.writeFileSync(file, lines.join('\n') + '\n');
   if (mtimeMs) fs.utimesSync(file, new Date(mtimeMs), new Date(mtimeMs));
@@ -55,7 +60,9 @@ test('find resolves a unique id prefix and errors on ambiguity', function () {
   seedSession(ctx, '-p', 'zzz999', '/x', 'c');
   assert.strictEqual(sessions.find(ctx, 'zzz999').sessionId, 'zzz999');
   assert.strictEqual(sessions.find(ctx, 'zzz').sessionId, 'zzz999');
-  assert.throws(function () { sessions.find(ctx, 'abc'); }, /ambiguous/);
+  assert.throws(function () {
+    sessions.find(ctx, 'abc');
+  }, /ambiguous/);
   assert.strictEqual(sessions.find(ctx, 'nope'), null);
 });
 
@@ -70,9 +77,19 @@ test('filenames that are not real session ids are ignored (argv-injection guard)
   const ctx = makeCtx();
   const dir = path.join(ctx.home, '.claude', 'projects', '-p');
   fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(path.join(dir, '--inject.jsonl'), JSON.stringify({ type: 'user', cwd: '/x', message: { role: 'user', content: [{ type: 'text', text: 'a' }] } }) + '\n');
-  fs.writeFileSync(path.join(dir, 'good-1234-uuid.jsonl'), JSON.stringify({ type: 'user', cwd: '/x', message: { role: 'user', content: [{ type: 'text', text: 'b' }] } }) + '\n');
-  const ids = sessions.list(ctx, {}).map(function (r) { return r.sessionId; });
+  fs.writeFileSync(
+    path.join(dir, '--inject.jsonl'),
+    JSON.stringify({ type: 'user', cwd: '/x', message: { role: 'user', content: [{ type: 'text', text: 'a' }] } }) +
+      '\n',
+  );
+  fs.writeFileSync(
+    path.join(dir, 'good-1234-uuid.jsonl'),
+    JSON.stringify({ type: 'user', cwd: '/x', message: { role: 'user', content: [{ type: 'text', text: 'b' }] } }) +
+      '\n',
+  );
+  const ids = sessions.list(ctx, {}).map(function (r) {
+    return r.sessionId;
+  });
   assert.ok(ids.indexOf('good-1234-uuid') !== -1);
   assert.strictEqual(ids.indexOf('--inject'), -1); // dangerous name skipped
 });
@@ -82,15 +99,25 @@ test('rebindConfigPaths rewrites the old path across .claude.json, settings and 
   const oldCwd = '/Users/x/Documents/GitHub/proj';
   const newCwd = '/Users/x/Projects/GitHub/proj';
   // .claude.json: projects map KEY, githubRepoPaths, and an stdio MCP server pointing into the folder
-  fs.writeFileSync(ctx.claudeConfigPath, JSON.stringify({
-    projects: { [oldCwd]: { allowedTools: [] }, '/other': {} },
-    githubRepoPaths: { 'me/proj': [oldCwd] },
-    mcpServers: { local: { command: oldCwd + '/tools/bin/mcp', args: ['-c', oldCwd + '/tools/c.yaml'] } },
-  }, null, 2));
+  fs.writeFileSync(
+    ctx.claudeConfigPath,
+    JSON.stringify(
+      {
+        projects: { [oldCwd]: { allowedTools: [] }, '/other': {} },
+        githubRepoPaths: { 'me/proj': [oldCwd] },
+        mcpServers: { local: { command: oldCwd + '/tools/bin/mcp', args: ['-c', oldCwd + '/tools/c.yaml'] } },
+      },
+      null,
+      2,
+    ),
+  );
   // settings.json permission rule + a slash-command script
   const claudeDir = path.join(ctx.home, '.claude');
   fs.mkdirSync(path.join(claudeDir, 'commands'), { recursive: true });
-  fs.writeFileSync(path.join(claudeDir, 'settings.json'), JSON.stringify({ permissions: { allow: ['Bash(bash ' + oldCwd + '/deploy.sh *)'] } }, null, 2));
+  fs.writeFileSync(
+    path.join(claudeDir, 'settings.json'),
+    JSON.stringify({ permissions: { allow: ['Bash(bash ' + oldCwd + '/deploy.sh *)'] } }, null, 2),
+  );
   fs.writeFileSync(path.join(claudeDir, 'commands', 'ship.md'), 'run: cd ' + oldCwd + '/apps/mobile && ./release.sh\n');
 
   const res = sessions.rebindConfigPaths(ctx, oldCwd, newCwd);
@@ -110,7 +137,8 @@ test('rebindConfigPaths rewrites the old path across .claude.json, settings and 
 
 test('rebindConfigPaths honors dryRun and extraFiles, and no-ops when old===new', function () {
   const ctx = makeCtx();
-  const oldCwd = '/a/b/proj', newCwd = '/c/d/proj';
+  const oldCwd = '/a/b/proj',
+    newCwd = '/c/d/proj';
   fs.writeFileSync(ctx.claudeConfigPath, JSON.stringify({ projects: { [oldCwd]: {} } }));
   const extra = path.join(ctx.home, 'wiki.config');
   fs.writeFileSync(extra, 'VAULT="' + oldCwd + '/docs"\n');

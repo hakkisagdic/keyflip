@@ -20,7 +20,7 @@ test('setPath refuses prototype-pollution keys', function () {
   const o = {};
   settings.setPath(o, '__proto__.polluted', 'yes');
   settings.setPath(o, 'a.constructor.x', 'yes');
-  assert.strictEqual(({}).polluted, undefined, 'Object prototype not polluted');
+  assert.strictEqual({}.polluted, undefined, 'Object prototype not polluted');
   assert.strictEqual(o.__proto__.polluted, undefined);
 });
 

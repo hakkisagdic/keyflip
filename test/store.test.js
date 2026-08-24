@@ -36,20 +36,40 @@ test('createStore uses the file backend when a credentials file exists (even on 
   const credsFilePath = path.join(home, '.claude', '.credentials.json');
   fs.mkdirSync(path.dirname(credsFilePath), { recursive: true });
   fs.writeFileSync(credsFilePath, '{}');
-  const store = createStore({ platform: 'darwin', credsFilePath: credsFilePath, configDir: path.join(home, '.config', 'keyflip'), account: 'me' });
+  const store = createStore({
+    platform: 'darwin',
+    credsFilePath: credsFilePath,
+    configDir: path.join(home, '.config', 'keyflip'),
+    account: 'me',
+  });
   assert.strictEqual(store.type, 'file');
 });
 
 test('createStore uses Keychain on macOS when no credentials file exists', function () {
   const home = tmpdir();
-  const store = createStore({ platform: 'darwin', credsFilePath: path.join(home, 'nope.json'), configDir: path.join(home, 'cfg'), account: 'me' });
+  const store = createStore({
+    platform: 'darwin',
+    credsFilePath: path.join(home, 'nope.json'),
+    configDir: path.join(home, 'cfg'),
+    account: 'me',
+  });
   assert.strictEqual(store.type, 'keychain');
 });
 
 test('createStore defaults to the file backend on Linux/Windows', function () {
   const home = tmpdir();
-  const linux = createStore({ platform: 'linux', credsFilePath: path.join(home, 'nope.json'), configDir: path.join(home, 'cfg'), account: 'me' });
-  const win = createStore({ platform: 'win32', credsFilePath: path.join(home, 'nope2.json'), configDir: path.join(home, 'cfg'), account: 'me' });
+  const linux = createStore({
+    platform: 'linux',
+    credsFilePath: path.join(home, 'nope.json'),
+    configDir: path.join(home, 'cfg'),
+    account: 'me',
+  });
+  const win = createStore({
+    platform: 'win32',
+    credsFilePath: path.join(home, 'nope2.json'),
+    configDir: path.join(home, 'cfg'),
+    account: 'me',
+  });
   assert.strictEqual(linux.type, 'file');
   assert.strictEqual(win.type, 'file');
 });
@@ -68,7 +88,10 @@ test('FileStore preserves credential bytes verbatim, including a trailing newlin
 test('MemoryStore behaves like a store', function () {
   const s = new MemoryStore();
   assert.strictEqual(s.getLive(), null);
-  s.setLive('L'); assert.strictEqual(s.getLive(), 'L');
-  s.setProfile('p', 'V'); assert.strictEqual(s.getProfile('p'), 'V');
-  s.delProfile('p'); assert.strictEqual(s.getProfile('p'), null);
+  s.setLive('L');
+  assert.strictEqual(s.getLive(), 'L');
+  s.setProfile('p', 'V');
+  assert.strictEqual(s.getProfile('p'), 'V');
+  s.delProfile('p');
+  assert.strictEqual(s.getProfile('p'), null);
 });

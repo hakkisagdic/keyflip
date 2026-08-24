@@ -33,6 +33,10 @@ test('real keychain round-trip (throwaway keychain)', function (t) {
     s.setProfile('big', big);
     assert.strictEqual(s.getProfile('big'), big);
   } finally {
-    try { execFileSync('/usr/bin/security', ['delete-keychain', kcPath]); } catch (e) { /* ignore */ }
+    try {
+      execFileSync('/usr/bin/security', ['delete-keychain', kcPath]);
+    } catch (e) {
+      /* ignore */
+    }
   }
 });

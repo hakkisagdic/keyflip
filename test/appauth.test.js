@@ -11,10 +11,26 @@ function setup() {
   const appDataDir = path.join(home, 'Library', 'Application Support', 'Claude');
   fs.mkdirSync(appDataDir, { recursive: true });
   const cfg = path.join(appDataDir, 'config.json');
-  fs.writeFileSync(cfg, JSON.stringify({ locale: 'en-US', 'oauth:tokenCache': 'TOKEN-A-V1', 'oauth:tokenCacheV2': 'TOKEN-A-V2', keep: 'me' }));
+  fs.writeFileSync(
+    cfg,
+    JSON.stringify({
+      locale: 'en-US',
+      'oauth:tokenCache': 'TOKEN-A-V1',
+      'oauth:tokenCacheV2': 'TOKEN-A-V2',
+      keep: 'me',
+    }),
+  );
   const cookies = path.join(appDataDir, 'Cookies');
   fs.writeFileSync(cookies, 'sessionKey COOKIES-A'); // stands in for the SQLite session DB
-  const ctx = { home: home, platform: 'darwin', appDataDir: appDataDir, configDir: path.join(home, '.config', 'keyflip'), now: function () { return '2026-01-01T00:00:00.000Z'; } };
+  const ctx = {
+    home: home,
+    platform: 'darwin',
+    appDataDir: appDataDir,
+    configDir: path.join(home, '.config', 'keyflip'),
+    now: function () {
+      return '2026-01-01T00:00:00.000Z';
+    },
+  };
   return { ctx: ctx, cfg: cfg, cookies: cookies };
 }
 
@@ -32,15 +48,29 @@ test('applyFromProfile restores tokens, preserves other keys, and backs up', fun
   const s = setup();
   appauth.snapshotToProfile(s.ctx, 'A');
   // app is now logged in as B
-  fs.writeFileSync(s.cfg, JSON.stringify({ locale: 'en-US', 'oauth:tokenCache': 'TOKEN-B-V1', 'oauth:tokenCacheV2': 'TOKEN-B-V2', keep: 'me', extra: 1 }));
+  fs.writeFileSync(
+    s.cfg,
+    JSON.stringify({
+      locale: 'en-US',
+      'oauth:tokenCache': 'TOKEN-B-V1',
+      'oauth:tokenCacheV2': 'TOKEN-B-V2',
+      keep: 'me',
+      extra: 1,
+    }),
+  );
   const r = appauth.applyFromProfile(s.ctx, 'A');
   assert.strictEqual(r.ok, true);
   const cfg = JSON.parse(fs.readFileSync(s.cfg, 'utf8'));
   assert.strictEqual(cfg['oauth:tokenCacheV2'], 'TOKEN-A-V2'); // restored A
-  assert.strictEqual(cfg.extra, 1);                            // unrelated keys kept
+  assert.strictEqual(cfg.extra, 1); // unrelated keys kept
   assert.strictEqual(cfg.keep, 'me');
   const bdir = path.join(s.ctx.configDir, 'backups');
-  assert.ok(fs.readdirSync(bdir).some(function (n) { return n.indexOf('config-') === 0; }), 'config backup made');
+  assert.ok(
+    fs.readdirSync(bdir).some(function (n) {
+      return n.indexOf('config-') === 0;
+    }),
+    'config backup made',
+  );
 });
 
 test('applyFromProfile is not-ok when the profile has no saved desktop login', function () {
@@ -84,8 +114,18 @@ test('signOutApp deletes the Cookies DB and strips tokens (with backups)', funct
   assert.strictEqual(cfg.keep, 'me');
   const bdir = path.join(s.ctx.configDir, 'backups');
   const names = fs.readdirSync(bdir);
-  assert.ok(names.some(function (n) { return n.indexOf('config-') === 0; }), 'config backed up');
-  assert.ok(names.some(function (n) { return n.indexOf('cookies-') === 0; }), 'cookies backed up');
+  assert.ok(
+    names.some(function (n) {
+      return n.indexOf('config-') === 0;
+    }),
+    'config backed up',
+  );
+  assert.ok(
+    names.some(function (n) {
+      return n.indexOf('cookies-') === 0;
+    }),
+    'cookies backed up',
+  );
 });
 
 test('signOutApp still signs out when only cookies exist (no tokens in config)', function () {
@@ -106,11 +146,14 @@ test('app-login snapshots live in app/ and do NOT pollute profiles.list()', func
 
 test('detectActiveOrg returns the org with the most recent allowlist timestamp', function () {
   const s = setup();
-  fs.writeFileSync(s.cfg, JSON.stringify({
-    'oauth:tokenCacheV2': 'T',
-    'dxt:allowlistLastUpdated:ORG-GMAIL': '2026-07-01T12:00:00.000Z',
-    'dxt:allowlistLastUpdated:ORG-YAHOO': '2026-07-01T19:00:00.000Z',
-  }));
+  fs.writeFileSync(
+    s.cfg,
+    JSON.stringify({
+      'oauth:tokenCacheV2': 'T',
+      'dxt:allowlistLastUpdated:ORG-GMAIL': '2026-07-01T12:00:00.000Z',
+      'dxt:allowlistLastUpdated:ORG-YAHOO': '2026-07-01T19:00:00.000Z',
+    }),
+  );
   assert.strictEqual(appauth.detectActiveOrg(s.ctx), 'ORG-YAHOO');
 });
 
@@ -166,9 +209,10 @@ test('decryptBlob round-trips an Electron safeStorage (v10) blob', function () {
   assert.strictEqual(appauth.decryptBlob('bm90LXYxMA==', 'pw123'), null); // not v10
 });
 
-test('detectAppAccount identifies org/account/email from the app\'s own data', function () {
+test("detectAppAccount identifies org/account/email from the app's own data", function () {
   const s = setup();
-  const ORG = '48ebd0e4-4225-4565-93b1-beb21171933e', ACCT = '99b327a0-bd81-4e43-b2ef-ee618d301400';
+  const ORG = '48ebd0e4-4225-4565-93b1-beb21171933e',
+    ACCT = '99b327a0-bd81-4e43-b2ef-ee618d301400';
   const obj = {};
   obj['oauth:tokenCacheV2'] = encryptV10('{"org":"' + ORG + '","scopes":[]}', 'pw123');
   obj['dxt:allowlistLastUpdated:' + ORG] = '2026-07-01T00:00:00.000Z';
@@ -195,7 +239,8 @@ test('detectAppAccount reports no-token-cache (no Keychain access) when the blob
 
 test('detectAppAccount FALLS BACK to the allowlist org when the token cannot be decrypted', function () {
   const s = setup();
-  const ORG = '11111111-2222-3333-4444-555555555555', ACCT = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+  const ORG = '11111111-2222-3333-4444-555555555555',
+    ACCT = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
   // Non-decryptable token cache, but the config's allowlist still names the active org.
   const cfg = { 'oauth:tokenCacheV2': 'not-a-v10-blob' };
   cfg['dxt:allowlistLastUpdated:' + ORG] = '2026-07-05T00:00:00.000Z';
@@ -226,7 +271,8 @@ test('detectAppAccount reports keychain-locked when the token is v10 but the key
 test('detectAppAccount on Linux decrypts via the safeStorage password (the same v10 path as macOS, NOT win32 DPAPI)', function () {
   const s = setup();
   s.ctx.platform = 'linux'; // Linux uses libsecret for the key but the SAME v10 blob format
-  const ORG = '48ebd0e4-4225-4565-93b1-beb21171933e', ACCT = '99b327a0-bd81-4e43-b2ef-ee618d301400';
+  const ORG = '48ebd0e4-4225-4565-93b1-beb21171933e',
+    ACCT = '99b327a0-bd81-4e43-b2ef-ee618d301400';
   const obj = {};
   obj['oauth:tokenCacheV2'] = encryptV10('{"org":"' + ORG + '","scopes":[]}', 'linuxpw');
   obj['dxt:allowlistLastUpdated:' + ORG] = '2026-07-01T00:00:00.000Z';
@@ -246,7 +292,15 @@ test('applyFromProfile round-trips on Linux (the apply side is file-copy — pla
   const s = setup();
   s.ctx.platform = 'linux';
   appauth.snapshotToProfile(s.ctx, 'A');
-  fs.writeFileSync(s.cfg, JSON.stringify({ locale: 'en-US', 'oauth:tokenCache': 'TOKEN-B-V1', 'oauth:tokenCacheV2': 'TOKEN-B-V2', keep: 'me' }));
+  fs.writeFileSync(
+    s.cfg,
+    JSON.stringify({
+      locale: 'en-US',
+      'oauth:tokenCache': 'TOKEN-B-V1',
+      'oauth:tokenCacheV2': 'TOKEN-B-V2',
+      keep: 'me',
+    }),
+  );
   const r = appauth.applyFromProfile(s.ctx, 'A');
   assert.strictEqual(r.ok, true, r.reason);
   assert.strictEqual(JSON.parse(fs.readFileSync(s.cfg, 'utf8'))['oauth:tokenCacheV2'], 'TOKEN-A-V2');
@@ -273,7 +327,8 @@ test('detectAppAccount does NOT surface a stale allowlist org when the app is si
 
 test('detectAppAccount returns unresolved-org (not a stale org) when the token names an unlisted account', function () {
   const s = setup();
-  const STALE = '88888888-8888-8888-8888-888888888888', FRESH = '99999999-9999-9999-9999-999999999999';
+  const STALE = '88888888-8888-8888-8888-888888888888',
+    FRESH = '99999999-9999-9999-9999-999999999999';
   // The token decrypts to FRESH (brand-new account, not in the allowlist / no folder yet),
   // while a DIFFERENT account (STALE) holds the most-recent allowlist timestamp.
   const cfg = { 'oauth:tokenCacheV2': encryptV10('{"org":"' + FRESH + '"}', 'pw123') };
@@ -297,8 +352,19 @@ test('decryptAppBlobWin recovers a v10 AES-256-GCM token cache via the DPAPI mas
   const ct = Buffer.concat([c.update(Buffer.from('org-abc-uuid'), 'utf8'), c.final()]);
   const blob = Buffer.concat([Buffer.from('v10'), nonce, ct, c.getAuthTag()]).toString('base64');
   const appDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kf-winapp-'));
-  fs.writeFileSync(path.join(appDataDir, 'Local State'), JSON.stringify({ os_crypt: { encrypted_key: Buffer.concat([Buffer.from('DPAPI'), Buffer.from('enc')]).toString('base64') } }));
-  const ctx = { platform: 'win32', appDataDir: appDataDir, dpapi: function () { return key; } };
+  fs.writeFileSync(
+    path.join(appDataDir, 'Local State'),
+    JSON.stringify({
+      os_crypt: { encrypted_key: Buffer.concat([Buffer.from('DPAPI'), Buffer.from('enc')]).toString('base64') },
+    }),
+  );
+  const ctx = {
+    platform: 'win32',
+    appDataDir: appDataDir,
+    dpapi: function () {
+      return key;
+    },
+  };
   assert.strictEqual(appauth.decryptAppBlobWin(ctx, blob), 'org-abc-uuid');
   assert.strictEqual(appauth.isEncBlob(blob), true, 'v10/v11 prefix recognized');
   assert.strictEqual(appauth.decryptAppBlobWin(ctx, 'not-encrypted'), null);

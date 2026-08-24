@@ -94,9 +94,16 @@ test('readConfig returns null on a corrupt (non-JSON) file — never throws', fu
 test('readConfig scrubs secrets under bare key/value fields AND inside arrays (regression)', function () {
   const ctx = makeCtx();
   const TOK = 'sk-ant-api03-AbCdEf1234567890AbCdEf1234567890wxyz';
-  writeConfig(ctx, { providers: { openai: { key: TOK }, anthropic: { value: TOK } }, notes: ['Authorization: Bearer ' + TOK] });
+  writeConfig(ctx, {
+    providers: { openai: { key: TOK }, anthropic: { value: TOK } },
+    notes: ['Authorization: Bearer ' + TOK],
+  });
   const out = JSON.stringify(codexbar.readConfig(ctx));
-  assert.strictEqual(out.indexOf(TOK), -1, 'no token may survive under a bare key/value field or inside an array string');
+  assert.strictEqual(
+    out.indexOf(TOK),
+    -1,
+    'no token may survive under a bare key/value field or inside an array string',
+  );
   assert.ok(out.indexOf('openai') !== -1, 'the non-secret provider structure is still there');
 });
 
@@ -108,11 +115,7 @@ test('trackedProviders extracts ids from an array-of-strings config', function (
 
 test('trackedProviders extracts ids from array-of-objects, skipping disabled', function () {
   const ctx = makeCtx();
-  writeConfig(ctx, { providers: [
-    { id: 'codex', enabled: true },
-    { id: 'gemini', enabled: false },
-    { id: 'cursor' },
-  ] });
+  writeConfig(ctx, { providers: [{ id: 'codex', enabled: true }, { id: 'gemini', enabled: false }, { id: 'cursor' }] });
   assert.deepStrictEqual(codexbar.trackedProviders(ctx), ['codex', 'cursor']);
 });
 
@@ -167,10 +170,7 @@ test('a fake api key in the config is NOT surfaced in any output', function () {
   const SECRET = 'sk-fake-DEADBEEF-should-never-appear';
   writeConfig(ctx, {
     apiKey: SECRET,
-    providers: [
-      { id: 'codex', token: SECRET, api_key: SECRET },
-      { id: 'gemini' },
-    ],
+    providers: [{ id: 'codex', token: SECRET, api_key: SECRET }, { id: 'gemini' }],
     auth: { bearer: SECRET },
     credentials: { openai: SECRET },
   });

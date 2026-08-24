@@ -9,9 +9,18 @@ import os from 'os';
 import path from 'path';
 import * as ctxstore from '../src/projctx.js';
 
-function tmpProject() { return fs.mkdtempSync(path.join(os.tmpdir(), 'keyflip-projctx-')); }
+function tmpProject() {
+  return fs.mkdtempSync(path.join(os.tmpdir(), 'keyflip-projctx-'));
+}
 const CLOCK = '2026-07-12T00:00:00.000Z';
-const OPTS = { now: function () { return CLOCK; }, run: function () { return { code: 1, stdout: '', stderr: '' }; } };
+const OPTS = {
+  now: function () {
+    return CLOCK;
+  },
+  run: function () {
+    return { code: 1, stdout: '', stderr: '' };
+  },
+};
 
 // A handful of real-shaped secrets used across the leakage tests.
 const SECRETS = {
@@ -82,10 +91,17 @@ test('setProject / patchProject round-trip and preserve projectId + injected upd
   ctxstore.init(pp, OPTS);
   const id = ctxstore.read(pp, OPTS).project.projectId;
 
-  ctxstore.setProject(pp, {
-    name: 'Zirve', description: 'billing service', stack: ['go', 'postgres'],
-    repositories: [{ path: '.', branch: 'main' }], lastProvider: 'anthropic',
-  }, OPTS);
+  ctxstore.setProject(
+    pp,
+    {
+      name: 'Zirve',
+      description: 'billing service',
+      stack: ['go', 'postgres'],
+      repositories: [{ path: '.', branch: 'main' }],
+      lastProvider: 'anthropic',
+    },
+    OPTS,
+  );
   const p = ctxstore.read(pp, OPTS).project;
   assert.strictEqual(p.name, 'Zirve');
   assert.strictEqual(p.description, 'billing service');
@@ -111,10 +127,17 @@ test('setContextMd stores freeform text', function () {
 test('decisions: add / update / remove', function () {
   const pp = tmpProject();
   ctxstore.init(pp, OPTS);
-  const d = ctxstore.addDecision(pp, {
-    id: 'd1', title: 'Use Postgres', rationale: 'ACID + team familiarity',
-    alternatives: ['MySQL', 'Mongo'], doNot: ['do not use SQLite in prod'],
-  }, OPTS);
+  const d = ctxstore.addDecision(
+    pp,
+    {
+      id: 'd1',
+      title: 'Use Postgres',
+      rationale: 'ACID + team familiarity',
+      alternatives: ['MySQL', 'Mongo'],
+      doNot: ['do not use SQLite in prod'],
+    },
+    OPTS,
+  );
   assert.strictEqual(d.status, 'decided');
   assert.strictEqual(d.at, CLOCK);
 
@@ -131,7 +154,9 @@ test('decisions: add / update / remove', function () {
 test('decisions reject an invalid status', function () {
   const pp = tmpProject();
   ctxstore.init(pp, OPTS);
-  assert.throws(function () { ctxstore.addDecision(pp, { title: 'x', status: 'maybe' }, OPTS); }, /invalid decision status/);
+  assert.throws(function () {
+    ctxstore.addDecision(pp, { title: 'x', status: 'maybe' }, OPTS);
+  }, /invalid decision status/);
 });
 
 test('tasks: add / update status / remove / setActiveTask', function () {
@@ -142,15 +167,21 @@ test('tasks: add / update status / remove / setActiveTask', function () {
   assert.strictEqual(ctxstore.read(pp, OPTS).tasks[0].status, 'todo');
 
   ctxstore.updateTask(pp, 't1', { status: 'in_progress', completedSteps: ['a'] }, OPTS);
-  const t = ctxstore.read(pp, OPTS).tasks.filter(function (x) { return x.id === 't1'; })[0];
+  const t = ctxstore.read(pp, OPTS).tasks.filter(function (x) {
+    return x.id === 't1';
+  })[0];
   assert.strictEqual(t.status, 'in_progress');
   assert.deepStrictEqual(t.completedSteps, ['a']);
 
-  assert.throws(function () { ctxstore.updateTask(pp, 't1', { status: 'wat' }, OPTS); }, /invalid task status/);
+  assert.throws(function () {
+    ctxstore.updateTask(pp, 't1', { status: 'wat' }, OPTS);
+  }, /invalid task status/);
 
   ctxstore.setActiveTask(pp, 't1', OPTS);
   assert.strictEqual(ctxstore.read(pp, OPTS).activeTaskId, 't1');
-  assert.throws(function () { ctxstore.setActiveTask(pp, 'ghost', OPTS); }, /no such task/);
+  assert.throws(function () {
+    ctxstore.setActiveTask(pp, 'ghost', OPTS);
+  }, /no such task/);
 
   // removing the active task clears the pointer
   ctxstore.removeTask(pp, 't1', OPTS);
@@ -169,10 +200,10 @@ test('pack assembles all four sections + env var NAMES', function () {
   ctxstore.setContextMd(pp, 'summary', OPTS);
   ctxstore.addDecision(pp, { id: 'd1', title: 'A', rationale: 'r' }, OPTS);
   ctxstore.addTask(pp, { id: 't1', title: 'T' }, OPTS);
-  fs.writeFileSync(path.join(pp, '.env'), [
-    '# Postgres connection', 'DATABASE_URL=postgres://u:p@h/db',
-    'PORT=8080',
-  ].join('\n'));
+  fs.writeFileSync(
+    path.join(pp, '.env'),
+    ['# Postgres connection', 'DATABASE_URL=postgres://u:p@h/db', 'PORT=8080'].join('\n'),
+  );
 
   const pkg = ctxstore.pack(pp, OPTS);
   assert.strictEqual(pkg.schemaVersion, ctxstore.SCHEMA_VERSION);
@@ -181,9 +212,13 @@ test('pack assembles all four sections + env var NAMES', function () {
   assert.strictEqual(pkg.context, 'summary');
   assert.strictEqual(pkg.decisions.length, 1);
   assert.strictEqual(pkg.tasks.length, 1);
-  const names = pkg.requiredEnvironmentVariables.map(function (e) { return e.name; });
+  const names = pkg.requiredEnvironmentVariables.map(function (e) {
+    return e.name;
+  });
   assert.deepStrictEqual(names, ['DATABASE_URL', 'PORT']);
-  const dbvar = pkg.requiredEnvironmentVariables.filter(function (e) { return e.name === 'DATABASE_URL'; })[0];
+  const dbvar = pkg.requiredEnvironmentVariables.filter(function (e) {
+    return e.name === 'DATABASE_URL';
+  })[0];
   assert.strictEqual(dbvar.description, 'Postgres connection');
 });
 
@@ -192,10 +227,16 @@ test('SECURITY: a secret in ANY text field never reaches storage or the package'
   ctxstore.init(pp, OPTS);
   ctxstore.setProject(pp, { name: 'App', description: 'prod key ' + SECRETS.anthropic }, OPTS);
   ctxstore.setContextMd(pp, 'deploy with token ' + SECRETS.github + ' — do not commit', OPTS);
-  ctxstore.addDecision(pp, {
-    id: 'd1', title: 'Auth', rationale: 'signed with ' + SECRETS.jwt,
-    doNot: ['never paste ' + SECRETS.aws],
-  }, OPTS);
+  ctxstore.addDecision(
+    pp,
+    {
+      id: 'd1',
+      title: 'Auth',
+      rationale: 'signed with ' + SECRETS.jwt,
+      doNot: ['never paste ' + SECRETS.aws],
+    },
+    OPTS,
+  );
   ctxstore.addTask(pp, { id: 't1', title: 'deploy', knownIssues: ['leftover key ' + SECRETS.anthropic] }, OPTS);
 
   // (a) the stored files on disk carry no secret
@@ -214,19 +255,24 @@ test('SECURITY: a secret in ANY text field never reaches storage or the package'
 test('SECURITY: .env VALUES never enter the package — only names + isSecret', function () {
   const pp = tmpProject();
   ctxstore.init(pp, OPTS);
-  fs.writeFileSync(path.join(pp, '.env'), [
-    '# Anthropic key for prod',
-    'API_KEY=' + SECRETS.anthropic,
-    'export AWS_ACCESS_KEY_ID=' + SECRETS.aws,
-    'PORT=3000',
-  ].join('\n'));
+  fs.writeFileSync(
+    path.join(pp, '.env'),
+    [
+      '# Anthropic key for prod',
+      'API_KEY=' + SECRETS.anthropic,
+      'export AWS_ACCESS_KEY_ID=' + SECRETS.aws,
+      'PORT=3000',
+    ].join('\n'),
+  );
   fs.writeFileSync(path.join(pp, '.env.local'), 'SESSION_TOKEN=' + SECRETS.jwt + '\n');
 
   const pkg = ctxstore.pack(pp, OPTS);
   assertNoSecrets(JSON.stringify(pkg)); // no value leaked
 
   const byName = {};
-  pkg.requiredEnvironmentVariables.forEach(function (e) { byName[e.name] = e; });
+  pkg.requiredEnvironmentVariables.forEach(function (e) {
+    byName[e.name] = e;
+  });
   assert.ok(byName.API_KEY && byName.API_KEY.isSecret === true, 'API_KEY flagged secret');
   assert.strictEqual(byName.API_KEY.description, 'Anthropic key for prod');
   assert.ok(byName.AWS_ACCESS_KEY_ID && byName.AWS_ACCESS_KEY_ID.isSecret === true, 'AWS key by value shape');
@@ -251,10 +297,13 @@ test('prototype-pollution: a hostile __proto__ key in stored JSON cannot pollute
   const pp = tmpProject();
   ctxstore.init(pp, OPTS);
   // hand-craft a malicious decisions.json
-  fs.writeFileSync(path.join(pp, '.keyflip', 'decisions.json'), JSON.stringify({
-    schemaVersion: 1,
-    decisions: [{ id: 'd1', title: 'ok', __proto__: { polluted: true } }],
-  }));
+  fs.writeFileSync(
+    path.join(pp, '.keyflip', 'decisions.json'),
+    JSON.stringify({
+      schemaVersion: 1,
+      decisions: [{ id: 'd1', title: 'ok', __proto__: { polluted: true } }],
+    }),
+  );
   const pkg = ctxstore.pack(pp, OPTS);
   assert.strictEqual({}.polluted, undefined, 'Object.prototype must not be polluted');
   assert.strictEqual(pkg.decisions[0].polluted, undefined);

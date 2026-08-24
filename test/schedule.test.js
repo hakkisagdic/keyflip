@@ -13,7 +13,10 @@ function fakeRunner(recorder, cronState) {
     recorder.push({ cmd: cmd, args: args, input: input });
     if (cmd === 'which') return { code: 0, stdout: '/usr/local/bin/keyflip\n' };
     if (cmd === 'crontab' && args[0] === '-l') return { code: 0, stdout: cronState.text || '' };
-    if (cmd === 'crontab' && args[0] === '-') { cronState.text = input; return { code: 0 }; }
+    if (cmd === 'crontab' && args[0] === '-') {
+      cronState.text = input;
+      return { code: 0 };
+    }
     return { code: 0, stdout: '' };
   };
 }
@@ -21,7 +24,13 @@ function fakeRunner(recorder, cronState) {
 test('parseAt clamps a HH:MM; buildPlist embeds the dream command + time', function () {
   assert.deepStrictEqual(schedule.parseAt('03:30'), { h: 3, m: 30 });
   assert.deepStrictEqual(schedule.parseAt('bogus'), { h: 3, m: 0 });
-  const plist = schedule.buildPlist({ at: '04:15', days: 30, run: function () { return { code: 1 }; } });
+  const plist = schedule.buildPlist({
+    at: '04:15',
+    days: 30,
+    run: function () {
+      return { code: 1 };
+    },
+  });
   assert.ok(plist.indexOf('<key>Hour</key><integer>4</integer>') !== -1);
   assert.ok(plist.indexOf('<key>Minute</key><integer>15</integer>') !== -1);
   assert.ok(plist.indexOf('dream') !== -1 && plist.indexOf('--apply') !== -1);
@@ -29,7 +38,8 @@ test('parseAt clamps a HH:MM; buildPlist embeds the dream command + time', funct
 });
 
 test('cronLine encodes the schedule + a managed marker; installCron is idempotent', function () {
-  const rec = [], cron = { text: '0 0 * * * other-job\n' };
+  const rec = [],
+    cron = { text: '0 0 * * * other-job\n' };
   const runner = fakeRunner(rec, cron);
   const line = schedule.cronLine({ at: '02:05', days: 14, run: runner });
   assert.ok(/^5 2 \* \* \* /.test(line), 'minute hour * * *');
@@ -45,7 +55,8 @@ test('cronLine encodes the schedule + a managed marker; installCron is idempoten
 });
 
 test('uninstallCron removes only the managed line, keeps the rest', function () {
-  const rec = [], cron = { text: '0 0 * * * other-job\n5 2 * * * something ' + schedule.CRON_MARK + '\n' };
+  const rec = [],
+    cron = { text: '0 0 * * * other-job\n5 2 * * * something ' + schedule.CRON_MARK + '\n' };
   const runner = fakeRunner(rec, cron);
   const r = schedule.uninstallCron({ run: runner });
   assert.strictEqual(r.existed, true);
@@ -62,7 +73,12 @@ test('install/uninstall on macOS writes + removes the launchd plist (temp home)'
   assert.strictEqual(r.ok, true);
   assert.strictEqual(r.kind, 'launchd');
   assert.ok(fs.existsSync(schedule.plistPath(home)), 'plist written');
-  assert.ok(rec.some(function (c) { return c.cmd === 'launchctl' && c.args[0] === 'load'; }), 'launchctl load called');
+  assert.ok(
+    rec.some(function (c) {
+      return c.cmd === 'launchctl' && c.args[0] === 'load';
+    }),
+    'launchctl load called',
+  );
   const u = schedule.uninstall(ctx, { home: home, run: runner });
   assert.strictEqual(u.ok, true);
   assert.strictEqual(fs.existsSync(schedule.plistPath(home)), false, 'plist removed');
@@ -87,5 +103,8 @@ test('cronLine coerces a malicious days value to a bounded integer (no shell inj
   // out-of-range / non-numeric fall back or clamp
   assert.ok(/--older-than 1d(\s|$)/.test(schedule.cronLine({ days: -5, run: runner })), 'clamped to >=1');
   assert.ok(/--older-than 3650d(\s|$)/.test(schedule.cronLine({ days: 999999, run: runner })), 'clamped to <=3650');
-  assert.ok(/--older-than 30d(\s|$)/.test(schedule.cronLine({ days: 'garbage', run: runner })), 'non-numeric -> default 30');
+  assert.ok(
+    /--older-than 30d(\s|$)/.test(schedule.cronLine({ days: 'garbage', run: runner })),
+    'non-numeric -> default 30',
+  );
 });

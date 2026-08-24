@@ -13,10 +13,18 @@ const OAUTH_BETA_HEADER = 'oauth-2025-04-20';
 const CACHE_TTL_MS = 60 * 1000;
 
 let VERSION = '0.0.0';
-try { VERSION = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version; } catch (e) { /* ignore */ }
+try {
+  VERSION = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version;
+} catch (e) {
+  /* ignore */
+}
 
 function accessTokenOf(blob) {
-  try { return JSON.parse(blob).claudeAiOauth.accessToken || null; } catch (e) { return null; }
+  try {
+    return JSON.parse(blob).claudeAiOauth.accessToken || null;
+  } catch (e) {
+    return null;
+  }
 }
 
 // Detailed variant: { usage, httpStatus } — httpStatus lets callers distinguish
@@ -32,7 +40,10 @@ async function fetchUsageDetailed(accessToken, opts) {
         'anthropic-beta': OAUTH_BETA_HEADER,
         'User-Agent': 'keyflip/' + VERSION,
       },
-      signal: (typeof AbortSignal !== 'undefined' && AbortSignal.timeout) ? AbortSignal.timeout(opts.timeoutMs || 5000) : undefined,
+      signal:
+        typeof AbortSignal !== 'undefined' && AbortSignal.timeout
+          ? AbortSignal.timeout(opts.timeoutMs || 5000)
+          : undefined,
     });
     if (!res || !res.ok) return { usage: null, httpStatus: (res && res.status) || null };
     const data = await res.json();
@@ -43,8 +54,10 @@ async function fetchUsageDetailed(accessToken, opts) {
     if (data.seven_day && typeof data.seven_day.utilization === 'number') {
       out.sevenDay = { pct: data.seven_day.utilization, resetsAt: data.seven_day.resets_at || null };
     }
-    return { usage: (out.fiveHour || out.sevenDay) ? out : null, httpStatus: res.status };
-  } catch (e) { return { usage: null, httpStatus: null }; }
+    return { usage: out.fiveHour || out.sevenDay ? out : null, httpStatus: res.status };
+  } catch (e) {
+    return { usage: null, httpStatus: null };
+  }
 }
 
 // -> { fiveHour: {pct, resetsAt}, sevenDay: {pct, resetsAt} } | null
@@ -71,13 +84,19 @@ function fmt(usage) {
   return parts.join(' · ') || '?';
 }
 
-function cachePath(ctx) { return path.join(ctx.configDir, '.usage-cache.json'); }
+function cachePath(ctx) {
+  return path.join(ctx.configDir, '.usage-cache.json');
+}
 
 // The cache TTL, in ms, defaulting from config (`keyflip config set usage.cacheTtlSeconds N`).
 // Falls back to the built-in 60s if config is unreadable. Callers can still override via opts.cacheTtlMs.
 function cfgTtlMs(ctx) {
-  try { const s = _config.get(ctx, 'usage.cacheTtlSeconds'); return (typeof s === 'number' ? s : 60) * 1000; }
-  catch (e) { return CACHE_TTL_MS; }
+  try {
+    const s = _config.get(ctx, 'usage.cacheTtlSeconds');
+    return (typeof s === 'number' ? s : 60) * 1000;
+  } catch (e) {
+    return CACHE_TTL_MS;
+  }
 }
 
 // Usage per profile name -> { status: 'ok'|'no-creds'|'no-token'|'error',
@@ -92,8 +111,11 @@ async function usageForProfiles(ctx, names, opts) {
   let cache = Object.create(null);
   try {
     const parsed = JSON.parse(fs.readFileSync(cachePath(ctx), 'utf8'));
-    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) cache = Object.assign(Object.create(null), parsed);
-  } catch (e) { /* none / corrupt — start empty */ }
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed))
+      cache = Object.assign(Object.create(null), parsed);
+  } catch (e) {
+    /* none / corrupt — start empty */
+  }
   const out = {};
   for (let i = 0; i < names.length; i++) {
     const name = names[i];
@@ -107,17 +129,30 @@ async function usageForProfiles(ctx, names, opts) {
     // while the stored snapshot may hold an already-expired access token.
     let blob = null;
     if (opts.liveFor && opts.liveFor === name) {
-      try { blob = ctx.store.getLive(); } catch (e) { blob = null; }
+      try {
+        blob = ctx.store.getLive();
+      } catch (e) {
+        blob = null;
+      }
     }
-    if (!blob) { try { blob = ctx.store.getProfile(name); } catch (e) { blob = null; } }
-    if (!blob) { out[name] = { status: 'no-creds', usage: null, headroom: null }; }
-    else {
+    if (!blob) {
+      try {
+        blob = ctx.store.getProfile(name);
+      } catch (e) {
+        blob = null;
+      }
+    }
+    if (!blob) {
+      out[name] = { status: 'no-creds', usage: null, headroom: null };
+    } else {
       const token = accessTokenOf(blob);
-      if (!token) { out[name] = { status: 'no-token', usage: null, headroom: null }; }
-      else {
+      if (!token) {
+        out[name] = { status: 'no-token', usage: null, headroom: null };
+      } else {
         const r = await fetchUsageDetailed(token, opts);
         if (r.usage) out[name] = { status: 'ok', usage: r.usage, headroom: headroom(r.usage) };
-        else if (r.httpStatus === 401 || r.httpStatus === 403) out[name] = { status: 'expired', usage: null, headroom: null };
+        else if (r.httpStatus === 401 || r.httpStatus === 403)
+          out[name] = { status: 'expired', usage: null, headroom: null };
         // 429 here means the USAGE ENDPOINT throttled this token — it does NOT
         // prove the account's inference is rate-limited (verified live: a 429
         // account kept working). Report unknown, never auto-skip on it.
@@ -127,9 +162,19 @@ async function usageForProfiles(ctx, names, opts) {
     }
     cache[name] = { at: nowMs, status: out[name].status, usage: out[name].usage };
     // #12: record every FRESH sample (cache hits `continue` above) to the trend log.
-    if (opts.recordHistory) { try { _history.recordUsage(ctx, name, out[name]); } catch (e) { /* best effort */ } }
+    if (opts.recordHistory) {
+      try {
+        _history.recordUsage(ctx, name, out[name]);
+      } catch (e) {
+        /* best effort */
+      }
+    }
   }
-  try { atomicWrite(cachePath(ctx), JSON.stringify(cache), 0o600); } catch (e) { /* best effort */ }
+  try {
+    atomicWrite(cachePath(ctx), JSON.stringify(cache), 0o600);
+  } catch (e) {
+    /* best effort */
+  }
   return out;
 }
 
@@ -140,10 +185,14 @@ async function usageForProfiles(ctx, names, opts) {
 function pickByStrategy(candidates, infos, strategy) {
   if (!candidates.length) return null;
   if (strategy === 'best') {
-    let best = null, bestH = -Infinity;
+    let best = null,
+      bestH = -Infinity;
     candidates.forEach(function (c) {
       const info = infos[c.name];
-      if (info && typeof info.headroom === 'number' && info.headroom > bestH) { best = c; bestH = info.headroom; }
+      if (info && typeof info.headroom === 'number' && info.headroom > bestH) {
+        best = c;
+        bestH = info.headroom;
+      }
     });
     return best; // null when no candidate has known usage
   }

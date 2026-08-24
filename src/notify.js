@@ -13,7 +13,11 @@ import { atomicWrite, readJsonForWrite } from './fsutil.js';
 import * as _exec from './exec.js';
 
 let VERSION = '0.0.0';
-try { VERSION = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version; } catch (e) { /* ignore */ }
+try {
+  VERSION = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version;
+} catch (e) {
+  /* ignore */
+}
 
 // The events keyflip knows how to emit; a user may enable arbitrary extra names.
 const KNOWN_EVENTS = ['quota', 'switch', 'fleet-reply'];
@@ -27,7 +31,9 @@ const SECRET_KEY_RE = /(token|key|credential|password|passphrase|secret|bearer|c
 // eslint-disable-next-line no-control-regex
 const CTRL = /[\x00-\x1f\x7f]/g; // strip control chars (newlines/ANSI ESC) from text we render
 
-function notifyPath(ctx) { return path.join(ctx.configDir, 'notify.json'); }
+function notifyPath(ctx) {
+  return path.join(ctx.configDir, 'notify.json');
+}
 
 // Dedupe + validate a user-supplied events array. The dedupe map is null-proto so
 // an event literally named '__proto__' can never pollute a prototype (mirrors fleet).
@@ -38,7 +44,8 @@ function sanitizeEvents(list) {
   list.forEach(function (e) {
     const s = String(e == null ? '' : e).trim();
     if (!EVENT_RE.test(s) || seen[s]) return;
-    seen[s] = true; out.push(s);
+    seen[s] = true;
+    out.push(s);
   });
   return out;
 }
@@ -47,13 +54,17 @@ function sanitizeEvents(list) {
 function sanitizeWebhook(url) {
   if (typeof url !== 'string' || !url) return null;
   let u;
-  try { u = new URL(url); } catch (e) { return null; }
-  return (u.protocol === 'http:' || u.protocol === 'https:') ? u.href : null;
+  try {
+    u = new URL(url);
+  } catch (e) {
+    return null;
+  }
+  return u.protocol === 'http:' || u.protocol === 'https:' ? u.href : null;
 }
 
 // Coerce any raw disk object into the canonical config shape (never throws).
 function normalize(raw) {
-  const r = (raw && typeof raw === 'object' && !Array.isArray(raw)) ? raw : {};
+  const r = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
   return {
     webhook: sanitizeWebhook(r.webhook),
     events: sanitizeEvents(r.events),
@@ -64,7 +75,11 @@ function normalize(raw) {
 // Read-only, never throws — safe on the hot path (send).
 function getConfig(ctx) {
   let raw = null;
-  try { raw = JSON.parse(fs.readFileSync(notifyPath(ctx), 'utf8')); } catch (e) { raw = null; }
+  try {
+    raw = JSON.parse(fs.readFileSync(notifyPath(ctx), 'utf8'));
+  } catch (e) {
+    raw = null;
+  }
   return normalize(raw);
 }
 
@@ -82,7 +97,9 @@ function setConfig(ctx, patch) {
   return cur;
 }
 
-function isEnabled(cfg, event) { return cfg.events.indexOf(event) !== -1; }
+function isEnabled(cfg, event) {
+  return cfg.events.indexOf(event) !== -1;
+}
 
 // Deep-clone `value` into a plain, JSON-safe object with every secret-looking key
 // removed at EVERY level. Scalars pass through; functions/undefined are dropped.
@@ -97,7 +114,9 @@ function stripSecrets(value, depth) {
   if (depth >= 6) return Array.isArray(value) ? [] : {};
   if (Array.isArray(value)) {
     const arr = [];
-    value.slice(0, 1000).forEach(function (v) { arr.push(stripSecrets(v, depth + 1)); });
+    value.slice(0, 1000).forEach(function (v) {
+      arr.push(stripSecrets(v, depth + 1));
+    });
     return arr;
   }
   const out = {};
@@ -110,11 +129,17 @@ function stripSecrets(value, depth) {
   return out;
 }
 
-function scrub(s, max) { return String(s == null ? '' : s).replace(CTRL, ' ').slice(0, max || 180); }
+function scrub(s, max) {
+  return String(s == null ? '' : s)
+    .replace(CTRL, ' ')
+    .slice(0, max || 180);
+}
 // Escape a string for embedding inside an AppleScript double-quoted literal, after
 // stripping control chars so a payload can't inject newlines or break out of the
 // literal into arbitrary AppleScript.
-function asAppleScript(s) { return scrub(s).replace(/\\/g, '\\\\').replace(/"/g, '\\"'); }
+function asAppleScript(s) {
+  return scrub(s).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+}
 
 // A short human line for the desktop banner, from the ALREADY secret-stripped payload.
 function summarize(event, payload) {
@@ -143,7 +168,8 @@ async function send(ctx, event, payload, opts) {
   opts = opts || {};
   event = String(event == null ? '' : event);
   const cfg = getConfig(ctx);
-  if (!opts.force && !isEnabled(cfg, event)) return { sent: false, event: event, reason: 'event-disabled', channels: [] };
+  if (!opts.force && !isEnabled(cfg, event))
+    return { sent: false, event: event, reason: 'event-disabled', channels: [] };
   const at = ctx.now();
   const safe = stripSecrets(payload); // NEVER send the raw payload past this point
   const channels = [];
@@ -158,12 +184,22 @@ async function send(ctx, event, payload, opts) {
           method: 'POST',
           headers: { 'content-type': 'application/json', 'user-agent': 'keyflip/' + VERSION },
           body: JSON.stringify({ event: event, payload: safe === undefined ? null : safe, at: at }),
-          signal: (typeof AbortSignal !== 'undefined' && AbortSignal.timeout) ? AbortSignal.timeout(opts.timeoutMs || 5000) : undefined,
+          signal:
+            typeof AbortSignal !== 'undefined' && AbortSignal.timeout
+              ? AbortSignal.timeout(opts.timeoutMs || 5000)
+              : undefined,
         });
         const status = res && typeof res.status === 'number' ? res.status : null;
         const ok = !!(res && (res.ok || (status != null && status < 400)));
-        channels.push({ channel: 'webhook', ok: ok, httpStatus: status, reason: ok ? undefined : (status != null ? 'http-' + status : 'no-response') });
-      } catch (e) { channels.push({ channel: 'webhook', ok: false, reason: (e && e.message) || 'network-error' }); }
+        channels.push({
+          channel: 'webhook',
+          ok: ok,
+          httpStatus: status,
+          reason: ok ? undefined : status != null ? 'http-' + status : 'no-response',
+        });
+      } catch (e) {
+        channels.push({ channel: 'webhook', ok: false, reason: (e && e.message) || 'network-error' });
+      }
     }
   }
 
@@ -173,16 +209,28 @@ async function send(ctx, event, payload, opts) {
     else {
       const runner = opts.run || _exec.run;
       try {
-        const script = 'display notification "' + asAppleScript(summarize(event, safe)) +
-          '" with title "keyflip" subtitle "' + asAppleScript(event) + '"';
+        const script =
+          'display notification "' +
+          asAppleScript(summarize(event, safe)) +
+          '" with title "keyflip" subtitle "' +
+          asAppleScript(event) +
+          '"';
         const r = runner('/usr/bin/osascript', ['-e', script], undefined, { timeoutMs: 5000 });
         const ok = !!(r && r.code === 0);
-        channels.push({ channel: 'desktop', ok: ok, reason: ok ? undefined : ((r && (r.stderr || (r.error && r.error.message))) || 'osascript-failed') });
-      } catch (e) { channels.push({ channel: 'desktop', ok: false, reason: (e && e.message) || 'osascript-error' }); }
+        channels.push({
+          channel: 'desktop',
+          ok: ok,
+          reason: ok ? undefined : (r && (r.stderr || (r.error && r.error.message))) || 'osascript-failed',
+        });
+      } catch (e) {
+        channels.push({ channel: 'desktop', ok: false, reason: (e && e.message) || 'osascript-error' });
+      }
     }
   }
 
-  const sent = channels.some(function (c) { return c.ok; });
+  const sent = channels.some(function (c) {
+    return c.ok;
+  });
   const out = { sent: sent, event: event, at: at, channels: channels };
   if (!sent) out.reason = channels.length ? 'delivery-failed' : 'no-sink';
   return out;
@@ -194,4 +242,15 @@ async function test(ctx, opts) {
   return send(ctx, 'test', { message: 'keyflip test notification' }, Object.assign({}, opts, { force: true }));
 }
 
-export { getConfig, setConfig, send, test, isEnabled, stripSecrets, sanitizeWebhook, sanitizeEvents, KNOWN_EVENTS, notifyPath };
+export {
+  getConfig,
+  setConfig,
+  send,
+  test,
+  isEnabled,
+  stripSecrets,
+  sanitizeWebhook,
+  sanitizeEvents,
+  KNOWN_EVENTS,
+  notifyPath,
+};

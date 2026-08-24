@@ -17,7 +17,9 @@ const path = require('path');
 const crypto = require('crypto');
 
 // base64url without padding — matches Buffer.toString('base64url') used by license.js.
-function b64uEnc(buf) { return Buffer.from(buf).toString('base64url'); }
+function b64uEnc(buf) {
+  return Buffer.from(buf).toString('base64url');
+}
 
 // EXACT canonical bytes that get signed. Must equal src/license.js canonicalPayload():
 // keys in alphabetical order (email, expiry, issued, tier); email/issued/tier coerce
@@ -34,7 +36,9 @@ function canonicalPayload(p) {
 
 // Default location of the issuer private key. KEYFLIP_ISSUER_KEY (a path, not a
 // secret) relocates it, matching keygen.js so keygen+sign agree in tests.
-function defaultKeyPath() { return process.env.KEYFLIP_ISSUER_KEY || path.join(__dirname, 'private', 'issuer.key'); }
+function defaultKeyPath() {
+  return process.env.KEYFLIP_ISSUER_KEY || path.join(__dirname, 'private', 'issuer.key');
+}
 
 // Read the PKCS8 DER private key written by keygen.js and return a KeyObject.
 // Accepts either raw DER bytes (what keygen writes) or a PEM/base64 text file, so a
@@ -67,9 +71,10 @@ function signLicense(fields, privateKey) {
     expiry: fields.expiry,
     issued: fields.issued,
   });
-  const key = (privateKey && typeof privateKey === 'object' && !Buffer.isBuffer(privateKey))
-    ? privateKey
-    : crypto.createPrivateKey(privateKey);
+  const key =
+    privateKey && typeof privateKey === 'object' && !Buffer.isBuffer(privateKey)
+      ? privateKey
+      : crypto.createPrivateKey(privateKey);
   const sig = crypto.sign(null, Buffer.from(canonical, 'utf8'), key);
   return b64uEnc(Buffer.from(canonical, 'utf8')) + '.' + b64uEnc(sig);
 }
@@ -83,8 +88,12 @@ function parseFlags(argv) {
     if (a.slice(0, 2) === '--') {
       const key = a.slice(2);
       const next = argv[i + 1];
-      if (next === undefined || next.slice(0, 2) === '--') { out[key] = true; }
-      else { out[key] = next; i++; }
+      if (next === undefined || next.slice(0, 2) === '--') {
+        out[key] = true;
+      } else {
+        out[key] = next;
+        i++;
+      }
     }
   }
   return out;
@@ -109,12 +118,15 @@ function main(argv) {
     process.exitCode = 1;
     return;
   }
-  const token = signLicense({
-    tier: f.tier,
-    email: typeof f.email === 'string' ? f.email : '',
-    expiry: typeof f.expiry === 'string' ? f.expiry : null,
-    issued: typeof f.issued === 'string' ? f.issued : new Date().toISOString(),
-  }, key);
+  const token = signLicense(
+    {
+      tier: f.tier,
+      email: typeof f.email === 'string' ? f.email : '',
+      expiry: typeof f.expiry === 'string' ? f.expiry : null,
+      issued: typeof f.issued === 'string' ? f.issued : new Date().toISOString(),
+    },
+    key,
+  );
   process.stdout.write(token + '\n');
 }
 

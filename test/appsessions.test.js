@@ -4,7 +4,9 @@ import fs from 'fs';
 import path from 'path';
 import { consolidate, mergeStore, pruneBackups } from '../src/appsessions.js';
 // backup behavior is a per-store concern -> test it on mergeStore directly.
-function mergeCode(ctx) { return mergeStore(ctx, 'claude-code-sessions', 'claude-code-sessions-'); }
+function mergeCode(ctx) {
+  return mergeStore(ctx, 'claude-code-sessions', 'claude-code-sessions-');
+}
 import { tmpdir } from './helpers.js';
 
 // Fake Claude desktop app store with two accounts (A active in ~/.claude.json,
@@ -13,15 +15,28 @@ function setup() {
   const home = tmpdir();
   const appDataDir = path.join(home, 'Library', 'Application Support', 'Claude');
   const store = path.join(appDataDir, 'claude-code-sessions');
-  const A = 'acctA', OA = 'orgA', B = 'acctB', OB = 'orgB';
+  const A = 'acctA',
+    OA = 'orgA',
+    B = 'acctB',
+    OB = 'orgB';
   fs.mkdirSync(path.join(store, A, OA), { recursive: true });
   fs.mkdirSync(path.join(store, B, OB), { recursive: true });
-  fs.writeFileSync(path.join(store, A, OA, 'local_1.json'), JSON.stringify({ sessionId: 'local_1', cliSessionId: 'cs1', title: 'in-A' }));
-  fs.writeFileSync(path.join(store, B, OB, 'local_2.json'), JSON.stringify({ sessionId: 'local_2', cliSessionId: 'cs2', title: 'in-B' }));
+  fs.writeFileSync(
+    path.join(store, A, OA, 'local_1.json'),
+    JSON.stringify({ sessionId: 'local_1', cliSessionId: 'cs1', title: 'in-A' }),
+  );
+  fs.writeFileSync(
+    path.join(store, B, OB, 'local_2.json'),
+    JSON.stringify({ sessionId: 'local_2', cliSessionId: 'cs2', title: 'in-B' }),
+  );
   const ctx = {
-    home: home, platform: 'darwin', appDataDir: appDataDir,
+    home: home,
+    platform: 'darwin',
+    appDataDir: appDataDir,
     configDir: path.join(home, '.config', 'keyflip'),
-    now: function () { return '2026-01-01T00:00:00.000Z'; },
+    now: function () {
+      return '2026-01-01T00:00:00.000Z';
+    },
   };
   return { ctx: ctx, store: store, A: A, OA: OA, B: B, OB: OB };
 }
@@ -31,8 +46,8 @@ test('consolidate unions sessions into every account folder', function () {
   const r = consolidate(s.ctx);
   assert.strictEqual(r.ok, true);
   assert.strictEqual(r.merged, 2); // cs2 -> A, cs1 -> B
-  assert.ok(fs.existsSync(path.join(s.store, s.A, s.OA, 'local_2.json')), 'A now has B\'s session');
-  assert.ok(fs.existsSync(path.join(s.store, s.B, s.OB, 'local_1.json')), 'B now has A\'s session');
+  assert.ok(fs.existsSync(path.join(s.store, s.A, s.OA, 'local_2.json')), "A now has B's session");
+  assert.ok(fs.existsSync(path.join(s.store, s.B, s.OB, 'local_1.json')), "B now has A's session");
 });
 
 test('consolidate is idempotent', function () {
@@ -45,7 +60,10 @@ test('consolidate is idempotent', function () {
 test('consolidate dedupes by cliSessionId (no duplicate pointers)', function () {
   const s = setup();
   // B already has cs1 under a different local id
-  fs.writeFileSync(path.join(s.store, s.B, s.OB, 'local_9.json'), JSON.stringify({ sessionId: 'local_9', cliSessionId: 'cs1' }));
+  fs.writeFileSync(
+    path.join(s.store, s.B, s.OB, 'local_9.json'),
+    JSON.stringify({ sessionId: 'local_9', cliSessionId: 'cs1' }),
+  );
   const r = consolidate(s.ctx);
   assert.strictEqual(r.merged, 1); // only cs2 -> A; B already has cs1 and cs2
   assert.ok(!fs.existsSync(path.join(s.store, s.A, s.OA, 'local_9.json')), 'no duplicate cs1 pointer added to A');

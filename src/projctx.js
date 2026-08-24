@@ -27,37 +27,90 @@ import * as _exec from './exec.js';
 const SCHEMA_VERSION = 1;
 const DECISION_STATUS = ['decided', 'rejected', 'superseded'];
 const TASK_STATUS = ['todo', 'in_progress', 'blocked', 'done'];
-const PROJECT_FIELDS = ['schemaVersion', 'projectId', 'name', 'description', 'stack', 'repositories', 'activeTaskId', 'lastProvider', 'updatedAt'];
+const PROJECT_FIELDS = [
+  'schemaVersion',
+  'projectId',
+  'name',
+  'description',
+  'stack',
+  'repositories',
+  'activeTaskId',
+  'lastProvider',
+  'updatedAt',
+];
 const DECISION_FIELDS = ['id', 'title', 'rationale', 'alternatives', 'status', 'doNot', 'at'];
-const TASK_FIELDS = ['id', 'title', 'status', 'relatedFiles', 'completedSteps', 'remainingSteps', 'acceptanceCriteria', 'knownIssues', 'at'];
+const TASK_FIELDS = [
+  'id',
+  'title',
+  'status',
+  'relatedFiles',
+  'completedSteps',
+  'remainingSteps',
+  'acceptanceCriteria',
+  'knownIssues',
+  'at',
+];
 
 // ---- paths -------------------------------------------------------------------
-function base(projectPath) { return path.resolve(projectPath || process.cwd()); }
-function dir(projectPath) { return path.join(base(projectPath), '.keyflip'); }
-function projectFile(pp) { return path.join(dir(pp), 'project.json'); }
-function contextFile(pp) { return path.join(dir(pp), 'context.md'); }
-function decisionsFile(pp) { return path.join(dir(pp), 'decisions.json'); }
-function tasksFile(pp) { return path.join(dir(pp), 'tasks.json'); }
+function base(projectPath) {
+  return path.resolve(projectPath || process.cwd());
+}
+function dir(projectPath) {
+  return path.join(base(projectPath), '.keyflip');
+}
+function projectFile(pp) {
+  return path.join(dir(pp), 'project.json');
+}
+function contextFile(pp) {
+  return path.join(dir(pp), 'context.md');
+}
+function decisionsFile(pp) {
+  return path.join(dir(pp), 'decisions.json');
+}
+function tasksFile(pp) {
+  return path.join(dir(pp), 'tasks.json');
+}
 
 // ---- tiny helpers ------------------------------------------------------------
-function str(v) { return typeof v === 'string' ? v : (v == null ? '' : String(v)); }
-function strArray(v) { return Array.isArray(v) ? v.filter(function (x) { return typeof x === 'string'; }) : []; }
+function str(v) {
+  return typeof v === 'string' ? v : v == null ? '' : String(v);
+}
+function strArray(v) {
+  return Array.isArray(v)
+    ? v.filter(function (x) {
+        return typeof x === 'string';
+      })
+    : [];
+}
 
 // Injected clock: opts.now() or opts.clock() -> ISO string; else real time.
 function nowIso(opts) {
   const f = opts && (opts.now || opts.clock);
-  if (typeof f === 'function') { try { return str(f()); } catch (e) { /* fall through */ } }
+  if (typeof f === 'function') {
+    try {
+      return str(f());
+    } catch (e) {
+      /* fall through */
+    }
+  }
   return new Date().toISOString();
 }
 
 function genId(prefix) {
-  let rnd; try { rnd = crypto.randomBytes(6).toString('hex'); }
-  catch (e) { rnd = String(Date.now()) + Math.floor(Math.random() * 1e6); }
+  let rnd;
+  try {
+    rnd = crypto.randomBytes(6).toString('hex');
+  } catch (e) {
+    rnd = String(Date.now()) + Math.floor(Math.random() * 1e6);
+  }
   return prefix + '-' + rnd;
 }
 function genUuid() {
-  try { return crypto.randomUUID(); }
-  catch (e) { return 'proj-' + crypto.randomBytes(8).toString('hex'); }
+  try {
+    return crypto.randomUUID();
+  } catch (e) {
+    return 'proj-' + crypto.randomBytes(8).toString('hex');
+  }
 }
 
 // ---- redaction (the security core) ------------------------------------------
@@ -90,26 +143,44 @@ function redactDeep(v) {
 
 // ---- guarded JSON IO ---------------------------------------------------------
 function readJson(file) {
-  let raw; try { raw = fs.readFileSync(file, 'utf8'); } catch (e) { return null; }
-  try { return JSON.parse(raw); } catch (e) { return null; } // corrupt file = treat as absent (never throw a read)
+  let raw;
+  try {
+    raw = fs.readFileSync(file, 'utf8');
+  } catch (e) {
+    return null;
+  }
+  try {
+    return JSON.parse(raw);
+  } catch (e) {
+    return null;
+  } // corrupt file = treat as absent (never throw a read)
 }
-function writeJson(file, obj) { atomicWrite(file, JSON.stringify(obj, null, 2) + '\n', 0o600); }
+function writeJson(file, obj) {
+  atomicWrite(file, JSON.stringify(obj, null, 2) + '\n', 0o600);
+}
 
 // Copy only known fields from base then patch (ignores prototype-polluting keys implicitly).
 function mergeKnown(baseObj, patch, fields) {
   const out = {};
-  fields.forEach(function (f) { if (baseObj && Object.prototype.hasOwnProperty.call(baseObj, f)) out[f] = baseObj[f]; });
-  if (patch) fields.forEach(function (f) { if (Object.prototype.hasOwnProperty.call(patch, f) && patch[f] !== undefined) out[f] = patch[f]; });
+  fields.forEach(function (f) {
+    if (baseObj && Object.prototype.hasOwnProperty.call(baseObj, f)) out[f] = baseObj[f];
+  });
+  if (patch)
+    fields.forEach(function (f) {
+      if (Object.prototype.hasOwnProperty.call(patch, f) && patch[f] !== undefined) out[f] = patch[f];
+    });
   return out;
 }
 
 // ---- normalizers (runtime shape validation + redaction) ----------------------
 function repoArray(v) {
   if (!Array.isArray(v)) return [];
-  return v.map(function (r) {
-    if (!r || typeof r !== 'object') return null;
-    return { path: redactText(r.path), branch: r.branch != null ? redactText(r.branch) : null };
-  }).filter(Boolean);
+  return v
+    .map(function (r) {
+      if (!r || typeof r !== 'object') return null;
+      return { path: redactText(r.path), branch: r.branch != null ? redactText(r.branch) : null };
+    })
+    .filter(Boolean);
 }
 function normalizeProject(input, pp, opts) {
   input = input || {};
@@ -128,7 +199,8 @@ function normalizeProject(input, pp, opts) {
 function normalizeDecision(input, opts) {
   input = input || {};
   const status = input.status != null && input.status !== '' ? String(input.status) : 'decided';
-  if (DECISION_STATUS.indexOf(status) === -1) throw new Error("invalid decision status: '" + status + "' (use " + DECISION_STATUS.join('|') + ')');
+  if (DECISION_STATUS.indexOf(status) === -1)
+    throw new Error("invalid decision status: '" + status + "' (use " + DECISION_STATUS.join('|') + ')');
   return {
     id: str(input.id) || genId('dec'),
     title: redactText(input.title),
@@ -142,7 +214,8 @@ function normalizeDecision(input, opts) {
 function normalizeTask(input, opts) {
   input = input || {};
   const status = input.status != null && input.status !== '' ? String(input.status) : 'todo';
-  if (TASK_STATUS.indexOf(status) === -1) throw new Error("invalid task status: '" + status + "' (use " + TASK_STATUS.join('|') + ')');
+  if (TASK_STATUS.indexOf(status) === -1)
+    throw new Error("invalid task status: '" + status + "' (use " + TASK_STATUS.join('|') + ')');
   return {
     id: str(input.id) || genId('task'),
     title: redactText(input.title),
@@ -158,10 +231,14 @@ function normalizeTask(input, opts) {
 
 // ---- project.json ------------------------------------------------------------
 function defaultProject(pp, opts) {
-  return normalizeProject({
-    projectId: (opts && opts.projectId) || genUuid(),
-    name: (opts && opts.name) || path.basename(base(pp)),
-  }, pp, opts);
+  return normalizeProject(
+    {
+      projectId: (opts && opts.projectId) || genUuid(),
+      name: (opts && opts.name) || path.basename(base(pp)),
+    },
+    pp,
+    opts,
+  );
 }
 function saveProject(pp, project, opts) {
   const p = normalizeProject(project, pp, opts);
@@ -172,19 +249,31 @@ function saveProject(pp, project, opts) {
 function touch(pp, opts) {
   const existing = readJson(projectFile(pp));
   if (!existing) return;
-  try { saveProject(pp, existing, opts); } catch (e) { /* ignore */ }
+  try {
+    saveProject(pp, existing, opts);
+  } catch (e) {
+    /* ignore */
+  }
 }
 
 // ---- public API --------------------------------------------------------------
 function exists(projectPath) {
   const pp = base(projectPath);
-  try { return fs.statSync(projectFile(pp)).isFile(); } catch (e) { return false; }
+  try {
+    return fs.statSync(projectFile(pp)).isFile();
+  } catch (e) {
+    return false;
+  }
 }
 
 function defaultContextMd(pp) {
-  return '# ' + path.basename(base(pp)) + '\n\n' +
+  return (
+    '# ' +
+    path.basename(base(pp)) +
+    '\n\n' +
     '_Freeform project summary. Describe what this project is, its architecture, and anything a\n' +
-    'new AI session should know before touching the code._\n';
+    'new AI session should know before touching the code._\n'
+  );
 }
 
 // Create the `.keyflip/` folder + all four files (idempotent — never clobbers existing state).
@@ -198,9 +287,14 @@ function init(projectPath, opts) {
     if (repo) project.repositories = [repo];
     saveProject(pp, project, opts);
   }
-  if (readJson(decisionsFile(pp)) == null) writeJson(decisionsFile(pp), { schemaVersion: SCHEMA_VERSION, decisions: [] });
+  if (readJson(decisionsFile(pp)) == null)
+    writeJson(decisionsFile(pp), { schemaVersion: SCHEMA_VERSION, decisions: [] });
   if (readJson(tasksFile(pp)) == null) writeJson(tasksFile(pp), { schemaVersion: SCHEMA_VERSION, tasks: [] });
-  try { fs.accessSync(contextFile(pp)); } catch (e) { atomicWrite(contextFile(pp), defaultContextMd(pp), 0o600); }
+  try {
+    fs.accessSync(contextFile(pp));
+  } catch (e) {
+    atomicWrite(contextFile(pp), defaultContextMd(pp), 0o600);
+  }
   return read(pp, opts);
 }
 
@@ -214,7 +308,9 @@ function detectRepo(projectPath, opts) {
       const branch = str(r.stdout).trim();
       if (branch) return { path: '.', branch: branch };
     }
-  } catch (e) { /* no git / not a repo */ }
+  } catch (e) {
+    /* no git / not a repo */
+  }
   return null;
 }
 
@@ -225,7 +321,11 @@ function read(projectPath, opts) {
   const decisionsDoc = readJson(decisionsFile(pp)) || {};
   const tasksDoc = readJson(tasksFile(pp)) || {};
   let context = '';
-  try { context = fs.readFileSync(contextFile(pp), 'utf8'); } catch (e) { context = ''; }
+  try {
+    context = fs.readFileSync(contextFile(pp), 'utf8');
+  } catch (e) {
+    context = '';
+  }
   return {
     schemaVersion: SCHEMA_VERSION,
     projectPath: pp,
@@ -263,7 +363,9 @@ function readDecisions(pp) {
   const doc = readJson(decisionsFile(pp));
   return Array.isArray(doc && doc.decisions) ? doc.decisions.slice() : [];
 }
-function writeDecisions(pp, list) { writeJson(decisionsFile(pp), { schemaVersion: SCHEMA_VERSION, decisions: list }); }
+function writeDecisions(pp, list) {
+  writeJson(decisionsFile(pp), { schemaVersion: SCHEMA_VERSION, decisions: list });
+}
 function addDecision(projectPath, decision, opts) {
   const pp = base(projectPath);
   const rec = normalizeDecision(decision, opts);
@@ -294,7 +396,9 @@ function updateDecision(projectPath, id, patch, opts) {
 function removeDecision(projectPath, id, opts) {
   const pp = base(projectPath);
   const list = readDecisions(pp);
-  const kept = list.filter(function (d) { return !(d && d.id === str(id)); });
+  const kept = list.filter(function (d) {
+    return !(d && d.id === str(id));
+  });
   if (kept.length === list.length) return false;
   writeDecisions(pp, kept);
   touch(pp, opts);
@@ -306,7 +410,9 @@ function readTasks(pp) {
   const doc = readJson(tasksFile(pp));
   return Array.isArray(doc && doc.tasks) ? doc.tasks.slice() : [];
 }
-function writeTasks(pp, list) { writeJson(tasksFile(pp), { schemaVersion: SCHEMA_VERSION, tasks: list }); }
+function writeTasks(pp, list) {
+  writeJson(tasksFile(pp), { schemaVersion: SCHEMA_VERSION, tasks: list });
+}
 function addTask(projectPath, task, opts) {
   const pp = base(projectPath);
   const rec = normalizeTask(task, opts);
@@ -337,12 +443,15 @@ function updateTask(projectPath, id, patch, opts) {
 function removeTask(projectPath, id, opts) {
   const pp = base(projectPath);
   const list = readTasks(pp);
-  const kept = list.filter(function (t) { return !(t && t.id === str(id)); });
+  const kept = list.filter(function (t) {
+    return !(t && t.id === str(id));
+  });
   if (kept.length === list.length) return false;
   writeTasks(pp, kept);
   // If the removed task was the active one, clear the pointer.
   const proj = readJson(projectFile(pp));
-  if (proj && proj.activeTaskId === str(id)) saveProject(pp, mergeKnown(proj, { activeTaskId: null }, PROJECT_FIELDS), opts);
+  if (proj && proj.activeTaskId === str(id))
+    saveProject(pp, mergeKnown(proj, { activeTaskId: null }, PROJECT_FIELDS), opts);
   else touch(pp, opts);
   return true;
 }
@@ -353,7 +462,9 @@ function setActiveTask(projectPath, taskId, opts) {
   let next = null;
   if (taskId != null && taskId !== '') {
     next = str(taskId);
-    const known = readTasks(pp).some(function (t) { return t && t.id === next; });
+    const known = readTasks(pp).some(function (t) {
+      return t && t.id === next;
+    });
     if (!known) throw new Error("no such task: '" + next + "'");
   }
   return saveProject(pp, mergeKnown(project, { activeTaskId: next }, PROJECT_FIELDS), opts);
@@ -367,27 +478,61 @@ function setActiveTask(projectPath, taskId, opts) {
 function scanEnvVars(projectPath) {
   const pp = base(projectPath);
   const acc = Object.create(null);
-  let names; try { names = fs.readdirSync(pp); } catch (e) { return []; }
-  names.filter(function (n) { return /^\.env(\.[A-Za-z0-9_.\-]+)?$/.test(n); }).sort().forEach(function (n) {
-    const file = path.join(pp, n);
-    let raw; try { if (!fs.statSync(file).isFile()) return; raw = fs.readFileSync(file, 'utf8'); } catch (e) { return; }
-    let pendingComment = '';
-    str(raw).split('\n').forEach(function (line) {
-      const t = line.trim();
-      if (!t) { pendingComment = ''; return; }
-      if (t[0] === '#') { pendingComment = t.replace(/^#+\s*/, ''); return; }
-      const m = line.match(/^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/);
-      if (!m) { pendingComment = ''; return; }
-      const name = m[1];
-      const val = m[2].trim().replace(/^["']|["']$/g, ''); // used ONLY for the secret check, never stored
-      const isSecret = secretscan.isCredentialKey(name) || secretscan.looksSecret(val);
-      const desc = redactText(pendingComment);
-      if (!acc[name]) acc[name] = { name: name, description: desc, isSecret: isSecret };
-      else { if (isSecret) acc[name].isSecret = true; if (!acc[name].description && desc) acc[name].description = desc; }
-      pendingComment = '';
+  let names;
+  try {
+    names = fs.readdirSync(pp);
+  } catch (e) {
+    return [];
+  }
+  names
+    .filter(function (n) {
+      return /^\.env(\.[A-Za-z0-9_.\-]+)?$/.test(n);
+    })
+    .sort()
+    .forEach(function (n) {
+      const file = path.join(pp, n);
+      let raw;
+      try {
+        if (!fs.statSync(file).isFile()) return;
+        raw = fs.readFileSync(file, 'utf8');
+      } catch (e) {
+        return;
+      }
+      let pendingComment = '';
+      str(raw)
+        .split('\n')
+        .forEach(function (line) {
+          const t = line.trim();
+          if (!t) {
+            pendingComment = '';
+            return;
+          }
+          if (t[0] === '#') {
+            pendingComment = t.replace(/^#+\s*/, '');
+            return;
+          }
+          const m = line.match(/^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/);
+          if (!m) {
+            pendingComment = '';
+            return;
+          }
+          const name = m[1];
+          const val = m[2].trim().replace(/^["']|["']$/g, ''); // used ONLY for the secret check, never stored
+          const isSecret = secretscan.isCredentialKey(name) || secretscan.looksSecret(val);
+          const desc = redactText(pendingComment);
+          if (!acc[name]) acc[name] = { name: name, description: desc, isSecret: isSecret };
+          else {
+            if (isSecret) acc[name].isSecret = true;
+            if (!acc[name].description && desc) acc[name].description = desc;
+          }
+          pendingComment = '';
+        });
     });
-  });
-  return Object.keys(acc).sort().map(function (k) { return acc[k]; });
+  return Object.keys(acc)
+    .sort()
+    .map(function (k) {
+      return acc[k];
+    });
 }
 
 // Build the single context PACKAGE — project + context + decisions + tasks + requiredEnvironmentVariables.
@@ -409,7 +554,11 @@ function pack(projectPath, opts) {
 
 function countBy(arr, key) {
   const m = Object.create(null);
-  (arr || []).forEach(function (x) { if (!x) return; const k = String(x[key]); m[k] = (m[k] || 0) + 1; });
+  (arr || []).forEach(function (x) {
+    if (!x) return;
+    const k = String(x[key]);
+    m[k] = (m[k] || 0) + 1;
+  });
   return m;
 }
 
@@ -423,14 +572,50 @@ function summary(projectPath, opts) {
   lines.push(name + (p && p.description ? ' — ' + p.description : ''));
   if (p && Array.isArray(p.stack) && p.stack.length) lines.push('Stack: ' + p.stack.join(', '));
   const byStatus = countBy(c.tasks, 'status');
-  lines.push('Tasks: ' + c.tasks.length + ' (' + (byStatus.in_progress || 0) + ' in progress, ' +
-    (byStatus.todo || 0) + ' todo, ' + (byStatus.blocked || 0) + ' blocked, ' + (byStatus.done || 0) + ' done)');
+  lines.push(
+    'Tasks: ' +
+      c.tasks.length +
+      ' (' +
+      (byStatus.in_progress || 0) +
+      ' in progress, ' +
+      (byStatus.todo || 0) +
+      ' todo, ' +
+      (byStatus.blocked || 0) +
+      ' blocked, ' +
+      (byStatus.done || 0) +
+      ' done)',
+  );
   lines.push('Decisions: ' + c.decisions.length);
   if (c.activeTaskId) {
-    const at = c.tasks.filter(function (t) { return t && t.id === c.activeTaskId; })[0];
+    const at = c.tasks.filter(function (t) {
+      return t && t.id === c.activeTaskId;
+    })[0];
     lines.push('Active task: ' + (at ? at.title : c.activeTaskId));
   }
   return redactText(lines.join('\n'));
 }
 
-export { SCHEMA_VERSION, DECISION_STATUS, TASK_STATUS, dir, init, exists, read, setProject, patchProject, setContextMd, addDecision, updateDecision, removeDecision, addTask, updateTask, removeTask, setActiveTask, scanEnvVars, pack, summary, redactText, detectRepo };
+export {
+  SCHEMA_VERSION,
+  DECISION_STATUS,
+  TASK_STATUS,
+  dir,
+  init,
+  exists,
+  read,
+  setProject,
+  patchProject,
+  setContextMd,
+  addDecision,
+  updateDecision,
+  removeDecision,
+  addTask,
+  updateTask,
+  removeTask,
+  setActiveTask,
+  scanEnvVars,
+  pack,
+  summary,
+  redactText,
+  detectRepo,
+};

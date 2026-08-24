@@ -22,7 +22,12 @@ function snapshotLogins(ctx) {
   const cli = core.currentEmail(ctx) || null;
   let app = null;
   if (ctx.appDataDir) {
-    try { const d = appauth.detectAppAccount(ctx); if (d && d.email) app = d.email; } catch (e) { /* ignore */ }
+    try {
+      const d = appauth.detectAppAccount(ctx);
+      if (d && d.email) app = d.email;
+    } catch (e) {
+      /* ignore */
+    }
   }
   return { cli: cli, app: app };
 }

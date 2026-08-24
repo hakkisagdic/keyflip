@@ -4,7 +4,11 @@ import { atomicWrite } from './fsutil.js';
 
 // Lenient read: returns null for a missing OR unparseable file. Use for display.
 function readConfig(p) {
-  try { return JSON.parse(fs.readFileSync(p, 'utf8')); } catch (e) { return null; }
+  try {
+    return JSON.parse(fs.readFileSync(p, 'utf8'));
+  } catch (e) {
+    return null;
+  }
 }
 
 // Strict read for the write path: {} if the file is missing, but THROWS if the
@@ -28,7 +32,11 @@ function loadForWrite(p) {
 // Atomic write that preserves the original file mode and every unrelated key.
 function writeConfig(p, obj) {
   let mode = 0o600;
-  try { mode = fs.statSync(p).mode & 0o777; } catch (e) { /* new file */ }
+  try {
+    mode = fs.statSync(p).mode & 0o777;
+  } catch (e) {
+    /* new file */
+  }
   atomicWrite(p, JSON.stringify(obj, null, 2), mode);
 }
 

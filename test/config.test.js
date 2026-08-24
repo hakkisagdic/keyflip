@@ -14,7 +14,9 @@ import path from 'path';
 import * as config from '../src/config.js';
 import { makeCtx } from './helpers.js';
 
-function cpath(ctx) { return path.join(ctx.configDir, 'config.json'); }
+function cpath(ctx) {
+  return path.join(ctx.configDir, 'config.json');
+}
 
 // ---- defaults / describe ----------------------------------------------------
 
@@ -116,8 +118,16 @@ test('setting one key preserves the others and stores keys sorted', function () 
   config.set(ctx, 'notify.desktop', 'on');
   const raw = fs.readFileSync(cpath(ctx), 'utf8');
   const parsed = JSON.parse(raw);
-  assert.deepStrictEqual(parsed, { 'autoswitch.strategy': 'next-available', 'autoswitch.threshold': 80, 'notify.desktop': true });
-  assert.deepStrictEqual(Object.keys(parsed), ['autoswitch.strategy', 'autoswitch.threshold', 'notify.desktop'], 'keys written sorted');
+  assert.deepStrictEqual(parsed, {
+    'autoswitch.strategy': 'next-available',
+    'autoswitch.threshold': 80,
+    'notify.desktop': true,
+  });
+  assert.deepStrictEqual(
+    Object.keys(parsed),
+    ['autoswitch.strategy', 'autoswitch.threshold', 'notify.desktop'],
+    'keys written sorted',
+  );
 });
 
 test('readAll returns only stored overrides (null-proto), not defaults', function () {
@@ -132,10 +142,22 @@ test('readAll returns only stored overrides (null-proto), not defaults', functio
 
 test('hostile: unknown key is rejected by get/set/unset (nothing written)', function () {
   const ctx = makeCtx();
-  assert.throws(function () { config.get(ctx, 'does.not.exist'); }, /unknown config key/);
-  assert.throws(function () { config.set(ctx, 'does.not.exist', 'x'); }, /unknown config key/);
-  assert.throws(function () { config.unset(ctx, 'does.not.exist'); }, /unknown config key/);
-  assert.throws(function () { config.get(ctx, '__proto__'); }, /unknown config key/, 'reserved key is not known');
+  assert.throws(function () {
+    config.get(ctx, 'does.not.exist');
+  }, /unknown config key/);
+  assert.throws(function () {
+    config.set(ctx, 'does.not.exist', 'x');
+  }, /unknown config key/);
+  assert.throws(function () {
+    config.unset(ctx, 'does.not.exist');
+  }, /unknown config key/);
+  assert.throws(
+    function () {
+      config.get(ctx, '__proto__');
+    },
+    /unknown config key/,
+    'reserved key is not known',
+  );
   assert.strictEqual(fs.existsSync(cpath(ctx)), false, 'no write on rejection');
 });
 
@@ -143,23 +165,55 @@ test('hostile: unknown key is rejected by get/set/unset (nothing written)', func
 
 test('hostile: bad type or out-of-range value throws and never writes', function () {
   const ctx = makeCtx();
-  assert.throws(function () { config.set(ctx, 'autoswitch.threshold', 'abc'); }, /expected an integer/);
-  assert.throws(function () { config.set(ctx, 'autoswitch.threshold', '9.5'); }, /expected an integer/);
-  assert.throws(function () { config.set(ctx, 'autoswitch.threshold', '150'); }, /must be <= 100/);
-  assert.throws(function () { config.set(ctx, 'autoswitch.threshold', '-1'); }, /must be >= 0/);
-  assert.throws(function () { config.set(ctx, 'usage.cacheTtlSeconds', '5000'); }, /must be <= 3600/);
-  assert.throws(function () { config.set(ctx, 'notify.desktop', 'maybe'); }, /expected a boolean/);
-  assert.throws(function () { config.set(ctx, 'autoswitch.strategy', 'purple'); }, /must be one of/);
-  assert.throws(function () { config.set(ctx, 'autoswitch.threshold', null); }, /a value is required/);
-  assert.throws(function () { config.set(ctx, 'autoswitch.threshold', undefined); }, /a value is required/);
+  assert.throws(function () {
+    config.set(ctx, 'autoswitch.threshold', 'abc');
+  }, /expected an integer/);
+  assert.throws(function () {
+    config.set(ctx, 'autoswitch.threshold', '9.5');
+  }, /expected an integer/);
+  assert.throws(function () {
+    config.set(ctx, 'autoswitch.threshold', '150');
+  }, /must be <= 100/);
+  assert.throws(function () {
+    config.set(ctx, 'autoswitch.threshold', '-1');
+  }, /must be >= 0/);
+  assert.throws(function () {
+    config.set(ctx, 'usage.cacheTtlSeconds', '5000');
+  }, /must be <= 3600/);
+  assert.throws(function () {
+    config.set(ctx, 'notify.desktop', 'maybe');
+  }, /expected a boolean/);
+  assert.throws(function () {
+    config.set(ctx, 'autoswitch.strategy', 'purple');
+  }, /must be one of/);
+  assert.throws(function () {
+    config.set(ctx, 'autoswitch.threshold', null);
+  }, /a value is required/);
+  assert.throws(function () {
+    config.set(ctx, 'autoswitch.threshold', undefined);
+  }, /a value is required/);
   assert.strictEqual(fs.existsSync(cpath(ctx)), false, 'no write on any rejection');
 });
 
 test('hostile: string value rejects control chars and over-length input', function () {
   const ctx = makeCtx();
-  assert.throws(function () { config.set(ctx, 'autoswitch.group', 'ab'); }, /control characters/, 'ANSI ESC refused');
-  assert.throws(function () { config.set(ctx, 'autoswitch.group', 'a\nb'); }, /control characters/, 'newline refused');
-  assert.throws(function () { config.set(ctx, 'autoswitch.group', 'x'.repeat(1025)); }, /too long/);
+  assert.throws(
+    function () {
+      config.set(ctx, 'autoswitch.group', 'ab');
+    },
+    /control characters/,
+    'ANSI ESC refused',
+  );
+  assert.throws(
+    function () {
+      config.set(ctx, 'autoswitch.group', 'a\nb');
+    },
+    /control characters/,
+    'newline refused',
+  );
+  assert.throws(function () {
+    config.set(ctx, 'autoswitch.group', 'x'.repeat(1025));
+  }, /too long/);
   assert.strictEqual(fs.existsSync(cpath(ctx)), false);
 });
 
@@ -167,19 +221,22 @@ test('hostile: string value rejects control chars and over-length input', functi
 
 test('hostile: a tampered config.json cannot pollute prototypes and bad entries are dropped', function () {
   const ctx = makeCtx();
-  fs.writeFileSync(cpath(ctx), JSON.stringify({
-    __proto__: { polluted: true },
-    constructor: 'nope',
-    'autoswitch.threshold': 55,          // valid -> survives
-    'autoswitch.strategy': 'bogus',      // invalid enum -> dropped (default)
-    'usage.cacheTtlSeconds': 99999,      // out of range -> dropped (default)
-    'ui.color': 5,                       // wrong type (not bool) -> dropped
-    'notify.desktop': 'true',            // wrong type (string not bool) -> dropped
-    'totally.unknown': 1,                // unknown key -> dropped
-  }));
+  fs.writeFileSync(
+    cpath(ctx),
+    JSON.stringify({
+      __proto__: { polluted: true },
+      constructor: 'nope',
+      'autoswitch.threshold': 55, // valid -> survives
+      'autoswitch.strategy': 'bogus', // invalid enum -> dropped (default)
+      'usage.cacheTtlSeconds': 99999, // out of range -> dropped (default)
+      'ui.color': 5, // wrong type (not bool) -> dropped
+      'notify.desktop': 'true', // wrong type (string not bool) -> dropped
+      'totally.unknown': 1, // unknown key -> dropped
+    }),
+  );
   const all = config.readAll(ctx);
   assert.strictEqual(Object.getPrototypeOf(all), null, 'readAll is null-proto');
-  assert.strictEqual(({}).polluted, undefined, 'Object.prototype was not polluted');
+  assert.strictEqual({}.polluted, undefined, 'Object.prototype was not polluted');
   assert.deepStrictEqual(Object.keys(all), ['autoswitch.threshold'], 'only the valid override survives');
   assert.strictEqual(all['autoswitch.threshold'], 55);
   // effective values fall back to defaults for every dropped/invalid key
@@ -191,14 +248,21 @@ test('hostile: a tampered config.json cannot pollute prototypes and bad entries 
 
 test('a subsequent set rewrites the file clean — junk/invalid keys are pruned', function () {
   const ctx = makeCtx();
-  fs.writeFileSync(cpath(ctx), JSON.stringify({
-    'autoswitch.strategy': 'best',   // valid, kept
-    'bad.key': 1,                    // unknown, pruned
-    'ui.color': 'yes',               // wrong stored type, pruned then irrelevant
-  }));
+  fs.writeFileSync(
+    cpath(ctx),
+    JSON.stringify({
+      'autoswitch.strategy': 'best', // valid, kept
+      'bad.key': 1, // unknown, pruned
+      'ui.color': 'yes', // wrong stored type, pruned then irrelevant
+    }),
+  );
   config.set(ctx, 'autoswitch.threshold', '70');
   const parsed = JSON.parse(fs.readFileSync(cpath(ctx), 'utf8'));
-  assert.deepStrictEqual(parsed, { 'autoswitch.strategy': 'best', 'autoswitch.threshold': 70 }, 'only valid keys survive the rewrite');
+  assert.deepStrictEqual(
+    parsed,
+    { 'autoswitch.strategy': 'best', 'autoswitch.threshold': 70 },
+    'only valid keys survive the rewrite',
+  );
 });
 
 test('corrupt config.json: reads degrade to defaults, but writes REFUSE to clobber', function () {
@@ -206,8 +270,20 @@ test('corrupt config.json: reads degrade to defaults, but writes REFUSE to clobb
   fs.writeFileSync(cpath(ctx), '{ this is not json');
   assert.deepStrictEqual(config.readAll(ctx), Object.create(null), 'read degrades to empty');
   assert.strictEqual(config.get(ctx, 'autoswitch.strategy'), 'best', 'get falls back to default');
-  assert.throws(function () { config.set(ctx, 'autoswitch.strategy', 'next-available'); }, /not valid JSON/, 'set refuses to overwrite a corrupt file');
-  assert.throws(function () { config.unset(ctx, 'autoswitch.strategy'); }, /not valid JSON/, 'unset refuses too');
+  assert.throws(
+    function () {
+      config.set(ctx, 'autoswitch.strategy', 'next-available');
+    },
+    /not valid JSON/,
+    'set refuses to overwrite a corrupt file',
+  );
+  assert.throws(
+    function () {
+      config.unset(ctx, 'autoswitch.strategy');
+    },
+    /not valid JSON/,
+    'unset refuses too',
+  );
   assert.strictEqual(fs.readFileSync(cpath(ctx), 'utf8'), '{ this is not json', 'corrupt file left untouched');
 });
 

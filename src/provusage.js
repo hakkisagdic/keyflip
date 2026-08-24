@@ -42,9 +42,9 @@ function defaultRunner(cmd, args, opts) {
       maxBuffer: 8 * 1024 * 1024,
     });
     if (r.error) return { code: -1, stdout: '', stderr: String(r.error.message || r.error), error: true };
-    return { code: (typeof r.status === 'number' ? r.status : -1), stdout: r.stdout || '', stderr: r.stderr || '' };
+    return { code: typeof r.status === 'number' ? r.status : -1, stdout: r.stdout || '', stderr: r.stderr || '' };
   } catch (e) {
-    return { code: -1, stdout: '', stderr: String(e && e.message || e), error: true };
+    return { code: -1, stdout: '', stderr: String((e && e.message) || e), error: true };
   }
 }
 
@@ -58,25 +58,59 @@ function resolveDeps(deps) {
     // `node --test`) that merely forgot to inject one. A null fetch makes api reads 'unknown'.
     // Production callers (the CLI) pass fetch explicitly; tests pass a controlled stub.
     fetch: deps.fetch || null,
-    now: deps.now || function () { return Date.now(); },
+    now:
+      deps.now ||
+      function () {
+        return Date.now();
+      },
     env: deps.env || process.env,
     // Lets the claude provider delegate to keyflip's existing usage.js without
     // duplicating Claude logic — and lets tests inject a stub.
-    requireUsage: deps.requireUsage || function () { return _usage; },
+    requireUsage:
+      deps.requireUsage ||
+      function () {
+        return _usage;
+      },
   };
 }
 
 // ---------------------------------------------------------------------------
 // Small, safe utilities (never throw).
 // ---------------------------------------------------------------------------
-function safe(fn, d) { try { return fn(); } catch (e) { return d; } }
-function existsAbs(p) { return safe(function () { return fs.existsSync(p); }, false); }
-function homePath(ctx, rel) { return path.join(ctx.home, rel); }
-function existsHome(ctx, rel) { return existsAbs(homePath(ctx, rel)); }
-function readJson(abs) { return safe(function () { return JSON.parse(fs.readFileSync(abs, 'utf8')); }, null); }
-function isObj(v) { return v && typeof v === 'object' && !Array.isArray(v); }
-function num(v) { return typeof v === 'number' && isFinite(v) ? v : null; }
-function clampPct(v) { const n = num(v); if (n === null) return null; return Math.max(0, Math.min(100, n)); }
+function safe(fn, d) {
+  try {
+    return fn();
+  } catch (e) {
+    return d;
+  }
+}
+function existsAbs(p) {
+  return safe(function () {
+    return fs.existsSync(p);
+  }, false);
+}
+function homePath(ctx, rel) {
+  return path.join(ctx.home, rel);
+}
+function existsHome(ctx, rel) {
+  return existsAbs(homePath(ctx, rel));
+}
+function readJson(abs) {
+  return safe(function () {
+    return JSON.parse(fs.readFileSync(abs, 'utf8'));
+  }, null);
+}
+function isObj(v) {
+  return v && typeof v === 'object' && !Array.isArray(v);
+}
+function num(v) {
+  return typeof v === 'number' && isFinite(v) ? v : null;
+}
+function clampPct(v) {
+  const n = num(v);
+  if (n === null) return null;
+  return Math.max(0, Math.min(100, n));
+}
 
 // Read only the tail of a (possibly huge) file, so scanning a long JSONL session
 // log stays cheap. Returns a string (best-effort); '' on any error.
@@ -94,12 +128,18 @@ function readTail(abs, maxBytes) {
     fs.readSync(fd, buf, 0, len, start);
     let s = buf.toString('utf8');
     // If we cut into the middle of a line, drop the first partial line.
-    if (start > 0) { const nl = s.indexOf('\n'); if (nl !== -1) s = s.slice(nl + 1); }
+    if (start > 0) {
+      const nl = s.indexOf('\n');
+      if (nl !== -1) s = s.slice(nl + 1);
+    }
     return s;
   } catch (e) {
     return '';
   } finally {
-    if (fd !== null) safe(function () { fs.closeSync(fd); });
+    if (fd !== null)
+      safe(function () {
+        fs.closeSync(fd);
+      });
   }
 }
 
@@ -112,7 +152,11 @@ function findFiles(dir, re, cap) {
   while (stack.length && out.length < cap) {
     const cur = stack.pop();
     let ents;
-    try { ents = fs.readdirSync(cur, { withFileTypes: true }); } catch (e) { continue; }
+    try {
+      ents = fs.readdirSync(cur, { withFileTypes: true });
+    } catch (e) {
+      continue;
+    }
     for (let i = 0; i < ents.length; i++) {
       const e = ents[i];
       const full = path.join(cur, e.name);
@@ -133,7 +177,7 @@ function windowNameForMinutes(minutes) {
   // tolerant buckets (providers report slightly-off durations)
   if (m <= 90) return '1h';
   if (m <= 360) return '5h';
-  if (m <= 1500) return 'daily';   // ~1440
+  if (m <= 1500) return 'daily'; // ~1440
   if (m <= 12000) return 'weekly'; // ~10080
   if (m <= 50000) return 'monthly'; // ~43200
   return m + 'm';
@@ -170,16 +214,24 @@ function resetWindow(input, deps) {
   } else if (typeof input === 'number' && isFinite(input)) {
     ms = input >= 1e12 ? input : input * 1000;
   } else if (typeof input === 'string') {
-    const t = Date.parse(input); ms = isNaN(t) ? null : t;
+    const t = Date.parse(input);
+    ms = isNaN(t) ? null : t;
   } else if (isObj(input)) {
     if (typeof input.ms === 'number' && isFinite(input.ms)) ms = input.ms;
     else if (typeof input.unixSeconds === 'number' && isFinite(input.unixSeconds)) ms = input.unixSeconds * 1000;
     else if (typeof input.inSeconds === 'number' && isFinite(input.inSeconds)) ms = nowMs + input.inSeconds * 1000;
-    else if (typeof input.iso === 'string') { const t = Date.parse(input.iso); ms = isNaN(t) ? null : t; }
+    else if (typeof input.iso === 'string') {
+      const t = Date.parse(input.iso);
+      ms = isNaN(t) ? null : t;
+    }
   }
   if (ms === null) return { resetsAt: null, human: null };
   let iso = null;
-  try { iso = new Date(ms).toISOString(); } catch (e) { return { resetsAt: null, human: null }; }
+  try {
+    iso = new Date(ms).toISOString();
+  } catch (e) {
+    return { resetsAt: null, human: null };
+  }
   return { resetsAt: iso, human: humanizeUntil(ms - nowMs) };
 }
 
@@ -197,7 +249,7 @@ async function httpGetJson(url, headers, deps) {
   try {
     const res = await deps.fetch(url, {
       headers: headers || {},
-      signal: (typeof AbortSignal !== 'undefined' && AbortSignal.timeout) ? AbortSignal.timeout(6000) : undefined,
+      signal: typeof AbortSignal !== 'undefined' && AbortSignal.timeout ? AbortSignal.timeout(6000) : undefined,
     });
     if (!res) return { ok: false, status: null };
     if (!res.ok) return { ok: false, status: res.status || null };
@@ -212,7 +264,7 @@ async function httpGetJson(url, headers, deps) {
 // and never a leak of the (absent) value.
 function keyFromEnv(deps, envName) {
   const v = deps.env ? deps.env[envName] : undefined;
-  return (typeof v === 'string' && v.length) ? v : null;
+  return typeof v === 'string' && v.length ? v : null;
 }
 
 // ===========================================================================
@@ -241,8 +293,10 @@ function codexReadWindow(w, deps) {
 function codexParseSnapshot(rl, deps) {
   if (!isObj(rl)) return null;
   const windows = [];
-  const p = codexReadWindow(rl.primary, deps); if (p) windows.push(p);
-  const s = codexReadWindow(rl.secondary, deps); if (s) windows.push(s);
+  const p = codexReadWindow(rl.primary, deps);
+  if (p) windows.push(p);
+  const s = codexReadWindow(rl.secondary, deps);
+  if (s) windows.push(s);
   if (!windows.length) return null;
   return windows;
 }
@@ -262,10 +316,12 @@ function codexLatestSnapshot(ctx, deps) {
     for (let li = lines.length - 1; li >= 0; li--) {
       const line = lines[li].trim();
       if (!line) continue;
-      const obj = safe(function () { return JSON.parse(line); }, null);
+      const obj = safe(function () {
+        return JSON.parse(line);
+      }, null);
       if (!obj) continue;
       const payload = isObj(obj.payload) ? obj.payload : obj;
-      const rl = isObj(payload.rate_limits) ? payload.rate_limits : (isObj(obj.rate_limits) ? obj.rate_limits : null);
+      const rl = isObj(payload.rate_limits) ? payload.rate_limits : isObj(obj.rate_limits) ? obj.rate_limits : null;
       if (rl) return rl;
     }
   }
@@ -273,8 +329,12 @@ function codexLatestSnapshot(ctx, deps) {
 }
 
 const codexProvider = {
-  id: 'codex', label: 'Codex CLI (OpenAI)', kind: 'file',
-  detect: function (ctx, deps) { return { present: existsAbs(codexHome(ctx, deps)) }; },
+  id: 'codex',
+  label: 'Codex CLI (OpenAI)',
+  kind: 'file',
+  detect: function (ctx, deps) {
+    return { present: existsAbs(codexHome(ctx, deps)) };
+  },
   read: function (ctx, deps) {
     const rl = codexLatestSnapshot(ctx, deps);
     if (!rl) return { status: 'unknown', windows: [] };
@@ -296,15 +356,23 @@ const codexProvider = {
 //   or a flat { used_percent, window_minutes, resets_at }.
 // ===========================================================================
 function geminiParse(payload, deps) {
-  if (typeof payload === 'string') payload = safe(function () { return JSON.parse(payload); }, null);
+  if (typeof payload === 'string')
+    payload = safe(function () {
+      return JSON.parse(payload);
+    }, null);
   if (!isObj(payload)) return null;
-  const rows = Array.isArray(payload.windows) ? payload.windows
-    : (Array.isArray(payload.quotas) ? payload.quotas
-      : (num(payload.used_percent) !== null || num(payload.usedPct) !== null ? [payload] : null));
+  const rows = Array.isArray(payload.windows)
+    ? payload.windows
+    : Array.isArray(payload.quotas)
+      ? payload.quotas
+      : num(payload.used_percent) !== null || num(payload.usedPct) !== null
+        ? [payload]
+        : null;
   if (!rows) return null;
   const windows = [];
   for (let i = 0; i < rows.length; i++) {
-    const r = rows[i]; if (!isObj(r)) continue;
+    const r = rows[i];
+    if (!isObj(r)) continue;
     const pct = num(r.used_percent) !== null ? r.used_percent : r.usedPct;
     if (num(pct) === null) continue;
     const name = typeof r.name === 'string' ? r.name : windowNameForMinutes(r.window_minutes);
@@ -319,14 +387,24 @@ function geminiParse(payload, deps) {
 }
 
 const geminiProvider = {
-  id: 'gemini', label: 'Gemini CLI', kind: 'cli',
-  detect: function (ctx, deps) { return { present: existsHome(ctx, '.gemini') }; },
+  id: 'gemini',
+  label: 'Gemini CLI',
+  kind: 'cli',
+  detect: function (ctx, deps) {
+    return { present: existsHome(ctx, '.gemini') };
+  },
   read: function (ctx, deps) {
     const r = deps.runner('gemini', ['usage', '--json'], { timeoutMs: 5000 });
     if (!r || r.code !== 0 || !r.stdout) return { status: 'unknown', windows: [] };
     const windows = geminiParse(r.stdout, deps);
     if (!windows) return { status: 'unknown', windows: [] };
-    return { status: 'ok', windows: windows, raw: safe(function () { return JSON.parse(r.stdout); }, null) };
+    return {
+      status: 'ok',
+      windows: windows,
+      raw: safe(function () {
+        return JSON.parse(r.stdout);
+      }, null),
+    };
   },
 };
 
@@ -346,9 +424,14 @@ function opencodeUsagePath(ctx) {
   return null;
 }
 const opencodeProvider = {
-  id: 'opencode', label: 'opencode', kind: 'file',
+  id: 'opencode',
+  label: 'opencode',
+  kind: 'file',
   detect: function (ctx, deps) {
-    return { present: existsHome(ctx, path.join('.local', 'share', 'opencode')) || existsHome(ctx, path.join('.config', 'opencode')) };
+    return {
+      present:
+        existsHome(ctx, path.join('.local', 'share', 'opencode')) || existsHome(ctx, path.join('.config', 'opencode')),
+    };
   },
   read: function (ctx, deps) {
     const up = opencodeUsagePath(ctx);
@@ -378,9 +461,13 @@ function apiUnknownForStatus(status) {
 // usedPct = usage/limit*100 when limit is a positive number (null limit = no cap).
 // Real, documented endpoint; live correctness is NEEDS-VERIFICATION (no key here).
 const openrouterProvider = {
-  id: 'openrouter', label: 'OpenRouter', kind: 'api',
+  id: 'openrouter',
+  label: 'OpenRouter',
+  kind: 'api',
   envVar: 'OPENROUTER_API_KEY',
-  detect: function (ctx, deps) { return { present: !!keyFromEnv(deps, 'OPENROUTER_API_KEY') }; },
+  detect: function (ctx, deps) {
+    return { present: !!keyFromEnv(deps, 'OPENROUTER_API_KEY') };
+  },
   read: async function (ctx, deps) {
     const key = keyFromEnv(deps, 'OPENROUTER_API_KEY');
     if (!key) return { status: 'unauthenticated', windows: [] };
@@ -392,7 +479,12 @@ const openrouterProvider = {
     const used = num(d.usage);
     let pct = null;
     if (limit !== null && limit > 0 && used !== null) pct = (used / limit) * 100;
-    const safeRaw = { limit: limit, usage: used, limit_remaining: num(d.limit_remaining), is_free_tier: !!d.is_free_tier };
+    const safeRaw = {
+      limit: limit,
+      usage: used,
+      limit_remaining: num(d.limit_remaining),
+      is_free_tier: !!d.is_free_tier,
+    };
     return { status: 'ok', windows: [makeWindow('credits', pct, null, deps)], raw: safeRaw };
   },
 };
@@ -401,7 +493,9 @@ const openrouterProvider = {
 // injected fetch. Endpoint + shape are NEEDS-VERIFICATION. Tolerant parse of a
 // per-model map { "<model>": { numRequests, maxRequestUsage } } or { used_percent }.
 const cursorProvider = {
-  id: 'cursor', label: 'Cursor', kind: 'api',
+  id: 'cursor',
+  label: 'Cursor',
+  kind: 'api',
   envVar: 'CURSOR_API_KEY',
   detect: function (ctx, deps) {
     return { present: existsHome(ctx, '.cursor') || !!keyFromEnv(deps, 'CURSOR_API_KEY') };
@@ -413,12 +507,24 @@ const cursorProvider = {
     if (!r.ok) return { status: apiUnknownForStatus(r.status), windows: [] };
     const d = r.data;
     if (num(d && d.used_percent) !== null) {
-      return { status: 'ok', windows: [makeWindow('monthly', d.used_percent, d.resets_at != null ? { unixSeconds: d.resets_at } : null, deps)], raw: d };
+      return {
+        status: 'ok',
+        windows: [
+          makeWindow('monthly', d.used_percent, d.resets_at != null ? { unixSeconds: d.resets_at } : null, deps),
+        ],
+        raw: d,
+      };
     }
     if (isObj(d) && isObj(d['gpt-4'])) {
-      const g = d['gpt-4']; const used = num(g.numRequests); const max = num(g.maxRequestUsage);
-      const pct = (used !== null && max !== null && max > 0) ? (used / max) * 100 : null;
-      return { status: 'ok', windows: [makeWindow('monthly', pct, null, deps)], raw: { numRequests: used, maxRequestUsage: max } };
+      const g = d['gpt-4'];
+      const used = num(g.numRequests);
+      const max = num(g.maxRequestUsage);
+      const pct = used !== null && max !== null && max > 0 ? (used / max) * 100 : null;
+      return {
+        status: 'ok',
+        windows: [makeWindow('monthly', pct, null, deps)],
+        raw: { numRequests: used, maxRequestUsage: max },
+      };
     }
     return { status: 'unknown', windows: [] };
   },
@@ -428,22 +534,36 @@ const cursorProvider = {
 // injected fetch, NEEDS-VERIFICATION. Tolerant parse of { quota_snapshots } or
 // { used_percent }.
 const copilotProvider = {
-  id: 'copilot', label: 'GitHub Copilot', kind: 'api',
+  id: 'copilot',
+  label: 'GitHub Copilot',
+  kind: 'api',
   envVar: 'GITHUB_COPILOT_TOKEN',
   detect: function (ctx, deps) {
     return {
-      present: existsHome(ctx, path.join('.config', 'github-copilot')) || existsHome(ctx, '.copilot') ||
+      present:
+        existsHome(ctx, path.join('.config', 'github-copilot')) ||
+        existsHome(ctx, '.copilot') ||
         !!keyFromEnv(deps, 'GITHUB_COPILOT_TOKEN'),
     };
   },
   read: async function (ctx, deps) {
     const key = keyFromEnv(deps, 'GITHUB_COPILOT_TOKEN');
     if (!key) return { status: 'unknown', windows: [] };
-    const r = await httpGetJson('https://api.github.com/copilot_internal/user', { Authorization: 'Bearer ' + key }, deps);
+    const r = await httpGetJson(
+      'https://api.github.com/copilot_internal/user',
+      { Authorization: 'Bearer ' + key },
+      deps,
+    );
     if (!r.ok) return { status: apiUnknownForStatus(r.status), windows: [] };
     const d = r.data;
     if (num(d && d.used_percent) !== null) {
-      return { status: 'ok', windows: [makeWindow('monthly', d.used_percent, d.resets_at != null ? { unixSeconds: d.resets_at } : null, deps)], raw: d };
+      return {
+        status: 'ok',
+        windows: [
+          makeWindow('monthly', d.used_percent, d.resets_at != null ? { unixSeconds: d.resets_at } : null, deps),
+        ],
+        raw: d,
+      };
     }
     return { status: 'unknown', windows: [] };
   },
@@ -464,10 +584,14 @@ function mapClaudeStatus(s) {
   return 'unknown';
 }
 const claudeProvider = {
-  id: 'claude', label: 'Claude (Anthropic)', kind: 'delegate',
+  id: 'claude',
+  label: 'Claude (Anthropic)',
+  kind: 'delegate',
   detect: function (ctx, deps) {
     // Present if keyflip has any Claude credential surface for the active account.
-    const hasLive = safe(function () { return !!(ctx.store && ctx.store.getLive && ctx.store.getLive()); }, false);
+    const hasLive = safe(function () {
+      return !!(ctx.store && ctx.store.getLive && ctx.store.getLive());
+    }, false);
     const hasCfg = !!(ctx.claudeConfigPath && existsAbs(ctx.claudeConfigPath));
     return { present: hasLive || hasCfg };
   },
@@ -475,7 +599,9 @@ const claudeProvider = {
     const usageMod = deps.requireUsage();
     const account = ctx.account || 'default';
     const res = await usageMod.usageForProfiles(ctx, [account], {
-      fetch: deps.fetch, nowMs: deps.now(), liveFor: account,
+      fetch: deps.fetch,
+      nowMs: deps.now(),
+      liveFor: account,
     });
     const info = res && res[account];
     if (!info) return { status: 'unknown', windows: [] };
@@ -487,10 +613,12 @@ const claudeProvider = {
         windows.push(makeWindow('5h', u.fiveHour.pct, u.fiveHour.resetsAt ? { iso: u.fiveHour.resetsAt } : null, deps));
       }
       if (isObj(u.sevenDay) && num(u.sevenDay.pct) !== null) {
-        windows.push(makeWindow('weekly', u.sevenDay.pct, u.sevenDay.resetsAt ? { iso: u.sevenDay.resetsAt } : null, deps));
+        windows.push(
+          makeWindow('weekly', u.sevenDay.pct, u.sevenDay.resetsAt ? { iso: u.sevenDay.resetsAt } : null, deps),
+        );
       }
     }
-    return { status: (status === 'ok' && !windows.length) ? 'unknown' : status, windows: windows, raw: null };
+    return { status: status === 'ok' && !windows.length ? 'unknown' : status, windows: windows, raw: null };
   },
 };
 
@@ -508,8 +636,12 @@ const PROVIDERS = [
 ];
 
 const BY_ID = Object.create(null);
-PROVIDERS.forEach(function (p) { BY_ID[p.id] = p; });
-function get(id) { return (typeof id === 'string' && BY_ID[id]) ? BY_ID[id] : null; }
+PROVIDERS.forEach(function (p) {
+  BY_ID[p.id] = p;
+});
+function get(id) {
+  return typeof id === 'string' && BY_ID[id] ? BY_ID[id] : null;
+}
 
 // Normalize the OUTPUT of a provider.read so the shape is IDENTICAL across every
 // provider even if a provider returns something partial. Never throws.
@@ -517,14 +649,16 @@ function normalizeRead(res) {
   const ok = isObj(res) ? res : {};
   const validStatus = { ok: 1, throttled: 1, unknown: 1, unauthenticated: 1 };
   const status = validStatus[ok.status] ? ok.status : 'unknown';
-  const windows = Array.isArray(ok.windows) ? ok.windows.map(function (w) {
-    return {
-      name: (w && typeof w.name === 'string') ? w.name : 'window',
-      usedPct: (w && num(w.usedPct) !== null) ? w.usedPct : null,
-      resetsAt: (w && typeof w.resetsAt === 'string') ? w.resetsAt : null,
-      human: (w && typeof w.human === 'string') ? w.human : null,
-    };
-  }) : [];
+  const windows = Array.isArray(ok.windows)
+    ? ok.windows.map(function (w) {
+        return {
+          name: w && typeof w.name === 'string' ? w.name : 'window',
+          usedPct: w && num(w.usedPct) !== null ? w.usedPct : null,
+          resetsAt: w && typeof w.resetsAt === 'string' ? w.resetsAt : null,
+          human: w && typeof w.human === 'string' ? w.human : null,
+        };
+      })
+    : [];
   const out = { status: status, windows: windows };
   if (ok.raw !== undefined) out.raw = ok.raw;
   return out;
@@ -536,7 +670,11 @@ async function detectOne(ctx, id, deps) {
   const p = get(id);
   if (!p) return null;
   let det;
-  try { det = await p.detect(ctx, d); } catch (e) { det = { present: false }; }
+  try {
+    det = await p.detect(ctx, d);
+  } catch (e) {
+    det = { present: false };
+  }
   return { id: p.id, label: p.label, kind: p.kind, present: !!(det && det.present) };
 }
 
@@ -547,11 +685,20 @@ async function readOne(ctx, id, deps) {
   const p = get(id);
   if (!p) return null;
   let present = false;
-  try { const det = await p.detect(ctx, d); present = !!(det && det.present); } catch (e) { present = false; }
+  try {
+    const det = await p.detect(ctx, d);
+    present = !!(det && det.present);
+  } catch (e) {
+    present = false;
+  }
   const base = { id: p.id, label: p.label, kind: p.kind, present: present };
   if (!present) return Object.assign(base, { status: 'unknown', windows: [] });
   let res;
-  try { res = await p.read(ctx, d); } catch (e) { res = { status: 'unknown', windows: [] }; }
+  try {
+    res = await p.read(ctx, d);
+  } catch (e) {
+    res = { status: 'unknown', windows: [] };
+  }
   return Object.assign(base, normalizeRead(res));
 }
 
@@ -563,13 +710,35 @@ async function readAll(ctx, deps) {
   for (let i = 0; i < PROVIDERS.length; i++) {
     const p = PROVIDERS[i];
     let present = false;
-    try { const det = await p.detect(ctx, d); present = !!(det && det.present); } catch (e) { present = false; }
+    try {
+      const det = await p.detect(ctx, d);
+      present = !!(det && det.present);
+    } catch (e) {
+      present = false;
+    }
     if (!present) continue;
     let res;
-    try { res = await p.read(ctx, d); } catch (e) { res = { status: 'unknown', windows: [] }; }
+    try {
+      res = await p.read(ctx, d);
+    } catch (e) {
+      res = { status: 'unknown', windows: [] };
+    }
     out.push(Object.assign({ id: p.id, label: p.label, kind: p.kind, present: true }, normalizeRead(res)));
   }
   return out;
 }
 
-export { PROVIDERS, get, detectOne, readOne, readAll, resetWindow, windowNameForMinutes, humanizeUntil, makeWindow, normalizeRead, codexParseSnapshot, geminiParse };
+export {
+  PROVIDERS,
+  get,
+  detectOne,
+  readOne,
+  readAll,
+  resetWindow,
+  windowNameForMinutes,
+  humanizeUntil,
+  makeWindow,
+  normalizeRead,
+  codexParseSnapshot,
+  geminiParse,
+};

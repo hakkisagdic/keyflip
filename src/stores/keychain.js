@@ -11,26 +11,28 @@ import { run as defaultRun } from '../exec.js';
 const SERVICE_LIVE = 'Claude Code-credentials'; // the item Claude itself manages
 const PROFILE_PREFIX = 'keyflip:';
 const SECURITY = '/usr/bin/security';
-const NOT_FOUND = 44;          // errSecItemNotFound
-const TIMEOUT_MS = 5000;       // a locked keychain must not hang the CLI
+const NOT_FOUND = 44; // errSecItemNotFound
+const TIMEOUT_MS = 5000; // a locked keychain must not hang the CLI
 // `security -i` reads stdin with a ~4096-byte line buffer; a longer command line
 // is split and its tail is mis-parsed as a bogus command. Keep the whole
 // `add-generic-password … -X <hex>` line safely under that. A real Claude OAuth
 // blob is ~500 bytes (≈1000 hex), so the stdin path ALWAYS covers real
 // credentials; only a synthetic >~1.9 KB blob ever falls back to argv.
-const STDIN_CMD_LIMIT = 3800;  // hex chars (≈1900-byte blob)
+const STDIN_CMD_LIMIT = 3800; // hex chars (≈1900-byte blob)
 
 function keychainError(op, r) {
-  const detail = r.timedOut ? 'timed out (keychain locked or waiting on a prompt?)'
-    : ((r.stderr || '').trim() || ('exit ' + r.code));
-  const err = new Error('Keychain ' + op + ' failed: ' + detail +
-    ' — unlock the login keychain and try again');
+  const detail = r.timedOut
+    ? 'timed out (keychain locked or waiting on a prompt?)'
+    : (r.stderr || '').trim() || 'exit ' + r.code;
+  const err = new Error('Keychain ' + op + ' failed: ' + detail + ' — unlock the login keychain and try again');
   err.code = 'EKEYCHAIN';
   return err;
 }
 
 // Quote a value for a `security -i` command line.
-function q(s) { return '"' + String(s).replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"'; }
+function q(s) {
+  return '"' + String(s).replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"';
+}
 
 class KeychainStore {
   constructor(opts) {
@@ -40,10 +42,17 @@ class KeychainStore {
     this.type = 'keychain';
   }
 
-  _tail() { return this.keychainPath ? [this.keychainPath] : []; }
+  _tail() {
+    return this.keychainPath ? [this.keychainPath] : [];
+  }
 
   _read(service) {
-    const r = this.run(SECURITY, ['find-generic-password', '-s', service, '-a', this.account, '-w'].concat(this._tail()), undefined, { timeoutMs: TIMEOUT_MS });
+    const r = this.run(
+      SECURITY,
+      ['find-generic-password', '-s', service, '-a', this.account, '-w'].concat(this._tail()),
+      undefined,
+      { timeoutMs: TIMEOUT_MS },
+    );
     if (r.code === 0) return r.stdout.replace(/\r?\n$/, '');
     if (r.code === NOT_FOUND) return null;
     throw keychainError('read of "' + service + '"', r);
@@ -64,22 +73,44 @@ class KeychainStore {
     } else {
       // Only synthetic, larger-than-any-real-credential blobs land here: the
       // stdin line would overflow, so fall back to argv (briefly `ps`-visible).
-      r = this.run(SECURITY, ['add-generic-password', '-U', '-s', service, '-a', this.account, '-X', hex].concat(this._tail()), undefined, { timeoutMs: TIMEOUT_MS });
+      r = this.run(
+        SECURITY,
+        ['add-generic-password', '-U', '-s', service, '-a', this.account, '-X', hex].concat(this._tail()),
+        undefined,
+        { timeoutMs: TIMEOUT_MS },
+      );
     }
     if (r.code !== 0) throw keychainError('write of "' + service + '"', r);
   }
 
   _delete(service) {
-    const r = this.run(SECURITY, ['delete-generic-password', '-s', service, '-a', this.account].concat(this._tail()), undefined, { timeoutMs: TIMEOUT_MS });
+    const r = this.run(
+      SECURITY,
+      ['delete-generic-password', '-s', service, '-a', this.account].concat(this._tail()),
+      undefined,
+      { timeoutMs: TIMEOUT_MS },
+    );
     if (r.code !== 0 && r.code !== NOT_FOUND && r.timedOut) throw keychainError('delete of "' + service + '"', r);
   }
 
-  getLive() { return this._read(SERVICE_LIVE); }
-  setLive(blob) { this._write(SERVICE_LIVE, blob); }
-  delLive() { this._delete(SERVICE_LIVE); }
-  getProfile(name) { return this._read(PROFILE_PREFIX + name); }
-  setProfile(name, blob) { this._write(PROFILE_PREFIX + name, blob); }
-  delProfile(name) { this._delete(PROFILE_PREFIX + name); }
+  getLive() {
+    return this._read(SERVICE_LIVE);
+  }
+  setLive(blob) {
+    this._write(SERVICE_LIVE, blob);
+  }
+  delLive() {
+    this._delete(SERVICE_LIVE);
+  }
+  getProfile(name) {
+    return this._read(PROFILE_PREFIX + name);
+  }
+  setProfile(name, blob) {
+    this._write(PROFILE_PREFIX + name, blob);
+  }
+  delProfile(name) {
+    this._delete(PROFILE_PREFIX + name);
+  }
 }
 
 export default KeychainStore;
