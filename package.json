@@ -7,8 +7,8 @@
     "kf": "bin/keyflip.js"
   },
   "scripts": {
-    "test": "KEYFLIP_VCS=off node --test",
-    "test:coverage": "KEYFLIP_VCS=off node --test --experimental-test-coverage",
+    "test": "node --test",
+    "test:coverage": "node --test --experimental-test-coverage",
     "lint": "eslint src/ test/ bin/",
     "lint:fix": "eslint --fix src/ test/ bin/",
     "format": "prettier --write \"src/**/*.js\" \"test/**/*.js\" \"bin/**/*.js\"",

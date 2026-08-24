@@ -1,6 +1,6 @@
 // Tests for git-backed versioning (src/vcs.js). Requires the system `git`; skips if absent.
 // This file OWNS the enabled path, so it clears KEYFLIP_VCS (the rest of the suite runs
-// with KEYFLIP_VCS=off from package.json so it doesn't git-init temp dirs).
+// with KEYFLIP_VCS=off, supplied by the CI job env, so it doesn't git-init temp dirs).
 delete process.env.KEYFLIP_VCS;
 
 import test from 'node:test';

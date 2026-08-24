@@ -3,6 +3,8 @@
 // expiresAt (ms), scopes } }. Anthropic ROTATES the refresh token on every
 // refresh, so a refreshed blob that fails to persist leaves the stored one stale
 // — callers must warn loudly in that case.
+import fs from 'fs';
+
 const OAUTH_TOKEN_URL = 'https://platform.claude.com/v1/oauth/token';
 const OAUTH_CLIENT_ID = '9d1c250a-e61b-44d9-88ed-5944d1962f5e'; // Claude Code's public client id
 const EXPIRY_BUFFER_MS = 5 * 60 * 1000;

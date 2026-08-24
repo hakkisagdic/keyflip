@@ -37,6 +37,8 @@ jobs:
           TAG="${GITHUB_REF_NAME#v}"
           test "$PKG" = "$TAG" || { echo "::error::version $PKG != tag $TAG"; exit 1; }
       - name: Test
+        env:
+          KEYFLIP_VCS: 'off'
         run: npm test
       - name: Security audit
         run: npm audit --audit-level=high
