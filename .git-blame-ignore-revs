@@ -1,0 +1,14 @@
+# Revisions for `git blame` to skip: commits that only reshape whitespace.
+#
+# GitHub applies this file automatically in its own blame view. Locally it is
+# opt-in, once per clone:
+#
+#     git config blame.ignoreRevsFile .git-blame-ignore-revs
+#
+# Only add a commit here if it changed no identifier, literal, or statement.
+
+# style: format the repository with prettier
+# The first run of `npm run format` the repository ever had: 193 files inside
+# the format:check globs plus issuer/**/*.js. Verified byte-identical to
+# `prettier --write` applied to the parent revision.
+842e717e4f9cccc6f372370cefdc8da7f835ae4b
