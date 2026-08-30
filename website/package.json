@@ -10,7 +10,7 @@
     "astro": "astro"
   },
   "dependencies": {
-    "astro": "^5.9.3",
+    "astro": "^7.2.9",
     "@astrojs/sitemap": "^3.3.1"
   },
   "devDependencies": {
