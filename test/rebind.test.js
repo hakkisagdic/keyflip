@@ -333,10 +333,14 @@ test('summarize reaches a cwd whose own record is one huge line (>1 MiB, no newl
   // one record: cwd first, then a 2 MiB embedded paste — no newline until the record ends.
   // The paste runs past the read cap, so the RECORD never completes: the cwd still has to be
   // recovered (from the partial record), while the preview may legitimately stay empty.
+  // The path goes through JSON.stringify because that is what a real transcript holds: on
+  // Windows the cwd is `"cwd":"C:\\Users\\…"`, and a raw-backslash fixture is not valid JSON —
+  // the partial-record recovery would then be testing its own broken fixture instead of
+  // summarize()'s escape handling (which is what windows-latest caught here).
   const rec =
-    '{"cwd":"' +
-    real +
-    '","type":"user","message":{"role":"user","content":[{"type":"text","text":"' +
+    '{"cwd":' +
+    JSON.stringify(real) +
+    ',"type":"user","message":{"role":"user","content":[{"type":"text","text":"' +
     'ğ'.repeat(2 * 1024 * 1024) +
     '"}]}}';
   fs.writeFileSync(path.join(dir, 'eeee5555.jsonl'), rec + '\n');

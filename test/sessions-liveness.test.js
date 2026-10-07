@@ -17,7 +17,11 @@ function seed(ctx, cwd, id, body) {
   const dir = path.join(sessions.projectsDir(ctx), sessions.encodeCwd(cwd));
   fs.mkdirSync(dir, { recursive: true });
   const file = path.join(dir, id + '.jsonl');
-  fs.writeFileSync(file, body || '{"cwd":"' + cwd + '","type":"user"}\n');
+  // JSON.stringify the path, not string-concat it: `ALIVE` is the real checkout dir, which on
+  // Windows is `D:\a\keyflip\keyflip`, and a raw backslash inside a JSON string is not valid
+  // JSON. Concatenating let summarize() fall back to the decoded dir name and still "pass" on
+  // windows-latest — the control would have proved nothing about the recorded cwd.
+  fs.writeFileSync(file, body || '{"cwd":' + JSON.stringify(cwd) + ',"type":"user"}\n');
   return { dir: dir, file: file };
 }
 
