@@ -372,7 +372,7 @@ const TOOLS = [
     name: 'keyflip_sessions',
     title: 'Browse Claude Code conversations',
     description:
-      'List/search past Claude Code conversations across ALL accounts (transcripts in ~/.claude/projects). `search` matches transcript CONTENT and returns a match snippet; `orphan` flags a session whose working dir is gone (fix with keyflip_sessions_rebind). Read-only.',
+      'List/search past Claude Code conversations across ALL accounts (transcripts in ~/.claude/projects). `search` matches transcript CONTENT and returns a match snippet. `orphan` = the recorded working dir is gone AND no live signal exists; a session a running `claude --resume` process or the Claude desktop app still uses comes back as `staleCwd` + `live:true` instead, so it is NEVER offered for deletion or rebind-by-alarm. Read-only.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -398,6 +398,10 @@ const TOOLS = [
             preview: r.preview,
             match: r.match || null,
             orphan: !!r.orphan,
+            live: !!r.live,
+            liveReason: r.liveReason || null,
+            staleCwd: !!r.staleCwd,
+            recentlyWritten: !!r.recentlyWritten,
           };
         }),
       };

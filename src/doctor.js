@@ -62,6 +62,8 @@ async function diagnose(ctx, opts) {
   secretsInGit(ctx, add);
   versioningState(ctx, add);
   orphanSessions(ctx, add);
+  rebindBackups(ctx, add);
+  emptyProjectsCheck(ctx, add);
   quotaPressure(ctx, add);
   settingsJson(ctx, add);
 
@@ -193,6 +195,82 @@ function orphanSessions(ctx, add) {
       'keyflip sessions rebind <old-path> <new-path>',
     );
   else if (rows.length) add('orphaned sessions', true, 'none (' + rows.length + ' session(s), folders present)');
+  // A gone cwd on a session that a live process / the desktop app is still using is a path
+  // mismatch, NOT an orphan. Reporting it separately keeps `doctor` from recommending deletion of
+  // a conversation someone is in right now.
+  const stale = rows.filter(function (r) {
+    return r.staleCwd;
+  });
+  if (stale.length)
+    add(
+      'live sessions with a stale cwd',
+      'warn',
+      stale.length +
+        ' session(s) record a folder that is gone but are still in use (' +
+        stale
+          .slice(0, 3)
+          .map(function (r) {
+            return r.sessionId.slice(0, 8) + ':' + r.liveReason;
+          })
+          .join(', ') +
+        (stale.length > 3 ? ', …' : '') +
+        ')',
+      'not orphans — do not delete; rebind only if you want the path tidy',
+    );
+}
+
+// rebind snapshots the old key into `<key>.keyflip-bak` and `sessions list` deliberately hides
+// those backups — so before `sessions backups` existed they were invisible AND permanent (657 MiB
+// of duplicates on a real machine). `doctor` surfaces them; the prune only removes proven duplicates.
+function rebindBackups(ctx, add) {
+  let r;
+  try {
+    r = _sessions.pruneBackups(ctx, {});
+  } catch (e) {
+    return;
+  }
+  if (!r.keys.length) return add('rebind backups', true, 'none');
+  const mb = function (n) {
+    return (n / 1048576).toFixed(1) + ' MB';
+  };
+  add(
+    'rebind backups',
+    r.removable ? 'warn' : true,
+    r.keys.length +
+      ' backup folder(s) — ' +
+      r.removable +
+      ' provably redundant, ' +
+      mb(r.removableBytes) +
+      (r.kept ? '; ' + r.kept + ' still holding unique content' : ''),
+    r.removable ? 'keyflip sessions backups --apply' : undefined,
+  );
+}
+
+// Project keys with no files anywhere inside: clutter that makes the store look like lost history.
+function emptyProjectsCheck(ctx, add) {
+  let r;
+  try {
+    r = _sessions.emptyProjects(ctx, {});
+  } catch (e) {
+    return;
+  }
+  if (r.empty)
+    return add(
+      'empty project folders',
+      'warn',
+      r.empty + ' folder(s) hold no files at all',
+      'keyflip sessions empty --apply',
+    );
+  if (r.notesOnly.length || r.sidecarsOnly.length)
+    return add(
+      'empty project folders',
+      true,
+      'none (' +
+        r.notesOnly.length +
+        ' memory-only, ' +
+        r.sidecarsOnly.length +
+        ' sidecar-only key(s) kept — they hold content)',
+    );
 }
 
 function quotaPressure(ctx, add) {

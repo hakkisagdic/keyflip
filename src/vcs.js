@@ -22,6 +22,10 @@ const GITIGNORE = ['# keyflip: NEVER version secrets — they live in the OS cre
     '.usage-cache.json',
     'backups/',
     'skill-backups/',
+    // B1/B2 archive store: gunzip-able CHAT HISTORY, not config. A transcript can contain anything
+    // a user ever pasted, so it must not enter the versioned repo that `keyflip migrate`/`backup`
+    // carry between machines. Reversible either way — `keyflip sessions unarchive` reads the files.
+    'archive/',
     '# transient runtime junk',
     '*.pid',
     '*.sock',

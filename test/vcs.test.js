@@ -108,6 +108,11 @@ test('every secret-bearing path is git-ignored (app oauth cache, cookies, tokens
   seed('a.token', 'SECRET');
   seed('a.key', 'SECRET');
   seed('a.pem', 'SECRET');
+  // B1/B2 archive store = gzipped CHAT HISTORY. It is neither a secret file nor metadata, but it
+  // holds everything a user ever pasted into a session, so it must not enter the versioned repo that
+  // `keyflip migrate`/`backup` carries between machines. Archiving 200+ sessions used to commit ~1 GB
+  // of transcripts into git.
+  seed('archive/-Users-x-proj/deadbeef.jsonl.gz', 'not-really-gzip-but-bytes');
   assert.strictEqual(vcs.ensureRepo(ctx), true);
   const files = tracked(ctx.configDir);
   assert.ok(files.indexOf('keep.json') !== -1, 'non-secret metadata is versioned');
@@ -120,6 +125,7 @@ test('every secret-bearing path is git-ignored (app oauth cache, cookies, tokens
     'a.token',
     'a.key',
     'a.pem',
+    'archive/-Users-x-proj/deadbeef.jsonl.gz',
   ].forEach(function (rel) {
     assert.strictEqual(files.indexOf(rel), -1, rel + ' must NEVER be committed');
   });

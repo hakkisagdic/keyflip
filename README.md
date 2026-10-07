@@ -289,6 +289,11 @@ keyflip sessions distill <id>   # summarize a chat into a durable keepsake (via 
 keyflip sessions compact <id> [--apply]   # shrink a transcript: elide bulky tool output, keep the conversation (dry-run default)
 keyflip sessions scrub <id> [--apply] [--categories …] [--llm-url URL]   # redact PII (email/phone/TCKN/card/IBAN/IP/secrets + custom + optional local LLM) — dry-run default, backs up on --apply
 keyflip sessions delete <id> [--hard]   # delete a conversation — archives first (recoverable) by default; --hard is a permanent unlink
+                                    # refuses a session a running `claude --resume` process holds (--allow-running overrides)
+keyflip sessions backups [--apply]  # find rebind's hidden .keyflip-bak duplicates; --apply removes ONLY the ones
+                                    # proven redundant (byte-identical in the live key AND the session id re-landed elsewhere)
+keyflip sessions empty [--apply]    # list project folders holding zero files; --apply prunes them. memory-only and
+                                    # sidecar-only keys are reported by kind and never removed
 keyflip sessions edit <id> <delete-message|redact-message|truncate-after> <n> [--apply]   # surgical JSONL edits (backs up; keeps the file valid)
 keyflip sessions export <id> [--format md|html|json]   # export a chat as a clean, shareable doc (offline review / archive)
 keyflip foreign <session-file> [--format md|html|json]   # normalize ANOTHER agent's session (JSONL / Cursor SQLite / opencode+generic JSON / Copilot YAML / Aider MD) into the same view

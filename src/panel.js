@@ -72,7 +72,16 @@ function buildState(ctx) {
     return sessions.list(ctx, { limit: 1500 });
   }, []);
   const recent = allSessions.slice(0, 12).map(function (r) {
-    return { sessionId: r.sessionId, cwd: r.cwd || null, mtime: r.mtime, preview: r.preview || '', orphan: !!r.orphan };
+    return {
+      sessionId: r.sessionId,
+      cwd: r.cwd || null,
+      mtime: r.mtime,
+      preview: r.preview || '',
+      orphan: !!r.orphan,
+      live: !!r.live,
+      staleCwd: !!r.staleCwd,
+      liveReason: r.liveReason || null,
+    };
   });
 
   const keepsakes = safe(function () {
@@ -482,7 +491,7 @@ const SCRIPT = [
   '   "<div class=\\""+bl+"\\"><i style=\\"width:"+w+"%\\"></i></div><div class=\\"barlabel\\"><span>5h "+pct(a.fiveHourPct)+"</span><span>7d "+pct(a.sevenDayPct)+"</span></div>"+spark(a.trend)+"</div>";',
   ' }).join("")||"<span class=muted>No saved accounts.</span>";',
   ' document.getElementById("providers").innerHTML=(s.providers||[]).map(function(p){return "<span class=\\"chip"+(p.active?" active":"")+"\\">"+esc(p.name)+(p.active?" ●":"")+"</span>";}).join("")||"<span class=muted>No providers.</span>";',
-  ' document.getElementById("sessions").innerHTML=(s.sessions||[]).map(function(r){return "<li><div>"+esc((r.sessionId||"").slice(0,8))+" <span class=meta>"+esc(r.cwd||"")+"</span>"+(r.orphan?" <span class=badge>⚠ folder gone</span>":"")+"</div>"+(r.preview?"<div class=meta>"+esc(r.preview)+"</div>":"")+"</li>";}).join("")||"<li class=muted>No sessions.</li>";',
+  ' document.getElementById("sessions").innerHTML=(s.sessions||[]).map(function(r){return "<li><div>"+esc((r.sessionId||"").slice(0,8))+" <span class=meta>"+esc(r.cwd||"")+"</span>"+(r.orphan?" <span class=badge>⚠ folder gone</span>":(r.staleCwd?" <span class=meta>(folder gone, still live)</span>":""))+"</div>"+(r.preview?"<div class=meta>"+esc(r.preview)+"</div>":"")+"</li>";}).join("")||"<li class=muted>No sessions.</li>";',
   ' document.getElementById("keepsakes").innerHTML=(s.keepsakes||[]).map(function(k){return "<li>"+esc(k.key.slice(0,8))+" <span class=meta>"+esc((k.mtime||"").slice(0,16).replace("T"," "))+"</span></li>";}).join("")||"<li class=muted>No keepsakes yet — try <code>keyflip dream --apply</code>.</li>";',
   ' var a=s.activity||{};document.getElementById("activity-total").textContent=a.total?("· "+a.total+" session"+(a.total===1?"":"s")+", last "+(a.weeks||26)+" weeks"):"";',
   ' document.getElementById("activity").innerHTML=calendar(a);',

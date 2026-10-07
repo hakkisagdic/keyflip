@@ -217,6 +217,10 @@ function usage() {
   print(
     '                                 move old transcripts into keyflip (gzipped) and back — declutter, reversible',
   );
+  print("  keyflip sessions backups [--apply]      find rebind's .keyflip-bak duplicates; --apply removes only");
+  print('                                 ones proven byte-identical AND re-landed under another project key');
+  print('  keyflip sessions empty [--apply]        list project folders holding no files at all (--apply prunes;');
+  print('                                 memory-only / sidecar-only keys are reported, never removed');
   print(
     '  keyflip sessions export <id> [--format md|html|json] [--out <file>]   export a chat as a clean, shareable doc',
   );
@@ -5371,6 +5375,18 @@ async function cmdSessionsRebind(ctx, rest) {
       r.newDir,
   );
   if (r.backup) print('  ↳ backup: ' + r.backup);
+  if (r.sidecars) print('  ↳ carried ' + r.sidecars + ' per-session sidecar dir(s) (sub-agent runs).');
+  if (r.memory && (r.memory.copied || r.memory.conflicts)) {
+    print(
+      '  ↳ memory notes: ' +
+        r.memory.copied +
+        ' carried over' +
+        (r.memory.identical ? ', ' + r.memory.identical + ' already matched' : '') +
+        (r.memory.conflicts
+          ? style.warn(', ' + r.memory.conflicts + ' name clash(es) kept BOTH (see *.keyflip-conflict)')
+          : ''),
+    );
+  }
   if (ctx.appDataDir && !appctl.isClaudeRunning(ctx.platform)) {
     const reg = sessions.rebindAppRegistry(ctx, oldAbs, newAbs);
     if (reg.patched) print('  ↳ patched ' + reg.patched + ' desktop-app session record(s).');
@@ -5400,6 +5416,8 @@ async function cmdSessionsRebind(ctx, rest) {
     rebind: {
       moved: r.moved,
       skipped: r.skipped,
+      sidecars: r.sidecars,
+      memory: r.memory,
       oldDir: r.oldDir,
       newDir: r.newDir,
       configFilesPatched: configs.patched,
@@ -6460,8 +6478,28 @@ async function cmdSessionsDelete(ctx, rest) {
   const row = resolveSessionArg(ctx, rest[0]);
   if (!row) return fail('no such session (pass a list number or a session id — see `keyflip sessions`).');
   const hard = rest.indexOf('--hard') !== -1;
-  const force = rest.indexOf('--force') !== -1 || rest.indexOf('-y') !== -1;
+  // `let`, not `const`: a session written minutes ago has its --force/-y downgrade below, because
+  // "skip the confirmation" is not the same claim as "this conversation is finished".
+  let force = rest.indexOf('--force') !== -1 || rest.indexOf('-y') !== -1;
+  // A session a live `claude --resume` process is writing is not "old history" — deleting it
+  // yanks the file out from under a running conversation (and --force must not be able to do
+  // that silently, because --force here only means "skip the prompt").
+  if (row.liveReason === 'running' && rest.indexOf('--allow-running') === -1)
+    return fail(
+      'session ' +
+        row.sessionId.slice(0, 8) +
+        ' is in use by a running `claude --resume` process — end that session first, or pass --allow-running if you mean it.',
+    );
+  // Written minutes ago: --force/-y must not skip the prompt either, because "skip the
+  // confirmation" is not the same as "I know this conversation is still being appended to".
+  if (row.recentlyWritten && rest.indexOf('--allow-running') === -1) force = false;
   if (!force) {
+    if (!process.stdin.isTTY && row.recentlyWritten)
+      return fail(
+        'session ' +
+          row.sessionId.slice(0, 8) +
+          ' was written minutes ago — needs a TTY to confirm, or --allow-running if you are sure.',
+      );
     if (!process.stdin.isTTY) return fail('deleting a session needs confirmation — re-run with --force (or -y)');
     const q = hard
       ? 'PERMANENTLY delete session ' + row.sessionId.slice(0, 8) + ' (NOT recoverable)? [y/N] '
@@ -6603,8 +6641,111 @@ async function cmdSessionsEdit(ctx, rest) {
   logmod.log('sessions edit ' + row.sessionId + ' ' + type + '@' + index);
 }
 
+// keyflip sessions backups [--apply] — reclaim rebind's duplicate snapshots.
+// Nothing else in keyflip ever shows `<key>.keyflip-bak` (list() filters it out on purpose),
+// so without this command those copies are invisible AND permanent.
+function cmdSessionsBackups(ctx, rest) {
+  const apply = rest.indexOf('--apply') !== -1;
+  const r = sessions.pruneBackups(ctx, { apply: apply });
+  if (JSON_MODE) {
+    jsonOut({ rebindBackups: r });
+    return;
+  }
+  if (!r.keys.length) {
+    print(style.ok('✅') + ' no rebind backups (' + style.bold('.keyflip-bak') + ') in the projects folder.');
+    return;
+  }
+  r.keys.forEach(function (k) {
+    const tag =
+      k.status === 'redundant'
+        ? style.ok('redundant')
+        : k.status === 'empty'
+          ? style.dim('empty folder')
+          : style.warn('kept — ' + k.blockers.join(', '));
+    print(
+      '  ' +
+        k.key +
+        '  ' +
+        style.dim(k.files + ' file(s), ' + fmtBytes(k.bytes)) +
+        '  ' +
+        tag +
+        (k.status === 'redundant' && apply ? '  ' + style.dim('(removed)') : ''),
+    );
+  });
+  print('');
+  if (apply)
+    print(
+      style.ok('✅') +
+        ' removed ' +
+        r.removed +
+        ' redundant backup(s) — ' +
+        fmtBytes(r.removableBytes) +
+        ' ' +
+        style.dim('(undo with: keyflip undo)') +
+        (r.kept ? ', ' + r.kept + ' kept (unproven)' : ''),
+    );
+  else
+    print(
+      r.removable
+        ? style.warn('⚠') +
+            ' ' +
+            r.removable +
+            ' backup(s) are provably redundant (' +
+            fmtBytes(r.removableBytes) +
+            '): ' +
+            style.bold('keyflip sessions backups --apply') +
+            '. ' +
+            style.dim(
+              'A backup is redundant only when the live key holds a byte-identical copy of every ' +
+                'file AND that session id now exists in another project key.',
+            )
+        : style.ok('✅') + ' nothing removable — every backup still holds something unique.',
+    );
+}
+
+// keyflip sessions empty [--apply] — prune project keys that contain no files at all.
+function cmdSessionsEmpty(ctx, rest) {
+  const apply = rest.indexOf('--apply') !== -1;
+  const r = sessions.emptyProjects(ctx, { apply: apply });
+  if (JSON_MODE) {
+    jsonOut({ emptyProjects: r });
+    return;
+  }
+  if (!r.empty && !r.notesOnly.length && !r.sidecarsOnly.length) {
+    print(style.ok('✅') + ' no empty project folders.');
+    return;
+  }
+  if (r.empty)
+    print(
+      (apply ? style.ok('✅') + ' removed ' + r.removed : style.warn('⚠') + ' ' + r.empty) +
+        ' folder(s) with ZERO files inside' +
+        (apply ? '' : ' — ' + style.bold('keyflip sessions empty --apply') + ' removes them'),
+    );
+  // Reported, never removed: these still hold content (notes / sub-agent runs).
+  r.notesOnly.forEach(function (k) {
+    print(
+      '  ' +
+        style.dim('memory-only key (kept): ') +
+        k.key +
+        ' ' +
+        style.dim(k.files + ' file(s), ' + fmtBytes(k.bytes)),
+    );
+  });
+  r.sidecarsOnly.forEach(function (k) {
+    print(
+      '  ' +
+        style.dim('transcript-less sidecar (kept): ') +
+        k.key +
+        ' ' +
+        style.dim(k.files + ' file(s), ' + fmtBytes(k.bytes)),
+    );
+  });
+}
+
 async function cmdSessions(ctx, rest) {
   if (rest[0] === 'rebind') return cmdSessionsRebind(ctx, rest.slice(1));
+  if (rest[0] === 'backups') return cmdSessionsBackups(ctx, rest.slice(1));
+  if (rest[0] === 'empty') return cmdSessionsEmpty(ctx, rest.slice(1));
   if (rest[0] === 'archive') return cmdSessionsArchive(ctx, rest.slice(1));
   if (rest[0] === 'unarchive') return cmdSessionsUnarchive(ctx, rest.slice(1));
   if (rest[0] === 'archived') return cmdSessionsArchived(ctx, rest.slice(1));
@@ -6649,6 +6790,10 @@ async function cmdSessions(ctx, rest) {
           preview: r.preview,
           match: r.match || null,
           orphan: !!r.orphan,
+          live: !!r.live,
+          liveReason: r.liveReason || null,
+          staleCwd: !!r.staleCwd,
+          recentlyWritten: !!r.recentlyWritten,
         };
       }),
     });
@@ -6659,8 +6804,10 @@ async function cmdSessions(ctx, rest) {
     return;
   }
   let orphans = 0;
+  let stale = 0;
   rows.forEach(function (r, i) {
     if (r.orphan) orphans++;
+    if (r.staleCwd) stale++;
     print(
       '  [' +
         (i + 1) +
@@ -6670,7 +6817,21 @@ async function cmdSessions(ctx, rest) {
         r.mtime.slice(0, 16).replace('T', ' ') +
         '  ' +
         (r.cwd || '?') +
-        (r.orphan ? '  ' + style.warn('⚠ folder missing') : ''),
+        (r.orphan ? '  ' + style.warn('⚠ folder missing') : '') +
+        (r.orphan && r.recentlyWritten ? '  ' + style.warn('(written minutes ago — check nothing uses it)') : '') +
+        // A gone cwd on a session that is RUNNING / in the desktop app's Recents / being written
+        // is a stale path record, not an orphan. Say so — otherwise this list reads as
+        // "safe to delete" for exactly the sessions someone is using right now.
+        (r.staleCwd
+          ? '  ' +
+            style.dim(
+              '(cwd gone, but ' +
+                (r.liveReason === 'running'
+                  ? 'a claude --resume process is using it'
+                  : 'the Claude desktop app lists it') +
+                ' — do not delete)',
+            )
+          : ''),
     );
     // On a search, show WHERE it matched (a content snippet); otherwise the first message.
     if (opts.search && r.match && r.match !== r.preview) print('        ' + style.dim('↳ ' + r.match));
@@ -6684,6 +6845,15 @@ async function cmdSessions(ctx, rest) {
         orphans +
         ' session(s) point at a folder that no longer exists — re-link with: ' +
         style.bold('keyflip sessions rebind <old-path> <new-path>'),
+    );
+  if (stale)
+    print(
+      style.dim(
+        'ℹ ' +
+          stale +
+          ' session(s) record a folder that is gone while the session itself is live (pruned worktree or a rename the app still resolves). ' +
+          'Not orphans — leave them alone, or rebind if you want the path tidied.',
+      ),
     );
   print('Resume one with:  keyflip resume <number|id>   (add --run to launch it)');
 }

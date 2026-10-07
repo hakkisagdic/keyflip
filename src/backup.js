@@ -10,7 +10,9 @@ import * as secretpaths from './secretpaths.js';
 const DEFAULT_KEEP = 10;
 // Dirs never backed up: the shared SECRET set (creds/app/browser-sessions/pre-sync-backups)
 // plus backup's own volatile/self-referential dirs.
-const SKIP = secretpaths.SECRET_DIRS.concat(['backups', 'logs', 'skill-backups']);
+// 'archive' = archived chat transcripts (gzip). They are neither metadata nor secret-free, so a
+// backup must not duplicate them; vcs.js ignores the same path, so git and backup stay in sync.
+const SKIP = secretpaths.SECRET_DIRS.concat(['backups', 'logs', 'skill-backups', 'archive']);
 // Never copy a secret-shaped FILE (shared source of truth — *.cred/*.cookies/*.key/*.token/
 // *.pem/*.sql, .credentials.json, mcp-registry.json, stray *credentials.json) or a volatile
 // cache/lock, wherever it sits.
