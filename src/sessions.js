@@ -286,9 +286,10 @@ function list(ctx, opts) {
     r.liveReason = live.get(r.sessionId) || null;
     r.live = !!r.liveReason;
     // Orphan is a claim about the USER'S disk, so it only goes out on authoritative evidence:
-    // the cwd the transcript itself recorded. decodeProjectDir maps BOTH '/' and '.' to '-',
-    // so `Projects/laya-uo-bot` decodes to the non-existent `Projects/laya/uo/bot` — a guess
-    // that looks exactly like a moved folder. Missing-cwd rows get `orphan:false`; rebind is
+    // the cwd the transcript itself recorded. encodeCwd folds EVERY non-alphanumeric character
+    // to '-', so decode is lossy: `Projects/laya-uo-bot` decodes to the non-existent
+    // `Projects/laya/uo/bot` — a guess that looks exactly like a moved folder. Missing-cwd rows
+    // get `orphan:false`; rebind is
     // still reachable by hand since the real cwd is what the transcript says when present.
     // And a missing cwd on a LIVE session is not an orphan either — it is a stale path record
     // (pruned worktree, renamed folder the app still resolves), so it must never be advertised
@@ -398,11 +399,21 @@ function sendCommand(row, message, opts) {
   return { cwd: row.cwd, command: 'claude', args: args };
 }
 
-// Claude Code encodes a project's cwd into its dir name by replacing BOTH '/' and '.'
-// with '-' (so decode is lossy — that's why decodeProjectDir is best-effort). But when
-// we already KNOW the cwd, the encode is exact.
+// Claude Code keys a project by its cwd with EVERY non-alphanumeric character folded to '-'
+// — not just '/' and '.'. Evidence from this machine's own ~/.claude/projects (2026-10-07): the
+// key `-Users-hakkisagdic--traycer-worktrees-hakkisagdic--loganalyzer-s05-…` contains the
+// transcript whose cwd is `/Users/hakkisagdic/.traycer/worktrees/hakkisagdic__loganalyzer/s05-…`
+// — so `.` → '-' AND `__` → '--'. Recomputing every key on disk both ways: the old `/[/.]/` rule
+// matched 20 of 22, this rule 21 of 22 (the one exception is a session started with an explicit
+// `--cwd`, so its recorded cwd is genuinely not its key).
+//
+// The same rule is also what makes the sessions feature usable on Windows at all: a directory
+// name that still contains ':' or '\' cannot exist there, so the POSIX-only mapping made
+// rebind/list die with ENOENT on `…\.claude\projects\C:\Users\…` — the windows-latest CI job
+// proved it. Folded this way `C:\Users\name\old\repo` → `C--Users-name-old-repo`, which is the
+// spelling Claude documents for Windows (':', '\', '/', space and "'" all become '-').
 function encodeCwd(cwd) {
-  return String(cwd).replace(/[/.]/g, '-');
+  return String(cwd).replace(/[^a-zA-Z0-9]/g, '-');
 }
 
 // Copy a session's sidecar tree (sub-agent runs etc.) to the new project key, rewriting the

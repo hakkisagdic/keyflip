@@ -15,9 +15,31 @@ function seedTranscript(ctx, cwd, id, content) {
   return dir;
 }
 
-test('encodeCwd replaces both "/" and "." with "-" (matches Claude Code)', function () {
+test('encodeCwd folds every non-alphanumeric character to "-" (matches Claude Code)', function () {
   assert.strictEqual(sessions.encodeCwd('/Users/x/Documents/Plansmith'), '-Users-x-Documents-Plansmith');
   assert.strictEqual(sessions.encodeCwd('/Users/x/proj/.claude-worktrees/wt'), '-Users-x-proj--claude-worktrees-wt');
+  // Underscores fold too — verified against a real transcript on disk: the project
+  // `/Users/…/.traycer/worktrees/hakkisagdic__loganalyzer/…` is keyed
+  // `-Users-…--traycer-worktrees-hakkisagdic--loganalyzer-…`.
+  assert.strictEqual(
+    sessions.encodeCwd('/Users/x/.traycer/worktrees/a__loganalyzer/s05'),
+    '-Users-x--traycer-worktrees-a--loganalyzer-s05',
+  );
+  assert.strictEqual(sessions.encodeCwd('/Users/x/My Projects/app\'s "beta"'), '-Users-x-My-Projects-app-s--beta-');
+});
+
+// The windows-latest CI job failed on this: a key that still contains ':' or '\' is not a legal
+// directory name on Windows, so every sessions call that built one died with ENOENT — on POSIX
+// the old /[/.]/ mapping looked harmless because those characters cannot appear there.
+test('encodeCwd output is a legal directory name on Windows too (no ":", no "\\")', function () {
+  const key = sessions.encodeCwd('C:\\Users\\name\\old\\repo');
+  assert.strictEqual(key, 'C--Users-name-old-repo');
+  assert.match(key, /^[A-Za-z0-9-]+$/, 'only characters a path segment may hold');
+  const ctx = makeCtx();
+  const dir = path.join(sessions.projectsDir(ctx), key);
+  fs.mkdirSync(dir, { recursive: true }); // must not throw on any platform
+  seedTranscript(ctx, 'C:\\Users\\name\\new\\repo', 'win-1', '{"cwd":"C:\\\\Users\\\\name\\\\new\\\\repo"}\n');
+  assert.ok(fs.existsSync(dir), 'a Windows-shaped key can be created');
 });
 
 test('rebind copies transcripts to the new folder key and rewrites the old cwd inside', function () {
