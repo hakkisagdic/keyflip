@@ -34,6 +34,17 @@ Log in to several accounts once, then hop between them without repeatedly loggin
 
 ---
 
+## Passkeys & device-bound credentials
+
+Claude (web and the desktop app) now offers **passkey (WebAuthn) sign-in**. What that means for keyflip:
+
+- **A passkey replaces the login step, not the session.** After WebAuthn the client still receives ordinary session credentials — exactly what keyflip saves and swaps. Adding a passkey does not invalidate existing profiles or saved logins.
+- **Synced passkeys follow your Apple ID.** On macOS, passkeys created in Safari/Chrome live in iCloud Keychain and already work on every Mac signed into the same Apple ID. keyflip never exports WebAuthn credentials — no transfer is needed or offered. Touch ID is only the local unlock: biometric data never leaves the device and is never part of a capture.
+- **Device-bound passkeys and hardware security keys cannot be moved.** If an account is bound to one, the only way onto a new machine is an interactive login there.
+- **Desktop-app logins stay machine-specific.** The app's cookies are encrypted with that machine's Safe Storage key, which is why `keyflip transfer` deliberately excludes them (re-run `keyflip add` on each machine instead).
+
+---
+
 ## Requirements
 
 - **Node.js ≥ 18** (Claude Code already needs Node)

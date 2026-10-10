@@ -34,6 +34,17 @@ Hesaplarınıza bir kez giriş yapın, sonra tekrar tekrar çıkış/giriş yapm
 
 ---
 
+## Passkey'ler ve cihaza bağlı kimlik bilgileri
+
+Claude (web ve masaüstü uygulama) artık **passkey (WebAuthn) ile giriş** sunuyor. keyflip için anlamı:
+
+- **Passkey oturum açma adımını değiştirir, oturumun kendisini değil.** WebAuthn sonrasında istemci yine sıradan oturum kimlik bilgisi alır — keyflip'in kaydedip değiştirdiği şey tam olarak odur. Passkey eklemek mevcut profilleri veya kayıtlı girişleri geçersiz kılmaz.
+- **Senkron passkey'ler Apple ID'nizle taşınır.** macOS'ta Safari/Chrome'da oluşturulan passkey'ler iCloud Keychain'de yaşar ve aynı Apple ID ile açık her Mac'te zaten çalışır. keyflip WebAuthn kimlik bilgilerini asla dışa aktarmaz — aktarım gerekmez ve sunulmaz. Touch ID yalnızca yerel kilidi açar: biyometrik veri cihazdan asla çıkmaz ve hiçbir kaydın parçası değildir.
+- **Cihaza bağlı passkey'ler ve donanım güvenlik anahtarları taşınamaz.** Bir hesap bunlara bağlıysa yeni bir makineye tek yol orada etkileşimli giriş yapmaktır.
+- **Masaüstü uygulama girişleri makineye özel kalır.** Uygulamanın cookie'leri o makinenin Safe Storage anahtarıyla şifrelidir; `keyflip transfer` bu yüzden bunları **bilinçli olarak** paketlemez (her makinede `keyflip add`'i yeniden çalıştırın).
+
+---
+
 ## Gereksinimler
 
 - **Node.js ≥ 18** (Claude Code zaten Node gerektirir)
