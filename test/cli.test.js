@@ -210,6 +210,34 @@ test('switch to an already-active CLI account still flips a lagging desktop app 
   assert.match(fs.readFileSync(path.join(appCfgDir, 'config.json'), 'utf8'), /ALICE-APP/);
 });
 
+// The gap this closes: `app ✓` describes a restorable CAPTURE. The app can still be
+// signed out — it re-mints its token cache from a claude.ai session cookie, so with the
+// cookie gone from its jar it opens on the sign-in screen while every keyflip report
+// looked healthy. list/doctor must show the live state too.
+test('list and doctor tell when the desktop app is signed out on disk (macOS)', function (t) {
+  if (process.platform !== 'darwin') return t.skip('the desktop app store is macOS-only');
+  const home = setupHome();
+  run(home, ['add']);
+  const appCfgDir = path.join(home, 'Library', 'Application Support', 'Claude');
+  fs.mkdirSync(appCfgDir, { recursive: true });
+  fs.writeFileSync(path.join(appCfgDir, 'config.json'), JSON.stringify({ 'oauth:tokenCacheV2': 'ALICE-APP' }));
+  fs.writeFileSync(path.join(appCfgDir, 'Cookies'), 'sessionKey ALICE-APP');
+  assert.strictEqual(run(home, ['add', 'alice', '--app']).status, 0);
+
+  const jar = path.join(appCfgDir, 'Cookies');
+  assert.doesNotMatch(run(home, ['list']).stdout, /signed out on disk/, 'while the cookie is there');
+  fs.writeFileSync(jar, 'lastActiveOrg ALICE'); // the app cleared its session cookie
+  const list = run(home, ['list']);
+  assert.strictEqual(list.status, 0, 'being signed out of the app is not an error');
+  assert.match(list.stdout, /desktop app: [^\n]*signed out on disk/);
+  assert.match(list.stdout, /app ✓/, 'the saved capture is still there — that is not what broke');
+  const j = JSON.parse(run(home, ['list', '--json']).stdout);
+  assert.strictEqual(j.appSessionLive, false);
+  const doc = run(home, ['doctor']);
+  assert.match(doc.stdout, /desktop app session.*sign-in screen/s);
+  assert.match(doc.stdout, /sign in once/);
+});
+
 test('chat --as rejects an unknown account before touching any cookie', function (t) {
   if (process.platform !== 'darwin') return t.skip('claude.ai Chat reading is macOS-only');
   const home = setupHome();

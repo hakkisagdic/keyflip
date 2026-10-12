@@ -13,6 +13,7 @@
 // ctx.appDataDir (set per-platform in context.js). Detection of WHICH account differs
 // only in how the safeStorage key is obtained (getSafeStoragePassword / decryptAppBlobWin).
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 import crypto from 'crypto';
 import { atomicWrite } from './fsutil.js';
@@ -313,20 +314,89 @@ function cookiesLookLoggedIn(file) {
 
 // Copy the live Cookies DB as consistently as possible: prefer sqlite3's online
 // .backup (safe while the app writes), fall back to a plain copy.
-function copyCookieDb(src, dest) {
+function copyCookieDb(src, dest, runner) {
   fs.mkdirSync(path.dirname(dest), { recursive: true });
   try {
     fs.rmSync(dest, { force: true });
   } catch (e) {
     /* ignore */
   }
-  const r = run('sqlite3', [src, '.backup "' + dest.replace(/"/g, '""') + '"']);
+  const r = (runner || run)('sqlite3', [src, '.backup "' + dest.replace(/"/g, '""') + '"']);
   if (r.code !== 0 || !fs.existsSync(dest)) fs.copyFileSync(src, dest);
   try {
     fs.chmodSync(dest, 0o600);
   } catch (e) {
     /* best effort */
   }
+}
+
+const SESSION_COOKIE_NAMES = ['sessionKey', 'sessionKeyV3'];
+
+// Is the desktop app signed in RIGHT NOW? i.e. does its own cookie jar hold a
+// claude.ai session cookie.
+//
+// This is the one question config.json cannot answer: the token cache there is a
+// DERIVED store — on launch the app calls /authorize *with* its sessionKey cookie to
+// re-mint it. So an app whose jar has no session cookie shows the sign-in screen even
+// though keyflip's capture (and the intact token blob) look perfectly healthy, and no
+// automated restore can talk it out of that: the exchange needs a human click. That is
+// exactly how a "switched" account can reopen on its onboarding screen.
+//
+// Cookie NAMES are plaintext in the DB. Prefer a real query — a raw byte scan can be
+// fooled by a freed page still holding a deleted row's name — and fall back to the scan
+// only when sqlite3 cannot read the file at all (which also keeps plain-text fixtures
+// working). Never reads cookie VALUES.
+function liveAppSession(ctx, opts) {
+  opts = opts || {};
+  const runner = opts.run || run;
+  const ck = cookiesPath(ctx);
+  if (!ck || !fs.existsSync(ck))
+    return { signedIn: false, expiresAt: null, checked: 'none', file: ck || null, reason: 'no-cookie-db' };
+  const tmp = path.join(os.tmpdir(), 'keyflip-livesess-' + process.pid + '-' + Date.now() + '.db');
+  let rows = null;
+  try {
+    copyCookieDb(ck, tmp, runner);
+    const r = runner('sqlite3', [
+      '-separator',
+      '\t',
+      'file:' + tmp + '?mode=ro',
+      "SELECT name, expires_utc FROM cookies WHERE host_key LIKE '%claude.ai' AND name IN ('" +
+        SESSION_COOKIE_NAMES.join("','") +
+        "');",
+    ]);
+    if (r && r.code === 0 && String(r.stdout || '').trim()) rows = String(r.stdout).trim().split('\n');
+    else if (r && r.code === 0) rows = [];
+  } catch (e) {
+    rows = null;
+  } finally {
+    try {
+      fs.rmSync(tmp, { force: true });
+    } catch (e) {
+      /* ignore */
+    }
+  }
+  if (rows === null)
+    return {
+      signedIn: cookiesLookLoggedIn(ck),
+      expiresAt: null,
+      checked: 'scan',
+      file: ck,
+      reason: cookiesLookLoggedIn(ck) ? 'sqlite-unreadable' : 'sqlite-unreadable-no-session',
+    };
+  let best = 0;
+  rows.forEach(function (line) {
+    const parts = line.split('\t');
+    const v = Number(parts[1]);
+    if (isFinite(v) && v > best) best = v;
+  });
+  // Chromium stamps expiries in microseconds since 1601-01-01; 0 / absent = a session
+  // cookie that dies with the app, which still counts as signed in today.
+  let expiresAt = null;
+  if (best > 0) {
+    const secs = Math.floor(best / 1000000) - 11644473600;
+    if (isFinite(secs) && secs > 0) expiresAt = new Date(secs * 1000).toISOString();
+  }
+  return { signedIn: rows.length > 0, expiresAt: expiresAt, checked: 'query', file: ck, reason: null };
 }
 
 // Capture the app's current login (token cache + the session Cookies DB that is
@@ -534,6 +604,8 @@ export {
   detectActiveOrg,
   detectAppAccount,
   cookiesLookLoggedIn,
+  liveAppSession,
+  SESSION_COOKIE_NAMES,
   decryptBlob,
   decryptAppBlobWin,
   isEncBlob,

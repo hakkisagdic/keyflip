@@ -175,3 +175,73 @@ test('a browser with no readable claude.ai session is reported, not guessed', fu
   assert.deepStrictEqual(r.saved, []);
   assert.strictEqual(r.skipped[0].reason, 'no-readable-session');
 });
+
+// ---- did the app actually come back signed in after the switch reopened it? ----
+// A restored jar is only half the story: the app trades its session cookie for a fresh
+// token cache at launch, and if claude.ai has since rotated that session the app deletes
+// the cookie and shows its sign-in screen. verifyAppRelogin is what stops keyflip from
+// calling that a clean switch.
+function reloginOpts(probe, calls) {
+  return {
+    polls: 4,
+    stepMs: 1,
+    sleep: async function (ms) {
+      calls.push(ms);
+    },
+    session: probe,
+  };
+}
+
+test('verifyAppRelogin: a cookie the app cleared is reported at once, not as a clean switch', async function () {
+  const ctx = makeCtx({ platform: 'darwin' });
+  ctx.appDataDir = path.join(ctx.home, 'Library', 'Application Support', 'Claude');
+  const calls = [];
+  const r = await cli.verifyAppRelogin(
+    ctx,
+    reloginOpts(() => false, calls),
+  );
+  assert.strictEqual(r, false);
+  assert.strictEqual(calls.length, 1, 'stops polling on the first cleared reading');
+});
+
+test('verifyAppRelogin: a session that survives the app boot passes', async function () {
+  const ctx = makeCtx({ platform: 'darwin' });
+  ctx.appDataDir = path.join(ctx.home, 'Library', 'Application Support', 'Claude');
+  const calls = [];
+  assert.strictEqual(
+    await cli.verifyAppRelogin(
+      ctx,
+      reloginOpts(() => true, calls),
+    ),
+    true,
+  );
+  assert.strictEqual(calls.length, 4, 'waits out the settle window on success');
+});
+
+test('verifyAppRelogin: an unreadable jar is retried instead of guessed at', async function () {
+  const ctx = makeCtx({ platform: 'darwin' });
+  ctx.appDataDir = path.join(ctx.home, 'Library', 'Application Support', 'Claude');
+  let n = 0;
+  const calls = [];
+  const r = await cli.verifyAppRelogin(
+    ctx,
+    reloginOpts(function () {
+      n++;
+      return n < 3 ? null : true; // locked/being-written, then readable
+    }, calls),
+  );
+  assert.strictEqual(r, true);
+  assert.strictEqual(n, 4, 'the two unreadable readings did not end the poll');
+});
+
+test('verifyAppRelogin: nothing to check where there is no desktop app', async function () {
+  const calls = [];
+  assert.strictEqual(
+    await cli.verifyAppRelogin(
+      makeCtx({ platform: 'linux' }),
+      reloginOpts(() => true, calls),
+    ),
+    null,
+  );
+  assert.strictEqual(calls.length, 0);
+});

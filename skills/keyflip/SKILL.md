@@ -97,6 +97,15 @@ re-`add`), `throttled` (usage endpoint throttled this token — **unknown**, NOT
 proof the account is rate-limited), `error` (network), `no-creds`/`no-token`.
 `headroomPct` = remaining % before the binding 5h/7d window; `null` = unknown.
 
+**A saved capture is not a live login.** The Claude desktop app's real session is a
+claude.ai `sessionKey` cookie in its own jar, and only a human sign-in can mint it. When
+claude.ai rotates or revokes a captured session the app opens on its sign-in screen even
+though keyflip's capture is intact, so keyflip reports it rather than looking healthy:
+`list` marks the app `(signed out on disk…)`, `list --json` carries `appSessionLive` /
+`appSessionExpires`, and `doctor`'s **desktop app session** check warns with the fix.
+Do NOT re-switch or re-`add` hoping to repair it — ask the user to sign in once in Claude
+(their login, never yours), then `keyflip add <name>` to refresh the capture.
+
 ## Switching (get consent first)
 
 ```bash
@@ -118,6 +127,12 @@ only when the user also wants the desktop app moved — it closes the app.
 If the Claude **desktop app** is running on a *different* account, it can rewrite the
 shared login and silently undo the switch — `--force` prints a warning when it detects
 this. To make the switch stick, use `--restart` (moves the app too) or quit the app.
+
+**A `--restart` switch is verified, not assumed.** After reopening Claude, keyflip waits
+a few seconds and reads the app's cookie jar; if it came back signed out it prints a
+`⚠ Claude reopened on its SIGN-IN screen` warning (`appSignedIn: false` in `--json`)
+instead of reporting a clean switch. Report that warning to the user — do not retry the
+switch, it will fail the same way (see "A saved capture is not a live login" above).
 
 ## When the user hits a rate limit
 
@@ -143,7 +158,7 @@ keyflip provider off          # back to the subscription (OAuth)
 keyflip provider list         # which providers exist / which is active
 keyflip speedtest <name>      # pick the fastest of a provider's endpoints
 keyflip test <name>           # one real request → auth ok? (auth/network/4xx/5xx)
-keyflip doctor                # health check: secrets-in-git, orphaned sessions, versioning, config, login, endpoints (MCP: keyflip_doctor)
+keyflip doctor                # health check: secrets-in-git, orphaned sessions, versioning, config, login, endpoints, desktop app session (MCP: keyflip_doctor)
 ```
 
 `status` shows the active provider. Switching a provider does NOT change the OAuth

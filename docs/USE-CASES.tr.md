@@ -96,9 +96,13 @@ keyflip status --json        # {"cli":{"email":…},"app":{"name":…,"email":�
 keyflip list                 # tüm yakalı hesaplar, her yüzeyde hangisi aktif
 keyflip list --usage         # + her hesabın 5s / 7g kota kullanımı
 keyflip list --usage --json  # makine-okunur kullanım + headroomPct + usageStatus
-keyflip doctor               # yapılandırma + giriş + uç nokta erişilebilirlik raporu
+keyflip doctor               # yapılandırma + giriş + uç nokta erişilebilirliği + gerçek masaüstü giriş kontrolü
 ```
 - `list` bir **web** sütunu ve tarayıcı/uzantı alt bilgisi gösterir, uyumsuzlukta uyarır.
+- `doctor`'daki **desktop app session** kontrolü uygulamanın kendi çerez veritabanını okur;
+  claude.ai'nin artık kabul etmediği bir yakalama sağlıklı görünmek yerine rapor edilir.
+  `list` uygulamanın yanına `(signed out on disk…)` yazar, `list --json` ise
+  `appSessionLive` / `appSessionExpires` alanlarını taşır.
 - `usageStatus` sabitleri: `ok`, `expired` (hesabı yeniden `add`'le), `throttled`
   (**bilinmiyor**, rate-limit kanıtı değil), `error`, `no-creds`/`no-token`.
 
@@ -121,6 +125,10 @@ keyflip next --strategy next-available  # tükenmemiş ilk hesap
 - **`--browser`** o hesabın kayıtlı tarayıcı oturumunu geri yükler (onboard/login
   sırasında yakalanan), tarayıcıyı kapatıp açar ki uzantı yeniden bağlansın.
 - Her geçiş sohbetleri de hesaplar arası eşitler (masaüstü açıksa ertelenir).
+- **`--restart` sonrası keyflip doğrular:** birkaç saniye bekler ve masaüstü uygulamasının
+  çerez veritabanını yeniden okur. Claude giriş ekranıyla açıldıysa (claude.ai kayıtlı oturumu
+  döndürmüş ya da iptal etmiştir) temiz bir geçiş bildirmez, uyarır. Çözüm: uygulamada bir kez
+  giriş yapıp `keyflip add <ad>` çalıştırmak — o çerezi otomatik hiçbir şey üretemez.
 
 ---
 

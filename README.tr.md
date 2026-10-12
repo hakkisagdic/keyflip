@@ -139,7 +139,7 @@ keyflip next                  # sıradaki kayıtlı hesaba dön
 keyflip next --strategy best  # ...veya kalan kotaya göre seç (ayrıca: next-available)
 keyflip provider add <ad> --base-url <url> --key-file -   # 3. taraf endpoint kaydet
 keyflip use <ad>              # Claude Code'u bir provider'a yönlendir (geri: keyflip provider off)
-keyflip doctor                # sağlık kontrolü: git-e-sır, orphan oturumlar, versiyonlama, config, giriş, endpointler
+keyflip doctor                # sağlık kontrolü: git-e-sır, orphan oturumlar, versiyonlama, config, giriş, endpointler, masaüstü oturumu
 keyflip backup now|list|restore <n>   # keyflip metadata anlık görüntüsü (sırsız)
 keyflip usage --history       # hesap-başına kullanım eğilimi + failover olayları
 keyflip usage --providers     # bu makinedeki DİĞER AI araçlarında kullanım/limit (Codex/Gemini/Cursor/Copilot/OpenRouter + Claude) — CodexBar tarzı monitör
@@ -272,7 +272,7 @@ keyflip use openrouter          # Claude Code'u ona yönlendir
 keyflip provider off            # aboneliğine geri dön (OAuth)
 keyflip speedtest openrouter    # endpoint'leri ölç, en hızlısını kullan
 keyflip test openrouter         # tek gerçek istek: auth çalışıyor mu?
-keyflip doctor                  # sağlık kontrolü: git-e-sır + orphan + versiyonlama + config + giriş + endpointler
+keyflip doctor                  # sağlık kontrolü: git-e-sır + orphan + versiyonlama + config + giriş + endpointler + masaüstü oturumu
 ```
 
 - **API anahtarı sırdır** → OS kimlik deposunda saklanır, asla metadata dosyasında
@@ -569,6 +569,18 @@ Sonrasında `keyflip <ad>` (uygulama kapatılıp yeniden açılarak) CLI kimliğ
 **ve** masaüstü girişini (token + oturum çerezi) takas eder — elle yeniden
 giriş yok. `config.json` ve çerez veritabanı önce yedeklenir
 (`~/.config/keyflip/backups/`).
+
+Kayıtlı *yakalama* ile *canlı giriş* aynı şey değildir; farkı şöyle ortaya çıkar:
+claude.ai o oturumu yakalamadan sonra döndürmüş ya da iptal etmişse uygulama açılışta
+çerezi siler ve **giriş ekranıyla** açılır — token önbelleği sağlam ve çözülebilir
+olduğu hâlde. Bunu hiçbir otomatik yol çözemez (çerezi yalnızca bir giriş üretir),
+bu yüzden keyflip sağlıklı görünmek yerine durumu söyler: `keyflip list` yakalama
+`app ✓` dururken uygulamayı `(signed out on disk…)` diye işaretler, `keyflip doctor`
+**desktop app session** kontrolünü çalıştırır (çerez varsa son kullanma tarihini de
+gösterir) ve Claude'u yeniden açan bir geçişten sonra birkaç saniye bekleyip uygulama
+girişsiz açıldıysa uyarır. Her üç durumunda da çözüm aynı: uygulamada bir kez giriş
+yapın, sonra `keyflip add <ad>` çalıştırın — CLI, tarayıcı oturumu ve diğer tüm
+yakalamalar seçtiğiniz hesapta kalmaya devam eder.
 
 > Deneysel: uygulama kapalıyken `config.json` girişini yeniden yazar. Kayıtlı
 > token tamamen süresi dolmuşsa uygulama yeniden giriş isteyebilir; o hesabı

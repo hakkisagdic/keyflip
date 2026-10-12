@@ -139,7 +139,7 @@ keyflip next                  # rotate to the next saved account
 keyflip next --strategy best  # ...or pick by remaining quota (also: next-available)
 keyflip provider add <name> --base-url <url> --key-file -   # save a 3rd-party endpoint
 keyflip use <name>            # route Claude Code to a provider (keyflip provider off = back)
-keyflip doctor                # health check: secrets-in-git, orphaned sessions, versioning, config, login, endpoints
+keyflip doctor                # health check: secrets-in-git, orphaned sessions, versioning, config, login, endpoints, desktop app session
 keyflip backup now|list|restore <n>   # snapshot keyflip metadata (no secrets)
 keyflip usage --history       # per-account usage trend + failover events
 keyflip usage --providers     # usage/limits across OTHER AI tools on this machine (Codex/Gemini/Cursor/Copilot/OpenRouter + Claude) — the CodexBar-style monitor
@@ -271,7 +271,7 @@ keyflip provider off            # back to your subscription (OAuth)
 keyflip provider list           # what's saved / active
 keyflip speedtest openrouter    # time the endpoints, use the fastest
 keyflip test openrouter         # one real request: is auth working?
-keyflip doctor                  # health check: secrets-in-git + orphans + versioning + config + login + endpoints
+keyflip doctor                  # health check: secrets-in-git + orphans + versioning + config + login + endpoints + desktop app session + is the desktop app really signed in
 ```
 
 - The **API key is a secret** → stored in the OS credential store, never in the
@@ -575,6 +575,17 @@ After that, `keyflip <name>` (app closed → reopened) swaps the CLI creds **and
 the desktop-app login (token + session cookie), so both come up on the chosen
 account — no manual re-login. `config.json` and the cookie DB are backed up first
 (`~/.config/keyflip/backups/`).
+
+A saved *capture* is not the same as a *live login*, and the difference shows: if
+claude.ai has rotated or revoked that session since it was captured, the app deletes the
+cookie on launch and opens on its **sign-in screen** — even though its token cache is
+intact and decryptable. Nothing automated can fix that (only a sign-in mints the
+cookie), so keyflip reports it instead of looking healthy: `keyflip list` marks the app
+`(signed out on disk…)` while its capture is still `app ✓`, `keyflip doctor` runs a
+**desktop app session** check (and shows the cookie's expiry when it is there), and
+after a switch that reopens Claude, keyflip waits a few seconds and warns if the app came
+back signed out. The fix in every case is one sign-in in the app plus `keyflip add
+<name>`; the CLI, the browser session and every other capture stay switched.
 
 > Experimental: it rewrites the app's `config.json` login while the app is closed.
 > If a saved token has fully expired the app may ask you to log in again; just

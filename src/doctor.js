@@ -9,6 +9,7 @@ import * as provider from './provider.js';
 import * as _vcs from './vcs.js';
 import * as _secretpaths from './secretpaths.js';
 import * as _sessions from './sessions.js';
+import * as _appauth from './appauth.js';
 
 async function probe(url, opts) {
   opts = opts || {};
@@ -61,6 +62,7 @@ async function diagnose(ctx, opts) {
   // --- state-hygiene checks (local, no network) ---
   secretsInGit(ctx, add);
   versioningState(ctx, add);
+  appSession(ctx, add, opts);
   orphanSessions(ctx, add);
   rebindBackups(ctx, add);
   emptyProjectsCheck(ctx, add);
@@ -174,6 +176,37 @@ function versioningState(ctx, add) {
     on ? true : 'warn',
     on ? 'on (undo / history available)' : 'off',
     on ? undefined : 'keyflip versioning enable  (needs git)',
+  );
+}
+
+// The desktop app's REAL login is a claude.ai session cookie in its own jar, not the
+// token cache in config.json — the app re-mints that cache from the cookie at launch.
+// So a jar with no session cookie means the app will sit on its sign-in screen while
+// every keyflip capture still reads "app ✓". Advisory only: it costs nothing to be
+// signed out of the app while the CLI and browser work fine.
+function appSession(ctx, add, opts) {
+  if (!ctx.appDataDir) return; // no desktop app on this platform
+  let s;
+  try {
+    s = _appauth.liveAppSession(ctx, opts || {});
+  } catch (e) {
+    return;
+  }
+  if (s.signedIn) {
+    add(
+      'desktop app session',
+      true,
+      'signed in' + (s.expiresAt ? ' (session cookie valid to ' + s.expiresAt.slice(0, 10) + ')' : ''),
+    );
+    return;
+  }
+  if (s.reason === 'no-cookie-db') return; // the app has never written a cookie jar — nothing to report
+  add(
+    'desktop app session',
+    'warn',
+    "the app's cookie jar has no claude.ai session cookie — it opens on its sign-in screen " +
+      'even though the saved capture is intact',
+    'sign in once in Claude (a restore cannot mint that cookie), then `keyflip add` to refresh the capture',
   );
 }
 

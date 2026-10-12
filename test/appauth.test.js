@@ -369,3 +369,77 @@ test('decryptAppBlobWin recovers a v10 AES-256-GCM token cache via the DPAPI mas
   assert.strictEqual(appauth.isEncBlob(blob), true, 'v10/v11 prefix recognized');
   assert.strictEqual(appauth.decryptAppBlobWin(ctx, 'not-encrypted'), null);
 });
+
+// ---- liveAppSession: is the app signed in RIGHT NOW? ----
+// The failure this exists for: config.json's token cache decrypts fine and names the
+// gmail org, yet the app opens on its sign-in screen, because the app re-mints that
+// cache from its claude.ai session cookie and the cookie is gone from the jar.
+import { execFileSync } from 'child_process';
+
+const CHROME_EPOCH_OFFSET_S = 11644473600;
+function cookieDb(file, rows) {
+  const sql =
+    'CREATE TABLE cookies(name TEXT, host_key TEXT, expires_utc INTEGER, encrypted_value BLOB);' +
+    rows
+      .map(function (r) {
+        return (
+          "INSERT INTO cookies VALUES('" +
+          r.name +
+          "','" +
+          (r.host || '.claude.ai') +
+          "'," +
+          Math.round((r.expiresSec + CHROME_EPOCH_OFFSET_S) * 1e6) +
+          ",X'763130');"
+        );
+      })
+      .join('');
+  execFileSync('sqlite3', [file, sql]);
+}
+function appCtxWithCookies(dir) {
+  return { home: dir, platform: 'darwin', appDataDir: dir, configDir: path.join(dir, 'cfg') };
+}
+
+test('liveAppSession reads a real cookie jar: signed in, with the session expiry', function () {
+  const dir = tmpdir();
+  cookieDb(path.join(dir, 'Cookies'), [
+    { name: 'lastActiveOrg', expiresSec: 1800000000 },
+    { name: 'sessionKey', expiresSec: 1790000000 },
+  ]);
+  const r = appauth.liveAppSession(appCtxWithCookies(dir), {});
+  assert.strictEqual(r.signedIn, true);
+  assert.strictEqual(r.checked, 'query');
+  assert.strictEqual(r.expiresAt, new Date(1790000000 * 1000).toISOString());
+});
+
+test('liveAppSession says signed OUT when the session row was deleted', function () {
+  const dir = tmpdir();
+  const file = path.join(dir, 'Cookies');
+  cookieDb(file, [{ name: 'sessionKey', expiresSec: 1790000000 }]);
+  assert.strictEqual(appauth.liveAppSession(appCtxWithCookies(dir), {}).signedIn, true, 'before the delete');
+  execFileSync('sqlite3', [file, "DELETE FROM cookies WHERE name LIKE 'session%';"]);
+  const r = appauth.liveAppSession(appCtxWithCookies(dir), {});
+  assert.strictEqual(r.signedIn, false, 'a queried jar is the truth, not what bytes linger');
+  assert.strictEqual(r.checked, 'query');
+  assert.strictEqual(r.expiresAt, null);
+});
+
+test('liveAppSession ignores a session cookie for a different site', function () {
+  const dir = tmpdir();
+  cookieDb(path.join(dir, 'Cookies'), [{ name: 'sessionKey', host: '.example.com', expiresSec: 1790000000 }]);
+  assert.strictEqual(appauth.liveAppSession(appCtxWithCookies(dir), {}).signedIn, false);
+});
+
+test('liveAppSession falls back to the plaintext name scan when sqlite3 cannot read the jar', function () {
+  const dir = tmpdir();
+  fs.writeFileSync(path.join(dir, 'Cookies'), 'sessionKey NOT-A-REAL-DB'); // fixtures + exotic installs
+  const r = appauth.liveAppSession(appCtxWithCookies(dir), {});
+  assert.strictEqual(r.signedIn, true);
+  assert.strictEqual(r.checked, 'scan');
+});
+
+test('liveAppSession: no jar at all is not signed in, and never throws', function () {
+  const r = appauth.liveAppSession(appCtxWithCookies(tmpdir()), {});
+  assert.strictEqual(r.signedIn, false);
+  assert.strictEqual(r.reason, 'no-cookie-db');
+  assert.strictEqual(appauth.liveAppSession({ platform: 'linux' }, {}).signedIn, false, 'no appDataDir');
+});

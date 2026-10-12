@@ -130,3 +130,37 @@ test('quota pressure warns only when an account is near its limit', async functi
   const c = find(r.checks, 'quota headroom');
   assert.ok(c && c.ok === 'warn' && /hot/.test(c.detail) && !/cool/.test(c.detail));
 });
+
+// ---- the desktop app's LIVE session (the token cache cannot answer this) ----
+// keyflip's "app ✓" means a restorable capture exists; the app itself can still be
+// signed out, because it re-mints its token cache from a claude.ai session cookie and
+// shows its sign-in screen without one. `doctor` must say so.
+import os from 'os';
+function appCtxWithJar(jarBody) {
+  const ctx = makeCtx();
+  const ad = fs.mkdtempSync(path.join(os.tmpdir(), 'kf-doctor-app-'));
+  ctx.appDataDir = ad;
+  if (jarBody !== null) fs.writeFileSync(path.join(ad, 'Cookies'), jarBody);
+  return ctx;
+}
+
+test('doctor: warns when the app jar has no session cookie', async function () {
+  const ctx = appCtxWithJar('lastActiveOrg COOKIES-NO-SESSION');
+  const r = await doctor.diagnose(ctx);
+  const c = find(r.checks, 'desktop app session');
+  assert.ok(c && c.ok === 'warn', 'advisory, not a failure: the CLI may be fine');
+  assert.match(c.detail, /no claude.ai session cookie/);
+  assert.match(c.fix, /sign in once/, 'and it names the only real fix (a restore cannot mint the cookie)');
+});
+
+test('doctor: passes when the app jar holds a session cookie', async function () {
+  const ctx = appCtxWithJar('sessionKey COOKIES-LIVE');
+  const r = await doctor.diagnose(ctx);
+  const c = find(r.checks, 'desktop app session');
+  assert.ok(c && c.ok === true, 'signed in: ' + (c && c.detail));
+});
+
+test('doctor: says nothing about an app that is not installed', async function () {
+  const r = await doctor.diagnose(makeCtx()); // no appDataDir
+  assert.strictEqual(find(r.checks, 'desktop app session'), undefined);
+});

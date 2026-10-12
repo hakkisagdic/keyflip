@@ -95,9 +95,12 @@ keyflip status --json        # {"cli":{"email":…},"app":{"name":…,"email":�
 keyflip list                 # all captured accounts, which is active on each surface
 keyflip list --usage         # + each account's 5h / 7d quota utilization
 keyflip list --usage --json  # machine-readable usage + headroomPct + usageStatus
-keyflip doctor               # config + login + endpoint reachability report
+keyflip doctor               # config + login + endpoint reachability + a real desktop-app login check
 ```
 - `list` shows a **web** column and a browser/extension footer, warning on a mismatch.
+- `doctor`'s **desktop app session** check reads the app's own cookie jar, so a capture
+  that claude.ai no longer accepts is reported instead of looking healthy. `list` marks the
+  app `(signed out on disk…)`, and `list --json` carries `appSessionLive` / `appSessionExpires`.
 - `usageStatus` sentinels: `ok`, `expired` (re-`add` the account), `throttled`
   (**unknown**, not proof of a rate-limit), `error`, `no-creds`/`no-token`.
 
@@ -120,6 +123,10 @@ keyflip next --strategy next-available  # first account that isn't exhausted
 - **`--browser`** restores that account's saved browser session (captured during
   onboard/login), quitting + reopening the browser so the extension reconnects.
 - Every switch also re-syncs chats across accounts (deferred if the desktop app is open).
+- **After `--restart` keyflip verifies the app** — it waits a few seconds and re-reads the
+  desktop app's cookie jar. If Claude came back on its sign-in screen (claude.ai rotated or
+  revoked the saved session), it warns rather than claiming a clean switch. The fix is one
+  sign-in in the app followed by `keyflip add <name>`; nothing automated can mint that cookie.
 
 ---
 

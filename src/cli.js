@@ -435,6 +435,9 @@ async function cmdSwitch(ctx, rest) {
   const name = core.resolveProfile(ctx, arg);
   if (!name) return fail("no such profile: '" + arg + "' (see: keyflip list)");
   const em = profiles.email(ctx.configDir, name);
+  // Did THIS switch reopen the desktop app? Only then is it worth waiting to see whether
+  // the app came back signed in (see verifyAppRelogin).
+  let appReopened = false;
   if (em && em === core.currentEmail(ctx)) {
     // "Already active" has to mean BOTH surfaces. The desktop app keeps its own
     // independent login, so a hand sign-in inside the app moves only the app while
@@ -480,6 +483,7 @@ async function cmdSwitch(ctx, rest) {
     if (appRunning) {
       print('Reopening Claude...');
       appctl.openClaude(ctx.platform);
+      appReopened = true;
     }
     if (!lagApp.ok) {
       return fail("the desktop app's login could not be switched (" + (lagApp.reason || 'failed') + ').');
@@ -577,10 +581,30 @@ async function cmdSwitch(ctx, rest) {
         /* best-effort — never block a switch on this */
       }
     }
+    // Did the app come back signed in? A saved session cookie the server has since
+    // rotated leaves Claude on its sign-in screen after a switch that looked clean.
+    let relogin = null;
+    if (appReopened && appl && appl.ok) relogin = await verifyAppRelogin(ctx);
+    if (relogin === false) {
+      print(
+        '  ' +
+          style.warn('⚠') +
+          " Claude reopened on its SIGN-IN screen: the saved session for '" +
+          name +
+          "' is no longer accepted by claude.ai.",
+      );
+      print(
+        '     Fix: sign in once in Claude as ' +
+          (em || name) +
+          ' — the CLI, browser and captures stay switched — then refresh the capture: ' +
+          style.bold('keyflip add ' + name),
+      );
+    }
     jsonOut({
       switched: { name: name, email: em || null },
       cliSwitched: !!(did && did.cli),
       appSwitched: !!(appl && appl.ok),
+      appSignedIn: relogin === null ? undefined : relogin,
       sessionsShared: (cons && cons.merged) || 0,
     });
     // Opt-in switch notification — a no-op unless the user configured notify for the 'switch'
@@ -651,6 +675,7 @@ async function cmdSwitch(ctx, rest) {
     const cons = consolidateAndReport(ctx);
     print('Reopening Claude...');
     appctl.openClaude(ctx.platform);
+    appReopened = true;
     print(style.ok('✅') + ' Switched to: ' + (em || name));
     await emitSwitched(did, appl, cons);
     return;
@@ -7533,6 +7558,39 @@ function switchDesktopLogin(ctx, name) {
   return a;
 }
 
+// After a switch reopens Claude, confirm it actually came back signed in.
+//
+// The restore hands the app a saved cookie jar, and the app then calls /authorize WITH
+// that session cookie to re-mint its token cache. If the server rotated or revoked the
+// session since the capture, the app deletes the cookie on boot and sits on its sign-in
+// screen — which looks like a clean switch from here. So poll the jar for a few seconds
+// instead of assuming: true = still signed in, false = the app cleared it (or never got
+// it), null = nothing to check on this platform.
+async function verifyAppRelogin(ctx, opts) {
+  opts = opts || {};
+  if (!ctx.appDataDir) return null;
+  const nap = opts.sleep || sleep;
+  const probe =
+    opts.session ||
+    function () {
+      try {
+        return appauth.liveAppSession(ctx, {}).signedIn;
+      } catch (e) {
+        return null;
+      }
+    };
+  const polls = typeof opts.polls === 'number' ? opts.polls : 4;
+  const stepMs = typeof opts.stepMs === 'number' ? opts.stepMs : 1000;
+  let last = null;
+  for (let i = 0; i < polls; i++) {
+    await nap(stepMs);
+    last = probe();
+    if (last === false) return false; // the app cleared the cookie — that IS the failure
+    if (last === null) continue; // unreadable (locked jar?) — keep trying
+  }
+  return last === true;
+}
+
 // The saved profile the desktop app's OWN login currently matches (by org uuid).
 // Returns the profile name, '' when the app is signed in on an account keyflip has
 // never saved, or null when there is no app login to read (no app, signed out, or
@@ -9181,6 +9239,17 @@ async function cmdList(ctx, rest) {
   const appFallbackLabel = appActive
     ? null
     : appDet && (appDet.email || (appDet.org ? appDet.org.slice(0, 8) + '… (unsaved)' : null));
+  // "app ✓" below means a RESTORABLE capture exists. This is the other question: is the
+  // app itself signed in right now? (It needs its session cookie to re-mint the token
+  // cache at launch, so a capture can be perfect and the app still show sign-in.)
+  let liveApp = null;
+  if (ctx.appDataDir) {
+    try {
+      liveApp = appauth.liveAppSession(ctx, {});
+    } catch (e) {
+      liveApp = null;
+    }
+  }
   const withUsage = (rest || []).indexOf('--usage') !== -1;
   let infos = null;
   if (withUsage && list.length) {
@@ -9241,6 +9310,8 @@ async function cmdList(ctx, rest) {
       }),
       activeCli: core.currentEmail(ctx) || null,
       activeApp: appActive ? profiles.email(ctx.configDir, appActive) || appActive : null,
+      appSessionLive: liveApp ? !!liveApp.signedIn : null,
+      appSessionExpires: liveApp && liveApp.expiresAt ? liveApp.expiresAt : null,
     });
     return;
   }
@@ -9286,7 +9357,10 @@ async function cmdList(ctx, rest) {
       (core.currentEmail(ctx) || 'not logged in') +
       (ctx.appDataDir
         ? '   ·   desktop app: ' +
-          (appActive ? profiles.email(ctx.configDir, appActive) || appActive : appFallbackLabel || 'unknown')
+          (appActive ? profiles.email(ctx.configDir, appActive) || appActive : appFallbackLabel || 'unknown') +
+          (liveApp && !liveApp.signedIn
+            ? style.dim('  (signed out on disk — it will open on its sign-in screen; see `keyflip doctor`)')
+            : '')
         : ''),
   );
   if (browsersPresent > 0) {
@@ -9904,4 +9978,5 @@ export {
   appActiveProfile,
   preserveOutgoingAppLogin,
   browserCapture,
+  verifyAppRelogin,
 };
