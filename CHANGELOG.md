@@ -19,6 +19,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   directory, `auth.json` is a secret basename, and `ensureRepo`'s existing stale-ignore
   purge removes any already-tracked copy on the next command.
 
+  Correction to the first version of this entry (and to commit `0b1cbba`): it also
+  claimed the tokens had been copied into metadata backups. `backup.js` really does
+  walk any directory missing from `SECRET_DIRS`, so the exposure was latent — but on
+  the machine where this was found, both backups predate the capture and contain zero
+  `surfaces/` files. The backup risk is a code property, not an observed leak.
+
 ### Added
 
 - `test/backup.test.js`: a metadata backup must carry `accounts.json` and never a
