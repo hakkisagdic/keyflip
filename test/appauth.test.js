@@ -375,6 +375,7 @@ test('decryptAppBlobWin recovers a v10 AES-256-GCM token cache via the DPAPI mas
 // gmail org, yet the app opens on its sign-in screen, because the app re-mints that
 // cache from its claude.ai session cookie and the cookie is gone from the jar.
 import { execFileSync } from 'child_process';
+import { SQLITE_SKIP } from './sqlite.js';
 
 const CHROME_EPOCH_OFFSET_S = 11644473600;
 function cookieDb(file, rows) {
@@ -399,7 +400,7 @@ function appCtxWithCookies(dir) {
   return { home: dir, platform: 'darwin', appDataDir: dir, configDir: path.join(dir, 'cfg') };
 }
 
-test('liveAppSession reads a real cookie jar: signed in, with the session expiry', function () {
+test('liveAppSession reads a real cookie jar: signed in, with the session expiry', { skip: SQLITE_SKIP }, function () {
   const dir = tmpdir();
   cookieDb(path.join(dir, 'Cookies'), [
     { name: 'lastActiveOrg', expiresSec: 1800000000 },
@@ -411,7 +412,7 @@ test('liveAppSession reads a real cookie jar: signed in, with the session expiry
   assert.strictEqual(r.expiresAt, new Date(1790000000 * 1000).toISOString());
 });
 
-test('liveAppSession says signed OUT when the session row was deleted', function () {
+test('liveAppSession says signed OUT when the session row was deleted', { skip: SQLITE_SKIP }, function () {
   const dir = tmpdir();
   const file = path.join(dir, 'Cookies');
   cookieDb(file, [{ name: 'sessionKey', expiresSec: 1790000000 }]);
@@ -423,7 +424,7 @@ test('liveAppSession says signed OUT when the session row was deleted', function
   assert.strictEqual(r.expiresAt, null);
 });
 
-test('liveAppSession ignores a session cookie for a different site', function () {
+test('liveAppSession ignores a session cookie for a different site', { skip: SQLITE_SKIP }, function () {
   const dir = tmpdir();
   cookieDb(path.join(dir, 'Cookies'), [{ name: 'sessionKey', host: '.example.com', expiresSec: 1790000000 }]);
   assert.strictEqual(appauth.liveAppSession(appCtxWithCookies(dir), {}).signedIn, false);

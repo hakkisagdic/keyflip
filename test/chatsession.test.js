@@ -13,6 +13,7 @@ import path from 'path';
 import crypto from 'crypto';
 import { execFileSync } from 'child_process';
 import * as chatsession from '../src/chatsession.js';
+import { SQLITE_SKIP } from './sqlite.js';
 
 const PW = 'unit-test-password';
 const KEY = crypto.pbkdf2Sync(PW, 'saltysalt', 1003, 16, 'sha1');
@@ -87,7 +88,7 @@ test('hasSession recognizes either session cookie name', function () {
   assert.ok(!chatsession.hasSession(''));
 });
 
-test('--as reads another account from its saved BROWSER snapshot, untouched', function () {
+test('--as reads another account from its saved BROWSER snapshot, untouched', { skip: SQLITE_SKIP }, function () {
   const b = browserDb({ sessionKey: 'SESSION-Y', lastActiveOrg: 'org-yahoo' });
   const ctx = ctxWith({ sessionKey: 'SESSION-LIVE', lastActiveOrg: 'org-live' });
   snapshotFile(b, ctx.configDir, 'yahoo');
@@ -104,7 +105,7 @@ test('--as reads another account from its saved BROWSER snapshot, untouched', fu
   assert.match(s.source, /\d{4}-\d\d-\d\d \d\d:\d\d/, 'says how stale the saved session is');
 });
 
-test('--as on an account with no saved session says how to get one', function () {
+test('--as on an account with no saved session says how to get one', { skip: SQLITE_SKIP }, function () {
   const ctx = ctxWith({ sessionKey: 'SESSION-LIVE' });
   assert.throws(
     function () {
@@ -118,7 +119,7 @@ test('--as on an account with no saved session says how to get one', function ()
   );
 });
 
-test('--as names the browser when its snapshot was taken on another machine', function () {
+test('--as names the browser when its snapshot was taken on another machine', { skip: SQLITE_SKIP }, function () {
   const b = browserDb({ sessionKey: 'SESSION-Y', lastActiveOrg: 'org-yahoo' });
   const ctx = ctxWith(null);
   snapshotFile(b, ctx.configDir, 'yahoo');
@@ -135,7 +136,7 @@ test('--as names the browser when its snapshot was taken on another machine', fu
   }, /is not installed here/);
 });
 
-test('the live app cookie is preferred while it is actually on disk', function () {
+test('the live app cookie is preferred while it is actually on disk', { skip: SQLITE_SKIP }, function () {
   const ctx = ctxWith({ sessionKey: 'SESSION-APP', lastActiveOrg: 'org-app' });
   const s = chatsession.findSession(ctx, {
     browsers: [],
@@ -148,7 +149,7 @@ test('the live app cookie is preferred while it is actually on disk', function (
   assert.strictEqual(s.source, 'the Claude desktop app');
 });
 
-test('when the app keeps its session in memory, the browser that has it is used', function () {
+test('when the app keeps its session in memory, the browser that has it is used', { skip: SQLITE_SKIP }, function () {
   // The common case on current desktop builds: the app's jar is readable but holds no
   // sessionKey, and Chrome (which does persist it) can carry the read.
   const ctx = ctxWith({ lastActiveOrg: 'org-app', __cf_bm: 'noise' });
@@ -163,7 +164,7 @@ test('when the app keeps its session in memory, the browser that has it is used'
   assert.strictEqual(s.source, 'Chrome (live browser session)');
 });
 
-test('nothing holds a session -> tell the user what to open', function () {
+test('nothing holds a session -> tell the user what to open', { skip: SQLITE_SKIP }, function () {
   const ctx = ctxWith({ lastActiveOrg: 'org-app' });
   assert.throws(
     function () {
@@ -183,7 +184,7 @@ test('nothing holds a session -> tell the user what to open', function () {
   );
 });
 
-test('withSession feeds the resolved cookie to chat.js and keeps the source label', function () {
+test('withSession feeds the resolved cookie to chat.js and keeps the source label', { skip: SQLITE_SKIP }, function () {
   const ctx = ctxWith({ lastActiveOrg: 'org-app' });
   const o = chatsession.withSession(ctx, {
     limit: 7,
@@ -203,22 +204,26 @@ test('withSession leaves an explicit override alone (tests, and callers that alr
   assert.strictEqual(o.sessionSource, undefined);
 });
 
-test('list() runs through the sourced session, so an account flag reaches the right org', async function () {
-  const b = browserDb({ sessionKey: 'SESSION-Y', lastActiveOrg: 'org-yahoo' });
-  const ctx = ctxWith(null);
-  snapshotFile(b, ctx.configDir, 'yahoo');
-  let asked = null;
-  const r = await chatsession.list(ctx, {
-    account: 'yahoo',
-    browsers: [b],
-    browserKey: function () {
-      return PW;
-    },
-    fetch: async function (url) {
-      asked = url;
-      return { ok: true, status: 200, json: async () => [] };
-    },
-  });
-  assert.strictEqual(r.org, 'org-yahoo');
-  assert.match(asked, /organizations\/org-yahoo\/chat_conversations/);
-});
+test(
+  'list() runs through the sourced session, so an account flag reaches the right org',
+  { skip: SQLITE_SKIP },
+  async function () {
+    const b = browserDb({ sessionKey: 'SESSION-Y', lastActiveOrg: 'org-yahoo' });
+    const ctx = ctxWith(null);
+    snapshotFile(b, ctx.configDir, 'yahoo');
+    let asked = null;
+    const r = await chatsession.list(ctx, {
+      account: 'yahoo',
+      browsers: [b],
+      browserKey: function () {
+        return PW;
+      },
+      fetch: async function (url) {
+        asked = url;
+        return { ok: true, status: 200, json: async () => [] };
+      },
+    });
+    assert.strictEqual(r.org, 'org-yahoo');
+    assert.match(asked, /organizations\/org-yahoo\/chat_conversations/);
+  },
+);

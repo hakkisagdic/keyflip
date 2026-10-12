@@ -10,6 +10,7 @@ import path from 'path';
 import crypto from 'crypto';
 import { execFileSync } from 'child_process';
 import * as chat from '../src/chat.js';
+import { SQLITE_SKIP } from './sqlite.js';
 
 const PW = 'unit-test-password';
 const KEY = crypto.pbkdf2Sync(PW, 'saltysalt', 1003, 16, 'sha1');
@@ -57,42 +58,53 @@ function ctxWith(rows, extra) {
 
 const LIVE = { sessionKey: 'SESSION-1', lastActiveOrg: 'org-live' };
 
-test('cookieHeader decrypts the live app cookie DB and reports the org', function () {
+test('cookieHeader decrypts the live app cookie DB and reports the org', { skip: SQLITE_SKIP }, function () {
   const ctx = ctxWith(LIVE);
   const ch = chat.cookieHeader(ctx);
   assert.match(ch.cookie, /sessionKey=SESSION-1/);
   assert.strictEqual(ch.org, 'org-live');
 });
 
-test('a RUNNING app whose cookies were never written out is named, not 403-debugged', function () {
-  // Chromium flushes session cookies only on a clean quit, so this is the common case
-  // while the app is open: readable cookies, but no sessionKey at all.
-  const ctx = ctxWith({ lastActiveOrg: 'org-live', __cf_bm: 'noise' });
-  assert.throws(
-    function () {
-      chat.cookieHeader(ctx);
-    },
-    function (e) {
-      assert.strictEqual(e.code, 'cookies-not-flushed');
-      assert.match(e.message, /Cmd\+Q/);
-      return true;
-    },
-  );
-});
+test(
+  'a RUNNING app whose cookies were never written out is named, not 403-debugged',
+  { skip: SQLITE_SKIP },
+  function () {
+    // Chromium flushes session cookies only on a clean quit, so this is the common case
+    // while the app is open: readable cookies, but no sessionKey at all.
+    const ctx = ctxWith({ lastActiveOrg: 'org-live', __cf_bm: 'noise' });
+    assert.throws(
+      function () {
+        chat.cookieHeader(ctx);
+      },
+      function (e) {
+        assert.strictEqual(e.code, 'cookies-not-flushed');
+        assert.match(e.message, /Cmd\+Q/);
+        return true;
+      },
+    );
+  },
+);
 
-test('cookieHeader can read ANOTHER account from its saved snapshot (no switching)', function () {
-  const ctx = ctxWith(LIVE);
-  const snap = path.join(ctx.configDir, 'app');
-  fs.mkdirSync(snap, { recursive: true });
-  fs.copyFileSync(cookieDb({ sessionKey: 'SESSION-Y', lastActiveOrg: 'org-yahoo' }), path.join(snap, 'yahoo.cookies'));
-  const mine = chat.cookieHeader(ctx);
-  const theirs = chat.cookieHeader(ctx, { account: 'yahoo' });
-  assert.match(mine.cookie, /sessionKey=SESSION-1/);
-  assert.match(theirs.cookie, /sessionKey=SESSION-Y/);
-  assert.strictEqual(theirs.org, 'org-yahoo', 'the org follows the snapshot, not the live app');
-});
+test(
+  'cookieHeader can read ANOTHER account from its saved snapshot (no switching)',
+  { skip: SQLITE_SKIP },
+  function () {
+    const ctx = ctxWith(LIVE);
+    const snap = path.join(ctx.configDir, 'app');
+    fs.mkdirSync(snap, { recursive: true });
+    fs.copyFileSync(
+      cookieDb({ sessionKey: 'SESSION-Y', lastActiveOrg: 'org-yahoo' }),
+      path.join(snap, 'yahoo.cookies'),
+    );
+    const mine = chat.cookieHeader(ctx);
+    const theirs = chat.cookieHeader(ctx, { account: 'yahoo' });
+    assert.match(mine.cookie, /sessionKey=SESSION-1/);
+    assert.match(theirs.cookie, /sessionKey=SESSION-Y/);
+    assert.strictEqual(theirs.org, 'org-yahoo', 'the org follows the snapshot, not the live app');
+  },
+);
 
-test('an account with no saved snapshot says how to get one', function () {
+test('an account with no saved snapshot says how to get one', { skip: SQLITE_SKIP }, function () {
   const ctx = ctxWith(LIVE);
   assert.throws(function () {
     chat.cookieHeader(ctx, { account: 'nevercaptured' });
@@ -174,7 +186,7 @@ test('search filters titles case-insensitively and reports what it scanned', asy
   );
 });
 
-test('get/list/search accept an account and pass it to the cookie source', async function () {
+test('get/list/search accept an account and pass it to the cookie source', { skip: SQLITE_SKIP }, async function () {
   const ctx = ctxWith(LIVE);
   const snap = path.join(ctx.configDir, 'app');
   fs.mkdirSync(snap, { recursive: true });
