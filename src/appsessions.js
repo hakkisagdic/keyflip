@@ -33,6 +33,23 @@ function listDirs(p) {
     return [];
   }
 }
+// Account and org folders are named by their UUIDs. Anything else under a store is the app's own
+// bookkeeping — e.g. local-agent-mode-sessions/skills-plugin/<orgUuid>/<accountUuid>/ — and is
+// NOT an account. Treating it as one made consolidate copy session pointers into it.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function isAccountDirName(name) {
+  return UUID_RE.test(name);
+}
+function listAccountDirs(p) {
+  return listDirs(p).filter(isAccountDirName);
+}
+// The app leaves `deleted_<id>` beside the index files when the user deletes a session while
+// signed in to that account. Copying the pointer back from another account's folder would
+// resurrect a chat the user removed.
+function isTombstoned(dir, indexName) {
+  const id = indexName.slice('local_'.length, -'.json'.length);
+  return fs.existsSync(path.join(dir, 'deleted_' + id));
+}
 function listIndexFiles(p) {
   try {
     return fs.readdirSync(p).filter(function (f) {
@@ -91,8 +108,8 @@ function mergeStore(ctx, storeName, backupPrefix) {
 
   // Every <accountUuid>/<orgUuid>/ folder that holds session index files.
   const orgDirs = [];
-  listDirs(store).forEach(function (acct) {
-    listDirs(path.join(store, acct)).forEach(function (org) {
+  listAccountDirs(store).forEach(function (acct) {
+    listAccountDirs(path.join(store, acct)).forEach(function (org) {
       orgDirs.push(path.join(store, acct, org));
     });
   });
@@ -120,6 +137,7 @@ function mergeStore(ctx, storeName, backupPrefix) {
       const m = master[id];
       const dest = path.join(dir, m.name);
       if (fs.existsSync(dest)) return; // filename clash safety (add-only)
+      if (isTombstoned(dir, m.name)) return; // deleted in this account — stays deleted
       plan.push({ from: m.from, to: dest });
     });
   });
@@ -159,4 +177,4 @@ function consolidate(ctx) {
   return { ok: code.ok || cowork.ok, merged: merged, code: code.merged || 0, cowork: cowork.merged || 0 };
 }
 
-export { consolidate, mergeStore, pruneBackups };
+export { consolidate, mergeStore, pruneBackups, isAccountDirName };

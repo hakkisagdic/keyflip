@@ -5,6 +5,7 @@
 // model, account email and timestamps. Read-only; account-independent browsing.
 import fs from 'fs';
 import path from 'path';
+import { isAccountDirName } from './appsessions.js';
 
 function coworkDir(ctx) {
   return ctx.appDataDir ? path.join(ctx.appDataDir, 'local-agent-mode-sessions') : null;
@@ -61,7 +62,9 @@ function list(ctx, opts) {
   } catch (e) {
     return [];
   }
-  accts.forEach(function (a) {
+  // Only <accountUuid>/<orgUuid>/ folders hold sessions; the store also has app bookkeeping
+  // (skills-plugin/…) that is laid out the same way but is not an account.
+  accts.filter(isAccountDirName).forEach(function (a) {
     const adir = path.join(root, a);
     let orgs;
     try {
@@ -69,7 +72,7 @@ function list(ctx, opts) {
     } catch (e) {
       return;
     }
-    orgs.forEach(function (o) {
+    orgs.filter(isAccountDirName).forEach(function (o) {
       const odir = path.join(adir, o);
       let files;
       try {
@@ -82,14 +85,32 @@ function list(ctx, opts) {
         const r = readIndex(path.join(odir, f));
         if (r) {
           r.accountUuid = a;
+          // The session's own data dir (transcript, outputs) exists only in its home account.
+          r.home = fs.existsSync(path.join(odir, f.slice(0, -5)));
           rows.push(r);
         }
       });
     });
   });
-  let out = rows.filter(function (r) {
-    return opts.includeArchived || !r.archived;
+  // After `consolidate` the same session's index file sits in every account folder. Report it
+  // once: the home copy if there is one, otherwise the most recently active.
+  const byId = Object.create(null);
+  rows.forEach(function (r) {
+    const cur = byId[r.sessionId];
+    if (
+      !cur ||
+      (r.home && !cur.home) ||
+      (r.home === cur.home && String(r.lastActivityAt || '') > String(cur.lastActivityAt || ''))
+    )
+      byId[r.sessionId] = r;
   });
+  let out = Object.keys(byId)
+    .map(function (id) {
+      return byId[id];
+    })
+    .filter(function (r) {
+      return opts.includeArchived || !r.archived;
+    });
   if (opts.search) {
     const t = String(opts.search).toLowerCase();
     out = out.filter(function (r) {

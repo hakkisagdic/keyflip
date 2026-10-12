@@ -15,10 +15,10 @@ function setup() {
   const home = tmpdir();
   const appDataDir = path.join(home, 'Library', 'Application Support', 'Claude');
   const store = path.join(appDataDir, 'claude-code-sessions');
-  const A = 'acctA',
-    OA = 'orgA',
-    B = 'acctB',
-    OB = 'orgB';
+  const A = 'aaaaaaaa-0000-4000-8000-000000000001',
+    OA = 'aaaaaaaa-0000-4000-8000-0000000000a1',
+    B = 'bbbbbbbb-0000-4000-8000-000000000002',
+    OB = 'bbbbbbbb-0000-4000-8000-0000000000b2';
   fs.mkdirSync(path.join(store, A, OA), { recursive: true });
   fs.mkdirSync(path.join(store, B, OB), { recursive: true });
   fs.writeFileSync(
@@ -112,4 +112,30 @@ test('pruneBackups keeps only the last N backups', function () {
   const left = fs.readdirSync(bdir).sort();
   assert.strictEqual(left.length, 5);
   assert.strictEqual(left[0], 'claude-code-sessions-2026-01-04T00-00-00');
+});
+
+test('consolidate ignores folders that are not accounts (skills-plugin)', function () {
+  const s = setup();
+  // The app keeps its own bookkeeping in the same store, laid out like an account folder:
+  // <store>/skills-plugin/<orgUuid>/<accountUuid>/. It must be neither read nor written.
+  const plugin = path.join(s.store, 'skills-plugin', s.OA);
+  fs.mkdirSync(path.join(plugin, s.A), { recursive: true });
+  fs.writeFileSync(
+    path.join(plugin, 'local_7.json'),
+    JSON.stringify({ sessionId: 'local_7', cliSessionId: 'cs7', title: 'stray' }),
+  );
+  const r = consolidate(s.ctx);
+  assert.strictEqual(r.merged, 2); // cs2 -> A, cs1 -> B; nothing to or from skills-plugin
+  assert.deepStrictEqual(fs.readdirSync(plugin).sort(), [s.A, 'local_7.json'].sort(), 'skills-plugin left untouched');
+  assert.ok(!fs.existsSync(path.join(s.store, s.A, s.OA, 'local_7.json')), 'stray pointer not spread to accounts');
+});
+
+test('consolidate does not resurrect a session deleted in an account', function () {
+  const s = setup();
+  // The user deleted local_1 while signed in to B: the app left a tombstone there.
+  fs.writeFileSync(path.join(s.store, s.B, s.OB, 'deleted_1'), '1791378056000');
+  const r = consolidate(s.ctx);
+  assert.strictEqual(r.merged, 1); // only cs2 -> A
+  assert.ok(!fs.existsSync(path.join(s.store, s.B, s.OB, 'local_1.json')), 'deleted session stays deleted in B');
+  assert.ok(fs.existsSync(path.join(s.store, s.A, s.OA, 'local_1.json')), 'A keeps its own copy');
 });

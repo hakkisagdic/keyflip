@@ -8,6 +8,12 @@ import * as chat from '../src/chat.js';
 import { makeCtx } from './helpers.js';
 import * as _appsessions from '../src/appsessions.js';
 
+// Account/org folders are UUID-named in the real store; anything else is not an account.
+const A1 = 'aaaaaaaa-0000-4000-8000-000000000001',
+  O1 = 'aaaaaaaa-0000-4000-8000-0000000000a1',
+  A2 = 'bbbbbbbb-0000-4000-8000-000000000002',
+  O2 = 'bbbbbbbb-0000-4000-8000-0000000000b2';
+
 function ctxApp() {
   const ctx = makeCtx();
   ctx.appDataDir = path.join(ctx.home, 'Library', 'Application Support', 'Claude');
@@ -23,7 +29,7 @@ function seedCowork(ctx, acctUuid, orgUuid, id, obj) {
 // ---- Cowork ----
 test('cowork lists sessions across accounts, newest first, with title/account/cliSessionId', function () {
   const ctx = ctxApp();
-  seedCowork(ctx, 'acct-gmail', 'org-1', 's1', {
+  seedCowork(ctx, A1, O1, 's1', {
     title: 'Exam builder',
     emailAddress: 'a@gmail.com',
     cliSessionId: 'cli-1',
@@ -31,7 +37,7 @@ test('cowork lists sessions across accounts, newest first, with title/account/cl
     initialMessage: 'make an exam',
     lastActivityAt: 1778848443085,
   });
-  seedCowork(ctx, 'acct-yahoo', 'org-2', 's2', {
+  seedCowork(ctx, A2, O2, 's2', {
     title: 'Ledger',
     emailAddress: 'b@yahoo.com',
     cliSessionId: 'cli-2',
@@ -46,16 +52,33 @@ test('cowork lists sessions across accounts, newest first, with title/account/cl
 
 test('cowork --search matches title/message/account; archived hidden by default', function () {
   const ctx = ctxApp();
-  seedCowork(ctx, 'a', 'o', 'x', { title: 'OAuth flow', emailAddress: 'a@x.com' });
-  seedCowork(ctx, 'a', 'o', 'y', { title: 'archived one', emailAddress: 'a@x.com', isArchived: true });
+  seedCowork(ctx, A1, O1, 'x', { title: 'OAuth flow', emailAddress: 'a@x.com' });
+  seedCowork(ctx, A1, O1, 'y', { title: 'archived one', emailAddress: 'a@x.com', isArchived: true });
   assert.strictEqual(cowork.list(ctx, { search: 'oauth' }).length, 1);
   assert.strictEqual(cowork.list(ctx, {}).length, 1); // archived hidden
   assert.strictEqual(cowork.list(ctx, { includeArchived: true }).length, 2);
 });
 
+test('cowork lists a consolidated session once, from its home account', function () {
+  const ctx = ctxApp();
+  const store = path.join(ctx.appDataDir, 'local-agent-mode-sessions');
+  // Home copy in A1 (the session's data dir sits beside it); consolidate copied the pointer to A2.
+  seedCowork(ctx, A1, O1, 's1', { title: 'Exam builder', cliSessionId: 'cli-1', lastActivityAt: 1778848443085 });
+  fs.mkdirSync(path.join(store, A1, O1, 'local_s1'));
+  seedCowork(ctx, A2, O2, 's1', { title: 'Exam builder', cliSessionId: 'cli-1', lastActivityAt: 1778848443085 });
+  // App bookkeeping laid out like an account folder is not an account.
+  seedCowork(ctx, 'skills-plugin', O1, 's1', { title: 'Exam builder', cliSessionId: 'cli-1' });
+  seedCowork(ctx, 'skills-plugin', O1, 'stray', { title: 'never a session' });
+  const rows = cowork.list(ctx, {});
+  assert.strictEqual(rows.length, 1);
+  assert.strictEqual(rows[0].sessionId, 's1');
+  assert.strictEqual(rows[0].accountUuid, A1);
+  assert.strictEqual(cowork.find(ctx, 's1').accountUuid, A1);
+});
+
 test('cowork resume uses the underlying cliSessionId', function () {
   const ctx = ctxApp();
-  seedCowork(ctx, 'a', 'o', 'sess', { title: 't', cliSessionId: 'cli-abc', cwd: '/my/dir' });
+  seedCowork(ctx, A1, O1, 'sess', { title: 't', cliSessionId: 'cli-abc', cwd: '/my/dir' });
   const rc = cowork.resumeCommand(cowork.find(ctx, 'sess'));
   assert.deepStrictEqual(rc, { cwd: '/my/dir', command: 'claude', args: ['--resume', 'cli-abc'] });
 });
@@ -117,12 +140,12 @@ test('consolidate merges Cowork sessions across accounts too', function () {
   const appsessions = _appsessions;
   const ctx = ctxApp();
   // account A has a cowork session; B has none -> after consolidate B should gain it
-  seedCowork(ctx, 'A', 'OA', 'cw1', { sessionId: 'cw1', cliSessionId: 'cli-1', title: 't' });
-  fs.mkdirSync(path.join(ctx.appDataDir, 'local-agent-mode-sessions', 'B', 'OB'), { recursive: true });
+  seedCowork(ctx, A1, O1, 'cw1', { sessionId: 'cw1', cliSessionId: 'cli-1', title: 't' });
+  fs.mkdirSync(path.join(ctx.appDataDir, 'local-agent-mode-sessions', A2, O2), { recursive: true });
   ctx.now = function () {
     return '2026-07-02T00:00:00.000Z';
   };
   const r = appsessions.consolidate(ctx);
   assert.ok(r.cowork >= 1);
-  assert.ok(fs.existsSync(path.join(ctx.appDataDir, 'local-agent-mode-sessions', 'B', 'OB', 'local_cw1.json')));
+  assert.ok(fs.existsSync(path.join(ctx.appDataDir, 'local-agent-mode-sessions', A2, O2, 'local_cw1.json')));
 });
