@@ -78,8 +78,29 @@ test('detectInstallMethod recognizes installer copies and npm globals', function
   assert.ok(update.upgradeCommand('installer', 'linux').indexOf('install.sh') !== -1);
   assert.ok(update.upgradeCommand('installer', 'win32').indexOf('install.ps1') !== -1);
   assert.ok(update.upgradeCommand('npm', 'linux').indexOf('npm install -g') !== -1);
+  // Without --install-links, npm >= 9 leaves a global git install as a dangling symlink.
+  assert.ok(update.upgradeSpawn('npm', 'linux').args.indexOf('--install-links') !== -1);
+  assert.ok(update.upgradeCommand('npm', 'linux').indexOf('--install-links') !== -1);
   // upgradeSpawn never uses bash on Windows.
   assert.strictEqual(update.upgradeSpawn('npm', 'win32').cmd, 'npm.cmd');
   assert.strictEqual(update.upgradeSpawn('installer', 'win32').cmd, 'powershell');
   assert.strictEqual(update.upgradeSpawn('installer', 'linux').cmd, 'bash');
+});
+
+test('detectInstallMethod recognizes a source checkout (npm link / install.sh --link)', function () {
+  const repo = tmpdir();
+  const bin = path.join(repo, 'bin', 'keyflip.js');
+  fs.mkdirSync(path.dirname(bin), { recursive: true });
+  fs.writeFileSync(bin, '');
+  fs.writeFileSync(path.join(repo, 'package.json'), '{}');
+  assert.strictEqual(update.detectInstallMethod(bin), 'unknown'); // not a git tree yet
+  fs.mkdirSync(path.join(repo, '.git'));
+  assert.strictEqual(update.detectInstallMethod(bin), 'checkout');
+  assert.strictEqual(update.checkoutRoot(bin), fs.realpathSync(repo));
+  // A symlinked bin (npm link's global shim) resolves to the same checkout.
+  const shim = path.join(tmpdir(), 'keyflip');
+  fs.symlinkSync(bin, shim);
+  assert.strictEqual(update.detectInstallMethod(shim), 'checkout');
+  // Never auto-spawned: updating a working tree is the developer's call.
+  assert.strictEqual(update.upgradeSpawn('checkout', 'linux'), null);
 });

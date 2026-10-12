@@ -4,11 +4,22 @@
 # One-liner (public repo):
 #   curl -fsSL https://raw.githubusercontent.com/hakkisagdic/keyflip/main/install.sh | bash
 # From a clone:
-#   ./install.sh
+#   ./install.sh            # copy the sources (re-run to pick up changes)
+#   ./install.sh --link     # developer mode: link to this checkout, so every edit
+#                           # (and `git pull`) is live with no reinstall
 #
 # It fetches the (dependency-free) sources into ~/.local/share/keyflip, links the
 # `keyflip` command into ~/.local/bin, and on macOS builds a launcher app.
 set -euo pipefail
+
+LINK=0
+for arg in "$@"; do
+  case "$arg" in
+    --link) LINK=1 ;;
+    -h|--help) sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *) printf 'error: unknown option %s (try --help)\n' "$arg" >&2; exit 2 ;;
+  esac
+done
 
 REPO_OWNER="${KEYFLIP_OWNER:-hakkisagdic}"
 REPO_NAME="${KEYFLIP_REPO:-keyflip}"
@@ -29,7 +40,9 @@ case "$OS" in
   Darwin|Linux) : ;;
   *) die "Unsupported OS '$OS'. On Windows run install.ps1." ;;
 esac
-command -v node >/dev/null 2>&1 || die "Node.js (>=18) is required. Install it and re-run."
+command -v node >/dev/null 2>&1 || die "Node.js (>=20) is required. Install it and re-run."
+node -e 'process.exit(Number(process.versions.node.split(".")[0]) >= 20 ? 0 : 1)' \
+  || die "Node.js >=20 is required (found $(node --version)). Upgrade it and re-run."
 
 # Are we running from a checkout (has the sources next to us) or piped from the web?
 SELF_DIR=""
@@ -37,14 +50,30 @@ if [ -n "${BASH_SOURCE:-}" ] && [ -f "${BASH_SOURCE[0]:-}" ]; then
   SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 fi
 
-info "Installing keyflip ..."
-rm -rf "$INSTALL_DIR"
-mkdir -p "$INSTALL_DIR" "$BIN_DIR"
-
+HAVE_CHECKOUT=0
 if [ -n "$SELF_DIR" ] && [ -f "$SELF_DIR/package.json" ] && [ -f "$SELF_DIR/bin/keyflip.js" ]; then
+  HAVE_CHECKOUT=1
+  SELF_REAL="$(cd "$SELF_DIR" && pwd -P)"
+  # Never wipe the tree we're running from (./install.sh run inside the install dir).
+  if [ ! -L "$INSTALL_DIR" ] && [ -d "$INSTALL_DIR" ] && [ "$(cd "$INSTALL_DIR" && pwd -P)" = "$SELF_REAL" ]; then
+    die "refusing to reinstall over the checkout it runs from ($INSTALL_DIR) — run install.sh from a separate clone."
+  fi
+fi
+[ "$LINK" -eq 0 ] || [ "$HAVE_CHECKOUT" -eq 1 ] || die "--link needs a local checkout: run ./install.sh --link from inside a clone."
+
+info "Installing keyflip ..."
+rm -rf "$INSTALL_DIR"   # a previous --link install is a symlink: this removes only the link
+mkdir -p "$(dirname "$INSTALL_DIR")" "$BIN_DIR"
+
+if [ "$LINK" -eq 1 ]; then
+  ln -s "$SELF_REAL" "$INSTALL_DIR"
+  info "  • source -> linked to $SELF_REAL (live: edits and git pull apply immediately)"
+elif [ "$HAVE_CHECKOUT" -eq 1 ]; then
+  mkdir -p "$INSTALL_DIR"
   cp -R "$SELF_DIR/bin" "$SELF_DIR/src" "$SELF_DIR/package.json" "$INSTALL_DIR/"
   info "  • source -> local checkout"
 else
+  mkdir -p "$INSTALL_DIR"
   # Remote install: try git, then fall back to a tarball (like nvm). Either works
   # for a public repo without auth.
   fetched=0

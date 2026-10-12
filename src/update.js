@@ -73,16 +73,31 @@ async function maybeNotify(ctx, currentVersion, opts) {
   return null;
 }
 
-// How was this copy installed? -> 'installer' (install.sh copy) | 'npm' | 'unknown'
-function detectInstallMethod(binPath) {
-  let real = binPath;
+// `npm install -g git+…` without --install-links makes npm >= 9 SYMLINK the global
+// package to its temporary clone dir, which npm then deletes — a dead `keyflip` bin.
+const NPM_GIT_ARGS = ['install', '-g', '--install-links', 'git+https://github.com/hakkisagdic/keyflip.git'];
+
+function realBin(binPath) {
   try {
-    real = fs.realpathSync(binPath);
+    return fs.realpathSync(binPath);
   } catch (e) {
-    /* keep */
+    return binPath;
   }
+}
+
+// The source checkout the bin runs from (npm link / install.sh --link), or null.
+function checkoutRoot(binPath) {
+  const root = path.dirname(path.dirname(realBin(binPath)));
+  return fs.existsSync(path.join(root, '.git')) && fs.existsSync(path.join(root, 'package.json')) ? root : null;
+}
+
+// How was this copy installed?
+// -> 'installer' (install.sh copy) | 'npm' | 'checkout' (git working tree) | 'unknown'
+function detectInstallMethod(binPath) {
+  const real = realBin(binPath);
   if (real.indexOf(path.join('.local', 'share', 'keyflip')) !== -1) return 'installer';
   if (real.indexOf('node_modules') !== -1) return 'npm';
+  if (checkoutRoot(binPath)) return 'checkout';
   return 'unknown';
 }
 
@@ -94,7 +109,7 @@ function upgradeCommand(method, platform) {
       ? 'irm https://raw.githubusercontent.com/hakkisagdic/keyflip/main/install.ps1 | iex'
       : 'curl -fsSL https://raw.githubusercontent.com/hakkisagdic/keyflip/main/install.sh | bash';
   }
-  if (method === 'npm') return 'npm install -g git+https://github.com/hakkisagdic/keyflip.git';
+  if (method === 'npm') return 'npm ' + NPM_GIT_ARGS.join(' ');
   return null;
 }
 
@@ -105,7 +120,7 @@ function upgradeSpawn(method, platform) {
   if (method === 'npm') {
     return {
       cmd: platform === 'win32' ? 'npm.cmd' : 'npm',
-      args: ['install', '-g', 'git+https://github.com/hakkisagdic/keyflip.git'],
+      args: NPM_GIT_ARGS.slice(),
     };
   }
   if (method === 'installer') {
@@ -127,4 +142,13 @@ function upgradeSpawn(method, platform) {
   return null;
 }
 
-export { latestVersion, maybeNotify, cmpVersions, detectInstallMethod, upgradeCommand, upgradeSpawn, RAW_PKG_URL };
+export {
+  latestVersion,
+  maybeNotify,
+  cmpVersions,
+  detectInstallMethod,
+  checkoutRoot,
+  upgradeCommand,
+  upgradeSpawn,
+  RAW_PKG_URL,
+};

@@ -7299,6 +7299,14 @@ async function cmdAddToken(ctx, rest) {
 async function cmdUpgrade(ctx) {
   if (JSON_MODE) return fail('upgrade is interactive and streams installer output — do not run it with --json');
   const method = update.detectInstallMethod(process.argv[1] || '');
+  if (method === 'checkout') {
+    // npm link / install.sh --link: the running code IS the working tree, so it is
+    // already "installed" — updating means pulling, which we never do on the user's behalf.
+    const root = update.checkoutRoot(process.argv[1] || '');
+    print('keyflip runs from a source checkout (' + root + ') — it already tracks that tree.');
+    print('Update it with:  git -C ' + JSON.stringify(root) + ' pull --ff-only');
+    return;
+  }
   const spawn = update.upgradeSpawn(method);
   if (!spawn) {
     return fail(
