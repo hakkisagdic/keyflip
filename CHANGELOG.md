@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`surfaces/` captures were versioned and backed up.** The secret set in
+  `src/secretpaths.js` listed `creds/`, `app/`, `browser-sessions/` and
+  `pre-sync-backups/`, but not the directory third-party tool captures live in.
+  Because those files have innocent basenames (`auth.json`, `CURRENT`, `000003.log`),
+  neither the managed `.gitignore`, nor `keyflip backup`, nor `keyflip doctor`'s
+  "secrets in git" check caught a Codex/ChatGPT capture: its OAuth tokens and API key
+  were committed to the state repo and reported as clean. `surfaces/` is now a secret
+  directory, `auth.json` is a secret basename, and `ensureRepo`'s existing stale-ignore
+  purge removes any already-tracked copy on the next command.
+
+### Added
+
+- `test/backup.test.js`: a metadata backup must carry `accounts.json` and never a
+  surface capture, an app cookie file or an `auth.json`.
+
 ## [1.5.2] - 2026-10-13
 
 Everything that has shipped since 1.5.0, which was the last published release

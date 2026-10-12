@@ -25,6 +25,15 @@ test('ensureRepo inits a repo + managed .gitignore; secrets are NEVER tracked', 
   fs.writeFileSync(path.join(ctx.configDir, 'creds', 'work.cred'), '{"token":"SECRET"}');
   fs.mkdirSync(path.join(ctx.configDir, 'browser-sessions'), { recursive: true });
   fs.writeFileSync(path.join(ctx.configDir, 'browser-sessions', 'a.sql'), 'INSERT ...');
+  // A third-party capture: innocent-looking basenames (auth.json, CURRENT) under surfaces/.
+  fs.mkdirSync(path.join(ctx.configDir, 'surfaces', 'codex', 'work'), { recursive: true });
+  fs.writeFileSync(
+    path.join(ctx.configDir, 'surfaces', 'codex', 'work', 'auth.json'),
+    '{"tokens":{"refresh_token":"SECRET"}}',
+  );
+  fs.writeFileSync(path.join(ctx.configDir, 'surfaces', 'codex', 'work', 'CURRENT'), 'MANIFEST-000001');
+  // ...and the same credential file shape loose at the top level.
+  fs.writeFileSync(path.join(ctx.configDir, 'auth.json'), '{"tokens":{"access_token":"SECRET"}}');
 
   assert.strictEqual(vcs.ensureRepo(ctx), true);
   assert.ok(vcs.isRepo(ctx));
@@ -34,6 +43,13 @@ test('ensureRepo inits a repo + managed .gitignore; secrets are NEVER tracked', 
   assert.ok(files.indexOf('.gitignore') !== -1);
   assert.strictEqual(files.indexOf('creds/work.cred'), -1, 'a .cred secret is NEVER committed');
   assert.strictEqual(files.indexOf('browser-sessions/a.sql'), -1, 'a browser session is NEVER committed');
+  assert.strictEqual(files.indexOf('surfaces/codex/work/auth.json'), -1, 'a surface capture is NEVER committed');
+  assert.strictEqual(
+    files.indexOf('surfaces/codex/work/CURRENT'),
+    -1,
+    'the whole surfaces/ dir is the secret boundary',
+  );
+  assert.strictEqual(files.indexOf('auth.json'), -1, 'a loose auth.json is NEVER committed');
 });
 
 test('autoCommit records a change; log lists it; nothing-to-commit is a no-op', function (t) {

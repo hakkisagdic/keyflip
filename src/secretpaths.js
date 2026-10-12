@@ -13,11 +13,16 @@ const SECRET_DIRS = [
   'browser-sessions', // captured browser cookie DBs (*.sql)
   'app', // desktop-app oauth token cache (app/<name>.json) + cookies (app/<name>.cookies)
   'pre-sync-backups', // pre-overwrite snapshots that contain raw OAuth access/refresh tokens
+  // Third-party tool captures (surfaces/<tool>/<account>/auth.json, extension leveldb, …).
+  // Their basenames look innocent (auth.json, CURRENT, 000003.log), so the DIR has to be the
+  // secret boundary — otherwise a capture is git-tracked and backed up like plain metadata.
+  'surfaces',
 ];
 // Secret-shaped files, by extension (no leading dot).
 const SECRET_FILE_EXTS = ['cred', 'cookies', 'key', 'token', 'pem', 'sql'];
-// Secret-shaped files, by exact basename.
-const SECRET_FILE_NAMES = ['.credentials.json', 'mcp-registry.json'];
+// Secret-shaped files, by exact basename. `auth.json` is the credential file of Codex/OpenAI and
+// opencode (surface.js already declares it `secret: true`), so it must never be versioned either.
+const SECRET_FILE_NAMES = ['.credentials.json', 'mcp-registry.json', 'auth.json'];
 
 // A basename is secret if it carries a secret extension, matches a secret name, or is a
 // legacy/stray `<something>credentials.json`.
