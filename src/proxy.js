@@ -265,7 +265,8 @@ function sanitizeHeaders(h) {
 // The actual server (run in the detached child by `__proxy-serve`).
 function serve(ctx, opts) {
   opts = opts || {};
-  const port = opts.port || DEFAULT_PORT;
+  // 0 is a valid port (OS picks a free one), so only fall back on a missing/invalid value.
+  const port = Number.isInteger(opts.port) && opts.port >= 0 ? opts.port : DEFAULT_PORT;
   const MAX_BODY = opts.maxBody || 32 * 1024 * 1024; // cap buffered request body (DoS guard)
   const server = http.createServer(function (req, res) {
     // Identity marker so `stop` can confirm it's really OUR proxy on this port
@@ -307,8 +308,11 @@ function serve(ctx, opts) {
       });
     });
   });
-  return new Promise(function (resolve) {
+  return new Promise(function (resolve, reject) {
+    // e.g. EADDRINUSE: reject instead of crashing the process with an unhandled 'error'.
+    server.once('error', reject);
     server.listen(port, '127.0.0.1', function () {
+      server.removeListener('error', reject);
       resolve({ server: server, port: server.address().port });
     });
   });

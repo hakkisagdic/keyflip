@@ -205,7 +205,18 @@ test('a real server starts on localhost and forwards via injected forward', asyn
       req.end('{}');
     });
     assert.match(body, /"ok":true/);
+    assert.notStrictEqual(s.port, proxy.DEFAULT_PORT); // port 0 = OS-assigned, never the default
   } finally {
     s.server.close();
+  }
+});
+
+test('serve rejects (not crashes) when the port is already taken', async function () {
+  const ctx = twoAccounts();
+  const first = await proxy.serve(ctx, { port: 0 });
+  try {
+    await assert.rejects(proxy.serve(ctx, { port: first.port }), { code: 'EADDRINUSE' });
+  } finally {
+    first.server.close();
   }
 });
