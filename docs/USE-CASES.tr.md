@@ -201,11 +201,20 @@ keyflip resume <id> --run              # orijinal dizininde `claude --resume <id
 keyflip cowork                         # Claude masaüstü Cowork oturumlarına göz at (tüm hesaplar)
 keyflip cowork --search T | --all
 keyflip chat                           # claude.ai bulut Sohbetlerini listele (DENEYSEL)
-keyflip chat get <id>                  # bir sohbeti oku
+keyflip chat get <kısa-id|başlık>      # bir sohbeti oku (listelemedeki kısa id yeterli)
+keyflip chat search "<sözcükler>"      # başlıkla bul
+keyflip chat --as <hesap>              # BAŞKA kayıtlı hesabı oku, geçiş yapmadan
 ```
 - `resume` proje kapsamlıdır — transkriptin orijinal dizinine `cd`'yi kendisi halleder.
-- `chat` taze bir Cloudflare çerezi ister (uygulamayı kullandıktan hemen sonra çalışır)
-  ve yalnız masaüstünün hesabını görür; 403 = "uygulamayı bir kez aç ve tekrar dene".
+- `chat`, bir claude.ai oturum çerezini kullanır ve çerezi kendisi bulur; her sonuçta
+  nereden okunduğu yazar: uygulamanın çerezi, yoksa claude.ai'a girişli bir tarayıcı
+  (güncel sürümler `sessionKey`'i yalnız bellekte tutar), o da yoksa hesabın kayıtlı
+  anlık kopyası. Taze bir Cloudflare doğrulaması gerekir: 403 bayatlık demek (çıkış
+  yapıldığı değil) — `keyflip chat --flush` uygulamayı bir kez kapatıp açar ve tekrar
+  dener. `--as <hesap>`, o hesabın kayıtlı tarayıcı oturumunu okur
+  (`keyflip browser sync <hesap>` bir kez yakalar; keyflip uzaklaştığı hesabın uygulama
+  girişini de tazeler) — çerezler yalnızca yakalandıkları makine+tarayıcıda çözülür.
+  Yalnız başlıklar — içerik: `keyflip recall`.
 
 ---
 

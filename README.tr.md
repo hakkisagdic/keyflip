@@ -21,8 +21,9 @@ Hesaplarınıza bir kez giriş yapın, sonra tekrar tekrar çıkış/giriş yapm
 > ve Windows'ta** çalışır (Linux'ta resmi masaüstü uygulaması yok). Uygulamanın
 > hesabını otomatik algılamanın artık bir **Windows yolu da var** (DPAPI + AES-GCM,
 > `src/wincrypt.js`, fixture-testli; kesin gerçek-kurulum yolları hâlâ cihazda
-> doğrulama bekliyor). Uygulamanın **tarayıcı** çerezlerini çözen `keyflip chat`
-> şimdilik **yalnız macOS** — bkz. [docs/PORTING.md](docs/PORTING.md).
+> doğrulama bekliyor). Bir **tarayıcı** çözüyle (uygulamanın ya da claude.ai'a girişli
+> bir tarayıcının) çalışan `keyflip chat` şimdilik **yalnız macOS** — bkz.
+> [docs/PORTING.md](docs/PORTING.md).
 
 ---
 
@@ -308,18 +309,36 @@ keyflip dream [--older-than 30d] [--archive] [--apply]   # "dreaming": eski sohb
 keyflip recall "<sorgu>" [--answer]   # TÜM sohbetlerinde arama (BM25; --semantic=embeddings; --answer = `claude -p` ile atıflı sentez)
 keyflip dream schedule [--at 03:00] | unschedule | status   # dream'i her gece gözetimsiz koştur (launchd/cron)
 keyflip cowork --search "sınav"       # masaüstü Cowork oturumları (tüm hesaplar)
-keyflip chat                          # aktif hesabın claude.ai Chat'i (deneysel)
-keyflip chat get <id>                 # bir bulut konuşmasını oku
+keyflip chat                          # claude.ai Chat listesi (deneysel) — `--as <hesap>` başka hesabı okur
+keyflip chat get <kısa-id|başlık>     # bir bulut sohbetini oku (listelemedeki kısa id yeterli)
+keyflip chat search "<sözcükler>"     # başlığa göre bulut sohbeti ara
 ```
 
 **Hesaplar arası ne taşınabilir:** Claude Code oturumları ve **Cowork**
 oturumları yerelde hesap-başına saklanır — keyflip ikisini de okur ve geçişte
-birleştirir; her hesap hepsini görür. **claude.ai Chat** ise bulutta;
-`keyflip chat` bunu masaüstü uygulamasının kendi oturum çerezi üzerinden okur —
-**deneyseldir** (belgesiz API), taze bir Cloudflare çerezi gerektirir; uygulama
-yeni kullanıldıysa çalışır, aksi halde 403 dönebilir. Yalnız masaüstünün o an
-girişli olduğu hesabı görür. (Uygulama tercihleri, `design/`, worktree'ler
-global/boş — orada taşınacak hesap-bazlı veri yok.)
+birleştirir; her hesap hepsini görür. **claude.ai Chat** ise bulutta, hesap-başına
+sunucu tarafında; `keyflip chat` bunu bir **claude.ai oturum çerezi**yle okur.
+**Deneyseldir** (belgesiz API) ve çerez-bağımlıdır:
+
+- Oturum çerezi otomatik bulunur ve her listeleme nereden okunduğunu yazar: uygulamanın
+  kendi çerezi, yoksa claude.ai'a girişli bir tarayıcı (güncel masaüstü sürümleri
+  `sessionKey`'i bellekte tutar; diskteki çerez kavanozu genelde *kullanılabilir olmaz*),
+  o da yoksa hesabın kayıtlı anlık kopyası.
+- `--as <hesap>`, *başka* bir kayıtlı hesabın sohbetlerini, onun **kayıtlı tarayıcı
+  oturumundan** (`~/.config/keyflip/browser-sessions/<ad>__<tarayici>.sql`, sonra
+  `app/<ad>.cookies`) hiçbir şeyi değiştirmeden okur — yani o hesabın bulut geçmişini
+  buradan arayabilir ve okuyabilirsin. Kayıtlı oturum yoksa, o hesap girişken bir kez
+  `keyflip browser sync <hesap>` çalıştır. Her keyflip geçişi ayrıca bırakılan hesabın
+  girişini *ve çerezini* tazeler.
+- **403, Cloudflare doğrulamasının bayatladığı** demektir — çıkış yapıldığı değil.
+  `keyflip chat --flush` uygulamayı bir kez kapatıp açar ve tekrar dener.
+- Arama yalnızca sohbet **başlıklarında** yapılır; mesaj içerikleri yerel kayıtlarında —
+  tam metin için `keyflip recall "<sorgu>"`.
+- Çerezler makine-bağımlıdır (tarayıcının kendi safeStorage anahtarı): bir anlık kopya
+  yalnızca yakalandığı makine ve tarayıcıda çözülür. Taşınabilir kimlik bilgileri için
+  `keyflip transfer`.
+
+(Uygulama tercihleri, `design/`, worktree'ler global/boş — orada taşınacak hesap-bazlı veri yok.)
 
 ## Bağlam Katmanı — taşınabilir proje hafızası (`.keyflip/`)
 

@@ -37,6 +37,7 @@ import fs from 'fs';
 import * as _transcript from './transcript.js';
 import * as _foreign from './foreign.js';
 import * as _chat from './chat.js';
+import * as _chatsession from './chatsession.js';
 import * as _fleet from './fleet.js';
 import * as _rt from './relaytransfer.js';
 import * as _svc from './autoswitchservice.js';
@@ -525,24 +526,39 @@ const TOOLS = [
   },
   {
     name: 'keyflip_chat',
-    title: 'Read claude.ai Chat (experimental)',
+    title: 'Read claude.ai Chat (any captured account)',
     description:
-      "List the active account's claude.ai cloud Chat conversations (or fetch one with id). EXPERIMENTAL: uses the desktop app session cookie against the undocumented claude.ai API; needs a fresh Cloudflare cookie (works right after using the app) and may fail with 403 otherwise. Read-only.",
+      "List, search or read claude.ai cloud Chat conversations. With no arguments: the newest chats of the LIVE account. With `search`: chats whose TITLE matches. With `id`: one conversation — the short id shown in listings, a full uuid, or a unique title all work. With `account`: another saved account's chats, read from its captured claude.ai session WITHOUT switching anything. The session is found automatically (desktop app cookie, then a signed-in browser, then that account's saved browser snapshot) and reported as `via`. EXPERIMENTAL: uses the undocumented claude.ai API with a session cookie, so it needs a fresh Cloudflare clearance — may return 403 when stale; if an account has no saved session the error says to run `keyflip browser sync <account>`. Read-only.",
     inputSchema: {
       type: 'object',
       properties: {
-        id: { type: 'string', description: 'Omit to list; set to fetch one conversation.' },
+        id: { type: 'string', description: 'Conversation uuid, short id (uuid prefix) or title.' },
+        search: { type: 'string', description: 'Filter the listing by title substring.' },
+        account: {
+          type: 'string',
+          description:
+            'Read another saved account via its captured claude.ai session (from keyflip_list); default = live login.',
+        },
         limit: { type: 'integer' },
       },
       additionalProperties: false,
     },
     annotations: RO_NET,
     run: async function (ctx, args) {
-      if (!ctx.appDataDir) throw new Error('reading claude.ai Chat needs the desktop app (macOS)');
-      const chat = _chat;
-      return args && args.id
-        ? { conversation: await chat.get(ctx, args.id) }
-        : await chat.list(ctx, { limit: (args && args.limit) || 30 });
+      const a = args || {};
+      const opts = {};
+      if (a.account) {
+        const name = core.resolveProfile(ctx, a.account);
+        if (!name) throw new Error("no such saved account: '" + a.account + "' (see keyflip_list)");
+        opts.account = name;
+      }
+      if (a.limit) opts.limit = a.limit;
+      // Where the session actually lives is chatsession's job (app build-dependent: the
+      // desktop app may keep it in memory while a browser has it on disk).
+      const o = _chatsession.withSession(ctx, opts);
+      if (a.id) return { via: o.sessionSource, conversation: await _chat.get(ctx, a.id, o) };
+      if (a.search) return Object.assign({ via: o.sessionSource }, await _chat.search(ctx, a.search, o));
+      return Object.assign({ via: o.sessionSource }, await _chat.list(ctx, o));
     },
   },
 

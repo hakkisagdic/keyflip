@@ -21,8 +21,9 @@ Log in to several accounts once, then hop between them without repeatedly loggin
 > they run on **macOS and Windows** (Linux has no official desktop app).
 > Auto-detecting the app's account now has a **Windows path too** (DPAPI +
 > AES-GCM via `src/wincrypt.js`, fixture-tested; the exact real-install paths
-> still need on-device validation). `keyflip chat`, which decrypts the app's
-> **browser** cookies, is **macOS-only** for now — see [docs/PORTING.md](docs/PORTING.md).
+> still need on-device validation). `keyflip chat`, which decrypts a **browser**
+> cookie (the desktop app's, or a browser signed into claude.ai), is **macOS-only**
+> for now — see [docs/PORTING.md](docs/PORTING.md).
 
 ---
 
@@ -313,18 +314,37 @@ keyflip dream [--older-than 30d] [--archive] [--apply]   # "dreaming": distill (
 keyflip recall "<query>" [--answer]   # search ALL your chats (BM25; --semantic=embeddings; --answer = a cited synthesis via `claude -p`)
 keyflip dream schedule [--at 03:00] | unschedule | status   # run the dream nightly, unattended (launchd/cron)
 keyflip cowork --search "exam"        # browse Claude desktop Cowork sessions (all accounts)
-keyflip chat                          # list the active account's claude.ai Chat (experimental)
-keyflip chat get <id>                 # read one cloud conversation
+keyflip chat                          # list claude.ai Chat (experimental) — `--as <acct>` reads another account
+keyflip chat get <short-id|title>     # read one cloud conversation (the short id from any listing works)
+keyflip chat search "<words>"         # find a cloud chat by title
 ```
 
 **What can be browsed across accounts:** Claude Code sessions and **Cowork**
 sessions are stored locally per account — keyflip reads and (on switch)
 consolidates both so every account sees them all. **claude.ai Chat** lives in the
-cloud; `keyflip chat` reads it through the desktop app's own session cookie —
-this is **experimental** (undocumented API) and needs a fresh Cloudflare cookie,
-so it works right after using the app and may otherwise return a 403. It only
-sees whichever account the desktop app is currently signed into. (App preferences,
-`design/`, worktrees etc. are global/empty — nothing per-account to migrate there.)
+cloud, server-side per account, and `keyflip chat` reads it with a **claude.ai
+session cookie**. It is **experimental** (undocumented API) and cookie-bound:
+
+- The session is found for you, and every listing prints where it came from: the
+  desktop app's own cookie, else a browser signed into claude.ai (current desktop
+  builds keep `sessionKey` in memory and only write analytics cookies, so the app's
+  on-disk jar is often *not* the usable one), else that account's saved snapshot.
+- `--as <account>` reads ANOTHER saved account's chats from its **captured browser
+  session** (`~/.config/keyflip/browser-sessions/<name>__<browser>.sql`, then the
+  app snapshot at `app/<name>.cookies`) without switching anything — so you can
+  search and read the other account's cloud history from here. If it reports no
+  saved session, run `keyflip browser sync <account>` once while that account is
+  signed in. Every keyflip switch also refreshes the login *and cookie* of the
+  account it leaves.
+- A **403 means the Cloudflare clearance went stale** — not that you are logged out.
+  `keyflip chat --flush` closes and reopens the app once, then retries.
+- Search matches chat **titles**; message bodies are in your local transcripts — use
+  `keyflip recall "<query>"` for full-text.
+- Cookies are machine-bound (the browser's own safeStorage key): a snapshot decrypts
+  only on the machine and browser that captured it. Use `keyflip transfer` for the
+  portable credentials.
+
+(App preferences, `design/`, worktrees etc. are global/empty — nothing per-account to migrate there.)
 
 ## Context Layer — portable project memory (`.keyflip/`)
 

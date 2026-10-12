@@ -66,6 +66,7 @@ import * as _panel from './panel.js';
 import * as _menubar from './menubar.js';
 import * as _cowork from './cowork.js';
 import * as _chat from './chat.js';
+import * as _chatsession from './chatsession.js';
 import * as _skillstore from './skillstore.js';
 import * as _archive from './archive.js';
 import * as _sessionmap from './sessionmap.js';
@@ -257,7 +258,11 @@ function usage() {
     '  keyflip send <id> "<message>" [--as <account>] [--fork]   inject a message into a session (steer/continue it headlessly)',
   );
   print('  keyflip cowork [--search T]    browse Claude desktop Cowork sessions (all accounts)');
-  print('  keyflip chat [--limit N | get <id>]   read claude.ai Chat of the active account (experimental)');
+  print('  keyflip chat [--as <acct>] [--limit N]        list claude.ai Chat (experimental)');
+  print(
+    '  keyflip chat get <short-id|title> [--as <acct>]  read one cloud conversation  (--flush: close/reopen the app to get a fresh cookie)',
+  );
+  print('  keyflip chat search "<words>" [--as <acct>]      find a cloud chat by title');
   print('  keyflip browser [status|logout|sync]   check/reset/restore the BROWSER claude.ai account so the Claude');
   print('                                 Chrome extension connects (it inherits the browser session)');
   print('  keyflip skill add <owner/repo|./dir|file.tgz>   install a skill; also: skill list|remove');
@@ -430,8 +435,56 @@ async function cmdSwitch(ctx, rest) {
   if (!name) return fail("no such profile: '" + arg + "' (see: keyflip list)");
   const em = profiles.email(ctx.configDir, name);
   if (em && em === core.currentEmail(ctx)) {
-    print("'" + em + "' is already active.");
-    jsonOut({ alreadyActive: { name: name, email: em } });
+    // "Already active" has to mean BOTH surfaces. The desktop app keeps its own
+    // independent login, so a hand sign-in inside the app moves only the app while
+    // the CLI still reads as active — that is a real pending switch, not a no-op.
+    const appNow = appActiveProfile(ctx);
+    if (appNow === null || appNow === name || !appauth.hasProfile(ctx, name)) {
+      print("'" + em + "' is already active.");
+      jsonOut({ alreadyActive: { name: name, email: em } });
+      return;
+    }
+    print(
+      '  ↳ the CLI is already on this account, but the desktop app is on ' +
+        (appNow || "another account keyflip hasn't saved") +
+        ' — switching the app login.',
+    );
+    const appRunning = appctl.isClaudeRunning(ctx.platform);
+    if (appRunning) {
+      if (!appctl.canManageApp(ctx.platform))
+        return fail('Claude is open — close it first (it cannot be auto-closed on this OS), or --force.');
+      if (!autoYes) {
+        if (!process.stdin.isTTY)
+          return fail('Claude is open. Re-run with --restart to close & reopen it, or quit it yourself first.');
+        const ok = await confirm('Claude is open and will be closed to switch its login. Continue? [y/N] ');
+        if (!ok) {
+          print('Cancelled — nothing was changed.');
+          return;
+        }
+      }
+      print('Quitting Claude...');
+      appctl.quitClaude(ctx.platform);
+      await waitForQuit(ctx);
+      // isClaudeRunning() also counts Claude *Code* CLI processes, so a busy terminal can
+      // make the wait time out while the desktop app is still up. Ask the right question:
+      // if the app itself is still alive, its login files are locked — say so instead of
+      // failing with a bare "(failed)".
+      if (appctl.isDesktopAppRunning(ctx.platform)) {
+        return fail('Claude Desktop did not close, so nothing was changed — quit it with Cmd+Q and re-run.');
+      }
+    }
+    preserveOutgoingAppLogin(ctx);
+    const lagApp = switchDesktopLogin(ctx, name);
+    const lagCons = consolidateAndReport(ctx);
+    if (appRunning) {
+      print('Reopening Claude...');
+      appctl.openClaude(ctx.platform);
+    }
+    if (!lagApp.ok) {
+      return fail("the desktop app's login could not be switched (" + (lagApp.reason || 'failed') + ').');
+    }
+    print(style.ok('✅') + ' Switched to: ' + (em || name));
+    await emitSwitched({ cli: false }, lagApp, lagCons);
     return;
   }
   // Policy engine: block a switch this directory isn't allowed to use (no-op until rules exist).
@@ -592,6 +645,7 @@ async function cmdSwitch(ctx, rest) {
     await refreshIfNeeded();
     const did = core.performSwitch(ctx, name);
     if (!did.cli) print("  ↳ CLI login for this profile isn't captured — switched the desktop app only.");
+    preserveOutgoingAppLogin(ctx);
     const appl = switchDesktopLogin(ctx, name);
     const cons = consolidateAndReport(ctx);
     print('Reopening Claude...');
@@ -616,6 +670,7 @@ async function cmdSwitch(ctx, rest) {
   await refreshIfNeeded();
   const did = core.performSwitch(ctx, name);
   if (!did.cli) print("  ↳ CLI login for this profile isn't captured — switched the desktop app only.");
+  preserveOutgoingAppLogin(ctx);
   const appl = switchDesktopLogin(ctx, name);
   const cons = consolidateAndReport(ctx);
   print(style.ok('✅') + ' Switched to: ' + (em || name) + (manage ? '' : '. Restart Claude Code to apply.'));
@@ -4368,44 +4423,93 @@ function cmdCowork(ctx, rest) {
 // EXPERIMENTAL: read claude.ai cloud Chat conversations (per active account).
 async function cmdChat(ctx, rest) {
   const chat = _chat;
-  // Reading claude.ai chats decrypts the desktop app's session cookie via the macOS keychain — it is
+  // Reading claude.ai chats decrypts a claude.ai session cookie via the macOS keychain — it is
   // macOS-only for now. Gate on the PLATFORM (not just appDataDir, which is also set on Windows) so
   // Windows/Linux get a clear message instead of a confusing failure deep in the cookie decrypt.
   if (ctx.platform !== 'darwin')
     return fail(
       'reading claude.ai Chat is macOS-only for now (Windows/Linux cookie decryption is not wired up yet — see docs/PORTING.md).',
     );
-  if (!ctx.appDataDir)
-    return fail('reading claude.ai Chat needs the Claude desktop app installed (its session cookie).');
   const sub = rest[0];
-  try {
-    if (sub === 'get') {
-      if (!rest[1]) return fail('usage: keyflip chat get <conversation-id>');
-      const conv = await chat.get(ctx, rest[1]);
-      if (JSON_MODE) {
-        jsonOut({ conversation: conv });
-        return;
+  const flushFirst = rest.indexOf('--flush') !== -1 || rest.indexOf('--restart') !== -1;
+  const asArg = flagVal(rest, '--as');
+  let as = null;
+  if (asArg) {
+    as = core.resolveProfile(ctx, asArg);
+    if (!as) return fail("no such saved account: '" + asArg + "' (see: keyflip list)");
+  }
+  const opts = { account: as, limit: parseInt(flagVal(rest, '--limit'), 10) || 0 };
+  // Until a session is found we only know WHICH account was asked for; chatsession then
+  // reports the surface it actually read it from (the app, Chrome, a saved snapshot).
+  let src = as ? "saved login of '" + as + "'" : 'the live login';
+
+  // A cookie can be in memory rather than on disk, and the right source depends on the
+  // build, so resolve it per read — a --flush retry then re-looks it up afterwards.
+  function resolved() {
+    const o = _chatsession.withSession(ctx, opts);
+    if (o.sessionSource) src = o.sessionSource;
+    return o;
+  }
+
+  // A cookie the app never wrote out is fixed by one clean quit — so close the app,
+  // read, and put it back the way it was. Never done for --as (a saved snapshot
+  // belongs to another account; closing this app would not refresh it).
+  async function withFlush(read) {
+    try {
+      return await read();
+    } catch (e) {
+      const flushable =
+        (e && (e.code === 'cookies-not-flushed' || e.code === 'no-session')) || /403/.test(String(e && e.message));
+      if (!flushable || as || !appctl.canManageApp(ctx.platform)) throw e;
+      if (!appctl.isClaudeRunning(ctx.platform)) throw e;
+      if (!flushFirst) {
+        if (!process.stdin.isTTY)
+          throw new Error(e.message + ' (or re-run with --flush to let keyflip close and reopen the app for you)');
+        const ok = await confirm(
+          'The app has not flushed its session cookie yet. Briefly close & reopen Claude to read it? [y/N] ',
+        );
+        if (!ok) throw e;
       }
-      print(conv.name || '(untitled)');
-      (conv.chat_messages || []).forEach(function (m) {
-        const text = (m.content || [])
-          .filter(function (b) {
-            return b.type === 'text';
-          })
-          .map(function (b) {
-            return b.text;
-          })
-          .join('');
-        print('  ' + (m.sender === 'human' ? '›' : '‹') + ' ' + text.replace(/\s+/g, ' ').slice(0, 200));
-      });
-      return;
+      print('Quitting Claude (so it writes its cookies out)...');
+      appctl.quitClaude(ctx.platform);
+      await waitForQuit(ctx);
+      if (appctl.isDesktopAppRunning(ctx.platform)) {
+        return fail('Claude did not close, so nothing was changed — quit it with Cmd+Q and retry.');
+      }
+      let out = null,
+        err = null;
+      try {
+        out = await read();
+      } catch (e2) {
+        err = e2;
+      }
+      print('Reopening Claude...');
+      appctl.openClaude(ctx.platform);
+      if (err) throw err;
+      return out;
     }
-    const r = await chat.list(ctx, { limit: parseInt(flagVal(rest, '--limit'), 10) || 30 });
-    if (JSON_MODE) {
-      jsonOut(r);
-      return;
-    }
-    print('claude.ai Chat conversations (active account):');
+  }
+
+  function showConversation(conv) {
+    if (JSON_MODE) return jsonOut({ source: src, conversation: conv });
+    print(conv.name || '(untitled)');
+    print(style.dim('  ' + (conv.uuid || '') + '  ·  ' + src));
+    (conv.chat_messages || []).forEach(function (m) {
+      const text = (m.content || [])
+        .filter(function (b) {
+          return b.type === 'text';
+        })
+        .map(function (b) {
+          return b.text;
+        })
+        .join('');
+      print('  ' + (m.sender === 'human' ? '›' : '‹') + ' ' + text.replace(/\s+/g, ' ').slice(0, 200));
+    });
+  }
+
+  function showConversations(r) {
+    if (JSON_MODE) return jsonOut(Object.assign({ source: src }, r));
+    print('claude.ai Chat conversations (' + src + '):');
     if (!r.conversations.length) {
       print('  (none — this account has no cloud Chat conversations)');
       return;
@@ -4423,7 +4527,43 @@ async function cmdChat(ctx, rest) {
       );
     });
     print('');
-    print('Read one:  keyflip chat get <id>');
+    print('Read one:  keyflip chat get <short-id-or-title>   Find:  keyflip chat search "<words>"');
+  }
+
+  try {
+    if (sub === 'get') {
+      if (!rest[1]) return fail('usage: keyflip chat get <conversation-id|short-id|title> [--as <account>]');
+      showConversation(
+        await withFlush(function () {
+          return chat.get(ctx, rest[1], resolved());
+        }),
+      );
+      return;
+    }
+    if (sub === 'search') {
+      const term = rest[1] && rest[1].indexOf('-') === 0 ? '' : rest[1] || '';
+      const r = await withFlush(function () {
+        return chat.search(ctx, term, resolved());
+      });
+      if (JSON_MODE) return jsonOut(Object.assign({ source: src }, r));
+      print('claude.ai Chat titles matching "' + term + '" (' + src + '):');
+      if (!r.matches.length) {
+        print('  none of the ' + r.scanned + ' most recent chats match');
+        print('  (only TITLES are searched; for message bodies use: keyflip recall "<query>")');
+        return;
+      }
+      r.matches.forEach(function (c) {
+        print('  ' + c.name + '   ' + style.dim(c.uuid.slice(0, 8)));
+      });
+      print('');
+      print('Read one:  keyflip chat get <short-id>');
+      return;
+    }
+    showConversations(
+      await withFlush(function () {
+        return chat.list(ctx, resolved());
+      }),
+    );
   } catch (e) {
     return fail(e.message);
   }
@@ -7392,6 +7532,63 @@ function switchDesktopLogin(ctx, name) {
   return a;
 }
 
+// The saved profile the desktop app's OWN login currently matches (by org uuid).
+// Returns the profile name, '' when the app is signed in on an account keyflip has
+// never saved, or null when there is no app login to read (no app, signed out, or
+// its state is unreadable) — null means "can't tell", so callers must not act on it.
+function profileForOrg(ctx, org) {
+  let found = '';
+  profiles.list(ctx.configDir).forEach(function (n) {
+    if (found) return;
+    const m = profiles.read(ctx.configDir, n);
+    if (m && m.oauthAccount && m.oauthAccount.organizationUuid === org) found = n;
+  });
+  return found;
+}
+
+function appActiveProfile(ctx) {
+  if (!ctx.appDataDir) return null;
+  let det = null;
+  try {
+    det = appauth.detectAppAccount(ctx);
+  } catch (e) {
+    return null;
+  }
+  if (!det || !det.org) return null;
+  return profileForOrg(ctx, det.org);
+}
+
+// Before a switch overwrites the app's login, keep the account we are LEAVING
+// recoverable: re-snapshot its token + its freshly-flushed Cookies DB into its own
+// profile. A clean quit is exactly when Chromium writes sessionKey/cf_clearance to
+// disk, so this is the moment a usable cookie exists — which is what later lets
+// `keyflip chat --as <that account>` read its cloud chats without switching back.
+// Only runs while the desktop app is CLOSED (its files are locked otherwise), and
+// only on a CONFIRMED token decrypt: the allowlist-org fallback is a guess, and a
+// wrong guess would overwrite a good capture with another account's blob (same rule
+// `keyflip add` follows when it refuses to auto-name an unidentified app login).
+function preserveOutgoingAppLogin(ctx) {
+  if (!ctx.appDataDir || appctl.isDesktopAppRunning(ctx.platform)) return null;
+  let det = null;
+  try {
+    det = appauth.detectAppAccount(ctx);
+  } catch (e) {
+    return null;
+  }
+  if (!det || det.reason || !det.org) return null;
+  const cur = profileForOrg(ctx, det.org);
+  if (!cur) return null; // an account keyflip never saved: nothing to update
+  let r = null;
+  try {
+    r = appauth.snapshotToProfile(ctx, cur);
+  } catch (e) {
+    return null;
+  }
+  if (r && r.ok && r.cookies === 'ok')
+    print("  ↳ kept '" + cur + "'s app login + session cookie fresh for later reads.");
+  return r && r.ok ? r : null;
+}
+
 // Capture the desktop app's CURRENT login into a profile — fully independent of
 // the CLI (which may be logged out or on another account). Creates the profile if
 // needed: identifies the app's account by decrypting its token cache (org uuid),
@@ -9581,4 +9778,4 @@ async function dispatch(ctx, cmd, rest) {
   }
 }
 
-export { main, usage, positionals, onboardProvider, desktopTugRisk };
+export { main, usage, positionals, onboardProvider, desktopTugRisk, appActiveProfile, preserveOutgoingAppLogin };

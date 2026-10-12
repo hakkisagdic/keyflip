@@ -376,15 +376,35 @@ keyflip dream schedule [--at 03:00] | unschedule | status   # run the dream nigh
 keyflip resume <number|id>            # print the resume command for its original dir
 keyflip resume <id> --run             # launch `claude --resume <id>` in that dir
 keyflip cowork [--search T]           # browse Claude desktop Cowork sessions (all accounts)
-keyflip chat [get <id>]               # read the active account's claude.ai Chat (EXPERIMENTAL)
+keyflip chat [--as <acct>] [--limit N]  # list claude.ai cloud Chats (EXPERIMENTAL)
+keyflip chat get <short-id|title> [--as <acct>]   # read ONE — the short id from any listing works, so does a unique title
+keyflip chat search "<words>" [--as <acct>]        # find a cloud chat by TITLE
 keyflip handoff [--to claude|cursor|kiro|opencode|windsurf|generic] [--out CONTINUE.md]   # emit a CONTINUE-PROMPT so a NEW AI tool resumes this project from .keyflip/ without re-reading everything
+keyflip mcp                              # the same thing as MCP tools for agents: keyflip_chat (id/search/account)
 ```
 
 `cowork` and Claude Code `sessions` are LOCAL and reliable. `chat` reads
-claude.ai's cloud history via the desktop app's session cookie — it's
-experimental: it needs a fresh Cloudflare cookie (works right after the app was
-used) and only sees the account the desktop app is signed into; if it 403s, tell
-the user to open the Claude app once and retry.
+claude.ai's CLOUD history — it is experimental and cookie-bound:
+
+- keyflip FINDS the session itself and prints where it read from (`Chrome (live browser
+  session)`, `the Claude desktop app`, `saved Chrome session of 'yahoo' (…)`). Current
+  desktop builds keep `sessionKey` only in memory, so the app's on-disk jar is often not
+  the usable one — a browser signed into claude.ai usually is.
+- It needs a *fresh* Cloudflare clearance. A 403 means stale, not
+  logged out: `keyflip chat --flush` closes and reopens the app once so Chromium
+  writes its cookies out, then retries.
+- **`--as <account>` reads ANOTHER saved account's chats without switching anything** —
+  from that account's captured browser session
+  (`~/.config/keyflip/browser-sessions/<name>__<browser>.sql`), then its app-cookie
+  snapshot. So you CAN search and read a non-active account's cloud history. If it says
+  there is no saved session, run `keyflip browser sync <account>` once while that account
+  is signed in; every `keyflip <name>` switch also refreshes the app login it leaves.
+- Cookies are machine-bound (they decrypt with that browser's own key): a snapshot only
+  decrypts on the machine + browser that captured it.
+  Chats that never went through the desktop app are not in this list — claude.ai cloud
+  Chat is server-side per account and cannot be merged across accounts locally.
+- `search` matches TITLES only. For message BODIES across all your local transcripts,
+  use `keyflip recall "<query>"`.
 
 ## Context Layer — portable project memory (`.keyflip/`)
 

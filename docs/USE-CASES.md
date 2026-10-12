@@ -200,11 +200,19 @@ keyflip resume <id> --run              # launch `claude --resume <id>` in its or
 keyflip cowork                         # browse Claude desktop Cowork sessions (all accounts)
 keyflip cowork --search T | --all
 keyflip chat                           # list claude.ai cloud Chats (EXPERIMENTAL)
-keyflip chat get <id>                  # read one conversation
+keyflip chat get <short-id|title>      # read one conversation (short ids from the listing work)
+keyflip chat search "<words>"          # find one by title
+keyflip chat --as <account>            # read ANOTHER saved account, no switching
 ```
 - `resume` is project-scoped — it handles the `cd` to the transcript's original dir.
-- `chat` needs a fresh Cloudflare cookie (works right after using the app) and only
-  sees the desktop app's account; a 403 means "open the app once and retry".
+- `chat` authenticates with a claude.ai session cookie, found automatically and printed
+  with every result: the desktop app's cookie, else a browser signed into claude.ai
+  (current app builds keep `sessionKey` in memory only), else the account's saved
+  snapshot. It needs a fresh Cloudflare clearance: a 403 means stale, not logged out —
+  `keyflip chat --flush` closes/reopens the app once and retries. `--as <account>` reads
+  that account's saved browser session (`keyflip browser sync <account>` once captures it;
+  keyflip also refreshes the app login it switches away from) — cookies only decrypt on the
+  machine+browser that captured them. Titles only — bodies: `keyflip recall`.
 
 ---
 

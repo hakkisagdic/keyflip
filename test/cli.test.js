@@ -180,6 +180,45 @@ test('keyflip <name> switches directly (no "switch" keyword)', function () {
   assert.match(run(home, ['list']).stdout, /Claude Code: alice@example\.com/);
 });
 
+// The desktop app has its OWN login, so signing into another account by hand inside
+// the app leaves the CLI on the old account. `keyflip <that-account>` must not call
+// that "already active" — it still has a real switch to do (the app login).
+test('switch to an already-active CLI account still flips a lagging desktop app (macOS)', function (t) {
+  if (process.platform !== 'darwin') return t.skip('the desktop app store is macOS-only');
+  const home = setupHome();
+  run(home, ['add']); // profile "alice"; the CLI stays on alice throughout
+  const appCfgDir = path.join(home, 'Library', 'Application Support', 'Claude');
+  fs.mkdirSync(appCfgDir, { recursive: true });
+  const YAHOO_ORG = '11111111-2222-3333-4444-555555555555';
+  const ALICE_ORG = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+  function appSignedInAs(token, org) {
+    const cfg = { 'oauth:tokenCacheV2': token };
+    cfg['dxt:allowlistLastUpdated:' + org] = '2026-07-05T00:00:00.000Z';
+    fs.writeFileSync(path.join(appCfgDir, 'config.json'), JSON.stringify(cfg));
+    fs.writeFileSync(path.join(appCfgDir, 'Cookies'), 'sessionKey ' + token);
+  }
+  appSignedInAs('ALICE-APP', ALICE_ORG);
+  assert.strictEqual(run(home, ['add', 'alice', '--app']).status, 0); // alice's app login saved
+  appSignedInAs('YAHOO-APP', YAHOO_ORG);
+  assert.strictEqual(run(home, ['add', 'yahoo', '--app']).status, 0); // ...then a manual app sign-in
+
+  assert.match(run(home, ['list']).stdout, /desktop app: yahoo/);
+  const sw = run(home, ['alice', '--restart']);
+  assert.strictEqual(sw.status, 0, sw.stderr);
+  assert.match(sw.stdout, /the desktop app is on yahoo/);
+  assert.match(sw.stdout, /switched the Claude desktop-app login too/);
+  assert.match(fs.readFileSync(path.join(appCfgDir, 'config.json'), 'utf8'), /ALICE-APP/);
+});
+
+test('chat --as rejects an unknown account before touching any cookie', function (t) {
+  if (process.platform !== 'darwin') return t.skip('claude.ai Chat reading is macOS-only');
+  const home = setupHome();
+  run(home, ['add']);
+  const r = run(home, ['chat', 'get', 'deadbeef', '--as', 'nosuchaccount']);
+  assert.notStrictEqual(r.status, 0);
+  assert.match(r.stderr + r.stdout, /no such saved account/);
+});
+
 test('unified add captures the desktop login too when only the app is signed in (macOS)', function (t) {
   if (process.platform !== 'darwin') return t.skip('the desktop app store is macOS-only');
   const home = setupHome();
