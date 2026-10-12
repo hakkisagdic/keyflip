@@ -217,6 +217,8 @@ keyflip chat                           # claude.ai bulut Sohbetlerini listele (D
 keyflip chat get <kısa-id|başlık>      # bir sohbeti oku (listelemedeki kısa id yeterli)
 keyflip chat search "<sözcükler>"      # başlıkla bul
 keyflip chat --as <hesap>              # BAŞKA kayıtlı hesabı oku, geçiş yapmadan
+keyflip foreign --list                 # bu makinedeki DİĞER ajanların oturum dosyalarını bul
+keyflip foreign <dosya> [--format md|html|json]   # birini aynı görünüme normalize et
 ```
 - `resume` proje kapsamlıdır — transkriptin orijinal dizinine `cd`'yi kendisi halleder.
 - `chat`, bir claude.ai oturum çerezini kullanır ve çerezi kendisi bulur; her sonuçta
@@ -229,6 +231,15 @@ keyflip chat --as <hesap>              # BAŞKA kayıtlı hesabı oku, geçiş y
   ters yöndedirler; keyflip uzaklaştığı hesabın uygulama girişini de tazeler) — çerezler
   yalnızca yakalandıkları makine+tarayıcıda çözülür.
   Yalnız başlıklar — içerik: `keyflip recall`.
+- `foreign`, Claude Code deposunun tutmadıklarını okur: Cursor'ün SQLite sohbet DB'si
+  (yanındaki `-wal` önce oynatılır ki içindeki yeni sohbetler kaçmasın; WAL vardır ama
+  içeri alınamıyorsa bunu söyler), opencode / Gemini / **Qoder CLI** JSONL ve Copilot YAML;
+  doğrudan gösterdiğiniz bir dosya düz JSON ya da Aider'ın `.aider.chat.history.md` dosyası da
+  olabilir. Keşif yeniden-eskiye sıralıdır ve araç başına bir dosya kotası taşır, böylece
+  çok dosyası olan bir araç diğerlerini ezmez; aracın oturum olmayan klasörleri (`log/`,
+  `snapshot/`, `tool-output/`, Qoder'ın `subagents/`) atlanır — tıpkı kimlik/sır görünümlü
+  dosyalar (`auth.json`, `credentials.json`, `oauth*.json`) gibi: keyflip canlı bir token'ı
+  asla sohbet olarak çizmez. Tanımadığı bir biçim boş sohbet değil, hatadır.
 
 ---
 
@@ -242,6 +253,12 @@ keyflip consolidate --watch --interval 60
 - Uygulama çalışırken deposu kilitli olur; tek atış modu kapat→eşitle→aç önerir
   (`-y` ile soruyu atla).
 - Ayrıca her geçişte otomatik çalışır.
+- Hesap klasörleri UUID adlarından tanınır; uygulamanın kendi kayıt klason
+  (`skills-plugin/<org>/<hesap>/`, aynı düzende dizilir) ne okunur ne yazılır — önceden bir
+  consolidate geçişi içine pointer dağıtırdı. Bir hesapta kullanıcının sildiği sohbet (uygulama
+  dizinin yanına `deleted_<id>` bırakır) başka hesabın klasöründen geri kopyalanmaz.
+  `keyflip cowork` eşitlenmiş sohbeti bir kez listeler: veri klasörü hâlâ yanında duran kopya,
+  o yoksa en son aktif olan.
 
 ---
 

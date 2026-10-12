@@ -308,7 +308,7 @@ keyflip sessions empty [--apply]    # list project folders holding zero files; -
                                     # sidecar-only keys are reported by kind and never removed
 keyflip sessions edit <id> <delete-message|redact-message|truncate-after> <n> [--apply]   # surgical JSONL edits (backs up; keeps the file valid)
 keyflip sessions export <id> [--format md|html|json]   # export a chat as a clean, shareable doc (offline review / archive)
-keyflip foreign <session-file> [--format md|html|json]   # normalize ANOTHER agent's session (JSONL / Cursor SQLite / opencode+generic JSON / Copilot YAML / Aider MD) into the same view
+keyflip foreign <session-file> [--format md|html|json]   # normalize ANOTHER agent's session (message-event JSONL — Claude Code/opencode/Gemini/Qoder CLI — / Cursor SQLite / generic JSON / Copilot YAML / Aider MD) into the same view
 keyflip handoff [--to claude|cursor|kiro|opencode|windsurf|generic] [--out CONTINUE.md]   # emit a CONTINUE-PROMPT so a NEW AI tool resumes THIS project from .keyflip/ (context, tasks, decisions, rules, last checkpoint) without re-reading everything
 keyflip dream [--older-than 30d] [--archive] [--apply]   # "dreaming": distill (+ archive) old chats in one pass; dry-run by default
 keyflip recall "<query>" [--answer]   # search ALL your chats (BM25; --semantic=embeddings; --answer = a cited synthesis via `claude -p`)

@@ -77,7 +77,8 @@ Chat history readable without switching to it.
 returns content snippets + an `orphan` flag), `keyflip_sessions_rebind` (folder-rename fix),
 `keyflip_sessions_archive`/`_unarchive`/`_archived`, `keyflip_sessions_export` (a chat → clean
 markdown/HTML/json for sharing), `keyflip_foreign_export` (normalize ANOTHER agent's session
-log — JSONL / Cursor SQLite / opencode+generic JSON / Copilot YAML / Aider MD — into the same view
+log — message-event JSONL (Claude Code, opencode, Gemini, **Qoder CLI**) / Cursor SQLite /
+generic JSON / Copilot YAML / Aider MD — into the same view
 via from-scratch zero-dep SQLite + YAML readers); cross-machine: `keyflip_migrate_export`/
 `_import`/`_push`/`_pull` (export takes `agents:true` to also carry other agents' memory) and
 `keyflip_agents` (inspect); git versioning: `keyflip_history`/`_undo`/`_restore`. The mutating
@@ -313,7 +314,13 @@ pins); `keyflip_transfer_pull` (pull+merge a bundle from a LAN peer running `tra
   file or the environment and saves them as providers (keys never printed). (MCP: `keyflip_import_env`.)
 - **Audit log** — `keyflip log [--tail N] [--grep S] [--since ISO]` views the action log (switches/
   adds/errors) at `<configDir>/logs/keyflip.log`. (MCP: `keyflip_audit_log` (read).)
-- **Cursor WAL** — `keyflip foreign` now replays a Cursor `-wal` sibling so RECENT chats aren't missed.
+- **Foreign sessions** — `keyflip foreign --list` discovers Cursor / opencode / Gemini /
+  **Qoder CLI** (`~/.qoder/projects/<key>/<id>.jsonl`, its `subagents/` and `memory/` sidecars are not
+  sessions) / Copilot logs, newest-first, with its own file budget per tool so one chatty tool cannot
+  bury the rest. Anything credential-shaped (`auth.json`, `credentials.json`, `oauth*`) is never
+  listed — do not hand a live token to the renderer. `keyflip foreign` replays a Cursor `-wal` sibling
+  so RECENT chats aren't missed, and warns when it cannot. An unrecognized format is an error, not an
+  empty chat.
 
 ## Orchestration, cost, teams, policy, routing (strategic layer)
 

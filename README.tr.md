@@ -303,7 +303,7 @@ keyflip sessions scrub <id> [--apply] [--categories …] [--llm-url URL]   # PII
 keyflip sessions delete <id> [--hard]   # bir sohbeti sil — varsayılan önce arşivler (geri alınabilir); --hard kalıcı siler
 keyflip sessions edit <id> <delete-message|redact-message|truncate-after> <n> [--apply]   # cerrahi JSONL düzenleme (yedekler; dosyayı geçerli tutar)
 keyflip sessions export <id> [--format md|html|json]   # bir sohbeti temiz, paylaşılabilir belgeye çıkar (offline inceleme / arşiv)
-keyflip foreign <oturum-dosyası> [--format md|html|json]   # BAŞKA bir ajanın oturumunu (JSONL / Cursor SQLite / opencode+genel JSON / Copilot YAML / Aider MD) aynı görünüme normalize et
+keyflip foreign <oturum-dosyası> [--format md|html|json]   # BAŞKA bir ajanın oturumunu (mesaj-olayı JSONL — Claude Code/opencode/Gemini/Qoder CLI — / Cursor SQLite / genel JSON / Copilot YAML / Aider MD) aynı görünüme normalize et
 keyflip handoff [--to claude|cursor|kiro|opencode|windsurf|generic] [--out CONTINUE.md]   # YENİ bir yapay zeka aracının bu projeyi .keyflip/ üzerinden (bağlam, görevler, kararlar, kurallar, son checkpoint) her şeyi yeniden okumadan sürdürmesi için bir DEVAM-İSTEMİ üretir
 keyflip dream [--older-than 30d] [--archive] [--apply]   # "dreaming": eski sohbetleri tek geçişte damıt (+ arşivle); varsayılan dry-run
 keyflip recall "<sorgu>" [--answer]   # TÜM sohbetlerinde arama (BM25; --semantic=embeddings; --answer = `claude -p` ile atıflı sentez)

@@ -215,6 +215,8 @@ keyflip chat                           # list claude.ai cloud Chats (EXPERIMENTA
 keyflip chat get <short-id|title>      # read one conversation (short ids from the listing work)
 keyflip chat search "<words>"          # find one by title
 keyflip chat --as <account>            # read ANOTHER saved account, no switching
+keyflip foreign --list                 # find OTHER agents' session files on this machine
+keyflip foreign <file> [--format md|html|json]   # normalize one into the same view
 ```
 - `resume` is project-scoped — it handles the `cd` to the transcript's original dir.
 - `chat` authenticates with a claude.ai session cookie, found automatically and printed
@@ -226,6 +228,16 @@ keyflip chat --as <account>            # read ANOTHER saved account, no switchin
   `browser sync` restores it into the browser — they are opposite directions; keyflip also
   refreshes the app login it switches away from) — cookies only decrypt on the
   machine+browser that captured them. Titles only — bodies: `keyflip recall`.
+- `foreign` reads what Claude Code's own store doesn't hold: Cursor's SQLite chat DB (a `-wal`
+  sibling is replayed first so the recent chats it holds aren't missed, and keyflip says so when
+  the WAL is there but cannot be folded in), opencode / Gemini /
+  **Qoder CLI** JSONL and Copilot YAML; a file you point at directly may also be a plain-JSON
+  log or Aider's `.aider.chat.history.md`. Discovery is newest-first with a per-tool
+  file budget, so one chatty tool cannot bury the rest; a tool's non-session folders
+  (`log/`, `snapshot/`, `tool-output/`, Qoder's `subagents/`) are skipped, and so is anything
+  credential-shaped (`auth.json`, `credentials.json`, `oauth*.json`) — keyflip will never hand a
+  live token to the renderer. A file whose format it does not recognize is an error, not an
+  empty chat.
 
 ---
 
@@ -239,6 +251,17 @@ keyflip consolidate --watch --interval 60
 - The desktop app's store is locked while it runs, so a one-shot offers to
   close→sync→reopen the app (`-y` to skip the prompt).
 - Also runs automatically on every switch.
+- Account folders are recognised by their UUID name, so the app's own bookkeeping
+  (`skills-plugin/<org>/<account>/`, laid out the same way) is neither read nor written — before,
+  a consolidate pass spread pointers into it. A session the user deleted in one account (the app
+  leaves a `deleted_<id>` tombstone beside the index) is not copied back from another account's
+  folder. `keyflip cowork` then lists a consolidated session once: the copy whose data folder
+  still sits beside it, otherwise the most recently active.
+- Only UUID-named folders count as accounts: the app's own bookkeeping
+  (`skills-plugin/<org>/<account>/`) is laid out the same way but is neither read nor written,
+  and a session the user deleted in an account (its `deleted_<id>` tombstone) is not copied back
+  from elsewhere. `keyflip cowork` shows a consolidated session once — its home account, i.e. the
+  one that still has the transcript folder beside the index.
 
 ---
 
