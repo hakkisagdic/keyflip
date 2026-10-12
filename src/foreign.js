@@ -36,9 +36,17 @@ const SESSION_SOURCES = [
       return { base: b + '/User/workspaceStorage', match: /state\.vscdb$/ };
     }),
   },
-  { tool: 'opencode', dirs: [{ base: '.local/share/opencode', match: /\.jsonl?$/ }] },
+  {
+    tool: 'opencode',
+    // log/, snapshot/, tool-output/ and repos/ sit beside the session store and hold no chats.
+    dirs: [{ base: '.local/share/opencode', match: /\.jsonl?$/, skipDir: /^(log|snapshot|tool-output|repos)$/ }],
+  },
   { tool: 'gemini', dirs: [{ base: '.gemini/antigravity-cli', match: /transcript\.jsonl$/ }] },
   { tool: 'copilot', dirs: [{ base: '.copilot/session-state', match: /workspace\.ya?ml$/ }] },
+  // Qoder CLI keeps Claude-Code-shaped transcripts at ~/.qoder/projects/<key>/<sessionId>.jsonl
+  // (verified against a real install, 2026-10). The per-session sidecar holds subagent logs and
+  // memory notes — not conversations of their own.
+  { tool: 'qoder', dirs: [{ base: '.qoder/projects', match: /\.jsonl$/, skipDir: /^(subagents|memory)$/ }] },
   // Windsurf (Codeium) + Kiro (AWS) are VS Code forks; their Cascade/chat transcripts live in an
   // app-specific globalStorage SQLite (NOT the `cursorDiskKV` schema parseCursor reads) whose table
   // layout is undocumented. Listing them here without a verified parser would surface files
@@ -48,7 +56,14 @@ const SESSION_SOURCES = [
   //   windsurf: ~/Library/Application Support/Windsurf/User/{globalStorage,workspaceStorage}/**/state.vscdb
   //   kiro:     ~/Library/Application Support/Kiro/User/{globalStorage,workspaceStorage}/**/state.vscdb
 ];
-function walkFind(dir, matchRe, budget, out) {
+// Files that live beside a session store but are NOT sessions — login material above all. A tool's
+// data dir is matched by extension, so without this `auth.json` is listed as a "session" and
+// `keyflip foreign <path>` is one paste away from rendering a credential as a chat.
+const NOT_A_SESSION = /^(auth|accounts?|credentials?|tokens?|secrets?|oauth[\w-]*|config|settings)\.jsonl?$/i;
+// Per-source cap, so one tool with thousands of files cannot starve the ones listed after it.
+const PER_SOURCE_BUDGET = 3000;
+
+function walkFind(dir, matchRe, budget, out, skipDirRe) {
   if (budget.left <= 0) return;
   let ents;
   try {
@@ -57,18 +72,19 @@ function walkFind(dir, matchRe, budget, out) {
     return;
   }
   for (let i = 0; i < ents.length && budget.left > 0; i++) {
-    const p = path.join(dir, ents[i].name);
-    if (ents[i].isDirectory()) walkFind(p, matchRe, budget, out);
-    else if (ents[i].isFile() && matchRe.test(ents[i].name)) {
+    const name = ents[i].name;
+    const p = path.join(dir, name);
+    if (ents[i].isDirectory()) {
+      if (!skipDirRe || !skipDirRe.test(name)) walkFind(p, matchRe, budget, out, skipDirRe);
+    } else if (ents[i].isFile() && matchRe.test(name) && !NOT_A_SESSION.test(name)) {
       out.push(p);
       budget.left--;
     }
   }
 }
-// Discover foreign session files present on this machine → [{ tool, path, mtime }].
+// Discover foreign session files present on this machine → [{ tool, path, mtime }], newest first.
 function discover(ctx) {
   const home = (ctx && ctx.home) || _os.homedir();
-  const budget = { left: 3000 };
   const out = [];
   const add = function (tool, p) {
     try {
@@ -87,13 +103,19 @@ function discover(ctx) {
         /* absent */
       }
     });
+    const budget = { left: PER_SOURCE_BUDGET };
     (src.dirs || []).forEach(function (d) {
       const found = [];
-      walkFind(path.join(home, d.base), d.match, budget, found);
+      walkFind(path.join(home, d.base), d.match, budget, found, d.skipDir);
       found.forEach(function (p) {
         add(src.tool, p);
       });
     });
+  });
+  // Newest first: the list is long and callers show only its head, so recency has to decide
+  // what is visible — not the order tools happen to be declared in.
+  out.sort(function (a, b) {
+    return b.mtime < a.mtime ? -1 : b.mtime > a.mtime ? 1 : 0;
   });
   return out;
 }

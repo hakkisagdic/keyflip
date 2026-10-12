@@ -220,7 +220,7 @@ const CATALOG = [
     group: 'sessions',
     safe: false,
     usage: 'keyflip foreign --list | <session-file> [--format md|html|json]',
-    desc: "Find/normalize another agent's session (Cursor/opencode/Gemini/Aider).",
+    desc: "Find/normalize another agent's session (Cursor/opencode/Gemini/Qoder/Aider).",
   },
 
   // ---- context (portable project memory in .keyflip/) ----

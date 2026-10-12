@@ -184,6 +184,33 @@ test('discover: finds foreign sessions at the known locations, existence-gated',
   );
 });
 
+test('discover: lists Qoder sessions, never login material, newest first', function () {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'kf-disc-'));
+  const oc = path.join(home, '.local', 'share', 'opencode');
+  const qd = path.join(home, '.qoder', 'projects', '-Users-me-proj');
+  [path.join(oc, 'log'), path.join(oc, 'project', 'p', 'storage'), path.join(qd, 'sid-1', 'subagents')].forEach(
+    function (d) {
+      fs.mkdirSync(d, { recursive: true });
+    },
+  );
+  // opencode keeps its login beside the session store — it must never be offered as a session.
+  fs.writeFileSync(path.join(oc, 'auth.json'), '{"token":"secret"}');
+  fs.writeFileSync(path.join(oc, 'account.json'), '{}');
+  fs.writeFileSync(path.join(oc, 'log', 'run.json'), '{}');
+  fs.writeFileSync(path.join(oc, 'project', 'p', 'storage', 'ses_1.json'), '{}');
+  fs.writeFileSync(path.join(qd, 'sid-1.jsonl'), '{}');
+  fs.writeFileSync(path.join(qd, 'sid-1', 'subagents', 'agent-a.jsonl'), '{}');
+  const old = new Date('2026-01-01T00:00:00Z');
+  fs.utimesSync(path.join(oc, 'project', 'p', 'storage', 'ses_1.json'), old, old);
+  const found = foreign.discover({ home: home });
+  assert.deepStrictEqual(
+    found.map(function (f) {
+      return f.tool + ':' + path.basename(f.path);
+    }),
+    ['qoder:sid-1.jsonl', 'opencode:ses_1.json'],
+  );
+});
+
 test('parseYaml (Copilot/generic): extracts the conversation array from YAML', function () {
   const y = [
     'session: abc',

@@ -226,7 +226,7 @@ function usage() {
     '  keyflip sessions export <id> [--format md|html|json] [--out <file>]   export a chat as a clean, shareable doc',
   );
   print(
-    "  keyflip foreign --list | <session-file> [--format md|html|json]   find/normalize ANOTHER agent's session (Cursor/opencode/Gemini/Aider)",
+    "  keyflip foreign --list | <session-file> [--format md|html|json]   find/normalize ANOTHER agent's session (Cursor/opencode/Gemini/Qoder/Aider)",
   );
   print(
     '  keyflip sessions assign <id> <account>   continue a session AS another account (resume --run) — no profile switch',
@@ -6115,7 +6115,7 @@ function cmdForeign(ctx, rest) {
     if (!found.length) {
       print(
         style.dim(
-          "No other agents' sessions found in the known locations (Cursor / opencode / Gemini). These paths are best-effort — point at a file directly: ",
+          "No other agents' sessions found in the known locations (Cursor / opencode / Gemini / Qoder). These paths are best-effort — point at a file directly: ",
         ) + style.bold('keyflip foreign <file>'),
       );
       return;
