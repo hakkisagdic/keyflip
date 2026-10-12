@@ -263,8 +263,9 @@ function usage() {
     '  keyflip chat get <short-id|title> [--as <acct>]  read one cloud conversation  (--flush: close/reopen the app to get a fresh cookie)',
   );
   print('  keyflip chat search "<words>" [--as <acct>]      find a cloud chat by title');
-  print('  keyflip browser [status|logout|sync]   check/reset/restore the BROWSER claude.ai account so the Claude');
-  print('                                 Chrome extension connects (it inherits the browser session)');
+  print('  keyflip browser [status|logout|capture|sync]  BROWSER claude.ai account: capture saves it under an');
+  print('                                 account (so `keyflip chat --as` can read it), sync restores one;');
+  print('                                 logout clears it — the Chrome extension inherits this session');
   print('  keyflip skill add <owner/repo|./dir|file.tgz>   install a skill; also: skill list|remove');
   print('  keyflip proxy start [--wire] | stop | status | stats');
   print('                                 command-started failover proxy (429/5xx → next account)');
@@ -8314,6 +8315,77 @@ function saveBrowserSession(ctx, name) {
   }
 }
 
+// `keyflip browser capture <account>` — save the browser's CURRENT claude.ai session
+// under a named account, which is what makes `keyflip chat --as <account>` able to read
+// that account's cloud history later. Note this is the opposite direction of
+// `keyflip browser sync`, which WRITES a saved session back into the browser.
+//
+// Guarded on purpose: filing one account's cookies under another account's name would
+// silently poison every later read of it, so a browser whose claude.ai org is known and
+// differs from the named account is skipped, never saved.
+function browserCapture(ctx, name, opts) {
+  opts = opts || {};
+  const browser = _browser;
+  const installed = opts.installed || browser.installed(ctx.home);
+  const read =
+    opts.readClaudeCookies ||
+    function (b) {
+      return browser.readClaudeCookies(b, opts.run ? { run: opts.run } : {});
+    };
+  const save =
+    opts.saveSession ||
+    function (n, b) {
+      return browser.saveSession(ctx.configDir, n, b, {});
+    };
+  const emailOf =
+    opts.emailOf ||
+    function (n) {
+      return n && profiles.email(ctx.configDir, n);
+    };
+  const orgOf =
+    opts.orgOf ||
+    function (n) {
+      const m = n ? profiles.read(ctx.configDir, n) : null;
+      return (m && m.oauthAccount && m.oauthAccount.organizationUuid) || null;
+    };
+  const labelOf =
+    opts.labelOf ||
+    function (org) {
+      if (!org) return null;
+      let lbl = null;
+      profiles.list(ctx.configDir).forEach(function (n) {
+        const m = profiles.read(ctx.configDir, n);
+        if (m && m.oauthAccount && m.oauthAccount.organizationUuid === org) lbl = m.email || n;
+      });
+      return lbl;
+    };
+  const wantOrg = orgOf(name);
+  const out = { name: name, email: emailOf(name), saved: [], skipped: [] };
+  installed.forEach(function (b) {
+    let ck = null;
+    try {
+      ck = read(b);
+    } catch (e) {
+      ck = null;
+    }
+    if (!ck || !ck.cookie) {
+      out.skipped.push({ browser: b.name, reason: 'no-readable-session' });
+      return;
+    }
+    if (ck.org && wantOrg && ck.org !== wantOrg) {
+      out.skipped.push({
+        browser: b.name,
+        reason: 'other-account',
+        signedInAs: labelOf(ck.org) || ck.org.slice(0, 8) + '…',
+      });
+      return;
+    }
+    if (save(name, b)) out.saved.push(b.name);
+    else out.skipped.push({ browser: b.name, reason: 'snapshot-failed' });
+  });
+  return out;
+}
+
 // `keyflip browser [status|logout]` — Phase 2/3: see and reset the BROWSER's
 // claude.ai session, which the Claude Chrome extension inherits. A mismatch
 // between the browser account and the active CLI/desktop account is exactly why
@@ -8449,6 +8521,49 @@ async function cmdBrowser(ctx, rest) {
     return;
   }
 
+  if (sub === 'capture') {
+    // Save the browser's current claude.ai session UNDER an account (the active one by
+    // default) so `keyflip chat --as <account>` can read its cloud history later.
+    const who = rest[1] && rest[1].indexOf('-') !== 0 ? rest[1] : null;
+    const name = who ? core.resolveProfile(ctx, who) : null;
+    if (who && !name) return fail("no such saved account: '" + who + "' (see: keyflip list)");
+    if (!name)
+      return fail('which account? usage: keyflip browser capture <name>  (the browser must be signed in as it)');
+    print('Saving the browser claude.ai session as ' + style.bold(profiles.email(ctx.configDir, name) || name) + ' …');
+    const r = browserCapture(ctx, name, { installed: list });
+    r.saved.forEach(function (n) {
+      print(
+        '  ' + style.ok('✅') + ' ' + n + ': claude.ai session saved — `keyflip chat --as ' + name + '` can read it.',
+      );
+    });
+    r.skipped.forEach(function (s) {
+      if (s.reason === 'other-account')
+        print(
+          '  ' +
+            style.err('✗') +
+            ' ' +
+            s.browser +
+            ' is signed into claude.ai as ' +
+            style.bold(s.signedInAs) +
+            ", not '" +
+            name +
+            "' — nothing saved (filing it under the wrong account would poison every later read).",
+        );
+      else if (s.reason === 'snapshot-failed')
+        print('  ' + style.err('✗') + ' ' + s.browser + ': could not read its cookies into a snapshot.');
+      else
+        print(
+          '  ' +
+            style.warn('·') +
+            ' ' +
+            s.browser +
+            ': no readable claude.ai session (sign into claude.ai there first).',
+        );
+    });
+    if (!r.saved.length) return fail("nothing saved for '" + name + "'.");
+    jsonOut({ browserCapture: name, saved: r.saved, skipped: r.skipped });
+    return;
+  }
   if (sub === 'sync') {
     // Restore the saved browser session for an account (the active one by default).
     const target = rest[1] && rest[1].indexOf('-') !== 0 ? core.resolveProfile(ctx, rest[1]) : null;
@@ -8489,7 +8604,9 @@ async function cmdBrowser(ctx, rest) {
     jsonOut({ browserSync: name, synced: synced });
     return;
   }
-  return fail('usage: keyflip browser [status|logout|sync [name]] [--browser chrome|brave|edge|arc] [--force]');
+  return fail(
+    'usage: keyflip browser [status|logout|capture <name>|sync [name]] [--browser chrome|brave|edge|arc] [--force]',
+  );
 }
 
 // #8 desktop↔CLI tug-of-war: is the RUNNING desktop app on a DIFFERENT account than
@@ -9778,4 +9895,13 @@ async function dispatch(ctx, cmd, rest) {
   }
 }
 
-export { main, usage, positionals, onboardProvider, desktopTugRisk, appActiveProfile, preserveOutgoingAppLogin };
+export {
+  main,
+  usage,
+  positionals,
+  onboardProvider,
+  desktopTugRisk,
+  appActiveProfile,
+  preserveOutgoingAppLogin,
+  browserCapture,
+};

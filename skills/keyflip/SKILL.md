@@ -62,10 +62,14 @@ its own — it inherits the browser's claude.ai session. If that != the active
 CLI/desktop account, the extension's native-messaging bridge refuses to connect
 ("user mismatch"). `keyflip browser status` shows the browser's claude.ai account
 and flags a mismatch; `keyflip browser logout` clears it (reversible, quit the
-browser first) so the user can sign in as the right account. `keyflip browser sync
-[name]` restores a previously-captured session for that account into the browser
-(defaults to the active account) — the same alignment `keyflip <name> --browser` does
-on a switch. Sessions are captured automatically during `onboard`/`login`.
+browser first) so the user can sign in as the right account. `keyflip browser capture
+[name]` SAVES the browser's current claude.ai session under that account (refusing a
+browser that is signed in as a different one), and `keyflip browser sync [name]` does the
+opposite — it RESTORES a saved session into the browser (quits and reopens it; defaults to
+the active account), the same alignment `keyflip <name> --browser` does on a switch.
+Sessions are also captured automatically during `onboard`/`login`. What `capture` saves is
+what `keyflip chat --as <name>` reads, so it is the way to make another account's cloud
+Chat history readable without switching to it.
 
 **Via MCP:** almost everything here is also an MCP tool — `keyflip_login`, `keyflip_logout`,
 `keyflip_browser_status`/`_logout`/`_sync`, `keyflip_consolidate`, `keyflip_switch`/`_next`,
@@ -397,8 +401,10 @@ claude.ai's CLOUD history — it is experimental and cookie-bound:
   from that account's captured browser session
   (`~/.config/keyflip/browser-sessions/<name>__<browser>.sql`), then its app-cookie
   snapshot. So you CAN search and read a non-active account's cloud history. If it says
-  there is no saved session, run `keyflip browser sync <account>` once while that account
-  is signed in; every `keyflip <name>` switch also refreshes the app login it leaves.
+  there is no saved session, have the user sign into claude.ai in a browser as that
+  account and run `keyflip browser capture <account>` once — capture SAVES a session
+  under an account, `browser sync` RESTORES one into the browser; never call sync to
+  "refresh" a capture. Every `keyflip <name>` switch also refreshes the app login it leaves.
 - Cookies are machine-bound (they decrypt with that browser's own key): a snapshot only
   decrypts on the machine + browser that captured it.
   Chats that never went through the desktop app are not in this list — claude.ai cloud

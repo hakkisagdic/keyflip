@@ -58,13 +58,24 @@ function snapshotsFor(ctx, account) {
   });
 }
 
-// The snapshot stores whole INSERT statements. `keyflip browser sync` writes them with
-// `.mode insert`, which has NO column list, so the table is rebuilt from the explicit
-// column list if the file has one and otherwise from the live browser's own `cookies`
-// schema (snapshots are machine-bound anyway — they only decrypt with that browser's
-// key on this machine). Then the rows read back exactly like a live cookie DB.
+// The snapshot stores whole INSERT statements. They are written with `.mode insert`,
+// which has NO column list, so the table is rebuilt from the explicit column list if the
+// file has one and otherwise from the live browser's own `cookies` schema (snapshots are
+// machine-bound anyway — they only decrypt with that browser's key on this machine). Then
+// the rows read back exactly like a live cookie DB.
 function shq(s) {
   return "'" + String(s).replace(/'/g, "'\\''") + "'";
+}
+
+// How old a saved session is, on the user's own clock — a UTC stamp makes a capture from
+// ten minutes ago look stale.
+function stampLocal(d) {
+  const p = function (n) {
+    return String(n).padStart(2, '0');
+  };
+  return (
+    d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes())
+  );
 }
 
 function tableSchemaFrom(browserDb, runner) {
@@ -167,14 +178,7 @@ function findSession(ctx, opts) {
         return {
           cookie: parsed.cookie,
           org: parsed.org,
-          source:
-            'saved ' +
-            b.name +
-            " session of '" +
-            account +
-            "' (" +
-            s.mtime.toISOString().slice(0, 16).replace('T', ' ') +
-            ')',
+          source: 'saved ' + b.name + " session of '" + account + "' (" + stampLocal(s.mtime) + ')',
         };
       notes.push('the saved ' + b.name + ' session has no claude.ai login cookie');
     }
@@ -192,11 +196,11 @@ function findSession(ctx, opts) {
           account +
           "' — " +
           (notes.join('; ') || 'nothing saved') +
-          '. Fix: `keyflip browser sync ' +
+          '. Fix: sign into claude.ai in a browser as ' +
           account +
-          '` once (or sign into claude.ai in a browser as that account and run `keyflip add ' +
+          ' and run `keyflip browser capture ' +
           account +
-          '`), then retry.',
+          '` once — that SAVES the session for later reading (`keyflip browser sync` is the opposite: it restores a saved session into the browser).',
       ),
       { code: 'no-session' },
     );

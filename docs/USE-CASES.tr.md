@@ -145,12 +145,17 @@ Uzantı tarayıcının claude.ai oturumunu miras alır; uyumsuzluk onu engeller.
 ```bash
 keyflip browser status               # tarayıcının claude.ai hesabı + uyumsuzluk bayrağı
 keyflip browser logout               # claude.ai oturumunu temizle (geri alınabilir; önce tarayıcıyı kapat)
+keyflip browser capture work         # tarayıcının claude.ai oturumunu bir HESABA kaydet
 keyflip browser sync                 # AKTİF hesabın kayıtlı tarayıcı oturumunu geri yükle
 keyflip browser sync work            # ...belirli bir hesabın oturumunu geri yükle
 keyflip browser status --browser brave   # tek tarayıcı hedefle (chrome|brave|edge|arc)
 ```
-- Oturumlar `onboard`/`login` sırasında tarayıcı o hesaptayken otomatik yakalanır;
-  `browser sync` ve `<ad> --browser` onları geri oynatır.
+- Oturumlar, tarayıcı o hesapken `onboard`/`login` sırasında otomatik yakalanır;
+  `browser capture <hesap>` istediğin zaman yapar, `browser sync` ve `<ad> --browser`
+  geri oynatır. Capture, claude.ai'da *başka* hesapla girişli bir tarayıcıyı reddeder —
+  o çerezleri yanlış adın altına koymamak için.
+- Burada kaydedilen, `keyflip chat --as <hesap>`ın okuduğu şeydir: yakalanmış bir tarayıcı
+  oturumu, o hesabın bulut Chat geçmişini ona geçmeden okunur kılar.
 
 ---
 
@@ -212,8 +217,9 @@ keyflip chat --as <hesap>              # BAŞKA kayıtlı hesabı oku, geçiş y
   anlık kopyası. Taze bir Cloudflare doğrulaması gerekir: 403 bayatlık demek (çıkış
   yapıldığı değil) — `keyflip chat --flush` uygulamayı bir kez kapatıp açar ve tekrar
   dener. `--as <hesap>`, o hesabın kayıtlı tarayıcı oturumunu okur
-  (`keyflip browser sync <hesap>` bir kez yakalar; keyflip uzaklaştığı hesabın uygulama
-  girişini de tazeler) — çerezler yalnızca yakalandıkları makine+tarayıcıda çözülür.
+  (`keyflip browser capture <hesap>` onu kaydeder; `browser sync` tarayıcıya geri yazar —
+  ters yöndedirler; keyflip uzaklaştığı hesabın uygulama girişini de tazeler) — çerezler
+  yalnızca yakalandıkları makine+tarayıcıda çözülür.
   Yalnız başlıklar — içerik: `keyflip recall`.
 
 ---

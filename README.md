@@ -333,9 +333,10 @@ session cookie**. It is **experimental** (undocumented API) and cookie-bound:
   session** (`~/.config/keyflip/browser-sessions/<name>__<browser>.sql`, then the
   app snapshot at `app/<name>.cookies`) without switching anything — so you can
   search and read the other account's cloud history from here. If it reports no
-  saved session, run `keyflip browser sync <account>` once while that account is
-  signed in. Every keyflip switch also refreshes the login *and cookie* of the
-  account it leaves.
+  saved session, sign into claude.ai in a browser as that account and run
+  `keyflip browser capture <account>` once (`browser sync` is the opposite — it puts a
+  saved session back into the browser). Every keyflip switch also refreshes the login
+  *and cookie* of the account it leaves.
 - A **403 means the Cloudflare clearance went stale** — not that you are logged out.
   `keyflip chat --flush` closes and reopens the app once, then retries.
 - Search matches chat **titles**; message bodies are in your local transcripts — use

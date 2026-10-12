@@ -327,9 +327,10 @@ sunucu tarafında; `keyflip chat` bunu bir **claude.ai oturum çerezi**yle okur.
 - `--as <hesap>`, *başka* bir kayıtlı hesabın sohbetlerini, onun **kayıtlı tarayıcı
   oturumundan** (`~/.config/keyflip/browser-sessions/<ad>__<tarayici>.sql`, sonra
   `app/<ad>.cookies`) hiçbir şeyi değiştirmeden okur — yani o hesabın bulut geçmişini
-  buradan arayabilir ve okuyabilirsin. Kayıtlı oturum yoksa, o hesap girişken bir kez
-  `keyflip browser sync <hesap>` çalıştır. Her keyflip geçişi ayrıca bırakılan hesabın
-  girişini *ve çerezini* tazeler.
+  buradan arayabilir ve okuyabilirsin. Kayıtlı oturum yoksa, o hesapla bir tarayıcıda
+  claude.ai'a giriş yap ve bir kez `keyflip browser capture <hesap>` çalıştır
+  (`browser sync` tersini yapar — kayıtlı oturumu tarayıcıya geri yazar). Her keyflip
+  geçişi ayrıca bırakılan hesabın girişini *ve çerezini* tazeler.
 - **403, Cloudflare doğrulamasının bayatladığı** demektir — çıkış yapıldığı değil.
   `keyflip chat --flush` uygulamayı bir kez kapatıp açar ve tekrar dener.
 - Arama yalnızca sohbet **başlıklarında** yapılır; mesaj içerikleri yerel kayıtlarında —

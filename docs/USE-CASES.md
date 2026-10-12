@@ -144,12 +144,17 @@ The extension inherits the browser's claude.ai session; a mismatch blocks it.
 ```bash
 keyflip browser status               # the browser's claude.ai account + mismatch flag
 keyflip browser logout               # clear the claude.ai session (reversible; quit browser first)
+keyflip browser capture work         # SAVE the browser's claude.ai session under an account
 keyflip browser sync                 # restore the ACTIVE account's saved browser session
 keyflip browser sync work            # ...restore a specific account's session
 keyflip browser status --browser brave   # target one browser (chrome|brave|edge|arc)
 ```
 - Sessions are captured automatically during `onboard`/`login` while the browser is on
-  that account; `browser sync` and `<name> --browser` replay them.
+  that account; `browser capture <account>` does it on demand, `browser sync` and
+  `<name> --browser` replay them. Capture refuses a browser that is signed into claude.ai
+  as a different account — it would file those cookies under the wrong name.
+- What is saved here is also what `keyflip chat --as <account>` reads: a captured browser
+  session makes that account's cloud Chat history readable without switching to it.
 
 ---
 
@@ -210,8 +215,9 @@ keyflip chat --as <account>            # read ANOTHER saved account, no switchin
   (current app builds keep `sessionKey` in memory only), else the account's saved
   snapshot. It needs a fresh Cloudflare clearance: a 403 means stale, not logged out —
   `keyflip chat --flush` closes/reopens the app once and retries. `--as <account>` reads
-  that account's saved browser session (`keyflip browser sync <account>` once captures it;
-  keyflip also refreshes the app login it switches away from) — cookies only decrypt on the
+  that account's saved browser session (`keyflip browser capture <account>` saves it;
+  `browser sync` restores it into the browser — they are opposite directions; keyflip also
+  refreshes the app login it switches away from) — cookies only decrypt on the
   machine+browser that captured them. Titles only — bodies: `keyflip recall`.
 
 ---

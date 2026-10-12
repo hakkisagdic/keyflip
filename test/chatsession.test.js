@@ -112,7 +112,7 @@ test('--as on an account with no saved session says how to get one', function ()
     },
     function (e) {
       assert.strictEqual(e.code, 'no-session');
-      assert.match(e.message, /keyflip browser sync nevercaptured/);
+      assert.match(e.message, /keyflip browser capture nevercaptured/);
       return true;
     },
   );

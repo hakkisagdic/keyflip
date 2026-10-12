@@ -104,3 +104,74 @@ test('an app login keyflip has never saved is skipped, not guessed into a profil
     'nothing was captured into a profile that is not this account',
   );
 });
+
+// ---- browser-session capture: the other thing that makes an account's cloud Chat
+// readable later (`keyflip chat --as <name>` reads these snapshots).
+
+const CHROME = { id: 'chrome', name: 'Chrome' };
+const OTHER_ORG = '99999999-8888-7777-6666-555555555555';
+
+function captureCtx() {
+  const ctx = darwinCtx(tokenBlob(JSON.stringify({ subscriptionUUID: ORG })));
+  profiles.write(ctx.configDir, {
+    name: 'elsewhere',
+    email: 'elsewhere@example.com',
+    oauthAccount: { organizationUuid: OTHER_ORG },
+    savedAt: ctx.now(),
+  });
+  return ctx;
+}
+
+test('browser capture saves the claude.ai session under the account it belongs to', function () {
+  const ctx = captureCtx();
+  const saved = [];
+  const r = cli.browserCapture(ctx, 'yahoo', {
+    installed: [CHROME],
+    readClaudeCookies: function () {
+      return { cookie: 'sessionKey=S; lastActiveOrg=' + ORG, org: ORG };
+    },
+    saveSession: function (name, b) {
+      saved.push(name + '/' + b.id);
+      return true;
+    },
+  });
+  assert.deepStrictEqual(saved, ['yahoo/chrome']);
+  assert.deepStrictEqual(r.saved, ['Chrome']);
+  assert.strictEqual(r.skipped.length, 0);
+});
+
+test('browser capture refuses to file a session under the WRONG account', function () {
+  // The whole point of a saved session is that it is read back as that account later;
+  // mislabelled cookies would silently poison every `chat --as` read.
+  const ctx = captureCtx();
+  let savedCalls = 0;
+  const r = cli.browserCapture(ctx, 'yahoo', {
+    installed: [CHROME],
+    readClaudeCookies: function () {
+      return { cookie: 'sessionKey=S', org: OTHER_ORG };
+    },
+    saveSession: function () {
+      savedCalls++;
+      return true;
+    },
+  });
+  assert.strictEqual(savedCalls, 0, 'nothing was written');
+  assert.deepStrictEqual(r.saved, []);
+  assert.strictEqual(r.skipped[0].reason, 'other-account');
+  assert.strictEqual(r.skipped[0].signedInAs, 'elsewhere@example.com', 'says who is actually in there');
+});
+
+test('a browser with no readable claude.ai session is reported, not guessed', function () {
+  const ctx = captureCtx();
+  const r = cli.browserCapture(ctx, 'yahoo', {
+    installed: [CHROME],
+    readClaudeCookies: function () {
+      return null; // app-bound cookie encryption, or simply not signed in
+    },
+    saveSession: function () {
+      assert.fail('must not save when nothing could be read');
+    },
+  });
+  assert.deepStrictEqual(r.saved, []);
+  assert.strictEqual(r.skipped[0].reason, 'no-readable-session');
+});
