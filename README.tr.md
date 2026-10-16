@@ -123,7 +123,7 @@ kaydeder (tek tek). macOS'ta ilk Keychain okumasında **"Always Allow"** (Her Za
 halini tek ad altında gösterir. Her thread'i üyeleriyle listeler — hangi hesabın, transkripti nerede,
 ne kadar taze ve onu sürdürecek `cd … && claude --resume …` satırı birebir — ayrıca `[s]` ile *bölünmüş
 işi kendisi arar*. Bilerek salt-okunur: transkript gövdesi okumaz, hiçbir şey yazmaz, kota harcamaz;
-bir thread'i değiitmenin tek yolu adını CLI'dan yazmak (`keyflip threads create|add|open …`). Atanmamış
+bir thread'i değiştirmenin tek yolu adını CLI'dan yazmak (`keyflip threads create|add|open …`). Atanmamış
 bir üye düzeltme komutuyla birlikte işaretlenir, çünkü keyflip'in sahibini bilemediği bir oturum
 *o anki hesapla* devam eder — bir görev tam olarak böyle sessizce bölünür.
 
