@@ -324,6 +324,7 @@ keyflip resume 3                       # listedeki 3. öğenin devam komutunu ya
 keyflip resume <id> --run             # `claude --resume <id>`'yi kendi dizininde başlat
 keyflip sessions rebind <eski> <yeni> # klasörünü yeniden adlandırdıktan sonra projenin chat geçmişini yeniden bağla
 keyflip sessions assign <id> <hesap>  # bir oturumu başka bir hesap altında sürdür (resume --run) — profil değiştirmeden
+keyflip sessions attribute           # ATANMAMIŞ her oturumun hesabını keyflip'in kendi geçiş zaman çizelgesinden tahmin et (kuru çalıştırma; yazmak için --apply)
 keyflip threads                       # AYNI görevin oturumlarına tek ad — HESAPLAR ARASI (işaretçi, kopya değil)
 keyflip threads suggest               # ZATEN 2+ hesaba bölünmüş işi bul — id tahmin etmeden
 keyflip threads create <slug> --title "…"   # sonra: keyflip threads add <slug> <oturum-id|--chat uuid> [--account <ad>]
@@ -587,6 +588,12 @@ keyflip threads drop dugum-acmak -y    # yalnız ADI unutur; her transkript ve h
   kapsadıklarını düşürerek — raporlar; yani işlerini adlandırdıkça liste küçülür. Bir hesap artı
   atanmamış oturumlar *raporlanmaz*: o bir hesap geçişi değil, sahibinin atamadığı bir oturumdur
   (`keyflip sessions assign <id> <hesap>` ile ata).
+- **`sessions attribute` her oturumu elle atamak zorunda bırakmak yerine hesabı tahmin eder.** Geçiş
+  zaman çizelgesini keyflip'in kendi eylem günlüğünden yeniden kurar (yalnız hesap adları + zaman
+  damgaları — hiçbir transkript okumaz) ve atanmamış her oturum için çalışılmış hesabı önerir: oturumun
+  tüm aralığı tek bir hesabın penceresine sığıyorsa `high`, bir geçişi kesiyorsa `low` ve **işaretli**.
+  `--apply` olmadan hiçbir şey yazılmaz; yazılan bir tahmin tahmin olarak saklanır — `sessions assign`
+  ile onaylayana kadar thread ekranı onu `yahoo (inferred)` diye gösterir.
 - **Birleştirme, nerede eksik kaldığını söyler.** Her tur üyesini ve hesabını taşır
   (`↪ yahoo'dan · oturum 9f8e7d6c`); tarihsiz turlar kararların arasına sıkıştırılmak yerine başta bir
   grup olarak kalır; bir bulut sohbeti offline tur katkısı yapamaz ve okuyacak `keyflip chat get …`

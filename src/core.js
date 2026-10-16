@@ -4,6 +4,7 @@
 import * as claude from './claude.js';
 import * as profiles from './profiles.js';
 import * as _stores from './stores/index.js';
+import * as _log from './log.js';
 
 /**
  * Get the email of the currently logged-in Claude account.
@@ -224,6 +225,11 @@ function performSwitch(ctx, name) {
   const hasCli = !!ctx.store.getProfile(name);
   if (hasCli) doSwitch(ctx, name);
   else refreshCurrent(ctx, name); // still preserve the current CLI account's tokens
+  // The ONE canonical "this account is now live" record. Switches reach here from the CLI, the
+  // menu, the TUI, MCP, fleet and autoswitch; each caller adds its own flavour of message, so a
+  // reader that wants the full timeline (attrib.js) must not have to know all of them. Written
+  // after the switch lands: a switch that threw never gets here. Name only — never a token.
+  _log.log('active -> ' + name);
   return { cli: hasCli };
 }
 

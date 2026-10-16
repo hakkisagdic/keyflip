@@ -274,8 +274,8 @@ function threadDetail(ctx, row, p, style) {
         tag +
         '] ' +
         String(m.id).slice(0, 8) +
-        (m.account ? '' : '  ⚠ unassigned') +
-        (m.label ? '  ' + clip(m.label, 48) : ''),
+        (m.account ? (m.provenance === 'inferred' ? '  ' + dim('(inferred)') + ' ' : '  ') : '  ⚠ unassigned') +
+        (m.label ? clip(m.label, 48) : ''),
     );
     if (!m.resolved) {
       p('           ' + dim(m.reason || 'not reachable from here'));
@@ -327,7 +327,8 @@ function threadSuggest(ctx, p, style) {
     p(
       dim(
         '    (checked the newest 400; an UNASSIGNED session is not evidence of a switch — assign first:' +
-          ' keyflip sessions assign <session-id> <account>)',
+          ' keyflip sessions assign <session-id> <account>,' +
+          ' or guess from the switch log: keyflip sessions attribute)',
       ),
     );
     return;
@@ -403,7 +404,9 @@ async function menuThreads(ctx, rl, p, style) {
         p(
           '        ' +
             dim(
-              (r.accounts.length ? 'accounts: ' + r.accounts.join(', ') : 'no account attributed yet') +
+              (r.accounts.length
+                ? 'accounts: ' + r.accounts.join(', ') + (r.inferred ? '  (' + r.inferred + ' inferred)' : '')
+                : 'no account attributed yet — keyflip sessions attribute guesses them') +
                 (r.noAccount ? '  · ' + r.noAccount + ' member(s) unassigned' : ''),
             ),
         );

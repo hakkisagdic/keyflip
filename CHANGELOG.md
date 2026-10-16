@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`keyflip sessions attribute [--apply] [--min-confidence high|medium]`** — threads only see work
+  that is split across accounts once sessions are attributed to one, so an unassigned history makes
+  `threads suggest` return nothing and the `[t]` menu screen look empty. Asking the user to run
+  `sessions assign` for every session is the tedious half of the feature. This reconstructs keyflip's
+  own switch timeline from its action log (secret-free: account names + timestamps, no transcript is
+  read) and proposes the account each unassigned session was worked on, with the evidence: `high`
+  when the session's whole logged span sits inside one account's window, `medium` when the span is
+  thin (no start timestamp, or it opens before the logged history) but all visible time is one
+  account, `low` — and flagged as *spanning* — when it crosses a switch, in which case the account
+  holding the most logged time is chosen and said so. Nothing is written without `--apply`; an
+  account that is no longer a saved profile is reported, never proposed; sessions the user already
+  assigned are counted, never proposed over.
+  **Provenance is recorded, not assumed:** every applied inference goes to
+  `<configDir>/session-accounts-source.json` (a reserved state file, 0600, names + timestamps only)
+  so the threads screen prints `yahoo (inferred)` instead of presenting a guess as a fact, and
+  `keyflip sessions assign` overwrites a guess with the user's word. A switch now also records one
+  canonical `active -> <name>` line from `core.performSwitch`, so every path — CLI, menu, TUI, MCP,
+  fleet, autoswitch — lands on the timeline that this reads. Exposed to agents as
+  `keyflip_sessions_attribute`. To see which account a session is really tied to, run
+  `keyflip doctor` or `keyflip list`: no credential value is ever echoed.
+
 ## [1.5.3] - 2026-10-16
 
 ### Added

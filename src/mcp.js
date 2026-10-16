@@ -50,6 +50,7 @@ import _path from 'path';
 import * as _pii from './pii.js';
 import * as _session from './session.js';
 import * as _sessionmap from './sessionmap.js';
+import * as _attrib from './attrib.js';
 import * as _threads from './threads.js';
 import * as _secretpolicy from './secretpolicy.js';
 import * as _schedule from './schedule.js';
@@ -3303,12 +3304,69 @@ const TOOLS = [
       try {
         if (!args.account) {
           sessionmap.unset(ctx, row.sessionId);
+          _attrib.removeSource(ctx, row.sessionId); // no assignment → no provenance either
           return { unassigned: row.sessionId };
         }
         const name = core.resolveProfile(ctx, String(args.account));
         if (!name) throw new Error("no such account: '" + args.account + "'");
         sessionmap.set(ctx, row.sessionId, name);
+        // Same rule as the CLI: the user's word replaces any earlier guess, so threads can tell
+        // them apart instead of presenting a guess as a fact.
+        _attrib.recordStated(ctx, row.sessionId, { account: name });
         return { assigned: { session: row.sessionId, account: name } };
+      } finally {
+        l.release();
+      }
+    },
+  },
+  {
+    name: 'keyflip_sessions_attribute',
+    title: 'Infer which account each unassigned session belongs to',
+    description:
+      "Threads only see fragmentation once sessions are attributed to accounts, and assigning them by hand is tedious. This reconstructs keyflip's OWN switch timeline from its action log (secret-free: account names + timestamps) and proposes the account each unassigned session was worked on, with the evidence for it. Confidence: `high` = its whole logged span sits inside one account's window; `medium` = the span is thin (no start timestamp, or it opens before the logged history) but visible time is all one account; `low` = it spans a switch, so the account holding the most logged time wins and it is flagged. Sessions the user already assigned are counted, never proposed over, and nothing is written unless apply:true (then confirm:true too). An account that is no longer a saved profile is never proposed — resume would point at credentials that do not exist. Use `threads suggest` afterwards to find the fragments this exposes.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        apply: {
+          type: 'boolean',
+          description: 'Write the proposals into the session→account map (default false: print only).',
+        },
+        min_confidence: {
+          type: 'string',
+          enum: ['low', 'medium', 'high'],
+          description: 'Only propose at or above this confidence (default low = everything).',
+        },
+        limit: { type: 'integer', description: 'How many recent sessions to examine (default 200).' },
+        confirm: {
+          type: 'boolean',
+          description:
+            'Required by the tool contract; only CONSULTED when apply:true (must then be true, set after the user agreed). A dry run may pass false.',
+        },
+      },
+      required: ['confirm'],
+      additionalProperties: false,
+    },
+    annotations: MUT,
+    run: async function (ctx, args) {
+      // The tool contract requires `confirm` on every mutating tool; it is only CONSULTED when it
+      // would actually write, so a dry run (apply omitted) still puts nothing on disk.
+      if (args.apply) needConfirm(args);
+      const rank = { low: 0, medium: 1, high: 2 };
+      const floor = args.min_confidence && rank[args.min_confidence] != null ? rank[args.min_confidence] : 0;
+      const l = await lock.acquire(ctx.configDir);
+      try {
+        const r = _attrib.proposals(ctx, { limit: parseInt(args.limit, 10) || 200 });
+        const usable = r.proposals.filter(function (p) {
+          return rank[p.confidence] >= floor;
+        });
+        const written = args.apply ? _attrib.apply(ctx, usable) : [];
+        return {
+          dry_run: !args.apply,
+          coverage: r.coverage,
+          counts: Object.assign({}, r.counts, { filtered: r.proposals.length - usable.length }),
+          proposals: usable,
+          applied: written,
+        };
       } finally {
         l.release();
       }

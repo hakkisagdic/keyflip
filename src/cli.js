@@ -73,6 +73,7 @@ import * as _chatsession from './chatsession.js';
 import * as _skillstore from './skillstore.js';
 import * as _archive from './archive.js';
 import * as _sessionmap from './sessionmap.js';
+import * as attrib from './attrib.js';
 import * as _threads from './threads.js';
 import * as _schedule from './schedule.js';
 import * as _settingsmod from './settings.js';
@@ -250,6 +251,10 @@ function usage() {
   );
   print(
     '  keyflip sessions assign <id> <account>   continue a session AS another account (resume --run) — no profile switch',
+  );
+  print('  keyflip sessions attribute [--apply] [--min-confidence high|medium]  guess unassigned sessions from');
+  print(
+    "                                 keyflip's own switch timeline; --apply fills gaps only, never a stated assign",
   );
   print('  keyflip threads                  ONE name for the sessions that are the same task, across accounts');
   print('                                 (a thread stores POINTERS — ids/uuids — never a copy of your chat)');
@@ -5102,6 +5107,10 @@ function cmdSessionsAssign(ctx, rest) {
   const name = core.resolveProfile(ctx, acct);
   if (!name) return fail("no such account: '" + acct + "' (see: keyflip list)");
   sessionmap.set(ctx, row.sessionId, name);
+  // Provenance: this is the user's word, so an earlier guess for the same session is replaced —
+  // otherwise the threads screen would keep calling a confirmed account a guess (and vice versa:
+  // `sessions attribute` never relabels a guess as stated).
+  attrib.recordStated(ctx, row.sessionId, { account: name, at: ctx.now() });
   print(
     style.ok('✅') +
       ' assigned session ' +
@@ -5126,10 +5135,139 @@ function cmdSessionsUnassign(ctx, rest) {
   }
   const key = row ? row.sessionId : id;
   const had = sessionmap.unset(ctx, key);
+  attrib.removeSource(ctx, key); // an unassigned session has no provenance either
   print(
     had ? style.ok('✅') + ' unassigned ' + key.slice(0, 8) + '.' : 'session ' + key.slice(0, 8) + ' was not assigned.',
   );
   jsonOut({ unassigned: key });
+}
+
+// #50: infer WHICH ACCOUNT each session was worked on from keyflip's own switch timeline, so
+// `threads suggest` stops returning empty for a history that IS split across accounts. Dry-run by
+// default: proposals are printed and nothing is written; --apply fills only the gaps (a stated
+// `sessions assign` is never proposed over, and a guess is never stored as if it were the word).
+function cmdSessionsAttribute(ctx, rest) {
+  const apply = rest.indexOf('--apply') !== -1;
+  const limit = parseInt(flagVal(rest, '--limit'), 10) || 200;
+  const minConf = flagVal(rest, '--min-confidence');
+  const rank = { low: 0, medium: 1, high: 2 };
+  const floor = minConf && rank[minConf] != null ? rank[minConf] : 0;
+  let r;
+  try {
+    r = attrib.proposals(ctx, { limit: limit });
+  } catch (e) {
+    return fail(e.message);
+  }
+  const usable = r.proposals.filter(function (p) {
+    return rank[p.confidence] >= floor;
+  });
+  if (JSON_MODE) {
+    const written = apply ? attrib.apply(ctx, usable, { at: ctx.now() }) : [];
+    jsonOut({
+      attribute: {
+        dryRun: !apply,
+        coverage: r.coverage,
+        counts: Object.assign({}, r.counts, { filtered: r.proposals.length - usable.length }),
+        proposals: usable,
+        applied: written,
+      },
+    });
+    return;
+  }
+  if (!r.coverage.switches) {
+    print(
+      style.warn('⚠') +
+        " the action log holds no switch yet, so there is nothing to infer from. Switch once ('" +
+        style.bold('keyflip <account>') +
+        "') and retry.",
+    );
+    return;
+  }
+  print(
+    style.bold('Switch timeline') +
+      ': ' +
+      r.coverage.switches +
+      ' account change(s), earliest ' +
+      style.dim(String(r.coverage.from).slice(0, 16) + 'Z') +
+      (r.coverage.partial ? style.dim('  (older history is beyond the log read — treated as no evidence)') : ''),
+  );
+  print(
+    style.dim(
+      '  scanned ' +
+        r.counts.scanned +
+        ' session(s): ' +
+        r.counts.stated +
+        ' stated by hand, ' +
+        r.counts.inferred +
+        ' already attributed' +
+        (r.counts.noEvidence ? ', ' + r.counts.noEvidence + ' with no evidence' : '') +
+        (r.counts.unknownAccount ? ', ' + r.counts.unknownAccount + ' pointing at a removed account' : ''),
+    ),
+  );
+  if (!usable.length) {
+    print('');
+    print(
+      r.counts.proposed
+        ? style.warn('⚠') + ' ' + r.counts.proposed + ' proposal(s) sit below --min-confidence ' + minConf + '.'
+        : style.ok('✅') + ' nothing to attribute — every session in view is already assigned or undatable.',
+    );
+    return;
+  }
+  print('');
+  usable.forEach(function (p) {
+    const tag =
+      p.confidence === 'high'
+        ? style.ok(p.confidence)
+        : p.confidence === 'medium'
+          ? style.bold(p.confidence)
+          : style.warn(p.confidence);
+    const proj = (p.project || '').replace(/^-/, '/').replace(/-/g, '/');
+    print(
+      '  ' +
+        style.bold(p.session.slice(0, 8)) +
+        '  ' +
+        style.dim(proj.length > 40 ? '…' + proj.slice(-39) : proj.padEnd(40).slice(0, 40)) +
+        ' → ' +
+        style.bold(p.account) +
+        '  ' +
+        tag +
+        (p.spanning ? style.warn(' ⚠ spans a switch') : ''),
+    );
+    print('           ' + style.dim(p.why + '  ·  last write ' + String(p.lastActivity).slice(0, 16) + 'Z'));
+  });
+  print('');
+  if (apply) {
+    const written = attrib.apply(ctx, usable, { at: ctx.now() });
+    print(
+      style.ok('✅') +
+        ' attributed ' +
+        written.length +
+        ' session(s). ' +
+        style.dim(
+          'Recorded as a GUESS, not as your word: ' +
+            String(
+              usable.filter(function (p) {
+                return p.confidence !== 'high';
+              }).length,
+            ) +
+            ' of them are uncertain — correct any of them with keyflip sessions assign <id> <account>.',
+        ),
+    );
+    print(style.dim('  Next: keyflip threads suggest   (fragments are now visible)'));
+  } else {
+    print(
+      style.warn('⚠') +
+        ' nothing written — ' +
+        style.bold(usable.length) +
+        ' proposal(s) await: re-run with ' +
+        style.bold('--apply') +
+        ' (' +
+        r.counts.high +
+        ' high-confidence, ' +
+        (r.counts.proposed - r.counts.high) +
+        ' uncertain).',
+    );
+  }
 }
 
 // B3: compact a transcript — elide bulky tool output, keep the conversation. Dry-run by
@@ -7574,6 +7712,10 @@ async function cmdSessions(ctx, rest) {
     return withLock(ctx, function () {
       return cmdSessionsUnassign(ctx, rest.slice(1));
     });
+  if (rest[0] === 'attribute')
+    return withLock(ctx, function () {
+      return cmdSessionsAttribute(ctx, rest.slice(1));
+    });
   if (rest[0] === 'export') return cmdSessionsExport(ctx, rest.slice(1));
   if (rest[0] === 'delete' || rest[0] === 'rm')
     return withLock(ctx, function () {
@@ -7784,8 +7926,8 @@ function threadsList(ctx) {
       '        ' +
         style.dim(
           r.accounts.length
-            ? 'accounts: ' + r.accounts.join(', ')
-            : 'no account attributed yet (`keyflip sessions assign <id> <account>`)',
+            ? 'accounts: ' + r.accounts.join(', ') + (r.inferred ? '  (' + r.inferred + ' inferred)' : '')
+            : 'no account attributed yet (`keyflip sessions attribute` to guess, `assign` to state)',
         ),
     );
     if (r.corrupt) print('        ' + style.warn('⚠ unreadable thread file: ' + r.file));
@@ -7810,7 +7952,9 @@ function threadsList(ctx) {
         st.noAccountSlugs.slice(0, 6).join(', ') +
         (st.noAccountSlugs.length > 6 ? ', …' : '') +
         ' have no account resolved — `threads open` would resume them as the CURRENT account.' +
-        style.dim('  Fix: keyflip sessions assign <session-id> <account>'),
+        style.dim(
+          '  Fix: keyflip sessions attribute   (or assign by hand: keyflip sessions assign <session-id> <account>)',
+        ),
     );
   print(
     style.dim('Merged view: ') +
@@ -8030,12 +8174,17 @@ function threadsRemove(ctx, rest) {
 function threadMembersOf(ctx, t, opts) {
   const idx = opts.idx || _threads.index(ctx);
   const assigned = opts.assigned || _threads.assignments(ctx);
-  return _threads.expand(ctx, t, { index: idx, assigned: assigned });
+  // `sources` is the provenance sidecar (#50), read once per command like the assignment map:
+  // it is what lets a member print "inferred" instead of pretending a guess is the user's word.
+  const sources = opts.sources || attrib.sources(ctx);
+  return _threads.expand(ctx, t, { index: idx, assigned: assigned, sources: sources });
 }
 
 function printThreadMembers(exp) {
   exp.rows.forEach(function (r, i) {
-    const who = r.account ? style.bold(r.account) : style.dim('unassigned');
+    const who = r.account
+      ? style.bold(r.account) + (r.provenance === 'inferred' ? style.dim(' (inferred)') : '')
+      : style.dim('unassigned');
     const head =
       '  [' +
       (i + 1) +
@@ -8359,7 +8508,7 @@ function threadsSuggest(ctx, rest) {
     );
     print(
       style.dim(
-        'If the split is on purpose (different projects, same account) this stays empty — an unassigned session is not a switch. Assign first: keyflip sessions assign <id> <account>',
+        'If the split is on purpose (different projects, same account) this stays empty — an unassigned session is not a switch. Assign first: keyflip sessions assign <id> <account>   ·   or let keyflip guess: keyflip sessions attribute --apply',
       ),
     );
     return;

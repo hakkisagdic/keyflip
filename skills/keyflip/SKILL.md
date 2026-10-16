@@ -426,6 +426,7 @@ keyflip sessions [--search "oauth"] [--here]   # list/search conversations, all 
                                        #   sessions whose folder is gone (⚠) and suggests rebind
 keyflip sessions rebind <old> <new>   # re-link a project's chat history after renaming/moving its folder
 keyflip sessions assign <id> <account>   # continue a session AS another account (resume --run runs it isolated) — NO profile switch
+keyflip sessions attribute [--apply] [--min-confidence high|medium]   # INFER which account each unassigned session was worked on, from keyflip's own switch timeline (dry-run default; --apply fills gaps only)
 keyflip resume <id> --as <account>    # ...or one-off: resume this session under another account without switching profiles
 keyflip send <id> "<message>" [--as <account>] [--fork]   # inject a message into a session headlessly (steer/continue it; e.g. from another machine)
 keyflip sessions archive <id|--older-than 30d>   # move old transcripts into keyflip (gzipped), declutter ~/.claude
@@ -606,6 +607,14 @@ keyflip threads mirror <slug> | unmirror <slug>   # writes conversation TEXT —
   look fragmented. `keyflip doctor`'s **threads** row and the menu's `[t]` header both count the members
   that would resume as the *current* account — if that number is the whole store, say THAT, and offer
   `keyflip sessions assign <id> <account>`, before claiming the work was never split.
+- **Before a bulk `sessions assign`, run `keyflip sessions attribute` (MCP `keyflip_sessions_attribute`).**
+  It infers each UNASSIGNED session's account from keyflip's own switch timeline — the action log, which
+  is secret-free (account names + timestamps, no transcript is read) — and prints the evidence with a
+  confidence. Dry-run by default; `--apply` (MCP: `apply:true` + `confirm:true`) fills only the gaps: a
+  session the user already assigned is never proposed over, and an account that is no longer a saved
+  profile is reported rather than proposed. Treat `medium`/`low`/spanning rows as guesses to confirm,
+  not facts — an applied guess is recorded in `session-accounts-source.json` (a reserved state file),
+  so the threads screen prints `yahoo (inferred)` until the user confirms it with `sessions assign`.
 
 ## Context Layer — portable project memory (`.keyflip/`)
 

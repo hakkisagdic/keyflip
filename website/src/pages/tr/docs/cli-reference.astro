@@ -90,6 +90,7 @@ import CommandReference from '../../../components/CommandReference.astro';
           { cmd: 'keyflip resume <id> --run', desc: 'claude --resume dizininde başlat' },
           { cmd: 'keyflip sessions rebind <eski> <yeni>', desc: 'Klasör yeniden adlandırma sonrası sohbet geçmişini yeniden bağla' },
           { cmd: 'keyflip sessions assign <id> <hesap>', desc: 'Oturumu başka bir hesap altında devam ettir' },
+          { cmd: 'keyflip sessions attribute [--apply]', desc: 'Atanmamış oturumları geçiş günlüğünden tahmin et (kuru çalıştırma)' },
           { cmd: 'keyflip send <id> "<msg>" [--as <hsb>] [--fork]', desc: 'Bir oturuma mesaj enjekte et' },
           { cmd: 'keyflip sessions archive <id|--older-than 30d>', desc: 'Eski transkriptleri arşivle (gzip)' },
           { cmd: 'keyflip sessions distill <id>', desc: 'Sohbeti kalıcı hatıraya özetle' },

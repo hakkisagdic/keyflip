@@ -163,8 +163,9 @@ const CATALOG = [
     name: 'sessions',
     group: 'sessions',
     safe: true,
-    usage: 'keyflip sessions [--search T] [--here] | rebind | archive | export | assign | distill | compact',
-    desc: 'Browse Claude Code conversations across all accounts.',
+    usage:
+      'keyflip sessions [--search T] [--here] | rebind | archive | export | assign | attribute | distill | compact',
+    desc: 'Browse Claude Code conversations across all accounts; `attribute` guesses unassigned ones from the switch log.',
   },
   {
     name: 'threads',

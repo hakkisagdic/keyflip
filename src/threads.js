@@ -21,6 +21,7 @@ import path from 'path';
 import { StringDecoder } from 'string_decoder';
 import * as sessions from './sessions.js';
 import * as sessionmap from './sessionmap.js';
+import * as attrib from './attrib.js';
 import * as transcript from './transcript.js';
 import * as fsutil from './fsutil.js';
 import * as config from './config.js';
@@ -510,6 +511,16 @@ function expand(ctx, thread, opts) {
   opts = opts || {};
   const idx = opts.index || index(ctx);
   const assigned = opts.assigned || assignments(ctx);
+  // WHY the member has an account: `stated` = the user said so (`sessions assign`), `inferred` =
+  // keyflip guessed it from its own switch timeline (#50). A guess must never be shown as a fact,
+  // and provenance lives in the sidecar so the live map keeps its plain id→name shape.
+  const src = opts.sources || attrib.sources(ctx);
+  const prov = function (m) {
+    if (attrib.isAssigned(assigned, m.id)) return attrib.provenanceFor(m.id, assigned, src);
+    // No live assignment but the member carries a label: that came from `threads add --account`,
+    // i.e. the user named it, so it is stated, not guessed.
+    return m.account ? 'stated' : null;
+  };
   const rows = (thread.members || []).map(function (m) {
     const account = accountOf(ctx, m, assigned);
     if (m.kind === 'chat') {
@@ -526,6 +537,7 @@ function expand(ctx, thread, opts) {
           '`',
       };
     }
+    const provenance = prov(m);
     const loc = locate(ctx, m.id, idx);
     if (!loc) {
       return {
@@ -533,6 +545,7 @@ function expand(ctx, thread, opts) {
         id: m.id,
         label: m.label || '',
         account: account,
+        provenance: provenance,
         resolved: false,
         reason: 'no transcript on this machine' + (m.project ? ' (last seen in ' + m.project + ')' : ''),
       };
@@ -546,6 +559,7 @@ function expand(ctx, thread, opts) {
       id: m.id,
       label: m.label || s.preview || '',
       account: account,
+      provenance: provenance,
       resolved: true,
       file: loc.file,
       project: loc.project,
@@ -994,18 +1008,24 @@ function candidates(ctx, opts) {
 
 function summaries(ctx) {
   const assigned = assignments(ctx);
+  const src = attrib.sources(ctx);
   return list(ctx).map(function (t) {
     let sess = 0;
     let chats = 0;
     // A member with no account is a pointer keyflip cannot act on: `threads open` would resume it
     // under whatever is active now, which is exactly the wrong-account bug threads exist to kill.
     let noAccount = 0;
+    // Members whose account is keyflip's INFERENCE (#50), not the user's word. Listed and reported
+    // so a thread assembled from guesses never reads as confirmed — and so `threads suggest` can say
+    // "these accounts are inferred, check them" instead of leaving a plausible-looking lie.
+    let inferred = 0;
     const accts = new Set();
     (t.members || []).forEach(function (m) {
       if (m.kind === 'session') sess++;
       else chats++;
       const a = accountOf(ctx, m, assigned);
       if (!a) noAccount++;
+      if (a && m.kind === 'session' && attrib.provenanceFor(m.id, assigned, src) === 'inferred') inferred++;
       accts.add(a || 'unassigned');
     });
     return {
@@ -1019,6 +1039,7 @@ function summaries(ctx) {
       chats: chats,
       accounts: Array.from(accts).sort(),
       noAccount: noAccount,
+      inferred: inferred,
       droppedMembers: t.droppedMembers || 0,
       createdAt: t.createdAt,
       updatedAt: t.updatedAt,
@@ -1051,6 +1072,11 @@ function stats(ctx) {
     // pointers a switch cannot follow, and the fix is one command.
     noAccount: rows.reduce(function (n, r) {
       return n + (r.noAccount || 0);
+    }, 0),
+    // How many members' accounts are a #50 inference. Reported so `spanning` (a thread spanning two
+    // accounts) can never be quietly built on two guesses.
+    inferred: rows.reduce(function (n, r) {
+      return n + (r.inferred || 0);
     }, 0),
     noAccountSlugs: rows
       .filter(function (r) {

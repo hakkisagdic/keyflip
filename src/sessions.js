@@ -32,6 +32,14 @@ function takeLines(decoder, chunk, carry) {
 
 function parseRecord(j, state) {
   if (!state.cwd && typeof j.cwd === 'string') state.cwd = j.cwd;
+  // The first record that carries a timestamp is the earliest moment the transcript itself
+  // claims to exist — account attribution (attrib.js) needs a session SPAN, not just its last
+  // write. A leading `custom-title` record has none, so this is "first we see", not "line 1".
+  // Deliberately NOT part of the loop's stop condition: it must never turn a cheap head-read
+  // into a full 4 MiB scan just because a transcript has no timestamps at all.
+  if (!state.startedAt && typeof j.timestamp === 'string' && !Number.isNaN(Date.parse(j.timestamp))) {
+    state.startedAt = j.timestamp;
+  }
   if (!state.preview && j.type === 'user' && j.message && j.message.content) {
     const c = j.message.content;
     const text =
@@ -55,7 +63,7 @@ function summarize(file) {
   } catch (e) {
     return null;
   }
-  const state = { cwd: null, preview: null };
+  const state = { cwd: null, preview: null, startedAt: null };
   try {
     const dec = new StringDecoder('utf8');
     const buf = Buffer.alloc(CHUNK_BYTES);
@@ -277,6 +285,11 @@ function list(ctx, opts) {
     const s = summarize(r.file) || {};
     r.cwd = s.cwd || decodeProjectDir(r.project);
     r.preview = s.preview || '';
+    // Session span start, from the transcript's own first timestamp. A clock ahead of the
+    // last write (skew, a copied file) would make the span negative, so it is dropped here
+    // rather than at every call site — `mtimeMs` alone is still honest evidence.
+    r.startedAt = s.startedAt || null;
+    r.startedAtMs = s.startedAt && Date.parse(s.startedAt) <= r.mtimeMs ? Date.parse(s.startedAt) : null;
     r.recentlyWritten = nowMs - r.mtimeMs < RECENT_WRITE_MS;
     // Live = provable from OUTSIDE the transcript: a process resumed it, or the desktop app lists
     // it. Both are facts about the machine, so they can safely cancel the orphan claim. A recent

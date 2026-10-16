@@ -325,6 +325,7 @@ keyflip resume 3                      # print the resume command for list item #
 keyflip resume <id> --run             # launch `claude --resume <id>` in its dir
 keyflip sessions rebind <old> <new>   # re-link a project's chat history after you renamed/moved its folder
 keyflip sessions assign <id> <account>   # continue a session under another account (resume --run) — without switching profiles
+keyflip sessions attribute            # guess each UNASSIGNED session's account from keyflip's own switch timeline (dry run; --apply to write)
 keyflip threads                        # ONE name for the sessions that are the same task, ACROSS accounts (pointers, never a copy)
 keyflip threads suggest                # find work that is ALREADY split over 2+ accounts — no guessing ids
 keyflip threads create <slug> --title "…"   # then: keyflip threads add <slug> <session-id|--chat uuid> [--account <name>]
@@ -588,6 +589,12 @@ keyflip threads drop dugum-acmak -y    # forgets the NAME; every transcript and 
   thread already covers — so the list shrinks as you name your work. One account plus unassigned
   sessions is *not* reported: that is an account nobody assigned, not a switch (assign it with
   `keyflip sessions assign <id> <account>`).
+- **`sessions attribute` guesses the account instead of making you assign every session by hand.** It
+  reconstructs your switch timeline from keyflip's own action log (account names + timestamps only —
+  it reads no transcript) and proposes the account each unassigned session was worked on: `high` when
+  the session's whole span sits inside one account's window, `low` and **flagged** when it crosses a
+  switch. Nothing is written without `--apply`, and an applied guess is stored as a guess — the
+  threads screen shows it as `yahoo (inferred)` until you confirm it with `sessions assign`.
 - **The merge says where it stopped being complete.** Each turn keeps its member and account
   (`↪ from yahoo · session 9f8e7d6c`); undated turns stay a front group rather than being sorted
   between decisions; a cloud chat contributes no turns offline and is listed under `unavailable` with

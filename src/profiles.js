@@ -14,8 +14,9 @@ const RESERVED_NAMES = ['__proto__', 'prototype', 'constructor'];
 // accounts and the schema migration rewrites them to a bogus `undefined.json`.
 // INVARIANT: any NEW file written straight into configDir must be added here — a missing entry is not
 // cosmetic, it puts a fake account in `keyflip list`, in the interactive menu and in every count. The
-// three at the end are the ones that got forgotten when their feature landed (schedule receipts, #36/#40,
-// and the secrets toleration policy, #44); test/profiles.test.js now pins them.
+// ones at the end are the ones that got forgotten when their feature landed (schedule receipts, #36/#40,
+// the secrets toleration policy #44, and the attribution provenance sidecar #50); test/profiles.test.js
+// now pins them.
 const RESERVED_FILES = [
   'breakers',
   'proxy',
@@ -45,6 +46,7 @@ const RESERVED_FILES = [
   'dream-schedule',
   'refresh-schedule',
   'secrets-policy',
+  'session-accounts-source',
 ];
 
 function metaPath(dir, name) {

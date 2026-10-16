@@ -91,6 +91,7 @@ import CommandReference from '../../components/CommandReference.astro';
           { cmd: 'keyflip resume <id> --run', desc: 'Launch claude --resume in its dir' },
           { cmd: 'keyflip sessions rebind <old> <new>', desc: 'Re-link chat history after folder rename' },
           { cmd: 'keyflip sessions assign <id> <account>', desc: 'Continue session under another account' },
+          { cmd: 'keyflip sessions attribute [--apply]', desc: 'Infer unassigned sessions from the switch log (dry-run)' },
           { cmd: 'keyflip send <id> "<msg>" [--as <acct>] [--fork]', desc: 'Inject message into a session' },
           { cmd: 'keyflip sessions archive <id|--older-than 30d>', desc: 'Archive old transcripts (gzipped)' },
           { cmd: 'keyflip sessions distill <id>', desc: 'Summarize a chat into a durable keepsake' },
