@@ -12,6 +12,10 @@ import readline from 'readline';
 import * as core from './core.js';
 import * as profiles from './profiles.js';
 import * as appauth from './appauth.js';
+import * as verifymod from './verify.js';
+import * as oauth from './oauth.js';
+import * as _switchplan from './switchplan.js';
+import * as _switchfacts from './switchfacts.js';
 import * as usage from './usage.js';
 import * as lock from './lock.js';
 import * as logmod from './log.js';
@@ -46,6 +50,8 @@ import _path from 'path';
 import * as _pii from './pii.js';
 import * as _session from './session.js';
 import * as _sessionmap from './sessionmap.js';
+import * as _threads from './threads.js';
+import * as _secretpolicy from './secretpolicy.js';
 import * as _schedule from './schedule.js';
 import * as _settings from './settings.js';
 import * as _recall from './recall.js';
@@ -70,6 +76,8 @@ import * as _sessionedit from './sessionedit.js';
 import _child_process from 'child_process';
 import * as _checkpoint from './checkpoint.js';
 import * as _ctxsync from './ctxsync.js';
+import * as _leakscan from './leakscan.js';
+import * as _chains from './chains.js';
 import * as _orchestrator from './orchestrator.js';
 import * as _integrations from './integrations.js';
 import * as _vault from './vault.js';
@@ -136,6 +144,73 @@ function accountsPayload(ctx, infos) {
   });
 }
 
+// One thread member from MCP args, exactly as the CLI builds it: `session_id` and `chat_id` are both
+// UUID-shaped so the parameter NAME is the kind — there is no way to tell them apart from the string.
+// A prefix is expanded to the full id before it is written, because a thread is a pointer and a fuzzy
+// pointer cannot be followed later; an id with no local transcript is kept as given (it may be work on
+// another machine) and only the account name is validated against the saved profiles.
+function threadMemberFromArgs(ctx, args, optional) {
+  if (args.session_id && args.chat_id) throw new Error('one member per call: pass session_id OR chat_id, not both');
+  const raw = args.session_id || args.chat_id;
+  if (!raw) {
+    if (optional) return null;
+    throw new Error('which member? pass session_id or chat_id');
+  }
+  let account = null;
+  if (args.account) {
+    account = core.resolveProfile(ctx, String(args.account));
+    if (!account) throw new Error("no such account: '" + args.account + "'");
+  }
+  if (args.chat_id) {
+    const id = String(args.chat_id);
+    if (!_threads.CHAT_ID_RE.test(id)) throw new Error('that does not look like a claude.ai chat uuid: ' + id);
+    const m = { kind: 'chat', id: id };
+    if (account) m.account = account;
+    if (args.label) m.label = String(args.label);
+    return m;
+  }
+  const idx = _threads.index(ctx);
+  const r = _threads.resolveSessionId(ctx, String(args.session_id), idx);
+  if (r.ambiguous.length)
+    throw new Error(
+      '"' +
+        args.session_id +
+        '" is the start of ' +
+        r.ambiguous.length +
+        ' sessions (' +
+        r.ambiguous
+          .slice(0, 4)
+          .map(function (id) {
+            return id.slice(0, 8);
+          })
+          .join(', ') +
+        ') — pass a longer session_id',
+    );
+  const m = { kind: 'session', id: r.id };
+  if (account) m.account = account;
+  // The project key is a fast path back to the file; NO transcript prose is stored, because an MCP
+  // caller could add a member whose first prompt holds a pasted key and threads/*.json is versioned.
+  // `keyflip_threads` returns the live preview separately.
+  if (r.matched) m.project = r.matched.project;
+  if (args.label) m.label = String(args.label);
+  return m;
+}
+
+// An MCP result gets copied into an agent transcript, and the rule keyflip learned with `keyflip_chains`
+// is that a state-repo path never travels as `/Users/<name>/…`: it is reported relative to the state
+// dir, and a transcript relative to ~/.claude/projects. The resume command keeps its absolute cwd —
+// running it genuinely needs that, and a working directory is not a secret.
+function statePathForAgent(ctx, p) {
+  if (!p) return p;
+  const rel = _path.relative(ctx.configDir, String(p));
+  return rel && rel.indexOf('..') !== 0 ? rel : String(p);
+}
+function transcriptForAgent(ctx, p) {
+  if (!p) return p;
+  const rel = _path.relative(sessions.projectsDir(ctx), String(p));
+  return rel && rel.indexOf('..') !== 0 ? rel : _path.basename(String(p));
+}
+
 const TOOLS = [
   {
     name: 'keyflip_status',
@@ -181,10 +256,46 @@ const TOOLS = [
     },
   },
   {
+    name: 'keyflip_switch_plan',
+    title: 'Plan a switch without performing it',
+    description:
+      'The dry run of `keyflip <account>`: which surfaces a switch WOULD write (CLI credential, desktop-app login, browser session, chat pointers), what would block it (Claude running and not closable, an org policy for this directory, a missing capture), and — the part no earlier command answered — whether that account can still authenticate at all. Read-only: it writes nothing, takes no lock and needs no confirmation, so call it freely before asking the user to approve a switch.',
+    inputSchema: {
+      type: 'object',
+      properties: { name: { type: 'string', description: 'Account name (from keyflip_list).' } },
+      required: ['name'],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+    run: async function (ctx, args) {
+      const name = core.resolveProfile(ctx, String(args.name));
+      if (!name) throw new Error("no such account: '" + args.name + "' (use keyflip_list)");
+      const f = await _switchfacts.collect(ctx, name, {});
+      const plan = _switchplan.build(f, {});
+      return {
+        target: name,
+        email: f.email || null,
+        mode: plan.mode,
+        wouldQuitClaude: !!plan.wouldQuit,
+        needsConfirmation: !!plan.needsConfirm,
+        plan: { writes: plan.writes, skips: plan.skips, warns: plan.warns, blockers: plan.blockers },
+        verify: { state: f.targetState, headline: verifymod.HEADLINE[f.targetState] || null, detail: f.targetDetail },
+        surfaces: {
+          cliCaptured: f.cliCaptured,
+          appCaptured: f.appCaptured,
+          browserCaptured: f.browserCaptured,
+          claudeRunning: f.appRunning,
+          activeCliProfile: f.activeCliProfile,
+          appActiveProfile: f.appActiveProfile,
+        },
+      };
+    },
+  },
+  {
     name: 'keyflip_switch',
     title: 'Switch Claude account',
     description:
-      "Switch the Claude Code CLI credential to a saved account (in place — the desktop app is NOT closed; a running Claude Code picks the new account up on its next request, so the user's current conversation continues on the new account). IMPORTANT: this changes which account is billed and rate-limited. Ask the user before calling, then set confirm=true.",
+      "Switch the Claude Code CLI credential to a saved account (in place — the desktop app is NOT closed; a running Claude Code picks the new account up on its next request, so the user's current conversation continues on the new account). IMPORTANT: this changes which account is billed and rate-limited. Ask the user before calling, then set confirm=true. Call keyflip_switch_plan FIRST when it is not obvious that the target works — a clean return value has repeatedly hidden a switch that did not produce a usable machine, so this one reads itself back: `verified` says usable now / usable, decaying / NOT usable.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -200,7 +311,9 @@ const TOOLS = [
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     run: async function (ctx, args) {
       if (args.confirm !== true) {
-        throw new Error('confirmation required: ask the user first, then call again with confirm=true');
+        throw new Error(
+          'confirmation required: ask the user first, then call again with confirm=true (keyflip_switch_plan answers without switching)',
+        );
       }
       const name = core.resolveProfile(ctx, String(args.name));
       if (!name) throw new Error("no such account: '" + args.name + "' (use keyflip_list)");
@@ -208,17 +321,151 @@ const TOOLS = [
       if (em && em === core.currentEmail(ctx)) return { alreadyActive: { name: name, email: em } };
       _policy.enforce(ctx, { cwd: process.cwd(), account: name }); // org policy: agents can't dodge it
       const l = await lock.acquire(ctx.configDir);
+      let did;
       try {
-        const did = core.performSwitch(ctx, name);
+        did = core.performSwitch(ctx, name);
         logmod.log('mcp switch -> ' + name);
-        return {
-          switched: { name: name, email: em || null },
-          cliSwitched: did.cli,
-          note: 'Desktop app not touched; a running Claude Code applies the new account on its next request.',
-        };
       } finally {
         l.release();
       }
+      // Read it back instead of trusting the write: what is now on disk, and which identity the CLI
+      // actually holds. Structural only — verify.js never returns a credential value.
+      let verified = null;
+      try {
+        const r = await verifymod.verifyAccount(ctx, name, {
+          liveAccount: name,
+          currentEmail: function (c) {
+            return core.currentEmail(c);
+          },
+        });
+        const b = verifymod.brief(r);
+        verified = { state: b.state, headline: b.headline, detail: b.detail || null };
+      } catch (e) {
+        verified = null; // a broken verifier must not fail a switch that already worked
+      }
+      let cliEmail = null;
+      try {
+        cliEmail = core.currentEmail(ctx) || null;
+      } catch (e) {
+        cliEmail = null;
+      }
+      return {
+        switched: { name: name, email: em || null },
+        cliSwitched: did.cli,
+        verified: verified,
+        cliEmailAfterSwitch: cliEmail,
+        note: 'Desktop app not touched; a running Claude Code applies the new account on its next request.',
+      };
+    },
+  },
+  {
+    name: 'keyflip_verify',
+    title: 'Check whether an account can still be switched to',
+    description:
+      'Read each captured surface back the way its own application does — stored vs live CLI token (expiry, and whether a refresh token exists at all), the desktop-app token cache, the app session cookie AND its expiry, the browser capture age — and roll each account up to usable now / usable, decaying / NOT usable / nothing captured. Answers "would switching there actually work" BEFORE a switch strands a session. Read-only: reports presence, expiry and age, never a token or cookie value. Set include_usage=true to also ask the server (one network call per account) whether the stored credential can still read quota.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        account: { type: 'string', description: 'One account name (from keyflip_list). Omit to check all.' },
+        include_usage: { type: 'boolean', description: 'Also probe the server for each account (network).' },
+      },
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: true },
+    run: async function (ctx, args) {
+      const all = profiles.list(ctx.configDir);
+      if (!all.length) return { accounts: [], note: 'nothing captured yet — run keyflip add' };
+      let names = all;
+      if (args && args.account) {
+        const hit = core.resolveProfile(ctx, String(args.account));
+        if (!hit) throw new Error("no such account: '" + args.account + "' (use keyflip_list)");
+        names = [hit];
+      }
+      // Only the account the machine is ACTUALLY on has a live credential worth describing.
+      let liveAccount = null;
+      try {
+        const cur = core.currentEmail(ctx);
+        all.forEach(function (n) {
+          if (!liveAccount && profiles.email(ctx.configDir, n) === cur) liveAccount = n;
+        });
+      } catch (e) {
+        liveAccount = null;
+      }
+      const results = await verifymod.verifyAll(ctx, {
+        accounts: names,
+        usage: !!(args && args.include_usage),
+        liveAccount: liveAccount,
+        currentEmail: function (c) {
+          return core.currentEmail(c);
+        },
+      });
+      return {
+        liveAccount: liveAccount,
+        accounts: results.map(function (r) {
+          const b = verifymod.brief(r);
+          return {
+            account: r.account,
+            email: profiles.email(ctx.configDir, r.account) || null,
+            state: r.state,
+            headline: b.headline,
+            detail: b.detail || null,
+            checks: r.checks,
+          };
+        }),
+      };
+    },
+  },
+  {
+    name: 'keyflip_refresh',
+    title: 'Revive stored OAuth tokens',
+    description:
+      "Refresh stored OAuth tokens proactively so a saved account does not quietly die while idle — the same guarded refresh a switch performs. Refuses to rotate a token whose account has a LIVE session: Anthropic rotates the refresh token on each use, so refreshing under a running Claude logs that surface out. Requires confirm=true (it rewrites stored credentials). A 'persist-failed' status means refreshed but NOT saved: the stored token is now stale and needs a real login plus keyflip add.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        account: { type: 'string', description: 'One account name. Omit (or all=true) for every saved account.' },
+        all: { type: 'boolean', description: 'true = sweep every saved account.' },
+        confirm: { type: 'boolean', description: 'Must be true — this rewrites stored credentials.' },
+      },
+      required: ['confirm'],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
+    run: async function (ctx, args) {
+      if (args && args.confirm !== true)
+        throw new Error(
+          'confirmation required: this rewrites stored credentials — ask the user, then set confirm=true',
+        );
+      let names = profiles.list(ctx.configDir);
+      if (args && args.account) {
+        const hit = core.resolveProfile(ctx, String(args.account));
+        if (!hit) throw new Error("no such account: '" + args.account + "' (use keyflip_list)");
+        names = [hit];
+      }
+      if (!names.length) return { refreshed: [], note: 'no saved account to refresh' };
+      const out = [];
+      for (let i = 0; i < names.length; i++) {
+        const n = names[i];
+        // The same guard the CLI uses: never rotate a token a live session is holding.
+        const r = await oauth.maybeRefreshProfile(ctx, n, {
+          isRunning: function () {
+            return appctl.isClaudeRunning(ctx.platform);
+          },
+          instances: function () {
+            return appctl.claudeInstances(ctx.home);
+          },
+        });
+        out.push({ account: n, status: r.status });
+      }
+      logmod.log(
+        'mcp refresh -> ' +
+          out
+            .map(function (o) {
+              return o.account + ':' + o.status;
+            })
+            .join(', '),
+      );
+      return { refreshed: out };
     },
   },
   {
@@ -2575,6 +2822,77 @@ const TOOLS = [
     },
   },
   {
+    name: 'keyflip_llm',
+    title: 'Which model runs the background chores, and what it costs',
+    description:
+      "Resolve keyflip's headless-LLM provider — the thing that summarizes chats for `dream`/`distill`/`recall --answer` — as { provider, model, base_url, key_env (NAME only), usable, cost }. Default is claude -p, which spends the ACTIVE account's quota; ollama is local and free, openai-compatible uses an endpoint key read from an env var at call time (keyflip stores the name, never the key). Set it with keyflip_config_set on llm.provider / llm.model / llm.base_url / llm.key_env. Read-only; probe=true additionally sends one tiny 'say OK' completion to test the endpoint, which costs one request and touches the network.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        probe: { type: 'boolean', description: 'true = make one small completion call to prove the endpoint answers.' },
+        provider: {
+          type: 'string',
+          description:
+            'test THIS provider without changing shared state (claude | ollama | openai) — the same one-off override KEYFLIP_LLM_PROVIDER gives a terminal.',
+        },
+        model: { type: 'string', description: 'with provider: the model name to probe (e.g. a local ollama tag).' },
+        base_url: { type: 'string', description: 'with provider=openai: the endpoint to probe.' },
+        key_env: {
+          type: 'string',
+          description: 'with provider=openai: NAME of the env var holding the key — never the key.',
+        },
+      },
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: true },
+    run: async function (ctx, args) {
+      const want = {
+        provider: args && args.provider,
+        model: args && args.model,
+        base_url: args && args.base_url,
+        key_env: args && args.key_env,
+      };
+      const p = llm.resolve(ctx, want);
+      const gate = llm.availability(ctx, want);
+      const out = {
+        provider: p.provider,
+        model: p.model || null,
+        base_url: p.baseUrl || null,
+        key_env: p.keyEnv || null, // the NAME; the value is never read into a result
+        cost: p.cost,
+        usable: gate.ok && (p.provider !== 'claude' || llm.available(ctx)),
+        reason: gate.ok ? null : gate.reason,
+        fix: gate.ok ? null : gate.fix,
+        // What an agent should say to the user before running a chore: this is a quota decision.
+        configured_for: args && args.provider ? 'one-off probe only — shared config unchanged' : 'keyflip llm (config)',
+      };
+      if (args && args.probe) {
+        if (!gate.ok) {
+          out.probe = { ok: false, reason: gate.reason, fix: gate.fix };
+          return out;
+        }
+        // A cold local model spends minutes loading weights, so a probe waits like a real call.
+        const r = await llm.complete(ctx, 'Reply with exactly: OK', 'ping', {
+          skipCheck: true,
+          timeoutMs: 180000,
+          provider: want.provider,
+          model: want.model,
+          base_url: want.base_url,
+          key_env: want.key_env,
+        });
+        out.probe = {
+          ok: !!r.ok,
+          reason: r.ok ? null : r.reason,
+          detail: r.ok ? null : r.detail || null,
+          provider: r.provider,
+          model: r.model || null,
+          bytes: r.ok ? String(r.text || '').length : 0,
+        };
+      }
+      return out;
+    },
+  },
+  {
     name: 'keyflip_agents',
     title: "List other agents' memory + config keyflip can carry",
     description:
@@ -2996,6 +3314,271 @@ const TOOLS = [
       }
     },
   },
+
+  // ---- #35 threads: one name for the sessions that are the same task, across accounts ----
+  {
+    name: 'keyflip_threads',
+    title: 'Browse threads (one task across accounts)',
+    description:
+      "Read-only view of keyflip threads — named groups of POINTERS to the Claude Code sessions and cloud chats that are the same task, spread over several accounts as quotas ran out. A thread stores ids and labels only, never a conversation copy, so it is versioned and migratable. `slug` returns that thread expanded against this machine (which transcripts exist, where, which account, resume command) plus `missing` for pointers that resolve to nothing here; `timeline:true` merges the members' turns chronologically with per-member provenance, reading each transcript under `keyflip config threads.mergeMaxMiB` (transcripts reach tens of MB); cloud chat members contribute NO turns offline — they are server-side and only `keyflip chat get` can read them. `suggest:true` instead finds work that is ALREADY split over 2+ accounts and unthreaded. Never writes.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        slug: { type: 'string', description: 'Thread slug (or a unique prefix / title match). Omit for the list.' },
+        timeline: { type: 'boolean', description: "With slug: merge the members' turns into one chronological view." },
+        limit: { type: 'integer', description: 'Max turns to return with timeline (default 200).' },
+        id: { type: 'string', description: 'Which threads contain this session id / chat uuid (or a prefix).' },
+        suggest: { type: 'boolean', description: 'Return the split-across-accounts candidates instead of the list.' },
+      },
+      additionalProperties: false,
+    },
+    annotations: RO,
+    run: async function (ctx, args) {
+      args = args || {};
+      if (args.suggest)
+        return {
+          candidates: _threads.candidates(ctx, {}).map(function (r) {
+            return {
+              project: r.project,
+              cwd: r.cwd,
+              accounts: r.accounts,
+              suggestedSlug: r.suggestedSlug,
+              sessionCount: r.sessions,
+              unthreaded: r.unthreaded,
+              sessions: r.open.map(function (s) {
+                return { sessionId: s.sessionId, account: s.account, mtime: s.mtime, preview: s.preview };
+              }),
+            };
+          }),
+        };
+      if (args.id) {
+        const hits = _threads.threadsFor(ctx, null, String(args.id));
+        return {
+          id: String(args.id),
+          threads: hits.map(function (r) {
+            return { slug: r.slug, title: r.title, updatedAt: r.updatedAt };
+          }),
+        };
+      }
+      if (!args.slug) {
+        return {
+          threads: _threads.summaries(ctx).map(function (r) {
+            const o = Object.assign({}, r);
+            o.file = statePathForAgent(ctx, o.file);
+            return o;
+          }),
+          stats: _threads.stats(ctx),
+        };
+      }
+      const t = _threads.read(ctx, String(args.slug));
+      const idx = _threads.index(ctx);
+      const assigned = _threads.assignments(ctx);
+      const exp = _threads.expand(ctx, t, { index: idx, assigned: assigned });
+      const out = {
+        thread: Object.assign({}, t, { file: statePathForAgent(ctx, t.file) }),
+        members: exp.rows.map(function (r) {
+          const o = Object.assign({}, r);
+          if (o.file) {
+            o.transcript = transcriptForAgent(ctx, o.file);
+            delete o.file;
+          }
+          return o;
+        }),
+        accounts: exp.accounts,
+        missing: exp.missing,
+      };
+      if (args.timeline) {
+        const maxTotal = parseInt(args.limit, 10);
+        const tl = _threads.timeline(ctx, t, {
+          index: idx,
+          assigned: assigned,
+          maxTotal: Number.isNaN(maxTotal) ? 200 : Math.max(0, maxTotal),
+        });
+        out.timeline = tl.messages.map(function (m) {
+          const o = Object.assign({}, m);
+          if (o.file) {
+            o.transcript = transcriptForAgent(ctx, o.file);
+            delete o.file;
+          }
+          return o;
+        });
+        out.unavailable = tl.unavailable;
+        out.droppedFromStart = tl.droppedFromStart;
+        out.cappedMembers = tl.cappedMembers;
+      }
+      return out;
+    },
+  },
+  {
+    name: 'keyflip_thread_create',
+    title: 'Name a thread',
+    description:
+      'Create a thread: a single name for the sessions/chats that are the same task, so an account switch stops fragmenting the work. Writes <configDir>/threads/<slug>.json — pointers and labels only, no conversation content. Give `session_id` or `chat_id` to start it with that member. Mutating — ask the user, then confirm=true.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        slug: {
+          type: 'string',
+          description: 'Lowercase-kebab name. Optional — `title` is folded into a slug when it is omitted.',
+        },
+        title: { type: 'string', description: 'Human title (accent-folded Turkish/English both fine).' },
+        notes: { type: 'string', description: 'Why this thread exists / what to continue. Max 4000 chars.' },
+        session_id: { type: 'string', description: 'Optional first member: a Claude Code session id.' },
+        chat_id: { type: 'string', description: 'Optional first member: a claude.ai chat uuid.' },
+        account: { type: 'string', description: 'Account that member belongs to (names a saved keyflip account).' },
+        confirm: confirmProp.confirm,
+      },
+      required: ['confirm'],
+      additionalProperties: false,
+    },
+    annotations: MUT,
+    run: async function (ctx, args) {
+      needConfirm(args);
+      const member = threadMemberFromArgs(ctx, args, true);
+      const l = await lock.acquire(ctx.configDir);
+      try {
+        return {
+          created: _threads.create(ctx, { slug: args.slug, title: args.title, notes: args.notes, member: member }),
+        };
+      } finally {
+        l.release();
+      }
+    },
+  },
+  {
+    name: 'keyflip_thread_add',
+    title: 'Link a session or chat into a thread',
+    description:
+      'Add one pointer to an existing thread — a local Claude Code session by `session_id`, or a cloud claude.ai chat by `chat_id`. Idempotent: re-adding the same member refreshes its label/account instead of duplicating. A session may belong to several threads (a thread is a name, not a container). The conversation itself is never touched or copied. Mutating — ask the user, then confirm=true.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        slug: { type: 'string', description: 'Target thread (slug, unique prefix, or title match).' },
+        session_id: { type: 'string', description: 'Session id or unique prefix (local transcript).' },
+        chat_id: { type: 'string', description: 'Cloud chat uuid — use this for a claude.ai conversation.' },
+        account: {
+          type: 'string',
+          description:
+            'Account to attribute. For a session this is only a fallback (the live `sessions assign` map wins); for a chat it decides which cookie snapshot reads it.',
+        },
+        label: { type: 'string', description: 'Short note on what this member covers.' },
+        confirm: confirmProp.confirm,
+      },
+      required: ['slug', 'confirm'],
+      additionalProperties: false,
+    },
+    annotations: MUT,
+    run: async function (ctx, args) {
+      needConfirm(args);
+      const member = threadMemberFromArgs(ctx, args, false);
+      const l = await lock.acquire(ctx.configDir);
+      try {
+        const t = _threads.read(ctx, String(args.slug));
+        return { added: _threads.addMember(ctx, t.slug, member), thread: t.slug };
+      } finally {
+        l.release();
+      }
+    },
+  },
+  {
+    name: 'keyflip_thread_remove',
+    title: 'Unlink one member from a thread',
+    description:
+      'Remove ONE pointer from a thread (`id` may be "session:<id>", "chat:<id>", a full id, or a unique prefix). The conversation and its transcript are untouched — only the link goes away. Mutating — ask the user, then confirm=true.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        slug: { type: 'string' },
+        id: { type: 'string', description: 'Member id, optionally prefixed with "session:" / "chat:".' },
+        confirm: confirmProp.confirm,
+      },
+      required: ['slug', 'id', 'confirm'],
+      additionalProperties: false,
+    },
+    annotations: MUT,
+    run: async function (ctx, args) {
+      needConfirm(args);
+      const l = await lock.acquire(ctx.configDir);
+      try {
+        const t = _threads.read(ctx, String(args.slug));
+        const r = _threads.removeMember(ctx, t.slug, String(args.id));
+        if (!r) throw new Error("no member of '" + t.slug + "' matches '" + args.id + "'");
+        return { removed: r.removed, thread: t.slug, members: r.thread.members.length };
+      } finally {
+        l.release();
+      }
+    },
+  },
+  {
+    name: 'keyflip_thread_drop',
+    title: 'Forget a thread name',
+    description:
+      'Delete a thread FILE. This deletes a NAME, never a conversation: every session/chat it points at stays exactly where it is, and the removal is recoverable through keyflip history/undo. If the opt-in transcript mirror has a file for this slug it SURVIVES the drop (the mirror dir is separate) — `remove_mirror:true` deletes that text too. Mutating — ask the user, then confirm=true.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        slug: { type: 'string' },
+        remove_mirror: { type: 'boolean', description: 'Also delete the mirrored conversation text, if any.' },
+        confirm: confirmProp.confirm,
+      },
+      required: ['slug', 'confirm'],
+      additionalProperties: false,
+    },
+    annotations: MUT,
+    run: async function (ctx, args) {
+      needConfirm(args);
+      const l = await lock.acquire(ctx.configDir);
+      try {
+        const t = _threads.read(ctx, String(args.slug));
+        const mirrorPath = _threads.mirrorFileFor(ctx, t.slug);
+        const hadMirror = fs.existsSync(mirrorPath);
+        const r = _threads.drop(ctx, t.slug);
+        const out = { dropped: t.slug, members: (r.members || []).length };
+        if (args.remove_mirror && hadMirror)
+          out.mirrorRemoved = statePathForAgent(ctx, _threads.unmirror(ctx, t).path || mirrorPath);
+        else if (hadMirror)
+          out.mirrorStillThere =
+            statePathForAgent(ctx, mirrorPath) +
+            ' — the conversation text outlives the name; call again with remove_mirror:true (or keyflip threads unmirror ' +
+            t.slug +
+            ')';
+        return out;
+      } finally {
+        l.release();
+      }
+    },
+  },
+  {
+    name: 'keyflip_thread_mirror',
+    title: "Write a thread's merged text to disk",
+    description:
+      'The one place keyflip puts CONVERSATION TEXT into the state dir: renders the thread\'s merged markdown to <configDir>/thread-mirror/<slug>.md (0600). Two gates, both required — `keyflip config set threads.mirror true` AND this call — and it REFUSES when the state repo has a git remote configured, because "git-ignored" is only a promise about `git add -A`. The file is git-ignored and never backed up; `keyflip threads show <slug> --md` gives the same markdown without ever writing it, which is the better default. Mutating — ask the user, then confirm=true.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        slug: { type: 'string' },
+        confirm: confirmProp.confirm,
+      },
+      required: ['slug', 'confirm'],
+      additionalProperties: false,
+    },
+    annotations: MUT,
+    run: async function (ctx, args) {
+      needConfirm(args);
+      const l = await lock.acquire(ctx.configDir);
+      try {
+        const t = _threads.read(ctx, String(args.slug));
+        // No `force`: an agent calling this must not walk past the "this state repo has a remote" gate
+        // — that check exists precisely because nobody was watching when the file got written.
+        const r = _threads.mirror(ctx, t, {});
+        if (!r.ok) throw new Error((r.detail || r.reason || 'the mirror was refused') + (r.fix ? ' — ' + r.fix : ''));
+        return Object.assign({}, r, { path: statePathForAgent(ctx, r.path) });
+      } finally {
+        l.release();
+      }
+    },
+  },
+
   {
     name: 'keyflip_sessions_archived',
     title: 'List archived transcripts',
@@ -3070,7 +3653,7 @@ const TOOLS = [
     name: 'keyflip_sessions_distill',
     title: 'Distill a chat into a durable keepsake',
     description:
-      'Summarize a past conversation into a durable "keepsake" (goal/decisions/learnings/TODOs) via headless `claude -p`, saved to keyflip\'s OWN memory store. SPENDS the active account\'s quota. Set to_claude=true to ALSO write it into ~/.claude project memory (opt-in). Mutating — ask the user, then confirm=true.',
+      'Summarize a past conversation into a durable "keepsake" (goal/decisions/learnings/TODOs) through keyflip\'s configured LLM provider — `keyflip llm` picks it: the default `claude -p` SPENDS the active account\'s quota, while provider=ollama runs locally for free and provider=openai uses an endpoint key. The result records which provider/model wrote it. Set to_claude=true to ALSO write it into ~/.claude project memory (opt-in). Mutating — ask the user, then confirm=true.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -3088,12 +3671,15 @@ const TOOLS = [
       const path = _path;
       const row = sessions.find(ctx, String(args.session_id));
       if (!row) throw new Error("no session matches '" + args.session_id + "'");
-      if (!llm.available()) throw new Error('distill needs Claude Code on PATH (summarizes via `claude -p`)');
+      const gate = llm.availability(ctx);
+      if (!gate.ok) throw new Error('distill has no usable provider: ' + gate.reason + ' — ' + gate.fix);
+      if (gate.provider.provider === 'claude' && !llm.available(ctx))
+        throw new Error('distill needs Claude Code on PATH — or set a provider: keyflip llm set --provider ollama');
       const transcript = fs.readFileSync(row.file, 'utf8');
       const INSTR =
         'Summarize this past coding-assistant conversation (a JSONL transcript) into a durable "keepsake" memory. Output terse markdown bullets under these headings: Goal, Decisions, Built/Changed, Gotchas/Learnings, Open TODOs. Be specific; skip anything trivial; no preamble.';
-      const res = llm.summarize(INSTR, transcript, { model: args.model, skipCheck: true });
-      if (!res.ok) throw new Error('distill failed: ' + (res.reason || 'unknown'));
+      const res = await llm.complete(ctx, INSTR, transcript, { model: args.model, skipCheck: true });
+      if (!res.ok) throw new Error('distill failed: ' + (res.reason || 'unknown') + (res.fix ? ' — ' + res.fix : ''));
       const l = await lock.acquire(ctx.configDir);
       let saved;
       try {
@@ -3101,6 +3687,8 @@ const TOOLS = [
           session: row.sessionId,
           cwd: row.cwd || '',
           distilledAt: ctx.now(),
+          distillProvider: res.provider,
+          distillModel: res.model || '',
         });
       } finally {
         l.release();
@@ -3114,7 +3702,14 @@ const TOOLS = [
           /* best-effort */
         }
       }
-      return { session: row.sessionId, memory: saved, toClaude: !!args.to_claude };
+      return {
+        session: row.sessionId,
+        memory: saved,
+        toClaude: !!args.to_claude,
+        provider: res.provider,
+        model: res.model || null,
+        cost: res.cost,
+      };
     },
   },
   {
@@ -3174,6 +3769,7 @@ const TOOLS = [
         return r.mtimeMs < cutoff && !memorymod.has(ctx, r.sessionId);
       });
       const batch = targets.slice(0, cap);
+      const prov = llm.resolve(ctx);
       if (!args || !args.apply)
         return {
           candidates: targets.length,
@@ -3181,8 +3777,16 @@ const TOOLS = [
             return r.sessionId;
           }),
           apply: false,
+          provider: prov.provider,
+          model: prov.model || null,
+          cost: prov.cost,
         };
-      if (!llm.available()) throw new Error('dream needs Claude Code on PATH (`claude -p`)');
+      const gate = llm.availability(ctx);
+      if (!gate.ok) throw new Error('dream has no usable provider: ' + gate.reason + ' — ' + gate.fix);
+      if (gate.provider.provider === 'claude' && !llm.available(ctx))
+        throw new Error(
+          'dream needs Claude Code on PATH (`claude -p`), or a provider: keyflip llm set --provider ollama',
+        );
       const INSTR =
         'Summarize this past coding-assistant conversation (a JSONL transcript) into a durable "keepsake" memory. Output terse markdown bullets under: Goal, Decisions, Built/Changed, Gotchas/Learnings, Open TODOs. Be specific; skip trivia; no preamble.';
       let distilled = 0,
@@ -3197,7 +3801,7 @@ const TOOLS = [
           failed++;
           continue;
         }
-        const res = llm.summarize(INSTR, transcript, { skipCheck: true });
+        const res = await llm.complete(ctx, INSTR, transcript, { skipCheck: true });
         if (!res.ok) {
           failed++;
           continue;
@@ -3208,6 +3812,8 @@ const TOOLS = [
             session: r.sessionId,
             cwd: r.cwd || '',
             distilledAt: ctx.now(),
+            distillProvider: res.provider,
+            distillModel: res.model || '',
           });
         } finally {
           l.release();
@@ -3222,7 +3828,15 @@ const TOOLS = [
           }
         }
       }
-      return { distilled: distilled, archived: archived, failed: failed, apply: true };
+      return {
+        distilled: distilled,
+        archived: archived,
+        failed: failed,
+        apply: true,
+        provider: prov.provider,
+        model: prov.model || null,
+        cost: prov.cost,
+      };
     },
   },
   {
@@ -3245,16 +3859,49 @@ const TOOLS = [
     annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
     run: async function (ctx, args) {
       const schedule = _schedule;
-      if (args.action === 'status') return { schedule: schedule.status(ctx) };
+      const prov = llm.resolve(ctx);
+      if (args.action === 'status')
+        return {
+          schedule: schedule.status(ctx),
+          willUse: { provider: prov.provider, model: prov.model || null, cost: prov.cost },
+        };
       needConfirm(args);
       if (args.action === 'remove') return { removed: schedule.uninstall(ctx) };
       const r = schedule.install(ctx, {
         at: args.at || '03:00',
         days: args.older_than_days || 30,
         archive: !!args.archive,
+        provider: prov.provider,
+        model: prov.model,
       });
       if (!r.ok) throw new Error('could not schedule: ' + (r.reason || r.detail || 'unknown'));
-      return { scheduled: r };
+      return { scheduled: r, provider: prov.provider, cost: prov.cost };
+    },
+  },
+  {
+    name: 'keyflip_refresh_schedule',
+    title: 'Schedule the nightly token refresh',
+    description:
+      'Install/remove/inspect a schedule (launchd on macOS, cron on Linux) that runs `keyflip refresh --all` unattended nightly, so stored OAuth tokens are renewed before they expire rather than discovered dead at switch time. action="status" (read) | "install" | "remove". It rotates tokens for every saved account but calls NO model and spends no quota; while a Claude session is live each run declines to change anything. For install/remove, ask the user, then confirm=true.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', enum: ['status', 'install', 'remove'] },
+        at: { type: 'string', description: 'HH:MM, default 04:30 (deliberately not the dream hour)' },
+        confirm: confirmProp.confirm,
+      },
+      required: ['action', 'confirm'],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    run: async function (ctx, args) {
+      const schedule = _schedule;
+      if (args.action === 'status') return { schedule: schedule.status(ctx, { job: 'refresh' }) };
+      needConfirm(args);
+      if (args.action === 'remove') return { removed: schedule.uninstall(ctx, { job: 'refresh' }) };
+      const r = schedule.install(ctx, { job: 'refresh', at: args.at || '04:30' });
+      if (!r.ok) throw new Error('could not schedule: ' + (r.reason || r.detail || 'unknown'));
+      return { scheduled: r, spendsQuota: false };
     },
   },
   {
@@ -3377,10 +4024,18 @@ const TOOLS = [
     name: 'keyflip_recall',
     title: 'Semantic recall over your chat keepsakes',
     description:
-      'Search your distilled keepsakes for a topic across ALL past chats — "where did I discuss X". Default is local BM25 (offline); set semantic=true to use an embedding endpoint (Ollama/hosted) for true vector search (falls back to lexical if none). Returns ranked keepsakes with a snippet + source session. Read-only.',
+      'Search your distilled keepsakes for a topic across ALL past chats — "where did I discuss X". Default is local BM25 (offline); set semantic=true to use an embedding endpoint (Ollama/hosted) for true vector search (falls back to lexical if none). set answer=true to synthesize a CITED answer over the retrieved keepsakes through keyflip\'s configured LLM provider (`keyflip llm`: default claude -p spends the active account, ollama is local/free) — one model call, no writes. Returns ranked keepsakes with a snippet + source session. Read-only.',
     inputSchema: {
       type: 'object',
-      properties: { query: { type: 'string' }, limit: { type: 'integer' }, semantic: { type: 'boolean' } },
+      properties: {
+        query: { type: 'string' },
+        limit: { type: 'integer' },
+        semantic: { type: 'boolean' },
+        answer: {
+          type: 'boolean',
+          description: 'true = synthesize a cited answer (one LLM call, provider = keyflip llm).',
+        },
+      },
       required: ['query'],
       additionalProperties: false,
     },
@@ -3388,6 +4043,34 @@ const TOOLS = [
     run: async function (ctx, args) {
       const recall = _recall;
       const limit = (args && args.limit) || 10;
+      if (args && args.answer) {
+        const ans = await recall.answer(ctx, String(args.query), { limit: (args.limit && args.limit) || 6 });
+        if (ans.ok)
+          return {
+            mode: 'answer',
+            answer: ans.text,
+            provider: ans.provider,
+            model: ans.model || null,
+            sources: ans.hits.map(function (h) {
+              return { session: h.session, cwd: h.cwd, snippet: h.snippet };
+            }),
+          };
+        // No answer (nothing matched / no provider) — still hand back the ranked keepsakes.
+        const fallback = recall.search(ctx, String(args.query), { limit: limit });
+        return {
+          mode: 'lexical',
+          answerUnavailable: ans.reason + (ans.fix ? ' — ' + ans.fix : ''),
+          recall: fallback.map(function (h) {
+            return {
+              key: h.key,
+              session: h.session,
+              cwd: h.cwd,
+              score: Math.round(h.score * 1000) / 1000,
+              snippet: h.snippet,
+            };
+          }),
+        };
+      }
       if (args && args.semantic) {
         const sem = await recall.semanticSearch(ctx, String(args.query), { limit: limit });
         if (sem.ok)
@@ -3745,6 +4428,296 @@ const TOOLS = [
       };
     },
   },
+
+  // ---- #41: "is a secret still readable in the PAST?" ----
+  {
+    name: 'keyflip_history_audit',
+    title: 'Scan old commits for leaked secrets',
+    description:
+      'Walk EVERY blob keyflip ever committed to its state repo and report which ones still hold a secret shape or a secret-path capture — the case the live-file checks cannot see: a file untracked TODAY is still fully readable from an older commit. Returns file + secret KIND + blob sha + how many commits still hold it + whether the path is still tracked; it NEVER returns content, so reading this result does not make a copy of the secret. Run it before letting keyflip mirror chat transcripts (transcripts are full of pasted keys). Findings the user has recorded as expected (keyflip_secrets_policy) come back with tolerated=true and are counted separately — they are STILL scrubbed by keyflip_history_scrub, they just stop being an alarm. Read-only; can take a few seconds. CLI twin: keyflip doctor --history.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        max_blobs: {
+          type: 'integer',
+          description: 'Cap how many blobs are read (default 5000). A capped scan says truncated=true.',
+        },
+      },
+      additionalProperties: false,
+    },
+    annotations: RO,
+    run: async function (ctx, args) {
+      const leakscan = _leakscan;
+      if (!vcs.isRepo(ctx)) return { ok: false, reason: 'no-repo', fix: 'keyflip versioning on' };
+      const hist = leakscan.historyLeaks(ctx, { maxBlobs: (args && args.max_blobs) || undefined });
+      if (!hist.ok) return { ok: false, reason: hist.reason };
+      const cls = _secretpolicy.classify(ctx, hist.leaks);
+      const scrubbable = [];
+      const trackedNow = [];
+      hist.leaks.forEach(function (l) {
+        const into = l.trackedNow ? trackedNow : scrubbable;
+        if (into.indexOf(l.file) === -1) into.push(l.file);
+      });
+      return {
+        ok: true,
+        scanned: hist.scanned,
+        skipped: hist.skipped,
+        truncated: !!hist.truncated,
+        leak_count: hist.leaks.length,
+        // #44: ALARM vs TOLERATED is the difference between "the user must act" and "the user already
+        // decided". Do not treat them as one list, and do not tell them to rotate a tolerated key.
+        alarm_count: cls.alarms.length,
+        tolerated_count: cls.tolerated.length,
+        policy_error: cls.policyError,
+        rules_dropped: cls.dropped,
+        // Split by whether the path is LIVE: scrubbing a tracked path deletes the working file too,
+        // so the agent must not treat these two lists as the same decision.
+        scrubbable_paths: scrubbable,
+        tracked_paths: trackedNow,
+        leaks: cls.findings.map(function (l) {
+          return {
+            file: l.file,
+            blob: l.blob,
+            kinds: l.labels,
+            confidence: l.confidence,
+            tracked_now: !!l.trackedNow,
+            commits: l.commits,
+            tolerated: !!l.tolerated,
+            by: l.by || null,
+          };
+        }),
+        fix: !cls.alarms.length
+          ? cls.tolerated.length
+            ? 'every finding is tolerated by policy — nothing to explain; keyflip scrub-history still removes them from history if you want the blobs gone'
+            : 'history is clean'
+          : 'keyflip scrub-history (dry-run plan), then keyflip_history_scrub with confirm=true; for a finding the user knows is expected, keyflip_secrets_tolerate instead of repeating the alarm',
+      };
+    },
+  },
+  {
+    name: 'keyflip_memory_audit',
+    title: 'Audit distilled keepsakes for secrets',
+    description:
+      "Scan keyflip's own distilled memory (configDir/memory/*.md — what recall, distill, migrate and sync all carry) for secret shapes. A summarized chat can innocently preserve 'my API key is sk-ant-…', and then it propagates to every machine. Returns keepsake key + which KINDS matched + hit count, never the text. Read-only. CLI twin: keyflip memory audit.",
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    annotations: RO,
+    run: async function (ctx) {
+      const a = _leakscan.keepsakeAudit(ctx, memorymod);
+      const copies = _leakscan.keepsakeCopies(ctx, memorymod);
+      return {
+        audited: a.audited,
+        leak_count: a.leaks.length,
+        leaks: a.leaks.map(function (l) {
+          return { key: l.key, kinds: l.kinds, hits: l.hits, bytes: l.bytes };
+        }),
+        // The un-redacted originals a previous --apply left behind: invisible to `keyflip memory`,
+        // and still readable secrets, so an agent must be able to see that they exist.
+        pending_originals: copies.files.map(function (f) {
+          return { key: f.key, bytes: f.bytes };
+        }),
+        fix: a.leaks.length
+          ? 'keyflip memory audit --apply, or keyflip_memory_redact with confirm=true (then keyflip_history_scrub — the keepsake is also in git history)'
+          : copies.files.length
+            ? 'keyflip memory audit --drop-copies, once the user has confirmed the redaction lost nothing'
+            : 'keepsakes are clean',
+      };
+    },
+  },
+  {
+    name: 'keyflip_history_scrub',
+    title: 'Remove leaked secrets from the state-repo history',
+    description:
+      "Rewrite keyflip's OWN state-repo history with git filter-repo so the paths keyflip_history_audit flagged no longer resolve from any commit. Guardrails, in order: it REFUSES unless git-filter-repo is installed (a hand-rolled partial rewrite can corrupt the repo); it writes a `git bundle` of the current history FIRST, outside the repo at 0600, and refuses to continue if that backup fails; and by default it leaves alone any path that is STILL TRACKED, because dropping a live file from history also drops it from the working tree (pass include_tracked only when the user means it). After the rewrite it re-scans and reports whether the history is provably clean. NOTE the backup bundle contains the secrets until the user moves or deletes it, and the credentials must be rotated anyway. This rewrites git history: call keyflip_history_audit first, show the user what will go, then set confirm=true.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        include_tracked: {
+          type: 'boolean',
+          description:
+            'true also scrubs paths still tracked today (deletes the live file). Default false — history-only.',
+        },
+        confirm: confirmProp.confirm,
+      },
+      required: ['confirm'],
+      additionalProperties: false,
+    },
+    annotations: MUT,
+    run: async function (ctx, args) {
+      needConfirm(args);
+      const leakscan = _leakscan;
+      if (!vcs.isRepo(ctx))
+        return { applied: false, reason: 'no-repo — nothing versioned to scrub (keyflip versioning on)' };
+      const wantTracked = !!(args && args.include_tracked);
+      const hist = leakscan.historyLeaks(ctx);
+      if (!hist.ok) return { applied: false, reason: 'could not read the history (' + hist.reason + ')' };
+      const plan = leakscan.planScrub(ctx, hist.leaks, { now: ctx.now, includeTracked: wantTracked });
+      if (plan.mode !== 'filter-repo')
+        return {
+          applied: false,
+          blockers: plan.blockers,
+          warns: plan.warns,
+          paths: plan.paths,
+          left_alone_tracked: plan.skippedTracked,
+          tolerated_still_scrubbed: plan.toleratedPaths,
+        };
+      const r = leakscan.applyScrub(ctx, hist.leaks, { now: ctx.now, includeTracked: wantTracked });
+      if (!r.ok) return { applied: false, reason: r.reason, bundle: r.bundle || null, restored: r.restored || null };
+      const after = leakscan.historyLeaks(ctx);
+      const clsAfter = _secretpolicy.classify(ctx, after.leaks || []);
+      return {
+        applied: true,
+        removed: r.removed,
+        bundle: r.bundle,
+        rescan_clean: !!(after.ok && !after.leaks.length),
+        remaining_leaks: after.leaks ? after.leaks.length : null,
+        remaining_alarms: clsAfter.alarms.length,
+        note: 'commit ids changed; the bundle still contains the secrets until it is moved off or deleted; rotate the credentials themselves — except any path the user tolerates in keyflip_secrets_policy, which needs no rotation and was still removed from history',
+      };
+    },
+  },
+  {
+    name: 'keyflip_memory_redact',
+    title: 'Redact secrets out of keepsakes',
+    description:
+      "Replace the secret shapes keyflip_memory_audit found inside the keepsake files themselves, in place, and keep each original beside it as <key>.md.pre-scrub (0600; 'pre-scrub' is a registered secret extension, so the copy is never git-versioned or backed up). Counts only — no content in the return value. This does NOT touch git history: a redacted keepsake is still readable from its old commit until keyflip_history_scrub runs. Pass drop_copies:true (still confirm-gated) once the user has actually read the redacted keepsake, because that is the only step that removes the raw secret from the disk — until then the .pre-scrub IS the leak, and keyflip doctor reports it as 'keepsake originals'. Ask the user, then set confirm=true.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        confirm: confirmProp.confirm,
+        drop_copies: {
+          type: 'boolean',
+          description:
+            'true also removes each .pre-scrub original whose keepsake is now provably clean. That is the step that actually gets the secret off the disk — but the copy is the LAST version of that text, so show the user the redacted keepsake first.',
+        },
+      },
+      required: ['confirm'],
+      additionalProperties: false,
+    },
+    annotations: MUT,
+    run: async function (ctx, args) {
+      needConfirm(args);
+      const r = _leakscan.keepsakeScrub(ctx, memorymod);
+      const after = _leakscan.keepsakeAudit(ctx, memorymod);
+      const out = {
+        redacted: r.redacted,
+        keys: r.files,
+        matches: r.total,
+        originals: 'kept as <key>.md.pre-scrub (0600, never versioned) — delete them once confirmed',
+        rescan_leaks: after.leaks.length,
+      };
+      if (args && args.drop_copies) {
+        const d = _leakscan.dropKeepsakeCopies(ctx, memorymod);
+        out.dropped_originals = d.dropped;
+        out.kept_originals = d.kept;
+        out.bytes_removed = d.bytes;
+      }
+      return out;
+    },
+  },
+  {
+    name: 'keyflip_secrets_policy',
+    title: 'Which history findings are expected',
+    description:
+      "Read keyflip's secrets policy: the list of history-scan findings the user has recorded as EXPECTED rather than alarming (a free-tier API key parked where it belongs is the typical case). Returns the rules — each one a repo-relative PATH and/or a secret KIND, never a value — plus how many current findings each silences and how many are still alarms. A tolerated finding is NOT exempted from cleaning: keyflip_history_scrub still removes it from git history, the policy only stops the alarm and the rotation advice. Read-only. Keepsakes (memory/*.md) are never silenced. CLI twin: keyflip secrets list.",
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    annotations: RO,
+    run: async function (ctx) {
+      const pol = _secretpolicy.load(ctx);
+      const hist = vcs.isRepo(ctx) ? _leakscan.historyLeaks(ctx) : null;
+      const cls = hist && hist.ok ? _secretpolicy.classify(ctx, hist.leaks, { policy: pol }) : null;
+      return {
+        file: _secretpolicy.FILE_NAME,
+        relative_to: 'the state dir',
+        exists: pol.exists,
+        rules: pol.rules.map(function (r) {
+          const cov = cls ? _secretpolicy.coverageOf(ctx, cls.findings, r) : { findings: 0, paths: [] };
+          return {
+            path: r.path,
+            kinds: r.kinds.length ? r.kinds : ['any kind'],
+            note: r.note || null,
+            added_at: r.addedAt || null,
+            silences_findings: cov.findings,
+            silences_paths: cov.paths,
+            broad: r.path === '*' || r.path.indexOf('*') !== -1 || r.path.slice(-1) === '/',
+          };
+        }),
+        rules_dropped: pol.dropped,
+        policy_error: pol.error,
+        alarms: cls ? cls.alarms.length : null,
+        tolerated: cls ? cls.tolerated.length : null,
+        history_scanned: !!(hist && hist.ok),
+        known_kinds: _secretpolicy.KNOWN_LABELS,
+        note_on_scope:
+          "a rule silences the ALARM only. Every tolerated path stays in keyflip_history_scrub's plan, because a secret that is merely unimportant is still readable from an old commit.",
+        fix: pol.error
+          ? 'the policy file could not be read, so NO rule is in effect — fix ' +
+            _secretpolicy.FILE_NAME +
+            ' in the state dir'
+          : 'keyflip_secrets_tolerate to record one, keyflip secrets list to see the findings',
+      };
+    },
+  },
+  {
+    name: 'keyflip_secrets_tolerate',
+    title: 'Record a finding as expected (or undo that)',
+    description:
+      'Write the secrets policy. action="add" records a repo-relative path (as keyflip_history_audit reports it, e.g. "providers/foo.json") and optionally the secret KIND(s) it covers — "*" for any path is only allowed together with a kind, so a rule can never switch the scan off. action="remove" drops the rule(s) on that path and its findings are alarms again. WHY THIS IS NOT SUPPRESSION: the path stays in the scrub plan and keyflip still cleans it out of git history; what stops is the repeated ✗ in keyflip doctor --history and the "rotate the credential" advice, which is noise for a key the user knowingly left in place. Rules are keyed on path + kind and NEVER on a secret value, and the note is redacted before it is stored, so the versioned policy file holds no fingerprint of anything. This writes versioned state (keyflip undo reverts it). Ask the user which findings they consider expected — do not tolerate a secret on your own initiative, and never for a keepsake.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', enum: ['add', 'remove'] },
+        path: {
+          type: 'string',
+          description:
+            'Repo-relative path exactly as keyflip_history_audit reported it, or "*" when --kinds names a secret kind that is always fine. Trailing "/" = everything under a directory; "*" inside a segment is a wildcard.',
+        },
+        kinds: {
+          type: 'array',
+          items: { type: 'string' },
+          description:
+            'Secret KIND(s) the rule covers, from known_kinds in keyflip_secrets_policy (e.g. ["google-api-key"]). Omit = any kind found on that path.',
+        },
+        note: { type: 'string', description: 'Why this one is expected, for whoever reads the policy later.' },
+        confirm: confirmProp.confirm,
+      },
+      required: ['action', 'path', 'confirm'],
+      additionalProperties: false,
+    },
+    annotations: MUT,
+    run: async function (ctx, args) {
+      needConfirm(args);
+      const action = args && args.action;
+      const pathArg = args && args.path;
+      const kinds = Array.isArray(args && args.kinds) ? args.kinds : [];
+      const before = _secretpolicy.load(ctx);
+      const r =
+        action === 'add'
+          ? _secretpolicy.addRule(ctx, { path: pathArg, kinds: kinds, note: args && args.note, now: ctx.now })
+          : action === 'remove'
+            ? _secretpolicy.removeRule(ctx, { path: pathArg, kinds: kinds })
+            : null;
+      if (!r) return { ok: false, reason: 'action must be "add" or "remove"' };
+      if (!r.ok) return { ok: false, reason: r.reason, rules: before.rules };
+      // Say what the change DID, from the same scan — an agent must be able to see the breadth it just
+      // bought, not only that a rule was written.
+      const hist = vcs.isRepo(ctx) ? _leakscan.historyLeaks(ctx) : null;
+      const cls = hist && hist.ok ? _secretpolicy.classify(ctx, hist.leaks) : null;
+      return {
+        ok: true,
+        action: action,
+        rule: action === 'add' ? r.rule : { removed: r.removed },
+        replaced: r.replaced || null,
+        note_redacted: r.noteRedacted || 0,
+        alarms_now: cls ? cls.alarms.length : null,
+        tolerated_now: cls ? cls.tolerated.length : null,
+        // Every finding, silenced or not, is what keyflip_history_scrub will remove. Naming them here is
+        // the proof that a toleration is not suppression.
+        still_scrubbed: cls ? cls.findings.map((f) => f.file) : [],
+        rules_total: cls ? cls.rules.length : 0,
+        fix: 'keyflip secrets list shows the findings and the rule that covers each one',
+      };
+    },
+  },
 ];
 
 // Wave-2 modules that ship their own self-contained MCP tool objects (annotations + confirm-gating
@@ -3756,6 +4729,7 @@ const TOOLS = [
   _vault.tools,
   _license.mcpTools,
   _surface.mcpTools,
+  _chains.mcpTools, // #39: keyflip_chains (RO map) + keyflip_chains_tighten (confirm-gated chmod)
   _handoff.mcpTools, // Wave 4: keyflip_handoff (RO continue-prompt)
 ].forEach(function (arr) {
   (Array.isArray(arr) ? arr : []).forEach(function (t) {

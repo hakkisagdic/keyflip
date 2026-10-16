@@ -3,6 +3,8 @@ import assert from 'node:assert';
 import fs from 'fs';
 import path from 'path';
 import * as profiles from '../src/profiles.js';
+import * as schedule from '../src/schedule.js';
+import * as secretpolicy from '../src/secretpolicy.js';
 import { tmpdir } from './helpers.js';
 
 test('write/read/exists/email round-trip', function () {
@@ -57,4 +59,35 @@ test('isValidName rejects reserved, traversal, and flag-like names', function ()
   ['__proto__', 'prototype', 'constructor', '..', '.hidden', '-y', '--force', '', 'a/b', 'a b'].forEach(function (n) {
     assert.strictEqual(profiles.isValidName(n), false, n);
   });
+});
+
+// The phantom-account bug. `list()` decides "is this an account?" by looking at every top-level
+// <configDir>/*.json and subtracting RESERVED_FILES — so any NEW state file written straight into
+// configDir is an account until someone remembers to add its name here. Found live: `refresh-schedule`
+// (the #36 receipt) appeared as an account in `keyflip list`, the interactive menu and every count.
+// The fix is not the three entries, it is this test: the names come from the modules that WRITE them,
+// so the drift is caught in the same commit that would have introduced it.
+test('a top-level state file is never listed as an account', function () {
+  const dir = tmpdir();
+  profiles.write(dir, { name: 'alice', email: 'a@x.com' });
+  const stateFiles = [schedule.RECORD_NAME, schedule.REFRESH_RECORD_NAME, secretpolicy.FILE_NAME];
+  stateFiles.forEach(function (n) {
+    fs.writeFileSync(path.join(dir, n), JSON.stringify({ installedAt: 'now', job: 'nightly' }), { mode: 0o600 });
+  });
+  assert.deepStrictEqual(profiles.list(dir), ['alice'], 'the receipts exist on disk but are not accounts');
+  assert.strictEqual(fs.existsSync(path.join(dir, schedule.REFRESH_RECORD_NAME)), true, 'and nothing was deleted');
+
+  // Every reserved name, dressed up as an account, stays invisible — and a name that is reserved but
+  // missing from the list is what would put a fake account in front of a user.
+  profiles.RESERVED_FILES.forEach(function (n) {
+    fs.writeFileSync(path.join(dir, n + '.json'), JSON.stringify({ email: 'ghost@x.com', userID: 'x' }), {
+      mode: 0o600,
+    });
+  });
+  assert.deepStrictEqual(profiles.list(dir), ['alice'], profiles.list(dir).join(','));
+  assert.ok(profiles.RESERVED_FILES.indexOf('secrets-policy') !== -1, 'the #44 policy is reserved');
+  assert.ok(profiles.RESERVED_FILES.indexOf('refresh-schedule') !== -1, 'and so is the #36 receipt');
+
+  // An account may not be NAMED after state, either: import/switch paths use isValidName.
+  assert.strictEqual(profiles.isValidName('vault'), false, 'a reserved name is not a legal account name');
 });

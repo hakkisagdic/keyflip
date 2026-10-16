@@ -18,7 +18,8 @@ import CodeBlock from '../../components/CodeBlock.astro';
   → [1] alice@example.com
     [2] bob@example.org
 
-  [number] switch   [a] save current   [d] delete   [r] refresh   [q] quit`} lang="text" />
+  [number] switch   [a] save current   [d] delete   [t] threads   [r] refresh   [q] quit`} lang="text" />
+      <p class="text-surface-700 dark:text-surface-300 mb-4 mt-4"><code>[t]</code> opens the threads screen: the sessions and cloud chats that are the <em>same task</em> across accounts, each with its owning account, where its transcript lives, and the exact <code>cd … && claude --resume …</code> line that continues it. It is read-only by design — it never reads a transcript body, never writes, never spends quota.</p>
 
       <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-4 mt-10">Quick Switch</h2>
       <p class="text-surface-700 dark:text-surface-300 mb-4">Switch directly by name or number:</p>

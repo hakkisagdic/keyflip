@@ -42,7 +42,7 @@ test('search returns [] when nothing matches or the corpus is empty', function (
   assert.deepStrictEqual(recall.search(ctx, 'nonexistentterm', {}), []);
 });
 
-test('answer feeds the top keepsakes to claude -p and returns a cited synthesis', function () {
+test('answer feeds the top keepsakes to the provider and returns a cited synthesis', async function () {
   const ctx = makeCtx();
   memory.save(ctx, 'aaaa1111', '# Goal\n- fix OAuth token refresh with backoff\n', {
     session: 'aaaa1111',
@@ -55,25 +55,26 @@ test('answer feeds the top keepsakes to claude -p and returns a cited synthesis'
     seen = { args: args, input: input };
     return { code: 0, stdout: 'You handled it with backoff [aaaa1111].' };
   };
-  const a = recall.answer(ctx, 'how did I fix the oauth refresh', { run: runner, limit: 6 });
+  const a = await recall.answer(ctx, 'how did I fix the oauth refresh', { run: runner, limit: 6 });
   assert.strictEqual(a.ok, true);
+  assert.strictEqual(a.provider, 'claude', 'the default provider is the subscription — it must be named');
   assert.ok(a.text.indexOf('[aaaa1111]') !== -1, 'cited answer');
   assert.strictEqual(a.hits[0].session, 'aaaa1111', 'the relevant keepsake was retrieved');
   assert.ok(seen.args[0] === '-p' && /QUESTION:/.test(seen.args[1]), 'question is in the instruction');
   assert.ok(seen.input.indexOf('OAuth token refresh') !== -1, 'the keepsake text is the stdin context');
 });
 
-test('answer reports no-matches / claude-not-installed cleanly', function () {
+test('answer reports no-matches / claude-not-installed cleanly', async function () {
   const ctx = makeCtx();
   const runner = function () {
     return { code: 0, stdout: 'claude 1' };
   };
-  assert.strictEqual(recall.answer(ctx, 'x', { run: runner }).reason, 'no-matches');
+  assert.strictEqual((await recall.answer(ctx, 'x', { run: runner })).reason, 'no-matches');
   memory.save(ctx, 's', 'about oauth tokens', {});
   const absent = function () {
     return { code: 127 };
   };
-  assert.strictEqual(recall.answer(ctx, 'oauth', { run: absent }).reason, 'claude-not-installed');
+  assert.strictEqual((await recall.answer(ctx, 'oauth', { run: absent })).reason, 'claude-not-installed');
 });
 
 test('rank is a pure BM25 over supplied docs (idf favors the rarer term)', function () {

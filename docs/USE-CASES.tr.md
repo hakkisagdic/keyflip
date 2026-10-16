@@ -245,6 +245,9 @@ keyflip foreign <dosya> [--format md|html|json]   # birini aynı görünüme nor
 
 ## 9. Sohbetleri hesaplar arasında eşitlemek
 
+`consolidate`, masaüstü uygulamasının **dizinlerini** eşitler. Tek bir *iş* için ulaşılabilir bir nesne
+yapmaz — kota görevin ortasında tükenince bozulan şey tam olarak budur:
+
 ```bash
 keyflip consolidate                    # her hesabın sohbet dizini TÜM sohbetleri gösterir
 keyflip consolidate --watch            # uygulama kapalıyken periyodik olarak yeniden eşitle
@@ -259,6 +262,54 @@ keyflip consolidate --watch --interval 60
   dizinin yanına `deleted_<id>` bırakır) başka hesabın klasöründen geri kopyalanmaz.
   `keyflip cowork` eşitlenmiş sohbeti bir kez listeler: veri klasörü hâlâ yanında duran kopya,
   o yoksa en son aktif olan.
+
+### 9.1 Hesaplar arası tek adlandırılmış görev — `keyflip threads`
+
+Senaryo: gmail üzerinde görevin ortasındasın, 5 saatlik tavan dolar, yahoo'ya geçersin ve Claude Code
+aynı projede **yeni** bir oturum açar. İki oturum, üstine işi planladığın bir claude.ai sohbeti.
+Hiçbir şey kaybolmaz, ama hiçbir şey senin *tek nesnen* de değildir — `keyflip chat` diğer hesaba parça
+parça erişir, `keyflip sessions --search` ise görev değil satır döndürür.
+
+```bash
+keyflip threads suggest                  # ZATEN 2+ adlandırılmış hesaba bölünmüş iş, proje klasörü başına
+keyflip threads create fatura --title "Fatura akışı" --session 1a2b3c4d
+keyflip threads add fatura 9f8e7d6c --account yahoo   # önek yeterli; keyflip TAM id'yi yazar
+keyflip threads add fatura 3b0c…e1a4 --chat            # bir claude.ai sohbeti de üye olabilir
+keyflip threads show fatura              # üyeler + birleşik görünüm
+keyflip threads show fatura --timeline    # yalnız kronolojik turlar, kimin hangi hesapta söylediğiyle
+keyflip threads show fatura --md         # birleşik belge, basılır — hiçbir şey yazılmaz
+keyflip threads open fatura               # işin son durduğu yer, ona sahip hesabın kimliğiyle sürdür
+keyflip threads where 1a2b3c4d            # bu oturumu hangi thread'ler içeriyor (tersten arama)
+keyflip threads remove fatura 9f8e7d6c    # tek üyeyi ayır; oturumun kendisi yerinde kalır
+keyflip threads drop fatura -y            # adı UNUT — her transkript ve her atama sağ çıkar
+```
+
+- **Bu bir kap değil, bir ad.** `~/.config/keyflip/threads/fatura.json` yalnız `{kind, id, account,
+  project, addedAt}` listeler, düzyazı taşımaz. Transkriptler asla yer değiştirmez, yani aynı oturum iki
+  hesabın listesinde birden meşru biçimde durur — amaç bu, hata değil — ve thread'i düşürmek bir mesajı
+  kaybedemez.
+- **`suggest`, "işim nerede bölündü?" sorusunu sen sayıp dökmeden yanıtlar.** Bir klasörde **iki veya
+  daha fazla adlandırılmış hesap** arar; bir hesap artı atanmamış oturum içeren klasör raporlanmaz
+  (onları `keyflip sessions assign <id> <hesap>` ile ata) ve bir thread'in adlandırdığı şeyler düşürülür
+  — görevleri adlandırdıkça liste küçülür.
+- **Birleşik görünüm sınırlarında dürüsttür.** Her tur üyesini ve hesabını taşır; tarihsiz turlar iki
+  kararın arasına sıkıştırılmak yerine başta grup olarak kalır; bir bulut sohbeti offline tur katkısı
+  yapamaz ve `unavailable` altında, okuyacak `keyflip chat get …` komutuyla listelenir; `threads.mergeMaxMiB`
+  (varsayılan 8 — buradaki transkriptler 24 MB'a çıkıyor) eşiklerini aşan üye sessizce
+  kısa sayılmaz, kesilmiş diye sayılır.
+- **Diskte sohbet metni senin tercihindir ve çift kapılıdır.** `keyflip threads mirror fatura`,
+  `thread-mirror/fatura.md` dosyasını yalnız `keyflip config set threads.mirror true` sonrasında yazar; o
+  dizin kayıtlı bir sır dizinidir (0600, asla versiyonlanmaz, yedeklenmez, senkronlanmaz) ve ayna, durum
+  reposunda bir git remote varsa tamamen reddeder. Onu açana kadar aynı belgeyi ekranda görmek istersen
+  `--md` hiçbir şey yazmaz.
+- **Bir thread, bu makinede olmayan işi adlandırabilir ve bunu söyler.** Üye okuma anında çözümlenir:
+  transkripti burada olmayan bir oturum sessizce düşürülmek yerine `resolved: false` ve
+  `no transcript on this machine (last seen in <proje>)` gerekçesiyle döner. **Ne taşınır:** `threads/`
+  sıradan versiyonlanmış durumdur ve `keyflip backup` onu taşır; `keyflip migrate` / `sync` paketleri ise
+  küratörlü hesap verisidir — ayna düzyazısını içermezler, thread pointer'ları da arkalarından gitmez,
+  yani bir thread kendine ad veren makinede kalır.
+- Agent'lar bunun tamamını MCP üzerinden yapar: salt-okunur `keyflip_threads` (`slug`, `timeline`,
+  `suggest`, tersten `id`) ve `confirm` isteyen `keyflip_thread_create|add|remove|drop|mirror`.
 
 ---
 
@@ -363,10 +414,23 @@ keyflip mcpreg add ctx -- some-server  # MCP sunucularını bir kez yönet, Code
 keyflip mcpreg list | enable | disable | remove | import
 ```
 - **MCP araçları ile** (shell'e göre tercih et): `keyflip_status`, `keyflip_list`,
-  `keyflip_switch`, `keyflip_next`, `keyflip_login`, `keyflip_logout`,
-  `keyflip_browser_status/_logout`, `keyflip_consolidate`,
+  `keyflip_switch`, `keyflip_switch_plan`, `keyflip_verify`, `keyflip_refresh`,
+  `keyflip_refresh_schedule`, `keyflip_llm`,
+  `keyflip_next`, `keyflip_login`, `keyflip_logout`,
+  `keyflip_browser_status/_logout`, `keyflip_consolidate`, `keyflip_history_audit`,
+  `keyflip_memory_audit`, `keyflip_history_scrub`, `keyflip_memory_redact`, `keyflip_secrets_policy`,
+  `keyflip_secrets_tolerate`, `keyflip_chains`,
+  `keyflip_chains_tighten`,
   `keyflip_migrate_export/_import`, sağlayıcılar, yedekler, oturumlar, proxy… Mutasyon
-  araçları `confirm: true` ister.
+  araçları `confirm: true` ister; `keyflip_switch_plan`/`keyflip_verify`/`keyflip_llm`/
+  `keyflip_history_audit`/`keyflip_memory_audit`/`keyflip_secrets_policy`/`keyflip_chains` salt-okunurdur, yani bir ajan onay istemeden önce
+  geçişin tutacağını, o hesabın hâlâ kimlik doğrulayıp doğrulamadığını, arka plan görevinin hangi modeli
+  — kimin kotasını — kullanacağını, eski bir commit'te hâlâ okunabilir bir sır olup olmadığını, hangi
+  bulguların kullanıcı tarafından "beklenen" sayıldığını ve bir
+  hesabın hangi yakalamasının bayat, hangi rakiple tek depoyu paylaştığını ya da herkese okunabilir
+  olduğunu kontrol edebilir.
+  `keyflip_refresh_schedule`, `refresh --all`'ı her geceki zamanlayıcıya koyar (model çağırmaz, kota
+  harcamaz) ve bir Claude oturumu kimlik bilgisini hâlâ tutuyorsa `changed: false` ile reddeder.
 
 ---
 

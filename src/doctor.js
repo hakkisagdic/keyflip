@@ -10,6 +10,13 @@ import * as _vcs from './vcs.js';
 import * as _secretpaths from './secretpaths.js';
 import * as _sessions from './sessions.js';
 import * as _appauth from './appauth.js';
+import * as _llm from './llm.js';
+import * as _schedule from './schedule.js';
+import * as _leakscan from './leakscan.js';
+import * as _chains from './chains.js';
+import * as _memory from './memory.js';
+import * as _profiles from './profiles.js';
+import * as _threads from './threads.js';
 
 async function probe(url, opts) {
   opts = opts || {};
@@ -65,8 +72,13 @@ async function diagnose(ctx, opts) {
   appSession(ctx, add, opts);
   orphanSessions(ctx, add);
   rebindBackups(ctx, add);
+  threadsCheck(ctx, add);
+  keepsakeCopiesCheck(ctx, add);
+  chainsCheck(ctx, add);
   emptyProjectsCheck(ctx, add);
   quotaPressure(ctx, add);
+  choreProvider(ctx, add);
+  tokenRenewalCheck(ctx, add);
   settingsJson(ctx, add);
 
   const active = provider.readActive(ctx);
@@ -279,6 +291,150 @@ function rebindBackups(ctx, add) {
   );
 }
 
+// #35: a thread is a NAME over sessions, so a broken thread can never lose a conversation — but it can
+// silently stop being useful. Three ways that happen: a file that no longer parses (`threads open`
+// would throw), a member no account can be resolved for (the resume would run under whatever happens
+// to be active — the exact wrong-account bug threads exist to prevent), and the opt-in mirror, which
+// is the one place keyflip writes conversation TEXT into the state dir. stats() reads the threads dir
+// and the session map only: no subprocess, no transcript scan, so it stays cheap on every `doctor`.
+function threadsCheck(ctx, add) {
+  let st;
+  try {
+    st = _threads.stats(ctx);
+  } catch (e) {
+    return add('threads', 'warn', 'could not be read (' + String((e && e.message) || e) + ')');
+  }
+  if (!st.threads)
+    return add('threads', true, 'none named yet — keyflip threads suggest finds work already split over accounts');
+  const bad = [];
+  const fixes = [];
+  if (st.corrupt.length) {
+    bad.push(
+      st.corrupt.length +
+        ' file(s) unreadable or holding invalid members (' +
+        st.corrupt.slice(0, 3).join(', ') +
+        (st.corrupt.length > 3 ? ', …' : '') +
+        ')',
+    );
+    fixes.push('keyflip threads show <slug> prints the path; the name is expendable: keyflip threads drop <slug>');
+  }
+  if (st.noAccount) {
+    bad.push(
+      st.noAccount +
+        ' member(s) have no account (' +
+        st.noAccountSlugs.slice(0, 3).join(', ') +
+        (st.noAccountSlugs.length > 3 ? ', …' : '') +
+        ')',
+    );
+    fixes.push('keyflip sessions assign <session-id> <account>');
+  }
+  if (bad.length)
+    return add(
+      'threads',
+      'warn',
+      // The mirror clause rides on the warning too: "you have conversation text on disk" is worth
+      // saying whether or not something else is broken, and a warning that hides it is a leak the
+      // user stops seeing.
+      bad.join('; ') + mirrorClause(st, ctx),
+      fixes.join('   ·   '),
+    );
+  add(
+    'threads',
+    true,
+    st.threads +
+      ' named task(s), ' +
+      st.members +
+      ' member(s) (' +
+      st.sessions +
+      ' session(s)' +
+      (st.chats ? ', ' + st.chats + ' chat(s)' : '') +
+      ')' +
+      (st.spanning.length ? ', ' + st.spanning.length + ' spanning 2+ accounts' : '') +
+      mirrorClause(st, ctx),
+  );
+}
+
+// Spelled in dir NAMES, never absolute paths: these rows also reach `keyflip doctor --json` and the
+// MCP tool, and a keyflip state path is a home path.
+function mirrorClause(st, ctx) {
+  return st.mirrorEnabled
+    ? '; mirror ON — ' +
+        st.mirrorFiles +
+        ' text file(s) in ' +
+        _threads.MIRROR_DIR_NAME +
+        '/ (0600, never versioned or backed up)'
+    : '; pointers only (mirror off)';
+}
+
+// #39: every state-hygiene row above looks at ONE thing (is a secret tracked? is this session an
+// orphan?). None of them can see the RELATIONSHIPS between the pieces of a login: a capture older
+// than the store it was copied from, four accounts sharing one browser cookie jar, a captured cookie
+// DB sitting at mode 644. Stat-only and offline, so it is cheap enough to run on every `doctor`.
+function chainsCheck(ctx, add) {
+  let c;
+  try {
+    c = _chains.chains(ctx, {});
+  } catch (e) {
+    return add('credential chains', 'warn', 'could not be mapped (' + String((e && e.message) || e) + ')');
+  }
+  const counts = Object.create(null);
+  c.risks.forEach(function (r) {
+    counts[r.kind] = (counts[r.kind] || 0) + 1;
+  });
+  if (!c.risks.length)
+    return add(
+      'credential chains',
+      true,
+      c.summary.present +
+        ' credential(s) mapped over ' +
+        c.accounts.length +
+        ' account(s); every capture is at least as fresh as what it was taken from',
+    );
+  const parts = Object.keys(counts)
+    .sort()
+    .map(function (k) {
+      return counts[k] + ' ' + k;
+    });
+  // Only the FIXABLE exposure makes the report red: a world-readable secret in keyflip's own state
+  // repo is one command away. An account sharing a browser profile with three others is structural
+  // reality — a permanent ✗ over it would train the user to ignore the ✗.
+  const fixable = counts['loose-mode'] || 0;
+  add(
+    'credential chains',
+    fixable ? false : 'warn',
+    parts.join(', ') + ' (' + c.summary.nodes + ' node(s), ' + c.summary.unprobed + ' in the Keychain unprobed)',
+    fixable
+      ? 'keyflip chains --tighten --apply   (chmod the state-repo secrets to 600); keyflip chains for the whole map'
+      : 'keyflip chains                     — the per-account map, and why each capture can or cannot be renewed',
+  );
+}
+
+// #41: `memory audit --apply` keeps each un-redacted original as `<key>.md.pre-scrub` so the edit is
+// reversible — and `keyflip memory` deliberately lists only *.md, so nothing would ever show that a
+// secret is still sitting on disk in plain sight. Same lesson as the rebind backups: an invisible
+// leftover is a permanent leftover. Read-only fs scan; no subprocess.
+function keepsakeCopiesCheck(ctx, add) {
+  let r;
+  try {
+    r = _leakscan.keepsakeCopies(ctx, _memory);
+  } catch (e) {
+    return;
+  }
+  if (!r.files.length) return add('keepsake originals', true, 'none');
+  const bytes = r.files.reduce(function (n, f) {
+    return n + (f.bytes || 0);
+  }, 0);
+  add(
+    'keepsake originals',
+    'warn',
+    r.files.length +
+      ' redacted keepsake(s) still hold their UNREDACTED original as .pre-scrub (' +
+      bytes +
+      ' bytes, 0600, never versioned)',
+    'read them once to confirm the redaction lost nothing you needed, then: keyflip memory audit --drop-copies',
+  );
+}
+
 // Project keys with no files anywhere inside: clutter that makes the store look like lost history.
 function emptyProjectsCheck(ctx, add) {
   let r;
@@ -324,6 +480,78 @@ function quotaPressure(ctx, add) {
       hot.join(', ') + ' at ≥95% of the 5h limit',
       'keyflip next  (rotate to an account with headroom)',
     );
+}
+
+// A background chore's cost is invisible at the moment it is chosen, which is exactly when it goes
+// wrong: a nightly `dream` on the subscription burns quota nobody decided to spend, and rerouting it
+// later leaves a schedule that says one thing and does another. Both are pure config reads — no
+// subprocess, because `keyflip doctor` must stay offline-safe (and never spawns `claude --version`).
+function choreProvider(ctx, add) {
+  const prov = _llm.resolve(ctx);
+  let rec = null;
+  try {
+    rec = _schedule.readRecord(ctx);
+  } catch (e) {
+    rec = null;
+  }
+  const line = prov.display + ' — ' + prov.cost;
+  if (rec && rec.provider && rec.provider !== prov.provider)
+    return add(
+      'chore provider',
+      'warn',
+      'now ' + line + ', but the nightly job was scheduled on "' + rec.provider + '"',
+      'keyflip dream schedule <time> again so the receipt matches, or `keyflip llm set` it back',
+    );
+  if (rec && prov.provider === 'claude')
+    return add(
+      'chore provider',
+      'warn',
+      'the nightly dream distills via ' + line,
+      'an unattended job need not spend the subscription: keyflip llm set --provider ollama',
+    );
+  add('chore provider', true, line + (rec ? ' (nightly job scheduled)' : ' (on demand only)'));
+}
+
+// #36: a stored OAuth token dies on the CALENDAR, not on the day you happen to switch — and the
+// proof is a switch that "succeeds" and opens an onboarding screen. `keyflip refresh --all` fixes
+// that, but only if it runs while the tokens are still alive, which is precisely the moment nobody
+// thinks about. So the honest diagnosis is "is anything renewing them?", asked of the install
+// RECEIPT (written by `install`, inside the state dir) rather than of ~/Library — doctor must stay
+// offline, hermetic and reproducible in a test, and a receipt-free schedule is not a schedule keyflip
+// agreed to anyway.
+function tokenRenewalCheck(ctx, add) {
+  let accounts = [];
+  try {
+    accounts = _profiles.list(ctx.configDir);
+  } catch (e) {
+    accounts = [];
+  }
+  if (!accounts.length) return; // nothing stored, nothing to renew
+  let rec = null;
+  try {
+    rec = _schedule.readRecord(ctx, { job: 'refresh' });
+  } catch (e) {
+    rec = null;
+  }
+  if (rec) {
+    const at = rec.at;
+    return add(
+      'token renewal',
+      true,
+      accounts.length +
+        ' account(s), renewed nightly' +
+        (at ? ' at ' + String(at.h).padStart(2, '0') + ':' + String(at.m).padStart(2, '0') : '') +
+        ' (' +
+        rec.kind +
+        ')',
+    );
+  }
+  add(
+    'token renewal',
+    'warn',
+    accounts.length + ' saved account(s) and nothing renews their tokens',
+    'keyflip refresh --schedule — an unused token expires (~6 days) and only a human sign-in revives it; `keyflip verify` shows which are already dead',
+  );
 }
 
 function settingsJson(ctx, add) {

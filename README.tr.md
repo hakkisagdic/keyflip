@@ -116,8 +116,16 @@ kaydeder (tek tek). macOS'ta ilk Keychain okumasında **"Always Allow"** (Her Za
   → [1] alice@example.com
     [2] bob@example.org
 
-  [number] switch   [a] save current   [d] delete   [r] refresh   [q] quit
+  [number] switch   [a] save current   [d] delete   [t] threads   [r] refresh   [q] quit
 ```
+
+`[t]` **thread** ekranını açar: aynı görevin, kota ortada tükenince iki hesabın oturumlarına dağılmış
+halini tek ad altında gösterir. Her thread'i üyeleriyle listeler — hangi hesabın, transkripti nerede,
+ne kadar taze ve onu sürdürecek `cd … && claude --resume …` satırı birebir — ayrıca `[s]` ile *bölünmüş
+işi kendisi arar*. Bilerek salt-okunur: transkript gövdesi okumaz, hiçbir şey yazmaz, kota harcamaz;
+bir thread'i değiitmenin tek yolu adını CLI'dan yazmak (`keyflip threads create|add|open …`). Atanmamış
+bir üye düzeltme komutuyla birlikte işaretlenir, çünkü keyflip'in sahibini bilemediği bir oturum
+*o anki hesapla* devam eder — bir görev tam olarak böyle sessizce bölünür.
 
 Claude / Claude Code açıksa keyflip önce **"Geçiş için Claude kapatılacak — devam edilsin mi?"** diye sorar. **Evet**'te Claude'u kapatır, geçer ve yeniden açar (macOS); **hayır**'da iptal eder, hiçbir şey değişmez.
 
@@ -135,15 +143,33 @@ keyflip <ad|numara>           # o hesaba geç (Claude'u kapatmadan önce sorar)
 keyflip <ad> --restart        # ...sormadan Claude'u kapatıp yeniden açar
 keyflip <ad> --force          # ...Claude'u kapatmadan takas eder (kendiniz yeniden başlatın)
 keyflip <ad> --browser        # ...tarayıcıyı + Chrome uzantısını da bu hesaba hizalar
+keyflip <ad> --dry-run        # ...önce PLANI göster: neyin üzerine yazılacak, ne engelliyor ve o
+                              # hesap gerçekten kimlik doğrulayabiliyor mu — HİÇBİR ŞEYE dokunmaz
+keyflip <ad> --no-verify      # ...geçişin sonunda yaptığı geri-okumayı atla (varsayılan olarak çalışır)
+keyflip <ad> --rollback-on-fail  # ...geri-okuma geçişin tutmadığını söylerse önceki hesabı geri koyar
+                              # (bilerek açılır: kimlik bilgilerini yeniden yazar)
 keyflip next                  # sıradaki kayıtlı hesaba dön
 keyflip next --strategy best  # ...veya kalan kotaya göre seç (ayrıca: next-available)
 keyflip provider add <ad> --base-url <url> --key-file -   # 3. taraf endpoint kaydet
 keyflip use <ad>              # Claude Code'u bir provider'a yönlendir (geri: keyflip provider off)
 keyflip doctor                # sağlık kontrolü: git-e-sır, orphan oturumlar, versiyonlama, config, giriş, endpointler, masaüstü oturumu
+                              #   --history ekle: keyflip'in commit ettiği her blob'da hâlâ okunabilir bir sır var mı?
 keyflip backup now|list|restore <n>   # keyflip metadata anlık görüntüsü (sırsız)
 keyflip usage --history       # hesap-başına kullanım eğilimi + failover olayları
 keyflip usage --providers     # bu makinedeki DİĞER AI araçlarında kullanım/limit (Codex/Gemini/Cursor/Copilot/OpenRouter + Claude) — CodexBar tarzı monitör
 keyflip status                # her yüzey hangi hesapta (CLI + masaüstü uygulaması)
+keyflip verify [hesap] [--usage] [--live]  # oraya geçmek ŞİMDİ işe yarar mı? saklanan/canlı token
+                              # bitişini, uygulama cookie yakalamasını (oturum cookie'si + bitişi),
+                              # token önbelleğini ve tarayıcı yakalamasının yaşını okur — sır değeri asla
+keyflip refresh [hesap|--all] # saklı OAuth tokenları yeniler; bir Claude çalışırken yenilemeyi REDDEDER
+                              # (canlı oturumun altında rotasyon bir yüzeyi logout eder)
+keyflip refresh --schedule [--at 04:30] | --unschedule | --schedule-status
+                              # `refresh --all`'ı her gece zamanlayıcıya koy (launchd/cron) — token
+                              # takvimde ölür, geçiş yaptığın günde değil; boş vaktte gözetimsiz koşar
+keyflip chains [hesap] [--tighten [--apply]]   # bir giriş NEYDEN OLUŞUR: her yakalama hangi depodan
+                              # kopyalandı, her parçayı kim yenileyebilir (araç / geçişte keyflip / yeni
+                              # yakalama / sadece insan), ve ne bayat, paylaşılmış ya da herkese okunabilir.
+                              # Yalnız stat — sırrı hiç okumaz, Keychain'e hiç dokunmaz
 keyflip list [--usage]        # hesaplar; --usage her hesabın 5s/7g kullanımını ekler
 keyflip autoswitch            # kullanımı izle; eşikte CLI hesabını otomatik değiştir
 keyflip link [ad|--remove]    # bu dizin ağacını `run` için bir hesaba eşle
@@ -206,6 +232,9 @@ keyflip consolidate [--watch] # her hesabın sohbet dizinini eşitle; her biri T
 keyflip remove <ad|numara>    # kayıtlı hesabı sil (onay ister; --force ile atla)
 keyflip logout [--browser] [--desktop]   # canlı oturum(lar)dan çık — kayıtlı hesaplar korunur
 keyflip history | undo | restore <ref>   # git-versiyonlu config: her değişikliği incele / geri al / geri dön (sırlar asla commit edilmez)
+keyflip doctor --history      # bir sır eski bir commit'te hâlâ okunabilir mi? (her blob'u tarar, türü bildirir)
+keyflip scrub-history [--apply]  # onları history'den çıkar (önce dry-run; bundle yedeği + git-filter-repo; canlı dosya için --include-tracked)
+keyflip secrets list | tolerate <yol> [--kind T] | untolerate <yol>  # hangi bulgular BEKLENEN bir şey (bedava/döndürülmüş/ölü anahtar): alarmı ve rotasyon ısrarını bitirir, temizliği asla
 keyflip reset [--soft]        # FABRİKA sıfırlaması: TÜM keyflip verisini SİL (--soft hesapları korur)
 keyflip uninstall [--purge]   # keyflip'i bu makineden kaldır (--purge veriyi de siler)
 keyflip upgrade               # keyflip'in kendisini güncelle (kurulum yöntemini algılar)
@@ -295,9 +324,16 @@ keyflip resume 3                       # listedeki 3. öğenin devam komutunu ya
 keyflip resume <id> --run             # `claude --resume <id>`'yi kendi dizininde başlat
 keyflip sessions rebind <eski> <yeni> # klasörünü yeniden adlandırdıktan sonra projenin chat geçmişini yeniden bağla
 keyflip sessions assign <id> <hesap>  # bir oturumu başka bir hesap altında sürdür (resume --run) — profil değiştirmeden
+keyflip threads                       # AYNI görevin oturumlarına tek ad — HESAPLAR ARASI (işaretçi, kopya değil)
+keyflip threads suggest               # ZATEN 2+ hesaba bölünmüş işi bul — id tahmin etmeden
+keyflip threads create <slug> --title "…"   # sonra: keyflip threads add <slug> <oturum-id|--chat uuid> [--account <ad>]
+keyflip threads show <slug> [--timeline] [--md]  # thread'i tek kronolojik görünüm olarak (--md = yalnız belge)
+keyflip threads open <slug> [--run]   # işin son durduğu yerde, ona sahip hesabın kimliğiyle devam ettir
+keyflip threads where <id> | remove <slug> <id> | drop <slug> -y   # bul / ayır / adı UNUT (transkriptlere dokunmaz)
+keyflip threads mirror <slug> | unmirror <slug>   # opsiyonel: birleşik sohbet metnini thread-mirror/'a yaz (`config set threads.mirror true` ister)
 keyflip send <id> "<mesaj>" [--as <hesap>] [--fork]   # bir oturuma mesaj enjekte et (headless yönlendir/sürdür; ör. başka makineden)
 keyflip sessions archive <id|--older-than 30d>   # eski transkriptleri keyflip'e taşı (gzip'li); unarchive geri yükler
-keyflip sessions distill <id>   # bir sohbeti kalıcı hatıraya damıt (`claude -p` ile); `keyflip memory` ile gözat
+keyflip sessions distill <id>   # bir sohbeti kalıcı hatıraya damıt (damıtma modelini `keyflip llm` seçer); `keyflip memory` ile gözat
 keyflip sessions compact <id> [--apply]   # transkripti küçült: hacimli tool çıktısını ele, sohbeti koru (varsayılan dry-run)
 keyflip sessions scrub <id> [--apply] [--categories …] [--llm-url URL]   # PII redakte et (e-posta/telefon/TCKN/kart/IBAN/IP/sırlar + özel + opsiyonel yerel LLM) — varsayılan dry-run, --apply'da yedekler
 keyflip sessions delete <id> [--hard]   # bir sohbeti sil — varsayılan önce arşivler (geri alınabilir); --hard kalıcı siler
@@ -306,8 +342,9 @@ keyflip sessions export <id> [--format md|html|json]   # bir sohbeti temiz, payl
 keyflip foreign <oturum-dosyası> [--format md|html|json]   # BAŞKA bir ajanın oturumunu (mesaj-olayı JSONL — Claude Code/opencode/Gemini/Qoder CLI — / Cursor SQLite / genel JSON / Copilot YAML / Aider MD) aynı görünüme normalize et
 keyflip handoff [--to claude|cursor|kiro|opencode|windsurf|generic] [--out CONTINUE.md]   # YENİ bir yapay zeka aracının bu projeyi .keyflip/ üzerinden (bağlam, görevler, kararlar, kurallar, son checkpoint) her şeyi yeniden okumadan sürdürmesi için bir DEVAM-İSTEMİ üretir
 keyflip dream [--older-than 30d] [--archive] [--apply]   # "dreaming": eski sohbetleri tek geçişte damıt (+ arşivle); varsayılan dry-run
-keyflip recall "<sorgu>" [--answer]   # TÜM sohbetlerinde arama (BM25; --semantic=embeddings; --answer = `claude -p` ile atıflı sentez)
+keyflip recall "<sorgu>" [--answer]   # TÜM sohbetlerinde arama (BM25; --semantic=embeddings; --answer = damıtma modelinin atıflı sentezi)
 keyflip dream schedule [--at 03:00] | unschedule | status   # dream'i her gece gözetimsiz koştur (launchd/cron)
+keyflip llm [status|set --provider claude|ollama|openai [--model M] [--base-url U] [--key-env AD]|test [--timeout ms]|off]   # bu görevleri hangi model koşar — ve kimin kotasını yakar
 keyflip cowork --search "sınav"       # masaüstü Cowork oturumları (tüm hesaplar)
 keyflip chat                          # claude.ai Chat listesi (deneysel) — `--as <hesap>` başka hesabı okur
 keyflip chat get <kısa-id|başlık>     # bir bulut sohbetini oku (listelemedeki kısa id yeterli)
@@ -340,6 +377,238 @@ sunucu tarafında; `keyflip chat` bunu bir **claude.ai oturum çerezi**yle okur.
   `keyflip transfer`.
 
 (Uygulama tercihleri, `design/`, worktree'ler global/boş — orada taşınacak hesap-bazlı veri yok.)
+
+### Görevleri hangi model koşar (`llm`)
+
+`dream`, `sessions distill` ve `recall --answer` ev işidir — aboneliğin parasını yemesi gereken iş
+değil. Yine de varsayılan olarak `claude -p`'yi çağırırlar, yani **aktif hesabın** kotasını harcarlar;
+kurulu bir `dream schedule` bunu her gece 03:00'te gözetimsiz tekrarlar. `keyflip llm` bu tercihi
+açık ve geri alınabilir hale getirir:
+
+```bash
+keyflip llm                                   # görevleri kim koşuyor, maliyeti ne
+keyflip llm set --provider ollama --model qwen2.5:7b-instruct   # yerel, ücretsiz, makineden çıkmaz
+keyflip llm set --provider openai --base-url https://own-gateway/v1 --key-env GW_KEY --model NAME
+keyflip llm test                              # toplu işten önce endpoint'in cevap verdiğini kanıtla
+keyflip llm off                               # varsayılana dön (`claude -p`)
+```
+
+- Sağlayıcılar: `claude` (Claude Code CLI, aktif hesabın kotası), `ollama` (yerel, varsayılan
+  `http://127.0.0.1:11434/v1`), `openai` (OpenAI-uyumlu herhangi bir endpoint — API anahtarı olan bir gateway).
+- **Endpoint anahtarı saklanmaz.** `--key-env` bir ortam değişkeninin *adını* alır; value'su çağrı
+  anında shell'den okunur. Durum dizini bir git reposu olduğu için saklanan anahtar sızdırılmış
+  anahtardır; `--key-env`'e anahtar biçiminde bir değer verilirse komut reddeder.
+- Her görev, bir şey harcamadan **önce** `distills via <sağlayıcı> <model> — <maliyet>` yazdırır;
+  yazılan hatıralar hangi modelden üretildiğini kaydeder. `dream schedule` kurulum anındaki sağlayıcıyı
+  fişe yazar ve `keyflip doctor` bu fiş saparsa — ya da gecelik iş hâlâ aboneliği yakıyorsa — uyarır.
+- Paylaşılan duruma dokunmadan tek seferlik yönlendirme: `KEYFLIP_LLM_PROVIDER=ollama keyflip dream --apply`
+  (ayrıca `KEYFLIP_LLM_MODEL`, `KEYFLIP_LLM_BASE_URL`, `KEYFLIP_LLM_KEY_ENV`) — cron girdisinin kullandığı yol.
+- Önce `ollama pull <model>` (ya da `--model`'i sahip olduğun bir modele çevir); `keyflip llm test`
+  endpoint'in cevap verdiğini kanıtlar. Soğuk bir yerel model ağırlıkları yüklerken dakika harcar, bu
+  yüzden self-test 3 dakika bekler — `keyflip llm test --timeout 300000` ile uzat ya da daha küçük model seç.
+
+### Hiçbir şey kendi kendine ölmesin (`refresh --schedule`)
+
+Bir Anthropic OAuth token'ı yaklaşık altı gün yaşar ve **takvimde** ölür — geçiş yaptığın günde değil.
+Bir geçişin "başarılı" görünüp sonra giriş ekranı açmasının nedeni bu boşluk: saklı token haftalar önce
+sessizce ölmüştür, `keyflip refresh` ise yalnızca kimlik bilgisi boştayken çalışır. O yüzden onarım
+hatırlanacak değil, zamanlanacak bir şey:
+
+```bash
+keyflip refresh --schedule                      # launchd (macOS) / crontab (Linux), varsayılan 04:30
+keyflip refresh --schedule --at 05:15
+keyflip refresh --schedule-status               # ne koşar, ne zaman, çıktısı nereye yazar
+keyflip refresh --unschedule
+```
+
+- `keyflip refresh --all`'ı koşar: her kayıtlı hesabın token'ı hiçbir şey onu kullanmırken yenilenir.
+  **Model çağırmaz, kota harcamaz** — gözetimsiz `dream`'den farkı bu; bu yüzden kendi launchd
+  etiketi, kendi crontab işareti ve kendi makbuzu var. İki iş birbirinin üstüne yazmaz, ve 04:30
+  bilinçli olarak dream'in 03:00'ı değil.
+- **Canlı bir Claude oturumu varsa koşu hiçbir şeyi değiştirmez.** Bir oturum hâlâ tutarken refresh
+  token'ını döndürmek o yüzeyi logout eder; iş bunu reddedip bir sonraki boş geceden sessizce bekler.
+  `--json` tarafında bu red bir paragraf değil `{refused, changed:false}` alanıdır — exit 0 bir no-op'u
+  yenileme sanmanın tam yoludur.
+- Çıktısı `~/Library/Logs/refresh-keyflip.log` dosyasına gider ve plist `AbandonProcessGroup` taşır:
+  iş koştuktan sonra okunabilir, kopuk çocuk süreçler iş bitiminde öldürülmez. launchd'in `PATH`'i
+  `/usr/bin:/bin:/usr/sbin:/sbin` olduğu için zamanlayıcı mutlak bir çalıştırıcı + betik yolu yazar —
+  fnm ile kurulmuş bir `keyflip` yoksa başka türlü hiç bulunamaz.
+- `keyflip doctor`'da **token renewal** satırı var: hesaplar yenilenmeyen tokenlar tutarken uyarır,
+  bir şey zamanlanınca yeşile döner. MCP tarafında: `keyflip_refresh_schedule` (`action=status|install|
+  remove`, `confirm` ister). Zamanlanmış bir yenilemenin *kurtaramayacağı* kısımlar için `keyflip
+  chains`'e bak — masaüstü uygulamasının session cookie'si insan ister, hiçbir zamanlayıcı bunu değiştirmez.
+
+### Bir sır geçmişte hâlâ okunabilir mi? (`doctor --history`, `scrub-history`)
+
+keyflip kendi durum dizinini git'le versiyonlar; böylece her değişiklik incelenebilir ve geri
+alınabilir — ama bir zamanlar bir ignore kuralından sızmış her sır da aynı şekilde saklanır. Bugün
+**takip edilen** dosyalara bakmak yetmez: `git rm --cached` dosyayı gelecekteki commit'lerden durdurur,
+zaten kaydetmiş olan commit ise eski blob'u eksiksiz çözmeye devam eder. Transkript aynalamasına
+geçmeden önce temizliğinin kanıtlanması gereken işte bu rezidüeldir; çünkü insanlar API anahtarlarını
+sohbetlere yapıştırır.
+
+```bash
+keyflip doctor --history          # commit edilmiş her blob'u tara; İÇERİĞİ değil, TÜRÜNÜ bildir
+keyflip scrub-history             # plan: hangi yol, hangi tür, kaç commit onu tutuyor
+keyflip scrub-history --apply     # bundle yedeği → git-filter-repo → kanıt olarak yeniden tarama
+keyflip memory audit [--apply]    # aynı tarama keyflip'in hatıralarında (keepsake)
+```
+
+- **Rapor, sırrın kopyası olmaz.** Bulgular yol + sır *türü* (`anthropic-api-key`, `jwt`,
+  `private-key-block`…) + blob id + boyut + onu kaç commit'in tuttuğunu taşır; terminal, log dosyası ve
+  çıktıyı okuyan agent temiz kalır.
+- **Gizli bir dizinin altındaki yakalama, byte'ları hiçbir bilinen biçime uymasa bile sırdır** —
+  tarayıcının tanımadığı bir format yine bir kimlik dosyasıdır.
+- **Bugün hâlâ takip edilen bir yolun history'si, `--include-tracked` verilmeden temizlenmez**: canlı
+  dosyanın history'sini silmek, working tree'den de silmek demektir. Yalnızca genel long-hex biçimine
+  uyan eşleşme `[weak match]` olarak işaretlenir — 64 hex karakterlik bir `userID` bir tanımlayıcıdır,
+  bir dosyayı yok etme gerekçesi değil.
+- `--apply`, `git-filter-repo` kurulu **değlse reddeder** (elle yazılan kısmi bir rewrite repoyu
+  bozabilir); önce güncel history'nin `git bundle` yedeğini yazar ve o bundle doğrulanmazsa devam
+  etmez; sonra yeniden tarar ve history'nin kanıtlanmış biçimde temiz olup olmadığını söyler.
+- Senin yerlerine yapamayacağı iki şey: bundle, sen taşıp silene kadar sırları içerir ve **kimlikler
+  döndürülmelidir** — çıkarılmış ama hâlâ geçerli bir sır, düzelmiş sır değildir.
+- `memory audit --apply` sırları yerinde karalar ve her orijinali `<key>.md.pre-scrub` olarak
+  yanına koyar (0600; `pre-scrub` gizli uzantı setine kayıtlıdır, yani o kopya asla versiyonlanmaz ve
+  yedeklenmez). Karaelenmiş bir hatıra, `scrub-history` çalışana kadar git history'sinde okunur kalır.
+- MCP tarafında: salt-okunur `keyflip_history_audit` + `keyflip_memory_audit`, `confirm` isteyen
+  `keyflip_history_scrub` + `keyflip_memory_redact`.
+
+#### "Onu zaten biliyorum" — tolerans politikası (`secrets`)
+
+Her bulgu bir sorun değildir. Bedava bir Google AI anahtarı, oturumu haftalar önce düşmüş bir JWT, bir
+atılabilir hesabın kaydı — hepsi gerçekten sırdır, hiçbiri alarmı hak etmez. Kullanıcının karara bağladığı
+bir şeyin her taramada yeniden ✗ olarak basılması tam da gürültüdür; gürültü, gerçekten sorun olan bulgunun
+gözden kaçmasının sebebidir. `keyflip secrets`, "beklenen bu" kararını her taramada vermek yerine bir kez
+bir dosyaya yazmanın yoludur.
+
+```bash
+keyflip secrets list                 # her bulgu + her kural, ve her kuralın neyi susturduğu
+keyflip secrets list --alarms        # yalnızca hâlâ alarm olanlar
+keyflip secrets tolerate "surfaces/codex/x/auth.json" --kind jwt --note "oturum düştü"
+keyflip secrets tolerate --kind google-api-key   # her nerede çıkarsa çıkmasın sorun olmayan bir tür
+keyflip secrets untolerate <yol>     # alarm geri gelir
+```
+
+- **Tolerans ALARMI bitirir, temizliği asla.** Toleranslı yol `scrub-history` planında kalır ve history'den
+  yine silinir; duran şey ✗ ile rotasyon tavsiyesidir. "Bu sır geçmişte kalsın" anlamına bir seçenek
+  bilinçli olarak yok — o bir politika değil, config dosyası olan bir sızıntı.
+- **Bir kural yol ve tür söyler, değer asla** — değere göre eşleşmek sırrın parmak izini git'le versiyonlanan
+  durum reposuna koymak olurdu. `--note` metni saklanmadan önce redakte edilir; `secrets-policy.json`
+  kendisi gizli bir yol **değildir**, yani `keyflip backup` ile taşınır ve `keyflip undo` ile geri alınabilir.
+- **Bilinçli olarak reddedilenler:** bilinmeyen bir `--kind` (hiçbir şeyi susturmaz, kalan alarm hata gibi
+  görünür) ve türü olmayan çıplak `*` — o politika değil, tarayıcının kapatılması. `*` dizin sınırını aşmaz
+  ve `*`/sonunda `/` olan bir kural **etki alanıyla** birlikte basılır, çünkü o yol altındaki YENİ her şeyi
+  de kapsar.
+- **Kapalı tarafa düşer (fail closed).** Bozuk/okunamaz politika hiçbir kuralı uygulamaz, bunu söyler ve her
+  bulgu alarm olarak kalır; hatalı kurallar düşürülür ama sayılır.
+- **Hatıralar (keepsake) asla susturulmaz.** `memory audit` politikasızdır: damıtılmış bir "anahtarım
+  sk-ant-…" metni keyflip'in *senin hakkında* yazdığı bir satırdır, senin saklamayı seçtiğin bir dosya değil.
+- `doctor --history` bulguları değil **alarm sayısı**nı başlığa koyar ve politikanın susturduklarını soluk bir
+  satırla bildirir — temiz başlık her zaman açıklanabilir. MCP: `keyflip_secrets_policy` (salt-okunur) ve
+  `keyflip_secrets_tolerate` (`action=tolerate|untolerate`, `confirm` ister).
+
+### Bir giriş gerçekte neyden oluşur? (`chains`)
+
+Bir hesap asla tek dosya değildir. Canlı bir kimlik bilgisi **artı keyflip'in ondan çıkardığı her
+kopya**: OAuth profili, masaüstü uygulamasının token önbelleği *ve* oturum cookie'si, bir tarayıcı
+cookie yakalaması, bir sağlayıcı API anahtarı, `surfaces/` altında üçüncü taraf bir kayıt. Bu kopyalar
+bir grafik oluşturur ve geçişin çalışıp çalışmayacağını o grafiğin üç özelliği belirler — hiçbir önceki
+komut bunları göremezdi, çünkü her biri tek dosyaya bakıyor, doğrunun olduğu yer ise dosyalar arası
+ilişki:
+
+- **Yenilenme.** Uygulamanın `oauth:tokenCache` değeri *türetilmiştir*: uygulama onu, `sessionKey`
+  cookie'si ile `/authorize` çağırıp yeniden basar. Yani zincirin gerçek kökü cookie'dir ve onu
+  insan dışında hiç kimse yenileyemez. Bir token blob'u kusursuz görünürken hesabın kendisi ölmüş
+  olabilir — "geçtim, uygulama sadece giriş ekranını gösterdi" tam olarak budur.
+- **Bayatlık.** Bir yakalama, hareket etmeye devam eden bir deponun kopyasıdır. Kaynağın mtime'ı
+  yakalamadan yeni ise, o yakalamayı geri yüklemek geçmişi geri yükler.
+- **Paylaşım.** Tek bir tarayıcı profili, ya da tek bir uygulama cookie kavanozu, **bir tek** hesabın
+  oturumunu tutar. Aynı depodan çıkarılmış her yakalama diğerleriyle yarışır: Chrome'a bir hesapla
+  giriş yapmak, o hesabın diğerlerinden aldığı yakalamaları sessizce geçersiz kılar.
+
+```bash
+keyflip chains                 # tüm harita, artı tüm bulgular
+keyflip chains is              # tek hesap: ne tutuyor, kimi yeniler, nerede sonlanıyor
+keyflip chains --tighten       # durum reposunda herkese okunabilir ne var (dry run)
+keyflip chains --tighten --apply   # o dosyaları 600 yap, sonra kanıt için yeniden tara
+```
+
+- **Sırrı hiç okumaz.** Harita yalnız yol ve `stat()` sonuçlarından kurulur — boyut, mtime, mode.
+  Ayrıca `security … -w` çalıştırmaz, çünkü bir Keychain kaydının var olduğunu kanıtlamanın tek yolu
+  sırrı yazdırmaktır; o konumlar `exists: null` (probed değil) olarak raporlanır. Ve git'le
+  versiyonlanan durum reposuna **hiçbir şey yazmaz**, dolayısıyla sır değerinin parmak izini
+  history'ye bırakamaz.
+- **Şikâyet değil, bulgu.** Her risk kendi çözümünü söyler (`re-capture it while that account is
+  logged in`, `keyflip add <ad>`, `keyflip chains --tighten`) ve `high` olanlar önce sıralanır.
+  `doctor` satırını yalnız keyflip'in kendi bırakmış olduğu, sahibinden başkasına okunabilir bir sır
+  kızartabilir — dört hesabın tek Chrome profilini paylaşması yapısal gerçektir, üzerine kalıcı bir ✗
+  koymak ✗'yi görmezden gelmeyi öğretir.
+- **`--tighten` bilinçli olarak sınırlıdır**: yalnız durum reposunun içindeki, yalnız gizli yol
+  kümesindeki dosyalar. Chrome'un kendi cookie DB'sinin 644 olması normaldir (macOS onu dosya
+  sisteminin üstünde korur), o yüzden ona da dokunulmaz, uyarı da edilmez.
+- CLI'ın `--json` çıktısı ve MCP sonuçları yalnız repoya ya da `~`'e göreli yollar taşır
+  (`publicNode`/`publicRisk` mutlak olanları düşürür); yani haritayı bir agent kaydına yapıştırmak
+  dosya sistemini ona haritalamaz.
+- MCP tarafında: salt-okunur `keyflip_chains` (+ opsiyonel `account`), `confirm` isteyen
+  `keyflip_chains_tighten`. `keyflip doctor` her teşhiste bu haritayı çalıştıran **credential chains**
+  satırını kazandı.
+
+### Hesaplar arası tek görev (`threads`)
+
+Kota görevin ortasında tükenir, hesap değiştirirsin, ve aynı iş bir anda üç nesneye bölünür: gmail
+altında bir Claude Code oturumu, yahoo altında bir tane daha, ve kimsenin işaret edemediği bir
+claude.ai sohbeti. `keyflip threads` o işe **tek bir ad** verir. Bir thread bir *işaretçi dosyasıdır*,
+`~/.config/keyflip/threads/<slug>.json`; oturum id'lerini ve chat uuid'lerini, hangisinin hangi hesaba
+aidiyetle birlikte listeler — kap değildir. Yani hesap değiştirmek işi bölmeyi bırakır, `keyflip
+chat`'in parça parça erişimi de adlandırılmış tek bir göreve dönüşür.
+
+```bash
+keyflip threads suggest                    # ZATEN 2+ hesaba bölünmüş iş, proje klasörü başına
+keyflip threads create dugum-acmak --title "Düğüm açmak" --session 1a2b3c4d
+keyflip threads add dugum-acmak 9f8e7d6c --account yahoo   # kısa önek yeterli — tam id yazılır
+keyflip threads add dugum-acmak 3b0c…e1a4 --chat            # bir claude.ai sohbeti de üyedir
+keyflip threads show dugum-acmak --timeline               # tek kronolojik sohbet, kaynağıyla birlikte
+keyflip threads open dugum-acmak            # işin son durduğu yer, ona sahip hesabın kimliğiyle
+keyflip threads where 1a2b3c4d              # bu oturumu hangi thread'ler içeriyor
+keyflip threads drop dugum-acmak -y    # yalnız ADI unutur; her transkript ve her atama yerinde kalır
+```
+
+- **İşaretçi, asla kopya.** Transkript Claude'un yazdığı yerde kalır. Hiçbir şey çoğalmaz; bir
+  thread'i silmek, bozmak ya da taşımak bir mesajı değil yalnız bir adı kaybedebilir. `keyflip threads
+  show --md` hiçbir şey yazmadan birleşik belgeyi basar.
+- **Menüdeki `[t]` aynı deposunu salt-okunur hali.** Hesap değiştiricinin bir thread ekranı var: her
+  thread, üyeleri, her üyenin hangi hesaba ait olduğu, transkriptinin nerede olduğu, ne kadar taze
+  olduğu ve onu sürdüren `cd … && claude --resume …` satırının birebir hali — artı *bulabildiği*
+  bölünmüş işler için `[s]`. Asla bir transkript gövdesi okumaz, asla yazmaz, asla kota harcamaz;
+  ad koymak ve adı silmek CLI'da kalır, çünkü bir thread hesap geçişinin sessizce bölebildiği tek şey.
+- **Bölünmeyi sen sayıp dökmeni beklemeden bulur.** `suggest` son oturumları proje klasörü başına
+  toplar ve **iki veya daha fazla adlandırılmış hesabın** çalıştığı klasörleri — bir thread'in zaten
+  kapsadıklarını düşürerek — raporlar; yani işlerini adlandırdıkça liste küçülür. Bir hesap artı
+  atanmamış oturumlar *raporlanmaz*: o bir hesap geçişi değil, sahibinin atamadığı bir oturumdur
+  (`keyflip sessions assign <id> <hesap>` ile ata).
+- **Birleştirme, nerede eksik kaldığını söyler.** Her tur üyesini ve hesabını taşır
+  (`↪ yahoo'dan · oturum 9f8e7d6c`); tarihsiz turlar kararların arasına sıkıştırılmak yerine başta bir
+  grup olarak kalır; bir bulut sohbeti offline tur katkısı yapamaz ve okuyacak `keyflip chat get …`
+  komutuyla `unavailable` altında listelenir; `threads.mergeMaxMiB` (varsayılan 8 — buradaki
+  transkriptler 24 MB'a kadar çıkıyor) tarafından kesilen bir üye sessizce kısa sayılmaz, kesilmiş
+  diye sayılır.
+- **Diskte sohbet metni görmek opsiyoneldir ve çift kapılıdır.** `threads mirror`,
+  `~/.config/keyflip/thread-mirror/<slug>.md` dosyasını yalnız `keyflip config set threads.mirror true`
+  **ve** çağrı izin verirlerse yazar; o dizin kayıtlı bir sır dizinidir (0600, asla versiyonlanmaz,
+  yedeklenmez, senkronlanmaz, `migrate` dışlanır), ve durum reposunda bir git remote varsa ayna yine de
+  reddeder. Bir işaretçi dosyasına transkript düzyesi de kopyalanmaz — bir oturumun ilk istemi
+  yapıştırılmış bir API anahtarının bulunduğu yerdir.
+- **Adlar dosya adıdır, o yüzden normalize edilir.** `düğüm` → `dugum`, `../secrets/x` `threads/`
+  dışına çıkamaz, ve belirsiz önek tahmin edilmez, reddedilir. Bozuk ya da elle düzenlenmiş bir
+  thread'i `list` raporlar ve yazmayı engeller; `keyflip doctor`ın okunamaz dosyalar, hesabı
+  çözümlenemeyen üyeler ve açık ayna için bir **threads** satırı var.
+- MCP tarafında: salt-okunur `keyflip_threads` (liste / `slug` / `timeline` / `suggest` / tersten `id`)
+  artı `confirm` isteyen `keyflip_thread_create|add|remove|drop|mirror`. MCP sonuçları **ve** tüm `--json`
+  çıktıları yolları durum reposuna ya da `~/.claude/projects`'e göreli döndürür — asla kullanıcının ev
+  yoluyla değil, çünkü bu çıktı bir agent kaydına yapıştırılmak içindir. Bir devam komutunun `cwd`'si
+  mutlak kalır (çalıştırmak onu ister, bir çalışma dizini sır değildir) ve insan çıktısı, açılabilsin diye
+  gerçek yolları korur.
 
 ## Bağlam Katmanı — taşınabilir proje hafızası (`.keyflip/`)
 
@@ -476,11 +745,24 @@ Agent'lar CLI'ı tahmin etmek zorunda kalmasın — keyflip **MCP** konuşur:
 claude mcp add keyflip -- keyflip mcp     # veya: keyflip mcp --setup
 ```
 
-**Tüm CLI yüzeyi 130+ MCP aracı olarak sunulur** — agent hiçbir şeyi kabuğa
+**Tüm CLI yüzeyi 160+ MCP aracı olarak sunulur** — agent hiçbir şeyi kabuğa
 dökmeden yapabilir: hesaplar (`keyflip_status/list/switch/next/add/account_remove`), provider'lar
 (`keyflip_providers`, `keyflip_provider_use/add/remove`, `keyflip_test_provider`, `keyflip_speedtest`),
 **filo** kontrol düzlemi (`keyflip_fleet_status/switch/send_account/collect/keys/trust`),
-oturumlar (`keyflip_sessions`, `keyflip_resume_command`, archive/distill/compact), migrate + LAN
+oturumlar (`keyflip_sessions`, `keyflip_resume_command`, archive/distill/compact), **hesaplar arası tek
+görev** (`keyflip_threads` salt-okunurdur: liste / `slug` / `timeline` / `suggest` / tersten `id` arama;
+`keyflip_thread_create|add|remove|drop|mirror` yazar ve `confirm` ister), **geçiş ön kontrolü**
+(`keyflip_switch_plan` + `keyflip_verify` salt-okunurdur: bir şey hareket etmeden önce tam yazılacaklar,
+engeller, kota durumu ve geri alma kapsamı), **görev maliyeti** (`keyflip_llm` — `dream`/`distill`/
+`recall` hangi modelin koşacağı ve kimin kotasını yaktığı; `keyflip_recall` `answer: true` atıflı sentez
+verir), **geçmiş hijyeni** (`keyflip_history_audit` + `keyflip_memory_audit` salt-okunurdur: commit
+edilmiş her blob ve hatıralar taranır; `keyflip_history_scrub` + `keyflip_memory_redact` yazar ve
+`confirm` ister; `keyflip_secrets_policy` okur, `keyflip_secrets_tolerate` ise değersiz
+"bu bulgu beklenen bir şey" politikasını yazar — alarmı susturur, yolu temizlikten muaf tutmaz),
+**kimlik bilgisi zincirleri** (`keyflip_chains` salt-okunurdur: her yakalamanın
+hangi depodan kopyalandığı, her parçayı kimin yenileyebileceği, neyin bayat/paylaşılmış/herkese
+okunabilir olduğu — yol ve stat, asla değer; `keyflip_chains_tighten` chmod eder ve `confirm` ister),
+migrate + LAN
 (`keyflip_migrate_*`, `keyflip_transfer_pull`), WebDAV sync (`keyflip_sync_test/push/pull`),
 `keyflip://` linkleri (`keyflip_share/share_apply`), masaüstü gateway (`keyflip_gateway_*`), MCP-sunucu
 kaydı (`keyflip_mcpreg_*`), dizin pin'leri (`keyflip_link/links`), tanılama
@@ -592,6 +874,8 @@ yakalamalar seçtiğiniz hesapta kalmaya devam eder.
 >   **kapatılmadan önce sorulur** — *hayır* derseniz iptal edilir.
 > - `--restart`: sormadan kapatıp yeniden açar (macOS).
 > - `--force`: kapatmadan geçer — sonrasında Claude'u kendiniz yeniden başlatın. **Masaüstü uygulaması** başka bir hesapta çalışıyorsa paylaşılan girişi geri yazıp geçişi bozabilir; `--force` bunu tespit edince uyarır ve `--restart` önerir.
+> - `--dry-run`: planı yazdırır (hangi yüzeylerin üzerine yazılacak, ne engelliyor, o hesap hâlâ kimlik doğrulayabiliyor mu) ve hiçbir şeyi değiştirmez — Claude açıkken bile güvenlidir.
+> - Her geçiş ardından **kendini geri okur**: yeni hesaba taşınan yüzeyleri yeniden kontrol eder (token son kullanma tarihi, uygulamanın oturum çerezi, diskteki CLI kimliği) ve temiz çıkan çıkış koduna güvenmek yerine `usable now` / `usable, decaying` / `NOT usable` der. `--no-verify` bunu atlar; `--rollback-on-fail` ayrıca geri-okuma geçişin tutmadığını söylerse önceki hesabı geri koyar — bilerek açılır, çünkü geri alma kimlik bilgilerini yeniden yazar ve `keyflip undo` çare değildir (yalnız keyflip'in metadata deposunu geri alır).
 > - Etkileşimsiz (pipe/CI) ve Claude açıkken bayraksız: uygulamanızı beklenmedik
 >   şekilde kapatmak yerine reddeder.
 

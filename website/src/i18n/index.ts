@@ -121,12 +121,12 @@ export const translations: Record<Locale, Translations> = {
   en: {
     site: {
       title: 'keyflip',
-      description: 'Multi-account switcher for Claude Code & AI tools. Zero dependencies, cross-platform, 130+ commands.',
+      description: 'Multi-account switcher for Claude Code & AI tools. Zero dependencies, cross-platform, 150+ commands.',
       tagline: 'Multi-account switcher for Claude Code & AI tools',
     },
     hero: {
       title: 'Switch Claude accounts in one command',
-      subtitle: 'Log in to multiple Anthropic accounts once, then hop between them without repeatedly logging in and out. Zero dependencies, cross-platform, 130+ CLI commands.',
+      subtitle: 'Log in to multiple Anthropic accounts once, then hop between them without repeatedly logging in and out. Zero dependencies, cross-platform, 150+ CLI commands.',
       cta: 'Get Started',
       ctaDocs: 'Read the Docs',
     },
@@ -161,12 +161,12 @@ export const translations: Record<Locale, Translations> = {
   tr: {
     site: {
       title: 'keyflip',
-      description: 'Claude Code ve AI araçları için çoklu hesap değiştirici. Sıfır bağımlılık, çoklu platform, 130+ komut.',
+      description: 'Claude Code ve AI araçları için çoklu hesap değiştirici. Sıfır bağımlılık, çoklu platform, 150+ komut.',
       tagline: 'Claude Code ve AI araçları için çoklu hesap değiştirici',
     },
     hero: {
       title: 'Claude hesaplarını tek komutla değiştir',
-      subtitle: 'Birden fazla Anthropic hesabına bir kez giriş yapın, ardından tekrar tekrar giriş/çıkış yapmadan aralarında geçiş yapın. Sıfır bağımlılık, çoklu platform, 130+ CLI komutu.',
+      subtitle: 'Birden fazla Anthropic hesabına bir kez giriş yapın, ardından tekrar tekrar giriş/çıkış yapmadan aralarında geçiş yapın. Sıfır bağımlılık, çoklu platform, 150+ CLI komutu.',
       cta: 'Başlayın',
       ctaDocs: 'Dokümantasyon',
     },

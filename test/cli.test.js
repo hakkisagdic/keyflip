@@ -411,3 +411,260 @@ test('logout verb exists, is confirm-gated, and KEEPS saved accounts', function 
   assert.strictEqual(done.status, 0, 'logout -y succeeds');
   assert.match(run(home, ['list']).stdout, /alice/, 'saved account is kept after logout');
 });
+
+// #35 threads, driven through the REAL binary. The unit tests prove the module and the MCP tests prove
+// the agent surface; only this layer catches a CLI wiring bug — and it did: `threads add <prefix>` threw
+// "Assignment to constant variable" because threadsAdd reassigned a const, which neither layer could
+// see. The flow below is the one the README documents, in the order a user types it.
+test('threads CLI: suggest → create → add by prefix → merged --md → opt-in mirror → drop, end to end', function () {
+  // realpath for the same reason test/setup.js does it: on macOS os.tmpdir() is a symlinked path, and
+  // the transcript's encoded project folder is derived from the cwd STRING the CLI resolves.
+  const home = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'keyflip-cli-threads-'));
+  fs.mkdirSync(path.join(home, '.claude'), { recursive: true });
+  fs.writeFileSync(path.join(home, '.claude', '.credentials.json'), '{"live":"TOKEN-1"}');
+  const cfg = path.join(home, '.config', 'keyflip');
+  const ID_A = '1a2b3c4d-1111-4111-8111-111111111111';
+  const ID_B = '9f8e7d6c-2222-4222-8222-222222222222';
+  const proj = path.join(home, 'work', 'billing');
+  const pdir = path.join(home, '.claude', 'projects', proj.replace(/[^a-zA-Z0-9]/g, '-'));
+  fs.mkdirSync(pdir, { recursive: true });
+  const write = function (id, turns) {
+    fs.writeFileSync(
+      path.join(pdir, id + '.jsonl'),
+      turns
+        .map(function (t, i) {
+          return JSON.stringify({
+            type: t.role,
+            sessionId: id,
+            cwd: i === 0 ? proj : undefined,
+            timestamp: t.ts,
+            message: { role: t.role, content: [{ type: 'text', text: t.text }] },
+          });
+        })
+        .join('\n') + '\n',
+      { mode: 0o600 },
+    );
+  };
+  // The first prompt holds a pasted key — that is exactly where one lands in real life.
+  write(ID_A, [{ role: 'user', text: 'fatura akışını kur sk-ant-PASTEDKEY', ts: '2026-10-14T09:00:00.000Z' }]);
+  write(ID_B, [{ role: 'user', text: 'kota bitti, yahoo ile devam', ts: '2026-10-14T13:00:00.000Z' }]);
+  const tokenFile = function (name) {
+    const p = path.join(home, name + '.json');
+    fs.writeFileSync(
+      p,
+      JSON.stringify({ claudeAiOauth: { accessToken: 'AT-' + name, refreshToken: 'RT', expiresAt: 1 } }),
+    );
+    return p;
+  };
+  for (const a of ['gmail', 'yahoo'])
+    assert.strictEqual(run(home, ['add', a, '--token', tokenFile(a), '--force']).status, 0, 'saved ' + a);
+  assert.strictEqual(run(home, ['sessions', 'assign', ID_A, 'gmail']).status, 0);
+  assert.strictEqual(run(home, ['sessions', 'assign', ID_B, 'yahoo']).status, 0);
+
+  const suggested = run(home, ['threads', 'suggest']);
+  assert.strictEqual(suggested.status, 0, suggested.stderr);
+  assert.match(suggested.stdout, /work.billing|billing/, 'the split folder is named');
+  assert.match(suggested.stdout, /2 session\(s\)/, 'and sizes it');
+  assert.ok(
+    suggested.stdout.indexOf(ID_A.slice(0, 8)) !== -1 || suggested.stdout.indexOf(ID_B.slice(0, 8)) !== -1,
+    'it prints SHORT ids — which is exactly why `add` has to expand them',
+  );
+
+  const created = run(home, ['threads', 'create', 'fatura', '--title', 'Düğüm açmak', '--session', ID_A.slice(0, 8)]);
+  assert.strictEqual(created.status, 0, created.stderr);
+  const added = run(home, ['threads', 'add', 'fatura', ID_B.slice(0, 8), '--account', 'yahoo']);
+  assert.strictEqual(added.status, 0, added.stderr + added.stdout);
+  assert.match(added.stdout, /expands to the full id/, 'it says so out loud');
+  const pf = path.join(cfg, 'threads', 'fatura.json');
+  const pointer = fs.readFileSync(pf, 'utf8');
+  assert.ok(pointer.indexOf(ID_A) !== -1 && pointer.indexOf(ID_B) !== -1, 'both pointers are stored as FULL ids');
+  assert.strictEqual(pointer.indexOf('sk-ant-PASTEDKEY'), -1, 'a thread is a POINTER file; prose never rides into it');
+  assert.strictEqual(pointer.indexOf('fatura akışını'), -1, 'not even the preview label — expand() reads that live');
+  assert.strictEqual(fs.statSync(pf).mode & 0o777, 0o600);
+
+  // `--json` is the surface that gets pasted into an agent transcript, so keyflip's own paths come back
+  // relative there — the state dir for pointers, ~/.claude/projects for transcripts — exactly as the MCP
+  // tools and `keyflip chains` do. What stays absolute is a resume command's cwd, which needs it.
+  const listJson = JSON.parse(run(home, ['threads', 'list', '--json']).stdout);
+  assert.strictEqual(listJson.threads[0].file, path.join('threads', 'fatura.json'), 'relative to the state dir');
+  const showJson = JSON.parse(run(home, ['threads', 'show', 'fatura', '--json']).stdout);
+  assert.strictEqual(showJson.thread.file, path.join('threads', 'fatura.json'));
+  assert.notStrictEqual(showJson.members[0].file.charAt(0), '/', 'a transcript path is relative too…');
+  assert.match(showJson.members[0].file, new RegExp(ID_A + '\\.jsonl$'), '…and still names the session it points at');
+  assert.strictEqual(JSON.stringify(showJson).indexOf(cfg), -1, 'never the state dir, which is a home path');
+
+  const md = run(home, ['threads', 'show', 'fatura', '--md']);
+  assert.strictEqual(md.status, 0, md.stderr);
+  assert.ok(md.stdout.startsWith('# Thread `fatura`'), '--md prints ONLY the document, so it pipes');
+  assert.match(md.stdout, /↪ from gmail/, 'the account switch is visible inside the merged conversation');
+  assert.match(md.stdout, /↪ from yahoo/);
+  assert.match(
+    md.stdout,
+    /sk-ant-PASTEDKEY|fatura akışını/,
+    'the document is the transcript, key and all — which is why it is opt-in',
+  );
+
+  const refused = run(home, ['threads', 'mirror', 'fatura']);
+  assert.match(refused.stdout + refused.stderr, /threads\.mirror is off/, 'the mirror needs the config flag too');
+  assert.strictEqual(
+    fs.existsSync(path.join(cfg, 'thread-mirror', 'fatura.md')),
+    false,
+    'refused means nothing written',
+  );
+  assert.strictEqual(run(home, ['config', 'set', 'threads.mirror', 'true']).status, 0);
+  assert.strictEqual(run(home, ['threads', 'mirror', 'fatura']).status, 0);
+  const mf = path.join(cfg, 'thread-mirror', 'fatura.md');
+  assert.ok(fs.existsSync(mf), 'the merged text is on disk once both gates say yes');
+  assert.strictEqual(fs.statSync(mf).mode & 0o777, 0o600);
+  assert.ok(fs.readFileSync(mf, 'utf8').indexOf('sk-ant-PASTEDKEY') !== -1);
+
+  const noConfirm = run(home, ['threads', 'drop', 'fatura']);
+  assert.notStrictEqual(noConfirm.status, 0, 'forgetting a name needs confirmation');
+  const dropped = run(home, ['threads', 'drop', 'fatura', '-y']);
+  assert.strictEqual(dropped.status, 0, dropped.stderr + dropped.stdout);
+  assert.strictEqual(fs.existsSync(pf), false, 'the NAME is gone');
+  assert.ok(fs.existsSync(path.join(pdir, ID_A + '.jsonl')), 'the transcripts were never touched');
+  assert.ok(fs.existsSync(path.join(pdir, ID_B + '.jsonl')));
+  assert.match(
+    run(home, ['threads', 'suggest']).stdout,
+    /2 session\(s\)/,
+    'the split is findable again — the assignments survived',
+  );
+});
+
+// #44 — the findings-management command. Two halves, both worth proving at the CLI: the refusals that
+// keep a policy from becoming silent suppression, and the one property the user actually asked for
+// ("alarm verme, ama geçmişten temizle").
+test('secrets CLI: a rule is refused when it would leave a hole, and a note is redacted before it is stored', function () {
+  const home = setupHome();
+  const cfg = path.join(home, '.config', 'keyflip');
+  const GOOGLE = 'AIza' + 'Simulated-Not-A-Real-Google-Key-00000';
+
+  // No versioned state yet => an honest "there is no history to judge", not a crash and not a false clean.
+  const none = run(home, ['secrets']);
+  assert.strictEqual(none.status, 0, none.stderr);
+  assert.match(none.stdout, /not a git repo/);
+
+  const typo = run(home, ['secrets', 'tolerate', 'providers/gmail.json', '--kind', 'google-api-ky']);
+  assert.notStrictEqual(typo.status, 0, 'a KIND keyflip does not scan for would match nothing, forever');
+  assert.match(typo.stderr, /unknown secret kind/);
+
+  const blanket = run(home, ['secrets', 'tolerate', '*']);
+  assert.notStrictEqual(blanket.status, 0);
+  assert.match(blanket.stderr, /switched off/, '"*" with no kind is the scan turned off, not a policy');
+
+  const out = run(home, [
+    'secrets',
+    'tolerate',
+    'providers/gmail.json',
+    '--kind',
+    'google-api-key',
+    '--note',
+    'free tier, the key is ' + GOOGLE,
+    '--json',
+  ]);
+  assert.strictEqual(out.status, 0, out.stderr + out.stdout);
+  const j = JSON.parse(out.stdout);
+  assert.strictEqual(j.secrets.action, 'tolerate');
+  assert.strictEqual(j.secrets.rule.path, 'providers/gmail.json');
+  assert.deepStrictEqual(j.secrets.rule.kinds, ['google-api-key']);
+  assert.ok(j.secrets.rule.note.indexOf('keyflip_redacted') !== -1, 'the note came back redacted');
+
+  const raw = fs.readFileSync(path.join(cfg, 'secrets-policy.json'), 'utf8');
+  assert.strictEqual(raw.indexOf(GOOGLE), -1, 'never the value — this file is git-versioned');
+  assert.strictEqual(JSON.stringify(j).indexOf(GOOGLE), -1, 'and not in the payload an agent pastes either');
+  if (process.platform !== 'win32')
+    assert.strictEqual(fs.statSync(path.join(cfg, 'secrets-policy.json')).mode & 0o777, 0o600);
+
+  const listed = run(home, ['secrets', 'list', '--json']);
+  assert.strictEqual(listed.status, 0, listed.stderr);
+  const lj = JSON.parse(listed.stdout);
+  assert.strictEqual(lj.secrets.policy.rules.length, 1);
+  // Whether the state dir is a repo yet depends on autoCommit having run, so the assertion is about the
+  // SHAPE: a history is either judged or honestly absent, never silently "clean".
+  assert.ok(Array.isArray(lj.secrets.history ? lj.secrets.history.leaks : []), 'a leak array, or no history at all');
+  assert.strictEqual(lj.secrets.tolerated, lj.secrets.history ? lj.secrets.history.tolerated : null);
+
+  const back = run(home, ['secrets', 'untolerate', 'providers/gmail.json']);
+  assert.strictEqual(back.status, 0, back.stderr);
+  assert.match(back.stdout, /alarms again/);
+  assert.strictEqual(
+    JSON.parse(run(home, ['secrets', 'list', '--json']).stdout).secrets.policy.rules.length,
+    0,
+    'and the file really says so',
+  );
+});
+
+test('secrets + doctor + scrub-history: a tolerated finding stops being an alarm and is STILL scrubbed', function (t) {
+  let hasGit = true;
+  try {
+    _child_process.execFileSync('git', ['--version']);
+  } catch (e) {
+    hasGit = false;
+  }
+  if (!hasGit) return t.skip('git not installed');
+  const home = setupHome();
+  const cfg = path.join(home, '.config', 'keyflip');
+  fs.mkdirSync(cfg, { recursive: true });
+  const g = function (args) {
+    return _child_process.execFileSync('git', ['-C', cfg].concat(args), { encoding: 'utf8' });
+  };
+  const id = ['-c', 'user.email=t@keyflip.test', '-c', 'user.name=t'];
+  const GOOGLE = 'AIza' + 'Simulated-Not-A-Real-Google-Key-00000';
+  g(['init', '-q']);
+  fs.writeFileSync(path.join(cfg, 'providers-gmail.json'), '{"apiKey":"' + GOOGLE + '"}\n');
+  g(id.concat(['add', '-A', '-f']));
+  g(id.concat(['commit', '-q', '-m', 'a free-tier key, parked where it belongs']));
+  // The "fix" everyone believes is enough: untrack it. The blob is still reachable.
+  fs.rmSync(path.join(cfg, 'providers-gmail.json'));
+  g(['rm', '--cached', '-q', '-f', 'providers-gmail.json']);
+  g(id.concat(['commit', '-q', '-m', 'untrack it']));
+
+  const before = run(home, ['secrets']);
+  assert.strictEqual(before.status, 0, before.stderr);
+  assert.match(before.stdout, /1 alarm\(s\)/, 'before: it is an alarm');
+  assert.match(before.stdout, /providers-gmail\.json/);
+  assert.match(before.stdout, /google-api-key/, 'named by KIND, never by value');
+  assert.strictEqual(before.stdout.indexOf(GOOGLE), -1);
+
+  const tol = run(home, [
+    'secrets',
+    'tolerate',
+    'providers-gmail.json',
+    '--kind',
+    'google-api-key',
+    '--note',
+    'free tier',
+  ]);
+  assert.strictEqual(tol.status, 0, tol.stderr);
+  assert.match(tol.stdout, /silencing 1 finding/);
+  assert.match(tol.stdout, /0 still an alarm/);
+  assert.match(tol.stdout, /scrub-history still removes/, 'and the command says out loud that it is not an exemption');
+
+  const after = run(home, ['secrets', 'list']);
+  assert.match(after.stdout, /✓ 0 alarm\(s\)/, 'after: nothing alarms');
+  assert.match(after.stdout, /1 tolerated/);
+  assert.match(after.stdout, /tolerated by rule/, 'with the reason on the line itself');
+
+  // doctor's headline is the one the user reads every day.
+  const doc = run(home, ['doctor', '--history']);
+  assert.strictEqual(doc.status, 0, doc.stderr);
+  assert.match(doc.stdout, /✓ history scan {2}— 0 alarm\(s\) \(1 tolerated by policy\)/);
+  assert.strictEqual(doc.stdout.indexOf(GOOGLE), -1, 'a diagnostic is not allowed to print the secret');
+
+  // THE POINT: the plan still contains the path.
+  const plan = run(home, ['scrub-history']);
+  assert.strictEqual(plan.status, 0, plan.stderr);
+  assert.match(plan.stdout, /providers-gmail\.json/, 'a tolerated path is still on the chopping block');
+  assert.match(plan.stdout, /TOLERATED by the secrets policy/);
+  assert.strictEqual(plan.stdout.indexOf('rotated'), -1, 'and no rotation advice for a key the user decided about');
+  const planJson = JSON.parse(run(home, ['scrub-history', '--json']).stdout);
+  assert.ok(planJson.scrubHistory.plan.paths.indexOf('providers-gmail.json') !== -1);
+  assert.deepStrictEqual(planJson.scrubHistory.plan.toleratedPaths, ['providers-gmail.json']);
+  assert.strictEqual(planJson.scrubHistory.tolerated, 1);
+  assert.strictEqual(planJson.scrubHistory.alarms, 0);
+
+  // Undoing the decision brings the alarm back — nothing about toleration is sticky or invisible.
+  run(home, ['secrets', 'untolerate', 'providers-gmail.json']);
+  assert.match(run(home, ['doctor', '--history']).stdout, /✗ history scan {2}— 1 alarm/);
+});

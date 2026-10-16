@@ -7,8 +7,234 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`keyflip verify [account] [--usage] [--live]`** — answers "would switching there actually work",
+  which no earlier command did. Every failure of a switch is a *silent* one: a stored access token
+  expired 115 days ago, a desktop-app cookie capture whose `sessionKey` expired last month, a
+  capture written in a shape the tool refuses to parse. Those all follow successful writes, so exit
+  codes cannot catch them — `src/verify.js` re-reads each surface the way its own application does
+  (stored vs **live** credential, the app token cache, the cookie DB's session cookie *and its
+  expiry*, browser capture age) and rolls the account up to ok / warn / fail / none. It reports
+  presence, expiry and age only — never a token or cookie value, and a test asserts that.
+- **`keyflip refresh [account|--all]`** — the same guarded OAuth refresh `switch` already performs,
+  now runnable for every saved account at once, so an idle machine can keep all of them alive
+  instead of discovering a dead capture mid-task. It refuses outright while Claude Code or the
+  desktop app is running: Anthropic rotates the refresh token on each use, so rotating one under a
+  live session logs a surface out. `persist-failed` (refreshed but not saved = the stored token is
+  now stale) stays as loud as it was.
+- **Switch preflight: `keyflip <account> --dry-run`, a read-back after every switch, and opt-in
+  `--rollback-on-fail`.** `src/switchplan.js` turns the live facts (which surfaces are captured, is
+  Claude running, can keyflip close it, does a policy allow this directory, and what `verify` says
+  about the target) into a plan of writes / skips / warnings / blockers, rendered before anything
+  happens — and it is pure by construction, so a dry run provably cannot write. A refusal empties the
+  write list rather than leaving half a plan. Then `cmdSwitch` no longer trusts its own successful
+  writes: it re-reads the account it moved to and prints `verified: usable now` or the failing
+  checks, and `--rollback-on-fail` re-applies the previous profile when the read-back shows the
+  machine did not land (app on its sign-in screen, dead capture, or the CLI credential still the old
+  account). Rollback is deliberately opt-in and scope-limited: `keyflip undo` reverts only the
+  metadata git repo and never a credential store, so only accounts that were themselves saved
+  profiles can be restored — and `rollbackScope()` says so instead of half-restoring.
+- **The same preflight for agents: `keyflip_switch_plan`, `keyflip_verify`, `keyflip_refresh` over
+  MCP.** `src/switchfacts.js` is the single read-only fact collector both surfaces use, so an agent
+  and a terminal cannot get different stories about the same machine. Planning is its own
+  `readOnlyHint: true` tool rather than a `dry_run` flag on `keyflip_switch`, because every mutating
+  MCP tool must require `confirm` (enforced by `test/mcp.test.js`) — an agent can now ask "would this
+  switch land, and is that account still usable?" without asking permission to read. `keyflip_switch`
+  itself returns the read-back (`verified`, `cliEmailAfterSwitch`), and `keyflip_refresh` performs the
+  guarded token refresh with the same refuse-while-running rule.
+- **`keyflip llm` — the chores' cost is now a choice, stated before it is spent.** `dream`,
+  `sessions distill` and `recall --answer` all shelled `claude -p`, so housekeeping burned the **active
+  subscription account's** quota — and `dream schedule` repeated that nightly, unattended. `src/llm.js`
+  resolves a provider (`claude` / `ollama` / any OpenAI-compatible `openai` endpoint) from
+  `opts > KEYFLIP_LLM_* env > config.json`, and every chore prints
+  `distills via <provider> <model> — <cost>` before its first call. An endpoint key is never stored:
+  `llm.key_env` holds the *name* of an environment variable, read from the process environment at call
+  time only, so nothing key-shaped can land in the git-versioned state dir, a log line or an error —
+  and a value that looks like a key rather than a name is refused by `llm set --key-env`. Provenance
+  follows the work: keepsakes record `distillProvider`/`distillModel`, the `dream schedule` receipt
+  records the provider it was installed with, and a new `keyflip doctor` check ("chore provider")
+  warns when a nightly job sits on the subscription, or when the live config diverged from that receipt.
+  Over MCP: read-only `keyflip_llm` (with an optional `probe`) and `keyflip_recall {answer:true}`.
+- **`keyflip doctor --history` + `keyflip scrub-history` — a secret you untracked is not a secret you
+  removed.** The old "secrets in git" check only looked at what is tracked *now*, so an account capture
+  that predated a `.gitignore` rule stayed fully readable from the commit that recorded it, and the
+  repair (`git rm --cached`) looked like it had worked. `src/leakscan.js` walks **every blob keyflip
+  ever committed** and reports file + secret KIND + blob id + how many commits still hold it — never the
+  content, so the report cannot become another copy of the leak. A capture under a secret path counts
+  even when its bytes match no known shape. `scrub-history` is a dry run by default; `--apply` refuses
+  unless `git-filter-repo` is installed (no hand-rolled rewrites), writes a `git bundle` backup first
+  and refuses to continue if that bundle does not verify, then re-scans and reports whether the history
+  is provably clean. Paths **still tracked today are left alone** unless `--include-tracked`, because
+  dropping a live file from history also drops it from the working tree — and a match resting only on
+  the generic long-hex shape is labelled `[weak match]`, so an identifier such as a 64-hex `userID` can
+  never masquerade as a credential worth destroying a file for. `keyflip memory audit [--apply]` runs
+  the same scanner over keyflip's own keepsakes (a summarized chat can innocently preserve "my key is
+  sk-ant-…") and redacts in place, keeping each original as `<key>.md.pre-scrub` — which is why
+  `pre-scrub` joined the secret-extension set: a reversible copy of a secret is exactly as secret as
+  the file it came from, and must never be versioned or backed up. Over MCP: read-only
+  `keyflip_history_audit` and `keyflip_memory_audit`, confirm-gated `keyflip_history_scrub` and
+  `keyflip_memory_redact`.
+- **`keyflip secrets list|tolerate|untolerate` — a finding the user already decided about stops being an
+  alarm, and keeps being cleaned up.** The scan is honest, which means it is sometimes repetitive: a free
+  Google AI key, a JWT whose session expired weeks ago, a throwaway account's capture are all genuinely
+  secrets and none of them want rotation advice. Reprinting ✗ over a settled decision is not safety, it is
+  the noise that gets the one real leak skimmed past. `src/secretpolicy.js` stores that decision once — a
+  rule is a **path + secret KIND**, never a value, because a value in the policy would put a fingerprint of
+  the secret into the git-versioned state repo (the same rule `chains` already holds), and `--note` text is
+  redacted through the secret scanner before it is written. Crucially the policy is an **ALARM control, not
+  a cleanliness control**: a tolerated path stays in `planScrub`'s `paths` and is still removed by
+  `scrub-history --apply`; what ends is the rotation warning and the ✗ in `doctor --history`, whose headline
+  now counts alarms and adds a dim line naming what the policy silenced. There is no "keep this secret in
+  history" option — that is a leak with a config file. Refused by construction: an unknown `--kind` (it
+  would silence nothing and the surviving alarm would read like a bug), a bare `*` with no kinds (that is the
+  scanner switched off), and any value-shaped note. `*` cannot cross a directory, broad rules are printed
+  with their **reach** because they also cover anything new at that path, a corrupt policy **fails closed**
+  (no rules applied, `policy_error`, every finding still alarming, dropped rules counted), and keepsakes are
+  never silenced — a distilled "my key is sk-ant-…" is text keyflip wrote *about* the user, not config they
+  chose to keep. `secrets-policy.json` is deliberately not a secret path, so it rides along with `keyflip
+  backup` and is reversible with `keyflip undo`. Over MCP: read-only `keyflip_secrets_policy` +
+  confirm-gated `keyflip_secrets_tolerate`, and `keyflip_history_audit` now separates `alarm_count` from
+  `tolerated_count` so an agent cannot report a clean repo it merely silenced. Tests assert the scrub still
+  contains the tolerated path, that no secret value or absolute keepsake path appears in any payload, and
+  that `untolerate` brings the alarm back.
+- **`keyflip threads` — one name for the same task when it is spread over two accounts.** A quota runs
+  out mid-task, the switch happens, and the work is suddenly two Claude Code sessions with unrelated
+  ids plus a cloud chat nobody can point at — `keyflip chat` can reach the other account, but only
+  piece by piece, and nothing says "these three are one job". `src/threads.js` is keyflip's own store
+  for that: `~/.config/keyflip/threads/<slug>.json` holds **POINTERS** (session ids, claude.ai chat
+  uuids, the account each belongs to), never a copy of the conversation. The transcripts stay exactly
+  where Claude put them, so nothing duplicates, and a thread that is deleted, corrupted or carried to
+  another machine cannot lose a single message — only a name. `create / add / remove / drop / list /
+  show / open / where / suggest / mirror / unmirror`, and:
+  - **`threads suggest` finds the fragmentation instead of asking for it.** It groups recent sessions by
+    project folder and keeps the folders where **two or more NAMED accounts** worked, minus sessions a
+    thread already covers, so the list shrinks as work gets named — and one account plus unassigned
+    sessions is deliberately *not* reported (that is an account nobody assigned, not a split). An
+    unassigned session is never treated as a switch.
+  - **Ids you can actually paste.** `suggest` and `list` print 8-char ids; `resolveSessionId()` expands
+    a unique prefix to the full id at write time and refuses an ambiguous one, so a thread never stores
+    a dead pointer. (This was found by a test, not by review: the CLI used to write the short id
+    straight into the pointer file, where it resolved to nothing.)
+  - **One merged timeline, honestly labelled.** Turns sort chronologically across members; a member with
+    no timestamps becomes a front *group* rather than being smuggled between decisions; provenance
+    dividers show `↪ from gmail · session aaaaaaaa`, so the account switch is visible *inside* the
+    conversation; a cloud chat contributes no turns offline and lands in `unavailable` with the
+    `keyflip chat get …` command that would. Caps announce themselves (`cappedMembers`,
+    `droppedFromStart` — going over `maxTotal` drops the OLDEST end, because the recent tail is what
+    continuing the work needs) and reads stream under `threads.mergeMaxMiB` (default 8), since real
+    transcripts here run to 24 MB and a thread merges several.
+  - **`threads open` resumes where the work stopped, as the account that owns it** — `newest()` only
+    considers transcripts, and a member whose account cannot be resolved is warned about rather than
+    resumed under whatever happens to be active.
+  - **The prose stays opt-in, and provable.** `threads mirror` writes the merged conversation to
+    `~/.config/keyflip/thread-mirror/<slug>.md` only when BOTH the `threads.mirror` config flag (default
+    **off**) and the call say yes; the directory is registered in `secretpaths.SECRET_DIRS`, so it is
+    0600 and git-ignored, and `privacyCheck` still refuses when the state repo has a git remote
+    (`--force` overrides). Three carriers were then read back rather than assumed, because each is a
+    different code path: `keyflip backup` **does** walk `configDir` and skips it only via `SECRET_DIRS`,
+    while `migrate` and `sync` send a curated payload that has no thread keys at all — so the pointers
+    stay on the machine that named them and their prose cannot leave. A test asserts the mirror dir is a
+    secret dir and the pointer dir is NOT (the mirror is the only thing between a merged transcript and a
+    versioned file), and the same test walks a real backup for the mirror-only strings. Nothing
+    auto-copies transcript text into a pointer either: `threads add` stores the project key only, and the
+    preview is read live — a thread whose first prompt was a pasted API key must not put that key into a
+    versioned file.
+  - Names are filenames, so they are normalized, not trusted: `../secrets/x` cannot escape `threads/`,
+    and a slug keeps its word — NFD + diacritic folding plus `ı→i`, because these threads are titled in
+    Turkish and a naive `[^a-z0-9]` fold renders "düğüm" as "d-g-m".
+  - A corrupt or hand-edited file is **reported**, never treated as empty (`list` shows it, `read`
+    refuses to write over it, dropped members are counted and never persisted). `keyflip doctor` gained a
+    `threads` row for the three silent failures: unreadable files, members with no resolvable account,
+    and the mirror being on. Over MCP: read-only `keyflip_threads` (show / `timeline` / `suggest` /
+    reverse `id` lookup) plus confirm-gated `keyflip_thread_create|add|remove|drop|mirror`; their
+    payloads report the pointer file relative to the state dir and the transcript relative to
+    `~/.claude/projects`, the way `keyflip_chains` does, because the result is copied into an agent
+    transcript — and the CLI's `--json` now follows the same rule (it used to print `/Users/<name>/…`),
+    while the human output keeps real paths so they can be opened, and a resume command's `cwd` stays
+    absolute because running it needs it. `threads show --md` prints ONLY the markdown document, so it
+    pipes into a file or an agent context without a human header glued to the front.
+- **The account switcher can now show a thread: `keyflip menu` → `[t]`.** A thread only earns its keep at
+  the moment an account is about to change, and that moment is the menu, not a terminal running
+  `keyflip threads list`. The screen is deliberately **read-only**: every thread with its members — which
+  named account each belongs to, where its transcript is, how fresh it is, and the exact
+  `cd … && claude --resume …` line that continues it — plus `[s]`, which *looks for* split work instead of
+  making the user enumerate it, and a header that counts the members which would silently resume as the
+  **current** account. It never reads a transcript body, never writes, never spends quota; creating,
+  adding and dropping stay CLI/MCP, because naming a task is the user's call. Building it surfaced a real
+  input bug: piping answers to the menu lost every line after the first, because `rl.question` drops a
+  `line` event that arrives while no question is pending and a piped chunk delivers them all at once.
+  `src/menu.js` now shares one queued reader between the account list and its sub-screens, so
+  `printf 't\ns\n\nq\n' | keyflip menu` walks the whole screen. Tests drive both input modes (queued lines
+  and keypresses) and byte-compare the `threads/` directory before and after, so "read-only" is an
+  assertion rather than a comment.
+- **`keyflip chains [account] [--tighten [--apply]]` — what one "login" is actually made of, and who
+  can keep it alive.** An account is never one file: it is a live credential plus every copy keyflip
+  has taken from it (an OAuth profile, the desktop app's token cache *and* its session cookie, a
+  browser cookie snapshot, a provider key, a third-party `surfaces/` capture). `src/chains.js` maps
+  that graph from **paths and file stats only** — it never reads a secret's content, never spawns
+  `security … -w` (a Keychain item is therefore reported `exists: null`, unprobed, rather than
+  fetched), and writes nothing into the state repo, so it cannot leave a fingerprint of a value in
+  git. Three failures that were otherwise only visible *after* a switch misbehaved become plain:
+  **renewal** (the app's `oauth:tokenCache` is derived from its `sessionKey` cookie, so the cookie is
+  the chain's root and nothing renews it but a human — "switched account opens the onboarding screen"
+  while every token blob looks healthy); **staleness** (a capture whose source store has a newer
+  mtime is a copy of the past — on a real machine, eight captures were 48–198 h behind their
+  sources); and **sharing** (one browser profile or one app cookie jar holds exactly one account, so
+  four captures taken from `Chrome/Default/Cookies` contend by construction). It also reports
+  captures filed under an account with no profile (`keyflip list` can never show them), profiles with
+  nothing to restore, and secret files inside the state repo whose mode grants access beyond the
+  owner — the one finding class `--tighten --apply` fixes with a re-scan that proves the chmod
+  landed. Modes of stores keyflip does *not* own are deliberately not flagged: Chrome's own cookie DB
+  being 644 is normal, and a permanent warning over it would train everyone to ignore warnings.
+  `keyflip doctor` gained a "credential chains" row that only goes red for the fixable exposure.
+  Over MCP: read-only `keyflip_chains` and confirm-gated `keyflip_chains_tighten`; both the CLI
+  `--json` and the MCP payload strip absolute paths (`publicNode`/`publicRisk`) so a transcript of
+  the map stays safe to paste into a chat.
+- **`keyflip refresh --schedule [--at 04:30] | --unschedule | --schedule-status` — the tokens renew
+  themselves, on the machine's own clock.** `refresh --all` already existed, but "run it when the CLI
+  is idle" is advice nobody follows at 04:30, and an Anthropic token expires on the calendar rather
+  than on the day you happen to switch. `src/schedule.js` became a two-JOB scheduler (`JOBS.dream` /
+  `JOBS.refresh`) instead of a dream-only module: each job carries its own launchd label, its own
+  managed crontab marker, its own receipt file, its own plist and log path, so installing or removing
+  one can never clobber the other — while `jobOf()` defaults to `dream`, leaving every call site and
+  test written before this unchanged. The refresh argv is FIXED (`refresh --all`): nothing from `opts`
+  reaches the Linux `/bin/sh -c` cron line, so this job cannot be steered the way `older_than_days`
+  once could, and its default hour is deliberately 04:30 rather than the dream's 03:00. The plist now
+  declares two things learned the hard way: `AbandonProcessGroup` (launchd otherwise kills the job's
+  whole process group when the job exits — that is what murdered the detached workers a scheduled
+  dream used to start) and `StandardOutPath`/`StandardErrorPath` into `~/Library/Logs/<job>-keyflip.log`,
+  because an unattended job nobody can read after it ran is a job nobody can debug. launchd's PATH is
+  `/usr/bin:/bin:/usr/sbin:/sbin`, which is not where an fnm-installed `keyflip` lives, so the argv is
+  asserted as a whole now: `test/schedule.test.js` parses `ProgramArguments` and requires
+  `[node, <keyflip.js>, refresh, --all]` — a grep for the string "refresh --all" passed on a plist that
+  could not run. `--json` is read from `JSON_MODE` (a command-local `rest.indexOf('--json')` can never
+  see it: `main()` consumes the global flag first), and the refuse-while-running path emits
+  `{refused, instances, changed:false}` instead of prose, since exit 0 plus a paragraph is how a no-op
+  gets mistaken for a renewal. Receipts are metadata-only and now git-ignored: a receipt that travelled
+  with the state repo to a second machine would make `doctor` report a nightly job that is not scheduled
+  there. The new `token renewal` doctor row (warn: N accounts and nothing renews their tokens; green:
+  renewed nightly at 04:30) reads the receipt, so `doctor` stays offline and hermetic. Over MCP:
+  `keyflip_refresh_schedule` — its own tool rather than a `job` flag on `keyflip_dream_schedule`,
+  because that tool's "spends your quota" wording would be a lie about a job that calls no model — and
+  confirm-gated like every mutating tool. Verified on the machine it was built on, not by exit code:
+  `launchctl print gui/501/com.keyflip.refresh` reports `runs = 1`, `last exit code = 0`,
+  `properties = abandon process group | inferred program`, and the log holds the guard's own refusal —
+  "Claude Code is running on this machine … nothing was changed" — which is the designed outcome for a
+  night the user was still working.
+
 ### Fixed
 
+- **A keyflip state file was listed as a saved account.** `profiles.list()` decides "is this an account?"
+  by taking every top-level `<configDir>/*.json` and subtracting `RESERVED_FILES`, and
+  `refresh-schedule.json` — written by the new `refresh --schedule` — had been added to the git-ignore
+  list and never to that one. So the machine running the feature listed `refresh-schedule` as an account
+  in `keyflip list`, in the interactive menu, and in every count; worse, `isValidName()` did not reject
+  the name, so an account called that could overwrite the receipt. `dream-schedule`, `refresh-schedule`
+  and `secrets-policy` are reserved now, with the invariant written above the list, and the new test
+  imports the filenames **from the modules that write them** (`schedule.RECORD_NAME`,
+  `secretpolicy.FILE_NAME`) and iterates the whole reserved list — the drift fails in the commit that
+  would cause it instead of on the user's machine.
 - **`surfaces/` captures were versioned and backed up.** The secret set in
   `src/secretpaths.js` listed `creds/`, `app/`, `browser-sessions/` and
   `pre-sync-backups/`, but not the directory third-party tool captures live in.
@@ -24,6 +250,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   walk any directory missing from `SECRET_DIRS`, so the exposure was latent — but on
   the machine where this was found, both backups predate the capture and contain zero
   `surfaces/` files. The backup risk is a code property, not an observed leak.
+- Three defects in the new `threads` layer, all found by **running** it rather than reading it:
+  - `keyflip threads add <id>` died with `Assignment to constant variable.` on **every id that resolved**
+    (`src/cli.js` declared `const member` and then reassigned it to the expanded member). The unit and
+    MCP layers both call the module, so only the CLI path hit it; `test/cli.test.js` now drives the real
+    binary over a throwaway `HOME`, including that "expands to the full id" line, so the regression is
+    covered at the layer that missed it.
+  - `threads.read()` returned two different shapes depending on **how the name matched** — the exact-slug
+    path gave the bare record, the prefix path gave a `list()` row — so `keyflip threads show <exact-slug>`
+    printed `undefined` for `thread.file`. Both now return the same row.
+  - The doctor `threads` row spelled the mirror directory as an absolute path, and `doctor --json` /
+    `keyflip_doctor` are built to be pasted into an agent transcript. It now names the directory
+    (`thread-mirror/`), and the mirror status clause rides on the **warning** row too — a warning that
+    hides "you have conversation text on disk" is a leak the user stops seeing.
 
 ### Added
 

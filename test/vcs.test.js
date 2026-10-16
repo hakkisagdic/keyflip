@@ -9,6 +9,8 @@ import fs from 'fs';
 import path from 'path';
 import cp from 'child_process';
 import * as vcs from '../src/vcs.js';
+import * as threads from '../src/threads.js';
+import * as config from '../src/config.js';
 import { makeCtx } from './helpers.js';
 
 const HAS_GIT = vcs.gitAvailable();
@@ -50,6 +52,26 @@ test('ensureRepo inits a repo + managed .gitignore; secrets are NEVER tracked', 
     'the whole surfaces/ dir is the secret boundary',
   );
   assert.strictEqual(files.indexOf('auth.json'), -1, 'a loose auth.json is NEVER committed');
+});
+
+// #36/#40: a schedule receipt is a fact about THIS machine's launchd/cron table. Versioned, it would
+// ride along with `migrate`/`restore` to a machine where nothing is scheduled, and doctor — which
+// reads the receipt as "the schedule keyflip agreed to" — would report a nightly job that isn't there.
+test('schedule receipts are machine-local and never versioned', function (t) {
+  if (!HAS_GIT) return t.skip('git not installed');
+  const ctx = makeCtx();
+  fs.writeFileSync(path.join(ctx.configDir, 'work.json'), '{"name":"work"}');
+  fs.writeFileSync(
+    path.join(ctx.configDir, 'dream-schedule.json'),
+    '{"job":"dream","provider":"ollama","at":{"h":3,"m":0}}',
+  );
+  fs.writeFileSync(path.join(ctx.configDir, 'refresh-schedule.json'), '{"job":"refresh","kind":"launchd"}');
+  assert.strictEqual(vcs.ensureRepo(ctx), true);
+  vcs.autoCommit(ctx, 'install schedules');
+  const files = tracked(ctx.configDir);
+  assert.ok(files.indexOf('work.json') !== -1, 'accounts are still versioned');
+  assert.strictEqual(files.indexOf('dream-schedule.json'), -1, 'the dream receipt stays local');
+  assert.strictEqual(files.indexOf('refresh-schedule.json'), -1, 'the refresh receipt stays local');
 });
 
 test('autoCommit records a change; log lists it; nothing-to-commit is a no-op', function (t) {
@@ -180,4 +202,51 @@ test('ensureRepo refreshes a stale .gitignore and purges now-ignored files from 
     'the leaked secret is untracked after refresh',
   );
   assert.ok(fs.existsSync(path.join(ctx.configDir, 'app', 'work.cookies')), 'the working file itself is NOT deleted');
+});
+
+// SECURITY (#35): a thread is a NAME plus POINTERS — that is versioned metadata and must survive
+// `migrate` between machines. Its OPTIONAL mirror (`threads.mirror`) is the merged conversation text,
+// i.e. everything ever pasted into those sessions, and it must never enter the git repo. The whole
+// difference between the two dirs is one line of .gitignore, so both halves are asserted here, on a
+// real repo, with real files — plus the remote check the mirror consults before it writes anything.
+test('threads/ is versioned, thread-mirror/ never is, and a configured remote blocks the mirror', function (t) {
+  if (!HAS_GIT) return t.skip('git not installed');
+  const ctx = makeCtx();
+  fs.writeFileSync(path.join(ctx.configDir, 'keep.json'), '{"ok":1}');
+  threads.create(ctx, { slug: 'design', title: 'Threads design' });
+  threads.addMember(ctx, 'design', { kind: 'session', id: 'aaaaaaaa-1111-4111-8111-111111111111' });
+  config.set(ctx, 'threads.mirror', true);
+  const m = threads.mirror(ctx, threads.read(ctx, 'design'));
+  assert.strictEqual(m.ok, true, 'a local-only repo may mirror');
+
+  assert.strictEqual(vcs.ensureRepo(ctx), true);
+  vcs.autoCommit(ctx, 'thread work');
+  const files = tracked(ctx.configDir);
+  assert.ok(files.indexOf('threads/design.json') !== -1, 'the pointer file is versioned — that is the feature');
+  assert.strictEqual(files.indexOf('thread-mirror/design.md'), -1, 'the conversation text is NEVER committed');
+  assert.ok(fs.existsSync(path.join(ctx.configDir, 'thread-mirror', 'design.md')), 'the mirror itself stays on disk');
+
+  // The gate is git's own answer, not a cached flag: add a remote and the next mirror refuses.
+  assert.strictEqual(vcs.hasRemote(ctx), false, 'no remote until one is added');
+  cp.execFileSync('git', [
+    '-C',
+    ctx.configDir,
+    'remote',
+    'add',
+    'origin',
+    path.join(ctx.configDir, '..', 'elsewhere.git'),
+  ]);
+  assert.strictEqual(vcs.hasRemote(ctx), true, 'hasRemote reads live state');
+  const refused = threads.mirror(ctx, threads.read(ctx, 'design'));
+  assert.strictEqual(refused.ok, false, 'the mirror refuses once the repo could leave this machine');
+  assert.strictEqual(refused.reason, 'remote-configured');
+  assert.ok(
+    fs.existsSync(path.join(ctx.configDir, 'thread-mirror', 'design.md')),
+    'refusing does not delete what is already there',
+  );
+  assert.strictEqual(
+    tracked(ctx.configDir).indexOf('thread-mirror/design.md'),
+    -1,
+    'and it is still ignored after the remote appears',
+  );
 });

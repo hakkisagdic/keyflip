@@ -10,6 +10,10 @@ import path from 'path';
 import cp from 'child_process';
 import * as doctor from '../src/doctor.js';
 import * as vcs from '../src/vcs.js';
+import * as config from '../src/config.js';
+import * as profiles from '../src/profiles.js';
+import * as schedule from '../src/schedule.js';
+import * as threads from '../src/threads.js';
 import { makeCtx } from './helpers.js';
 
 const HAS_GIT = vcs.gitAvailable();
@@ -95,6 +99,30 @@ test('doctor surfaces rebind backups and offers the proven-redundant prune', asy
   assert.ok(/sessions backups --apply/.test(c.fix || ''), 'and it names the fix');
 });
 
+test('doctor surfaces an un-redacted keepsake original that only the .pre-scrub copy still holds', async function () {
+  const memory = await import('../src/memory.js');
+  const leakscan = await import('../src/leakscan.js');
+  const KEY = 'sk-ant-api03-' + 'AbCdEfGhIjKlMnOpQrStUvWx'.repeat(2);
+  const ctx = makeCtx();
+  ctx.claudeDir = path.join(ctx.home, '.claude');
+  let c = find((await doctor.diagnose(ctx)).checks, 'keepsake originals');
+  assert.ok(c && c.ok === true && /none/.test(c.detail), 'nothing pending is not a warning');
+
+  memory.save(ctx, 'k1', 'key: ' + KEY + '\n');
+  leakscan.keepsakeScrub(ctx, memory); // leaves k1.md.pre-scrub holding the raw key
+  c = find((await doctor.diagnose(ctx)).checks, 'keepsake originals');
+  assert.strictEqual(c.ok, 'warn', 'a secret left on disk by design must be visible');
+  assert.match(c.detail, /UNREDACTED original/);
+  assert.match(c.fix || '', /--drop-copies/, 'and it names the way out');
+  // The scan reports a COUNT, never the secret it is warning about.
+  const r = await doctor.diagnose(ctx);
+  assert.strictEqual(JSON.stringify(r.checks).indexOf(KEY), -1, 'doctor output carries no secret value');
+
+  leakscan.dropKeepsakeCopies(ctx, memory);
+  c = find((await doctor.diagnose(ctx)).checks, 'keepsake originals');
+  assert.strictEqual(c.ok, true, 'dropped => quiet again');
+});
+
 test('doctor reports empty project folders (and keeps quiet when there are none)', async function () {
   const ctx = makeCtx();
   ctx.claudeDir = path.join(ctx.home, '.claude');
@@ -163,4 +191,181 @@ test('doctor: passes when the app jar holds a session cookie', async function ()
 test('doctor: says nothing about an app that is not installed', async function () {
   const r = await doctor.diagnose(makeCtx()); // no appDataDir
   assert.strictEqual(find(r.checks, 'desktop app session'), undefined);
+});
+
+// --- #40: a chore's cost belongs in doctor, because nobody re-reads a schedule they set months ago,
+// and a nightly job that quietly moved back onto the subscription is otherwise invisible. ---
+test('chore provider: names the model and whose quota it burns', async function () {
+  const ctx = makeCtx();
+  const c = find((await doctor.diagnose(ctx)).checks, 'chore provider');
+  assert.ok(c && c.ok === true, 'an on-demand chore on the default provider is not a warning');
+  assert.match(c.detail, /^claude — spends the ACTIVE Claude account/);
+  assert.match(c.detail, /on demand only/, 'and says there is no unattended job');
+
+  config.set(ctx, 'llm.provider', 'ollama');
+  const o = find((await doctor.diagnose(ctx)).checks, 'chore provider');
+  assert.match(o.detail, /ollama qwen2\.5:7b-instruct/, 'the resolved model is shown, not guessed');
+  assert.match(o.detail, /locally/i, 'with its cost');
+});
+
+test('chore provider: a nightly job still distilling on the subscription is a warning', async function () {
+  const ctx = makeCtx();
+  schedule.writeRecord(ctx, {
+    installedAt: '2026-01-01T00:00:00.000Z',
+    kind: 'cron',
+    at: { h: 2, m: 0 },
+    days: 30,
+    provider: 'claude',
+    model: '',
+  });
+  const c = find((await doctor.diagnose(ctx)).checks, 'chore provider');
+  assert.strictEqual(c.ok, 'warn', 'unattended + subscription quota is worth surfacing');
+  assert.match(c.fix, /--provider ollama/, 'and it offers the way off');
+});
+
+test('chore provider: a schedule whose cost changed after install is called out', async function () {
+  const ctx = makeCtx();
+  schedule.writeRecord(ctx, {
+    installedAt: '2026-01-01T00:00:00.000Z',
+    kind: 'cron',
+    at: { h: 2, m: 0 },
+    days: 30,
+    provider: 'ollama',
+    model: 'qwen2.5:7b-instruct',
+  });
+  config.set(ctx, 'llm.provider', 'claude');
+  const c = find((await doctor.diagnose(ctx)).checks, 'chore provider');
+  assert.strictEqual(c.ok, 'warn');
+  assert.match(c.detail, /scheduled on "ollama"/, 'the install receipt and the live config must agree');
+});
+
+// #39 — the credential-chain row. The distinction being tested is the one that keeps doctor honest:
+// a relationship problem (a stale capture, four accounts in one browser profile) is advisory, while
+// a secret keyflip itself left world-readable is the only thing that may turn the row red.
+test('doctor: credential chains are clean until a state-repo secret is world-readable', async function () {
+  const ctx = makeCtx();
+  const clean = find((await doctor.diagnose(ctx)).checks, 'credential chains');
+  assert.ok(clean, 'the row exists');
+  assert.strictEqual(clean.ok, true);
+  assert.match(clean.detail, /mapped over 0 account\(s\)/);
+
+  fs.mkdirSync(path.join(ctx.configDir, 'browser-sessions'), { recursive: true });
+  fs.writeFileSync(path.join(ctx.configDir, 'browser-sessions', 'work__chrome.sql'), 'cookies');
+  fs.chmodSync(path.join(ctx.configDir, 'browser-sessions', 'work__chrome.sql'), 0o644);
+  const bad = find((await doctor.diagnose(ctx)).checks, 'credential chains');
+  assert.strictEqual(bad.ok, false, 'a 644 cookie dump in the git-versioned state repo is a live exposure');
+  assert.match(bad.detail, /loose-mode/);
+  assert.match(bad.fix || '', /keyflip chains --tighten --apply/);
+
+  // Fix it the way the row says, and the row goes back to green — the fix text must actually work.
+  fs.chmodSync(path.join(ctx.configDir, 'browser-sessions', 'work__chrome.sql'), 0o600);
+  const fixed = find((await doctor.diagnose(ctx)).checks, 'credential chains');
+  assert.strictEqual(fixed.ok, 'warn', 'a capture of an account with no profile is still worth mentioning');
+  assert.match(fixed.detail, /orphan-capture/);
+  assert.match(fixed.fix || '', /keyflip chains/);
+});
+
+test('doctor: a shared browser profile is advisory, never a permanent red', async function () {
+  const ctx = makeCtx();
+  profiles.write(ctx.configDir, { name: 'alpha', email: 'a@example.com' });
+  profiles.write(ctx.configDir, { name: 'beta', email: 'b@example.com' });
+  fs.mkdirSync(path.join(ctx.configDir, 'browser-sessions'), { recursive: true });
+  ['alpha', 'beta'].forEach(function (a) {
+    const p = path.join(ctx.configDir, 'browser-sessions', a + '__chrome.sql');
+    fs.writeFileSync(p, 'cookies');
+    fs.chmodSync(p, 0o600);
+  });
+  const c = find((await doctor.diagnose(ctx)).checks, 'credential chains');
+  assert.strictEqual(c.ok, 'warn', 'several accounts on one profile is structural reality, not a red ✗');
+  assert.match(c.detail, /shared-source/);
+  assert.match(c.detail, /\d+ node\(s\)/, 'it names the map size, so the row is a measurement not a mood');
+});
+
+// #36: a stored token expires on the calendar, not at switch time — so the row doctor must give is
+// "is anything renewing them?", read from the install receipt rather than from ~/Library (doctor
+// stays offline and hermetic, and the receipt is the schedule keyflip itself agreed to).
+test('doctor: nothing renews the stored tokens until the refresh job is scheduled', async function () {
+  const ctx = makeCtx();
+  assert.strictEqual(
+    find((await doctor.diagnose(ctx)).checks, 'token renewal'),
+    undefined,
+    'no accounts saved = nothing that can expire = nothing to nag about',
+  );
+  profiles.write(ctx.configDir, { name: 'alpha', email: 'a@example.com' });
+  const bad = find((await doctor.diagnose(ctx)).checks, 'token renewal');
+  assert.ok(bad, 'the row appears once there is a token that can die');
+  assert.strictEqual(bad.ok, 'warn');
+  assert.match(bad.detail, /1 saved account\(s\) and nothing renews their tokens/);
+  assert.match(bad.fix || '', /keyflip refresh --schedule/, 'the fix is the command that closes the gap');
+  // The `dream` receipt must not be mistaken for a renewal schedule: it distills chats, it does not
+  // rotate tokens.
+  schedule.writeRecord(ctx, {
+    installedAt: '2026-01-01T00:00:00.000Z',
+    job: 'dream',
+    kind: 'cron',
+    provider: 'claude',
+  });
+  assert.strictEqual(find((await doctor.diagnose(ctx)).checks, 'token renewal').ok, 'warn');
+  schedule.writeRecord(
+    ctx,
+    { installedAt: '2026-01-01T00:00:00.000Z', job: 'refresh', kind: 'cron', at: { h: 4, m: 30 } },
+    { job: 'refresh' },
+  );
+  const good = find((await doctor.diagnose(ctx)).checks, 'token renewal');
+  assert.strictEqual(good.ok, true);
+  assert.match(good.detail, /renewed nightly at 04:30/);
+  assert.strictEqual(good.fix, undefined, 'a green row needs no fix');
+  assert.strictEqual(fs.existsSync(path.join(ctx.configDir, schedule.RECORD_NAME)), true, 'the dream receipt survived');
+});
+
+// #35: a thread is only a NAME until it is checked. Three silent failures this row exists to catch:
+// a file that no longer parses, a member no account can be resolved for (`threads open` would resume
+// it under whatever account is active now — the exact bug threads were built to kill), and the mirror
+// switch being on without the user remembering conversation text is on disk. Stat-only: no transcript
+// is read and no subprocess runs, so the row is cheap enough for every `doctor`.
+test('doctor: threads are named, checked and fixed — and the row never prints an absolute path', async function () {
+  const ctx = makeCtx();
+  const none = find((await doctor.diagnose(ctx)).checks, 'threads');
+  assert.strictEqual(none.ok, true);
+  assert.match(none.detail, /none named yet/, 'the empty state points at the command that fills it');
+
+  // A thread spanning two accounts is the success case, and it is described as one.
+  threads.create(ctx, { slug: 'design', title: 'Threads design' });
+  threads.addMember(ctx, 'design', { kind: 'session', id: 'aaaaaaaa-1111-4111-8111-111111111111', account: 'gmail' });
+  threads.addMember(ctx, 'design', { kind: 'chat', id: 'dddddddd-4444-4444-8444-444444444444', account: 'yahoo' });
+  const good = find((await doctor.diagnose(ctx)).checks, 'threads');
+  assert.strictEqual(good.ok, true, 'a complete thread is green');
+  assert.match(
+    good.detail,
+    /1 named task\(s\), 2 member\(s\) \(1 session\(s\), 1 chat\(s\)\), 1 spanning 2\+ accounts/,
+  );
+  assert.match(good.detail, /pointers only \(mirror off\)/);
+  assert.strictEqual(good.detail.indexOf(ctx.configDir), -1, 'the state repo path stays out of the row');
+
+  // A dangling pointer is a warning with the one command that fixes it.
+  threads.addMember(ctx, 'design', { kind: 'session', id: 'bbbbbbbb-2222-4222-8222-222222222222' });
+  const loose = find((await doctor.diagnose(ctx)).checks, 'threads');
+  assert.strictEqual(loose.ok, 'warn');
+  assert.match(loose.detail, /1 member\(s\) have no account \(design\)/);
+  assert.match(loose.fix, /keyflip sessions assign/, 'the fix names the assignment command');
+
+  // A hand-edited file that no longer parses is REPORTED, never counted as zero threads.
+  fs.writeFileSync(path.join(threads.dir(ctx), 'broken.json'), '{ this is not json', { mode: 0o600 });
+  const bad = find((await doctor.diagnose(ctx)).checks, 'threads');
+  assert.strictEqual(bad.ok, 'warn');
+  assert.match(bad.detail, /unreadable or holding invalid members \(broken\)/);
+  assert.match(bad.fix, /keyflip threads show/, 'and it says where to look');
+
+  // Mirror on: the row states what is now on disk, in relative terms.
+  config.set(ctx, 'threads.mirror', true);
+  fs.mkdirSync(threads.mirrorDir(ctx), { recursive: true });
+  fs.writeFileSync(path.join(threads.mirrorDir(ctx), 'design.md'), '# conversation text', { mode: 0o600 });
+  fs.rmSync(path.join(threads.dir(ctx), 'broken.json'));
+  const mirrored = find((await doctor.diagnose(ctx)).checks, 'threads');
+  assert.strictEqual(mirrored.ok, 'warn', 'the unassigned member still warns');
+  assert.match(
+    mirrored.detail,
+    /mirror ON — 1 text file\(s\) in thread-mirror\/ \(0600, never versioned or backed up\)/,
+  );
+  assert.strictEqual(mirrored.detail.indexOf(ctx.configDir), -1, 'even with the mirror on, no absolute path leaks');
 });

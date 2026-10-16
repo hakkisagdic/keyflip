@@ -217,6 +217,7 @@ keyflip chat search "<words>"          # find one by title
 keyflip chat --as <account>            # read ANOTHER saved account, no switching
 keyflip foreign --list                 # find OTHER agents' session files on this machine
 keyflip foreign <file> [--format md|html|json]   # normalize one into the same view
+keyflip threads suggest                # one TASK split over 2+ accounts? see §9.1
 ```
 - `resume` is project-scoped — it handles the `cd` to the transcript's original dir.
 - `chat` authenticates with a claude.ai session cookie, found automatically and printed
@@ -243,6 +244,9 @@ keyflip foreign <file> [--format md|html|json]   # normalize one into the same v
 
 ## 9. Keeping chats in sync across accounts
 
+`consolidate` makes the desktop app's **indexes** agree. It does not make one piece of *work*
+addressable — and that is the thing that breaks when a quota runs out mid-task:
+
 ```bash
 keyflip consolidate                    # every account's chat index shows ALL conversations
 keyflip consolidate --watch            # re-sync on an interval whenever the app is closed
@@ -262,6 +266,55 @@ keyflip consolidate --watch --interval 60
   and a session the user deleted in an account (its `deleted_<id>` tombstone) is not copied back
   from elsewhere. `keyflip cowork` shows a consolidated session once — its home account, i.e. the
   one that still has the transcript folder beside the index.
+
+### 9.1 One named task across accounts — `keyflip threads`
+
+The scenario: you are mid-task on gmail, the 5-hour cap hits, you switch to yahoo, and Claude Code
+starts a **new** session in the same project. Two sessions, plus the claude.ai chat where you planned
+it. Nothing is lost, but nothing is *yours* as one object either — `keyflip chat` reaches the other
+account piece by piece, and `keyflip sessions --search` returns rows, not the task.
+
+```bash
+keyflip threads suggest                  # what is ALREADY split over 2+ named accounts, per project folder
+keyflip threads create fatura --title "Fatura akışı" --session 1a2b3c4d
+keyflip threads add fatura 9f8e7d6c --account yahoo   # a prefix is fine; keyflip stores the FULL id
+keyflip threads add fatura 3b0c…e1a4 --chat            # a claude.ai chat can be a member too
+keyflip threads show fatura              # the members + the merged view
+keyflip threads show fatura --timeline    # just the chronological turns, with who said them under which account
+keyflip threads show fatura --md         # the merged document, printed — nothing written
+keyflip threads open fatura               # where the work last stopped, resumed as the account that owns it
+keyflip threads where 1a2b3c4d            # which threads contain this session (reverse lookup)
+keyflip threads remove fatura 9f8e7d6c    # unlink one member; the session itself stays
+keyflip threads drop fatura -y            # forget the NAME — every transcript and assignment survives
+```
+
+- **It is a name, not a container.** `~/.config/keyflip/threads/fatura.json` lists `{kind, id, account,
+  project, addedAt}` and no prose. The transcripts never move, so the same session legitimately appears in
+  two accounts' listings at once — that is the point, not a bug — and dropping the thread cannot lose a
+  message.
+- **`suggest` answers "where is my work split?" without you enumerating it.** It needs **two or more
+  named accounts** in one project folder, so a folder with one account plus unassigned sessions is not
+  reported (assign those: `keyflip sessions assign <id> <account>`), and anything a thread already names
+  is excluded — the list shrinks as you name your tasks.
+- **The merged view is honest about its edges.** Each turn keeps its member and account; undated turns
+  stay a front group instead of being sorted between two decisions; a cloud chat contributes nothing
+  offline and shows up under `unavailable` with the `keyflip chat get …` command that would read it; and
+  a member larger than `threads.mergeMaxMiB` (default 8 — some transcripts here run to 24 MB) is counted
+  as capped rather than silently shortened.
+- **Conversation TEXT on disk stays your choice, and it is gated twice.** `keyflip threads mirror
+  fatura` writes `thread-mirror/fatura.md` only after `keyflip config set threads.mirror true`, that dir
+  is a registered secret dir (0600, never versioned, never backed up, never synced, excluded from
+  `migrate`), and the mirror refuses outright if the state repo ever gains a git remote. Until you turn
+  it on, `--md` gives you the same document on screen.
+- **A thread may name work that is not on this machine, and it says so.** A member is resolved at read
+  time: a session with no transcript here comes back `resolved: false` with the reason
+  `no transcript on this machine (last seen in <project>)` rather than being quietly dropped, and a cloud
+  chat is `unavailable` until someone reads it. **What travels:** `threads/` is ordinary versioned state
+  and `keyflip backup` carries it, while `keyflip migrate` / `sync` bundles are curated account data —
+  they never include the mirror prose, and no thread pointers ride along, so a thread stays on the
+  machine that named it.
+- Agents do all of this over MCP: read-only `keyflip_threads` (`slug`, `timeline`, `suggest`, reverse
+  `id`) and confirm-gated `keyflip_thread_create|add|remove|drop|mirror`.
 
 ---
 
@@ -366,10 +419,21 @@ keyflip mcpreg add ctx -- some-server  # manage MCP servers once, project into C
 keyflip mcpreg list | enable | disable | remove | import
 ```
 - **Via MCP tools** (prefer over shelling out): `keyflip_status`, `keyflip_list`,
-  `keyflip_switch`, `keyflip_next`, `keyflip_login`, `keyflip_logout`,
-  `keyflip_browser_status/_logout`, `keyflip_consolidate`,
+  `keyflip_switch`, `keyflip_switch_plan`, `keyflip_verify`, `keyflip_refresh`,
+  `keyflip_refresh_schedule`, `keyflip_llm`,
+  `keyflip_next`, `keyflip_login`, `keyflip_logout`,
+  `keyflip_browser_status/_logout`, `keyflip_consolidate`, `keyflip_history_audit`,
+  `keyflip_memory_audit`, `keyflip_history_scrub`, `keyflip_memory_redact`, `keyflip_secrets_policy`,
+  `keyflip_secrets_tolerate`, `keyflip_chains`,
+  `keyflip_chains_tighten`,
   `keyflip_migrate_export/_import`, providers, backups, sessions, proxy… Mutating tools
-  require `confirm: true`.
+  require `confirm: true`; `keyflip_switch_plan`/`keyflip_verify`/`keyflip_llm`/`keyflip_history_audit`/
+  `keyflip_memory_audit`/`keyflip_secrets_policy`/`keyflip_chains` are read-only, so an agent can check whether a switch would land, whether that
+  account can still authenticate, which model + quota a background chore would spend, whether a
+  secret is still readable from an old commit, which findings the user already declared expected, and which capture of an account is stale, sharing one
+  store with a rival, or world-readable — all before asking for consent.
+  `keyflip_refresh_schedule` puts `refresh --all` on a nightly timer (it calls no model and spends no
+  quota) and refuses with `changed: false` while a Claude session still holds the credential.
 
 ---
 

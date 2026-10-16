@@ -23,25 +23,29 @@
 
 const REDACTED = '«keyflip_redacted»';
 
-// Known secret SHAPES. Each entry is { re }, consumed as new RegExp(re.source, 'g').
+// Known secret SHAPES. Each entry is { label, re }, consumed as new RegExp(re.source, 'g').
+// `label` exists so a REPORT can name the KIND of secret without ever quoting its value.
 const SECRET_PATTERNS = [
-  { re: /-----BEGIN (?:[A-Z0-9 ]+ )?PRIVATE KEY-----[\s\S]*?-----END (?:[A-Z0-9 ]+ )?PRIVATE KEY-----/ }, // PEM private key block
-  { re: /sk-ant-[A-Za-z0-9_-]{16,}/ }, // Anthropic API key (incl. sk-ant-api03-…, admin)
-  { re: /sk-(?:proj|live|test)?-?[A-Za-z0-9]{20,}/ }, // OpenAI / Stripe-ish sk- keys
-  { re: /rk_(?:live|test)_[A-Za-z0-9]{16,}/ }, // Stripe restricted key
-  { re: /AKIA[0-9A-Z]{16}/ }, // AWS access key id
-  { re: /ASIA[0-9A-Z]{16}/ }, // AWS temp access key id
-  { re: /gh[pousr]_[A-Za-z0-9]{30,}/ }, // GitHub token (ghp_/gho_/ghu_/ghs_/ghr_)
-  { re: /github_pat_[A-Za-z0-9_]{40,}/ }, // GitHub fine-grained PAT
-  { re: /glpat-[A-Za-z0-9_-]{18,}/ }, // GitLab PAT
-  { re: /AIza[0-9A-Za-z_-]{35}/ }, // Google API key
-  { re: /ya29\.[0-9A-Za-z_-]{20,}/ }, // Google OAuth access token
-  { re: /xox[baprs]-[0-9A-Za-z-]{10,}/ }, // Slack token
-  { re: /npm_[A-Za-z0-9]{36}/ }, // npm token
-  { re: /dop_v1_[a-f0-9]{64}/ }, // DigitalOcean token
-  { re: /eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/ }, // JWT (header.payload.sig)
-  { re: /\b[Bb]earer\s+[A-Za-z0-9._~+/-]{20,}=*/ }, // Authorization: Bearer <token>
-  { re: /\b[0-9a-fA-F]{40,}\b/ }, // long hex secret (sha/hmac/hex token)
+  {
+    label: 'private-key-block',
+    re: /-----BEGIN (?:[A-Z0-9 ]+ )?PRIVATE KEY-----[\s\S]*?-----END (?:[A-Z0-9 ]+ )?PRIVATE KEY-----/,
+  }, // PEM private key block
+  { label: 'anthropic-api-key', re: /sk-ant-[A-Za-z0-9_-]{16,}/ }, // Anthropic API key (incl. sk-ant-api03-…, admin)
+  { label: 'openai-style-key', re: /sk-(?:proj|live|test)?-?[A-Za-z0-9]{20,}/ }, // OpenAI / Stripe-ish sk- keys
+  { label: 'stripe-restricted-key', re: /rk_(?:live|test)_[A-Za-z0-9]{16,}/ }, // Stripe restricted key
+  { label: 'aws-access-key-id', re: /AKIA[0-9A-Z]{16}/ }, // AWS access key id
+  { label: 'aws-temp-access-key-id', re: /ASIA[0-9A-Z]{16}/ }, // AWS temp access key id
+  { label: 'github-token', re: /gh[pousr]_[A-Za-z0-9]{30,}/ }, // GitHub token (ghp_/gho_/ghu_/ghs_/ghr_)
+  { label: 'github-fine-grained-pat', re: /github_pat_[A-Za-z0-9_]{40,}/ }, // GitHub fine-grained PAT
+  { label: 'gitlab-pat', re: /glpat-[A-Za-z0-9_-]{18,}/ }, // GitLab PAT
+  { label: 'google-api-key', re: /AIza[0-9A-Za-z_-]{35}/ }, // Google API key
+  { label: 'google-oauth-token', re: /ya29\.[0-9A-Za-z_-]{20,}/ }, // Google OAuth access token
+  { label: 'slack-token', re: /xox[baprs]-[0-9A-Za-z-]{10,}/ }, // Slack token
+  { label: 'npm-token', re: /npm_[A-Za-z0-9]{36}/ }, // npm token
+  { label: 'digitalocean-token', re: /dop_v1_[a-f0-9]{64}/ }, // DigitalOcean token
+  { label: 'jwt', re: /eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/ }, // JWT (header.payload.sig)
+  { label: 'bearer-token', re: /\b[Bb]earer\s+[A-Za-z0-9._~+/-]{20,}=*/ }, // Authorization: Bearer <token>
+  { label: 'long-hex-secret', re: /\b[0-9a-fA-F]{40,}\b/ }, // long hex secret (sha/hmac/hex token)
 ];
 
 const CRED_KEY =
@@ -142,6 +146,22 @@ function scanText(text) {
     while ((m = re.exec(s)) !== null) matches.push(m[0]);
   }
   return matches;
+}
+
+/**
+ * Redact every known secret shape in a string, but report WHICH KINDS matched — for a scan that
+ * must tell the user "an anthropic-api-key is in there" without printing it.
+ * @param {string | null | undefined} text - The text to scan.
+ * @returns {string[]} Sorted, unique pattern labels (empty means clean).
+ */
+function scanLabeled(text) {
+  const s = String(text == null ? '' : text);
+  const found = new Set();
+  for (const p of SECRET_PATTERNS) {
+    const re = new RegExp(p.re.source, 'g');
+    if (re.test(s)) found.add(p.label || 'unnamed-secret');
+  }
+  return Array.from(found).sort();
 }
 
 /**
@@ -249,6 +269,8 @@ export {
   isEnvRefOrEmpty,
   looksSecret,
   scanText,
+  scanLabeled,
+  redactShapes,
   redactValue,
   redactLines,
   redactJson,

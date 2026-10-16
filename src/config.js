@@ -39,6 +39,25 @@ SCHEMA['autoswitch.group'] = {
   help: 'Restrict autoswitch/rotation to accounts in this group tag (empty = all accounts).',
 };
 SCHEMA['notify.desktop'] = { type: 'bool', default: false, help: 'Show desktop banners on notable events (macOS).' };
+// #35 threads. A thread is normally just POINTERS (session ids, chat uuids) — non-secret metadata that
+// is git-versioned like the rest of keyflip's state. `threads.mirror` is the one switch that puts
+// CONVERSATION TEXT on disk, which is why it defaults to off and why the mirror directory is
+// registered in secretpaths.SECRET_DIRS (0600, never versioned, never backed up, never synced).
+SCHEMA['threads.mirror'] = {
+  type: 'bool',
+  default: false,
+  help: 'Let `keyflip threads mirror` write the merged conversation text to disk (off = pointers only).',
+};
+// Merging is the expensive part: real transcripts here run to 24 MB and a thread reads several at
+// once, so the per-member read is capped. Bounded, because a "just read it all" knob invites an
+// out-of-memory on a 2 GB paste.
+SCHEMA['threads.mergeMaxMiB'] = {
+  type: 'int',
+  default: 8,
+  min: 1,
+  max: 512,
+  help: 'Per-member transcript read cap (MiB) when merging a thread into one timeline.',
+};
 SCHEMA['ui.color'] = { type: 'bool', default: true, help: 'Colorize CLI output.' };
 SCHEMA['usage.cacheTtlSeconds'] = {
   type: 'int',
@@ -46,6 +65,30 @@ SCHEMA['usage.cacheTtlSeconds'] = {
   min: 0,
   max: 3600,
   help: 'How long to cache per-account usage before refetching.',
+};
+// Where the BACKGROUND chores (dream / distill / recall --answer) compute their summaries. The
+// default keeps `claude -p`, i.e. the subscription; the point of these keys is that a chore does NOT
+// have to be paid for with plan quota. llm.key_env is the NAME of an env var, never a secret value.
+SCHEMA['llm.provider'] = {
+  type: 'enum',
+  values: ['claude', 'ollama', 'openai'],
+  default: 'claude',
+  help: 'What runs headless summaries: claude -p (subscription quota), ollama (local), openai (any OpenAI-compatible endpoint).',
+};
+SCHEMA['llm.model'] = {
+  type: 'string',
+  default: '',
+  help: 'Model name for llm.provider (empty = the provider default).',
+};
+SCHEMA['llm.base_url'] = {
+  type: 'string',
+  default: '',
+  help: 'Endpoint base URL for llm.provider, e.g. http://127.0.0.1:11434/v1 or https://gateway/v1 (empty = provider default).',
+};
+SCHEMA['llm.key_env'] = {
+  type: 'string',
+  default: '',
+  help: 'NAME of the environment variable holding the endpoint API key. keyflip stores the name only — never the key.',
 };
 
 function configPath(ctx) {

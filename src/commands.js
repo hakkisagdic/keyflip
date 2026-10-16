@@ -89,8 +89,8 @@ const CATALOG = [
     name: 'switch',
     group: 'accounts',
     safe: false,
-    usage: 'keyflip <name|number> [--restart|--force] [--browser]',
-    desc: 'Switch to that account (aligns CLI + desktop, optionally the browser).',
+    usage: 'keyflip <name|number> [--restart|--force] [--browser] [--dry-run] [--no-verify] [--rollback-on-fail]',
+    desc: 'Switch to that account (aligns CLI + desktop, optionally the browser); --dry-run plans it, then every switch reads itself back.',
   },
   {
     name: 'next',
@@ -167,6 +167,14 @@ const CATALOG = [
     desc: 'Browse Claude Code conversations across all accounts.',
   },
   {
+    name: 'threads',
+    group: 'sessions',
+    safe: true,
+    usage:
+      'keyflip threads [list] | create <slug> | add <slug> <id> [--chat] | show <slug> [--timeline] | open | where | suggest | mirror | drop',
+    desc: 'One name for the sessions that are the same task across accounts (pointers, never copies).',
+  },
+  {
     name: 'resume',
     group: 'sessions',
     safe: false,
@@ -193,6 +201,20 @@ const CATALOG = [
     safe: true,
     usage: 'keyflip chat [--limit N | get <id>]',
     desc: 'Read claude.ai Chat of the active account (experimental).',
+  },
+  {
+    name: 'refresh',
+    group: 'accounts',
+    safe: false,
+    usage: 'keyflip refresh [account] [--all] [--json] | --schedule [--at 04:30] | --unschedule | --schedule-status',
+    desc: 'Refresh stored OAuth tokens for every idle account before they expire — or put it on a nightly timer.',
+  },
+  {
+    name: 'verify',
+    group: 'accounts',
+    safe: true,
+    usage: 'keyflip verify [account] [--usage] [--live] [--json]',
+    desc: 'Read each surface back the way its own app would: would a switch work right now?',
   },
   {
     name: 'consolidate',
@@ -258,8 +280,8 @@ const CATALOG = [
     name: 'memory',
     group: 'context',
     safe: true,
-    usage: 'keyflip memory [show <key>]',
-    desc: "Browse keyflip's distilled keepsakes (its own memory store).",
+    usage: 'keyflip memory [show <key>|audit [--apply|--drop-copies]]',
+    desc: "Browse keyflip's distilled keepsakes; `audit` scans them for secrets (MCP: keyflip_memory_audit/_redact).",
   },
 
   // ---- transfer ----
@@ -412,6 +434,14 @@ const CATALOG = [
     usage: 'keyflip budget [status|set <acct> --5h N --7d N|clear <acct>]',
     desc: 'Usage ceilings with breach/near-breach alerts.',
   },
+  {
+    name: 'llm',
+    group: 'cost',
+    safe: true,
+    usage:
+      'keyflip llm [status|set --provider claude|ollama|openai [--model M] [--base-url U] [--key-env NAME]|test [--timeout ms]|off]',
+    desc: 'Which model runs the chores (dream/distill/recall) — and whose quota they burn.',
+  },
 
   // ---- policy ----
   {
@@ -560,8 +590,30 @@ const CATALOG = [
     name: 'doctor',
     group: 'maintenance',
     safe: true,
-    usage: 'keyflip doctor',
-    desc: 'Diagnose config, login and endpoint reachability.',
+    usage: 'keyflip doctor [--history]',
+    desc: 'Diagnose config, login and endpoint reachability (--history also scans old commits).',
+  },
+  {
+    name: 'scrub-history',
+    group: 'maintenance',
+    safe: false,
+    usage: 'keyflip scrub-history [--apply] [--include-tracked] [--max-blobs N]',
+    desc: 'Find secrets still reachable in the state-repo history; --apply removes them after a bundle backup.',
+  },
+  {
+    name: 'secrets',
+    group: 'maintenance',
+    safe: true,
+    usage:
+      'keyflip secrets [list [--alarms]] | tolerate <path> [--kind K] [--note "..."] | untolerate <path> [--kind K]',
+    desc: 'Decide which history findings are expected: ends the alarm and the rotation nag, never the clean-up.',
+  },
+  {
+    name: 'chains',
+    group: 'maintenance',
+    safe: true,
+    usage: 'keyflip chains [account] [--tighten [--apply]]',
+    desc: 'Map what each login is made of: who can renew each part, what is stale, shared or world-readable.',
   },
   {
     name: 'backup',

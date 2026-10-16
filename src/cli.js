@@ -14,6 +14,9 @@ import * as oauth from './oauth.js';
 import * as update from './update.js';
 import * as transfer from './transfer.js';
 import * as usagemod from './usage.js';
+import * as verifymod from './verify.js';
+import * as _switchplan from './switchplan.js';
+import * as _switchfacts from './switchfacts.js';
 import * as session from './session.js';
 import * as links from './links.js';
 import * as autosw from './autoswitch.js';
@@ -70,10 +73,14 @@ import * as _chatsession from './chatsession.js';
 import * as _skillstore from './skillstore.js';
 import * as _archive from './archive.js';
 import * as _sessionmap from './sessionmap.js';
+import * as _threads from './threads.js';
 import * as _schedule from './schedule.js';
 import * as _settingsmod from './settings.js';
 import * as _recall from './recall.js';
 import * as _llm from './llm.js';
+import * as _leakscan from './leakscan.js';
+import * as _secretpolicy from './secretpolicy.js';
+import * as _chains from './chains.js';
 import * as _memory from './memory.js';
 import * as _foreign from './foreign.js';
 import * as _transcript from './transcript.js';
@@ -157,7 +164,7 @@ function capturedCliSafe(ctx, name) {
 function usage() {
   print('keyflip ' + VERSION + ' — switch between Anthropic / Claude Code accounts (macOS, Linux, Windows)');
   print('');
-  print('  keyflip                       interactive menu (↑/↓ + Enter)');
+  print('  keyflip                       interactive menu (↑/↓ + Enter; [t] shows threads — read-only)');
   print('  keyflip onboard [--manual] [--sso] [--console]   full first-run: sign in per account →');
   print('                                 capture + point CLI + browser at it + sync chats, then ask for');
   print('                                 the next ("p" = add an API-key provider; --sso = enterprise SSO)');
@@ -173,7 +180,10 @@ function usage() {
   print('                                 (--app: desktop app only; name it if undetected)');
   print('  keyflip <name|number>         switch to that account (asks before closing Claude;');
   print('                                 --restart = no prompt, --force = swap without closing,');
-  print('                                 --browser = also align the browser + Chrome extension)');
+  print('                                 --browser = also align the browser + Chrome extension,');
+  print('                                 --dry-run = show the plan and touch NOTHING; the switch');
+  print('                                 then reads itself back (--no-verify skips that, and');
+  print('                                 --rollback-on-fail puts the previous account back)');
   print('  keyflip next [--strategy best|next-available]');
   print('                                 rotate to the next account — or pick by remaining quota');
   print('  keyflip provider add <name> --base-url <url> [--key-file <f|->]');
@@ -181,8 +191,12 @@ function usage() {
   print('  keyflip use <name>             route Claude Code to that provider (no restart);');
   print('                                 keyflip provider off = back to your subscription');
   print("  keyflip speedtest [name]       time a provider's endpoints, pick the fastest");
-  print('  keyflip doctor                 diagnose config, login and endpoint reachability');
+  print('  keyflip doctor [--history]    diagnose config, login and endpoint reachability');
+  print('                                 (--history also scans every blob keyflip ever committed)');
   print("  keyflip test <provider>        fire one real request to check a provider's auth");
+  print(
+    '  keyflip chains [account] [--tighten [--apply]]   what each login is made of, who can renew each part, and what is stale/shared/world-readable',
+  );
   print('  keyflip usage --history        per-account usage trend + autoswitch/failover events');
   print(
     '  keyflip usage --providers      usage/limits across OTHER AI tools (Codex/Gemini/Cursor/Copilot/OpenRouter…) — the multi-provider monitor',
@@ -190,6 +204,12 @@ function usage() {
   print('  keyflip backup [now|list|restore <n>|prune]   snapshot keyflip metadata (no secrets)');
   print('  keyflip history | undo | restore <ref>   git-versioned config: see/undo/roll back changes');
   print('  keyflip versioning [on|off]   toggle auto-versioning (ON by default; secrets never committed)');
+  print(
+    '  keyflip scrub-history [--apply] [--include-tracked]   find (and remove) secrets still reachable in the state-repo history',
+  );
+  print(
+    '  keyflip secrets [list|tolerate <path> [--kind K]|untolerate <path>]   which of those findings are EXPECTED (silences the alarm, never the clean-up)',
+  );
   print('  keyflip share <name> [--no-secrets]   make a keyflip:// link; import with `keyflip import`');
   print('  keyflip mcpreg [add|list|enable|disable|import]   manage MCP servers across Claude Code + Desktop');
   print('  keyflip gateway use <provider> | off   route the Claude DESKTOP app through a provider gateway');
@@ -231,11 +251,20 @@ function usage() {
   print(
     '  keyflip sessions assign <id> <account>   continue a session AS another account (resume --run) — no profile switch',
   );
+  print('  keyflip threads                  ONE name for the sessions that are the same task, across accounts');
+  print('                                 (a thread stores POINTERS — ids/uuids — never a copy of your chat)');
+  print('  keyflip threads create <slug> [--title "…"] | add <slug> <id> [--chat] [--account <name>]');
+  print('  keyflip threads show <slug> [--timeline] [--md] [--mirror]   the whole thread as one merged view');
+  print('  keyflip threads open <slug> [--run]   resume where the thread last stopped, as the account that owns it');
+  print('  keyflip threads suggest            find work that is ALREADY split over 2+ accounts (no guessing ids)');
+  print('  keyflip threads where <id> | remove <slug> <id> | drop <slug>   locate / unlink / forget the name');
   print('  keyflip sessions distill <id> [--to-claude]   summarize a chat into a durable keepsake (via `claude -p`)');
   print(
     '  keyflip sessions compact <id> [--apply]   shrink a transcript (elide bulky tool output; dry-run by default)',
   );
-  print("  keyflip memory [show <key>]    browse keyflip's distilled keepsakes (its own memory store)");
+  print(
+    "  keyflip memory [show <key>|audit [--apply|--drop-copies]]    browse keyflip's distilled keepsakes (audit = secret scan of them)",
+  );
   print(
     '  keyflip recall "<query>" [--semantic] [--answer]   search your chats (BM25; --semantic = embeddings; --answer = `claude -p` synthesis)',
   );
@@ -270,6 +299,13 @@ function usage() {
   print('  keyflip proxy start [--wire] | stop | status | stats');
   print('                                 command-started failover proxy (429/5xx → next account)');
   print('  keyflip status                which account each surface is on (CLI + desktop app)');
+  print('  keyflip verify [acct] [--usage|--live]  would switching there WORK right now? reads each');
+  print('                                 surface back the way its own app does (token/cookie expiry, capture age)');
+  print('  keyflip refresh [acct|--all]  revive stored OAuth tokens while no Claude is running them');
+  print('                                 (run it on a schedule, not at switch time)');
+  print('  keyflip refresh --schedule [--at 04:30] | --unschedule | --schedule-status');
+  print('                                 put `refresh --all` on a nightly timer (launchd/cron): tokens');
+  print('                                 expire on the calendar, not on the day you happen to switch');
   print('  keyflip list [--usage]        saved accounts; --usage adds 5h/7d quota per account');
   print('  keyflip remove <name|number>  delete a saved account');
   print('  keyflip autoswitch            watch usage; auto-swap the CLI account at a threshold');
@@ -286,6 +322,9 @@ function usage() {
     '  keyflip group [list|members <g>|tag <acct> <g…>|untag <acct> <g>]   tag accounts into pools; `next --group <g>` rotates within one',
   );
   print('  keyflip budget [status|set <acct> --5h N --7d N|clear <acct>]   usage ceilings + breach/near-breach alerts');
+  print(
+    '  keyflip llm [status|set --provider claude|ollama|openai [--model M] [--base-url U] [--key-env NAME]|test [--timeout ms]|off]   what runs dream/distill/recall, and whose quota it burns (keys are named, never stored)',
+  );
   print(
     '  keyflip notify [status|set --webhook URL --events a,b,c|test|off]   push alerts on quota/switch/fleet-reply',
   );
@@ -426,15 +465,168 @@ function askHidden(rl, question) {
   });
 }
 
+// ---- #38 SWITCH PREFLIGHT ---------------------------------------------------------------------
+// The facts live in src/switchfacts.js (shared with the MCP switch tool, so an agent and a terminal
+// read the same machine); everything below is the rendering and the recovery, which belong to the CLI.
+const SWITCH_MODE_LABEL = {
+  'already-active': 'nothing to do — this account is already active on every surface keyflip can see',
+  'app-only': 'the CLI is already on this account; only the desktop app login would move',
+  restart: 'full switch: Claude is quit, the logins move, Claude reopens',
+  'in-place': 'full switch WITHOUT closing Claude (--force) — the app can still fight it',
+  plain: 'full switch while Claude is closed',
+  refuse: 'BLOCKED — this switch would not run as things stand',
+};
+
+// Render the plan. The labels are literal ("write:" / "skip:" / "warn:" / "block:") so `--dry-run`
+// output is greppable and testable, and because a plan you have to interpret is a plan you distrust.
+async function dryRunReport(ctx, name, em, opts) {
+  const f = await _switchfacts.collect(ctx, name, opts);
+  const plan = _switchplan.build(f, opts);
+  print(
+    style.bold('dry run') +
+      ' — ' +
+      style.dim('nothing was changed') +
+      '  target: ' +
+      style.bold(em || name) +
+      '  ' +
+      style.dim('(profile: ' + name + ')'),
+  );
+  print('  ' + (SWITCH_MODE_LABEL[plan.mode] || plan.mode));
+  if (f.targetState)
+    print(
+      '  ' +
+        style.dim('target reads as') +
+        ': ' +
+        (f.targetState === 'ok'
+          ? style.ok(verifymod.HEADLINE[f.targetState])
+          : f.targetState === 'warn'
+            ? style.warn(verifymod.HEADLINE[f.targetState])
+            : f.targetState === 'fail'
+              ? style.err(verifymod.HEADLINE[f.targetState])
+              : style.dim(verifymod.HEADLINE[f.targetState])) +
+        (f.targetDetail ? ' — ' + f.targetDetail : ''),
+    );
+  plan.writes.forEach(function (w) {
+    print('  ' + style.ok('write:') + ' ' + w);
+  });
+  plan.skips.forEach(function (s) {
+    print('  ' + style.dim('skip:') + '  ' + s);
+  });
+  plan.warns.forEach(function (w) {
+    print('  ' + style.warn('warn:') + '  ' + w);
+  });
+  plan.blockers.forEach(function (b) {
+    print('  ' + style.err('block:') + '  ' + b);
+  });
+  if (plan.needsConfirm)
+    print(
+      '  ' +
+        style.dim(
+          'note:  this switch closes Claude, so the real run asks you to confirm first (--restart answers it).',
+        ),
+    );
+  if (JSON_MODE)
+    jsonOut({
+      dryRun: true,
+      target: name,
+      email: em || null,
+      mode: plan.mode,
+      verify: { state: f.targetState, detail: f.targetDetail, checks: f.targetChecks },
+      plan: {
+        writes: plan.writes,
+        skips: plan.skips,
+        warns: plan.warns,
+        blockers: plan.blockers,
+        wouldQuit: plan.wouldQuit,
+      },
+    });
+  else print(style.dim('  ↳ run the same command without --dry-run to actually switch.'));
+  return plan.mode === 'refuse' ? 1 : 0;
+}
+
+// Put the machine back as far as keyflip CAN. `keyflip undo` does not apply here: it reverts the
+// metadata git repo and never touches a credential store, so the only recovery is to switch back the
+// way a switch works. Restoring the app login needs Claude closed, so it is quit and reopened — only
+// on a platform where keyflip can do that; otherwise the CLI is restored and the user is told exactly
+// what is left.
+async function rollbackToPrevious(ctx, scope, targetName) {
+  const done = { cli: null, app: null, notes: [] };
+  if (scope.cli) {
+    const emPrev = profiles.email(ctx.configDir, scope.cli);
+    const did = core.performSwitch(ctx, scope.cli);
+    done.cli = scope.cli;
+    print(
+      '  ↳ rolled the CLI back to ' +
+        (emPrev || scope.cli) +
+        (did && did.cli ? '' : ' (no captured login for it — best effort)'),
+    );
+  }
+  if (scope.app) {
+    let quitForThis = false;
+    if (appctl.isClaudeRunning(ctx.platform) && appctl.canManageApp(ctx.platform)) {
+      print('Quitting Claude to restore its login...');
+      appctl.quitClaude(ctx.platform);
+      await waitForQuit(ctx);
+      quitForThis = true;
+    }
+    if (appctl.isClaudeRunning(ctx.platform)) {
+      done.notes.push(
+        "the desktop app is still on '" + targetName + "' — quit Claude and run: keyflip " + scope.app + ' --restart',
+      );
+    } else {
+      const a = switchDesktopLogin(ctx, scope.app);
+      if (a && a.ok) {
+        done.app = scope.app;
+        print('  ↳ rolled the desktop app login back to ' + scope.app + '.');
+      } else done.notes.push('the desktop app login could not be restored (' + ((a && a.reason) || 'failed') + ')');
+    }
+    if (quitForThis) appctl.openClaude(ctx.platform);
+  }
+  return done;
+}
+
 async function cmdSwitch(ctx, rest) {
   const arg = rest[0];
-  if (!arg) return fail('usage: keyflip <name|number> [--restart|--force] [--browser]');
+  if (!arg)
+    return fail(
+      'usage: keyflip <name|number> [--restart|--force] [--browser] [--dry-run] [--no-verify] [--rollback-on-fail]',
+    );
   const autoYes = rest.indexOf('--restart') !== -1 || rest.indexOf('-y') !== -1 || rest.indexOf('--yes') !== -1;
   const force = rest.indexOf('--force') !== -1;
   const syncBrowser = rest.indexOf('--browser') !== -1;
+  // #38: --dry-run plans without touching anything; --no-verify skips the read-back that every switch
+  // does by default; --rollback-on-fail opts into putting the previous account back when that
+  // read-back says the switch did not produce a usable machine. (NOT --force, which already means
+  // "swap in place without closing the app".)
+  const dryRun = rest.indexOf('--dry-run') !== -1 || rest.indexOf('--plan') !== -1;
+  const noVerify = rest.indexOf('--no-verify') !== -1;
+  const rollbackOnFail = rest.indexOf('--rollback-on-fail') !== -1;
   const name = core.resolveProfile(ctx, arg);
   if (!name) return fail("no such profile: '" + arg + "' (see: keyflip list)");
   const em = profiles.email(ctx.configDir, name);
+
+  // What was live BEFORE anything is written. This snapshot is the only recovery path there is —
+  // `keyflip undo` reverts the metadata git repo, never a credential store — so it has to be taken
+  // first, and it is what --rollback-on-fail works from.
+  let prevCli = null;
+  let prevApp = null;
+  try {
+    const curEmail = core.currentEmail(ctx);
+    if (curEmail)
+      profiles.list(ctx.configDir).forEach(function (n) {
+        if (!prevCli && profiles.email(ctx.configDir, n) === curEmail) prevCli = n;
+      });
+  } catch (e) {
+    /* best-effort: a rollback simply won't be offered */
+  }
+  try {
+    prevApp = appActiveProfile(ctx);
+  } catch (e) {
+    /* ditto */
+  }
+
+  if (dryRun) return await dryRunReport(ctx, name, em, { autoYes: autoYes, force: force, browser: syncBrowser });
+
   // Did THIS switch reopen the desktop app? Only then is it worth waiting to see whether
   // the app came back signed in (see verifyAppRelogin).
   let appReopened = false;
@@ -600,12 +792,106 @@ async function cmdSwitch(ctx, rest) {
           style.bold('keyflip add ' + name),
       );
     }
+    // ---- #38 read-back: prove the switch landed, instead of trusting that the writes returned ok.
+    // Re-read the account we just moved to the way its own tools do (verify.js), and compare the CLI
+    // credential on disk against the email it should now be. Observation only unless the user asked
+    // for --rollback-on-fail.
+    let vb = null;
+    let cliNow = null;
+    if (!noVerify) {
+      try {
+        const r = await verifymod.verifyAccount(ctx, name, {
+          liveAccount: name, // the machine is supposed to BE on this account now
+          currentEmail: function (c) {
+            return core.currentEmail(c);
+          },
+        });
+        vb = verifymod.brief(r);
+        vb.checks = r.checks;
+      } catch (e) {
+        vb = null; // a broken verifier must never fail a switch that already worked
+      }
+      try {
+        cliNow = core.currentEmail(ctx) || null;
+      } catch (e) {
+        cliNow = null;
+      }
+    }
+    const cliMismatch = !!(em && cliNow && cliNow.toLowerCase() !== em.toLowerCase());
+    if (!JSON_MODE && vb) {
+      if (vb.state === 'ok' && !cliMismatch)
+        print(
+          '  ' +
+            style.ok('✓') +
+            ' ' +
+            style.dim('verified: ' + vb.headline + (cliNow ? ' — the CLI reads as ' + cliNow : '')),
+        );
+      else {
+        print(
+          '  ' +
+            (vb.state === 'warn' ? style.warn('·') : style.err('✗')) +
+            ' read-back: ' +
+            vb.headline +
+            (vb.detail ? ' — ' + vb.detail : ''),
+        );
+        (vb.checks || [])
+          .filter(function (c) {
+            return c.state === 'fail' || c.state === 'warn';
+          })
+          .slice(0, 3)
+          .forEach(function (c) {
+            print(
+              '      ' +
+                (c.state === 'fail' ? style.err('✗') : style.warn('·')) +
+                ' ' +
+                c.name +
+                (c.detail ? ' — ' + c.detail : ''),
+            );
+          });
+      }
+      if (cliMismatch)
+        print(
+          '  ' +
+            style.err('✗') +
+            ' the CLI credential on disk is ' +
+            cliNow +
+            ', not ' +
+            em +
+            ' — the switch did not land.',
+        );
+    }
+    const scope = _switchplan.rollbackScope(
+      {
+        cli: prevCli,
+        app: prevApp,
+        target: name,
+        appCaptured: !!prevApp && appauth.hasProfile(ctx, prevApp),
+      },
+      { cli: !!(did && did.cli), app: !!(appl && appl.ok) },
+    );
+    const dec = _switchplan.shouldRollback(
+      { scope: scope, state: vb && vb.state, detail: vb && vb.detail, appSignedIn: relogin, cliMismatch: cliMismatch },
+      { rollbackOnFail: rollbackOnFail },
+    );
+    let rolledBack = null;
+    if (dec.do) {
+      print('  ' + style.warn('↩') + ' rolling back: ' + dec.reason + '.');
+      rolledBack = await rollbackToPrevious(ctx, scope, name);
+      rolledBack.notes.forEach(function (n) {
+        print('  ' + style.warn('⚠') + ' ' + n);
+      });
+      if (!rolledBack.cli && !rolledBack.app) print('  ' + style.err('✗') + ' nothing could be restored.');
+      else print('  ' + style.dim('the switch was reverted as far as keyflip can — see the lines above.'));
+    } else if (rollbackOnFail && dec.reason) print('  ' + style.warn('⚠') + ' not rolled back: ' + dec.reason + '.');
     jsonOut({
       switched: { name: name, email: em || null },
       cliSwitched: !!(did && did.cli),
       appSwitched: !!(appl && appl.ok),
       appSignedIn: relogin === null ? undefined : relogin,
       sessionsShared: (cons && cons.merged) || 0,
+      verified: vb ? { state: vb.state, headline: vb.headline, detail: vb.detail || null } : null,
+      cliEmailAfterSwitch: cliNow || undefined,
+      rolledBackTo: rolledBack ? { cli: rolledBack.cli, app: rolledBack.app, notes: rolledBack.notes } : undefined,
     });
     // Opt-in switch notification — a no-op unless the user configured notify for the 'switch'
     // event (and a sink). Guarded + secret-stripped inside send(); never block a switch on it.
@@ -4910,11 +5196,12 @@ async function cmdSessionsCompact(ctx, rest) {
 // on Linux). Command-activated — the user runs it; nothing daemonizes on its own.
 async function cmdDreamSchedule(ctx, rest) {
   const schedule = _schedule;
+  const prov = _llm.resolve(ctx);
   const sub = rest[0];
   if (sub === 'status') {
     const st = schedule.status(ctx);
     if (JSON_MODE) {
-      jsonOut({ dreamSchedule: st });
+      jsonOut({ dreamSchedule: Object.assign({}, st, { willUse: prov }) });
       return;
     }
     print(
@@ -4923,6 +5210,21 @@ async function cmdDreamSchedule(ctx, rest) {
           ? style.ok('scheduled') + ' (' + st.kind + (st.path ? ', ' + st.path : '') + ')'
           : style.warn('not scheduled')),
     );
+    if (st.installed) {
+      // The job resolves its provider when it RUNS, so this is the live truth, not the install-time
+      // receipt. Show both when they differ — that is how a silent cost change becomes visible.
+      print('  ' + style.dim('tonight it distills via ') + style.bold(prov.display) + style.dim(' — ' + prov.cost));
+      if (st.recorded && st.recorded.provider && st.recorded.provider !== prov.provider)
+        print(
+          '  ' +
+            style.warn('·') +
+            ' installed expecting ' +
+            st.recorded.provider +
+            '; it now resolves to ' +
+            prov.provider +
+            '.',
+        );
+    }
     return;
   }
   if (sub === 'unschedule') {
@@ -4949,9 +5251,15 @@ async function cmdDreamSchedule(ctx, rest) {
   );
   print(
     style.dim(
-      "  It distills old chats into keepsakes (spends the active account's quota) unattended. Remove with: keyflip dream unschedule.",
+      '  It distills old chats into keepsakes unattended, via ' +
+        prov.display +
+        ' — ' +
+        prov.cost +
+        '.' +
+        (prov.provider === 'claude' ? ' Set `keyflip llm set --provider ollama` first to keep it off your plan.' : ''),
     ),
   );
+  print(style.dim('  Remove with: keyflip dream unschedule.'));
   if (rest.indexOf('-y') === -1 && rest.indexOf('--force') === -1) {
     if (!process.stdin.isTTY) return fail('re-run with -y to confirm.');
     if (!(await confirm('Install the nightly schedule? [y/N] '))) {
@@ -4959,7 +5267,13 @@ async function cmdDreamSchedule(ctx, rest) {
       return;
     }
   }
-  const r = schedule.install(ctx, { at: at, days: days, archive: archiveToo });
+  const r = schedule.install(ctx, {
+    at: at,
+    days: days,
+    archive: archiveToo,
+    provider: prov.provider,
+    model: prov.model,
+  });
   if (!r.ok) return fail('could not schedule: ' + (r.reason || r.detail || 'unknown'));
   print(
     style.ok('✅') +
@@ -4970,7 +5284,181 @@ async function cmdDreamSchedule(ctx, rest) {
       '). ' +
       style.dim('Status: keyflip dream status'),
   );
-  jsonOut({ dreamSchedule: { installed: true, at: at, kind: r.kind } });
+  jsonOut({
+    dreamSchedule: { installed: true, at: at, kind: r.kind, provider: prov.provider, model: prov.model || null },
+  });
+}
+
+// ---- #40 WHERE THE CHORES RUN ----------------------------------------------------------------------------------
+// `dream`, `sessions distill` and `recall --answer` summarize old transcripts. That is bookkeeping,
+// and by default it was billed to the Max plan the user pays to WORK — a nightly job quietly
+// spending subscription quota nobody opted into. `keyflip llm` picks the provider (and says, in
+// plain words, whose quota each choice burns) BEFORE the first call.
+//
+// SECURITY: an endpoint key is never stored. `llm.key_env` holds the NAME of an env var, and the
+// value is read from the process environment only when a request is made. The state directory is a
+// git repo; a key written there is a key pushed.
+const LLM_KEYS = ['llm.provider', 'llm.model', 'llm.base_url', 'llm.key_env'];
+function cmdLlm(ctx, rest) {
+  const llm = _llm;
+  const sub = rest[0] && rest[0].slice(0, 2) !== '--' ? rest[0] : 'status';
+  const flag = function (name) {
+    const i = rest.indexOf(name);
+    return i !== -1 ? rest[i + 1] : undefined;
+  };
+  if (sub === 'set') {
+    const want = [];
+    const p = flag('--provider');
+    if (p !== undefined) want.push(['llm.provider', p]);
+    const m = flag('--model');
+    if (m !== undefined) want.push(['llm.model', m]);
+    const b = flag('--base-url');
+    if (b !== undefined) want.push(['llm.base_url', b]);
+    const k = flag('--key-env');
+    if (k !== undefined) want.push(['llm.key_env', k]);
+    if (!want.length)
+      return fail(
+        'usage: keyflip llm set [--provider claude|ollama|openai] [--model NAME] [--base-url URL] [--key-env VAR_NAME]',
+      );
+    const envName = /^[A-Za-z_][A-Za-z0-9_]*$/;
+    for (let i = 0; i < want.length; i++) {
+      if (want[i][0] === 'llm.key_env' && want[i][1] && !envName.test(want[i][1]))
+        return fail(
+          "'" +
+            want[i][1] +
+            "' is not an env var NAME. Pass the NAME of the variable that holds the key (e.g. EVREN_KEY), never the key itself — keyflip stores the name and reads the value from your environment at call time.",
+        );
+      try {
+        _cfg.set(ctx, want[i][0], want[i][1]);
+      } catch (e) {
+        return fail(want[i][0] + ': ' + e.message);
+      }
+    }
+    const prov = llm.resolve(ctx);
+    print(style.ok('✅') + ' chores now run via ' + style.bold(prov.display) + ' — ' + style.dim(prov.cost) + '.');
+    if (prov.needsKey) {
+      const set = !!process.env[prov.keyEnv];
+      print(
+        (set ? style.ok('✓') : style.warn('·')) +
+          ' ' +
+          (set
+            ? 'the environment variable ' + prov.keyEnv + ' is present (its value was not read or stored)'
+            : prov.keyEnv +
+              ' is not set in this shell — export it before running a chore, or `keyflip llm set --key-env` another name'),
+      );
+    }
+    if (!prov.baseUrl && prov.provider !== 'claude')
+      print(style.warn('·') + ' no base_url — set one: `keyflip llm set --base-url https://gateway/v1`');
+    jsonOut({
+      llm: {
+        set: want,
+        provider: prov.provider,
+        model: prov.model || null,
+        base_url: prov.baseUrl || null,
+        key_env: prov.keyEnv || null,
+        cost: prov.cost,
+      },
+    });
+    return;
+  }
+  if (sub === 'off' || sub === 'reset') {
+    LLM_KEYS.forEach(function (k) {
+      try {
+        _cfg.unset(ctx, k);
+      } catch (e) {
+        /* unknown key — nothing to reset */
+      }
+    });
+    print(style.ok('✅') + ' back to the default: chores distill via claude -p (they spend the active account).');
+    jsonOut({ llm: { reset: true } });
+    return;
+  }
+  if (sub === 'test') {
+    const gate = llm.availability(ctx);
+    const prov = gate.provider;
+    if (!gate.ok) return fail('provider "' + prov.display + '" is not usable (' + gate.reason + ') — ' + gate.fix);
+    if (prov.provider === 'claude' && !llm.available(ctx))
+      return fail(
+        'claude -p is not on PATH — install Claude Code, or point chores somewhere else: keyflip llm set --provider ollama',
+      );
+    print('Testing ' + style.bold(prov.display) + ' ' + style.dim('(' + prov.cost + ')') + '…');
+    // A local model has to be loaded into RAM before it answers, which on a big one is minutes, not
+    // seconds — so the self-test waits as long as a real chore call would, and says so.
+    const ti = rest.indexOf('--timeout');
+    const timeoutMs = ti !== -1 ? parseInt(rest[ti + 1], 10) || 180000 : 180000;
+    return llm
+      .complete(ctx, 'Reply with exactly: OK', 'keyflip llm self-test', {
+        skipCheck: prov.provider === 'claude' ? true : false,
+        timeoutMs: timeoutMs,
+      })
+      .then(function (r) {
+        if (!r.ok)
+          return fail(
+            'the provider did not answer: ' +
+              (r.reason || 'unknown') +
+              (r.detail ? ' (' + r.detail + ')' : '') +
+              (r.fix ? ' — ' + r.fix : '') +
+              (/timed out/.test(r.detail || '')
+                ? ' — a large local model spends minutes loading; retry with a bigger --timeout or a smaller --model'
+                : ''),
+          );
+        print(
+          style.ok('✅') +
+            ' answered: ' +
+            style.dim(
+              String(r.text)
+                .replace(/[\r\n]+/g, ' ')
+                .slice(0, 120),
+            ),
+        );
+        jsonOut({ llmTest: { ok: true, provider: r.provider, model: r.model || null, bytes: String(r.text).length } });
+      });
+  }
+  // status (default)
+  const prov = llm.resolve(ctx);
+  const gate = llm.availability(ctx);
+  const usable = gate.ok && (prov.provider !== 'claude' || llm.available(ctx));
+  print(style.bold('keyflip llm') + ' — what runs the background chores (dream / sessions distill / recall --answer)');
+  print(
+    '  provider: ' +
+      style.bold(prov.display) +
+      (usable
+        ? ' ' + style.ok('(usable)')
+        : ' ' + style.warn('(not usable: ' + (gate.ok ? 'claude -p not on PATH' : gate.reason) + ')')),
+  );
+  print('  cost:     ' + style.dim(prov.cost));
+  if (prov.needsKey) {
+    const present = prov.keyEnv && process.env[prov.keyEnv] ? ' (present)' : ' (NOT SET in this shell)';
+    print(
+      '  key:      ' +
+        (prov.keyEnv ? 'env var ' + prov.keyEnv + present : 'none named') +
+        ' ' +
+        style.dim('— keyflip stores the NAME only; its value never touches disk'),
+    );
+  }
+  if (prov.provider === 'ollama')
+    print('  ' + style.dim('ollama pull <model> first; `keyflip llm test` proves it answers'));
+  print(
+    '  ' +
+      style.dim(
+        'change: keyflip llm set --provider ollama | --provider openai --base-url https://gateway/v1 --key-env MY_KEY --model NAME',
+      ),
+  );
+  print('  ' + style.dim('verify: keyflip llm test'));
+  jsonOut({
+    llm: {
+      provider: prov.provider,
+      model: prov.model || null,
+      base_url: prov.baseUrl || null,
+      key_env: prov.keyEnv || null,
+      key_present: prov.needsKey ? !!process.env[prov.keyEnv] : null,
+      needs_key: !!prov.needsKey,
+      usable: usable,
+      reason: gate.ok ? null : gate.reason,
+      cost: prov.cost,
+      display: prov.display,
+    },
+  });
 }
 
 // C1: "dreaming" — a background pass that consolidates OLD chats: distill each into a
@@ -4982,6 +5470,9 @@ async function cmdDream(ctx, rest) {
   const memory = _memory,
     llm = _llm,
     archive = _archive;
+  // Which model would do the work, and whose quota it burns — decided BEFORE anything runs, because
+  // a nightly chore on the subscription is exactly the cost nobody chose on purpose.
+  const prov = llm.resolve(ctx);
   const oi = rest.indexOf('--older-than');
   const days = oi !== -1 ? parseDays(rest[oi + 1]) || 30 : 30;
   const li = rest.indexOf('--limit');
@@ -5009,7 +5500,21 @@ async function cmdDream(ctx, rest) {
       (targets.length > cap ? ' (processing first ' + cap + ')' : '') +
       (apply ? '' : '   ' + style.dim('[dry run — add --apply to execute]')),
   );
-  if (apply && doDistill && !llm.available()) return fail('dream needs Claude Code on PATH to distill (`claude -p`).');
+  if (doDistill)
+    print(
+      '  ' +
+        style.dim('distills via ') +
+        style.bold(prov.display) +
+        style.dim(' — ' + prov.cost + '. Change it with `keyflip llm`.'),
+    );
+  if (apply && doDistill) {
+    const gate = llm.availability(ctx);
+    if (!gate.ok) return fail('dream: ' + gate.reason + ' — ' + gate.fix);
+    if (gate.provider.provider === 'claude' && !llm.available(ctx))
+      return fail(
+        'dream needs Claude Code on PATH to distill (`claude -p`), or a provider: `keyflip llm set --provider ollama`.',
+      );
+  }
   if (!apply) {
     batch.forEach(function (r) {
       print(
@@ -5030,7 +5535,15 @@ async function cmdDream(ctx, rest) {
             '. (--archive to also stow the bulk.)',
         ),
     );
-    jsonOut({ dream: { candidates: targets.length, wouldProcess: batch.length, apply: false } });
+    jsonOut({
+      dream: {
+        candidates: targets.length,
+        wouldProcess: batch.length,
+        apply: false,
+        provider: prov.provider,
+        model: prov.model || null,
+      },
+    });
     return;
   }
   const INSTR =
@@ -5048,14 +5561,20 @@ async function cmdDream(ctx, rest) {
         failed++;
         continue;
       }
-      const res = llm.summarize(INSTR, transcript, { skipCheck: true });
+      const res = await llm.complete(ctx, INSTR, transcript, { skipCheck: true });
       if (!res.ok) {
         failed++;
         print('  ' + style.warn('·') + ' skipped ' + r.sessionId.slice(0, 8) + ' (' + res.reason + ')');
         continue;
       }
       await withLock(ctx, function () {
-        memory.save(ctx, r.sessionId, res.text, { session: r.sessionId, cwd: r.cwd || '', distilledAt: ctx.now() });
+        memory.save(ctx, r.sessionId, res.text, {
+          session: r.sessionId,
+          cwd: r.cwd || '',
+          distilledAt: ctx.now(),
+          distillProvider: res.provider,
+          distillModel: res.model || '',
+        });
       });
       distilled++;
       print('  ' + style.ok('✓') + ' distilled ' + r.sessionId.slice(0, 8));
@@ -5077,7 +5596,16 @@ async function cmdDream(ctx, rest) {
       '.  Browse: ' +
       style.bold('keyflip memory'),
   );
-  jsonOut({ dream: { distilled: distilled, archived: archived, failed: failed, apply: true } });
+  jsonOut({
+    dream: {
+      distilled: distilled,
+      archived: archived,
+      failed: failed,
+      apply: true,
+      provider: prov.provider,
+      model: prov.model || null,
+    },
+  });
 }
 
 // B4: distill a session into a durable "keepsake" (via `claude -p`) in keyflip's OWN
@@ -5094,7 +5622,12 @@ async function cmdSessionsDistill(ctx, rest) {
     return fail(e.message);
   }
   if (!row) return fail("no session matches '" + id + "'.");
-  if (!llm.available()) return fail('distill needs Claude Code on PATH — it summarizes via `claude -p`.');
+  const gate = llm.availability(ctx);
+  if (!gate.ok) return fail('distill: ' + gate.reason + ' — ' + gate.fix);
+  if (gate.provider.provider === 'claude' && !llm.available(ctx))
+    return fail(
+      'distill needs Claude Code on PATH — it summarizes via `claude -p`. (Or route chores off the subscription: `keyflip llm set --provider ollama`.)',
+    );
   let transcript;
   try {
     transcript = fs.readFileSync(row.file, 'utf8');
@@ -5105,19 +5638,22 @@ async function cmdSessionsDistill(ctx, rest) {
     'Distilling ' +
       style.bold(row.sessionId.slice(0, 8)) +
       ' via ' +
-      style.bold('claude -p') +
+      style.bold(gate.provider.display) +
       ' ' +
-      style.dim("(spends the ACTIVE account's quota)") +
+      style.dim('(' + gate.provider.cost + ')') +
       '…',
   );
   const modelI = rest.indexOf('--model');
   const model = modelI !== -1 ? rest[modelI + 1] : null;
   const INSTR =
     'Summarize this past coding-assistant conversation (a JSONL transcript) into a durable "keepsake" memory. Output terse markdown bullets under these headings: Goal, Decisions, Built/Changed, Gotchas/Learnings, Open TODOs. Be specific; skip anything trivial; no preamble.';
-  const res = llm.summarize(INSTR, transcript, { model: model, skipCheck: true });
+  const res = await llm.complete(ctx, INSTR, transcript, { model: model, skipCheck: true });
   if (!res.ok)
     return fail(
-      'distill failed: ' + (res.reason || 'unknown') + (res.detail ? ' (' + String(res.detail).trim() + ')' : ''),
+      'distill failed: ' +
+        (res.reason || 'unknown') +
+        (res.detail ? ' (' + String(res.detail).trim() + ')' : '') +
+        (res.fix ? ' — ' + res.fix : ''),
     );
   let savedPath;
   await withLock(ctx, function () {
@@ -5125,6 +5661,10 @@ async function cmdSessionsDistill(ctx, rest) {
       session: row.sessionId,
       cwd: row.cwd || '',
       distilledAt: ctx.now(),
+      // Provenance: which model wrote this keepsake, on whose bill. Auditable later, and the
+      // reason `keyflip memory audit` can tell a local distill from a subscription one.
+      distillProvider: res.provider,
+      distillModel: res.model || '',
     });
   });
   print(style.ok('✅') + ' saved keepsake → ' + savedPath);
@@ -5138,7 +5678,9 @@ async function cmdSessionsDistill(ctx, rest) {
       print('  ' + style.warn('·') + ' could not write to ~/.claude memory: ' + e.message);
     }
   }
-  jsonOut({ distilled: { session: row.sessionId, memory: savedPath } });
+  jsonOut({
+    distilled: { session: row.sessionId, memory: savedPath, provider: res.provider, model: res.model || null },
+  });
 }
 
 // G3: a status line for Claude Code — shows the active account (+ provider, + cached quota)
@@ -5348,29 +5890,39 @@ async function cmdRecall(ctx, rest) {
     );
   }
 
-  // I3: --answer synthesizes a cited answer over the retrieved keepsakes via `claude -p`.
+  // I3: --answer synthesizes a cited answer over the retrieved keepsakes, through the configured
+  // provider (`keyflip llm`) — `claude -p` by default, which spends the subscription.
   if (rest.indexOf('--answer') !== -1) {
     const llm = _llm;
-    if (!llm.available()) {
+    const gate = llm.availability(ctx);
+    const usable = gate.ok && (gate.provider.provider !== 'claude' || llm.available(ctx));
+    if (!usable) {
       print(
-        style.warn('·') + ' --answer needs Claude Code on PATH (`claude -p`); showing the ranked keepsakes instead.',
+        style.warn('·') +
+          (gate.ok
+            ? ' --answer needs Claude Code on PATH (`claude -p`) or a provider you set with `keyflip llm`; showing the ranked keepsakes instead.'
+            : ' --answer provider is not usable (' +
+              gate.reason +
+              '): ' +
+              gate.fix +
+              ' — showing the ranked keepsakes instead.'),
       );
     } else {
       print(
         'Researching "' +
           style.bold(query) +
           '" across your keepsakes via ' +
-          style.bold('claude -p') +
+          style.bold(gate.provider.display) +
           ' ' +
-          style.dim('(spends the active account)') +
+          style.dim('(' + gate.provider.cost + ')') +
           '…',
       );
-      const a = recall.answer(ctx, query, { limit: limit, skipCheck: true });
+      const a = await recall.answer(ctx, query, { limit: limit, skipCheck: true });
       if (!a.ok)
         return fail(
           a.reason === 'no-matches'
             ? 'no keepsakes matched "' + query + '".'
-            : 'recall --answer failed: ' + (a.reason || 'unknown'),
+            : 'recall --answer failed: ' + (a.reason || 'unknown') + (a.fix ? ' — ' + a.fix : ''),
         );
       print('\n' + a.text + '\n');
       print(
@@ -5385,6 +5937,8 @@ async function cmdRecall(ctx, rest) {
       );
       jsonOut({
         answer: a.text,
+        provider: a.provider,
+        model: a.model || null,
         sources: a.hits.map(function (h) {
           return h.session;
         }),
@@ -5451,6 +6005,101 @@ function cmdMemory(ctx, rest) {
     if (!rest[1]) return fail('usage: keyflip memory remove <key>');
     memory.remove(ctx, rest[1]);
     print(style.ok('✅') + ' removed keepsake ' + rest[1] + '.');
+    return;
+  }
+  // #41: keepsakes are distilled PROSE, and prose is where a pasted key survives ("Gotchas: my key is
+  // sk-ant-…"). Audit them the way every outbound surface is scanned — report KIND, never content.
+  if (sub === 'audit') {
+    const leakscan = _leakscan;
+    const apply = rest.indexOf('--apply') !== -1;
+    // The .pre-scrub originals are the last copy of the UNREDACTED text — dropping one is only safe
+    // once its keepsake is provably clean, which is what dropKeepsakeCopies checks per key.
+    if (rest.indexOf('--drop-copies') !== -1) {
+      const d = leakscan.dropKeepsakeCopies(ctx, memory);
+      print(
+        d.dropped.length
+          ? style.ok('✅') +
+              ' removed ' +
+              d.dropped.length +
+              ' un-redacted original(s) (' +
+              d.bytes +
+              ' bytes): ' +
+              d.dropped.join(', ')
+          : style.dim('nothing dropped — no .pre-scrub original whose keepsake is already clean.'),
+      );
+      d.kept.forEach(function (k) {
+        print('  ' + style.warn('⚠') + ' kept ' + k.key + ' — ' + k.reason);
+      });
+      jsonOut({ memoryAudit: { dropped: d.dropped, kept: d.kept, bytes: d.bytes } });
+      return;
+    }
+    const copies = leakscan.keepsakeCopies(ctx, memory);
+    const audit = leakscan.keepsakeAudit(ctx, memory);
+    if (!audit.leaks.length) {
+      print(style.ok('✅') + ' ' + audit.audited + ' keepsake(s) audited — no secret shapes found.');
+      if (copies.files.length)
+        print(
+          '  ' +
+            style.warn('⚠') +
+            ' but ' +
+            copies.files.length +
+            ' un-redacted original(s) are still on disk as .pre-scrub (0600) — confirm the redaction, then: keyflip memory audit --drop-copies',
+        );
+      jsonOut({
+        memoryAudit: {
+          audited: audit.audited,
+          leaks: [],
+          redacted: 0,
+          pending_originals: copies.files.map((f) => f.key),
+        },
+      });
+      return;
+    }
+    print(
+      style.warn('⚠') +
+        ' ' +
+        audit.leaks.length +
+        ' of ' +
+        audit.audited +
+        ' keepsake(s) hold secret-shaped text (' +
+        audit.leaks.reduce(function (n, l) {
+          return n + l.hits;
+        }, 0) +
+        ' match(es)):',
+    );
+    audit.leaks.forEach(function (l) {
+      print('  • ' + l.key.slice(0, 12) + '  ' + style.dim(l.kinds.join(', ') + '  ·  ' + l.bytes + ' bytes'));
+    });
+    if (!apply) {
+      print(
+        '\n' +
+          style.dim('Dry run. --apply redacts the matches in place and keeps each original as <key>.md.pre-scrub.'),
+      );
+      jsonOut({ memoryAudit: { audited: audit.audited, leaks: audit.leaks, apply: false } });
+      return;
+    }
+    const r = leakscan.keepsakeScrub(ctx, memory);
+    print(
+      style.ok('✅') +
+        ' redacted ' +
+        r.total +
+        ' match(es) across ' +
+        r.redacted +
+        ' keepsake(s); originals kept as .pre-scrub.',
+    );
+    print(
+      style.dim(
+        '  The originals still HOLD the secret (0600, never versioned): read them, then `keyflip memory audit --drop-copies`.',
+      ),
+    );
+    print(
+      style.dim(
+        '  Note: a redacted keepsake is still in git history until you scrub it — keyflip doctor --history, then keyflip scrub-history.',
+      ),
+    );
+    jsonOut({
+      memoryAudit: { audited: audit.audited, leaks: audit.leaks, apply: true, redacted: r.redacted, matches: r.total },
+    });
     return;
   }
   const rows = memory.list(ctx);
@@ -7024,6 +7673,877 @@ async function cmdSessions(ctx, rest) {
   print('Resume one with:  keyflip resume <number|id>   (add --run to launch it)');
 }
 
+// ---- #35 threads -------------------------------------------------------------
+//
+// A THREAD is keyflip's own store (`<configDir>/threads/<slug>.json`): one name for the sessions that
+// are the SAME task, worked on across accounts. It holds POINTERS — a local session id, a claude.ai
+// chat uuid — so the transcripts stay exactly where Claude Code wrote them and a thread is non-secret
+// metadata: git-versioned with the rest of keyflip's state, and it rides `migrate`/`history`/`restore`.
+// Only `threads mirror`, behind the `threads.mirror` config flag, puts conversation TEXT on disk, and
+// that directory is a registered secret dir (0600, never versioned, never backed up).
+const THREADS_VALUE_FLAGS = [
+  '--title',
+  '--notes',
+  '--account',
+  '--label',
+  '--limit',
+  '--max-mib',
+  '--session',
+  '--chat-id',
+];
+const THREADS_USAGE =
+  'usage: keyflip threads [list] | create <slug> [--title "…"] | add <slug> <id> [--chat] | show <slug> | open <slug> | where <id> | suggest | mirror <slug> | drop <slug>';
+
+// Resolve a thread or stop the command. Ambiguous prefixes and corrupt files THROW (the module
+// refuses to write over damage); `fail` turns that into the usual exit 1 + machine-readable error.
+function threadAt(ctx, selection) {
+  if (!selection) {
+    fail('which thread? ' + THREADS_USAGE);
+    return null;
+  }
+  try {
+    return _threads.read(ctx, selection);
+  } catch (e) {
+    fail(e.message);
+    return null;
+  }
+}
+
+function threadStamp(iso) {
+  return String(iso || '?')
+    .slice(0, 16)
+    .replace('T', ' ');
+}
+
+// `--json` is the thread surface an agent pastes into a transcript, so it follows the rule keyflip
+// learned with `keyflip_chains` and over MCP: a state-repo path comes back RELATIVE to the state dir and
+// a transcript RELATIVE to ~/.claude/projects, never as `/Users/<name>/…`. The human-facing lines keep
+// the absolute path, because there it is a file the user may want to open. Anything outside those two
+// roots stays exactly as written — a resume command needs its cwd, and a working directory is not a
+// secret.
+function threadJsonForAgent(ctx, value) {
+  if (typeof value === 'string') {
+    if (value.charAt(0) !== '/') return value;
+    const inState = path.relative(ctx.configDir, value);
+    if (inState && inState.indexOf('..') !== 0) return inState;
+    const inTranscripts = path.relative(sessions.projectsDir(ctx), value);
+    if (inTranscripts && inTranscripts.indexOf('..') !== 0) return inTranscripts;
+    return value;
+  }
+  if (Array.isArray(value)) {
+    return value.map(function (v) {
+      return threadJsonForAgent(ctx, v);
+    });
+  }
+  if (value && typeof value === 'object') {
+    const out = {};
+    Object.keys(value).forEach(function (k) {
+      out[k] = threadJsonForAgent(ctx, value[k]);
+    });
+    return out;
+  }
+  return value;
+}
+
+function threadsList(ctx) {
+  const rows = _threads.summaries(ctx);
+  const st = _threads.stats(ctx);
+  if (JSON_MODE) {
+    jsonOut(threadJsonForAgent(ctx, { threads: rows, stats: st }));
+    return;
+  }
+  if (!rows.length) {
+    print('No threads yet.');
+    print('A thread gives one task a single name across accounts, so switching does not fragment it:');
+    print('  ' + style.bold('keyflip threads create <slug> --title "…"') + ', then');
+    print('  ' + style.bold('keyflip threads add <slug> <session-id>') + ' for every session that belongs to it.');
+    print(
+      style.dim('Not sure what is already split? ') +
+        style.bold('keyflip threads suggest') +
+        style.dim(' finds work two or more accounts have touched.'),
+    );
+    return;
+  }
+  rows.forEach(function (r, i) {
+    print(
+      '  [' +
+        (i + 1) +
+        '] ' +
+        style.bold(r.slug) +
+        '  ' +
+        r.members +
+        ' member(s): ' +
+        r.sessions +
+        ' session(s)' +
+        (r.chats ? ', ' + r.chats + ' chat(s)' : '') +
+        '  ' +
+        style.dim(threadStamp(r.updatedAt)),
+    );
+    if (r.title && _threads.slugify(r.title) !== r.slug) print('        ' + style.dim('“' + r.title + '”'));
+    print(
+      '        ' +
+        style.dim(
+          r.accounts.length
+            ? 'accounts: ' + r.accounts.join(', ')
+            : 'no account attributed yet (`keyflip sessions assign <id> <account>`)',
+        ),
+    );
+    if (r.corrupt) print('        ' + style.warn('⚠ unreadable thread file: ' + r.file));
+    else if (r.droppedMembers)
+      print('        ' + style.warn('⚠ ' + r.droppedMembers + ' invalid member(s) ignored in ' + r.file));
+  });
+  print('');
+  if (st.spanning.length)
+    print(
+      style.ok('✓') +
+        ' ' +
+        st.spanning.length +
+        ' thread(s) span more than one account: ' +
+        st.spanning.slice(0, 6).join(', ') +
+        (st.spanning.length > 6 ? ', …' : ''),
+    );
+  if (st.noAccount)
+    print(
+      style.warn('⚠ ') +
+        st.noAccount +
+        ' member(s) of ' +
+        st.noAccountSlugs.slice(0, 6).join(', ') +
+        (st.noAccountSlugs.length > 6 ? ', …' : '') +
+        ' have no account resolved — `threads open` would resume them as the CURRENT account.' +
+        style.dim('  Fix: keyflip sessions assign <session-id> <account>'),
+    );
+  print(
+    style.dim('Merged view: ') +
+      style.bold('keyflip threads show <slug> --timeline') +
+      style.dim('   ·   continue it: ') +
+      style.bold('keyflip threads open <slug>'),
+  );
+  if (st.mirrorEnabled)
+    print(
+      style.dim(
+        'ℹ threads.mirror is ON: merged conversation text may exist in ' +
+          _threads.mirrorDir(ctx) +
+          ' (' +
+          st.mirrorFiles +
+          ' file(s), 0600, never versioned or backed up). Off: keyflip config set threads.mirror false',
+      ),
+    );
+}
+
+// A thread is a POINTER, and only an exact id stays followable after a month of new sessions. Every
+// other keyflip surface accepts a unique prefix — `threads suggest` prints 8-char ids itself — so a
+// prefix is accepted here and expanded against the transcript index before it is written. Two outcomes
+// the user has to decide about: several sessions share the prefix (refused, candidates listed — which
+// conversation a thread means is not keyflip's guess), and nothing local matches (kept verbatim: work
+// on the user's other machine is still that work, and dropping the pointer would lose it).
+// Returns the member plus the resolution, so the caller can tell "expanded from a prefix" apart from
+// "no transcript here" without re-searching. Undefined when the prefix was ambiguous (already reported).
+function threadResolveMember(ctx, member, idx) {
+  if (member.kind !== 'session')
+    return { member: member, res: { matched: null, expanded: false, unknown: false, original: member.id } };
+  const r = _threads.resolveSessionId(ctx, member.id, idx);
+  if (r.ambiguous.length)
+    return fail(
+      '"' +
+        member.id +
+        '" is the start of ' +
+        r.ambiguous.length +
+        ' sessions (' +
+        r.ambiguous
+          .slice(0, 4)
+          .map(function (id) {
+            return id.slice(0, 8);
+          })
+          .join(', ') +
+        (r.ambiguous.length > 4 ? ', …' : '') +
+        ') — give a longer id',
+    );
+  const expanded = r.id !== member.id;
+  member.id = r.id;
+  // ONLY the project key is stored, never a label copied out of the transcript. The first user message
+  // is where a pasted API key lives, and threads/*.json is git-versioned and rides along with
+  // `migrate` — a pointer file that quotes conversation prose would break the one rule of this feature.
+  // The preview still SHOWS in `threads show`, because expand() reads it live from the transcript.
+  if (r.matched) member.project = r.matched.project;
+  return {
+    member: member,
+    res: { matched: r.matched, expanded: expanded, unknown: !!r.unknown, original: r.original },
+  };
+}
+
+function threadsCreate(ctx, rest) {
+  const pos = positionals(rest, THREADS_VALUE_FLAGS);
+  const slug = pos[0];
+  const title = flagVal(rest, '--title');
+  if (!slug && !title) return fail(THREADS_USAGE);
+  let member = threadMemberFromFlags(rest);
+  if (member) {
+    const r = threadResolveMember(ctx, member, _threads.index(ctx));
+    if (!r) return;
+    member = r.member;
+  }
+  try {
+    const t = _threads.create(ctx, {
+      slug: slug,
+      title: title || undefined,
+      notes: flagVal(rest, '--notes') || '',
+      member: member || undefined,
+    });
+    print(
+      style.ok('✅') +
+        ' created thread ' +
+        style.bold(t.slug) +
+        (t.title && t.title !== t.slug ? ' — ' + t.title : '') +
+        '.',
+    );
+    print(
+      style.dim('Add the sessions that belong to it: ') +
+        style.bold('keyflip threads add ' + t.slug + ' <session-id>') +
+        style.dim('   (ids: keyflip sessions --here)'),
+    );
+    jsonOut(threadJsonForAgent(ctx, { created: t }));
+  } catch (e) {
+    fail(e.message);
+  }
+}
+
+// `--chat` / `--cloud` marks a claude.ai conversation uuid. A local session id and a chat uuid are
+// BOTH UUIDs, so keyflip cannot tell them apart from the string alone — the flag is the only honest
+// answer, and `threads show` then reads it through that account's cookie snapshot instead of claiming
+// it can see a server-side conversation.
+function threadMemberFromFlags(rest) {
+  const pos = positionals(rest, THREADS_VALUE_FLAGS);
+  const isChat = rest.indexOf('--chat') !== -1 || rest.indexOf('--cloud') !== -1;
+  const explicit = flagVal(rest, isChat ? '--chat-id' : '--session');
+  const id = explicit || pos[1] || null;
+  const out = { kind: isChat ? 'chat' : 'session', id: id };
+  const account = flagVal(rest, '--account');
+  const label = flagVal(rest, '--label');
+  if (account) out.account = account;
+  if (label) out.label = label;
+  return out.id ? out : null;
+}
+
+function threadsAdd(ctx, rest) {
+  const pos = positionals(rest, THREADS_VALUE_FLAGS);
+  const slug = pos[0];
+  const t = threadAt(ctx, slug);
+  if (!t) return;
+  let member = threadMemberFromFlags(rest);
+  if (!member) return fail('which session or chat? ' + THREADS_USAGE);
+  if (member.account) {
+    const name = core.resolveProfile(ctx, member.account);
+    if (!name) return fail("no such account: '" + member.account + "' (see: keyflip list)");
+    member.account = name;
+  }
+  // Fill in what is visible NOW — the exact id, the project key (a fast path back to the file) and a
+  // label — and say out loud when the id resolves to nothing on this machine. A thread MAY name work
+  // that lives on another computer, so that is a note, not a refusal.
+  const idx = _threads.index(ctx);
+  const r = threadResolveMember(ctx, member, idx);
+  if (!r) return;
+  member = r.member;
+  if (member.kind === 'session') {
+    if (r.res.unknown && !member.label) {
+      print(
+        style.dim(
+          'ℹ no transcript for ' +
+            member.id.slice(0, 8) +
+            ' on this machine — added anyway. It will show as missing in `threads show` until that folder exists.',
+        ),
+      );
+    } else if (r.res.expanded)
+      print(style.dim('ℹ "' + r.res.original + '" expands to the full id ' + member.id + ' — the thread stores that.'));
+    const already = _threads.threadsFor(ctx, 'session', member.id).filter(function (r) {
+      return r.slug !== t.slug;
+    });
+    if (already.length)
+      print(
+        style.warn('⚠') +
+          ' that session is already in ' +
+          style.bold(already.length === 1 ? already[0].slug : already.length + ' threads') +
+          ' — a thread is a name, not a container, so this is allowed. Re-check with: keyflip threads where ' +
+          member.id.slice(0, 8),
+      );
+  } else if (!member.account) {
+    print(
+      style.dim(
+        'ℹ a cloud chat with no --account is read with the LIVE desktop-app cookie. To pin it to a saved account ' +
+          '(whose own cookie snapshot `keyflip chat get` uses): keyflip threads add ' +
+          t.slug +
+          ' ' +
+          member.id.slice(0, 8) +
+          ' --chat --account <name>',
+      ),
+    );
+  }
+  try {
+    const out = _threads.addMember(ctx, t.slug, member);
+    print(
+      style.ok('✅') +
+        ' ' +
+        member.kind +
+        ' ' +
+        style.bold(member.id.slice(0, 8)) +
+        (member.account ? ' as ' + (profiles.email(ctx.configDir, member.account) || member.account) : '') +
+        ' is now part of ' +
+        style.bold(t.slug) +
+        ' (' +
+        out.members.length +
+        ' member(s)).',
+    );
+    jsonOut(
+      threadJsonForAgent(ctx, {
+        added: { thread: t.slug, member: out.members[out.members.length - 1] || member },
+        thread: out,
+      }),
+    );
+  } catch (e) {
+    fail(e.message);
+  }
+}
+
+function threadsRemove(ctx, rest) {
+  const pos = positionals(rest, THREADS_VALUE_FLAGS);
+  const slug = pos[0];
+  const t = threadAt(ctx, slug);
+  if (!t) return;
+  if (!pos[1]) return fail('which member? usage: keyflip threads remove <slug> <id|kind:id>');
+  try {
+    const r = _threads.removeMember(ctx, t.slug, pos[1]);
+    if (!r)
+      return fail("no member of '" + t.slug + "' matches '" + pos[1] + "' (see: keyflip threads show " + t.slug + ')');
+    print(
+      style.ok('✅') +
+        ' unlinked ' +
+        style.bold(r.removed.kind + ':' + r.removed.id.slice(0, 8)) +
+        ' from ' +
+        style.bold(t.slug) +
+        '. The conversation itself was not touched.',
+    );
+    jsonOut(threadJsonForAgent(ctx, { removed: r.removed, thread: r.thread }));
+  } catch (e) {
+    fail(e.message);
+  }
+}
+
+function threadMembersOf(ctx, t, opts) {
+  const idx = opts.idx || _threads.index(ctx);
+  const assigned = opts.assigned || _threads.assignments(ctx);
+  return _threads.expand(ctx, t, { index: idx, assigned: assigned });
+}
+
+function printThreadMembers(exp) {
+  exp.rows.forEach(function (r, i) {
+    const who = r.account ? style.bold(r.account) : style.dim('unassigned');
+    const head =
+      '  [' +
+      (i + 1) +
+      '] ' +
+      style.bold(r.kind + ' ' + r.id.slice(0, 8)) +
+      '  ' +
+      who +
+      '  ' +
+      style.dim(threadStamp(r.mtime));
+    print(head);
+    if (!r.resolved) {
+      print('        ' + style.warn('⚠ ' + r.reason));
+      return;
+    }
+    if (r.label) print('        ' + style.dim('“' + String(r.label).slice(0, 90) + '”'));
+    print(
+      '        ' +
+        style.dim((r.cwd || '?') + ' · ' + fmtBytes(r.sizeBytes) + (r.cwdGone ? '  ⚠ folder missing — rebind?' : '')),
+    );
+    print(
+      '        ' +
+        style.dim('resume: ') +
+        style.bold('cd ' + (r.cwd || '.') + ' && ' + r.resume.command + ' ' + r.resume.args.join(' ')) +
+        (r.account ? style.dim('   (or keyflip resume ' + r.id.slice(0, 8) + ' --run)') : ''),
+    );
+  });
+  if (exp.missing)
+    print(
+      style.dim(
+        '\nℹ ' +
+          exp.missing +
+          ' member(s) do not resolve here. A thread is a set of POINTERS, so that is normal for work done on another machine — it is not a missing conversation.',
+      ),
+    );
+}
+
+function threadsShow(ctx, rest) {
+  const pos = positionals(rest, THREADS_VALUE_FLAGS);
+  const t = threadAt(ctx, pos[0]);
+  if (!t) return;
+  const wantTimeline = rest.indexOf('--timeline') !== -1;
+  const wantMd = rest.indexOf('--md') !== -1 || (rest.indexOf('--format') !== -1 && flagVal(rest, '--format') === 'md');
+  const limit = parseInt(flagVal(rest, '--limit'), 10);
+  const maxTotal = Number.isNaN(limit) ? 200 : Math.max(0, limit);
+  const idx = _threads.index(ctx);
+  const assigned = _threads.assignments(ctx);
+  const opts = { index: idx, assigned: assigned, maxTotal: maxTotal || undefined };
+  if (rest.indexOf('--max-mib') !== -1) {
+    const n = parseInt(flagVal(rest, '--max-mib'), 10);
+    if (!Number.isNaN(n) && n > 0) opts.maxBytes = Math.min(512, n) * 1024 * 1024;
+  }
+  const exp = threadMembersOf(ctx, t, { idx: idx, assigned: assigned });
+  const tl = wantTimeline || wantMd || rest.indexOf('--mirror') !== -1 ? _threads.timeline(ctx, t, opts) : null;
+  if (JSON_MODE) {
+    const payload = { thread: t, members: exp.rows, accounts: exp.accounts, missing: exp.missing };
+    if (tl) {
+      payload.timeline = tl.messages.slice(0, maxTotal || tl.messages.length);
+      payload.unavailable = tl.unavailable;
+      payload.droppedFromStart = tl.droppedFromStart;
+      payload.cappedMembers = tl.cappedMembers;
+    }
+    jsonOut(threadJsonForAgent(ctx, payload));
+    return;
+  }
+  if (wantMd) {
+    // --md is this command's machine-readable form: it prints ONLY the document, so it pipes into a
+    // file, a clipboard, or an agent context without a human header glued to the front. The header and
+    // the member table belong to the default output below.
+    print(_threads.toMarkdown(ctx, t, Object.assign({}, opts, { expand: exp, timeline: tl })));
+    return;
+  }
+  print(style.bold(t.slug) + (t.title && t.title !== t.slug ? ' — ' + t.title : ''));
+  if (t.notes) print(style.dim(t.notes));
+  print(
+    style.dim(
+      'created ' +
+        threadStamp(t.createdAt) +
+        ' · updated ' +
+        threadStamp(t.updatedAt) +
+        ' · ' +
+        exp.rows.length +
+        ' member(s) across ' +
+        Object.keys(exp.accounts).length +
+        ' account(s)',
+    ),
+  );
+  if (t.droppedMembers)
+    print(
+      style.warn('⚠ ') +
+        t.droppedMembers +
+        ' invalid member(s) were ignored — the file may be hand-edited: ' +
+        _threads.fileFor(ctx, t.slug),
+    );
+  print('');
+  if (!exp.rows.length) {
+    print(style.dim('This thread has no members yet.'));
+    print(
+      '  ' +
+        style.bold('keyflip threads add ' + t.slug + ' <session-id>') +
+        style.dim('   (ids: keyflip sessions --here)'),
+    );
+    return;
+  }
+  printThreadMembers(exp);
+  if (!tl) {
+    print('');
+    print(
+      style.dim('One merged, chronological view: ') +
+        style.bold('keyflip threads show ' + t.slug + ' --timeline') +
+        style.dim('   ·   continue: ') +
+        style.bold('keyflip threads open ' + t.slug),
+    );
+    return;
+  }
+  print('');
+  print(
+    style.bold('Timeline') +
+      style.dim(
+        ' (' +
+          tl.messages.length +
+          ' turn(s)' +
+          (tl.droppedFromStart ? ', oldest ' + tl.droppedFromStart + ' dropped' : '') +
+          ')',
+      ),
+  );
+  if (tl.cappedMembers)
+    print(
+      style.warn('⚠ ') +
+        tl.cappedMembers +
+        ' transcript(s) hit the read cap — raise it: keyflip config set threads.mergeMaxMiB <1-512>',
+    );
+  if (tl.unavailable.length)
+    print(style.dim('ℹ ' + tl.unavailable.length + ' member(s) contribute no turns (see the warning above each).'));
+  let lastFrom = null;
+  tl.messages.forEach(function (m) {
+    const key = m.from.kind + ':' + m.from.id;
+    if (key !== lastFrom) {
+      print('');
+      print(
+        style.dim(
+          '↪ ' +
+            (m.from.account ? m.from.account + ' · ' : '') +
+            m.from.kind +
+            ' ' +
+            m.from.id.slice(0, 8) +
+            ' — ' +
+            (m.from.label || ''),
+        ),
+      );
+      lastFrom = key;
+    }
+    print(
+      '  ' +
+        style.dim(
+          String(m.ts || '')
+            .slice(0, 16)
+            .replace('T', ' '),
+        ) +
+        ' ' +
+        (m.role === 'assistant' ? style.dim('▸ ') : style.bold('▪ ')) +
+        String(m.text || '(tool use)')
+          .replace(/\s+/g, ' ')
+          .slice(0, 160),
+    );
+  });
+  if (!tl.messages.length) print('  ' + style.dim('no local turns in this thread yet'));
+  print('');
+  print(style.dim('Full document: ') + style.bold('keyflip threads show ' + t.slug + ' --md'));
+}
+
+async function threadsOpen(ctx, rest) {
+  const pos = positionals(rest, THREADS_VALUE_FLAGS);
+  const t = threadAt(ctx, pos[0]);
+  if (!t) return;
+  const exp = threadMembersOf(ctx, t, {});
+  const next = _threads.newest(exp.rows);
+  if (!next) {
+    return fail(
+      'nothing in "' +
+        t.slug +
+        '" is resumable on this machine (' +
+        exp.rows.length +
+        ' member(s): ' +
+        (exp.rows
+          .map(function (r) {
+            return r.kind + ':' + r.id.slice(0, 8);
+          })
+          .join(', ') || 'none') +
+        ') — see keyflip threads show ' +
+        t.slug,
+    );
+  }
+  if (JSON_MODE) {
+    jsonOut(
+      threadJsonForAgent(ctx, {
+        thread: t.slug,
+        sessionId: next.id,
+        account: next.account || null,
+        cwd: next.cwd,
+        mtime: next.mtime,
+        command: 'cd ' + (next.cwd || '.') + ' && ' + next.resume.command + ' ' + next.resume.args.join(' '),
+      }),
+    );
+    return;
+  }
+  const others = exp.rows.filter(function (r) {
+    return r.kind === 'session' && r.resolved && r.id !== next.id;
+  });
+  print('Continuing ' + style.bold(t.slug) + ' at its last write:');
+  print(
+    '  ' +
+      style.bold(next.id.slice(0, 8)) +
+      '  ' +
+      (next.account ? style.bold(next.account) : style.dim('unassigned')) +
+      '  ' +
+      style.dim(threadStamp(next.mtime)),
+  );
+  if (next.label) print('  ' + style.dim('“' + String(next.label).slice(0, 90) + '”'));
+  print('  ' + style.dim('cd ') + (next.cwd || '.'));
+  print('  ' + style.bold(next.resume.command + ' ' + next.resume.args.join(' ')));
+  if (next.account)
+    print(
+      style.dim('  ↳ or let keyflip run it isolated as that account (your active profile stays put): ') +
+        style.bold('keyflip resume ' + next.id.slice(0, 8) + ' --run'),
+    );
+  if (others.length)
+    print(
+      style.dim(
+        '  ℹ ' +
+          others.length +
+          ' earlier session(s) in this thread: ' +
+          others
+            .slice(0, 4)
+            .map(function (r) {
+              return r.id.slice(0, 8) + (r.account ? '@' + r.account : '');
+            })
+            .join(', '),
+      ),
+    );
+  if (rest.indexOf('--run') !== -1) {
+    const sub = [next.id, '--run'];
+    if (next.account) sub.push('--as', next.account);
+    if (rest.indexOf('-y') !== -1 || rest.indexOf('--yes') !== -1 || rest.indexOf('--force') !== -1) sub.push('-y');
+    return cmdResume(ctx, sub);
+  }
+  print(style.dim('(add --run to launch it now)'));
+}
+
+function threadsWhere(ctx, rest) {
+  const pos = positionals(rest, THREADS_VALUE_FLAGS);
+  const id = pos[0];
+  if (!id) return fail('usage: keyflip threads where <session-id|chat-uuid|prefix>');
+  const hits = _threads.threadsFor(ctx, null, id);
+  const idx = _threads.index(ctx);
+  const loc = _threads.locate(ctx, id, idx);
+  const assigned = _threads.assignments(ctx);
+  if (JSON_MODE) {
+    jsonOut(
+      threadJsonForAgent(ctx, {
+        id: id,
+        threads: hits.map(function (r) {
+          return { slug: r.slug, title: r.title, updatedAt: r.updatedAt };
+        }),
+        transcriptOnDisk: loc ? loc.file : null,
+        assignedTo: assigned.get(id) || null,
+      }),
+    );
+    return;
+  }
+  if (!hits.length) {
+    print('No thread contains ' + style.bold(id.slice(0, 8)) + '.');
+    print(
+      loc
+        ? style.dim('The transcript is here (' + loc.file + ') and is ') +
+            (assigned.get(id) ? style.bold('assigned to ' + assigned.get(id)) : style.dim('not assigned to an account'))
+        : style.dim('No local transcript matches that id either.'),
+    );
+    print(style.dim('Put it in one: ') + style.bold('keyflip threads create <slug> --session ' + id));
+    return;
+  }
+  hits.forEach(function (r) {
+    print(
+      '  ' +
+        style.bold(r.slug) +
+        (r.title && r.title !== r.slug ? ' — ' + r.title : '') +
+        style.dim('  updated ' + threadStamp(r.updatedAt)),
+    );
+  });
+  print('');
+  print(
+    style.dim(
+      hits.length +
+        ' thread(s) name ' +
+        id.slice(0, 8) +
+        (loc ? '; transcript: ' + loc.file : '; no local transcript') +
+        (assigned.get(id) ? '; account: ' + assigned.get(id) : ''),
+    ),
+  );
+}
+
+function threadsSuggest(ctx, rest) {
+  const limit = parseInt(flagVal(rest, '--limit'), 10);
+  let rows = [];
+  try {
+    rows = _threads.candidates(ctx, Number.isNaN(limit) ? {} : { limit: limit });
+  } catch (e) {
+    return fail(e.message);
+  }
+  if (JSON_MODE) {
+    jsonOut(threadJsonForAgent(ctx, { candidates: rows }));
+    return;
+  }
+  if (!rows.length) {
+    print(style.ok('✓') + ' nothing looks fragmented.');
+    print(
+      style.dim(
+        'Checked the newest ' +
+          (limit || 400) +
+          ' session(s): no project folder holds transcripts assigned to two or more different accounts.',
+      ),
+    );
+    print(
+      style.dim(
+        'If the split is on purpose (different projects, same account) this stays empty — an unassigned session is not a switch. Assign first: keyflip sessions assign <id> <account>',
+      ),
+    );
+    return;
+  }
+  print(
+    style.warn('⚠') +
+      ' ' +
+      rows.length +
+      ' project folder(s) have work spread over 2+ accounts and no thread covering it yet:\n',
+  );
+  rows.forEach(function (r) {
+    print('  ' + style.bold(r.cwd || r.project));
+    print(
+      '    ' +
+        style.dim(
+          r.sessions +
+            ' session(s) by ' +
+            r.accounts.join(' + ') +
+            ' · ' +
+            r.unthreaded +
+            ' not yet in a thread · last ' +
+            threadStamp(r.newest.mtime),
+        ),
+    );
+    print(
+      '    ' +
+        style.dim('name it: ') +
+        style.bold(
+          'keyflip threads create ' + (r.suggestedSlug || 'work') + ' --session ' + r.newest.sessionId.slice(0, 8),
+        ),
+    );
+    r.open
+      .slice(1, 5)
+      .map(function (s) {
+        return 'keyflip threads add ' + (r.suggestedSlug || 'work') + ' ' + s.sessionId.slice(0, 8);
+      })
+      .forEach(function (c) {
+        print('      ' + style.dim('then: ') + style.bold(c));
+      });
+    print('');
+  });
+  print(style.dim('Widen the scan with --limit <n> (it reads the session index, not your transcripts).'));
+}
+
+function threadsMirror(ctx, rest) {
+  const pos = positionals(rest, THREADS_VALUE_FLAGS);
+  const t = threadAt(ctx, pos[0]);
+  if (!t) return;
+  const opts = { force: rest.indexOf('--force') !== -1 };
+  if (rest.indexOf('--max-mib') !== -1) {
+    const n = parseInt(flagVal(rest, '--max-mib'), 10);
+    if (!Number.isNaN(n) && n > 0) opts.maxBytes = Math.min(512, n) * 1024 * 1024;
+  }
+  const r = _threads.mirror(ctx, t, opts);
+  if (JSON_MODE) {
+    jsonOut(threadJsonForAgent(ctx, { mirror: r }));
+    if (!r.ok) return;
+  }
+  if (!r.ok) {
+    if (r.reason === 'disabled') {
+      print(
+        style.warn('⚠ ') +
+          'the mirror is OFF — ' +
+          r.detail +
+          '\n  keyflip only stores pointers unless you allow text on disk: ' +
+          style.bold(r.fix),
+      );
+      return;
+    }
+    print(
+      style.warn('⚠ ') +
+        r.detail +
+        '\n  The merged text would land in a state repo that can reach a remote. ' +
+        r.fix +
+        (opts.force ? '' : '\n  Re-run with ' + style.bold('--force') + ' once you are sure nothing pushes it.'),
+    );
+    return;
+  }
+  print(
+    style.ok('✅') +
+      ' mirrored ' +
+      style.bold(t.slug) +
+      ' → ' +
+      r.path +
+      style.dim(' (' + fmtBytes(r.bytes) + ', ' + r.mode + ')'),
+  );
+  if (r.forced) print(style.warn('⚠ ') + 'written despite a configured git remote (--force).');
+  print(style.dim('Remove the text again: ') + style.bold('keyflip threads unmirror ' + t.slug));
+}
+
+function threadsUnmirror(ctx, rest) {
+  const pos = positionals(rest, THREADS_VALUE_FLAGS);
+  const t = threadAt(ctx, pos[0]);
+  if (!t) return;
+  const r = _threads.unmirror(ctx, t);
+  if (!r.ok) return fail('could not remove ' + r.path + ': ' + r.error);
+  if (JSON_MODE) {
+    jsonOut(threadJsonForAgent(ctx, { unmirrored: r }));
+    return;
+  }
+  print(
+    r.existed
+      ? style.ok('✅') +
+          ' removed the mirrored text for ' +
+          style.bold(t.slug) +
+          ' (' +
+          r.path +
+          '). The thread itself is unchanged.'
+      : 'Nothing was mirrored for ' + style.bold(t.slug) + ' — no text on disk to remove.',
+  );
+}
+
+async function threadsDrop(ctx, rest) {
+  const pos = positionals(rest, THREADS_VALUE_FLAGS);
+  const t = threadAt(ctx, pos[0]);
+  if (!t) return;
+  const autoYes = rest.indexOf('-y') !== -1 || rest.indexOf('--yes') !== -1 || rest.indexOf('--force') !== -1;
+  if (!autoYes) {
+    if (!process.stdin.isTTY)
+      return fail(
+        'dropping a thread needs confirmation — re-run with -y (it only forgets the NAME, never a conversation).',
+      );
+    print(
+      'Forget the name ' +
+        style.bold(t.slug) +
+        style.dim(' (' + t.members.length + ' pointer(s))? No transcript, chat or account assignment is touched.'),
+    );
+    if (!(await confirm('Continue? [y/N] '))) {
+      print('Cancelled.');
+      return;
+    }
+  }
+  const r = _threads.drop(ctx, t.slug);
+  const mirrorFile = _threads.mirrorFileFor(ctx, t.slug);
+  const mirrored = fs.existsSync(mirrorFile);
+  print(style.ok('✅') + ' dropped thread ' + style.bold(t.slug) + ' — ' + r.members.length + ' pointer(s) forgotten.');
+  if (mirrored)
+    print(
+      style.warn('⚠ ') +
+        'its MIRRORED TEXT is still on disk at ' +
+        mirrorFile +
+        '\n  removing the name does not remove the conversation: ' +
+        style.bold('keyflip threads unmirror ' + t.slug) +
+        ' (or delete the file)',
+    );
+  print(style.dim('Undo through git: keyflip history | keyflip undo'));
+  jsonOut({ dropped: { slug: t.slug, members: r.members.length, mirrorLeft: mirrored } });
+}
+
+async function cmdThreads(ctx, rest) {
+  const sub = rest[0] && rest[0][0] !== '-' ? rest[0] : 'list';
+  const args = rest[0] && rest[0][0] !== '-' ? rest.slice(1) : rest;
+  switch (sub) {
+    case 'list':
+      return threadsList(ctx);
+    case 'create':
+      return threadsCreate(ctx, args);
+    case 'add':
+      return threadsAdd(ctx, args);
+    case 'remove':
+    case 'rm':
+      return threadsRemove(ctx, args);
+    case 'show':
+    case 'get':
+      return threadsShow(ctx, args);
+    case 'open':
+    case 'continue':
+      return threadsOpen(ctx, args);
+    case 'where':
+      return threadsWhere(ctx, args);
+    case 'suggest':
+      return threadsSuggest(ctx, args);
+    case 'mirror':
+      return threadsMirror(ctx, args);
+    case 'unmirror':
+      return threadsUnmirror(ctx, args);
+    case 'drop':
+    case 'delete':
+      return threadsDrop(ctx, args);
+    default:
+      return fail("unknown threads subcommand '" + rest[0] + "'. " + THREADS_USAGE);
+  }
+}
+
 // E4: inject a message into a session non-interactively and print the reply —
 // `claude -p "<message>" --resume <id>` in its project dir. Optionally AS another account
 // (--as, or an assignment) and/or --fork (branch instead of appending). This is how you
@@ -7258,11 +8778,643 @@ function cmdShare(ctx, rest) {
   print(url);
 }
 
+// #44 — `keyflip secrets [list|tolerate|untolerate]`: manage what the history scan FINDS.
+//
+// The scan (#41) reports every secret-shaped object in the state repo's git history, and `doctor` marks
+// that `✗` + "rotate the credential". Some of those findings are decisions, not accidents: a free-tier
+// Google AI key sitting in the provider file it was written to is real, known, and not worth an alarm
+// every time the user runs a diagnostic. `secrets tolerate` says so ONCE, in a versioned policy file,
+// and three things follow: the finding stops being an alarm, the rotation advice stops being repeated,
+// and — this is the part that is NOT an exemption — the path stays in `keyflip scrub-history`'s plan,
+// because "unimportant" never means "fine to leave readable in an old commit".
+//
+// A rule names a PATH and/or a secret KIND, never a value. It cannot match on a value even by accident:
+// that would put a fingerprint of a secret into the git-versioned state repo, the rule `chains` already
+// holds. That is also why the note is redacted before it is stored.
+async function cmdSecrets(ctx, rest) {
+  const leakscan = _leakscan;
+  const pol = _secretpolicy;
+  const positional = [];
+  const kinds = []; // --kind is repeatable: `--kind google-api-key --kind jwt`
+  let note = null;
+  let pathFlag = null;
+  for (let i = 0; i < rest.length; i++) {
+    const a = rest[i];
+    if (a === '--kind' || a === '--note' || a === '--path') {
+      const v = rest[i + 1];
+      if (v == null || v.charAt(0) === '-') continue; // a flag with no value is the flag being wrong, not a value
+      i++;
+      if (a === '--kind') kinds.push(v);
+      else if (a === '--note') note = v;
+      else pathFlag = v;
+      continue;
+    }
+    if (a.charAt(0) === '-') continue;
+    positional.push(a);
+  }
+  const verb = positional[0] || 'list';
+  const wantRepo = function () {
+    return _vcs.isRepo(ctx);
+  };
+
+  if (verb === 'tolerate' || verb === 'untolerate') {
+    // `tolerate <path>`, `tolerate --path <path>`, or `--kind <kind>` alone (a kind that is ALWAYS fine,
+    // anywhere) which becomes the explicit any-path rule.
+    const target = pathFlag || positional[1] || (kinds.length && verb === 'tolerate' ? '*' : null);
+    if (!target)
+      return fail(
+        'which path? ' +
+          (verb === 'tolerate'
+            ? 'keyflip secrets tolerate <path> [--kind <secret-kind>] — run keyflip secrets list to see them, or pass --kind alone for a kind that is always fine.'
+            : 'keyflip secrets untolerate <path> — run keyflip secrets list to see the rules.'),
+      );
+    let action = null;
+    if (verb === 'tolerate') {
+      const r = pol.addRule(ctx, { path: target, kinds: kinds, note: note, now: ctx.now });
+      if (!r.ok) return fail(r.reason);
+      action = r.rule;
+      print(
+        style.ok('✅') +
+          ' tolerated ' +
+          style.bold(r.rule.path) +
+          (r.rule.kinds.length
+            ? style.dim(' (kind: ' + r.rule.kinds.join(', ') + ')')
+            : style.dim(' (any kind on that path)')),
+      );
+      if (r.replaced) print(style.dim('  replaced the identical rule that was already there.'));
+      if (r.noteRedacted)
+        print(
+          style.warn('⚠ ') +
+            'the note was redacted before storing (' +
+            r.noteRedacted +
+            ' value(s)) — the policy file is git-versioned and never holds a secret.',
+        );
+    } else {
+      const r = pol.removeRule(ctx, { path: target, kinds: kinds });
+      if (!r.ok) return fail(r.reason);
+      if (!r.removed.length) {
+        print(style.dim('No rule on ') + style.bold(target) + ' — ' + r.reason + '.');
+        jsonOut({ secrets: { action: verb, path: target, removed: [], rules: r.kept } });
+        return;
+      }
+      action = { removed: r.removed };
+      print(
+        style.ok('✅') +
+          ' removed ' +
+          r.removed.length +
+          ' rule(s) — ' +
+          r.removed
+            .map(function (x) {
+              return x.path;
+            })
+            .join(', ') +
+          ' — those findings are alarms again.',
+      );
+    }
+    // The feedback that makes this trustworthy: what the change did to THIS scan, right now, before the
+    // user has to run anything to find out. Read-only.
+    const hist = wantRepo() ? leakscan.historyLeaks(ctx) : null;
+    const cls = hist && hist.ok ? pol.classify(ctx, hist.leaks) : null;
+    if (cls) {
+      print(
+        '  now silencing ' +
+          style.bold(String(cls.tolerated.length)) +
+          ' finding(s) over ' +
+          pathsOf(cls.tolerated).length +
+          ' path(s); ' +
+          style.bold(String(cls.alarms.length)) +
+          ' still an alarm.',
+      );
+      if (cls.broad.length)
+        print(
+          style.warn('⚠ ') +
+            cls.broad.length +
+            " broad rule(s) (a * or a trailing /), so they also cover anything NEW at that path — keyflip secrets list shows each one's reach.",
+        );
+      print(
+        style.dim(
+          '  keyflip scrub-history still removes every one of them — a toleration is an end to the ALARM, not an exemption from cleaning.',
+        ),
+      );
+    }
+    print(style.dim('  policy: ' + pol.FILE_NAME + ' in the state dir (versioned, value-free) · undo: keyflip undo'));
+    jsonOut({
+      secrets: {
+        action: verb,
+        rule: action,
+        silenced: cls ? cls.tolerated.length : 0,
+        silenced_paths: cls ? pathsOf(cls.tolerated) : [],
+        alarms: cls ? cls.alarms.length : 0,
+        still_scrubbed: cls ? pathsOf(cls.findings) : [],
+      },
+    });
+    return;
+  }
+
+  // ---- list (default) ----
+  const only = rest.indexOf('--alarms') !== -1;
+  const policy = pol.load(ctx);
+  const hist = wantRepo() ? leakscan.historyLeaks(ctx) : null;
+  const cls = hist && hist.ok ? pol.classify(ctx, hist.leaks, { policy: policy }) : null;
+  if (JSON_MODE) {
+    jsonOut({
+      secrets: {
+        policy: {
+          file: pol.FILE_NAME,
+          exists: policy.exists,
+          rules: policy.rules,
+          dropped: policy.dropped,
+          error: policy.error,
+        },
+        repo: wantRepo() ? undefined : 'no git repo in the state dir',
+        history: hist ? historyJson(hist, cls) : null,
+        alarms: cls ? cls.alarms.length : null,
+        tolerated: cls ? cls.tolerated.length : null,
+        keepsakes: keepsakeSummary(ctx),
+      },
+    });
+    return;
+  }
+  print(
+    style.bold('keyflip secrets') +
+      ' — what the history scan found, and what keyflip has been told to expect' +
+      style.dim('  (' + ctx.configDir + ')'),
+  );
+  if (hist === null)
+    print(
+      style.warn('⚠ ') +
+        'the state dir is not a git repo — there is no history to judge. keyflip versioning on, then keyflip doctor --history.',
+    );
+  else if (!hist.ok) print(style.err('✗') + ' the history could not be read (' + hist.reason + ').');
+  else {
+    print(
+      '  ' +
+        style.dim(
+          hist.scanned +
+            ' blob(s) scanned' +
+            (hist.skipped ? ', ' + hist.skipped + ' skipped as too large' : '') +
+            (hist.truncated ? ' [capped — more objects exist]' : ''),
+        ),
+    );
+    if (!hist.leaks.length)
+      print(style.ok('✅') + ' no secret-shaped object and no secret-path capture is reachable in the history.');
+    else {
+      const rows = cls.findings.filter(function (f) {
+        return !only || !f.tolerated;
+      });
+      rows.forEach(function (f) {
+        print(
+          '  ' +
+            (f.tolerated ? style.dim('•') : style.err('✗')) +
+            ' ' +
+            (f.tolerated ? style.dim(f.file) : f.file) +
+            style.dim(
+              '  ·  ' +
+                f.labels.join(', ') +
+                (f.confidence === 'low' ? ' [weak match]' : '') +
+                '  ·  ' +
+                fmtBytes(f.bytes) +
+                '  ·  ' +
+                f.commits +
+                ' commit(s)  ·  ' +
+                (f.trackedNow ? 'still tracked' : 'history only'),
+            ),
+        );
+        if (f.tolerated)
+          print(
+            '      ' +
+              style.dim(
+                '↳ tolerated by rule ' +
+                  f.by +
+                  (f.byNote ? ' — ' + f.byNote : '') +
+                  '   (still scrubbed from history by keyflip scrub-history)',
+              ),
+          );
+        else
+          print(
+            '      ' +
+              style.dim(
+                '↳ keyflip secrets tolerate ' +
+                  JSON.stringify(f.file) +
+                  (f.labels.length === 1 && f.labels[0] !== pol.PATH_ONLY_LABEL ? ' --kind ' + f.labels[0] : '') +
+                  '   (if this one is expected)',
+              ),
+          );
+      });
+      print(
+        '  ' +
+          (cls.alarms.length ? style.err('✗ ') : style.ok('✓ ')) +
+          cls.alarms.length +
+          ' alarm(s), ' +
+          style.dim(cls.tolerated.length + ' tolerated') +
+          (only && cls.tolerated.length ? style.dim(' (' + cls.tolerated.length + ' hidden by --alarms)') : '') +
+          ' — every one of them is still removed by keyflip scrub-history.',
+      );
+    }
+  }
+  print('');
+  print(
+    style.bold('policy') +
+      (policy.exists ? style.dim('  (' + pol.FILE_NAME + ', versioned)') : style.dim('  (none yet)')),
+  );
+  if (policy.error)
+    print(
+      style.err('✗') +
+        ' ' +
+        pol.FILE_NAME +
+        ' ' +
+        policy.error +
+        ' — keyflip applied NO rule, so the alarms above are complete.',
+    );
+  if (policy.dropped)
+    print(
+      style.warn('⚠ ') +
+        policy.dropped +
+        ' rule(s) in the file were not usable and were NOT applied — a rule needs a repo-relative path and known KIND(s).',
+    );
+  if (!policy.rules.length && !policy.error)
+    print(style.dim('  no rule — every finding is an alarm. keyflip secrets tolerate <path> [--kind <kind>]'));
+  else {
+    const allLeaks = cls ? cls.findings : [];
+    policy.rules.forEach(function (r) {
+      const cov = pol.coverageOf(ctx, allLeaks, r);
+      print(
+        '  • ' +
+          style.bold(r.path) +
+          (r.kinds.length ? style.dim(' [' + r.kinds.join(', ') + ']') : style.dim(' [any kind]')) +
+          style.dim(
+            '  ·  ' +
+              cov.findings +
+              ' finding(s) over ' +
+              cov.paths.length +
+              ' path(s)' +
+              (r.note ? '  ·  ' + r.note : ''),
+          ),
+      );
+      if (r.path === '*' || r.path.indexOf('*') !== -1 || r.path.slice(-1) === '/')
+        print(
+          style.dim(
+            '      ↳ a broad rule: it also covers anything NEW at that path. ' +
+              (cov.paths.length > 1 ? 'Currently ' + cov.paths.join(', ') + '.' : 'That is fine while you mean it.'),
+          ),
+        );
+    });
+  }
+  // Kept OUT of the policy on purpose, so say so rather than let the user think it is silenced.
+  const keeps = keepsakeSummary(ctx);
+  if (keeps.leaks)
+    print(
+      '\n  ' +
+        style.warn('⚠ ') +
+        keeps.leaks +
+        ' keepsake(s) hold a secret shape. ' +
+        style.bold('A policy never silences a keepsake') +
+        " — that text is keyflip's own writing, it travels through recall/migrate/sync, and the fix is " +
+        style.bold('keyflip memory audit --apply') +
+        '.',
+    );
+}
+
+function pathsOf(findings) {
+  const out = [];
+  findings.forEach(function (f) {
+    if (out.indexOf(f.file) === -1) out.push(f.file);
+  });
+  return out;
+}
+// Counts only. A keepsake leak is reported next to the history findings so the user sees the whole
+// picture in one command — and sees that `secrets tolerate` deliberately does not reach it.
+function keepsakeSummary(ctx) {
+  try {
+    const a = _leakscan.keepsakeAudit(ctx, _memory);
+    return { leaks: a.leaks.length, audited: a.audited };
+  } catch (e) {
+    return { leaks: 0, audited: 0 };
+  }
+}
+
 // #13 diagnostics
+// #41 — `keyflip scrub-history [--apply]`: remove secret-bearing paths from keyflip's OWN state-repo
+// history. Untracking a file is not the same as removing it: every old commit still resolves the blob.
+// DRY RUN by default; --apply refuses outright unless git-filter-repo exists (a hand-rolled rewrite
+// can corrupt the repo) and always bundles the current history first.
+async function cmdScrubHistory(ctx, rest) {
+  const leakscan = _leakscan;
+  const vcsmod = _vcs;
+  if (!vcsmod.isRepo(ctx))
+    return fail(
+      'the state dir is not a git repo (' +
+        ctx.configDir +
+        ') — nothing versioned to scrub. Enable it with: keyflip versioning on',
+    );
+  const apply = rest.indexOf('--apply') !== -1;
+  const yes = rest.indexOf('-y') !== -1 || rest.indexOf('--force') !== -1;
+  // A leaked path that is STILL tracked is live state — scrubbing it deletes the working file too.
+  // Opt-in only, so the default plan can never cost the user a file they are still using.
+  const includeTracked = rest.indexOf('--include-tracked') !== -1;
+  const mi = rest.indexOf('--max-blobs');
+  const scanOpts = mi !== -1 ? { maxBlobs: parseInt(rest[mi + 1], 10) || undefined } : {};
+  print(style.bold('keyflip scrub-history') + ' — ' + style.dim(ctx.configDir));
+  const hist = leakscan.historyLeaks(ctx, scanOpts);
+  if (!hist.ok) return fail('could not read the history (' + hist.reason + ').');
+  // #44: the policy decides what is an ALARM in this report, never what is in the plan. A tolerated path
+  // is scrubbed exactly like an alarming one — history cleanup is the thing toleration cannot opt out of.
+  const pol = _secretpolicy.load(ctx);
+  const cls = _secretpolicy.classify(ctx, hist.leaks, { policy: pol });
+  print(
+    '  scanned ' +
+      style.bold(String(hist.scanned)) +
+      ' blob(s)' +
+      (hist.skipped ? ', skipped ' + hist.skipped + ' over the size cap' : '') +
+      (hist.truncated ? ' ' + style.warn('[capped — more objects exist; raise --max-blobs]') : ''),
+  );
+  if (!hist.leaks.length) {
+    print(style.ok('✅') + ' history is clean — no secret-shaped object and no secret-path capture is reachable.');
+    jsonOut({ scrubHistory: { scanned: hist.scanned, leaks: [], plan: null, applied: false } });
+    return;
+  }
+  const plan = leakscan.planScrub(ctx, hist.leaks, {
+    now: ctx.now,
+    includeTracked: includeTracked,
+    policy: pol,
+  });
+  print(
+    '  ' +
+      (cls.alarms.length ? style.err('✗') : style.ok('✓')) +
+      ' ' +
+      hist.leaks.length +
+      ' leaked object(s) across ' +
+      (plan.paths.length + plan.skippedTracked.length) +
+      ' path(s)' +
+      (cls.tolerated.length ? style.dim(' — ' + cls.tolerated.length + ' tolerated, still scrubbed') : '') +
+      ':',
+  );
+  cls.findings.forEach(function (l) {
+    const tag = l.trackedNow ? 'still tracked' : 'history only';
+    print(
+      '    ' +
+        (l.tolerated ? style.dim('•') : style.err('•')) +
+        ' ' +
+        (l.tolerated ? style.dim(l.file) : l.file) +
+        style.dim(
+          '  ·  ' +
+            (l.kinds.length ? l.kinds.join(', ') : 'secret-path capture') +
+            (l.confidence === 'low' ? ' [weak match]' : '') +
+            '  ·  ' +
+            fmtBytes(l.bytes) +
+            '  ·  ' +
+            l.commits +
+            ' commit(s)  ·  ' +
+            tag,
+        ) +
+        (l.tolerated ? style.dim('  ·  tolerated (' + l.by + ')') : ''),
+    );
+  });
+  plan.warns.forEach(function (w) {
+    print('  ' + style.warn('!') + ' ' + w);
+  });
+  if (plan.blockers.length) {
+    plan.blockers.forEach(function (b) {
+      print('  ' + style.err('✗') + ' ' + b);
+    });
+    jsonOut({
+      scrubHistory: {
+        scanned: hist.scanned,
+        leaks: cls.findings,
+        alarms: cls.alarms.length,
+        tolerated: cls.tolerated.length,
+        plan: plan,
+        applied: false,
+        blocked: true,
+      },
+    });
+    return;
+  }
+  if (!apply) {
+    print('\n' + style.dim('Dry run. --apply writes the bundle and rewrites history with git-filter-repo.'));
+    jsonOut({
+      scrubHistory: {
+        scanned: hist.scanned,
+        leaks: cls.findings,
+        alarms: cls.alarms.length,
+        tolerated: cls.tolerated.length,
+        plan: plan,
+        applied: false,
+      },
+    });
+    return;
+  }
+  if (!yes && process.stdin.isTTY) {
+    const ok = await confirm(
+      'Rewrite ' +
+        plan.paths.length +
+        ' path(s) out of the state-repo history' +
+        (plan.toleratedPaths.length
+          ? ' (' + plan.toleratedPaths.length + ' tolerated by policy, still scrubbed)'
+          : '') +
+        '? [y/N] ',
+    );
+    if (!ok) {
+      print('Cancelled — the history is untouched.');
+      return;
+    }
+  } else if (!yes && !process.stdin.isTTY) {
+    return fail('re-run with -y to confirm (this rewrites git history).');
+  }
+  const r = leakscan.applyScrub(ctx, hist.leaks, { now: ctx.now, includeTracked: includeTracked, policy: pol });
+  if (!r.ok) return fail(r.reason + (r.restored ? ' — ' + r.restored : ''));
+  print(
+    style.ok('✅') +
+      ' removed ' +
+      r.removed.length +
+      ' path(s) from history; backup bundle at ' +
+      r.bundle +
+      ' (0600).',
+  );
+  const after = leakscan.historyLeaks(ctx);
+  const afterClass = after.ok ? _secretpolicy.classify(ctx, after.leaks, { policy: pol }) : null;
+  print(
+    after.ok && !after.leaks.length
+      ? style.ok('✓') +
+          ' re-scan is clean (' +
+          after.scanned +
+          ' blob(s)). Delete the bundle once you are sure you do not need it.'
+      : style.warn('⚠') +
+          ' re-scan still reports ' +
+          after.leaks.length +
+          ' object(s) — inspect before deleting the bundle.',
+  );
+  jsonOut({
+    scrubHistory: {
+      applied: true,
+      removed: r.removed,
+      removed_tolerated: plan.toleratedPaths,
+      bundle: r.bundle,
+      rescan: afterClass ? historyJson(after, afterClass) : historyJson(after),
+    },
+  });
+}
+
+// #39 — `keyflip chains [account] [--tighten [--apply]]`: what one account's login is actually MADE
+// of, who can renew each piece, and where the chain therefore dies. Structural facts only: never
+// reads a secret's content, never touches the Keychain, and writes nothing but a file mode under
+// --tighten --apply. The value is the three failure modes that were otherwise invisible until a
+// switch misbehaved: a capture is a copy of a store that kept MOVING; one browser profile / one app
+// cookie jar can only ever hold ONE account; and a 644 cookie dump is readable by the whole machine.
+async function cmdChains(ctx, rest) {
+  const doTighten = rest.indexOf('--tighten') !== -1;
+  const apply = rest.indexOf('--apply') !== -1;
+  const only = rest.filter(function (a) {
+    return a.length && a[0] !== '-';
+  })[0];
+  if (doTighten) {
+    const t = _chains.tighten(ctx, { apply: apply });
+    print(style.bold('keyflip chains --tighten') + ' — ' + style.dim(_chains.display(ctx, ctx.configDir)));
+    if (!t.changed.length && !t.refused.length) {
+      print(style.ok('✅') + ' no state-repo secret has a loose mode — nothing to do.');
+      jsonOut({ chains: { tighten: t } });
+      return;
+    }
+    t.changed.forEach(function (c) {
+      print(
+        '  ' +
+          (apply ? style.ok('✓') : style.dim('•')) +
+          ' ' +
+          c.file +
+          '  ' +
+          c.from +
+          ' → ' +
+          c.to +
+          (apply ? '' : style.dim('  (dry run)')),
+      );
+    });
+    t.refused.forEach(function (r) {
+      print('  ' + style.warn('!') + ' left alone: ' + r.file + ' — ' + r.reason);
+    });
+    if (!apply)
+      print('\n' + style.dim('Dry run. --apply chmods these to 600 — nothing else, and never outside the state repo.'));
+    else print(style.ok('✅') + ' tightened ' + t.changed.length + ' file(s); ' + t.remaining + ' still loose.');
+    jsonOut({ chains: { tighten: t } });
+    return;
+  }
+
+  // The scope belongs in the query, not in a post-hoc filter: chains(ctx, {account}) recomputes the
+  // summary so a scoped report can never print whole-store counts it did not look at.
+  const c = _chains.chains(ctx, only ? { account: only } : {});
+  print(style.bold('keyflip chains') + ' — ' + style.dim(c.configDir));
+  if (only && !c.accounts.length) print('  ' + style.warn('!') + ' no credentials are filed under "' + only + '"');
+  const map = _chains.index(c.nodes);
+  const nowMs = Date.parse(ctx.now()) || Date.now();
+  const age = function (n) {
+    if (!n.mtimeMs) return '';
+    const days = Math.floor((nowMs - n.mtimeMs) / 86400000);
+    return days <= 0 ? 'today' : days === 1 ? '1d' : days + 'd';
+  };
+  c.accounts.forEach(function (a) {
+    print(
+      '\n  ' +
+        style.bold(a.account) +
+        style.dim(
+          '  ·  ' +
+            a.present +
+            ' held' +
+            (a.missing ? ', ' + a.missing + ' not stored here' : '') +
+            (a.unprobed ? ', ' + a.unprobed + ' in the Keychain (unprobed)' : '') +
+            '  ·  renews with: ' +
+            (a.renewableBy.join(' / ') || 'nothing') +
+            '  ·  bottoms out at: ' +
+            (a.roots.length ? a.roots.join(', ') : 'nothing traceable (a copy keyflip cannot interpret)'),
+        ),
+    );
+    c.nodes
+      .filter(function (n) {
+        return n.account === a.account;
+      })
+      .forEach(function (n) {
+        const state =
+          n.exists === true
+            ? [n.mode, fmtBytes(n.bytes), age(n)].filter(Boolean).join(' · ')
+            : n.exists === null
+              ? 'unprobed'
+              : 'absent';
+        const src = n.source && map[n.source] ? '← ' + n.source : '';
+        print(
+          '    • ' +
+            (n.exists === true ? '' : n.exists === null ? style.dim('? ') : style.dim('– ')) +
+            n.kind +
+            '  ' +
+            String(n.file) +
+            style.dim('  ·  ' + state + (src ? '  ·  ' + src : '') + (n.secret ? '' : '  ·  not a credential')),
+        );
+      });
+  });
+  const shared = c.nodes.filter(function (n) {
+    return n.account === null && n.secret && n.exists !== false && !n.synthetic;
+  });
+  if (shared.length) {
+    print('\n  ' + style.dim('machine-wide stores (no single account owns these):'));
+    shared.forEach(function (n) {
+      print(
+        '    • ' +
+          n.kind +
+          '  ' +
+          String(n.file) +
+          style.dim(
+            '  ·  ' +
+              (n.exists === null ? 'unprobed' : fmtBytes(n.bytes) + ' · ' + age(n)) +
+              (n.note ? '  ·  ' + n.note : ''),
+          ),
+      );
+    });
+  }
+  print('');
+  if (!c.risks.length) {
+    print(
+      style.ok('✅') +
+        ' every credential keyflip holds is filed under a known account, no older than its source, and private.',
+    );
+  } else {
+    print(
+      style.bold('  ' + c.risks.length + ' structural risk(s):') +
+        ' ' +
+        style.dim(c.summary.high + ' high, ' + c.summary.warn + ' advisory'),
+    );
+    c.risks.forEach(function (r) {
+      print('    ' + (r.severity === 'high' ? style.err('✗') : style.warn('⚠')) + ' ' + r.kind + ': ' + r.detail);
+      print('      ' + style.dim('↳ ' + r.fix));
+    });
+  }
+  print(
+    style.dim(
+      '\n  Read-only: chains never opens a secret file (stats only) and never queries the Keychain, so a' +
+        '\n  "keychain:" location is reported unprobed. Nothing here is written to the state repo.',
+    ),
+  );
+  jsonOut({
+    chains: {
+      account: only || null,
+      accounts: c.accounts,
+      // Same reason as the MCP tool: this JSON gets pasted into agent chats and logged. The relative
+      // path is the useful part; the absolute one maps the user's filesystem for no benefit.
+      risks: c.risks.map(_chains.publicRisk),
+      nodes: c.nodes.map(_chains.publicNode),
+      summary: c.summary,
+    },
+  });
+}
+
 async function cmdDoctor(ctx, rest) {
   const r = await doctor.diagnose(ctx);
+  // `--history` is opt-in because it walks every blob keyflip ever committed (a few seconds, read-only).
+  const wantHistory = rest.indexOf('--history') !== -1;
+  if (wantHistory && !JSON_MODE) print('  … scanning git history (' + ctx.configDir + ')');
+  const hist = wantHistory ? _leakscan.historyLeaks(ctx) : null;
+  // #44: the scan stays broad, the VERDICT is the policy's. A finding the user has ruled "expected here"
+  // is reported and counted separately, so `doctor`'s headline can be honest ("no alarms") without the
+  // scan ever getting narrower.
+  const histClass = hist && hist.ok ? _secretpolicy.classify(ctx, hist.leaks) : null;
   if (JSON_MODE) {
-    jsonOut({ ok: r.ok, checks: r.checks });
+    jsonOut({ ok: r.ok, checks: r.checks, history: hist ? historyJson(hist, histClass) : undefined });
     return;
   }
   print('keyflip doctor:');
@@ -7281,14 +9433,131 @@ async function cmdDoctor(ctx, rest) {
   const warns = r.checks.filter(function (c) {
     return c.ok === 'warn';
   }).length;
+  if (hist) printHistoryLeaks(hist, histClass);
   print('');
+  // A reachable secret outranks advisory noise: `--history` was asked for, so its ✗ is the headline.
+  // Only an ALARM outranks it, though — a tolerated finding is the user's own recorded decision, and
+  // re-alarming on it every run is precisely the noise that gets `doctor` skipped.
+  const alarms = histClass ? histClass.alarms : hist ? hist.leaks : [];
+  const tolerated = histClass ? histClass.tolerated : [];
+  const historyOnly = alarms.filter(function (l) {
+    return !l.trackedNow;
+  }).length;
   print(
     !r.ok
       ? style.err('Some checks need attention (see ✗ above).')
-      : warns
-        ? style.warn(warns + ' advisory warning(s) (⚠).')
-        : style.ok('All good.'),
+      : alarms.length
+        ? style.warn(
+            alarms.length +
+              ' secret-bearing object(s) still an ALARM in git history (' +
+              historyOnly +
+              ' of them untracked — safe to scrub)' +
+              (tolerated.length ? ', ' + tolerated.length + ' more tolerated by policy' : '') +
+              ' — keyflip scrub-history',
+          )
+        : warns
+          ? style.warn(warns + ' advisory warning(s) (⚠).')
+          : style.ok('All good.'),
   );
+  if (histClass && tolerated.length && !alarms.length)
+    print(
+      style.dim(
+        '  (' +
+          tolerated.length +
+          ' history finding(s) are tolerated by your policy and still get scrubbed by keyflip scrub-history — keyflip secrets list)',
+      ),
+    );
+  if (histClass && histClass.policyError)
+    print(style.err('✗') + ' ' + _secretpolicy.FILE_NAME + ': ' + histClass.policyError + ' — no rule was applied.');
+}
+
+// A history finding is reported as KIND + PATH, never content: the terminal, the log file and any
+// agent reading this output must not become a copy of the secret they are being warned about.
+// `cls` (a secretpolicy.classify() result) adds the toleration verdict — `tolerated` + which rule — so a
+// machine reader can tell an alarm from a known-and-accepted finding without re-reading the policy.
+function historyJson(hist, cls) {
+  // classify() preserves leak order, so findings[i] IS leaks[i].
+  return {
+    ok: hist.ok,
+    reason: hist.reason || null,
+    scanned: hist.scanned,
+    skipped: hist.skipped,
+    truncated: !!hist.truncated,
+    alarms: cls ? cls.alarms.length : hist.leaks.length,
+    tolerated: cls ? cls.tolerated.length : 0,
+    // A policy that could not be read applies nothing — the payload must say so, or a reader would
+    // assume the small alarm count came from rules that did not load.
+    policy_error: cls ? cls.policyError : null,
+    rules_dropped: cls ? cls.dropped : 0,
+    leaks: hist.leaks.map(function (l, i) {
+      const f = cls && cls.findings[i] ? cls.findings[i] : null;
+      return {
+        file: l.file,
+        blob: l.blob,
+        bytes: l.bytes,
+        kinds: l.kinds,
+        secretPath: !!l.secretPath,
+        confidence: l.confidence || 'high',
+        trackedNow: !!l.trackedNow,
+        commits: l.commits,
+        tolerated: f ? !!f.tolerated : undefined,
+        by: f && f.by ? f.by : undefined,
+      };
+    }),
+  };
+}
+
+function printHistoryLeaks(hist, cls) {
+  if (!hist.ok) {
+    print('  ' + style.warn('⚠') + ' history scan  — could not run (' + hist.reason + ')');
+    return;
+  }
+  const alarms = cls ? cls.alarms : hist.leaks;
+  const tolerated = cls ? cls.tolerated.length : 0;
+  print(
+    '  ' +
+      (alarms.length ? style.err('✗') : style.ok('✓')) +
+      ' history scan  — ' +
+      alarms.length +
+      ' alarm(s)' +
+      (tolerated ? style.dim(' (' + tolerated + ' tolerated by policy)') : '') +
+      ' in ' +
+      hist.scanned +
+      ' blob(s) scanned' +
+      (hist.skipped ? ' (' + hist.skipped + ' skipped as too large)' : '') +
+      (hist.truncated ? ' [scan capped — more objects exist]' : ''),
+  );
+  const rows = cls ? cls.findings : hist.leaks.map((l) => Object.assign({}, l, { labels: l.kinds }));
+  rows.slice(0, 12).forEach(function (l) {
+    print(
+      '      ' +
+        (l.tolerated ? style.dim('·') : style.err('•')) +
+        ' ' +
+        style.dim(
+          l.file +
+            '  ·  ' +
+            (l.labels ? l.labels.join(', ') : l.kinds.length ? l.kinds.join(', ') : 'secret-path capture') +
+            (l.confidence === 'low' ? ' [weak match]' : '') +
+            '  ·  ' +
+            l.commits +
+            ' commit(s) still hold it' +
+            (l.trackedNow ? ' · still tracked today' : ''),
+        ) +
+        (l.tolerated ? style.dim('  ·  tolerated by ' + l.by) : ''),
+    );
+  });
+  if (rows.length > 12) print('      ' + style.dim('… ' + (rows.length - 12) + ' more'));
+  if (alarms.length)
+    print(
+      '      ' + style.dim('↳ keyflip scrub-history            (the plan; --apply rewrites it after a bundle backup)'),
+    );
+  if (tolerated)
+    print(
+      '      ' +
+        style.dim(
+          '↳ keyflip secrets list             (what is silenced, by which rule — and scrub-history still cleans all of it)',
+        ),
+    );
 }
 
 async function cmdTest(ctx, rest) {
@@ -8714,6 +10983,297 @@ function consolidateAndReport(ctx) {
 // index so each one shows ALL conversations (gap #3/#4). The desktop app's store
 // is locked while it runs, so a one-shot offers to bounce the app; --watch re-syncs
 // on an interval whenever the app is closed (a foreground watcher, Ctrl-C to stop).
+// `keyflip refresh [--all] [--json]` — revive stored OAuth tokens BEFORE you need them.
+// Switching is the wrong time to discover a token died: Anthropic rotates the refresh token on every
+// use, so a capture that sat unused while the live session kept refreshing is now stale, and the
+// only repair is either a refresh (which needs the credential to be idle) or a human login. This runs
+// the same guarded refresh keyflip already does inside `switch`, but for every saved account at once,
+// so an idle night can keep all of them alive.
+async function cmdRefresh(ctx, rest) {
+  // `main()` consumes the global `--json` before the command ever sees `rest`, so reading it off
+  // `rest` here was always false — `keyflip refresh --all --json` printed human prose. JSON_MODE is
+  // the only truth.
+  const asJson = JSON_MODE;
+  // #36: `--schedule [--at HH:MM]` / `--unschedule` / `--schedule-status` put this on the same
+  // nightly timer as `dream` (launchd on macOS, cron on Linux), so a 6-day token cannot expire
+  // while nobody is thinking about it. These are FLAGS, not subcommands: the first positional
+  // argument here is an account name resolved by `core.resolveProfile`, so a bare `schedule`
+  // would silently turn into "no saved account 'schedule'".
+  const sched = rest.indexOf('--schedule') !== -1;
+  const unsched = rest.indexOf('--unschedule') !== -1;
+  const schedStatus = rest.indexOf('--schedule-status') !== -1;
+  if (schedStatus) {
+    const st = _schedule.status(ctx, { job: 'refresh' });
+    if (asJson) {
+      jsonOut({ refreshSchedule: st });
+      return;
+    }
+    print(
+      'Nightly token refresh: ' +
+        (st.installed
+          ? style.ok('scheduled') + ' (' + st.kind + (st.path ? ', ' + st.path : '') + ')'
+          : style.warn('not scheduled')),
+    );
+    if (st.installed) {
+      const at = st.recorded && st.recorded.at;
+      print(
+        '  ' +
+          style.dim(
+            'runs `keyflip refresh --all` daily at ' +
+              (at ? String(at.h).padStart(2, '0') + ':' + String(at.m).padStart(2, '0') : 'its default hour'),
+          ),
+      );
+      if (st.log) print('  ' + style.dim('output lands in ' + st.log));
+      print(
+        style.dim(
+          '  While a Claude session is live the run refuses to rotate anything: it changes nothing and waits for the next idle night.',
+        ),
+      );
+    }
+    return;
+  }
+  if (unsched) {
+    const r = _schedule.uninstall(ctx, { job: 'refresh' });
+    if (!r.ok && r.kind === 'unsupported') return fail('scheduling is macOS/Linux-only for now.');
+    print(style.ok('✅') + ' nightly token refresh ' + (r.existed === false ? 'was not scheduled.' : 'unscheduled.'));
+    jsonOut({ refreshSchedule: { installed: false } });
+    return;
+  }
+  if (sched) {
+    const ai = rest.indexOf('--at');
+    const at = ai !== -1 ? rest[ai + 1] : '04:30';
+    if (!profiles.list(ctx.configDir).length)
+      print(
+        style.warn('·') + ' there are no saved accounts yet — the job has nothing to refresh until you capture one.',
+      );
+    print(
+      'This installs a ' +
+        (ctx.platform === 'darwin' ? 'launchd agent' : 'crontab entry') +
+        ' that runs ' +
+        style.bold('keyflip refresh --all') +
+        ' daily at ' +
+        at +
+        '.',
+    );
+    print(
+      style.dim(
+        '  It rotates stored OAuth tokens for every account while nothing is using them. It calls no model and spends no quota.',
+      ),
+    );
+    print(style.dim('  Remove with: keyflip refresh --unschedule.'));
+    if (rest.indexOf('-y') === -1 && rest.indexOf('--force') === -1) {
+      if (!process.stdin.isTTY) return fail('re-run with -y to confirm.');
+      if (!(await confirm('Install the nightly token-refresh schedule? [y/N] '))) {
+        print('Cancelled.');
+        return;
+      }
+    }
+    const r = _schedule.install(ctx, { job: 'refresh', at: at });
+    if (!r.ok) return fail('could not schedule: ' + (r.reason || r.detail || 'unknown'));
+    print(
+      style.ok('✅') +
+        ' scheduled nightly token refresh at ' +
+        at +
+        ' (' +
+        r.kind +
+        '). ' +
+        style.dim('Status: keyflip refresh --schedule-status'),
+    );
+    if (r.log)
+      print(
+        style.dim('  It logs to ' + r.log + ' — an unattended job you cannot read after it ran cannot be debugged.'),
+      );
+    jsonOut({ refreshSchedule: { installed: true, at: at, kind: r.kind, log: r.log || null } });
+    return;
+  }
+  const all = profiles.list(ctx.configDir);
+  if (!all.length) return fail('no saved accounts.');
+  const arg = rest.filter(function (a) {
+    return a[0] !== '-';
+  })[0];
+  let names = all;
+  if (arg && arg !== '--all') {
+    const hit = core.resolveProfile(ctx, arg);
+    if (!hit) return fail("no saved account '" + arg + "' — see: keyflip list");
+    names = [hit];
+  }
+  // THE GUARD: rotating a refresh token under a live Claude session logs one surface out, so a
+  // refresh is only safe while nothing is holding the credential.
+  const running = appctl.isClaudeRunning(ctx.platform);
+  const instances = appctl.claudeInstances(ctx.home);
+  if (running || instances.length) {
+    // A refusal must be readable by a machine too: this is the branch the nightly job takes whenever
+    // the user works late, and "exit 0 + prose" is how a no-op gets mistaken for a renewal.
+    if (asJson) {
+      jsonOut({
+        refreshed: [],
+        refused: running ? 'claude-code-running' : 'claude-instances-active',
+        instances: instances.length,
+        changed: false,
+      });
+      return 0;
+    }
+    print(
+      style.warn('·') +
+        ' ' +
+        (running ? 'Claude Code is running on this machine' : instances.length + ' Claude instance(s) active') +
+        ' — refreshing now would rotate a token something is still using.',
+    );
+    print(style.dim('  nothing was changed. Run this when the CLI is idle (or it will happen on the next switch).'));
+    return 0;
+  }
+  const results = [];
+  for (let i = 0; i < names.length; i++) {
+    const r = await oauth.maybeRefreshProfile(ctx, names[i], {
+      isRunning: function () {
+        return false;
+      },
+      instances: function () {
+        return [];
+      },
+    });
+    results.push({ account: names[i], status: r.status });
+    logmod.log('oauth refresh --all ' + names[i] + ': ' + r.status);
+  }
+  if (asJson) {
+    jsonOut({ refreshed: results });
+    return 0;
+  }
+  const glyph = {
+    refreshed: style.ok('✓'),
+    fresh: style.ok('✓'),
+    skipped: style.dim('—'),
+    'refresh-failed': style.err('✗'),
+    'persist-failed': style.err('✗'),
+  };
+  const text = {
+    refreshed: 'token was expiring — refreshed and saved (the rotated refresh token is stored)',
+    fresh: 'token still valid, nothing to do',
+    skipped: 'no credential stored for this account',
+    'refresh-failed': 'COULD NOT REFRESH — this account needs a real login',
+    'persist-failed': 'refreshed but NOT saved — the stored refresh token is now STALE, re-capture it',
+  };
+  results.forEach(function (r) {
+    print('   ' + (glyph[r.status] || ' ') + ' ' + style.bold(r.account) + ' — ' + text[r.status]);
+  });
+  const bad = results.filter(function (r) {
+    return r.status === 'refresh-failed' || r.status === 'persist-failed';
+  });
+  print('');
+  print(
+    bad.length
+      ? style.err(bad.length + ' account(s) cannot be revived by refresh alone') +
+          ' — ' +
+          bad
+            .map(function (b) {
+              return b.account;
+            })
+            .join(', ') +
+          '. Verify with: keyflip verify'
+      : style.ok('Every stored token is alive or was refreshed.') + '  Details: keyflip verify',
+  );
+  return 0;
+}
+
+// `keyflip verify [account] [--usage] [--live] [--json]` — read every captured surface back the way
+// its own application would, and report whether a switch to that account would actually WORK today.
+// Exit codes are not proof: a successful write of a dead cookie, an expired token, or a JSON shape
+// the tool refuses to parse all look like success until the app shows a sign-in screen.
+async function cmdVerify(ctx, rest) {
+  const asJson = rest.indexOf('--json') !== -1;
+  const wantUsage = rest.indexOf('--usage') !== -1;
+  const wantLive = rest.indexOf('--live') !== -1;
+  const arg = rest.filter(function (a) {
+    return a[0] !== '-';
+  })[0];
+
+  const all = profiles.list(ctx.configDir);
+  if (!all.length) return fail('no saved accounts to verify.');
+  let names = all;
+  if (arg) {
+    let hit = core.resolveProfile(ctx, arg);
+    if (!hit)
+      hit =
+        all.filter(function (n) {
+          return profiles.email(ctx.configDir, n) === arg || n.indexOf(arg) === 0;
+        })[0] || null;
+    if (!hit) return fail("no saved account '" + arg + "' — see: keyflip list");
+    names = [hit];
+  }
+
+  // Which account is the machine actually on? That is the only one live checks describe.
+  let liveAccount = null;
+  try {
+    const cur = core.currentEmail(ctx);
+    all.forEach(function (n) {
+      if (!liveAccount && profiles.email(ctx.configDir, n) === cur) liveAccount = n;
+    });
+  } catch (e) {
+    liveAccount = null;
+  }
+
+  const results = await verifymod.verifyAll(ctx, {
+    accounts: names,
+    usage: wantUsage,
+    live: wantLive,
+    liveAccount: liveAccount,
+    currentEmail: function (c) {
+      return core.currentEmail(c);
+    },
+  });
+
+  if (asJson) return print(JSON.stringify({ liveAccount: liveAccount, accounts: results }, null, 2));
+
+  const glyph = { ok: style.ok('✓'), warn: style.warn('·'), fail: style.err('✗'), none: style.dim('—') };
+  results.forEach(function (r) {
+    print(
+      (r.account === liveAccount ? ' → ' : '   ') +
+        style.bold(r.account) +
+        '  ' +
+        (r.state === 'ok'
+          ? style.ok(verifymod.HEADLINE.ok)
+          : r.state === 'warn'
+            ? style.warn(verifymod.HEADLINE.warn)
+            : r.state === 'fail'
+              ? style.err(verifymod.HEADLINE.fail)
+              : style.dim(verifymod.HEADLINE.none)),
+    );
+    r.checks.forEach(function (c) {
+      print('      ' + (glyph[c.state] || ' ') + ' ' + c.name + (c.detail ? ' — ' + c.detail : ''));
+    });
+  });
+  const dead = results.filter(function (r) {
+    return r.state === 'fail' || r.state === 'none';
+  });
+  print('');
+  if (!dead.length)
+    print(
+      style.ok('Every listed account can be switched to.') +
+        '  (' +
+        results.length +
+        ' checked' +
+        (liveAccount ? ', live: ' + liveAccount : '') +
+        ')',
+    );
+  else {
+    print(
+      style.err(dead.length + ' account(s) would NOT switch cleanly:') +
+        '  ' +
+        dead
+          .map(function (d) {
+            return d.account;
+          })
+          .join(', '),
+    );
+    print(
+      style.dim(
+        '  ↳ an expired stored token revives with `keyflip refresh`; a dead app cookie needs one human sign-in — do it while another account still works.',
+      ),
+    );
+  }
+  return 0;
+}
+
 async function cmdConsolidate(ctx, rest) {
   if (!ctx.appDataDir) return fail('desktop chat sync is macOS/Windows-only (no Claude Desktop data dir here).');
   const watch = rest.indexOf('--watch') !== -1;
@@ -9680,6 +12240,22 @@ async function dispatch(ctx, cmd, rest) {
         return cmdSpeedtest(ctx, rest);
       case 'doctor':
         return cmdDoctor(ctx, rest);
+      case 'scrub-history':
+        return cmdScrubHistory(ctx, rest);
+      case 'secrets':
+        // Reading the findings is read-only; writing a rule mutates versioned state, so it takes the
+        // mutex and H3 commits the policy file right after (paths + kinds only, never a value).
+        return ['tolerate', 'untolerate'].indexOf(rest[0]) !== -1
+          ? withLock(
+              ctx,
+              function () {
+                return cmdSecrets(ctx, rest);
+              },
+              'secrets',
+            )
+          : cmdSecrets(ctx, rest);
+      case 'chains':
+        return cmdChains(ctx, rest);
       case 'test':
         return cmdTest(ctx, rest);
       case 'usage':
@@ -9717,6 +12293,13 @@ async function dispatch(ctx, cmd, rest) {
               return cmdBudget(ctx, rest);
             })
           : cmdBudget(ctx, rest);
+      case 'llm':
+        // `set`/`off` write config.json; `status`/`test` do not.
+        return rest[0] === 'set' || rest[0] === 'off' || rest[0] === 'reset'
+          ? withLock(ctx, function () {
+              return cmdLlm(ctx, rest);
+            })
+          : cmdLlm(ctx, rest);
       case 'import-env':
         return withLock(ctx, function () {
           return cmdImportEnv(ctx, rest);
@@ -9825,6 +12408,10 @@ async function dispatch(ctx, cmd, rest) {
         );
       case 'consolidate':
         return cmdConsolidate(ctx, rest);
+      case 'refresh':
+        return cmdRefresh(ctx, rest);
+      case 'verify':
+        return cmdVerify(ctx, rest);
       case 'memory':
         return rest[0] === 'remove' || rest[0] === 'rm'
           ? withLock(ctx, function () {
@@ -9890,6 +12477,15 @@ async function dispatch(ctx, cmd, rest) {
           : cmdFleet(ctx, rest);
       case 'sessions':
         return cmdSessions(ctx, rest);
+      case 'threads':
+        // Browsing a thread is read-only; naming one, linking one, or writing its mirror takes the
+        // mutex, so a thread file can never be half-written by a racing switch — and H3 versions the
+        // pointer change right after (the mirror itself is git-ignored, so nothing but metadata lands).
+        return ['create', 'add', 'remove', 'rm', 'drop', 'delete', 'mirror', 'unmirror'].indexOf(rest[0]) !== -1
+          ? withLock(ctx, function () {
+              return cmdThreads(ctx, rest);
+            })
+          : cmdThreads(ctx, rest);
       case 'resume':
         return cmdResume(ctx, rest);
       case 'send':

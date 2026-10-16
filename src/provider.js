@@ -268,6 +268,9 @@ export {
   providersDir,
   metaPath,
   activePath,
+  // chains.js must derive the SAME credential-store name this module writes — a second copy of
+  // that rule would silently report a provider key as missing whenever the naming changes.
+  keyStoreName,
   list,
   read,
   exists,

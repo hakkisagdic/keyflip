@@ -116,8 +116,17 @@ Run `keyflip` (or, on macOS/Windows, open the **“Keyflip”** launcher) and pi
   → [1] alice@example.com
     [2] bob@example.org
 
-  [number] switch   [a] save current   [d] delete   [r] refresh   [q] quit
+  [number] switch   [a] save current   [d] delete   [t] threads   [r] refresh   [q] quit
 ```
+
+`[t]` opens the **threads** screen: the same task, named, when it is spread over two accounts' sessions
+because quota ran out mid-work. It lists every thread with its members — which account each one belongs
+to, where its transcript is, how fresh it is, and the exact `cd … && claude --resume …` line that would
+continue it — plus `[s]`, which *looks for* split work instead of asking you to remember it. It is
+read-only on purpose: it never reads a transcript body, never writes, never spends quota, and printing a
+thread's name is the only way to change one (`keyflip threads create|add|open …`). An unassigned member
+is flagged with the fix, because a session keyflip cannot attribute would resume as the *current*
+account — that is how a task silently fragments.
 
 If Claude / Claude Code is open, keyflip first asks **“Claude will be closed to switch — continue?”** On **yes** it closes Claude, switches, and reopens it (macOS); on **no** it cancels and changes nothing.
 
@@ -135,15 +144,33 @@ keyflip <name|number>         # switch to that account (asks before closing Clau
 keyflip <name> --restart      # ...close & reopen Claude without asking
 keyflip <name> --force        # ...swap without closing Claude (restart it yourself)
 keyflip <name> --browser      # ...also align the browser + Chrome extension to this account
+keyflip <name> --dry-run      # ...show the PLAN first: what would be written, what blocks it, and
+                              # whether that account can even authenticate — changes NOTHING
+keyflip <name> --no-verify    # ...skip the read-back every switch does by default (see `verify`)
+keyflip <name> --rollback-on-fail  # ...and if that read-back says the switch didn't land a usable
+                              # account, put the previous one back (opt-in: it re-writes credentials)
 keyflip next                  # rotate to the next saved account
 keyflip next --strategy best  # ...or pick by remaining quota (also: next-available)
 keyflip provider add <name> --base-url <url> --key-file -   # save a 3rd-party endpoint
 keyflip use <name>            # route Claude Code to a provider (keyflip provider off = back)
 keyflip doctor                # health check: secrets-in-git, orphaned sessions, versioning, config, login, endpoints, desktop app session
+                              #   add --history to also scan every blob keyflip ever committed for a reachable secret
 keyflip backup now|list|restore <n>   # snapshot keyflip metadata (no secrets)
 keyflip usage --history       # per-account usage trend + failover events
 keyflip usage --providers     # usage/limits across OTHER AI tools on this machine (Codex/Gemini/Cursor/Copilot/OpenRouter + Claude) — the CodexBar-style monitor
 keyflip status                # which account each surface is on (CLI + desktop app)
+keyflip verify [acct] [--usage] [--live]   # would switching there WORK right now? reads the stored/live
+                              # token expiry, the app cookie capture (its session cookie + its expiry),
+                              # the token cache and the browser capture age — never a secret value
+keyflip refresh [acct|--all]  # revive stored OAuth tokens; refuses while a Claude is running them
+                              # (rotating one under a live session logs a surface out)
+keyflip refresh --schedule [--at 04:30] | --unschedule | --schedule-status
+                              # put `refresh --all` on a nightly timer (launchd/cron) — tokens expire on
+                              # the calendar, not on the day you switch; run it unattended while idle
+keyflip chains [acct] [--tighten [--apply]]   # what one login is MADE of: which store each capture was
+                              # copied from, who can renew each part (the tool / keyflip on switch / a fresh
+                              # capture / only a human), and what is stale, shared or world-readable.
+                              # Stats only — it never reads a secret and never queries the Keychain
 keyflip list [--usage]        # accounts; --usage adds each one's 5h/7d utilization
 keyflip autoswitch            # watch usage; auto-swap the CLI account at a threshold
 keyflip link [name|--remove]  # map this directory tree to an account for `run`
@@ -206,6 +233,9 @@ keyflip consolidate [--watch] # sync every account's chat index so each shows AL
 keyflip remove <name|number>  # delete a saved account (confirms; --force to skip)
 keyflip logout [--browser] [--desktop]   # sign OUT of the live session(s) — saved accounts are kept
 keyflip history | undo | restore <ref>   # git-versioned config: inspect / undo / roll back any change (secrets never committed)
+keyflip doctor --history      # is a secret still readable from an OLD commit? (scan every blob; reports kind, never content)
+keyflip scrub-history [--apply]  # remove them from history (dry-run first; bundle backup + git-filter-repo; --include-tracked to touch live files)
+keyflip secrets list | tolerate <path> [--kind K] | untolerate <path>  # which findings are EXPECTED (a free/rotated/dead key): ends the alarm and the rotation nag, never the clean-up
 keyflip reset [--soft]        # FACTORY reset: DELETE all keyflip data (--soft keeps accounts)
 keyflip uninstall [--purge]   # remove keyflip from this machine (--purge also deletes data)
 keyflip upgrade               # update keyflip itself (detects how it was installed)
@@ -295,9 +325,16 @@ keyflip resume 3                      # print the resume command for list item #
 keyflip resume <id> --run             # launch `claude --resume <id>` in its dir
 keyflip sessions rebind <old> <new>   # re-link a project's chat history after you renamed/moved its folder
 keyflip sessions assign <id> <account>   # continue a session under another account (resume --run) — without switching profiles
+keyflip threads                        # ONE name for the sessions that are the same task, ACROSS accounts (pointers, never a copy)
+keyflip threads suggest                # find work that is ALREADY split over 2+ accounts — no guessing ids
+keyflip threads create <slug> --title "…"   # then: keyflip threads add <slug> <session-id|--chat uuid> [--account <name>]
+keyflip threads show <slug> [--timeline] [--md]   # the thread as one merged, chronological view (--md = the document only)
+keyflip threads open <slug> [--run]    # resume where the thread last stopped, as the account that owns it
+keyflip threads where <id> | remove <slug> <id> | drop <slug> -y   # locate / unlink / forget the NAME (transcripts are untouched)
+keyflip threads mirror <slug> | unmirror <slug>   # opt-in: write the merged conversation text to thread-mirror/ (needs `config set threads.mirror true`)
 keyflip send <id> "<message>" [--as <account>] [--fork]   # inject a message into a session (steer/continue it headlessly)
 keyflip sessions archive <id|--older-than 30d>   # move old transcripts into keyflip (gzipped); unarchive restores them
-keyflip sessions distill <id>   # summarize a chat into a durable keepsake (via `claude -p`); browse with `keyflip memory`
+keyflip sessions distill <id>   # summarize a chat into a durable keepsake (via the chore model — see `keyflip llm`); browse with `keyflip memory`
 keyflip sessions compact <id> [--apply]   # shrink a transcript: elide bulky tool output, keep the conversation (dry-run default)
 keyflip sessions scrub <id> [--apply] [--categories …] [--llm-url URL]   # redact PII (email/phone/TCKN/card/IBAN/IP/secrets + custom + optional local LLM) — dry-run default, backs up on --apply
 keyflip sessions delete <id> [--hard]   # delete a conversation — archives first (recoverable) by default; --hard is a permanent unlink
@@ -311,8 +348,9 @@ keyflip sessions export <id> [--format md|html|json]   # export a chat as a clea
 keyflip foreign <session-file> [--format md|html|json]   # normalize ANOTHER agent's session (message-event JSONL — Claude Code/opencode/Gemini/Qoder CLI — / Cursor SQLite / generic JSON / Copilot YAML / Aider MD) into the same view
 keyflip handoff [--to claude|cursor|kiro|opencode|windsurf|generic] [--out CONTINUE.md]   # emit a CONTINUE-PROMPT so a NEW AI tool resumes THIS project from .keyflip/ (context, tasks, decisions, rules, last checkpoint) without re-reading everything
 keyflip dream [--older-than 30d] [--archive] [--apply]   # "dreaming": distill (+ archive) old chats in one pass; dry-run by default
-keyflip recall "<query>" [--answer]   # search ALL your chats (BM25; --semantic=embeddings; --answer = a cited synthesis via `claude -p`)
+keyflip recall "<query>" [--answer]   # search ALL your chats (BM25; --semantic=embeddings; --answer = a cited synthesis by the chore model)
 keyflip dream schedule [--at 03:00] | unschedule | status   # run the dream nightly, unattended (launchd/cron)
+keyflip llm [status|set --provider claude|ollama|openai [--model M] [--base-url U] [--key-env NAME]|test [--timeout ms]|off]   # which model runs those chores — and whose quota it burns
 keyflip cowork --search "exam"        # browse Claude desktop Cowork sessions (all accounts)
 keyflip chat                          # list claude.ai Chat (experimental) — `--as <acct>` reads another account
 keyflip chat get <short-id|title>     # read one cloud conversation (the short id from any listing works)
@@ -346,6 +384,231 @@ session cookie**. It is **experimental** (undocumented API) and cookie-bound:
   portable credentials.
 
 (App preferences, `design/`, worktrees etc. are global/empty — nothing per-account to migrate there.)
+
+### Which model runs the chores (`llm`)
+
+`dream`, `sessions distill` and `recall --answer` are housekeeping, not the work you are paying a
+subscription for — yet by default they shell `claude -p`, which burns the **active account's** quota,
+and a nightly `dream schedule` will keep doing that unattended at 03:00. `keyflip llm` makes the
+choice explicit and reversible:
+
+```bash
+keyflip llm                                   # who runs the chores, and what it costs
+keyflip llm set --provider ollama --model qwen2.5:7b-instruct   # local, free, nothing leaves the machine
+keyflip llm set --provider openai --base-url https://your-gateway/v1 --key-env GW_KEY --model NAME
+keyflip llm test                              # one tiny call, to prove it answers before a batch runs
+keyflip llm off                               # back to the default (`claude -p`)
+```
+
+- Providers: `claude` (the Claude Code CLI, active-account quota), `ollama` (local, defaults to
+  `http://127.0.0.1:11434/v1`), `openai` (any OpenAI-compatible endpoint — a gateway on an API key).
+- **An endpoint key is never stored.** `--key-env` takes the *name* of an environment variable and
+  keyflip reads its value from your shell at call time. The state directory is a git repo, so a
+  stored key would be a leaked key; a key-shaped value passed to `--key-env` is refused outright.
+- Every chore prints `distills via <provider> <model> — <cost>` **before** it spends anything, and
+  the keepsakes it writes record which model produced them. `dream schedule` receipts the provider it
+  was installed with, and `keyflip doctor` warns if that ever diverges — or if a nightly job is still
+  running on the subscription.
+- One-off reroute without touching shared state: `KEYFLIP_LLM_PROVIDER=ollama keyflip dream --apply`
+  (also `KEYFLIP_LLM_MODEL`, `KEYFLIP_LLM_BASE_URL`, `KEYFLIP_LLM_KEY_ENV`) — what a cron entry uses.
+- `ollama pull <model>` first (or point `--model` at one you already have); `keyflip llm test` proves
+  the endpoint answers. A cold local model spends minutes loading weights, so the self-test waits 3
+  minutes — raise it with `keyflip llm test --timeout 300000` or pick a smaller model.
+
+### Nothing expires on its own (`refresh --schedule`)
+
+An Anthropic OAuth token lives about six days, and it expires on the **calendar** — not on the day you
+happen to switch. That gap is why a switch can "succeed" and still open a sign-in screen: the stored
+token died quietly weeks earlier, and `keyflip refresh` only works while the credential is idle. So the
+repair is scheduled rather than remembered:
+
+```bash
+keyflip refresh --schedule                      # launchd (macOS) / crontab (Linux), default 04:30
+keyflip refresh --schedule --at 05:15
+keyflip refresh --schedule-status               # what runs, when, and where its output lands
+keyflip refresh --unschedule
+```
+
+- It runs `keyflip refresh --all`: every saved account's token is renewed while nothing is using it. It
+  calls **no model and spends no quota** — unlike the nightly `dream`, which is why it has its own
+  launchd label, its own crontab marker and its own receipt file. The two jobs never overwrite
+  each other, and 04:30 is deliberately not the dream's 03:00.
+- **If a Claude session is live, the run changes nothing.** Rotating a refresh token under a session
+  that still holds it logs a surface out, so the job declines and waits for the next idle night; in
+  `--json` that refusal is `{refused, changed:false}` rather than a paragraph behind an exit 0.
+- Its output goes to `~/Library/Logs/refresh-keyflip.log` and the plist sets `AbandonProcessGroup`, so
+  the job can be read after it ran and its detached children are not killed at exit. launchd's `PATH`
+  is `/usr/bin:/bin:/usr/sbin:/sbin`, so the schedule stores an absolute interpreter + script path —
+  an fnm-installed `keyflip` would otherwise never be found.
+- `keyflip doctor` has a **token renewal** row: it warns while accounts hold unrenewed tokens and goes
+  green once something is scheduled. Over MCP: `keyflip_refresh_schedule` (`action=status|install|
+  remove`, confirm-gated). See `keyflip chains` for the parts of a login that a scheduled refresh
+  *cannot* save — a desktop-app session cookie needs a human, and no timer changes that.
+
+### Is a secret still readable in the past? (`doctor --history`, `scrub-history`)
+
+keyflip versions its state directory with git, so every config change is recoverable — and so, once, was
+every secret that slipped past an ignore rule. Checking what is tracked **today** is not enough:
+`git rm --cached` stops future commits from carrying a file, but the commit that already recorded it
+still resolves the old blob in full. That residual is what has to be provably clean before keyflip starts
+mirroring chat transcripts, because transcripts are where people paste keys.
+
+```bash
+keyflip doctor --history          # scan every blob ever committed; report KIND, never content
+keyflip scrub-history             # the plan: which path, which kind, how many commits hold it
+keyflip scrub-history --apply     # bundle backup → git-filter-repo → re-scan as proof
+keyflip memory audit [--apply]    # the same scan over keyflip's distilled keepsakes
+```
+
+- **A report is never a copy.** A finding carries the path, the secret *kind* (`anthropic-api-key`, `jwt`,
+  `private-key-block`…), the blob id, its size and how many commits still hold it — so the terminal, the
+  log file and any agent reading the output stay clean.
+- **A capture under a secret path counts even when its bytes match no known shape**, because a format the
+  scanner does not recognize is still a credential file.
+- **A path still tracked today is left alone** unless you pass `--include-tracked`: dropping a live file
+  from history also drops it from the working tree. And a match resting only on the generic long-hex
+  shape is marked `[weak match]` — a 64-hex `userID` is an identifier, not a reason to destroy a file.
+- `--apply` **refuses** if `git-filter-repo` is not installed (a hand-rolled partial rewrite can corrupt
+  the repo), writes a `git bundle` of the current history first and refuses to continue if that bundle
+  does not verify, then re-scans and says whether the history is provably clean.
+- Two things it cannot do for you: the bundle holds the secrets until you move or delete it, and **the
+  credentials themselves must be rotated** — a removed secret that is still valid is not a fixed secret.
+- `memory audit --apply` redacts in place and keeps each original as `<key>.md.pre-scrub` (0600, and
+  `pre-scrub` is a registered secret extension, so that copy is never versioned or backed up). A redacted
+  keepsake is still in git history until `scrub-history` runs.
+- Over MCP: read-only `keyflip_history_audit` + `keyflip_memory_audit`, and confirm-gated
+  `keyflip_history_scrub` + `keyflip_memory_redact`.
+
+#### "I already know about that one" — the toleration policy (`secrets`)
+
+Not every finding is a problem. A free Google AI key, a JWT whose session expired weeks ago, a capture of a
+throwaway account — all genuinely secrets, none worth an alarm. And the same ✗ reprinted on every scan for a
+thing the user already decided is exactly the noise that trains everyone to skim past the finding that *is*
+a problem. `keyflip secrets` is how you say "expected" once, in a file, instead of in every scan.
+
+```bash
+keyflip secrets list                 # every finding and every rule, plus what each rule silences
+keyflip secrets list --alarms        # only what is still an alarm
+keyflip secrets tolerate "surfaces/codex/x/auth.json" --kind jwt --note "session expired"
+keyflip secrets tolerate --kind google-api-key   # a kind that is fine wherever it turns up
+keyflip secrets untolerate <path>    # the alarm comes back
+```
+
+- **A toleration ends the ALARM, never the clean-up.** A tolerated path stays in `scrub-history`'s plan and is
+  still removed from history; what stops is the ✗ and the rotation advice. There is deliberately no option that
+  means "leave this secret in the past" — that is not a policy, it is a leak with a config file.
+- **A rule names a path and a kind, never a value** — matching on a value would put a fingerprint of the secret
+  into the git-versioned state repo. `--note` text is redacted before it is stored, and `secrets-policy.json`
+  itself is *not* a secret path, so it travels with `keyflip backup` and is reversible with `keyflip undo`.
+- **Refused by design:** an unknown `--kind` (it would silence nothing, and the surviving alarm would look like
+  a bug), and a bare `*` with no kind — that is not a policy, that is the scanner being switched off. `*` never
+  crosses a directory boundary, and a `*`/trailing-`/` rule is printed with its **reach**, because it also
+  covers anything NEW at that path.
+- **It fails closed.** A corrupt or unreadable policy applies no rules, says so, and every finding stays an
+  alarm; malformed rules are dropped but counted.
+- **Keepsakes are never silenced.** `memory audit` has no policy: a distilled "my key is sk-ant-…" is text
+  keyflip wrote *about* you, not a file you chose to keep.
+- `doctor --history` counts alarms, not findings, and adds a dim line for what your policy silenced — so a
+  clean headline can always be explained. Over MCP: `keyflip_secrets_policy` (read-only) and
+  `keyflip_secrets_tolerate` (`action=tolerate|untolerate`, confirm-gated).
+
+### What is one login actually made of? (`chains`)
+
+An account is never one file. It is a live credential **plus every copy keyflip has taken from it**:
+an OAuth profile, the desktop app's token cache *and* its session cookie, a browser cookie snapshot, a
+provider API key, a third-party capture under `surfaces/`. Those copies form a graph, and three
+properties of that graph decide whether a switch will work — none of which any earlier command could
+see, because each looks at one file while the truth lives in the relationships between them:
+
+- **Renewal.** The app's `oauth:tokenCache` is *derived*: the app re-mints it by calling `/authorize`
+  with its `sessionKey` cookie. So the cookie is the chain's real root, and nothing renews it but a
+  human. A token blob can look perfectly healthy while the account behind it is dead — which is
+  exactly what "I switched and the app just shows the sign-in screen" is.
+- **Staleness.** A capture is a copy of a store that kept moving. If the source's mtime is newer than
+  the capture's, restoring it restores the past.
+- **Sharing.** One browser profile, or one app cookie jar, holds exactly **one** account's session.
+  Every capture taken from the same store competes with all the others: logging into Chrome as one
+  account silently makes that account's snapshot of the others untrue.
+
+```bash
+keyflip chains                 # the whole map, plus every structural finding
+keyflip chains work            # one account: what it holds, who renews it, where it bottoms out
+keyflip chains --tighten       # what is world-readable in the state repo (dry run)
+keyflip chains --tighten --apply   # chmod 600 those files, then re-scan as proof
+```
+
+- **It never reads a secret.** The map is built from paths and `stat()` results — size, mtime, mode.
+  It also never spawns `security … -w`, because printing a Keychain item is the only way to prove it
+  exists; those locations are reported as `exists: null` (unprobed) instead. And it writes **nothing**
+  into the git-versioned state repo, so it cannot leave a fingerprint of a value in history.
+- **Findings, not complaints.** Each risk names its own fix (`re-capture it while that account is
+  logged in`, `keyflip add <name>`, `keyflip chains --tighten`), and `high` items sort first. Only a
+  secret keyflip itself left readable beyond your owner can turn the `doctor` row red — four accounts
+  sharing one Chrome profile is structural reality, and a permanent ✗ over it would train you to
+  ignore the ✗.
+- **`--tighten` is bounded on purpose**: files inside the state repo, in the secret path set only.
+  Chrome's own cookie DB being 644 is normal (macOS protects it above the filesystem layer), so it is
+  never touched and never warned about.
+- The CLI `--json` and the MCP results carry repo-relative or `~/`-relative paths only
+  (`publicNode`/`publicRisk` strip the absolute ones), so pasting the map into an agent transcript
+  does not map your filesystem for it.
+- Over MCP: read-only `keyflip_chains` (+ optional `account`), confirm-gated `keyflip_chains_tighten`.
+  `keyflip doctor` gained a **credential chains** row that runs this map on every diagnosis.
+
+### One task across accounts (`threads`)
+
+A quota runs out mid-task, you switch, and the same job is suddenly three objects: a Claude Code
+session under gmail, another under yahoo, and a claude.ai chat nobody can point at. `keyflip threads`
+gives that work **one name**. A thread is a *pointer file*, `~/.config/keyflip/threads/<slug>.json`,
+listing session ids and chat uuids plus the account each belongs to — it is not a container, so
+switching accounts stops fragmenting the work, and `keyflip chat`'s piece-by-piece reach becomes one
+named task.
+
+```bash
+keyflip threads suggest                    # what is ALREADY split over 2+ accounts, per project folder
+keyflip threads create dugum-acmak --title "Düğüm açmak" --session 1a2b3c4d
+keyflip threads add dugum-acmak 9f8e7d6c --account yahoo   # a prefix is fine — it stores the full id
+keyflip threads add dugum-acmak 3b0c…e1a4 --chat            # a claude.ai chat is a member too
+keyflip threads show dugum-acmak --timeline                # one chronological conversation, with provenance
+keyflip threads open dugum-acmak            # where the work last stopped, as the account that owns it
+keyflip threads where 1a2b3c4d              # which threads contain this session
+keyflip threads drop dugum-acmak -y    # forgets the NAME; every transcript and assignment stays
+```
+
+- **Pointers, never copies.** The transcript stays where Claude wrote it. Nothing duplicates, and
+  deleting, corrupting or migrating a thread cannot lose a message — only a name. `keyflip threads
+  show --md` prints the merged document without writing anything.
+- **`[t]` in the menu is the same store, read-only.** The account switcher has a threads screen: every
+  thread, its members, which account each belongs to, where its transcript is, how fresh it is, and the
+  exact `cd … && claude --resume …` line that continues it — plus `[s]` for split work it can *find*. It
+  never reads a transcript body, never writes, never spends quota; naming and un-naming stay on the CLI,
+  because a thread is the one thing an account switch can silently fragment.
+- **It finds the split instead of making you enumerate it.** `suggest` groups recent sessions per
+  project folder and reports the folders where **two or more named accounts** worked, minus what a
+  thread already covers — so the list shrinks as you name your work. One account plus unassigned
+  sessions is *not* reported: that is an account nobody assigned, not a switch (assign it with
+  `keyflip sessions assign <id> <account>`).
+- **The merge says where it stopped being complete.** Each turn keeps its member and account
+  (`↪ from yahoo · session 9f8e7d6c`); undated turns stay a front group rather than being sorted
+  between decisions; a cloud chat contributes no turns offline and is listed under `unavailable` with
+  the `keyflip chat get …` command that would read it; and a member cut off by `threads.mergeMaxMiB`
+  (default 8 — transcripts here run to 24 MB) is counted as capped, not silently short.
+- **Conversation text on disk is opt-in and doubly gated.** `threads mirror` only writes
+  `~/.config/keyflip/thread-mirror/<slug>.md` when `keyflip config set threads.mirror true` **and** the
+  call agree; that directory is a registered secret dir (0600, never versioned, never backed up, never
+  synced, excluded from `migrate`), and the mirror still refuses if the state repo has a git remote.
+  Nothing copies transcript prose into a pointer file, either — the first prompt of a session is where
+  a pasted API key lives.
+- **Names are filenames, so they are normalized.** `düğüm` → `dugum`, `../secrets/x` cannot escape
+  `threads/`, and an ambiguous prefix is refused rather than guessed. A corrupt or hand-edited thread
+  is reported by `list` and blocks a write; `keyflip doctor` has a **threads** row for unreadable
+  files, members with no resolvable account, and the mirror being on.
+- Over MCP: read-only `keyflip_threads` (list / `slug` / `timeline` / `suggest` / reverse `id`) plus
+  confirm-gated `keyflip_thread_create|add|remove|drop|mirror`. MCP results **and** every `--json` payload
+  come back with paths relative to the state repo or `~/.claude/projects` — never the user's home path,
+  because that output is meant to be pasted into an agent transcript. A resume command's `cwd` stays
+  absolute (running it needs that, and a working directory is not a secret), and the human output keeps
+  real paths so you can open them.
 
 ## Context Layer — portable project memory (`.keyflip/`)
 
@@ -483,11 +746,24 @@ Agents shouldn't have to guess the CLI — keyflip speaks **MCP**:
 claude mcp add keyflip -- keyflip mcp     # or see: keyflip mcp --setup
 ```
 
-**The full CLI surface is exposed as 130+ MCP tools**, so an agent can do
+**The full CLI surface is exposed as 160+ MCP tools**, so an agent can do
 everything without shelling out — accounts (`keyflip_status/list/switch/next/add/account_remove`),
 providers (`keyflip_providers`, `keyflip_provider_use/add/remove`, `keyflip_test_provider`,
 `keyflip_speedtest`), the **fleet** control plane (`keyflip_fleet_status/switch/send_account/collect/keys/trust`),
-sessions (`keyflip_sessions`, `keyflip_resume_command`, archive/distill/compact), migrate + LAN
+sessions (`keyflip_sessions`, `keyflip_resume_command`, archive/distill/compact), **one named task
+across accounts** (`keyflip_threads` is read-only: list / `slug` / `timeline` / `suggest` / reverse `id`
+lookup; `keyflip_thread_create|add|remove|drop|mirror` mutate and require `confirm`), **switch preflight**
+(`keyflip_switch_plan` + `keyflip_verify` are read-only: the exact writes, blockers, quota state and
+rollback scope before anything moves), **chore cost** (`keyflip_llm` — which model `dream`/`distill`/
+`recall --answer` will use and whose quota that burns; `keyflip_recall` with `answer: true` returns a
+cited synthesis), **history hygiene** (`keyflip_history_audit` + `keyflip_memory_audit` are read-only
+scans of every blob keyflip ever committed and of its keepsakes; `keyflip_history_scrub` +
+`keyflip_memory_redact` mutate, and are confirm-gated; `keyflip_secrets_policy` reads and
+`keyflip_secrets_tolerate` writes the value-free "this finding is expected" policy that mutes the alarm
+without exempting the path from the scrub), **credential chains** (`keyflip_chains` is a
+read-only map of which store each capture was copied from, who can renew each part, and what is stale,
+shared or world-readable — paths and stats, never a value; `keyflip_chains_tighten` chmods and is
+confirm-gated), migrate + LAN
 (`keyflip_migrate_*`, `keyflip_transfer_pull`), WebDAV sync (`keyflip_sync_test/push/pull`),
 `keyflip://` links (`keyflip_share/share_apply`), desktop gateway (`keyflip_gateway_*`), MCP-server
 registry (`keyflip_mcpreg_*`), directory pins (`keyflip_link/links`), diagnostics
@@ -595,6 +871,8 @@ back signed out. The fix in every case is one sign-in in the app plus `keyflip a
 > - **Interactive** (menu, or `keyflip <name>` in a terminal): if Claude is open you're **asked before it's closed** — answer *no* to cancel.
 > - `--restart`: close & reopen Claude without asking (macOS).
 > - `--force`: switch without closing Claude — restart it yourself afterward. If the **desktop app** is running on another account it can rewrite the shared login and undo the swap; `--force` warns you and suggests `--restart`.
+> - `--dry-run`: prints the plan (which surfaces would be written, what blocks it, whether that account can still authenticate) and writes nothing — safe with Claude open.
+> - Every switch then **reads itself back**: it re-checks the account it just moved to (token expiry, the app's session cookie, the CLI identity on disk) and tells you `usable now` / `usable, decaying` / `NOT usable` instead of trusting a clean exit. `--no-verify` skips it; `--rollback-on-fail` additionally puts the previous account back when the read-back says the switch didn't land — opt-in, because a rollback re-writes credential stores and `keyflip undo` cannot help (it only reverts keyflip's metadata repo).
 > - Non-interactive (piped/CI) with Claude open and no flag: refuses rather than closing your app unexpectedly.
 
 ---

@@ -12,6 +12,10 @@ const RESERVED_NAMES = ['__proto__', 'prototype', 'constructor'];
 // keyflip's own top-level state files (<configDir>/*.json) that are NOT account
 // profiles. Without this, list() counts breakers.json/proxy.json/etc. as phantom
 // accounts and the schema migration rewrites them to a bogus `undefined.json`.
+// INVARIANT: any NEW file written straight into configDir must be added here — a missing entry is not
+// cosmetic, it puts a fake account in `keyflip list`, in the interactive menu and in every count. The
+// three at the end are the ones that got forgotten when their feature landed (schedule receipts, #36/#40,
+// and the secrets toleration policy, #44); test/profiles.test.js now pins them.
 const RESERVED_FILES = [
   'breakers',
   'proxy',
@@ -38,6 +42,9 @@ const RESERVED_FILES = [
   'license',
   'embeddings',
   'pii-patterns',
+  'dream-schedule',
+  'refresh-schedule',
+  'secrets-policy',
 ];
 
 function metaPath(dir, name) {
@@ -147,4 +154,4 @@ function sanitizeName(emailAddr) {
   return base || 'account';
 }
 
-export { metaPath, list, read, exists, write, remove, email, isValidName, sanitizeName, NAME_RE };
+export { metaPath, list, read, exists, write, remove, email, isValidName, sanitizeName, NAME_RE, RESERVED_FILES };

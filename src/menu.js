@@ -8,6 +8,22 @@ import * as appctl from './platform.js';
 import * as appsessions from './appsessions.js';
 import * as appauth from './appauth.js';
 import * as lock from './lock.js';
+import * as threads from './threads.js';
+import * as config from './config.js';
+import * as styleModule from './style.js';
+
+// Styling is bound to the stream the menu actually writes to, so a piped / test output stays plain
+// text (style.make disables color on a non-TTY) and a real terminal gets dim hints. `ui.color=false`
+// is honoured the same way the CLI honours it, and an unknown key must never turn a render into a crash.
+function stylesFor(out, ctx) {
+  let off = false;
+  try {
+    off = config.get(ctx, 'ui.color') === false;
+  } catch (e) {
+    off = false;
+  }
+  return styleModule.make(out, { color: !off });
+}
 
 function delay(ms) {
   return new Promise(function (r) {
@@ -55,32 +71,47 @@ function firstNonActiveIndex(ctx) {
 // -------------------------------------------------------------------------
 // line mode (readline question loop) — used for piped stdin / tests
 // -------------------------------------------------------------------------
-function ask(rl, q) {
-  return new Promise(function (resolve) {
-    let done = false;
-    const finish = function (a) {
-      if (!done) {
-        done = true;
-        resolve(a);
-      }
-    };
-    if (rl.__closed) {
-      finish(null);
+// Why this is not `rl.question`: readline fires a 'line' event the moment it parses a newline, and a
+// question that is not yet pending would simply DROP it. Piping `printf 't\n1\n\nq\n' | keyflip menu`
+// sends every answer in one chunk, so the second and later answers vanished and the menu acted on stale
+// or missing input. A queue attached to the interface keeps them, in order, for whoever asks next.
+function queueFor(rl) {
+  if (rl.__kfQueue) return rl.__kfQueue;
+  const q = { lines: [], waiter: null };
+  rl.on('line', function (line) {
+    if (q.waiter) {
+      const w = q.waiter;
+      q.waiter = null;
+      w(line);
       return;
     }
-    const onClose = function () {
-      finish(null);
-    };
-    rl.once('close', onClose);
-    try {
-      rl.question(q, function (a) {
-        rl.removeListener('close', onClose);
-        finish(a);
-      });
-    } catch (e) {
-      rl.removeListener('close', onClose);
-      finish(null);
+    q.lines.push(line);
+  });
+  rl.on('close', function () {
+    rl.__closed = true;
+    if (q.waiter) {
+      const w = q.waiter;
+      q.waiter = null;
+      w(null);
     }
+  });
+  rl.__kfQueue = q;
+  return q;
+}
+
+function ask(rl, q) {
+  const queue = queueFor(rl);
+  if (q && rl.output && rl.output.write) rl.output.write(q);
+  return new Promise(function (resolve) {
+    if (queue.lines.length) {
+      resolve(queue.lines.shift());
+      return;
+    }
+    if (rl.__closed) {
+      resolve(null);
+      return;
+    }
+    queue.waiter = resolve;
   });
 }
 
@@ -187,6 +218,245 @@ async function menuRemove(ctx, rl, p) {
   });
 }
 
+// -------------------------------------------------------------------------
+// threads screen (#42) — READ-ONLY on purpose
+// -------------------------------------------------------------------------
+// A thread is the one thing an account switch threatens: the same task, named, spread over two
+// accounts' sessions. So the screen that shows it lives in the menu that performs the switch.
+// It lists POINTERS (id, account, where the transcript is) and prints the CLI command that would
+// change anything; it never reads a transcript body, never writes, and never spends quota.
+function whenStamp(iso) {
+  const s = String(iso || '');
+  if (!s) return 'never';
+  const ms = Date.parse(s);
+  if (isNaN(ms)) return s.slice(0, 10);
+  const diff = Date.now() - ms;
+  if (diff < 90 * 1000) return 'just now';
+  if (diff < 60 * 60 * 1000) return Math.round(diff / 60000) + 'm ago';
+  if (diff < 36 * 60 * 60 * 1000) return Math.round(diff / 3600000) + 'h ago';
+  if (diff < 7 * 24 * 3600 * 1000) return Math.round(diff / 86400000) + 'd ago';
+  return s.slice(0, 10);
+}
+
+// One thread's members, each with what is true about it ON THIS MACHINE right now.
+function threadDetail(ctx, row, p, style) {
+  const dim = style.dim;
+  let t;
+  try {
+    t = threads.read(ctx, row.slug);
+  } catch (e) {
+    p('  ⚠ ' + e.message);
+    return;
+  }
+  if (!t) {
+    p('  "' + row.slug + '" is gone — it was deleted while this screen was open.');
+    return;
+  }
+  let exp;
+  try {
+    // index + assignments are computed once and passed in: N members must not each re-scan the store.
+    exp = threads.expand(ctx, t, { index: threads.index(ctx), assigned: threads.assignments(ctx) });
+  } catch (e) {
+    p('  ⚠ could not resolve its members: ' + e.message);
+    return;
+  }
+  p('');
+  p('  ' + row.slug + (t.title && threads.slugify(t.title) !== row.slug ? '  — ' + t.title : ''));
+  Object.keys(exp.accounts)
+    .sort()
+    .forEach(function (a) {
+      p('    ' + (a === 'unassigned' ? '⚠ no account' : a) + ': ' + exp.accounts[a] + ' member(s)');
+    });
+  exp.rows.forEach(function (m) {
+    const tag = m.kind === 'chat' ? 'chat' : 'sess';
+    p(
+      '    [' +
+        tag +
+        '] ' +
+        String(m.id).slice(0, 8) +
+        (m.account ? '' : '  ⚠ unassigned') +
+        (m.label ? '  ' + clip(m.label, 48) : ''),
+    );
+    if (!m.resolved) {
+      p('           ' + dim(m.reason || 'not reachable from here'));
+      return;
+    }
+    p('           ' + dim(clip(m.cwd || m.project || '', 70) + (m.cwdGone ? '   (folder is gone)' : '')));
+    p('           ' + dim(whenStamp(m.mtime) + ' · ' + resumeLine(m)));
+  });
+  // Only a SESSION pointer can be missing "here" — a cloud chat is server-side by nature and its own
+  // reason line already says how to read it, so counting it as unresolved would be a false alarm.
+  const gone = exp.rows.filter(function (m) {
+    return m.kind === 'session' && !m.resolved;
+  }).length;
+  if (gone)
+    p(
+      '    ' +
+        dim(
+          gone +
+            ' session pointer(s) resolve to nothing on this machine; the thread still names them, so a re-capture or a `threads add` fixes it',
+        ),
+    );
+  p('');
+  p(
+    '  ' +
+      dim(
+        'merged read: keyflip threads show ' +
+          row.slug +
+          ' --timeline   ·   continue: keyflip threads open ' +
+          row.slug,
+      ),
+  );
+}
+
+// "Finds the fragmentation instead of asking for it" — the CLI's rule: only a folder whose sessions are
+// assigned to TWO OR MORE NAMED accounts is evidence of a switch. Reporting a thread is NOT done here:
+// naming a task is the user's call, so this screen prints the command and stops.
+function threadSuggest(ctx, p, style) {
+  const dim = style.dim;
+  let rows;
+  try {
+    rows = threads.candidates(ctx, {});
+  } catch (e) {
+    p('  ⚠ ' + e.message);
+    return;
+  }
+  p('');
+  if (!rows.length) {
+    p('  ✓ Nothing looks fragmented: no project folder holds sessions assigned to two or more named accounts.');
+    p(
+      dim(
+        '    (checked the newest 400; an UNASSIGNED session is not evidence of a switch — assign first:' +
+          ' keyflip sessions assign <session-id> <account>)',
+      ),
+    );
+    return;
+  }
+  rows.forEach(function (g) {
+    p('  ' + clip(g.cwd || g.project, 70));
+    p('    ' + g.accounts.join(' + ') + ' · ' + g.sessions + ' session(s), ' + g.unthreaded + ' not in any thread yet');
+    p(
+      '    ' +
+        dim('keyflip threads create ' + g.suggestedSlug + ' --title "…"   then add its ' + g.open.length + ' id(s)'),
+    );
+  });
+  p('');
+  p('  ' + dim('This screen does not create threads — naming one is your call.'));
+}
+
+function clip(s, n) {
+  const v = String(s == null ? '' : s)
+    .replace(/\s+/g, ' ')
+    .trim();
+  return v.length > n ? v.slice(0, n - 1) + '…' : v;
+}
+
+// `expand()` hands back resumeCommand()'s {cwd, command, args}; the menu shows what the user would paste,
+// so it renders it the way `keyflip threads show` does — the cd matters, a transcript resumes in its folder.
+function resumeLine(m) {
+  const r = m.resume || {};
+  return 'cd ' + (r.cwd || m.cwd || '.') + ' && ' + r.command + ' ' + (r.args || []).join(' ');
+}
+
+async function menuThreads(ctx, rl, p, style) {
+  const dim = style.dim;
+  for (;;) {
+    const rows = threads.summaries(ctx);
+    const st = threads.stats(ctx);
+    p('');
+    p(
+      '  ══ Threads ══  ' +
+        st.threads +
+        ' thread(s), ' +
+        st.members +
+        ' member(s): ' +
+        st.sessions +
+        ' session(s), ' +
+        st.chats +
+        ' cloud chat(s)',
+    );
+    if (!rows.length) {
+      p('  None yet. A thread gives one task a single name across accounts, so switching does not');
+      p('  fragment it into separate chats:');
+      p('    keyflip threads create <slug> --title "…"');
+      p('    keyflip threads add <slug> <session-id>');
+      p('    keyflip threads suggest   ' + dim('finds work two or more accounts already touched'));
+      p('');
+      p('  ' + dim('[s] look for split work · Enter back to accounts'));
+    } else {
+      rows.forEach(function (r, i) {
+        p(
+          '  [' +
+            (i + 1) +
+            '] ' +
+            r.slug +
+            '  ' +
+            r.members +
+            ' member(s): ' +
+            r.sessions +
+            ' session(s)' +
+            (r.chats ? ', ' + r.chats + ' chat(s)' : '') +
+            '  ' +
+            dim(whenStamp(r.updatedAt)),
+        );
+        if (r.title && threads.slugify(r.title) !== r.slug) p('        ' + dim('“' + clip(r.title, 72) + '”'));
+        p(
+          '        ' +
+            dim(
+              (r.accounts.length ? 'accounts: ' + r.accounts.join(', ') : 'no account attributed yet') +
+                (r.noAccount ? '  · ' + r.noAccount + ' member(s) unassigned' : ''),
+            ),
+        );
+        if (r.corrupt) p('        ⚠ unreadable thread file: ' + clip(r.file, 60));
+        else if (r.droppedMembers)
+          p('        ⚠ ' + r.droppedMembers + ' invalid member(s) ignored in ' + clip(r.file, 60));
+      });
+      p('');
+      if (st.spanning.length)
+        p('  ✓ ' + st.spanning.length + ' thread(s) span more than one account: ' + st.spanning.slice(0, 6).join(', '));
+      if (st.noAccount)
+        p(
+          '  ⚠ ' +
+            st.noAccount +
+            ' member(s) would resume as the CURRENT account (' +
+            st.noAccountSlugs.slice(0, 6).join(', ') +
+            ')  ' +
+            dim('fix: keyflip sessions assign <session-id> <account>'),
+        );
+      if (st.corrupt && st.corrupt.length) p('  ⚠ unreadable thread file(s): ' + st.corrupt.join(', '));
+      if (st.mirrorFiles)
+        p(
+          '  ' +
+            dim(
+              st.mirrorFiles +
+                ' markdown mirror(s) for other agents · mirroring ' +
+                (st.mirrorEnabled ? 'is on' : 'is off'),
+            ),
+        );
+      p('');
+      p('  ' + dim('[number] members · [s] look for split work · Enter back to accounts'));
+    }
+    const raw = await ask(rl, '  Threads: ');
+    if (raw === null) return;
+    const c = raw.trim();
+    if (c === '' || c === 'q' || c === 'b' || c === 'back') return;
+    if (c === 's' || c === 'S') {
+      threadSuggest(ctx, p, style);
+      continue;
+    }
+    if (/^[0-9]+$/.test(c)) {
+      const r = rows[parseInt(c, 10) - 1];
+      if (!r) {
+        p('  Invalid choice.');
+        continue;
+      }
+      threadDetail(ctx, r, p, style);
+      continue;
+    }
+    p('  Invalid choice.');
+  }
+}
+
 async function runMenuLine(ctx, io) {
   io = io || {};
   const out = io.out || process.stdout;
@@ -197,6 +467,7 @@ async function runMenuLine(ctx, io) {
   const p = function (s) {
     out.write((s == null ? '' : s) + '\n');
   };
+  const style = stylesFor(out, ctx);
   let appActive = ctx.appDataDir ? appauth.activeProfileName(ctx) : null;
   try {
     for (;;) {
@@ -220,7 +491,7 @@ async function runMenuLine(ctx, io) {
           p('  ' + (now ? '● ' : '  ') + '[' + e.index + '] ' + (e.email || e.name) + (now ? '   (' + now + ')' : ''));
         });
       p('');
-      p('  [number] switch   [a] save current   [d] delete   [r] refresh   [q] quit');
+      p('  [number] switch   [a] save current   [d] delete   [t] threads   [r] refresh   [q] quit');
       p('════════════════════════════════════════════');
       const raw = await ask(rl, '  Choose: ');
       if (raw === null) {
@@ -239,6 +510,10 @@ async function runMenuLine(ctx, io) {
       }
       if (c === 'd' || c === 'D') {
         await menuRemove(ctx, rl, p);
+        continue;
+      }
+      if (c === 't' || c === 'T') {
+        await menuThreads(ctx, rl, p, style);
         continue;
       }
       if (c === 'r' || c === 'R') {
@@ -348,7 +623,7 @@ function runMenuKeys(ctx, io) {
           else write('  ' + label + '\n');
         });
       }
-      write('\n  ↑/↓ move · Enter switch · [a] add · [d] delete · [r] refresh · [q] quit\n');
+      write('\n  ↑/↓ move · Enter switch · [a] add · [d] delete · [t] threads · [r] refresh · [q] quit\n');
     }
 
     function askYesNoKey(question) {
@@ -449,8 +724,9 @@ function runMenuKeys(ctx, io) {
       const p = function (s) {
         write((s == null ? '' : s) + '\n');
       };
+      const style = stylesFor(output, ctx);
       try {
-        await fn(ctx, rl, p);
+        await fn(ctx, rl, p, style);
       } catch (err) {
         p('  ❌ ' + (err && err.message ? err.message : err));
       } finally {
@@ -512,6 +788,10 @@ function runMenuKeys(ctx, io) {
       }
       if (key.name === 'd') {
         await lineAction(menuRemove);
+        return;
+      }
+      if (key.name === 't') {
+        await lineAction(menuThreads);
         return;
       }
     }

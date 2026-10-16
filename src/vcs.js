@@ -20,6 +20,13 @@ const GITIGNORE = ['# keyflip: NEVER version secrets — they live in the OS cre
     '# rebuildable caches / self-referential snapshots (not versioned)',
     'embeddings.json',
     '.usage-cache.json',
+    // #36/#40: a schedule receipt describes the launchd/cron job on THIS machine. Versioned, it
+    // follows the repo to a second machine (`migrate`) or comes back from `restore`, and doctor —
+    // which reads the receipt as "the schedule keyflip agreed to" — reports a nightly job that does
+    // not exist there. Metadata-only either way (provider, cadence; never a key), so keeping it local
+    // loses nothing except the false green.
+    'dream-schedule.json',
+    'refresh-schedule.json',
     'backups/',
     'skill-backups/',
     // B1/B2 archive store: gunzip-able CHAT HISTORY, not config. A transcript can contain anything
@@ -138,6 +145,23 @@ function commit(ctx, message) {
   return !!(r && r.code === 0);
 }
 
+// Does the state repo name a REMOTE? keyflip never pushes — that is always the user's own decision,
+// through `git` or the GitHub UI. This exists for the one feature that writes CONVERSATION TEXT into
+// the state dir (the #35 thread mirror): every such file is git-ignored by secretpaths, but "ignored"
+// is only a promise about `git add -A`, and a repo pointed at a hosted remote is a repo where someone
+// will eventually type `git add -f`. Asking is cheaper than explaining the leak. False when there is
+// no repo (nothing to push) and false if git cannot be consulted — the answer degrades to "local".
+function hasRemote(ctx) {
+  if (!isRepo(ctx)) return false;
+  const r = git(ctx, ['remote']);
+  if (!r || r.code !== 0) return false;
+  return String(r.stdout || '')
+    .split('\n')
+    .some(function (line) {
+      return !!line.trim();
+    });
+}
+
 // List the files git currently TRACKS (relative to configDir). Used by `keyflip doctor` to
 // verify no secret ever slipped into version control. Empty if not a repo.
 function tracked(ctx) {
@@ -227,6 +251,7 @@ export {
   autoCommit,
   log,
   tracked,
+  hasRemote,
   undo,
   restore,
   disable,

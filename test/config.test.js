@@ -304,3 +304,41 @@ test('config.json is written with 0600 permissions', function () {
   const mode = fs.statSync(cpath(ctx)).mode & 0o777;
   if (process.platform !== 'win32') assert.strictEqual(mode, 0o600);
 });
+
+// ---- #35 threads -------------------------------------------------------------
+// `threads.mirror` is the only user-facing switch in this store that turns on WRITING CONVERSATION
+// TEXT to disk. So it defaults off, and it is a strict bool: the CLI spellings ('true', '0', 'off')
+// are honored, and anything else is REFUSED rather than silently coerced — a typo that quietly
+// turned the mirror on would put pasted keys into a file the user thinks is pointers-only.
+
+test('threads.mirror defaults OFF and only a real bool turns it on', function () {
+  const ctx = makeCtx();
+  assert.strictEqual(config.get(ctx, 'threads.mirror'), false, 'pointers-only is the default state');
+  assert.strictEqual(config.describe()['threads.mirror'].type, 'bool');
+  assert.strictEqual(config.set(ctx, 'threads.mirror', 'true'), true);
+  assert.strictEqual(config.get(ctx, 'threads.mirror'), true);
+  assert.strictEqual(config.set(ctx, 'threads.mirror', 'false'), false);
+  assert.strictEqual(config.get(ctx, 'threads.mirror'), false, '"false" is off, not merely non-empty');
+  assert.throws(function () {
+    config.set(ctx, 'threads.mirror', 'maybe');
+  }, 'a non-bool is refused, not coerced to true');
+  config.set(ctx, 'threads.mirror', 'true');
+  assert.strictEqual(config.unset(ctx, 'threads.mirror'), true, 'an override was present');
+  assert.strictEqual(config.get(ctx, 'threads.mirror'), false, 'and it is back to pointers-only');
+});
+
+test('threads.mergeMaxMiB is a bounded int — no unbounded "read it all"', function () {
+  const ctx = makeCtx();
+  const d = config.describe()['threads.mergeMaxMiB'];
+  assert.strictEqual(d.type, 'int');
+  assert.strictEqual(d.default, 8);
+  assert.strictEqual(d.min, 1);
+  assert.strictEqual(d.max, 512);
+  assert.strictEqual(config.set(ctx, 'threads.mergeMaxMiB', '64'), 64, 'CLI strings coerce');
+  assert.throws(function () {
+    config.set(ctx, 'threads.mergeMaxMiB', '0');
+  }, 'a zero cap would read nothing at all');
+  assert.throws(function () {
+    config.set(ctx, 'threads.mergeMaxMiB', '4096');
+  }, 'a 4 GiB cap is an out-of-memory waiting for a 24 MB paste');
+});

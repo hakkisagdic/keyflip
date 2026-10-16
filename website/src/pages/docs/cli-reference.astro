@@ -5,7 +5,7 @@ import CommandReference from '../../components/CommandReference.astro';
 ---
 
 <BaseLayout title="CLI Reference" locale="en" currentPath="/docs/cli-reference">
-  <PageHeader title="CLI Reference" subtitle="All 130+ keyflip commands organized by category" />
+  <PageHeader title="CLI Reference" subtitle="All 150+ keyflip commands organized by category" />
 
   <section class="py-16">
     <div class="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -31,7 +31,7 @@ import CommandReference from '../../components/CommandReference.astro';
 
       <div id="core">
         <CommandReference title="Core & Setup" commands={[
-          { cmd: 'keyflip', desc: 'Interactive menu (select by number)' },
+          { cmd: 'keyflip', desc: 'Interactive menu (select by number; [t] shows threads, read-only)' },
           { cmd: 'keyflip onboard [--manual] [--sso] [--console]', desc: 'Full first-run: sign in per account, point CLI+browser, sync chats' },
           { cmd: 'keyflip setup', desc: 'Lighter wizard: log in, auto-detect & capture new logins' },
           { cmd: 'keyflip login [name] [--email x] [--sso] [--console]', desc: 'Official browser flow, isolated + captured' },
@@ -40,6 +40,8 @@ import CommandReference from '../../components/CommandReference.astro';
           { cmd: 'keyflip status', desc: 'Which account each surface is on (CLI + desktop app)' },
           { cmd: 'keyflip list [--usage]', desc: 'List accounts; --usage shows 5h/7d utilization' },
           { cmd: 'keyflip doctor', desc: 'Health check: secrets-in-git, orphaned sessions, config, endpoints' },
+          { cmd: 'keyflip doctor --history', desc: 'Also scan every blob keyflip ever committed for a reachable secret' },
+          { cmd: 'keyflip verify [account] [--usage|--live]', desc: 'Would switching there actually work? Re-reads each surface the way its own app does — presence, expiry, age; never a value' },
           { cmd: 'keyflip config <list|get|set|unset>', desc: 'Validated settings home' },
         ]} />
       </div>
@@ -50,6 +52,10 @@ import CommandReference from '../../components/CommandReference.astro';
           { cmd: 'keyflip <name> --restart', desc: 'Close & reopen Claude without asking' },
           { cmd: 'keyflip <name> --force', desc: 'Swap without closing Claude (restart yourself)' },
           { cmd: 'keyflip <name> --browser', desc: 'Also align browser + Chrome extension' },
+          { cmd: 'keyflip <name> --dry-run', desc: 'Show the PLAN first: what would be written, what blocks it, whether that account can even authenticate — changes nothing' },
+          { cmd: 'keyflip <name> --no-verify', desc: 'Skip the read-back every switch does by default' },
+          { cmd: 'keyflip <name> --rollback-on-fail', desc: 'If that read-back says the machine did not land a usable account, put the previous one back' },
+          { cmd: 'keyflip chains [account] [--tighten [--apply]]', desc: 'What one login is actually made of: every copy, who can renew each part, what is stale, shared or world-readable' },
           { cmd: 'keyflip next', desc: 'Rotate to the next saved account' },
           { cmd: 'keyflip next --strategy best', desc: 'Pick by remaining quota' },
           { cmd: 'keyflip link [name|--remove]', desc: 'Map this directory to an account for `run`' },
@@ -88,6 +94,7 @@ import CommandReference from '../../components/CommandReference.astro';
           { cmd: 'keyflip send <id> "<msg>" [--as <acct>] [--fork]', desc: 'Inject message into a session' },
           { cmd: 'keyflip sessions archive <id|--older-than 30d>', desc: 'Archive old transcripts (gzipped)' },
           { cmd: 'keyflip sessions distill <id>', desc: 'Summarize a chat into a durable keepsake' },
+          { cmd: 'keyflip memory audit [--apply|--drop-copies]', desc: 'Secret-scan the keepsakes keyflip itself distilled — a summary that quotes a key is still a key' },
           { cmd: 'keyflip sessions compact <id> [--apply]', desc: 'Shrink transcript: elide bulky tool output' },
           { cmd: 'keyflip sessions scrub <id> [--apply]', desc: 'Redact PII (email/phone/TCKN/card/IBAN/IP/secrets)' },
           { cmd: 'keyflip sessions delete <id> [--hard]', desc: 'Delete a conversation (archives first by default)' },
@@ -100,6 +107,15 @@ import CommandReference from '../../components/CommandReference.astro';
           { cmd: 'keyflip cowork --search "exam"', desc: 'Browse Claude desktop Cowork sessions' },
           { cmd: 'keyflip chat', desc: 'List active account claude.ai Chat (experimental)' },
           { cmd: 'keyflip chat get <id>', desc: 'Read one cloud conversation' },
+          { cmd: 'keyflip threads', desc: 'Named tasks: sessions/chats that are the same work, across accounts' },
+          { cmd: 'keyflip threads suggest', desc: 'Find work already split over 2+ named accounts' },
+          { cmd: 'keyflip threads create <slug> --title "..." --session <id>', desc: 'Name a thread (a pointer file, never a copy)' },
+          { cmd: 'keyflip threads add <slug> <id|--chat uuid> [--account <name>]', desc: 'Add a member; a prefix expands to the full id' },
+          { cmd: 'keyflip threads show <slug> [--timeline|--md]', desc: 'One merged chronological view, with provenance' },
+          { cmd: 'keyflip threads open <slug> [--run]', desc: 'Resume where the thread stopped, as its owning account' },
+          { cmd: 'keyflip threads where <id>', desc: 'Which threads contain this session' },
+          { cmd: 'keyflip threads drop <slug> -y', desc: 'Forget only the NAME; transcripts and assignments stay' },
+          { cmd: 'keyflip threads mirror <slug> | unmirror <slug>', desc: 'Opt-in merged text on disk (needs threads.mirror=true)' },
         ]} />
       </div>
 
@@ -160,6 +176,9 @@ import CommandReference from '../../components/CommandReference.astro';
           { cmd: 'keyflip notify set|test|off --webhook URL', desc: 'Push alerts on quota/switch/fleet events' },
           { cmd: 'keyflip cost status|predict|by-project', desc: 'Spend/utilization and time-to-limit prediction' },
           { cmd: 'keyflip usage --history', desc: 'Per-account usage trend + failover events' },
+          { cmd: 'keyflip refresh [account|--all]', desc: 'Revive stored OAuth tokens while no Claude is running them (Anthropic rotates on use)' },
+          { cmd: 'keyflip refresh --schedule [--at 04:30] | --unschedule | --schedule-status', desc: 'Put refresh --all on a nightly launchd/cron timer so a 6-day token never dies idle' },
+          { cmd: 'keyflip llm status|set --provider claude|ollama|openai [--model M] | test | off', desc: 'What runs dream/distill/recall — and whose quota it burns; keys are named, never stored' },
           { cmd: 'keyflip usage --providers', desc: 'Usage/limits across other AI tools (CodexBar monitor)' },
           { cmd: 'keyflip post --to <webhook> [--status]', desc: 'Post events to Slack/Discord/webhook' },
         ]} />
@@ -176,6 +195,8 @@ import CommandReference from '../../components/CommandReference.astro';
           { cmd: 'keyflip backup now|list|restore <n>', desc: 'Snapshot keyflip metadata (no secrets)' },
           { cmd: 'keyflip log [--tail N] [--grep S] [--since ISO]', desc: 'View the action/audit log' },
           { cmd: 'keyflip history|undo|restore <ref>', desc: 'Git-versioned config: inspect/undo/rollback' },
+          { cmd: 'keyflip scrub-history [--apply] [--include-tracked]', desc: 'Find — and with --apply remove — secrets still reachable in the state-repo history. Bundle-first, and refuses without git-filter-repo' },
+          { cmd: 'keyflip secrets list [--alarms] | tolerate <path> [--kind K] [--note "..."] | untolerate <path>', desc: 'Which findings you already decided about: a rule is a path + secret kind, never a value, and it ends the alarm and the rotation advice — never the clean-up' },
         ]} />
       </div>
 

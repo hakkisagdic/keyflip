@@ -17,9 +17,16 @@ const SECRET_DIRS = [
   // Their basenames look innocent (auth.json, CURRENT, 000003.log), so the DIR has to be the
   // secret boundary — otherwise a capture is git-tracked and backed up like plain metadata.
   'surfaces',
+  // #35: the merged CONVERSATION TEXT of a thread (`keyflip threads mirror`, opt-in). Like `surfaces`,
+  // the basename is innocent (`<slug>.md`) and the file sits inside the git-versioned state dir, so the
+  // DIR is the boundary. Thread POINTERS stay versioned on purpose; their transcripts never do.
+  'thread-mirror',
 ];
 // Secret-shaped files, by extension (no leading dot).
-const SECRET_FILE_EXTS = ['cred', 'cookies', 'key', 'token', 'pem', 'sql'];
+// `pre-scrub` is the reversible-copy suffix `memory audit --apply` leaves behind: a redacted keepsake
+// keeps its ORIGINAL (secret intact) next to it, so that file is exactly as secret as the one it came
+// from — and it sits inside the git-versioned config dir, so it must be ignored or it becomes a leak.
+const SECRET_FILE_EXTS = ['cred', 'cookies', 'key', 'token', 'pem', 'sql', 'pre-scrub'];
 // Secret-shaped files, by exact basename. `auth.json` is the credential file of Codex/OpenAI and
 // opencode (surface.js already declares it `secret: true`), so it must never be versioned either.
 const SECRET_FILE_NAMES = ['.credentials.json', 'mcp-registry.json', 'auth.json'];

@@ -151,13 +151,19 @@ function search(ctx, query, opts) {
   return rank(corpus(ctx), query, opts.limit || 10);
 }
 
-// I3: RAG answer — retrieve the top keepsakes, then have `claude -p` synthesize a CITED
-// answer over ONLY them. Spends the active account's quota. Returns { ok, text, hits } or
-// { ok:false, reason, hits }. Runner injectable for tests.
-function answer(ctx, query, opts) {
+// I3: RAG answer — retrieve the top keepsakes, then have the configured provider synthesize a CITED
+// answer over ONLY them. Provider = `keyflip llm` (default `claude -p`, which spends the active
+// account's quota; ollama/openai do not). Returns { ok, text, hits, provider } or
+// { ok:false, reason, fix, hits }. Runner/poster injectable for tests.
+async function answer(ctx, query, opts) {
   opts = opts || {};
   const llm = _llm;
-  if (!opts.skipCheck && !llm.available(opts.run)) return { ok: false, reason: 'claude-not-installed', hits: [] };
+  if (!opts.skipCheck) {
+    const a = llm.availability(ctx, opts);
+    if (!a.ok) return { ok: false, reason: a.reason, fix: a.fix, hits: [] };
+    if (a.provider.provider === 'claude' && !llm.available(ctx, { run: opts.run }))
+      return { ok: false, reason: 'claude-not-installed', hits: [] };
+  }
   const docs = corpus(ctx);
   const hits = rank(docs, query, opts.limit || 6);
   if (!hits.length) return { ok: false, reason: 'no-matches', hits: [] };
@@ -185,8 +191,17 @@ function answer(ctx, query, opts) {
     '] after each supported claim. If the sources do not answer it, say so plainly. Be concise.\n\nQUESTION: ' +
     query +
     '\n\nSOURCES follow:';
-  const res = llm.summarize(instruction, context, { run: opts.run, model: opts.model, skipCheck: true });
-  return res.ok ? { ok: true, text: res.text, hits: hits } : { ok: false, reason: res.reason, hits: hits };
+  const res = await llm.complete(ctx, instruction, context, {
+    run: opts.run,
+    model: opts.model,
+    skipCheck: true,
+    post: opts.post,
+    env: opts.env,
+    provider: opts.provider,
+  });
+  return res.ok
+    ? { ok: true, text: res.text, hits: hits, provider: res.provider, model: res.model || null }
+    : { ok: false, reason: res.reason, fix: res.fix || null, hits: hits };
 }
 
 // I2 (opt-in): semantic search via embeddings. Embeds the query + keepsakes through the

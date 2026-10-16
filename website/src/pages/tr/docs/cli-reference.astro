@@ -5,7 +5,7 @@ import CommandReference from '../../../components/CommandReference.astro';
 ---
 
 <BaseLayout title="CLI Referansı" locale="tr" currentPath="/tr/docs/cli-reference">
-  <PageHeader title="CLI Referansı" subtitle="Kategoriye göre düzenlenmiş tüm 130+ keyflip komutu" />
+  <PageHeader title="CLI Referansı" subtitle="Kategoriye göre düzenlenmiş tüm 150+ keyflip komutu" />
 
   <section class="py-16">
     <div class="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -30,7 +30,7 @@ import CommandReference from '../../../components/CommandReference.astro';
 
       <div id="core">
         <CommandReference title="Temel ve Kurulum" commands={[
-          { cmd: 'keyflip', desc: 'İnteraktif menü (numarayla seçin)' },
+          { cmd: 'keyflip', desc: 'İnteraktif menü (numarayla seçin; [t] thread\'leri salt-okunur gösterir)' },
           { cmd: 'keyflip onboard [--manual] [--sso] [--console]', desc: 'Tam ilk çalıştırma: hesap başına giriş, CLI+tarayıcıyı yönlendir, sohbetleri senkronize et' },
           { cmd: 'keyflip setup', desc: 'Hafif sihirbaz: giriş yap, yeni girişleri otomatik algıla ve yakala' },
           { cmd: 'keyflip login [isim] [--email x] [--sso] [--console]', desc: 'Resmi tarayıcı akışı, izole + yakalanmış' },
@@ -39,6 +39,8 @@ import CommandReference from '../../../components/CommandReference.astro';
           { cmd: 'keyflip status', desc: 'Her yüzeyde hangi hesap aktif (CLI + masaüstü uygulaması)' },
           { cmd: 'keyflip list [--usage]', desc: 'Hesapları listele; --usage 5s/7g kullanımını gösterir' },
           { cmd: 'keyflip doctor', desc: 'Sağlık kontrolü: git\'te sırlar, yetim oturumlar, yapılandırma, uç noktalar' },
+          { cmd: 'keyflip doctor --history', desc: 'Ayrıca keyflip\'in geçmişte commit ettiği her blob\'u erişilebilir bir sır açısından tarar' },
+          { cmd: 'keyflip verify [hesap] [--usage|--live]', desc: 'Oraya geçiş gerçekten işe yarar mı? Her yüzeyi kendi uygulamasının okuduğu gibi yeniden okur — varlık, expiry, yaş; asla değer' },
           { cmd: 'keyflip config <list|get|set|unset>', desc: 'Doğrulanmış ayarlar evi' },
         ]} />
       </div>
@@ -49,6 +51,10 @@ import CommandReference from '../../../components/CommandReference.astro';
           { cmd: 'keyflip <isim> --restart', desc: 'Claude\'u kapat ve sormadan yeniden aç' },
           { cmd: 'keyflip <isim> --force', desc: 'Claude kapatmadan değiştir (kendin yeniden başlat)' },
           { cmd: 'keyflip <isim> --browser', desc: 'Tarayıcı + Chrome uzantısını da hizala' },
+          { cmd: 'keyflip <isim> --dry-run', desc: 'Önce PLANI göster: ne yazılacak, ne engelliyor, o hesap gerçekten kimlik doğrulayabiliyor mu — hiçbir şeyi değiştirmez' },
+          { cmd: 'keyflip <isim> --no-verify', desc: 'Her geçişin varsayılan olarak yaptığı geri-okumayı atla' },
+          { cmd: 'keyflip <isim> --rollback-on-fail', desc: 'Geri-okuma makinenin kullanılabilir bir hesapta konmadığını söylerse önceki hesabı geri koy' },
+          { cmd: 'keyflip chains [hesap] [--tighten [--apply]]', desc: 'Bir giriş aslında neden oluşur: her kopya, hangi parçayı kim yenileyebilir, hangisi bayat, paylaşımlı veya herkesçe okunur' },
           { cmd: 'keyflip next', desc: 'Sonraki kayıtlı hesaba dön' },
           { cmd: 'keyflip next --strategy best', desc: 'Kalan kotaya göre seç' },
           { cmd: 'keyflip link [isim|--remove]', desc: 'Bu dizini bir hesapla eşle' },
@@ -87,6 +93,7 @@ import CommandReference from '../../../components/CommandReference.astro';
           { cmd: 'keyflip send <id> "<msg>" [--as <hsb>] [--fork]', desc: 'Bir oturuma mesaj enjekte et' },
           { cmd: 'keyflip sessions archive <id|--older-than 30d>', desc: 'Eski transkriptleri arşivle (gzip)' },
           { cmd: 'keyflip sessions distill <id>', desc: 'Sohbeti kalıcı hatıraya özetle' },
+          { cmd: 'keyflip memory audit [--apply|--drop-copies]', desc: 'keyflip\'in kendi özetlediği hatıraları sır açısından tara — bir anahtarı alıntılayan özet hâlâ bir anahtardır' },
           { cmd: 'keyflip sessions compact <id> [--apply]', desc: 'Transkripti kısalt: araç çıktısını ele' },
           { cmd: 'keyflip sessions scrub <id> [--apply]', desc: 'Kişisel verileri sansürle (e-posta/telefon/TCKN/kart/IBAN/IP/sırlar)' },
           { cmd: 'keyflip sessions delete <id> [--hard]', desc: 'Bir konuşmayı sil (varsayılan olarak önce arşivler)' },
@@ -99,6 +106,15 @@ import CommandReference from '../../../components/CommandReference.astro';
           { cmd: 'keyflip cowork --search "sınav"', desc: 'Claude masaüstü Cowork oturumlarını göz at' },
           { cmd: 'keyflip chat', desc: 'Aktif hesabın claude.ai sohbetlerini listele (deneysel)' },
           { cmd: 'keyflip chat get <id>', desc: 'Bir bulut konuşmasını oku' },
+          { cmd: 'keyflip threads', desc: 'Adlandırılmış görevler: aynı işin HESAPLAR ARASI oturumları/sohbetleri' },
+          { cmd: 'keyflip threads suggest', desc: 'Zaten 2+ adlandırılmış hesaba bölünmüş işi bul' },
+          { cmd: 'keyflip threads create <slug> --title "..." --session <id>', desc: 'Bir thread adlandır (işaretçi dosyası, kopya değil)' },
+          { cmd: 'keyflip threads add <slug> <id|--chat uuid> [--account <ad>]', desc: 'Üye ekle; önek tam id\'ye genişler' },
+          { cmd: 'keyflip threads show <slug> [--timeline|--md]', desc: 'Kaynağıyla tek birleşik kronolojik görünüm' },
+          { cmd: 'keyflip threads open <slug> [--run]', desc: 'İşin durduğu yerden, ona sahip hesapla sürdür' },
+          { cmd: 'keyflip threads where <id>', desc: 'Bu oturumu hangi thread\'ler içeriyor' },
+          { cmd: 'keyflip threads drop <slug> -y', desc: 'Yalnız ADI unut; transkriptler ve atamalar kalır' },
+          { cmd: 'keyflip threads mirror <slug> | unmirror <slug>', desc: 'Opsiyonel birleşik metin (threads.mirror=true ister)' },
         ]} />
       </div>
 
@@ -159,6 +175,9 @@ import CommandReference from '../../../components/CommandReference.astro';
           { cmd: 'keyflip notify set|test|off --webhook URL', desc: 'Kota/geçiş/filo olaylarında push uyarıları' },
           { cmd: 'keyflip cost status|predict|by-project', desc: 'Harcama/kullanım ve limite kalan süre tahmini' },
           { cmd: 'keyflip usage --history', desc: 'Hesap başına kullanım trendi + yedekleme olayları' },
+          { cmd: 'keyflip refresh [hesap|--all]', desc: 'Hiçbir Claude onları çalıştırmazken kayıtlı OAuth token\'larını canlandır (Anthropic kullanımda rotate eder)' },
+          { cmd: 'keyflip refresh --schedule [--at 04:30] | --unschedule | --schedule-status', desc: 'refresh --all\'ı gecelik launchd/cron zamanlayıcısına koy, 6 günlük token boşta ölmesin' },
+          { cmd: 'keyflip llm status|set --provider claude|ollama|openai [--model M] | test | off', desc: 'dream/distill/recall\'u ne çalıştırır — ve kimin kotasını yakar; anahtarlar adlandırılır, asla saklanmaz' },
           { cmd: 'keyflip usage --providers', desc: 'Diğer AI araçları genelinde kullanım/limitler (CodexBar monitörü)' },
           { cmd: 'keyflip post --to <webhook> [--status]', desc: 'Slack/Discord/webhook\'a olay gönder' },
         ]} />
@@ -175,6 +194,8 @@ import CommandReference from '../../../components/CommandReference.astro';
           { cmd: 'keyflip backup now|list|restore <n>', desc: 'keyflip meta veri anlığı (sır yok)' },
           { cmd: 'keyflip log [--tail N] [--grep S] [--since ISO]', desc: 'Eylem/denetim günlüğünü görüntüle' },
           { cmd: 'keyflip history|undo|restore <ref>', desc: 'Git sürümlü yapılandırma: incele/geri al/geri sar' },
+          { cmd: 'keyflip scrub-history [--apply] [--include-tracked]', desc: 'Durum deposu geçmişinde hâlâ erişilebilir sırları bul — --apply ile kaldır. Önce bundle, ve git-filter-repo yoksa reddeder' },
+          { cmd: 'keyflip secrets list [--alarms] | tolerate <yol> [--kind T] [--note "..."] | untolerate <yol>', desc: 'Hangi bulgular hakkında zaten karar verdiğin: kural bir yol + sır TÜRÜ, asla değer; alarmı ve rotasyon tavsiyesini bitirir — temizlemeyi asla' },
         ]} />
       </div>
 
