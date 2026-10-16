@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.4] - 2026-10-16
+
 ### Added
 
 - **`keyflip sessions attribute [--apply] [--min-confidence high|medium]`** — threads only see work
