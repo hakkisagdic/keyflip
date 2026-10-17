@@ -335,8 +335,8 @@ const CATALOG = [
     group: 'fleet',
     safe: false,
     usage:
-      'keyflip fleet init --dir <f> | push | status | switch <machine> <acct> | send-account | collect | keys | trust <machine> | panel',
-    desc: 'Manage all your machines from one screen (encrypted shared folder).',
+      'keyflip fleet init --dir <f> | discover | push | status | switch <machine> <acct> | send-account | collect | keys | trust <machine> | panel',
+    desc: 'Manage all your machines from one screen (encrypted shared folder; discover finds peers on the LAN).',
   },
   {
     name: 'swarm',

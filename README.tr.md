@@ -221,6 +221,7 @@ keyflip transfer serve --relay <dizin|url>   # İNTERNET: aynı kod UX'i, paket 
 keyflip transfer pull --relay <dizin|url> --code <rendezvous>-<key>   # İNTERNET: relay'den çek + BİRLEŞTİR (tek-atış; alınınca silinir)
 keyflip transfer relay [--dir D --host H --port P --auth-user U --auth-pass-file f]   # KENDİ sıfır-bağımlılık relay'ini barındır (sunucu gerekmez)
 keyflip fleet init --dir <paylaşılan-klasör>   # FİLO: bu makineyi kontrol düzlemine bağla (şifreli paylaşılan/senkron klasör)
+keyflip fleet discover   # bu LAN'daki diğer keyflip makinelerini bul (UDP multicast; paylaşılan klasör gerekmez)
 keyflip fleet push [--with-secrets]   # bu makinenin durumunu yayınla (hesaplar+kota+chat durumu) + kuyruğa alınmış komutları uygula
 keyflip fleet status | panel   # TÜM makineleri tek ekranda gör — hesaplar, kota, "cevap geldi mi?" (panel = web panosu)
 keyflip fleet switch <makine> <hesap>   # UZAK makinenin hesabını değiştir (o makine push edince uygulanır)
@@ -255,6 +256,18 @@ blob deposu; Docker yok, daemon yok: her iki makinenin de erişebildiği bir sun
 `keyflip transfer relay --host 0.0.0.0 --auth-user ben --auth-pass-file pass.txt` çalıştır, sonra her
 iki taraftan `--relay http://<o-host>:8788/kf --user ben --pass-file pass.txt` ile ona işaret et. (Auth
 olmadan herkese açık bir arayüze bağlanmayı reddeder; istersen `--allow-open` ile geçersiz kılarsın.)
+
+### Filo — diğer makineleri bulmak (LAN keşfi)
+
+Rendezvous klasörü her yerde çalışır, ama her makinede bir yol kurulumu ve eşler görünmeden önce bir
+senkron turu gerektirir. Tek bir ağda daha hızlı bir yol var: `keyflip fleet discover` bir **UDP
+multicast beacon** gönderip dinler ve yanıt veren keyflip makinelerini listeler — henüz paylaşılan
+klasör yok, parola yok. Beacon **yalnız genel kimlik** taşır (makine id'si, görünen ad ve Ed25519 imza
+anahtarının kısa SHA-256 parmak izi) — asla parola, özel anahtar ya da komut — bu yüzden liste
+yazdırılması güvenlidir. Bulunan bir eş yalnızca *erişilebilir*dir: bir komut hâlâ parola gerektirir ve
+parmak izini bant dışı karşılaştırdıktan sonra (`keyflip fleet keys`) anahtarı yine ilk-görüşte-güven
+ile sabitlenir. Multicast'ı engelleyen bir ağ basitçe "kimse bulunamadı" der ve paylaşılan klasör
+yedek yol olarak kalır.
 
 ### Filo — origin authentication
 

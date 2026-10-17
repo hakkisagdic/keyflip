@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`keyflip fleet discover` — find your other keyflip machines on the LAN, no shared folder.**
+  Fleet's transport is a synced rendezvous folder, which needs a path set up on every machine and a
+  sync round-trip before peers appear; on one network that is friction for nothing. `discover` sends
+  and listens for a zero-dependency UDP multicast beacon (the same group as `transfer`, its own tag
+  so the two never confuse each other) and lists who answered. The beacon carries **public identity
+  only** — machine id, display name, and the short SHA-256 fingerprint of the Ed25519 signing key —
+  never the fleet passphrase, a private key, or a command, so the output is safe to print and gives
+  nothing away. A discovered peer is only *reachable*: acting on one still needs the passphrase, and
+  a key is still pinned by TOFU (`fleet keys` / `fleet trust`) after an out-of-band fingerprint
+  comparison. A network that blocks multicast degrades to "found nobody" and the shared folder stays
+  the fallback. Exposed to agents as `keyflip_fleet_discover`. A hostile datagram can never inject an
+  id that reaches a bus filename (the id charset is the same one the filenames enforce), and nothing
+  is written on a discovery.
 - **`keyflip add --dry-run`** — `add` writes to the git-versioned state repo and to a credential
   store, so it now gets the same "plan first, then write" contract a switch already had: the dry run
   reports what it WOULD capture (which account, whether the profile is new or refreshed, and whether

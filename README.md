@@ -222,6 +222,7 @@ keyflip transfer serve --relay <dir|url>   # INTERNET: same code UX, bundle goes
 keyflip transfer pull --relay <dir|url> --code <rendezvous>-<key>   # INTERNET: pull + MERGE from the relay (one-shot; deleted on pickup)
 keyflip transfer relay [--dir D --host H --port P --auth-user U --auth-pass-file f]   # host your OWN zero-dep relay (no server needed)
 keyflip fleet init --dir <shared-folder>   # FLEET: link this machine into a control plane (encrypted shared/synced folder)
+keyflip fleet discover   # find other keyflip machines on this LAN (UDP multicast; no shared folder needed)
 keyflip fleet push [--with-secrets]   # publish this machine's status (accounts+quota+chat state) + apply queued commands
 keyflip fleet status | panel   # see EVERY machine on one screen — accounts, quota, "reply arrived?" (panel = web dashboard)
 keyflip fleet switch <machine> <account>   # switch a REMOTE machine's account (applied on its next push)
@@ -254,6 +255,18 @@ No relay of your own? keyflip can **host one for you** — a self-contained, zer
 Docker, no daemon: `keyflip transfer relay --host 0.0.0.0 --auth-user me --auth-pass-file pass.txt` on a
 box both machines can reach, then point `--relay http://<that-host>:8788/kf --user me --pass-file pass.txt`
 at it from each side. (It refuses to bind a public interface without auth unless you pass `--allow-open`.)
+
+### Fleet — finding the other machines (LAN discovery)
+
+The rendezvous folder works anywhere, but it needs a path set up on every machine and a sync
+round-trip before peers show up. On one network there is a faster way: `keyflip fleet discover`
+sends and listens for a **UDP multicast beacon** and lists the keyflip machines that answer —
+no shared folder configured yet, no passphrase. The beacon carries **public identity only** (machine
+id, display name, and the short SHA-256 fingerprint of the Ed25519 signing key) — never the
+passphrase, a private key, or a command — so the listing is safe to print. A discovered peer is only
+*reachable*: acting on one still needs the passphrase, and its key is still pinned by trust-on-first-use
+after you compare fingerprints out-of-band (`keyflip fleet keys`). A network that blocks multicast
+simply reports "found nobody", and the shared folder stays the fallback.
 
 ### Fleet — origin authentication
 

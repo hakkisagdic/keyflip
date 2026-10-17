@@ -63,6 +63,7 @@ import * as _agents from './agents.js';
 import * as _migrate from './migrate.js';
 import * as _qr from './qr.js';
 import * as _lan from './lantransfer.js';
+import * as _lanfleet from './lanfleet.js';
 import * as _relayserver from './relayserver.js';
 import * as _rt from './relaytransfer.js';
 import * as _panel from './panel.js';
@@ -223,8 +224,9 @@ function usage() {
   );
   print("  keyflip agents                 list other agents' memory + config keyflip can carry (Cursor/Gemini/Codex)");
   print(
-    '  keyflip fleet init --dir <shared-folder> | push | status | switch <machine> <acct> | send-account <acct> --to <machine> [--from <machine>] | collect | keys | trust <machine> | panel',
+    '  keyflip fleet init --dir <shared-folder> | discover | push | status | switch <machine> <acct> | send-account <acct> --to <machine> [--from <machine>] | collect | keys | trust <machine> | panel',
   );
+  print('                                 discover = find keyflip machines on this LAN (no shared folder needed)');
   print(
     '                                 manage ALL your machines from one screen (encrypted shared folder): remote switch, collect/distribute accounts, chat status, signed origin-auth',
   );
@@ -6441,6 +6443,60 @@ async function cmdFleet(ctx, rest) {
         style.dim('Publish + check in with:  ') +
         style.bold('keyflip fleet push --passphrase-file <f>') +
         style.dim('   (same passphrase on every machine).'),
+    );
+    return;
+  }
+
+  // LAN discovery (#57): find keyflip machines on this network WITHOUT the shared folder. Public
+  // identity only (machine id / name / key fingerprint) — no passphrase, so it runs before any
+  // rendezvous is configured. Read-only: it never writes state.
+  if (sub === 'discover') {
+    const tIdx = rest.indexOf('--timeout');
+    const timeoutMs = tIdx !== -1 ? Math.max(200, parseInt(rest[tIdx + 1], 10) || 3000) : 3000;
+    const self = fleet.identity(ctx);
+    const me = { machineId: self.machineId, name: self.name, fp: fleet.fingerprint(fleet.publicKey(ctx)) };
+    if (!JSON_MODE) print(style.dim('listening for keyflip machines on the LAN for ' + timeoutMs + 'ms…'));
+    let peers = [];
+    try {
+      peers = await _lanfleet.discover({ timeoutMs: timeoutMs, exclude: self.machineId });
+    } catch (e) {
+      peers = [];
+    }
+    if (JSON_MODE) {
+      jsonOut({ fleetDiscover: { self: me, peers: peers, ms: timeoutMs } });
+      return;
+    }
+    print(style.bold('On the LAN now:') + ' ' + style.dim('(announced as ' + self.name + ')'));
+    if (!peers.length) {
+      print('  ' + style.warn('no other keyflip machine answered in ' + timeoutMs + 'ms.'));
+      print(
+        '  ' +
+          style.dim(
+            'Same Wi-Fi/subnet? macOS may ask to allow incoming connections the first time. A VPN or a' +
+              ' locked-down network can block multicast (falls back to a shared folder).',
+          ),
+      );
+      return;
+    }
+    peers.forEach(function (p) {
+      print(
+        '  ' +
+          style.ok('●') +
+          ' ' +
+          style.bold(p.name || p.machineId) +
+          '  ' +
+          style.dim(p.machineId.slice(0, 12) + '…' + (p.fp ? '  key ' + p.fp : '  (no key published yet)')) +
+          '  ' +
+          style.dim(p.host),
+      );
+    });
+    print('');
+    print(
+      '  ' +
+        style.dim(
+          'Reachable, but a command still needs the fleet passphrase. Verify a peer out-of-band against' +
+            ' the fingerprint it prints (`keyflip fleet keys`), then trust-on-first-use pins it.',
+        ),
     );
     return;
   }

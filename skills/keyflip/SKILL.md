@@ -308,7 +308,11 @@ account; `keyflip provider off` restores it. Never put an API key in argv — us
   zero-dep blob store (no Docker/daemon; refuses a public bind without auth unless `--allow-open`).
 - **FLEET — one screen for every machine.** `keyflip fleet init --dir <shared-folder>` links this
   machine into a control plane through an **encrypted shared folder** (Dropbox/iCloud/synced dir;
-  same fleet passphrase everywhere). `keyflip fleet push [--with-secrets]` publishes this machine's
+  same fleet passphrase everywhere). Before any folder is set up, `keyflip fleet discover` finds the
+  other keyflip machines **on the same LAN** via a UDP multicast beacon (public identity + key
+  fingerprint only — no passphrase, safe to print; read-only, MCP `keyflip_fleet_discover`). A
+  discovered peer is only reachable — acting on it still needs the passphrase and TOFU key pinning.
+  `keyflip fleet push [--with-secrets]` publishes this machine's
   status (accounts + cached quota + recent chats with **reply status**: assistant=replied,
   user=waiting) AND applies commands queued for it (consent-gated). `keyflip fleet status` (or the
   web `fleet panel`) shows EVERY machine on one screen + flags chats that got a **new reply** since

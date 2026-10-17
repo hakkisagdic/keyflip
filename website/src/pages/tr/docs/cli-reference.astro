@@ -123,6 +123,7 @@ import CommandReference from '../../../components/CommandReference.astro';
       <div id="fleet">
         <CommandReference title="Filo ve Transfer" commands={[
           { cmd: 'keyflip fleet init --dir <klasör>', desc: 'Bu makineyi şifrelenmiş filoya bağla' },
+          { cmd: 'keyflip fleet discover', desc: 'Yerel ağdaki keyflip makinelerini bul (multicast; paylaşılan klasör gerekmez)' },
           { cmd: 'keyflip fleet push [--with-secrets]', desc: 'Durum yayınla + sıralı komutları uygula' },
           { cmd: 'keyflip fleet status | panel', desc: 'Her makineyi gör: hesaplar, kota, durum' },
           { cmd: 'keyflip fleet switch <makine> <hesap>', desc: 'Uzak makine hesabını değiştir' },

@@ -66,6 +66,7 @@ import * as _mcpreg from './mcpreg.js';
 import * as _share from './share.js';
 import * as _links from './links.js';
 import * as _lantransfer from './lantransfer.js';
+import * as _lanfleet from './lanfleet.js';
 import * as _autoswitch from './autoswitch.js';
 import * as _budget from './budget.js';
 import * as _notify from './notify.js';
@@ -1464,6 +1465,28 @@ const TOOLS = [
       const fleet = _fleet;
       const b = fleet.bus(ctx, { passphrase: fs.readFileSync(String(args.passphrase_file), 'utf8').trim() });
       return { keys: fleet.keyReport(ctx, fleet.readFleet(ctx, b)) };
+    },
+  },
+  {
+    name: 'keyflip_fleet_discover',
+    title: 'Find keyflip machines on this LAN (no shared folder needed)',
+    description:
+      'Listen for the UDP multicast beacon other keyflip machines announce and report the peers on the same network — the shared rendezvous folder is NOT required. Carries public identity only (machine id, display name, and the short SHA-256 fingerprint of the Ed25519 signing key) — never a passphrase, private key or command, so the result is safe to print. Read-only. A command to a discovered peer still needs the fleet passphrase; verify a peer out-of-band by comparing the fingerprint it prints (`keyflip_fleet_keys`) before trusting it.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        timeout_ms: { type: 'integer', description: 'How long to listen (default 3000, min 200).' },
+      },
+      additionalProperties: false,
+    },
+    annotations: RO_NET,
+    run: async function (ctx, args) {
+      const fleet = _fleet;
+      const self = fleet.identity(ctx);
+      const me = { machineId: self.machineId, name: self.name, fp: fleet.fingerprint(fleet.publicKey(ctx)) };
+      const ms = Number(args.timeout_ms) > 0 ? Math.max(200, Number(args.timeout_ms)) : 3000;
+      const peers = await _lanfleet.discover({ timeoutMs: ms, exclude: self.machineId });
+      return { self: me, peers: peers, ms: ms };
     },
   },
   {
