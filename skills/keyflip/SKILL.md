@@ -46,7 +46,10 @@ login and stores it. Two ways:
   the desktop app) and saves it, until they type `d`. Interactive (TTY).
 - **`keyflip add [name]`** — captures whatever is logged in right now (one account).
   Scriptable. `--app` = desktop app only. `--token <file|->` imports a raw
-  credential (secrets via file/stdin, never argv).
+  credential (secrets via file/stdin, never argv). `--dry-run` = report what it WOULD
+  save (which account, new vs refreshed, whether the app jar has a usable session) and
+  write NOTHING — use it to check before capturing, since a real `add` commits to the
+  git-versioned state repo.
 - **`keyflip login [name] --email <x>`** — signs in via the OFFICIAL `claude auth
   login` in an ISOLATED config dir (the user's current login is NOT disturbed) and
   captures the minted token. The only human step is approving in the browser. Note:
@@ -122,6 +125,13 @@ though keyflip's capture is intact, so keyflip reports it rather than looking he
 `appSessionExpires`, and `doctor`'s **desktop app session** check warns with the fix.
 Do NOT re-switch or re-`add` hoping to repair it — ask the user to sign in once in Claude
 (their login, never yours), then `keyflip add <name>` to refresh the capture.
+
+One common cause to name specifically: the app **auto-updated** (Squirrel/ShipIt swapped the
+bundle and relaunched it) and Chromium had not flushed the session cookie to disk yet, so the
+live jar reads signed-out while the capture is fine. `doctor` dates the installed bundle and
+says "the app was UPDATED <date>" in that case — that is a post-update timing gap, still fixed
+by one human sign-in, NOT a broken capture. `keyflip add --dry-run` shows whether the jar
+currently holds a usable session without writing anything.
 
 ## Switching (get consent first)
 

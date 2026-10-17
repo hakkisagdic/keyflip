@@ -138,7 +138,7 @@ keyflip onboard [--manual] [--sso] [--console]   # full first-run: sign in per a
                               #   at it, sync chats, ask for the next ("p" = API-key provider; --sso = enterprise)
 keyflip setup                 # lighter: log in in Claude, keyflip auto-detects & captures
 keyflip login [name] [--email x] [--sso] [--console]   # official browser flow, isolated + captured (--sso = enterprise)
-keyflip add [name] [--app]    # save the logged-in account(s) — CLI + desktop app
+keyflip add [name] [--app] [--dry-run]   # save the logged-in account(s) — CLI + desktop app (--dry-run = plan only)
 keyflip browser [status|logout|sync]   # check/reset/restore the browser claude.ai account (extension)
 keyflip <name|number>         # switch to that account (asks before closing Claude)
 keyflip <name> --restart      # ...close & reopen Claude without asking
@@ -869,6 +869,15 @@ cookie), so keyflip reports it instead of looking healthy: `keyflip list` marks 
 after a switch that reopens Claude, keyflip waits a few seconds and warns if the app came
 back signed out. The fix in every case is one sign-in in the app plus `keyflip add
 <name>`; the CLI, the browser session and every other capture stay switched.
+
+One specific and easy-to-blame cause: the app **updated itself**. Squirrel/ShipIt swaps
+the bundle and relaunches the app, and on that relaunch Chromium may not have flushed the
+`claude.ai` session cookie back to disk yet — so the live jar reads as signed out while
+your saved capture is perfectly fine, and it *looks* like logins stopped working with no
+change on keyflip's side. `keyflip doctor` dates the installed bundle and says so
+("the app was UPDATED <date> (vX)…) instead of implying a broken capture. `keyflip add
+--dry-run` shows what a capture *would* save and whether the app's jar currently holds a
+usable session, without writing anything.
 
 > Experimental: it rewrites the app's `config.json` login while the app is closed.
 > If a saved token has fully expired the app may ask you to log in again; just

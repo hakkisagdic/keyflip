@@ -213,6 +213,33 @@ function appSession(ctx, add, opts) {
     return;
   }
   if (s.reason === 'no-cookie-db') return; // the app has never written a cookie jar — nothing to report
+  // Why is the jar signed out while a capture exists? One honest, common cause: the app just
+  // UPDATED itself (Squirrel/ShipIt swaps the bundle and relaunches), and on that relaunch Chromium
+  // had not flushed the claude.ai session cookie back to disk yet. Dating the bundle turns a
+  // confusing "why is my capture not working" into "the app updated <when> — sign in once".
+  let updated = null;
+  try {
+    const info = _appauth.appInstallInfo(ctx);
+    if (info.mtimeMs) {
+      const days = (Date.now() - info.mtimeMs) / 86400000;
+      if (days >= 0 && days < 3)
+        updated = { when: new Date(info.mtimeMs).toISOString().slice(0, 10), version: info.version };
+    }
+  } catch (e) {
+    /* dating is advisory */
+  }
+  if (updated) {
+    add(
+      'desktop app session',
+      'warn',
+      'the app was UPDATED ' +
+        updated.when +
+        (updated.version ? ' (v' + updated.version + ')' : '') +
+        ' and its jar holds no claude.ai session cookie yet',
+      'this is a post-update timing gap, not a broken capture — sign in once in Claude, then `keyflip add`',
+    );
+    return;
+  }
   add(
     'desktop app session',
     'warn',

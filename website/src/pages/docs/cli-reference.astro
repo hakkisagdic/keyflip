@@ -36,6 +36,7 @@ import CommandReference from '../../components/CommandReference.astro';
           { cmd: 'keyflip setup', desc: 'Lighter wizard: log in, auto-detect & capture new logins' },
           { cmd: 'keyflip login [name] [--email x] [--sso] [--console]', desc: 'Official browser flow, isolated + captured' },
           { cmd: 'keyflip add [name] [--app]', desc: 'Save the currently logged-in account (CLI + desktop app)' },
+          { cmd: 'keyflip add [--dry-run]', desc: 'Plan a capture (which account, app session ok?) and write nothing' },
           { cmd: 'keyflip add <name> --token <file|->', desc: 'Headless import of raw credential (CI/provisioning)' },
           { cmd: 'keyflip status', desc: 'Which account each surface is on (CLI + desktop app)' },
           { cmd: 'keyflip list [--usage]', desc: 'List accounts; --usage shows 5h/7d utilization' },

@@ -137,7 +137,7 @@ keyflip onboard [--manual] [--sso] [--console]   # tam ilk-kurulum: hesap başı
                               #   hizala, chatleri eşitle, sıradakini sor ("p" = API-key provider; --sso = kurumsal)
 keyflip setup                 # hafif: Claude'da giriş yap, keyflip algılayıp yakalar
 keyflip login [ad] [--email x] [--sso] [--console]   # resmi tarayıcı akışı, izole + yakala (--sso = kurumsal)
-keyflip add [ad] [--app]      # girişli hesap(lar)ı kaydet — CLI + masaüstü uygulaması
+keyflip add [ad] [--app] [--dry-run]   # girişli hesap(lar)ı kaydet — CLI + masaüstü uygulaması (--dry-run = yalnız plan)
 keyflip browser [status|logout|sync]   # tarayıcı claude.ai hesabını kontrol/sıfırla/geri yükle (uzantı)
 keyflip <ad|numara>           # o hesaba geç (Claude'u kapatmadan önce sorar)
 keyflip <ad> --restart        # ...sormadan Claude'u kapatıp yeniden açar
@@ -870,6 +870,15 @@ gösterir) ve Claude'u yeniden açan bir geçişten sonra birkaç saniye bekleyi
 girişsiz açıldıysa uyarır. Her üç durumunda da çözüm aynı: uygulamada bir kez giriş
 yapın, sonra `keyflip add <ad>` çalıştırın — CLI, tarayıcı oturumu ve diğer tüm
 yakalamalar seçtiğiniz hesapta kalmaya devam eder.
+
+Suçu kolayca yanlış yere atan bir özel neden: uygulama **kendini güncelledi**. Squirrel/ShipIt
+paketi değiştirip uygulamayı yeniden başlatır ve o yeniden başlatmada Chromium `claude.ai`
+oturum çerezini henüz diske yazmamış olabilir — böylece canlı kavanoz girişsiz görünürken kayıtlı
+yakalaman kusursuzdur ve keyflip tarafında hiçbir değişiklik olmadan *sanki* girişler çalışmaz hâle
+gelmiş gibi görünür. `keyflip doctor` kurulu paketin tarihini okur ve "uygulama GÜNCELLENDİ
+<tarih> (vX)…" der, bozuk bir yakalama ima etmek yerine. `keyflip add --dry-run` ise bir yakalamanın
+*ne* kaydedeceğini ve uygulamanın kavanozunda şu an kullanılabilir bir oturum olup olmadığını hiçbir
+şey yazmadan gösterir.
 
 > Deneysel: uygulama kapalıyken `config.json` girişini yeniden yazar. Kayıtlı
 > token tamamen süresi dolmuşsa uygulama yeniden giriş isteyebilir; o hesabı

@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`keyflip add --dry-run`** — `add` writes to the git-versioned state repo and to a credential
+  store, so it now gets the same "plan first, then write" contract a switch already had: the dry run
+  reports what it WOULD capture (which account, whether the profile is new or refreshed, and whether
+  the app's cookie jar actually holds a usable session) and stops before the first write — including
+  the audit-log line. A dry run whose app jar has no `sessionKey` yet says so, because that capture
+  would be incomplete and a switch to it would land on the sign-in screen.
+
+### Fixed
+
+- **`doctor` now explains the post-update sign-out instead of implying a broken capture.** When the
+  Claude desktop app updates itself (Squirrel/ShipIt swaps the bundle and relaunches it), Chromium may
+  not have flushed the `claude.ai` session cookie back to disk on that relaunch, so the LIVE jar reads
+  as signed-out while keyflip's saved capture is intact — exactly how a working setup starts "not
+  letting me log in any more" with no code change on our side. The check dates the installed bundle
+  and, when it was written in the last few days, reports "the app was UPDATED <date> (vX) and its jar
+  holds no session cookie yet" with the fix "sign in once, then `keyflip add`". Provenance, not a
+  guess: the version and mtime come from `Info.plist` and the app binary, and a stale bundle never
+  claims a recent update.
+
 ## [1.5.4] - 2026-10-16
 
 ### Added

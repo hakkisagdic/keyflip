@@ -7,11 +7,21 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import _child_process from 'child_process';
+import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const BIN = path.join(__dirname, '..', 'bin', 'keyflip.js');
+
+// An Electron safeStorage blob: base64("v10" + AES-128-CBC(json)), IV = 16 spaces. The switch
+// wiring test injects the password via KEYFLIP_SAFE_STORAGE_PW so no real Keychain is touched.
+const SAFE_PW = 'unit-test-safe-storage';
+function tokenBlob(text) {
+  const key = crypto.pbkdf2Sync(SAFE_PW, 'saltysalt', 1003, 16, 'sha1');
+  const c = crypto.createCipheriv('aes-128-cbc', key, Buffer.alloc(16, 0x20));
+  return Buffer.concat([Buffer.from('v10'), c.update(text), c.final()]).toString('base64');
+}
 
 function setupHome() {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'keyflip-cli-'));
@@ -44,6 +54,9 @@ function run(home, args, extraEnv) {
         XDG_CONFIG_HOME: path.join(home, '.config'),
         APPDATA: path.join(home, 'AppData', 'Roaming'),
         KEYFLIP_TEST_CLAUDE: 'stopped', // never touch a real app; deterministic across machines
+        // The app bundle path is machine-GLOBAL; point it at a nonexistent dir so an update on the
+        // developer's machine can never leak an "app was UPDATED" line into these assertions.
+        KEYFLIP_APP_BUNDLE: path.join(home, 'no-such-Claude.app'),
       },
       extraEnv || {},
     ),
@@ -57,6 +70,42 @@ test('add detects & saves the logged-in account, list shows it', function () {
   assert.match(r.stdout, /alice@example\.com/);
   r = run(home, ['list']);
   assert.match(r.stdout, /alice@example\.com/);
+});
+
+test('a switch re-snapshots the OUTGOING desktop account before overwriting it (#51)', function (t) {
+  if (process.platform !== 'darwin') return t.skip('the desktop app store is macOS-only');
+  const ORG_B = '11111111-2222-3333-4444-555555555555';
+  const home = setupHome();
+  run(home, ['add']); // save alice (CLI, active)
+  loginAs(home, 'carol@example.com', 'u2', 'CAROL-TOKEN');
+  run(home, ['add']); // save carol — a CLI switch TARGET
+
+  // The desktop app is signed into BOB's org (an APP-ONLY profile, the way a real
+  // "web-only" account is captured) with a fresh cookie that lives only in its jar.
+  const appDir = path.join(home, 'Library', 'Application Support', 'Claude');
+  fs.mkdirSync(appDir, { recursive: true });
+  const cfg = { 'oauth:tokenCacheV2': tokenBlob(JSON.stringify({ subscriptionUUID: ORG_B })) };
+  cfg['dxt:allowlistLastUpdated:' + ORG_B] = '2026-07-05T00:00:00.000Z';
+  fs.writeFileSync(path.join(appDir, 'config.json'), JSON.stringify(cfg));
+  fs.writeFileSync(path.join(appDir, 'Cookies'), 'sessionKey FRESH-BOB-COOKIE');
+  const env = { KEYFLIP_SAFE_STORAGE_PW: SAFE_PW };
+  assert.strictEqual(run(home, ['add', 'bob', '--app'], env).status, 0, 'capture bob as an app-only profile');
+
+  // Make bob's app capture STALE — the switch must replace it with the live one.
+  const appJson = path.join(home, '.config', 'keyflip', 'app', 'bob.json');
+  fs.writeFileSync(appJson, JSON.stringify({ 'oauth:tokenCacheV2': 'STALE-BOB-BLOB' }));
+
+  const sw = run(home, ['alice', '--force'], env);
+  assert.strictEqual(sw.status, 0, sw.stderr);
+  assert.match(sw.stdout, /kept 'bob's app login \+ session cookie fresh/, sw.stdout);
+
+  const refreshed = JSON.parse(fs.readFileSync(appJson, 'utf8'));
+  assert.notStrictEqual(refreshed['oauth:tokenCacheV2'], 'STALE-BOB-BLOB', 'the stale capture was replaced');
+  assert.match(
+    fs.readFileSync(path.join(home, '.config', 'keyflip', 'app', 'bob.cookies'), 'utf8'),
+    /FRESH-BOB-COOKIE/,
+    'and the freshly-flushed session cookie came with it',
+  );
 });
 
 test('switch changes the active account (via CLI, --force)', function () {
@@ -113,6 +162,45 @@ test('capture-app without a name and no detectable identity gives a helpful erro
   const r = run(home, ['add', '--app']);
   assert.notStrictEqual(r.status, 0);
   assert.match(r.stderr, /add <name> --app/);
+});
+
+test('add --dry-run plans the app capture and writes NOTHING (#52)', function (t) {
+  if (process.platform !== 'darwin') return t.skip('the desktop app store is macOS-only');
+  const home = setupHome();
+  const appCfgDir = path.join(home, 'Library', 'Application Support', 'Claude');
+  fs.mkdirSync(appCfgDir, { recursive: true });
+  fs.writeFileSync(path.join(appCfgDir, 'config.json'), JSON.stringify({ 'oauth:tokenCacheV2': 'APP-TOKEN' }));
+  fs.writeFileSync(path.join(appCfgDir, 'Cookies'), 'sessionKey LIVE-COOKIES');
+
+  const r = run(home, ['add', 'yahoo', '--app', '--dry-run']);
+  assert.strictEqual(r.status, 0, r.stderr);
+  assert.match(r.stdout, /nothing is written/);
+  assert.match(r.stdout, /'yahoo'/, 'names the account it would save');
+  // Provably write-free: no profile, no app capture, and no state commit happened.
+  const cfg = path.join(home, '.config', 'keyflip');
+  assert.strictEqual(fs.existsSync(path.join(cfg, 'yahoo.json')), false, 'no profile written');
+  assert.strictEqual(fs.existsSync(path.join(cfg, 'app', 'yahoo.json')), false, 'no app capture written');
+  assert.strictEqual(fs.existsSync(path.join(cfg, 'app', 'yahoo.cookies')), false, 'no cookie snapshot written');
+  assert.doesNotMatch(run(home, ['list']).stdout, /yahoo/, 'and the dry run did not create an account');
+
+  // The real run then does capture it.
+  const real = run(home, ['add', 'yahoo', '--app']);
+  assert.strictEqual(real.status, 0, real.stderr);
+  assert.match(run(home, ['list']).stdout, /yahoo/);
+});
+
+test('add --dry-run warns when the app jar has no session cookie yet', function (t) {
+  if (process.platform !== 'darwin') return t.skip('the desktop app store is macOS-only');
+  const home = setupHome();
+  const appCfgDir = path.join(home, 'Library', 'Application Support', 'Claude');
+  fs.mkdirSync(appCfgDir, { recursive: true });
+  fs.writeFileSync(path.join(appCfgDir, 'config.json'), JSON.stringify({ 'oauth:tokenCacheV2': 'APP-TOKEN' }));
+  fs.writeFileSync(path.join(appCfgDir, 'Cookies'), 'lastActiveOrg NO-SESSION-HERE');
+  const r = run(home, ['add', 'yahoo', '--app', '--dry-run']);
+  assert.strictEqual(r.status, 0, r.stderr);
+  assert.match(r.stdout, /no claude\.ai session cookie/);
+  assert.match(r.stdout, /INCOMPLETE/);
+  assert.strictEqual(fs.existsSync(path.join(home, '.config', 'keyflip', 'yahoo.json')), false);
 });
 
 test('reset --force (factory) deletes all saved keyflip data', function () {

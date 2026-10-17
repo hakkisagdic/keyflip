@@ -132,6 +132,9 @@ function getSafeStoragePassword(ctx) {
   // An explicitly-set property (even null) is authoritative — lets tests inject a
   // locked/denied keychain without shelling out to the real `security`/`secret-tool` binary.
   if (ctx && Object.prototype.hasOwnProperty.call(ctx, 'safeStoragePassword')) return ctx.safeStoragePassword;
+  // Same door for a SPAWNED CLI (integration tests): the property cannot cross a process boundary,
+  // so an env override stands in. Never set in normal use — the real key comes from the Keychain.
+  if (process.env.KEYFLIP_SAFE_STORAGE_PW) return process.env.KEYFLIP_SAFE_STORAGE_PW;
   if (ctx && ctx.platform === 'linux') {
     // Linux Electron safeStorage keeps the key in the OS keyring (libsecret / gnome-keyring /
     // kwallet), the same as Chromium's OSCrypt. Look it up with secret-tool by the schema
@@ -331,6 +334,53 @@ function copyCookieDb(src, dest, runner) {
 }
 
 const SESSION_COOKIE_NAMES = ['sessionKey', 'sessionKeyV3'];
+
+// Where the desktop app bundle lives, so we can date the last UPDATE. macOS only; other
+// platforms return null (no equivalent single bundle path worth guessing).
+function appBundlePath(ctx) {
+  if (!ctx) return null;
+  // Override hooks: ctx (unit tests) and KEYFLIP_APP_BUNDLE (the spawned CLI in tests). Without an
+  // override the path is machine-GLOBAL (/Applications/Claude.app), so a test HOME cannot isolate
+  // it — an update story would leak from the developer's real app into a test run.
+  if (ctx.appBundlePath) return ctx.appBundlePath;
+  if (process.env.KEYFLIP_APP_BUNDLE) return process.env.KEYFLIP_APP_BUNDLE;
+  if (ctx.platform === 'win32') return null;
+  return '/Applications/Claude.app';
+}
+
+// Version + the time the installed binary was last written. Returns { version, mtimeMs, path }.
+//
+// WHY this exists: an in-app auto-update (Squirrel/ShipIt) replaces the .app and relaunches it.
+// On that relaunch Chromium may not have flushed the claude.ai session cookie back to disk yet, so
+// the LIVE jar reads as signed-out while keyflip's saved capture is intact — which looks exactly
+// like a broken capture but is really a timing window. Dating the bundle lets the report say
+// "the app was updated <when>", which is the honest explanation, instead of blaming the capture.
+function appInstallInfo(ctx) {
+  const p = appBundlePath(ctx);
+  if (!p) return { version: null, mtimeMs: null, path: null };
+  const bin = path.join(p, 'Contents', 'MacOS', 'Claude');
+  let mtimeMs = null;
+  try {
+    mtimeMs = fs.statSync(bin).mtimeMs;
+  } catch (e) {
+    try {
+      mtimeMs = fs.statSync(p).mtimeMs;
+    } catch (e2) {
+      mtimeMs = null;
+    }
+  }
+  let version = null;
+  try {
+    // The Info.plist is a binary plist; CFBundleShortVersionString is stored as a plain
+    // UTF-8 string in it, so a narrow scan is enough and avoids shelling out to plutil.
+    const buf = fs.readFileSync(path.join(p, 'Contents', 'Info.plist'));
+    const m = /CFBundleShortVersionString[\s\S]{0,40}?(\d+\.\d+(?:\.\d+)?)/.exec(buf.toString('latin1'));
+    if (m) version = m[1];
+  } catch (e) {
+    /* version is decoration; the mtime is the load-bearing part */
+  }
+  return { version: version, mtimeMs: mtimeMs, path: p };
+}
 
 // Is the desktop app signed in RIGHT NOW? i.e. does its own cookie jar hold a
 // claude.ai session cookie.
@@ -605,6 +655,8 @@ export {
   detectAppAccount,
   cookiesLookLoggedIn,
   liveAppSession,
+  appInstallInfo,
+  appBundlePath,
   SESSION_COOKIE_NAMES,
   decryptBlob,
   decryptAppBlobWin,

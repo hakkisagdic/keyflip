@@ -193,6 +193,40 @@ test('doctor: says nothing about an app that is not installed', async function (
   assert.strictEqual(find(r.checks, 'desktop app session'), undefined);
 });
 
+test('doctor: a just-updated app with no session is named as a post-update gap', async function () {
+  // The real bug behind "it used to work": an in-app update relaunches the app before Chromium
+  // flushes the claude.ai session cookie to disk. Dating the bundle lets doctor explain that
+  // instead of implying the capture broke.
+  const ctx = appCtxWithJar('lastActiveOrg NO-SESSION');
+  const bundle = fs.mkdtempSync(path.join(os.tmpdir(), 'kf-bundle-'));
+  fs.mkdirSync(path.join(bundle, 'Contents', 'MacOS'), { recursive: true });
+  fs.writeFileSync(path.join(bundle, 'Contents', 'MacOS', 'Claude'), 'BIN');
+  fs.writeFileSync(
+    path.join(bundle, 'Contents', 'Info.plist'),
+    'CFBundleShortVersionString\u0000' + '\u0000'.repeat(6) + '9.9.9',
+  );
+  ctx.appBundlePath = bundle;
+  const r = await doctor.diagnose(ctx);
+  const c = find(r.checks, 'desktop app session');
+  assert.ok(c && c.ok === 'warn');
+  assert.match(c.detail, /UPDATED/, c.detail);
+  assert.match(c.detail, /v9\.9\.9/, 'names the new version');
+  assert.match(c.fix, /post-update timing gap/, 'explains it is timing, not a broken capture');
+});
+
+test('doctor: an OLD app bundle does not claim "just updated"', async function () {
+  const ctx = appCtxWithJar('lastActiveOrg NO-SESSION');
+  const bundle = fs.mkdtempSync(path.join(os.tmpdir(), 'kf-bundle-old-'));
+  fs.mkdirSync(path.join(bundle, 'Contents', 'MacOS'), { recursive: true });
+  const bin = path.join(bundle, 'Contents', 'MacOS', 'Claude');
+  fs.writeFileSync(bin, 'BIN');
+  const old = new Date(Date.now() - 10 * 86400000); // ten days ago
+  fs.utimesSync(bin, old, old);
+  ctx.appBundlePath = bundle;
+  const c = find((await doctor.diagnose(ctx)).checks, 'desktop app session');
+  assert.doesNotMatch(c.detail, /UPDATED/, 'stale bundle -> the plain signed-out message, not the update story');
+});
+
 // --- #40: a chore's cost belongs in doctor, because nobody re-reads a schedule they set months ago,
 // and a nightly job that quietly moved back onto the subscription is otherwise invisible. ---
 test('chore provider: names the model and whose quota it burns', async function () {

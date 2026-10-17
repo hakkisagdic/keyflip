@@ -178,7 +178,8 @@ function usage() {
   print('  keyflip logout [--browser] [--desktop] [--close]   sign OUT of the live session(s) — saved accounts kept');
   print('  keyflip add [name] [--app]    save the account(s) you are logged into — Claude Code');
   print('                                 AND the desktop app, auto-detected. Once per account.');
-  print('                                 (--app: desktop app only; name it if undetected)');
+  print('                                 (--app: desktop app only; name it if undetected;');
+  print('                                  --dry-run: show what WOULD be saved and touch nothing)');
   print('  keyflip <name|number>         switch to that account (asks before closing Claude;');
   print('                                 --restart = no prompt, --force = swap without closing,');
   print('                                 --browser = also align the browser + Chrome extension,');
@@ -10080,7 +10081,8 @@ function appDetectHint(reason) {
 }
 
 // Returns { ok, name?, email?, needName?, reason? } — printing is the caller's job.
-function captureApp(ctx, nameArg) {
+function captureApp(ctx, nameArg, opts) {
+  const dryRun = !!(opts && opts.dryRun);
   if (!ctx.appDataDir) return { ok: false, reason: 'macos-only' };
   let name = nameArg || null;
   if (name && !profiles.isValidName(name)) return { ok: false, reason: "invalid profile name: '" + name + "'" };
@@ -10106,7 +10108,22 @@ function captureApp(ctx, nameArg) {
     if (!name) return { ok: false, needName: true, reason: det.reason || null };
   }
 
-  if (!profiles.exists(ctx.configDir, name)) {
+  const existed = profiles.exists(ctx.configDir, name);
+  // #52: a dry run must be PROVABLY write-free, so it stops before the first write and reports
+  // what it WOULD do — the same contract `keyflip <account> --dry-run` already gives a switch.
+  // The freshest evidence of the app's session (read-only) is what decides whether a real run
+  // could capture a usable cookie, so plan on that rather than assuming success.
+  if (dryRun) {
+    return {
+      ok: true,
+      dryRun: true,
+      name: name,
+      email: email,
+      existed: existed,
+      cookies: appauth.liveAppSession(ctx, {}).signedIn ? 'ok' : 'incomplete',
+    };
+  }
+  if (!existed) {
     const oa = {};
     if (det.org) oa.organizationUuid = det.org;
     if (det.account) oa.accountUuid = det.account;
@@ -10156,15 +10173,49 @@ function warnIncompleteCookies(name) {
 // `--app` limits it to the desktop app (use with a name when auto-detect can't
 // identify which account the app is signed into).
 async function cmdAdd(ctx, rest) {
-  logmod.log('add invoked');
-  if (rest.indexOf('--token') !== -1) return cmdAddToken(ctx, rest);
+  if (rest.indexOf('--token') !== -1) {
+    logmod.log('add invoked');
+    return cmdAddToken(ctx, rest);
+  }
   const appOnly = rest.indexOf('--app') !== -1;
+  // #52: `add` writes to the git-versioned state repo and to a credential store, so like a switch
+  // it must be plannable. --dry-run reports what it WOULD capture and stops before the first write
+  // — INCLUDING the audit-log line, which is itself versioned into the state repo (same contract
+  // as `keyflip <account> --dry-run`, which never logs `switch requested`).
+  const dryRun = rest.indexOf('--dry-run') !== -1 || rest.indexOf('--plan') !== -1;
+  if (!dryRun) logmod.log('add invoked');
   const nameArg = rest.filter(function (a) {
     return a.indexOf('--') !== 0;
   })[0];
 
   if (appOnly) {
-    const r = captureApp(ctx, nameArg || null);
+    const r = captureApp(ctx, nameArg || null, { dryRun: dryRun });
+    if (r.dryRun) {
+      if (r.cookies !== 'ok') {
+        print(
+          style.warn('⚠') + ' the app jar holds no claude.ai session cookie right now — a capture would be INCOMPLETE.',
+        );
+        print(
+          style.dim('   sign in once in Claude (a restore cannot mint that cookie), then re-run without --dry-run.'),
+        );
+        return;
+      }
+      print(style.bold('keyflip add --dry-run') + style.dim(' — nothing is written.'));
+      print(
+        '  Desktop app: signed in as ' +
+          style.bold("'" + r.name + "'") +
+          (r.email ? ' (' + r.email + ')' : '') +
+          (r.existed ? style.dim(' — profile exists, would be refreshed') : style.dim(' — new profile')),
+      );
+      print(
+        '  Would write: ' +
+          style.dim('app/' + r.name + '.json + app/' + r.name + '.cookies') +
+          style.dim(' (session cookie ' + r.cookies + ')'),
+      );
+      print(style.dim('  ↳ re-run the same command without --dry-run to capture it.'));
+      jsonOut({ dryRun: true, surface: 'app', account: r.name, email: r.email, cookies: r.cookies });
+      return;
+    }
     if (r.ok) {
       print("💾 Desktop app login: captured as '" + r.name + "'" + (r.email ? ' (' + r.email + ')' : '') + '.');
       let ck = r.cookies;
@@ -10181,6 +10232,31 @@ async function cmdAdd(ctx, rest) {
       'Could not capture the desktop-app login: ' +
         (r.reason === 'macos-only' ? 'the desktop app store is macOS-only.' : r.reason),
     );
+  }
+
+  // Unified add: the CLI login is captured from a credential store, so a dry run reports it
+  // (read-only) and never touches the store or the profile files.
+  if (dryRun) {
+    const cliEmail = core.currentEmail(ctx);
+    const appRes = captureApp(ctx, cliEmail ? null : nameArg, { dryRun: true });
+    if (!cliEmail && !appRes.ok) return fail('Nothing to capture. Log in in Claude first.');
+    print(style.bold('keyflip add --dry-run') + style.dim(' — nothing is written.'));
+    if (cliEmail) print('  Claude Code: would save the live CLI login for ' + style.bold(cliEmail));
+    if (appRes.ok)
+      print(
+        '  Desktop app: would save ' +
+          style.bold("'" + appRes.name + "'") +
+          (appRes.email ? ' (' + appRes.email + ')' : '') +
+          style.dim(' (session cookie ' + appRes.cookies + ')'),
+      );
+    else if (appRes.needName) print('  Desktop app: signed in, but its account could not be identified — name it.');
+    print(style.dim('  ↳ re-run the same command without --dry-run to capture.'));
+    jsonOut({
+      dryRun: true,
+      cli: cliEmail || null,
+      app: appRes.ok ? { account: appRes.name, email: appRes.email, cookies: appRes.cookies } : null,
+    });
+    return;
   }
 
   let cliRes = null,
