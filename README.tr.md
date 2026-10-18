@@ -139,10 +139,14 @@ keyflip setup                 # hafif: Claude'da giriş yap, keyflip algılayıp
 keyflip login [ad] [--email x] [--sso] [--console]   # resmi tarayıcı akışı, izole + yakala (--sso = kurumsal)
 keyflip add [ad] [--app] [--dry-run]   # girişli hesap(lar)ı kaydet — CLI + masaüstü uygulaması (--dry-run = yalnız plan)
 keyflip browser [status|logout|sync]   # tarayıcı claude.ai hesabını kontrol/sıfırla/geri yükle (uzantı)
-keyflip <ad|numara>           # o hesaba geç (Claude'u kapatmadan önce sorar)
+keyflip <ad|numara>           # TÜM yüzeyleri o hesaba geçirir — CLI, masaüstü uygulaması ve
+                              # tarayıcının claude.ai oturumu (dolayısıyla Chrome uzantısı); kaydı
+                              # olmayan yüzey atlanır ve adıyla söylenir, diğerleri yine geçer
+keyflip <ad> --only cli       # ...yalnız bu yüzeyler: cli | app | browser (virgülle)
 keyflip <ad> --restart        # ...sormadan Claude'u kapatıp yeniden açar
 keyflip <ad> --force          # ...Claude'u kapatmadan takas eder (kendiniz yeniden başlatın)
-keyflip <ad> --browser        # ...tarayıcıyı + Chrome uzantısını da bu hesaba hizalar
+keyflip <ad> --browser        # ...sekmelerini geri açmayan açık bir tarayıcıyı da kapatıp geçirir
+                              # (varsayılanda böyle bir tarayıcı atlanır, habersiz kapatılmaz)
 keyflip <ad> --dry-run        # ...önce PLANI göster: neyin üzerine yazılacak, ne engelliyor ve o
                               # hesap gerçekten kimlik doğrulayabiliyor mu — HİÇBİR ŞEYE dokunmaz
 keyflip <ad> --no-verify      # ...geçişin sonunda yaptığı geri-okumayı atla (varsayılan olarak çalışır)

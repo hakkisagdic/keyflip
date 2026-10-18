@@ -49,10 +49,11 @@ import CommandReference from '../../components/CommandReference.astro';
 
       <div id="switching">
         <CommandReference title="Switching" commands={[
-          { cmd: 'keyflip <name|number>', desc: 'Switch to that account (asks before closing Claude)' },
+          { cmd: 'keyflip <name|number>', desc: "Switch EVERY surface to that account — CLI, desktop app, the browser's claude.ai session (asks before closing Claude)" },
+          { cmd: 'keyflip <name> --only cli|app|browser', desc: 'Switch just those surfaces (comma-separated)' },
           { cmd: 'keyflip <name> --restart', desc: 'Close & reopen Claude without asking' },
           { cmd: 'keyflip <name> --force', desc: 'Swap without closing Claude (restart yourself)' },
-          { cmd: 'keyflip <name> --browser', desc: 'Also align browser + Chrome extension' },
+          { cmd: 'keyflip <name> --browser', desc: "Also close an open browser that won't restore its tabs (skipped by default)" },
           { cmd: 'keyflip <name> --dry-run', desc: 'Show the PLAN first: what would be written, what blocks it, whether that account can even authenticate — changes nothing' },
           { cmd: 'keyflip <name> --no-verify', desc: 'Skip the read-back every switch does by default' },
           { cmd: 'keyflip <name> --rollback-on-fail', desc: 'If that read-back says the machine did not land a usable account, put the previous one back' },

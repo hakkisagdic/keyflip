@@ -141,9 +141,12 @@ keyflip <name> --dry-run         # the PLAN only: which surfaces would be writte
 keyflip <name|number> --force     # swap in place; a running Claude Code picks it
                                    # up on its next request (keychain cache ~30s on macOS)
 keyflip <name> --restart          # also close & reopen the desktop app (full switch)
-keyflip <name> --browser          # also align the browser's claude.ai session (and thus
-                                   # the Claude Chrome extension) to this account, from a
-                                   # saved snapshot — captured during onboard/login
+keyflip <name>                    # moves EVERY surface by default: CLI, desktop app AND the
+                                   # browser's claude.ai session (so the Claude Chrome extension),
+                                   # from saved snapshots; a surface it can't move is named, not hidden
+keyflip <name> --only cli|app|browser   # just those surfaces (comma-separated)
+keyflip <name> --browser          # also close an open browser that won't restore its tabs
+                                   # (skipped by default rather than closed behind the user's back)
 keyflip next --strategy best            # rotate to the account with most headroom
 keyflip next --strategy next-available  # first account that isn't exhausted
 ```

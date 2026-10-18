@@ -209,3 +209,39 @@ test('--rollback-on-fail is opt-in and says what it restored (or why it cannot)'
   assert.match(bad.stdout, /rolled the CLI back to alice@example\.com/, bad.stdout);
   assert.match(run(home, ['list']).stdout, /Claude Code: alice@example\.com/);
 });
+
+test('--only picks the surfaces a switch moves, and rejects anything it does not know', function () {
+  const home = twoAccounts();
+  const bad = run(home, ['bob', '--only', 'fridge']);
+  assert.notStrictEqual(bad.status, 0);
+  assert.match(bad.stderr + bad.stdout, /--only takes cli, app or browser/);
+
+  // The plan says what --only leaves out, and writes nothing.
+  const before = snapshotTree(home);
+  const plan = run(home, ['bob', '--only', 'cli', '--dry-run']);
+  assert.strictEqual(plan.status, 0, plan.stderr);
+  assert.match(plan.stdout, /write: +the CLI login/);
+  assert.match(plan.stdout, /desktop app login — left out by --only/);
+  assert.match(plan.stdout, /browser claude.ai session — left out by --only/);
+  assert.deepStrictEqual(snapshotTree(home), before);
+
+  // --only cli moves the CLI credential in place and nothing else.
+  const sw = run(home, ['bob', '--only=cli']);
+  assert.strictEqual(sw.status, 0, sw.stderr);
+  assert.match(sw.stdout, /Switched the CLI to: bob@example\.com/);
+  assert.doesNotMatch(sw.stdout, /Quitting Claude|desktop app's login/);
+  assert.match(run(home, ['list']).stdout, /Claude Code: bob@example\.com/);
+  // …and saying it again is a no-op that says so.
+  const again = run(home, ['bob', '--only', 'cli']);
+  assert.strictEqual(again.status, 0, again.stderr);
+  assert.match(again.stdout, /The CLI is already on 'bob@example\.com'/);
+
+  // --only browser with no Chromium jar on this (temp) HOME: explicit, non-zero, nothing written.
+  const b4 = snapshotTree(home);
+  const br = run(home, ['alice', '--only', 'browser']);
+  if (process.platform === 'darwin') {
+    assert.strictEqual(br.status, 1, br.stdout + br.stderr);
+    assert.match(br.stdout, /No Chromium browser with a claude.ai cookie jar/);
+  } else assert.match(br.stderr, /macOS-only/);
+  assert.deepStrictEqual(snapshotTree(home), b4);
+});

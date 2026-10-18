@@ -20,10 +20,11 @@
 
 // A switch can end up in one of these shapes. Mirrors cmdSwitch's real branches so the plan cannot
 // drift from the code it describes.
-//   'already-active' — nothing to do (both surfaces are already on the target)
-//   'app-only'       — the CLI is already the target; only the desktop app's login lags
+//   'already-active' — nothing to do for the CLI/app (both are already on the target)
+//   'app-only'       — the CLI is already the target (or `--only app`); only the desktop app's login moves
+//   'browser-only'   — only the browser's claude.ai session moves (`--only browser`, or CLI+app already there)
 //   'restart'        — full switch; Claude gets quit and reopened
-//   'in-place'       — full switch with --force; Claude keeps running and may fight the swap
+//   'in-place'       — full switch with --force (or `--only cli`); Claude keeps running and may fight the swap
 //   'plain'          — full switch; Claude is closed (or cannot be managed on this OS)
 //   'refuse'         — nothing runs: a blocker stops the switch before it starts
 function build(facts, opts) {
@@ -75,6 +76,98 @@ function build(facts, opts) {
       'its stored CLI token cannot be refreshed (Claude stores no refresh token) — only a real sign-in fixes that surface.',
     );
 
+  // --- surface selection ------------------------------------------------------------------------
+  // Every surface moves by default; `--only` narrows it (opts.surfaces from the CLI's parser). The
+  // legacy `opts.browser === false` still means "not the browser".
+  const sf = opts.surfaces || { cli: true, app: true, browser: opts.browser !== false, only: false };
+  const browserLines = function () {
+    if (!sf.browser) {
+      if (sf.only) push(plan.skips, 'the browser claude.ai session — left out by --only');
+      return;
+    }
+    if (Array.isArray(facts.browsers)) {
+      if (!facts.browsers.length) push(plan.skips, 'no Chromium browser with a claude.ai cookie jar on this machine');
+      facts.browsers.forEach(function (b) {
+        if (b.action === 'already') push(plan.skips, b.browser + ' claude.ai is already on this account');
+        else if (b.action === 'sync')
+          plan.writes.push(
+            'the ' +
+              b.browser +
+              ' claude.ai session → ' +
+              facts.target +
+              (b.quit ? ' (' + b.browser + ' is closed and reopened to apply it)' : ''),
+          );
+        else if (b.reason === 'would-lose-tabs')
+          push(
+            plan.skips,
+            b.browser +
+              ' is open and would lose its tabs if closed — `keyflip ' +
+              facts.target +
+              ' --only browser` closes it anyway (or turn on "Continue where you left off")',
+          );
+        else
+          push(
+            plan.skips,
+            b.browser +
+              ': no saved claude.ai session for this account — sign in there, then `keyflip browser capture ' +
+              facts.target +
+              '`',
+          );
+      });
+    } else if (facts.browserCaptured) plan.writes.push('the browser claude.ai session → ' + facts.target);
+    else
+      push(plan.skips, 'no saved browser session exists for this account (capture one with `keyflip browser capture`)');
+  };
+
+  // --only browser: nothing else is looked at.
+  if (sf.only && !sf.cli && !sf.app) {
+    plan.mode = 'browser-only';
+    push(plan.skips, 'the CLI and the desktop app — left out by --only');
+    browserLines();
+    return plan;
+  }
+
+  // --only cli: the credential moves in place; Claude is neither closed nor re-logged.
+  if (sf.only && sf.cli && !sf.app) {
+    push(plan.skips, 'the desktop app login — left out by --only');
+    if (facts.email && facts.email === facts.activeCliEmail) {
+      plan.mode = 'already-active';
+      push(plan.skips, 'the CLI is already on this account');
+    } else if (facts.policyDenied) return refuse(facts.policyDenied + '  (override with --force)');
+    else if (!facts.cliCaptured) return refuse("no CLI login captured for '" + facts.target + "'");
+    else {
+      plan.mode = 'in-place';
+      plan.writes.push('the CLI login (OAuth blob) → ' + facts.target);
+      if (facts.appRunning && facts.appActiveProfile !== facts.target)
+        push(plan.warns, 'Claude Desktop stays on its own account and may rewrite the shared CLI login back.');
+    }
+    browserLines();
+    return plan;
+  }
+
+  // --only app: the desktop app moves; the CLI is left where it is.
+  if (sf.only && sf.app && !sf.cli) {
+    push(plan.skips, 'the CLI login — left out by --only');
+    if (!facts.appCaptured) return refuse("no saved desktop-app login for '" + facts.target + "'");
+    if (facts.appActiveProfile === facts.target) {
+      plan.mode = 'already-active';
+      push(plan.skips, 'the desktop app is already on this account');
+      browserLines();
+      return plan;
+    }
+    plan.mode = 'app-only';
+    plan.writes.push("the Claude desktop app's login → " + facts.target);
+    plan.writes.push('consolidated chat pointers');
+    if (facts.appRunning) {
+      if (!facts.canManageApp)
+        return refuse('Claude is open and cannot be auto-closed on this OS — quit it first, or --force.');
+      plan.wouldQuit = true;
+      if (!autoYes) plan.needsConfirm = true;
+    }
+    browserLines();
+    return plan;
+  }
+
   // --- already-active / app-only branch --------------------------------------------------------
   if (facts.email && facts.email === facts.activeCliEmail) {
     const appNow = facts.appActiveProfile; // null = can't tell, '' = app on an unsaved account
@@ -84,11 +177,15 @@ function build(facts, opts) {
       if (appNow === facts.target) push(plan.skips, 'the desktop app is already on it too');
       if (!facts.appCaptured && appNow !== null && appNow !== facts.target)
         push(plan.skips, "the app is on another account, but no app login is saved for '" + facts.target + "'");
+      // "Already active" covers the CLI and the app; the browser can still lag behind them.
+      browserLines();
+      if (plan.writes.length) plan.mode = 'browser-only';
       return plan;
     }
     plan.mode = 'app-only';
     plan.writes.push("the Claude desktop app's login → " + facts.target);
     plan.writes.push('consolidated chat pointers');
+    browserLines();
     if (appNow) push(plan.warns, 'the CLI already reads as this account; only the desktop app is on ' + appNow + '.');
     else
       push(
@@ -119,14 +216,7 @@ function build(facts, opts) {
   if (facts.appCaptured) plan.writes.push("the Claude desktop app's login → " + facts.target);
   else push(plan.skips, 'no saved desktop-app login for this account — the app stays where it is');
 
-  if (opts.browser) {
-    if (facts.browserCaptured) plan.writes.push('the browser claude.ai session → ' + facts.target);
-    else
-      push(
-        plan.skips,
-        '--browser was given but no saved browser session exists for this account (capture one with `keyflip browser capture`)',
-      );
-  }
+  browserLines();
   if (facts.cliCaptured || facts.appCaptured) plan.writes.push('consolidated chat pointers');
 
   if (facts.appRunning) {

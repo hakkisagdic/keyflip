@@ -7,8 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **`keyflip <account>` now moves EVERY surface by default — CLI, desktop app AND the browser's
+  claude.ai session** (and with it the Claude Chrome extension), from saved snapshots. Switching
+  used to leave the browser on the old account unless you remembered `--browser`. A surface that
+  cannot move is skipped and named (`⏭ browser Chrome NOT switched: …`) while the others still
+  switch. An open browser that would not restore its tabs after a quit is left alone rather than
+  closed behind your back; `--browser` (or `--only browser`) is the consent to close it. Before a
+  browser is restored, the session it is LEAVING is re-snapshotted under its own account, so the
+  outgoing account's capture stays fresh. `--dry-run` and the MCP `keyflip_switch_plan` show the
+  per-browser decision.
+
 ### Added
 
+- **`keyflip <account> --only cli|app|browser`** (comma-separated) switches just those surfaces:
+  `--only cli` swaps the credential in place without closing Claude, `--only app` moves only the
+  desktop login, `--only browser` only the claude.ai session.
 - **`keyflip fleet invite` / `fleet join <host-id> --code <code>` — pair a new machine with a
   one-time code, no silent trust.** Adding a machine is now a deliberate, two-sided act: `invite`
   mints a short one-time code (shown once, ~15 min) and drops an invite file encrypted **with that

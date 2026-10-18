@@ -41,6 +41,7 @@ import * as exec from './exec.js';
 import * as loginmod from './login.js';
 import * as _styleModule from './style.js';
 import * as _browser from './browser.js';
+import * as _browserswitch from './browserswitch.js';
 import * as _cfg from './config.js';
 import * as _svc from './autoswitchservice.js';
 import * as _groups from './groups.js';
@@ -182,9 +183,11 @@ function usage() {
   print('                                 AND the desktop app, auto-detected. Once per account.');
   print('                                 (--app: desktop app only; name it if undetected;');
   print('                                  --dry-run: show what WOULD be saved and touch nothing)');
-  print('  keyflip <name|number>         switch to that account (asks before closing Claude;');
-  print('                                 --restart = no prompt, --force = swap without closing,');
-  print('                                 --browser = also align the browser + Chrome extension,');
+  print('  keyflip <name|number>         switch EVERY surface to that account: CLI, desktop app');
+  print("                                 and the browser's claude.ai session (asks before closing");
+  print('                                 Claude; --restart = no prompt, --force = swap without closing,');
+  print('                                 --only cli|app|browser = just those surfaces; a browser that');
+  print('                                 would lose its tabs is skipped unless --only browser/--browser,');
   print('                                 --dry-run = show the plan and touch NOTHING; the switch');
   print('                                 then reads itself back (--no-verify skips that, and');
   print('                                 --rollback-on-fail puts the previous account back)');
@@ -482,8 +485,9 @@ function askHidden(rl, question) {
 // The facts live in src/switchfacts.js (shared with the MCP switch tool, so an agent and a terminal
 // read the same machine); everything below is the rendering and the recovery, which belong to the CLI.
 const SWITCH_MODE_LABEL = {
-  'already-active': 'nothing to do — this account is already active on every surface keyflip can see',
+  'already-active': 'already active — the CLI and desktop app are on this account; nothing to move there',
   'app-only': 'the CLI is already on this account; only the desktop app login would move',
+  'browser-only': "only the browser's claude.ai session would move",
   restart: 'full switch: Claude is quit, the logins move, Claude reopens',
   'in-place': 'full switch WITHOUT closing Claude (--force) — the app can still fight it',
   plain: 'full switch while Claude is closed',
@@ -602,11 +606,17 @@ async function cmdSwitch(ctx, rest) {
   const arg = rest[0];
   if (!arg)
     return fail(
-      'usage: keyflip <name|number> [--restart|--force] [--browser] [--dry-run] [--no-verify] [--rollback-on-fail]',
+      'usage: keyflip <name|number> [--restart|--force] [--only cli|app|browser] [--browser] [--dry-run] [--no-verify] [--rollback-on-fail]',
     );
   const autoYes = rest.indexOf('--restart') !== -1 || rest.indexOf('-y') !== -1 || rest.indexOf('--yes') !== -1;
   const force = rest.indexOf('--force') !== -1;
-  const syncBrowser = rest.indexOf('--browser') !== -1;
+  // A switch moves EVERY surface by default (CLI login, desktop-app login, browser claude.ai
+  // session); `--only` narrows it on purpose. `--browser` predates that default and now means "the
+  // browser too, even if closing it loses its tabs" — the explicit consent the default leg lacks.
+  const surfaces = parseSurfaces(rest);
+  if (surfaces.error) return fail("--only takes cli, app or browser (comma-separated), not '" + surfaces.error + "'");
+  const explicitBrowser = rest.indexOf('--browser') !== -1 || (surfaces.only && surfaces.browser);
+  const syncBrowser = surfaces.browser;
   // #38: --dry-run plans without touching anything; --no-verify skips the read-back that every switch
   // does by default; --rollback-on-fail opts into putting the previous account back when that
   // read-back says the switch did not produce a usable machine. (NOT --force, which already means
@@ -638,26 +648,58 @@ async function cmdSwitch(ctx, rest) {
     /* ditto */
   }
 
-  if (dryRun) return await dryRunReport(ctx, name, em, { autoYes: autoYes, force: force, browser: syncBrowser });
+  if (dryRun)
+    return await dryRunReport(ctx, name, em, {
+      autoYes: autoYes,
+      force: force,
+      browser: syncBrowser,
+      explicitBrowser: explicitBrowser,
+      surfaces: surfaces,
+    });
+
+  // The browser leg, shared by every branch below (see browserswitch.js).
+  async function browserLeg() {
+    if (ctx.platform !== 'darwin') return null;
+    try {
+      const res = await _browserswitch.align(ctx, name, { explicit: explicitBrowser });
+      if (!JSON_MODE) printBrowserLeg(name, em, res);
+      return res;
+    } catch (e) {
+      return null; // best-effort — never fail a switch on the browser leg
+    }
+  }
+  const browserJson = function (res) {
+    return res ? { synced: res.synced, already: res.already, skipped: res.skipped } : undefined;
+  };
+
+  // --only browser: nothing but the browser's claude.ai session moves.
+  if (surfaces.only && !surfaces.cli && !surfaces.app) {
+    const res = await browserLeg();
+    if (!res || !(res.synced.length || res.already.length)) {
+      if (ctx.platform !== 'darwin') return fail('browser session switching is macOS-only for now.');
+      if (res && !res.skipped.length)
+        print('No Chromium browser with a claude.ai cookie jar was found — nothing to switch.');
+      jsonOut({ switched: null, browser: browserJson(res) });
+      process.exitCode = 1;
+      return 1;
+    }
+    print(style.ok('✅') + ' Browser claude.ai is on: ' + (em || name));
+    jsonOut({
+      switched: { name: name, email: em || null },
+      cliSwitched: false,
+      appSwitched: false,
+      browser: browserJson(res),
+    });
+    return;
+  }
 
   // Did THIS switch reopen the desktop app? Only then is it worth waiting to see whether
   // the app came back signed in (see verifyAppRelogin).
   let appReopened = false;
-  if (em && em === core.currentEmail(ctx)) {
-    // "Already active" has to mean BOTH surfaces. The desktop app keeps its own
-    // independent login, so a hand sign-in inside the app moves only the app while
-    // the CLI still reads as active — that is a real pending switch, not a no-op.
-    const appNow = appActiveProfile(ctx);
-    if (appNow === null || appNow === name || !appauth.hasProfile(ctx, name)) {
-      print("'" + em + "' is already active.");
-      jsonOut({ alreadyActive: { name: name, email: em } });
-      return;
-    }
-    print(
-      '  ↳ the CLI is already on this account, but the desktop app is on ' +
-        (appNow || "another account keyflip hasn't saved") +
-        ' — switching the app login.',
-    );
+
+  // The desktop-app-only move (the CLI is left where it is). Used when the CLI is already on the
+  // target, and for `--only app`.
+  async function switchAppOnly() {
     const appRunning = appctl.isClaudeRunning(ctx.platform);
     if (appRunning) {
       if (!appctl.canManageApp(ctx.platform))
@@ -695,7 +737,54 @@ async function cmdSwitch(ctx, rest) {
     }
     print(style.ok('✅') + ' Switched to: ' + (em || name));
     await emitSwitched({ cli: false }, lagApp, lagCons);
+  }
+
+  // --only app (optionally with browser): leave the CLI alone.
+  if (surfaces.only && surfaces.app && !surfaces.cli) {
+    if (!appauth.hasProfile(ctx, name))
+      return fail(
+        "no saved desktop-app login for '" +
+          name +
+          "' — sign in once in Claude, then `keyflip add " +
+          name +
+          ' --app`.',
+      );
+    if (appActiveProfile(ctx) === name) {
+      print("The desktop app is already on '" + (em || name) + "'.");
+      const res = surfaces.browser ? await browserLeg() : null;
+      jsonOut({ alreadyActive: { name: name, email: em }, browser: browserJson(res) });
+      return;
+    }
+    return await switchAppOnly();
+  }
+
+  // --only cli (optionally with browser): the CLI credential moves in place; the desktop app is
+  // neither closed nor re-logged.
+  const onlyCli = !!(surfaces.only && surfaces.cli && !surfaces.app);
+  if (onlyCli && em && em === core.currentEmail(ctx)) {
+    print("The CLI is already on '" + em + "'.");
+    const res = surfaces.browser ? await browserLeg() : null;
+    jsonOut({ alreadyActive: { name: name, email: em }, browser: browserJson(res) });
     return;
+  }
+  if (em && em === core.currentEmail(ctx) && !onlyCli) {
+    // "Already active" has to mean EVERY surface. The desktop app keeps its own
+    // independent login, so a hand sign-in inside the app moves only the app while
+    // the CLI still reads as active — that is a real pending switch, not a no-op. Same for the
+    // browser: it is checked (and moved) even when the CLI and app need nothing.
+    const appNow = appActiveProfile(ctx);
+    if (appNow === null || appNow === name || !appauth.hasProfile(ctx, name)) {
+      print("'" + em + "' is already active" + (surfaces.browser ? ' (CLI + desktop app).' : '.'));
+      const res = surfaces.browser ? await browserLeg() : null;
+      jsonOut({ alreadyActive: { name: name, email: em }, browser: browserJson(res) });
+      return;
+    }
+    print(
+      '  ↳ the CLI is already on this account, but the desktop app is on ' +
+        (appNow || "another account keyflip hasn't saved") +
+        ' — switching the app login.',
+    );
+    return await switchAppOnly();
   }
   // Policy engine: block a switch this directory isn't allowed to use (no-op until rules exist).
   if (!force) {
@@ -732,30 +821,15 @@ async function cmdSwitch(ctx, rest) {
 
   async function emitSwitched(did, appl, cons) {
     logmod.log('switched -> ' + name + ' (cli=' + !!(did && did.cli) + ', app=' + !!(appl && appl.ok) + ')');
-    // With --browser: also align the browser's claude.ai session (and thus the
-    // Claude Chrome extension) to this account from a saved snapshot. Otherwise
-    // just WARN when the browser is on a different account — the native-messaging
-    // bridge won't connect on a mismatch.
-    if (!JSON_MODE && ctx.platform === 'darwin') {
+    // By default the browser's claude.ai session (and with it the Claude Chrome extension) moves
+    // with the account, from a saved snapshot (browserswitch.js says when it can't and why). When
+    // `--only` left the browser out, just WARN on a mismatch — the extension's native-messaging
+    // bridge won't connect across accounts.
+    let browserRes = null;
+    if (surfaces.browser) browserRes = await browserLeg();
+    else if (!JSON_MODE && ctx.platform === 'darwin') {
       try {
-        if (syncBrowser) {
-          const synced = await browserSync(ctx, name);
-          if (synced.length)
-            print(
-              '  ' +
-                style.ok('↳') +
-                ' synced the browser (' +
-                synced.join(', ') +
-                ') to this account — the Claude extension reconnects.',
-            );
-          else
-            print(
-              '  ' +
-                style.dim(
-                  '↳ no saved browser session for this account yet — capture one via `keyflip onboard`/`login` while the browser is signed into it.',
-                ),
-            );
-        } else {
+        {
           const browser = _browser;
           const meta = profiles.read(ctx.configDir, name) || {};
           const wantOrg = meta.oauthAccount && meta.oauthAccount.organizationUuid;
@@ -772,8 +846,8 @@ async function cmdSwitch(ctx, rest) {
                 );
                 print(
                   '     Fix: ' +
-                    style.bold('keyflip ' + name + ' --browser') +
-                    ' to auto-sync it, or ' +
+                    style.bold('keyflip ' + name + ' --only browser') +
+                    ' to switch it too, or ' +
                     style.bold('keyflip browser logout') +
                     ' and sign in as ' +
                     (em || name) +
@@ -901,6 +975,7 @@ async function cmdSwitch(ctx, rest) {
       cliSwitched: !!(did && did.cli),
       appSwitched: !!(appl && appl.ok),
       appSignedIn: relogin === null ? undefined : relogin,
+      browser: browserJson(browserRes),
       sessionsShared: (cons && cons.merged) || 0,
       verified: vb ? { state: vb.state, headline: vb.headline, detail: vb.detail || null } : null,
       cliEmailAfterSwitch: cliNow || undefined,
@@ -915,11 +990,21 @@ async function cmdSwitch(ctx, rest) {
     }
   }
 
-  // --force: swap in place without closing the app.
-  if (running && force) {
+  // --force: swap in place without closing the app. `--only cli` is the same move, on purpose.
+  if ((running && force) || onlyCli) {
+    if (onlyCli && !ctx.store.getProfile(name))
+      return fail("no saved CLI login for '" + name + "' — log in with Claude Code, then `keyflip add " + name + '`.');
+    if (onlyCli && !running) await refreshIfNeeded();
     const did = core.performSwitch(ctx, name);
     if (!did.cli) print("  ↳ CLI login for this profile isn't captured — nothing to swap for the CLI.");
-    print(style.ok('✅') + ' Switched to: ' + (em || name) + '. Restart Claude to apply.');
+    print(
+      style.ok('✅') +
+        ' Switched ' +
+        (onlyCli ? 'the CLI ' : '') +
+        'to: ' +
+        (em || name) +
+        (running && !onlyCli ? '. Restart Claude to apply.' : '.'),
+    );
     // #8: the running desktop app can rewrite the shared login and silently undo an
     // in-place CLI swap. Warn (and point to --restart) when it's on a different account.
     const tug = desktopTugRisk(ctx, name);
@@ -3305,11 +3390,7 @@ async function cmdApi(ctx, rest) {
           (acct.plan || '$' + acct.grant) +
           ') in manual mode — individual orgs have no Admin API key to save',
       );
-      print(
-        style.dim(
-          'when the Console Credits page shows a new balance: keyflip api set ' + id + ' --balance <usd>',
-        ),
-      );
+      print(style.dim('when the Console Credits page shows a new balance: keyflip api set ' + id + ' --balance <usd>'));
     }
     return;
   }
@@ -3346,7 +3427,7 @@ async function cmdApi(ctx, rest) {
           ' left of $' +
           grant.toFixed(0) +
           ' (' +
-          (Math.round((Math.max(0, grant - bal) / grant) * 1000) / 10) +
+          Math.round((Math.max(0, grant - bal) / grant) * 1000) / 10 +
           '% used)  · resets ' +
           resets
         : 'resets ' + resets);
@@ -11320,6 +11401,70 @@ async function browserSync(ctx, name) {
     }
   }
   return synced;
+}
+
+// Print the browser leg of a switch (browserswitch.align). Every browser that did NOT end up on the
+// target is named with the reason and the one command that finishes it — the whole point of an
+// all-surfaces switch is that nothing is left on the old account without saying so.
+function printBrowserLeg(name, em, res) {
+  if (!res) return;
+  res.preserved.forEach(function (p) {
+    print('  ' + style.dim("↳ kept '" + p.account + "'s " + p.browser + ' claude.ai session fresh for later.'));
+  });
+  if (res.synced.length)
+    print(
+      '  ' +
+        style.ok('↳') +
+        ' switched the browser claude.ai session (' +
+        res.synced.join(', ') +
+        ') — the Claude extension reconnects.',
+    );
+  if (res.already.length)
+    print('  ' + style.dim('↳ ' + res.already.join(', ') + ' claude.ai is already on this account.'));
+  res.skipped.forEach(function (s) {
+    let why;
+    if (s.reason === 'no-snapshot')
+      why =
+        'no saved claude.ai session for this account — sign in there once as ' +
+        (em || name) +
+        ', then `keyflip browser capture ' +
+        name +
+        '`';
+    else if (s.reason === 'would-lose-tabs')
+      why =
+        'it is open and does not reopen its tabs after a quit, so it was left alone — `keyflip ' +
+        name +
+        ' --only browser` closes it and switches anyway (or turn on "Continue where you left off")';
+    else if (s.reason === 'did-not-quit')
+      why = 'it did not close — quit it, then `keyflip ' + name + ' --only browser`';
+    else why = 'its claude.ai session could not be written (' + s.reason + ')';
+    print('  ' + style.warn('⏭') + ' browser ' + s.browser + ' NOT switched: ' + why + '.');
+  });
+}
+
+// `--only cli|app|browser[,…]` → which surfaces a switch moves. Default: all of them.
+function parseSurfaces(rest) {
+  const all = { cli: true, app: true, browser: true, only: false };
+  let raw = null;
+  for (let i = 0; i < rest.length; i++) {
+    if (rest[i] === '--only') raw = rest[i + 1] || '';
+    else if (String(rest[i]).indexOf('--only=') === 0) raw = String(rest[i]).slice(7);
+  }
+  if (raw === null) return all;
+  const want = String(raw)
+    .split(',')
+    .map(function (s) {
+      return s.trim().toLowerCase();
+    })
+    .filter(Boolean);
+  const out = { cli: false, app: false, browser: false, only: true };
+  for (let j = 0; j < want.length; j++) {
+    const w = want[j] === 'web' ? 'browser' : want[j] === 'desktop' ? 'app' : want[j];
+    if (w !== 'cli' && w !== 'app' && w !== 'browser') return { error: want[j] };
+    out[w] = true;
+  }
+  if (!out.cli && !out.app && !out.browser) return { error: raw || '(empty)' };
+  return out;
 }
 
 // Best-effort: stash the current browser session under `name` (called after a

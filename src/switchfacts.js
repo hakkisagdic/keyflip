@@ -14,6 +14,7 @@ import * as chatsession from './chatsession.js';
 import * as oauth from './oauth.js';
 import * as policy from './policy.js';
 import * as verifymod from './verify.js';
+import * as _browserswitch from './browserswitch.js';
 
 function safe(fn, d) {
   try {
@@ -56,6 +57,7 @@ async function collect(ctx, name, opts) {
     appRunning: false,
     canManageApp: false,
     browserCaptured: false,
+    browsers: null,
     needsRefresh: false,
     tokenDead: false,
     policyDenied: null,
@@ -87,6 +89,16 @@ async function collect(ctx, name, opts) {
   f.browserCaptured = safe(function () {
     return chatsession.snapshotsFor(ctx, name).length > 0;
   }, false);
+  // Per-browser: what the default browser leg would do (already on it / restore / skip and why).
+  // null = not inspected (the browser was left out, or this platform has no browser leg).
+  f.browsers =
+    opts.surfaces && opts.surfaces.browser === false
+      ? null
+      : safe(function () {
+          return ctx.platform === 'darwin'
+            ? _browserswitch.preview(ctx, name, { explicit: !!opts.explicitBrowser })
+            : null;
+        }, null);
   // Report a policy block as a plan line instead of throwing — the real switch still enforces it.
   if (!opts.force)
     f.policyDenied = safe(function () {

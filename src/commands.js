@@ -89,8 +89,9 @@ const CATALOG = [
     name: 'switch',
     group: 'accounts',
     safe: false,
-    usage: 'keyflip <name|number> [--restart|--force] [--browser] [--dry-run] [--no-verify] [--rollback-on-fail]',
-    desc: 'Switch to that account (aligns CLI + desktop, optionally the browser); --dry-run plans it, then every switch reads itself back.',
+    usage:
+      'keyflip <name|number> [--restart|--force] [--only cli|app|browser] [--browser] [--dry-run] [--no-verify] [--rollback-on-fail]',
+    desc: "Switch every surface to that account (CLI, desktop app, the browser's claude.ai session; --only narrows it); --dry-run plans it, then every switch reads itself back.",
   },
   {
     name: 'next',

@@ -140,10 +140,14 @@ keyflip setup                 # lighter: log in in Claude, keyflip auto-detects 
 keyflip login [name] [--email x] [--sso] [--console]   # official browser flow, isolated + captured (--sso = enterprise)
 keyflip add [name] [--app] [--dry-run]   # save the logged-in account(s) — CLI + desktop app (--dry-run = plan only)
 keyflip browser [status|logout|sync]   # check/reset/restore the browser claude.ai account (extension)
-keyflip <name|number>         # switch to that account (asks before closing Claude)
+keyflip <name|number>         # switch EVERY surface to that account — CLI, desktop app and the
+                              # browser's claude.ai session (so the Chrome extension too); a surface
+                              # with no saved login is skipped and named, the rest still switch
+keyflip <name> --only cli     # ...just these surfaces: cli | app | browser (comma-separated)
 keyflip <name> --restart      # ...close & reopen Claude without asking
 keyflip <name> --force        # ...swap without closing Claude (restart it yourself)
-keyflip <name> --browser      # ...also align the browser + Chrome extension to this account
+keyflip <name> --browser      # ...also close an open browser that won't restore its tabs (by
+                              # default such a browser is skipped, never closed behind your back)
 keyflip <name> --dry-run      # ...show the PLAN first: what would be written, what blocks it, and
                               # whether that account can even authenticate — changes NOTHING
 keyflip <name> --no-verify    # ...skip the read-back every switch does by default (see `verify`)

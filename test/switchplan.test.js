@@ -34,23 +34,38 @@ function facts(overrides) {
 test('a normal switch plans every surface it can move', function () {
   const p = plan.build(facts(), {});
   assert.strictEqual(p.mode, 'plain');
-  assert.strictEqual(p.writes.length, 3, JSON.stringify(p.writes)); // CLI blob, app login, chats
+  assert.strictEqual(p.writes.length, 4, JSON.stringify(p.writes)); // CLI blob, app login, browser, chats
   assert.match(p.writes.join(' '), /CLI login/);
   assert.match(p.writes.join(' '), /desktop app/);
+  assert.match(p.writes.join(' '), /browser claude.ai session/, 'the browser moves by default now');
   assert.match(p.writes.join(' '), /chat/);
   assert.strictEqual(p.wouldQuit, false);
   assert.strictEqual(p.blockers.length, 0);
 });
 
 test('--dry-run of an already-active account writes nothing at all', function () {
-  const p = plan.build(facts({ activeCliEmail: 'me@gmail.com', appActiveProfile: 'gmail' }), {});
+  const p = plan.build(
+    facts({
+      activeCliEmail: 'me@gmail.com',
+      appActiveProfile: 'gmail',
+      browsers: [{ browser: 'Chrome', action: 'already' }],
+    }),
+    {},
+  );
   assert.strictEqual(p.mode, 'already-active');
   assert.deepStrictEqual(p.writes, []);
   assert.match(p.skips.join(' '), /already on this account/);
 });
 
 test('the CLI being active but the app lagging is an app-only switch, not a no-op', function () {
-  const p = plan.build(facts({ activeCliEmail: 'me@gmail.com', appActiveProfile: 'yahoo' }), {});
+  const p = plan.build(
+    facts({
+      activeCliEmail: 'me@gmail.com',
+      appActiveProfile: 'yahoo',
+      browsers: [{ browser: 'Chrome', action: 'already' }],
+    }),
+    {},
+  );
   assert.strictEqual(p.mode, 'app-only');
   assert.strictEqual(p.writes.length, 2, JSON.stringify(p.writes));
   assert.doesNotMatch(p.writes.join(' '), /CLI login/, 'must not claim to move a CLI that is already there');
@@ -99,18 +114,88 @@ test('a dead capture is warned about BEFORE the machine moves', function () {
 });
 
 test('missing captures degrade to skips instead of promising a surface it cannot move', function () {
-  const p = plan.build(facts({ cliCaptured: false, appCaptured: false }), {});
+  const p = plan.build(facts({ cliCaptured: false, appCaptured: false, browserCaptured: false }), {});
   assert.match(p.skips.join(' '), /no CLI login/);
   assert.match(p.skips.join(' '), /no saved desktop-app login/);
   assert.deepStrictEqual(p.writes, [], 'nothing captured -> nothing promised');
 });
 
-test('--browser is only promised when a browser session is actually saved', function () {
-  assert.match(plan.build(facts(), { browser: true }).writes.join(' '), /browser claude.ai session/);
-  const none = plan.build(facts({ browserCaptured: false }), { browser: true });
+test('the browser is only promised when a browser session is actually saved', function () {
+  assert.match(plan.build(facts(), {}).writes.join(' '), /browser claude.ai session/);
+  const none = plan.build(facts({ browserCaptured: false }), {});
   assert.match(none.skips.join(' '), /no saved browser session/);
-  // Without the flag the plan never mentions the browser at all.
-  assert.doesNotMatch(plan.build(facts(), {}).writes.join(' '), /browser/);
+  // Left out on purpose (legacy browser:false, or --only without it): never written.
+  assert.doesNotMatch(plan.build(facts(), { browser: false }).writes.join(' '), /browser/);
+});
+
+test('per-browser facts become one honest line each: restore, already there, or why not', function () {
+  const p = plan.build(
+    facts({
+      browsers: [
+        { browser: 'Chrome', action: 'skip', reason: 'would-lose-tabs' },
+        { browser: 'Brave', action: 'sync', quit: true },
+        { browser: 'Arc', action: 'skip', reason: 'no-snapshot' },
+        { browser: 'Edge', action: 'already' },
+      ],
+    }),
+    {},
+  );
+  const w = p.writes.join(' | ');
+  const s = p.skips.join(' | ');
+  assert.match(w, /Brave claude.ai session → gmail \(Brave is closed and reopened/);
+  assert.doesNotMatch(w, /Chrome|Arc|Edge/, 'only the browser that will actually move is a write');
+  assert.match(s, /Chrome is open and would lose its tabs.*--only browser/);
+  assert.match(s, /Arc: no saved claude.ai session.*keyflip browser capture gmail/);
+  assert.match(s, /Edge claude.ai is already on this account/);
+  // A skipped browser never blocks the other surfaces.
+  assert.strictEqual(p.mode, 'plain');
+  assert.match(w, /CLI login/);
+});
+
+test('CLI + app already there but the browser lags: a browser-only switch, not a no-op', function () {
+  const p = plan.build(
+    facts({
+      activeCliEmail: 'me@gmail.com',
+      appActiveProfile: 'gmail',
+      browsers: [{ browser: 'Chrome', action: 'sync' }],
+    }),
+    {},
+  );
+  assert.strictEqual(p.mode, 'browser-only');
+  assert.deepStrictEqual(p.writes, ['the Chrome claude.ai session → gmail']);
+});
+
+test('--only narrows the plan to the chosen surfaces and names what it left out', function () {
+  const b = plan.build(facts(), { surfaces: { cli: false, app: false, browser: true, only: true } });
+  assert.strictEqual(b.mode, 'browser-only');
+  assert.deepStrictEqual(b.writes, ['the browser claude.ai session → gmail']);
+  assert.match(b.skips.join(' '), /CLI and the desktop app — left out by --only/);
+
+  const c = plan.build(facts({ appRunning: true }), {
+    surfaces: { cli: true, app: false, browser: false, only: true },
+  });
+  assert.strictEqual(c.mode, 'in-place');
+  assert.strictEqual(c.wouldQuit, false, '--only cli never closes Claude');
+  assert.deepStrictEqual(c.writes, ['the CLI login (OAuth blob) → gmail']);
+  assert.match(c.skips.join(' '), /desktop app login — left out/);
+  assert.match(c.skips.join(' '), /browser claude.ai session — left out/);
+  assert.match(c.warns.join(' '), /may rewrite the shared CLI login/);
+  assert.strictEqual(
+    plan.build(facts({ cliCaptured: false }), { surfaces: { cli: true, app: false, browser: false, only: true } }).mode,
+    'refuse',
+  );
+
+  const a = plan.build(facts({ appRunning: true }), {
+    surfaces: { cli: false, app: true, browser: false, only: true },
+  });
+  assert.strictEqual(a.mode, 'app-only');
+  assert.strictEqual(a.wouldQuit, true);
+  assert.doesNotMatch(a.writes.join(' '), /CLI login/);
+  const aDone = plan.build(facts({ appActiveProfile: 'gmail' }), {
+    surfaces: { cli: false, app: true, browser: false, only: true },
+  });
+  assert.strictEqual(aDone.mode, 'already-active');
+  assert.deepStrictEqual(aDone.writes, []);
 });
 
 test('an expiring-but-refreshable token is a note, not a blocker', function () {

@@ -261,7 +261,7 @@ const TOOLS = [
     name: 'keyflip_switch_plan',
     title: 'Plan a switch without performing it',
     description:
-      'The dry run of `keyflip <account>`: which surfaces a switch WOULD write (CLI credential, desktop-app login, browser session, chat pointers), what would block it (Claude running and not closable, an org policy for this directory, a missing capture), and — the part no earlier command answered — whether that account can still authenticate at all. Read-only: it writes nothing, takes no lock and needs no confirmation, so call it freely before asking the user to approve a switch.',
+      "The dry run of `keyflip <account>`, which moves EVERY surface by default: which surfaces a switch WOULD write (CLI credential, desktop-app login, each browser's claude.ai session, chat pointers), which it would skip and why (no saved browser session, a browser that would lose its tabs if closed), what would block it (Claude running and not closable, an org policy for this directory, a missing capture), and — the part no earlier command answered — whether that account can still authenticate at all. Read-only: it writes nothing, takes no lock and needs no confirmation, so call it freely before asking the user to approve a switch.",
     inputSchema: {
       type: 'object',
       properties: { name: { type: 'string', description: 'Account name (from keyflip_list).' } },
@@ -286,6 +286,7 @@ const TOOLS = [
           cliCaptured: f.cliCaptured,
           appCaptured: f.appCaptured,
           browserCaptured: f.browserCaptured,
+          browsers: f.browsers || [],
           claudeRunning: f.appRunning,
           activeCliProfile: f.activeCliProfile,
           appActiveProfile: f.appActiveProfile,
