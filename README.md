@@ -158,6 +158,8 @@ keyflip doctor                # health check: secrets-in-git, orphaned sessions,
 keyflip backup now|list|restore <n>   # snapshot keyflip metadata (no secrets)
 keyflip usage --history       # per-account usage trend + failover events
 keyflip usage --providers     # usage/limits across OTHER AI tools on this machine (Codex/Gemini/Cursor/Copilot/OpenRouter + Claude) — the CodexBar-style monitor
+keyflip api status            # the monthly Claude API credit a Max/Team plan grants its linked Console org
+                              #   (Admin key reads usage; the balance shown is an estimate)
 keyflip status                # which account each surface is on (CLI + desktop app)
 keyflip verify [acct] [--usage] [--live]   # would switching there WORK right now? reads the stored/live
                               # token expiry, the app cookie capture (its session cookie + its expiry),
@@ -324,6 +326,35 @@ keyflip doctor                  # health check: secrets-in-git + orphans + versi
   removes *exactly* what was injected.
 - `keyflip gateway use <provider>` does the same for the Claude **desktop app**
   (restart the app to apply); `keyflip gateway off` restores it.
+
+### The monthly API credit (`api`)
+
+Since 7 Oct 2026 a Claude **Max** or **Team** subscription also carries a monthly
+**Claude Platform (Console) API credit**: Max 5x $100, Max 20x $200, Team per seat
+(capped at $500). The claude.ai account links exactly **one Console organization**
+(claude.ai → Settings → Billing → API credits → *Link organization*); the credit
+refreshes each billing cycle, never rolls over, and is spent before prepaid funds.
+
+`keyflip api` follows that credit for every account you save:
+
+```bash
+keyflip api add hakkisagdic --plan max20x --cycle-day 8 --admin-key-file -   # Admin key on stdin
+keyflip api orgs hakkisagdic      # the orgs that admin key can see (pick the linked one)
+keyflip api status                # per org: grant, spent this cycle, what is left
+keyflip api status --json --offline
+keyflip api remove hakkisagdic
+```
+
+- The **Admin API key is a secret** (`sk-ant-admin01-…`, Console → Settings → API
+  Keys) → stored in the OS credential store (`keyflip:admin-key` / `api:<account>`),
+  never in the metadata file, never on the command line. It is sent to exactly one
+  host: `api.anthropic.com`.
+- The Console shows the true remaining balance, but **no API reads it** — so
+  `status` reads the Admin **cost report** for the current cycle and subtracts:
+  *the number shown is an estimate* (grant − spent), labelled as one. Plan grants
+  are known (`--plan`); a **Team** org must be told its grant once (`--grant`).
+- `--cycle-day` is the day of month the credit lands (default `1`); set it to the
+  account's subscription renewal day and the cycle window is always right.
 
 ### Find & resume past conversations (`sessions`, `resume`)
 

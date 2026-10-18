@@ -157,6 +157,8 @@ keyflip doctor                # sağlık kontrolü: git-e-sır, orphan oturumlar
 keyflip backup now|list|restore <n>   # keyflip metadata anlık görüntüsü (sırsız)
 keyflip usage --history       # hesap-başına kullanım eğilimi + failover olayları
 keyflip usage --providers     # bu makinedeki DİĞER AI araçlarında kullanım/limit (Codex/Gemini/Cursor/Copilot/OpenRouter + Claude) — CodexBar tarzı monitör
+keyflip api status            # Max/Team planının bağlı Console org'una verdiği aylık Claude API kredisi
+                              #   (Admin anahtarı kullanımı okur; gösterilen bakiye bir tahmindir)
 keyflip status                # her yüzey hangi hesapta (CLI + masaüstü uygulaması)
 keyflip verify [hesap] [--usage] [--live]  # oraya geçmek ŞİMDİ işe yarar mı? saklanan/canlı token
                               # bitişini, uygulama cookie yakalamasını (oturum cookie'si + bitişi),
@@ -324,6 +326,37 @@ keyflip doctor                  # sağlık kontrolü: git-e-sır + orphan + vers
   enjekte edileni geri alır.
 - `keyflip gateway use <provider>` aynısını Claude **masaüstü uygulaması** için
   yapar (uygulamayı yeniden başlat).
+
+### Aylık API kredisi (`api`)
+
+7 Ekim 2026'dan beri bir Claude **Max** veya **Team** aboneliği her ay bir
+**Claude Platform (Console) API kredisi** de taşıyor: Max 5x $100, Max 20x $200,
+Team koltuk başına ($500'de tavanlı). claude.ai hesabı tam **bir Console
+organization**'a bağlanır (claude.ai → Ayarlar → Faturalama → API credits →
+*Link organization*); kredi her faturalama döngüsünde yenilenir, devredemez ve ön
+ödemeden önce harcanır.
+
+`keyflip api` bu krediyi kaydettiğin her hesap için izler:
+
+```bash
+keyflip api add hakkisagdic --plan max20x --cycle-day 8 --admin-key-file -   # Admin anahtarı stdin'den
+keyflip api orgs hakkisagdic      # o admin anahtarının gördüğü org'lar (bağlı olanı seç)
+keyflip api status                # org başına: grant, bu döngüde harcanan, kalan
+keyflip api status --json --offline
+keyflip api remove hakkisagdic
+```
+
+- **Admin API anahtarı bir sırdır** (`sk-ant-admin01-…`, Console → Ayarlar → API
+  Keys) → OS kimlik deposunda saklanır (`keyflip:admin-key` / `api:<hesap>`),
+  asla metadata dosyasına yazılmaz, asla komut satırına konmaz. Tam tek bir
+  sunucuya gider: `api.anthropic.com`.
+- Console gerçek kalan bakiyeyi gösterir ama **onu okuyan bir API yok** — bu
+  yüzden `status` Admin **maliyet raporunu** okuyup grant'tan düşer: *gösterilen
+  sayı bir tahmindir* (grant − harcama) ve her yerde öyle söylenir. Plan
+  grant'ları bilinir (`--plan`); bir **Team** org'una grant'ı bir kez söylenir
+  (`--grant`).
+- `--cycle-day` kredinin her ay indiği gün (varsayılan `1`); hesabın abonelik
+  yenileme gününe kur, döngü penceresi hep doğru olsun.
 
 ### Geçmiş konuşmaları bul & devam ettir (`sessions`, `resume`)
 

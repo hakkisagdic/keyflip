@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`keyflip api` — the monthly Claude API credit a Max/Team plan grants its linked Console org.**
+  Since 7 Oct 2026 Max 5x carries $100 and Max 20x $200 a month of Claude Platform credit
+  (Team per seat, capped at $500), granted to the one Console organization the claude.ai
+  account links in Settings → Billing → API credits. `api add <account>` saves the org's
+  **Admin** API key (`sk-ant-admin01-…`) to the OS credential store (`keyflip:admin-key` /
+  `api:<account>` — never the metadata file, never argv, and it goes to exactly one host,
+  `api.anthropic.com`) with the plan, the cycle anchor day and an optional grant override in
+  the commit-safe `api-accounts.json`. `api status` reads the Admin **cost report** over the
+  current cycle and prints grant − spent per org, labelled as the estimate it is: the true
+  balance lives in the Console and no API reads it (`/v1/organizations/balance` 404s), so an
+  admin key reads what it can — the money spent — and the plan's grant fills the rest. `api
+  orgs` lists the orgs a key can see (the linked one is yours to pick), `api test` fires the
+  read once, `api remove` drops key and metadata together. A Team org must be told its grant
+  once (`--grant`, it is per seat); `--cycle-day` is the day the credit lands each month
+  (default `1`). Like `provusage`, the reader is zero-dependency and fail-closed: no fetch is
+  injected, no request leaves, and the key never appears in a result, an error, or a log.
+
 ## [1.5.5] - 2026-10-17
 
 ### Added

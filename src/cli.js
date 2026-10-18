@@ -78,6 +78,7 @@ import * as attrib from './attrib.js';
 import * as _threads from './threads.js';
 import * as _schedule from './schedule.js';
 import * as _settingsmod from './settings.js';
+import * as _apicredits from './apicredits.js';
 import * as _recall from './recall.js';
 import * as _llm from './llm.js';
 import * as _leakscan from './leakscan.js';
@@ -203,6 +204,9 @@ function usage() {
   print('  keyflip usage --history        per-account usage trend + autoswitch/failover events');
   print(
     '  keyflip usage --providers      usage/limits across OTHER AI tools (Codex/Gemini/Cursor/Copilot/OpenRouter…) — the multi-provider monitor',
+  );
+  print(
+    '  keyflip api <add|orgs|status|remove|test>   the monthly Claude Console API credit a Max/Team plan grants its linked org (Admin key reads usage; the balance is an estimate)',
   );
   print('  keyflip backup [now|list|restore <n>|prune]   snapshot keyflip metadata (no secrets)');
   print('  keyflip history | undo | restore <ref>   git-versioned config: see/undo/roll back changes');
@@ -3212,6 +3216,195 @@ async function cmdUsage(ctx, rest) {
     });
   }
   if (!samples.length && !events.length) print('  (nothing recorded yet — run: keyflip list --usage)');
+}
+
+// # Claude Console API credits — the monthly credit a Max/Team plan grants its linked org.
+// The org's Admin key reads the cost report; the credit balance itself has no API, so what
+// status shows is grant − spent-this-cycle, said as an estimate wherever it is printed.
+const API_USAGE = [
+  'usage: keyflip api add <account> --admin-key-file <path|-> [--org <uuid>] [--org-name <name>] [--email <email>]',
+  '                                  [--plan max5x|max20x|team] [--grant <usd>] [--cycle-day <1-28>]',
+  '       keyflip api orgs <account>             the organizations the saved admin key can see',
+  '       keyflip api status [--json] [--offline] each linked org: grant, spent this cycle, what is left (estimate)',
+  '       keyflip api remove <account>  |  keyflip api test <account>',
+].join('\n');
+
+async function cmdApi(ctx, rest) {
+  const A = _apicredits;
+  const sub = rest[0];
+  const args = rest.slice(1);
+  const deps = { fetch: typeof fetch !== 'undefined' ? fetch : undefined };
+  const opt = function (flag) {
+    const i = args.indexOf(flag);
+    return i === -1 ? null : args[i + 1];
+  };
+  if (sub === 'add') {
+    const id = positionals(args, [
+      '--admin-key-file',
+      '--org',
+      '--org-name',
+      '--email',
+      '--plan',
+      '--grant',
+      '--cycle-day',
+    ])[0];
+    const key = readSecretArg(args, '--admin-key-file');
+    if (!id || !key) return fail(API_USAGE);
+    let acct;
+    try {
+      acct = A.normalizeAccount({
+        id: id,
+        orgUuid: opt('--org') || null,
+        orgName: opt('--org-name') || null,
+        email: opt('--email') || null,
+        plan: opt('--plan') || null,
+        grant: opt('--grant') || null,
+        cycleDay: opt('--cycle-day') || null,
+      });
+    } catch (e) {
+      return fail(e.message);
+    }
+    let store;
+    try {
+      store = A.defaultStore(ctx, id);
+      store.setProfile(A.KEY_PROFILE, key);
+    } catch (e) {
+      return fail('the admin key could not be saved: ' + ((e && e.message) || e));
+    }
+    const cfg = A.readConfig(ctx);
+    const existing = A.accountById(cfg, id);
+    if (existing) cfg.accounts.splice(cfg.accounts.indexOf(existing), 1, acct);
+    else cfg.accounts.push(acct);
+    A.writeConfig(ctx, cfg);
+    print(
+      style.ok('✅') +
+        " saved '" +
+        acct.id +
+        "' (" +
+        (acct.plan || '$' + acct.grant) +
+        ')' +
+        (acct.orgName ? ' · org ' + acct.orgName : '') +
+        ' — the admin key went to the credential store, never into ' +
+        A.CONFIG_FILE,
+    );
+    print(style.dim('read the credit any time: keyflip api status'));
+    return;
+  }
+  if (sub === 'orgs') {
+    const id = positionals(args, [])[0];
+    if (!id) return fail('usage: keyflip api orgs <account>');
+    const r = await A.listOrgs(ctx, id, deps);
+    if (r.status !== 'ok') return fail(r.error || 'the organizations could not be listed (' + r.status + ')');
+    print('Organizations this admin key can see:');
+    r.orgs.forEach(function (o) {
+      print('  ' + String(o.id || '?') + '  ' + (o.name || '(unnamed)'));
+    });
+    print(
+      style.dim(
+        'link the org once in claude.ai → Settings → Billing → API credits, then: keyflip api add ' +
+          id +
+          ' --org <uuid>',
+      ),
+    );
+    return;
+  }
+  if (sub === 'status' || sub === 'list' || sub === undefined) {
+    let cfg;
+    try {
+      cfg = A.readConfig(ctx);
+    } catch (e) {
+      return fail(A.CONFIG_FILE + ' is corrupt: ' + ((e && e.message) || e));
+    }
+    if (!cfg.accounts.length) {
+      print('No Claude Console API accounts saved.');
+      print(style.dim('Add one: keyflip api add <account> --admin-key-file <path|-> --plan max20x'));
+      return;
+    }
+    const offline = args.indexOf('--offline') !== -1;
+    const rows = [];
+    for (const acct of cfg.accounts) {
+      if (offline) {
+        rows.push({
+          id: acct.id,
+          plan: acct.plan,
+          grant: A.grantFor(acct),
+          status: 'offline',
+          used: null,
+          remaining: null,
+          usedPct: null,
+          resetsISO: A.cycleBounds(acct, Date.now()).resetsISO,
+          error: null,
+        });
+      } else {
+        rows.push(await A.readStatus(ctx, acct, deps));
+      }
+    }
+    if (JSON_MODE) {
+      jsonOut({ apiAccounts: rows });
+      return;
+    }
+    print(
+      style.bold('Claude API credits') +
+        ' ' +
+        style.dim(
+          '(Max/Team monthly credit per linked Console org — remaining is an estimate: grant − spent this cycle)',
+        ),
+    );
+    for (const r of rows) {
+      let line = '  ' + String(r.id).padEnd(14) + ' ' + String(r.plan || '?').padEnd(7);
+      if (r.status === 'ok') {
+        const resets = String(new Date(r.resetsISO).toUTCString()).slice(5, 11);
+        line +=
+          '$' +
+          Number(r.used).toFixed(2) +
+          ' of $' +
+          Number(r.grant).toFixed(0) +
+          ' (' +
+          r.usedPct +
+          '%)  · $' +
+          Number(r.remaining).toFixed(2) +
+          ' left  · resets ' +
+          resets;
+      } else if (r.status === 'offline') {
+        line += style.dim('not asked (--offline)');
+      } else {
+        line += style.warn(r.status);
+      }
+      print(line);
+      if (r.error) print('     ' + style.dim(r.error));
+    }
+    print(
+      style.dim(
+        'The Console shows the true balance and no API reads it; this subtracts the Admin cost report from the grant.',
+      ),
+    );
+    return;
+  }
+  if (sub === 'remove') {
+    const id = positionals(args, [])[0];
+    if (!id) return fail('usage: keyflip api remove <account>');
+    const cfg = A.readConfig(ctx);
+    const acct = A.accountById(cfg, id);
+    if (!acct) return fail("no api account '" + id + "' saved");
+    try {
+      A.defaultStore(ctx, id).delProfile(A.KEY_PROFILE);
+    } catch (e) {
+      /* the metadata goes anyway; a stale key alone harms nothing it can name */
+    }
+    cfg.accounts.splice(cfg.accounts.indexOf(acct), 1);
+    A.writeConfig(ctx, cfg);
+    print(style.ok('✅') + " removed '" + id + "' — key and metadata gone");
+    return;
+  }
+  if (sub === 'test') {
+    const id = positionals(args, [])[0];
+    if (!id) return fail('usage: keyflip api test <account>');
+    const r = await A.listOrgs(ctx, id, deps);
+    if (r.status !== 'ok') return fail(r.error || 'the admin key did not answer (' + r.status + ')');
+    print(style.ok('✅') + ' the admin key works — ' + r.orgs.length + ' organization(s) visible');
+    return;
+  }
+  return fail(API_USAGE);
 }
 
 // #15 MCP registry
@@ -12574,6 +12767,13 @@ async function dispatch(ctx, cmd, rest) {
               return cmdBudget(ctx, rest);
             })
           : cmdBudget(ctx, rest);
+      case 'api':
+        // add/remove write the state file and the credential store; the reads do not.
+        return rest[0] === 'add' || rest[0] === 'remove'
+          ? withLock(ctx, function () {
+              return cmdApi(ctx, rest);
+            })
+          : cmdApi(ctx, rest);
       case 'llm':
         // `set`/`off` write config.json; `status`/`test` do not.
         return rest[0] === 'set' || rest[0] === 'off' || rest[0] === 'reset'
