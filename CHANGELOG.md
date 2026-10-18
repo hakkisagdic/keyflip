@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.6] - 2026-10-19
+
 ### Added
 
 - **`keyflip login <account> --long-lived` — a ONE-YEAR CLI token per account.** Mints it with the

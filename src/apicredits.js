@@ -222,7 +222,9 @@ export function manualStatus(acct, out) {
     (prev && out.trendUsd !== undefined
       ? ' · ' + (out.trendUsd >= 0 ? '+' : '−') + '$' + Math.abs(out.trendUsd).toFixed(2) + ' since the previous'
       : '') +
-    ' · entered by hand (`keyflip api set ' + acct.id + ' --balance <usd>`)';
+    ' · entered by hand (`keyflip api set ' +
+    acct.id +
+    ' --balance <usd>`)';
   return true;
 }
 
