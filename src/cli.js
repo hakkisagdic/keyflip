@@ -206,7 +206,7 @@ function usage() {
     '  keyflip usage --providers      usage/limits across OTHER AI tools (Codex/Gemini/Cursor/Copilot/OpenRouter…) — the multi-provider monitor',
   );
   print(
-    '  keyflip api <add|orgs|status|remove|test>   the monthly Claude Console API credit a Max/Team plan grants its linked org (Admin key reads usage; the balance is an estimate)',
+    '  keyflip api <add|set|orgs|status|remove|test>   the monthly Claude Console API credit a Max/Team plan grants its linked org (Admin key reads usage; individual orgs track the balance by hand: `api set`)',
   );
   print('  keyflip backup [now|list|restore <n>|prune]   snapshot keyflip metadata (no secrets)');
   print('  keyflip history | undo | restore <ref>   git-versioned config: see/undo/roll back changes');
@@ -3222,8 +3222,10 @@ async function cmdUsage(ctx, rest) {
 // The org's Admin key reads the cost report; the credit balance itself has no API, so what
 // status shows is grant − spent-this-cycle, said as an estimate wherever it is printed.
 const API_USAGE = [
-  'usage: keyflip api add <account> --admin-key-file <path|-> [--org <uuid>] [--org-name <name>] [--email <email>]',
+  'usage: keyflip api add <account> [--admin-key-file <path|->] [--org <uuid>] [--org-name <name>] [--email <email>]',
   '                                  [--plan max5x|max20x|team] [--grant <usd>] [--cycle-day <1-28>]',
+  '                                  (individual orgs have no Admin API key — add without one and use `api set`)',
+  '       keyflip api set <account> --balance <usd>   record the balance the Console Credits page shows',
   '       keyflip api orgs <account>             the organizations the saved admin key can see',
   '       keyflip api status [--json] [--offline] each linked org: grant, spent this cycle, what is left (estimate)',
   '       keyflip api remove <account>  |  keyflip api test <account>',
@@ -3249,7 +3251,7 @@ async function cmdApi(ctx, rest) {
       '--cycle-day',
     ])[0];
     const key = readSecretArg(args, '--admin-key-file');
-    if (!id || !key) return fail(API_USAGE);
+    if (!id) return fail(API_USAGE);
     let acct;
     try {
       acct = A.normalizeAccount({
@@ -3264,30 +3266,96 @@ async function cmdApi(ctx, rest) {
     } catch (e) {
       return fail(e.message);
     }
-    let store;
-    try {
-      store = A.defaultStore(ctx, id);
-      store.setProfile(A.KEY_PROFILE, key);
-    } catch (e) {
-      return fail('the admin key could not be saved: ' + ((e && e.message) || e));
-    }
     const cfg = A.readConfig(ctx);
     const existing = A.accountById(cfg, id);
+    if (key) {
+      let store;
+      try {
+        store = A.defaultStore(ctx, id);
+        store.setProfile(A.KEY_PROFILE, key);
+      } catch (e) {
+        return fail('the admin key could not be saved: ' + ((e && e.message) || e));
+      }
+    }
+    // Re-adding (e.g. to attach a key later) must not drop the manual readings gathered so far.
+    if (existing && Array.isArray(existing.entries)) acct.entries = existing.entries;
     if (existing) cfg.accounts.splice(cfg.accounts.indexOf(existing), 1, acct);
     else cfg.accounts.push(acct);
     A.writeConfig(ctx, cfg);
-    print(
+    if (key) {
+      print(
+        style.ok('✅') +
+          " saved '" +
+          acct.id +
+          "' (" +
+          (acct.plan || '$' + acct.grant) +
+          ')' +
+          (acct.orgName ? ' · org ' + acct.orgName : '') +
+          ' — the admin key went to the credential store, never into ' +
+          A.CONFIG_FILE,
+      );
+      print(style.dim('read the credit any time: keyflip api status'));
+    } else {
+      print(
+        style.ok('✅') +
+          " saved '" +
+          acct.id +
+          "' (" +
+          (acct.plan || '$' + acct.grant) +
+          ') in manual mode — individual orgs have no Admin API key to save',
+      );
+      print(
+        style.dim(
+          'when the Console Credits page shows a new balance: keyflip api set ' + id + ' --balance <usd>',
+        ),
+      );
+    }
+    return;
+  }
+  if (sub === 'set') {
+    const id = positionals(args, ['--balance'])[0];
+    const bal = parseFloat(opt('--balance'));
+    if (!id || !isFinite(bal) || bal < 0) return fail('usage: keyflip api set <account> --balance <usd>');
+    let cfg;
+    try {
+      cfg = A.readConfig(ctx);
+    } catch (e) {
+      return fail(A.CONFIG_FILE + ' is corrupt: ' + ((e && e.message) || e));
+    }
+    const acct = A.accountById(cfg, id);
+    if (!acct) return fail("no api account '" + id + "' saved — add it first: keyflip api add " + id);
+    let r;
+    try {
+      r = A.appendEntry(ctx, cfg, acct, bal);
+    } catch (e) {
+      return fail((e && e.message) || e);
+    }
+    const grant = A.grantFor(acct);
+    const resets = String(new Date(A.cycleBounds(acct, Date.now()).resetsISO).toUTCString()).slice(5, 11);
+    let line =
       style.ok('✅') +
-        " saved '" +
-        acct.id +
-        "' (" +
-        (acct.plan || '$' + acct.grant) +
-        ')' +
-        (acct.orgName ? ' · org ' + acct.orgName : '') +
-        ' — the admin key went to the credential store, never into ' +
-        A.CONFIG_FILE,
-    );
-    print(style.dim('read the credit any time: keyflip api status'));
+      ' recorded $' +
+      bal.toFixed(2) +
+      " for '" +
+      id +
+      "' — " +
+      (grant !== null
+        ? '$' +
+          Math.max(0, grant - bal).toFixed(2) +
+          ' left of $' +
+          grant.toFixed(0) +
+          ' (' +
+          (Math.round((Math.max(0, grant - bal) / grant) * 1000) / 10) +
+          '% used)  · resets ' +
+          resets
+        : 'resets ' + resets);
+    if (r.prev) {
+      const trend = Math.round((bal - r.prev.usd) * 100) / 100;
+      const d = new Date(r.prev.at);
+      line += '  ·  ' + (trend >= 0 ? '+$' : '−$') + Math.abs(trend).toFixed(2) + ' since ' + String(d).slice(4, 10);
+    }
+    print(line);
+    print(style.dim('manual mode: this is as exact as your last reading — re-run `api set` after heavy use'));
     return;
   }
   if (sub === 'orgs') {
@@ -3317,14 +3385,18 @@ async function cmdApi(ctx, rest) {
     }
     if (!cfg.accounts.length) {
       print('No Claude Console API accounts saved.');
-      print(style.dim('Add one: keyflip api add <account> --admin-key-file <path|-> --plan max20x'));
+      print(
+        style.dim(
+          'Add one: keyflip api add <account> --plan max20x — with an Admin key: --admin-key-file <path|->, without (individual org): set balances with `api set`',
+        ),
+      );
       return;
     }
     const offline = args.indexOf('--offline') !== -1;
     const rows = [];
     for (const acct of cfg.accounts) {
       if (offline) {
-        rows.push({
+        const row = {
           id: acct.id,
           plan: acct.plan,
           grant: A.grantFor(acct),
@@ -3334,7 +3406,9 @@ async function cmdApi(ctx, rest) {
           usedPct: null,
           resetsISO: A.cycleBounds(acct, Date.now()).resetsISO,
           error: null,
-        });
+        };
+        A.manualStatus(acct, row) || (row.status = 'offline'); // a manual reading needs no network
+        rows.push(row);
       } else {
         rows.push(await A.readStatus(ctx, acct, deps));
       }
@@ -3365,6 +3439,15 @@ async function cmdApi(ctx, rest) {
           Number(r.remaining).toFixed(2) +
           ' left  · resets ' +
           resets;
+      } else if (r.status === 'manual') {
+        const resets = String(new Date(r.resetsISO).toUTCString()).slice(5, 11);
+        line +=
+          '$' +
+          Number(r.remaining).toFixed(2) +
+          ' left' +
+          (r.grant !== null ? ' of $' + Number(r.grant).toFixed(0) + ' (' + r.usedPct + '% used)' : '') +
+          '  · resets ' +
+          resets;
       } else if (r.status === 'offline') {
         line += style.dim('not asked (--offline)');
       } else {
@@ -3375,7 +3458,7 @@ async function cmdApi(ctx, rest) {
     }
     print(
       style.dim(
-        'The Console shows the true balance and no API reads it; this subtracts the Admin cost report from the grant.',
+        'The Console shows the true balance and no API reads it: keyed accounts subtract the Admin cost report from the grant; manual accounts are as exact as the last `api set`.',
       ),
     );
     return;
@@ -12768,8 +12851,9 @@ async function dispatch(ctx, cmd, rest) {
             })
           : cmdBudget(ctx, rest);
       case 'api':
-        // add/remove write the state file and the credential store; the reads do not.
-        return rest[0] === 'add' || rest[0] === 'remove'
+        // add/set/remove write the state file (set also rewrites it) and add may write the
+        // credential store; the reads do not.
+        return rest[0] === 'add' || rest[0] === 'set' || rest[0] === 'remove'
           ? withLock(ctx, function () {
               return cmdApi(ctx, rest);
             })
