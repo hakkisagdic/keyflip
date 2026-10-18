@@ -359,6 +359,7 @@ keyflip api add hakkisagdic --plan max20x --cycle-day 8 --admin-key-file -   # A
 keyflip api orgs hakkisagdic      # the orgs that admin key can see (pick the linked one)
 keyflip api status                # per org: grant, spent this cycle, what is left
 keyflip api status --json --offline
+keyflip api set hakkisagdic --balance 137.42   # manual mode: record what the Console shows
 keyflip api remove hakkisagdic
 ```
 
@@ -370,6 +371,14 @@ keyflip api remove hakkisagdic
   `status` reads the Admin **cost report** for the current cycle and subtracts:
   *the number shown is an estimate* (grant − spent), labelled as one. Plan grants
   are known (`--plan`); a **Team** org must be told its grant once (`--grant`).
+- **Individual orgs have no Admin API at all** ("The Admin API is unavailable for
+  individual accounts" — the admin-keys page 404s there), so those accounts run in
+  **manual mode**: `api add` without `--admin-key-file`, then read the Credits
+  balance in the Console and record it with `api set <account> --balance <usd>`.
+  Each reading is one entry in `api-accounts.json` (a number and a timestamp —
+  never a secret, capped at 200); `status` prints the last balance, the trend
+  since the previous reading and the reset date, no network needed. Re-adding
+  the account later (e.g. to attach a key) keeps the readings.
 - `--cycle-day` is the day of month the credit lands (default `1`); set it to the
   account's subscription renewal day and the cycle window is always right.
 

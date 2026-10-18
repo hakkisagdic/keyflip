@@ -360,6 +360,7 @@ keyflip api add hakkisagdic --plan max20x --cycle-day 8 --admin-key-file -   # A
 keyflip api orgs hakkisagdic      # o admin anahtarının gördüğü org'lar (bağlı olanı seç)
 keyflip api status                # org başına: grant, bu döngüde harcanan, kalan
 keyflip api status --json --offline
+keyflip api set hakkisagdic --balance 137.42   # manuel mod: Console'un gösterdiğini işle
 keyflip api remove hakkisagdic
 ```
 
@@ -372,6 +373,15 @@ keyflip api remove hakkisagdic
   sayı bir tahmindir* (grant − harcama) ve her yerde öyle söylenir. Plan
   grant'ları bilinir (`--plan`); bir **Team** org'una grant'ı bir kez söylenir
   (`--grant`).
+- **Individual (bireysel) org'ların Admin API'si hiç yok** ("The Admin API is
+  unavailable for individual accounts" — admin-keys sayfası orada 404 verir), bu
+  yüzden o hesaplar **manuel modda** çalışır: `api add`'i `--admin-key-file`
+  olmadan ver, sonra Console'daki Credits bakiyesini okuyup
+  `api set <hesap> --balance <usd>` ile işle. Her okuma `api-accounts.json`'da
+  bir girdidir (bir sayı ve bir zaman damgası — asla sır değil, 200'de sınırlı);
+  `status` son bakiyeyi, önceki okumadan bu yana değişimi ve sıfırlama gününü
+  ağa çıkmadan basar. Hesabı sonra yeniden eklemek (ör. anahtar eklemek)
+  okumaları korur.
 - `--cycle-day` kredinin her ay indiği gün (varsayılan `1`); hesabın abonelik
   yenileme gününe kur, döngü penceresi hep doğru olsun.
 

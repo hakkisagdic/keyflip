@@ -44,8 +44,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   orgs` lists the orgs a key can see (the linked one is yours to pick), `api test` fires the
   read once, `api remove` drops key and metadata together. A Team org must be told its grant
   once (`--grant`, it is per seat); `--cycle-day` is the day the credit lands each month
-  (default `1`). Like `provusage`, the reader is zero-dependency and fail-closed: no fetch is
-  injected, no request leaves, and the key never appears in a result, an error, or a log.
+  (default `1`). Individual Console orgs have no Admin API to talk to ("The Admin API is
+  unavailable for individual accounts"), so `api add` also works **without a key**: such an
+  account runs in manual mode and `api set <account> --balance <usd>` records the balance
+  the Console Credits page shows — one capped entry per reading in `api-accounts.json`,
+  never a secret — while `status` prints the last balance with its trend, no network needed,
+  and re-adding the account keeps the readings. Like `provusage`, the reader is
+  zero-dependency and fail-closed: no fetch is injected, no request leaves, and the key never
+  appears in a result, an error, or a log.
 
 ## [1.5.5] - 2026-10-17
 

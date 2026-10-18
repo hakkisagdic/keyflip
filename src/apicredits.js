@@ -15,6 +15,10 @@
 // So the remaining credit shown here is an ESTIMATE: the plan's grant minus the USD cost the
 // report shows inside the current cycle, labelled as an estimate wherever it is printed.
 //
+// Individual orgs have no Admin API to talk to at all, so those accounts run in MANUAL mode:
+// the user reads the Credits balance in the Console and records it with `api set` — see
+// manualStatus below.
+//
 // Secrets: the admin key lives ONLY in the credential store (Keychain on macOS under the
 // service `keyflip:admin-key` / account `api:<id>`, else <configDir>/creds/admin-key.cred,
 // which the state repo ignores). It is never written to api-accounts.json, never printed, and
@@ -38,6 +42,12 @@ export const CONFIG_FILE = 'api-accounts.json';
 // Plan → the monthly USD grant it includes (support.claude.com 17154008). `team` is per seat
 // and capped, so its grant is whatever the org's seats work out to: it must be set explicitly.
 export const PLANS = { max5x: 100, max20x: 200, team: null };
+
+// Individual Console organizations have NO Admin API ("The Admin API is unavailable for
+// individual accounts" — the admin-keys page 404s and no admin key can be provisioned), so an
+// account there runs in MANUAL mode: the user reads the Credits balance the Console shows and
+// records it with `keyflip api set <id> --balance <usd>`. One reading = one entry, kept here.
+const MAX_ENTRIES = 200;
 
 const ACCOUNT_ID_RE = /^[a-z0-9][a-z0-9._-]{0,63}$/i;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -142,6 +152,8 @@ export function normalizeAccount(input) {
   if (acct.orgUuid && !UUID_RE.test(acct.orgUuid)) {
     throw new Error("org uuid looks wrong: '" + acct.orgUuid + "'");
   }
+  // Manual-mode readings ride along so a re-normalized record keeps its history.
+  if (Array.isArray(input.entries)) acct.entries = input.entries;
   return acct;
 }
 
@@ -160,6 +172,58 @@ export function cycleBounds(acct, nowMs) {
   if (start.getTime() > nowMs) start = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() - 1, day));
   const resets = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth() + 1, day));
   return { startISO: start.toISOString(), resetsISO: resets.toISOString() };
+}
+
+// ---------------------------------------------------------------------------
+// Manual mode. A balance reading is a number and a timestamp — never a secret — so it lives
+// in api-accounts.json with the rest of the metadata, newest last, capped to MAX_ENTRIES.
+// ---------------------------------------------------------------------------
+export function appendEntry(ctx, cfg, acct, usd, nowMs) {
+  const n = Math.round(Number(usd) * 100) / 100;
+  if (!isFinite(n) || n < 0) throw new Error('balance must be a USD number ≥ 0');
+  const entries = Array.isArray(acct.entries) ? acct.entries.slice() : [];
+  const prev = entries.length ? entries[entries.length - 1] : null;
+  const at = typeof nowMs === 'number' ? new Date(nowMs) : new Date();
+  const entry = { at: at.toISOString(), usd: n };
+  entries.push(entry);
+  acct.entries = entries.slice(-MAX_ENTRIES);
+  const existing = accountById(cfg, acct.id);
+  if (existing) cfg.accounts.splice(cfg.accounts.indexOf(existing), 1, acct);
+  else cfg.accounts.push(acct);
+  writeConfig(ctx, cfg);
+  return { entry: entry, prev: prev };
+}
+
+// Fill a readStatus-shaped `out` from an account's manual readings; false when there are none.
+// The caller owns the cycle bounds (out.resetsISO) — they are set before this runs.
+export function manualStatus(acct, out) {
+  const entries = Array.isArray(acct.entries) ? acct.entries : [];
+  if (!entries.length) return false;
+  const last = entries[entries.length - 1];
+  const prev = entries.length > 1 ? entries[entries.length - 2] : null;
+  const grant = grantFor(acct);
+  out.grant = grant;
+  out.status = 'manual';
+  out.balanceUsd = last.usd;
+  out.remaining = last.usd;
+  out.lastEntryISO = last.at;
+  out.entriesCount = entries.length;
+  if (prev) out.trendUsd = Math.round((last.usd - prev.usd) * 100) / 100;
+  if (grant !== null) {
+    out.used = Math.round(Math.max(0, grant - last.usd) * 100) / 100;
+    out.usedPct = Math.round((out.used / grant) * 1000) / 10;
+  }
+  const d = new Date(last.at);
+  out.error =
+    'last reading ' +
+    String(d).slice(4, 10) +
+    ' ' +
+    String(d).slice(16, 21) +
+    (prev && out.trendUsd !== undefined
+      ? ' · ' + (out.trendUsd >= 0 ? '+' : '−') + '$' + Math.abs(out.trendUsd).toFixed(2) + ' since the previous'
+      : '') +
+    ' · entered by hand (`keyflip api set ' + acct.id + ' --balance <usd>`)';
+  return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -277,8 +341,10 @@ export async function listOrgs(ctx, id, deps) {
 
 // One account's credit reading. Never throws, never returns the key:
 //   { id, plan, grant, orgUuid, orgName, cycleStartISO, resetsISO,
-//     status: 'ok'|'no-key'|'unauthenticated'|'grant-unknown'|'offline'|'unknown',
+//     status: 'ok'|'manual'|'no-key'|'unauthenticated'|'grant-unknown'|'offline'|'unknown',
 //     used, remaining, usedPct, error }
+// 'manual' adds balanceUsd/lastEntryISO/entriesCount (+trendUsd when a previous reading exists)
+// and carries no error — out.error then holds a dim human note, not a failure.
 export async function readStatus(ctx, acct, deps) {
   const D = resolveDeps(deps);
   const out = {
@@ -300,9 +366,14 @@ export async function readStatus(ctx, acct, deps) {
   const bounds = cycleBounds(acct, D.now());
   out.cycleStartISO = bounds.startISO;
   out.resetsISO = bounds.resetsISO;
-  if (grant === null) {
+  function grantUnknown() {
     out.status = 'grant-unknown';
     out.error = 'team credit is per seat — set it once with: keyflip api add ' + acct.id + ' --grant <usd>';
+  }
+  const hasReadings = Array.isArray(acct.entries) && acct.entries.length > 0;
+  // An unknown grant only blocks when nothing else can answer: manual readings can.
+  if (grant === null && !hasReadings) {
+    grantUnknown();
     return out;
   }
   const store = D.store || defaultStore(ctx, acct.id);
@@ -315,8 +386,22 @@ export async function readStatus(ctx, acct, deps) {
     return out;
   }
   if (!key) {
+    // No key: either a manual-mode account (the entries ARE the readings — no network needed)
+    // or an account that has neither, which is what the error should teach.
+    if (manualStatus(acct, out)) return out;
+    if (grant === null) {
+      grantUnknown();
+      return out;
+    }
     out.status = 'no-key';
-    out.error = 'no admin key saved — keyflip api add ' + acct.id;
+    out.error =
+      'no admin key (individual orgs have none) — record the Console balance with: keyflip api set ' +
+      acct.id +
+      ' --balance <usd>';
+    return out;
+  }
+  if (grant === null) {
+    grantUnknown();
     return out;
   }
   if (!ADMIN_KEY_RE.test(key)) {
