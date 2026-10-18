@@ -21,6 +21,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`keyflip freshness` (alias `age`) — how old every saved login is, before it bites.** Each
+  account gets three rows: the CLI token (renewable — `keyflip refresh` / `--schedule` already
+  keep it alive), the desktop app's saved claude.ai sign-in, and each browser's saved sign-in.
+  A claude.ai `sessionKey` lasts a fixed 28 days from the moment a human signed in and **cannot be
+  renewed by any program**, so these rows report the sign-in age and days left (read from the
+  cookie jar's creation/expiry timestamps — never a cookie value). The server can also refuse an
+  older sign-in early with "Sign in again" (`session_stale_relogin` in Claude's `main.log`):
+  keyflip now detects that refusal after a switch and during the nightly refresh, records the
+  refused age under `freshness/` in the state dir, and from then on warns ahead of the youngest
+  age that was ever refused — the threshold is learned, not guessed. The same age shows up as a
+  `keyflip doctor` row ("claude.ai sign-in age") and as a switch-plan warning when the target's
+  saved app sign-in is aging; a switch that lands on the refusal says so and names the fix
+  (sign in once, then `keyflip add <account> --app`).
 - **`keyflip <account> --only cli|app|browser`** (comma-separated) switches just those surfaces:
   `--only cli` swaps the credential in place without closing Claude, `--only app` moves only the
   desktop login, `--only browser` only the claude.ai session.

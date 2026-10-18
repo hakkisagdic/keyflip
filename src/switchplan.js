@@ -80,6 +80,29 @@ function build(facts, opts) {
   // Every surface moves by default; `--only` narrows it (opts.surfaces from the CLI's parser). The
   // legacy `opts.browser === false` still means "not the browser".
   const sf = opts.surfaces || { cli: true, app: true, browser: opts.browser !== false, only: false };
+  // The saved desktop-app sign-in cannot be refreshed (a claude.ai cookie needs a human), so its AGE
+  // is a fact the user should see before relying on it: near its hard 28-day end, or past the age at
+  // which the server has refused one before (the "Sign in again" banner).
+  const age = facts.appSignIn;
+  if (sf.app && facts.appCaptured && age && age.state && age.state !== 'fresh') {
+    const words = {
+      expired: 'has EXPIRED — the app will open on its sign-in screen',
+      expiring: 'expires in ' + Math.max(0, Math.round(age.daysLeft || 0)) + ' day(s)',
+      aging: 'is older than a sign-in claude.ai has refused before — expect "Sign in again"',
+    };
+    push(
+      plan.warns,
+      "the saved app sign-in for '" +
+        facts.target +
+        "' is " +
+        Math.round(age.ageDays) +
+        ' day(s) old and ' +
+        (words[age.state] || age.state) +
+        ' (sign in once in Claude, then `keyflip add ' +
+        facts.target +
+        ' --app`).',
+    );
+  }
   const browserLines = function () {
     if (!sf.browser) {
       if (sf.only) push(plan.skips, 'the browser claude.ai session — left out by --only');

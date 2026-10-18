@@ -596,6 +596,14 @@ const CATALOG = [
     desc: 'Diagnose config, login and endpoint reachability (--history also scans old commits).',
   },
   {
+    name: 'freshness',
+    group: 'maintenance',
+    safe: true,
+    aliases: ['age'],
+    usage: 'keyflip freshness [--json]',
+    desc: 'How old every saved login is: CLI token (renewable) and each claude.ai sign-in (28-day, human-only), plus "Sign in again" detection.',
+  },
+  {
     name: 'scrub-history',
     group: 'maintenance',
     safe: false,

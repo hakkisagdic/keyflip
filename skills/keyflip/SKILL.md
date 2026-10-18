@@ -213,6 +213,7 @@ keyflip secrets [list [--alarms]] | tolerate <path> [--kind K] [--note "..."] | 
 keyflip chains [account] [--tighten [--apply]]   # what each login is MADE of: which store each capture came from, who can renew each part, what is stale / shares one store / is world-readable (MCP: keyflip_chains)
 keyflip refresh [account|--all] [--json]   # revive stored OAuth tokens; REFUSES (changed:false) while a Claude session holds one
 keyflip refresh --schedule [--at 04:30] | --unschedule | --schedule-status   # the same revival nightly, unattended (launchd/cron) — calls no model, spends no quota
+keyflip freshness [--json]    # (alias: age) how old each saved login is: cli token (renewable) + app/browser claude.ai sign-in (fixed 28 days, human-only) + any "Sign in again" (session_stale_relogin) refusal — learns the refused age, reads timestamps never cookie values
 ```
 
 `status` shows the active provider. Switching a provider does NOT change the OAuth

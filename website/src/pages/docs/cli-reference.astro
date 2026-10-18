@@ -184,6 +184,7 @@ import CommandReference from '../../components/CommandReference.astro';
           { cmd: 'keyflip usage --history', desc: 'Per-account usage trend + failover events' },
           { cmd: 'keyflip refresh [account|--all]', desc: 'Revive stored OAuth tokens while no Claude is running them (Anthropic rotates on use)' },
           { cmd: 'keyflip refresh --schedule [--at 04:30] | --unschedule | --schedule-status', desc: 'Put refresh --all on a nightly launchd/cron timer so a 6-day token never dies idle' },
+          { cmd: 'keyflip freshness [--json]', desc: 'How old every saved login is: the renewable CLI token and each claude.ai sign-in (fixed 28 days, human-only); learns the age claude.ai answered with "Sign in again" (alias: age)' },
           { cmd: 'keyflip llm status|set --provider claude|ollama|openai [--model M] | test | off', desc: 'What runs dream/distill/recall — and whose quota it burns; keys are named, never stored' },
           { cmd: 'keyflip usage --providers', desc: 'Usage/limits across other AI tools (CodexBar monitor)' },
           { cmd: 'keyflip post --to <webhook> [--status]', desc: 'Post events to Slack/Discord/webhook' },

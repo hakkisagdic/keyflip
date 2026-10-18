@@ -183,6 +183,7 @@ import CommandReference from '../../../components/CommandReference.astro';
           { cmd: 'keyflip usage --history', desc: 'Hesap başına kullanım trendi + yedekleme olayları' },
           { cmd: 'keyflip refresh [hesap|--all]', desc: 'Hiçbir Claude onları çalıştırmazken kayıtlı OAuth token\'larını canlandır (Anthropic kullanımda rotate eder)' },
           { cmd: 'keyflip refresh --schedule [--at 04:30] | --unschedule | --schedule-status', desc: 'refresh --all\'ı gecelik launchd/cron zamanlayıcısına koy, 6 günlük token boşta ölmesin' },
+          { cmd: 'keyflip freshness [--json]', desc: 'Her kayıtlı giriş ne kadar eski: yenilenebilir CLI token ve her claude.ai girişi (sabit 28 gün, yalnızca insan yeniler); claude.ai\'ın "Sign in again" dediği yaşı öğrenir (takma ad: age)' },
           { cmd: 'keyflip llm status|set --provider claude|ollama|openai [--model M] | test | off', desc: 'dream/distill/recall\'u ne çalıştırır — ve kimin kotasını yakar; anahtarlar adlandırılır, asla saklanmaz' },
           { cmd: 'keyflip usage --providers', desc: 'Diğer AI araçları genelinde kullanım/limitler (CodexBar monitörü)' },
           { cmd: 'keyflip post --to <webhook> [--status]', desc: 'Slack/Discord/webhook\'a olay gönder' },

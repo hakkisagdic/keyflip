@@ -15,6 +15,7 @@ import * as oauth from './oauth.js';
 import * as policy from './policy.js';
 import * as verifymod from './verify.js';
 import * as _browserswitch from './browserswitch.js';
+import * as _sessionage from './sessionage.js';
 
 function safe(fn, d) {
   try {
@@ -58,6 +59,7 @@ async function collect(ctx, name, opts) {
     canManageApp: false,
     browserCaptured: false,
     browsers: null,
+    appSignIn: null,
     needsRefresh: false,
     tokenDead: false,
     policyDenied: null,
@@ -89,6 +91,13 @@ async function collect(ctx, name, opts) {
   f.browserCaptured = safe(function () {
     return chatsession.snapshotsFor(ctx, name).length > 0;
   }, false);
+  // How old the saved app sign-in is (its cookie's creation time, never its value): a claude.ai session
+  // cannot be refreshed, so an old one is the "Sign in again" banner waiting to happen.
+  if (f.appCaptured)
+    f.appSignIn = safe(function () {
+      const t = _sessionage.jarTimes(appauth.profileCookiesPath(ctx, name));
+      return t ? _sessionage.describe(t, { staleAfterDays: _sessionage.staleAfterDays(ctx.configDir) }) : null;
+    }, null);
   // Per-browser: what the default browser leg would do (already on it / restore / skip and why).
   // null = not inspected (the browser was left out, or this platform has no browser leg).
   f.browsers =

@@ -170,7 +170,7 @@ keyflip verify [hesap] [--usage] [--live]  # oraya geçmek ŞİMDİ işe yarar m
 keyflip refresh [hesap|--all] # saklı OAuth tokenları yeniler; bir Claude çalışırken yenilemeyi REDDEDER
                               # (canlı oturumun altında rotasyon bir yüzeyi logout eder)
 keyflip refresh --schedule [--at 04:30] | --unschedule | --schedule-status
-                              # `refresh --all`'ı her gece zamanlayıcıya koy (launchd/cron) — token
+keyflip freshness [--json]    # her kayıtlı giriş ne kadar eski: CLI token + claude.ai girişleri (takma ad: age)                              # `refresh --all`'ı her gece zamanlayıcıya koy (launchd/cron) — token
                               # takvimde ölür, geçiş yaptığın günde değil; boş vaktte gözetimsiz koşar
 keyflip chains [hesap] [--tighten [--apply]]   # bir giriş NEYDEN OLUŞUR: her yakalama hangi depodan
                               # kopyalandı, her parçayı kim yenileyebilir (araç / geçişte keyflip / yeni
@@ -515,6 +515,29 @@ keyflip refresh --unschedule
   bir şey zamanlanınca yeşile döner. MCP tarafında: `keyflip_refresh_schedule` (`action=status|install|
   remove`, `confirm` ister). Zamanlanmış bir yenilemenin *kurtaramayacağı* kısımlar için `keyflip
   chains`'e bak — masaüstü uygulamasının session cookie'si insan ister, hiçbir zamanlayıcı bunu değiştirmez.
+
+### Her giriş ne kadar eski? (`keyflip freshness`)
+
+Bir girişin öbür yarısı yenilenemez: masaüstü uygulamasının ve tarayıcının tuttuğu claude.ai
+`sessionKey`'i **bir insanın giriş yaptığı andan itibaren sabit 28 gün** yaşar, claude.ai daha eskisini
+"Sign in again" ile daha erken de reddedebilir. Bunun bir refresh çağrısı yoktur. keyflip'in
+yapabileceği, onu ölçmek ve canını yakmadan önce uyarmaktır:
+
+```bash
+keyflip freshness            # hesap başına: cli token, uygulama girişi, her tarayıcı girişi — yaş + kalan gün
+keyflip freshness --json     # aynısı, makine okunur (takma ad: keyflip age)
+```
+
+- Yaşlar cookie veritabanının oluşturma/bitiş **zaman damgalarından** okunur (veritabanının özel bir
+  kopyasından); hiçbir cookie değeri okunmaz ya da yazdırılmaz.
+- Uygulama geri yüklenen bir girişe "Sign in again" ile cevap verince (Claude'un `main.log`'unda
+  `session_stale_relogin`), keyflip bunu geçişin hemen ardından ve gecelik `refresh` koşusunda fark eder,
+  o girişin kaç günlük olduğunu durum dizininde `freshness/` altına yazar ve bundan sonra şimdiye kadar
+  reddedilmiş en genç yaşta uyarır. Eşik sabit kodlanmaz, kendi makinenden öğrenilir.
+- Aynı ölçüm `keyflip doctor`'da bir satır (**claude.ai sign-in age**) ve geçiş planında bir uyarı
+  olarak da görünür: geçtiğin hesabın kayıtlı uygulama girişi eskiyorsa plan bunu söyler.
+- Çözüm hep aynıdır ve yalnızca bir insan yapabilir: Claude'da o hesapla bir kez giriş yap, sonra
+  `keyflip add <hesap> --app`.
 
 ### Bir sır geçmişte hâlâ okunabilir mi? (`doctor --history`, `scrub-history`)
 

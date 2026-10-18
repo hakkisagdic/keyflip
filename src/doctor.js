@@ -17,6 +17,7 @@ import * as _chains from './chains.js';
 import * as _memory from './memory.js';
 import * as _profiles from './profiles.js';
 import * as _threads from './threads.js';
+import * as _sessionage from './sessionage.js';
 
 async function probe(url, opts) {
   opts = opts || {};
@@ -70,6 +71,7 @@ async function diagnose(ctx, opts) {
   secretsInGit(ctx, add);
   versioningState(ctx, add);
   appSession(ctx, add, opts);
+  signInAge(ctx, add, opts);
   orphanSessions(ctx, add);
   rebindBackups(ctx, add);
   threadsCheck(ctx, add);
@@ -247,6 +249,77 @@ function appSession(ctx, add, opts) {
       'even though the saved capture is intact',
     'sign in once in Claude (a restore cannot mint that cookie), then `keyflip add` to refresh the capture',
   );
+}
+
+// How OLD is each claude.ai sign-in keyflip would restore? The sessionKey cookie cannot be refreshed
+// by anything but a human sign-in: it dies 28 days after it was minted, and the server refuses an old
+// one earlier ("Sign in again" / session_stale_relogin). So the useful check is its AGE, read from the
+// cookie's creation time (never its value), plus whether the app is latched on that refusal right now.
+// Pure: reports only — `keyflip freshness` is what records a refusal for next time.
+function signInAge(ctx, add, opts) {
+  let r;
+  try {
+    r = _sessionage.report(ctx, opts || {});
+  } catch (e) {
+    return;
+  }
+  const NAME = 'claude.ai sign-in age';
+  if (r.stale && r.stale.stale) {
+    const who = r.stale.profile || 'the account it is on';
+    add(
+      NAME,
+      'warn',
+      'the desktop app is latched on session_stale_relogin — the server called ' +
+        who +
+        "'s sign-in too old (" +
+        String(r.stale.at || '')
+          .slice(0, 16)
+          .replace('T', ' ') +
+        'Z); that is the "Sign in again" banner',
+      'sign in once in Claude' +
+        (r.stale.profile ? ' as ' + r.stale.profile : '') +
+        ', then `keyflip add ' +
+        (r.stale.profile || '<name>') +
+        ' --app` (a cookie cannot be refreshed without you)',
+    );
+    return;
+  }
+  const bad = [];
+  let total = 0;
+  let oldest = null;
+  const look = function (label, e, fix) {
+    if (!e || e.state === 'unreadable' || e.state === 'signed-out') return;
+    total++;
+    if (!oldest || e.ageDays > oldest.ageDays) oldest = e;
+    if (e.state !== 'fresh') bad.push({ text: label + ' ' + e.state + ' (' + _sessionage.fmt(e) + ')', fix: fix });
+  };
+  r.accounts.forEach(function (a) {
+    look(a.name + ' app', a.app, 'sign in as ' + a.name + ' in Claude, then `keyflip add ' + a.name + ' --app`');
+    a.browsers.forEach(function (b) {
+      look(
+        a.name + ' ' + b.browser,
+        b,
+        'sign in as ' + a.name + ' on claude.ai in ' + b.browser + ', then `keyflip browser capture ' + a.name + '`',
+      );
+    });
+  });
+  if (!total) return; // nothing captured with a session — nothing to age
+  const learned =
+    r.staleAfterDays != null ? '; the server refused a ' + r.staleAfterDays + '-day-old sign-in before' : '';
+  if (bad.length) {
+    add(
+      NAME,
+      'warn',
+      bad
+        .map(function (b) {
+          return b.text;
+        })
+        .join('; ') + learned,
+      bad[0].fix + (bad.length > 1 ? '  (see `keyflip freshness` for the rest)' : ''),
+    );
+    return;
+  }
+  add(NAME, true, total + ' saved sign-in(s) fresh — oldest ' + _sessionage.fmt(oldest) + learned);
 }
 
 function orphanSessions(ctx, add) {

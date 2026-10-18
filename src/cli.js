@@ -78,6 +78,7 @@ import * as _sessionmap from './sessionmap.js';
 import * as attrib from './attrib.js';
 import * as _threads from './threads.js';
 import * as _schedule from './schedule.js';
+import * as _sessionage from './sessionage.js';
 import * as _settingsmod from './settings.js';
 import * as _apicredits from './apicredits.js';
 import * as _recall from './recall.js';
@@ -200,6 +201,8 @@ function usage() {
   print("  keyflip speedtest [name]       time a provider's endpoints, pick the fastest");
   print('  keyflip doctor [--history]    diagnose config, login and endpoint reachability');
   print('                                 (--history also scans every blob keyflip ever committed)');
+  print('  keyflip freshness [--json]     how old every saved login is: CLI token + claude.ai sign-ins (28-day,');
+  print('                                 human-only) and any "Sign in again" refusal (alias: age)');
   print("  keyflip test <provider>        fire one real request to check a provider's auth");
   print(
     '  keyflip chains [account] [--tighten [--apply]]   what each login is made of, who can renew each part, and what is stale/shared/world-readable',
@@ -694,8 +697,9 @@ async function cmdSwitch(ctx, rest) {
   }
 
   // Did THIS switch reopen the desktop app? Only then is it worth waiting to see whether
-  // the app came back signed in (see verifyAppRelogin).
-  let appReopened = false;
+  // the app came back signed in (see verifyAppRelogin). Holds the reopen time (epoch ms) — the
+  // stale-sign-in watch reads only log lines written after it.
+  let appReopened = 0;
 
   // The desktop-app-only move (the CLI is left where it is). Used when the CLI is already on the
   // target, and for `--only app`.
@@ -730,7 +734,7 @@ async function cmdSwitch(ctx, rest) {
     if (appRunning) {
       print('Reopening Claude...');
       appctl.openClaude(ctx.platform);
-      appReopened = true;
+      appReopened = Date.now();
     }
     if (!lagApp.ok) {
       return fail("the desktop app's login could not be switched (" + (lagApp.reason || 'failed') + ').');
@@ -879,6 +883,60 @@ async function cmdSwitch(ctx, rest) {
           style.bold('keyflip add ' + name),
       );
     }
+    // The server's OWN verdict on the restored sign-in. A session can be accepted (the jar keeps its
+    // cookie) and still be refused as too old for the app's full scope — the "Sign in again" banner,
+    // logged as session_stale_relogin within seconds of launch. Catch it, and remember the sign-in age
+    // it happened at so the next warning (doctor, freshness, the plan) comes BEFORE the banner.
+    let staleVerdict = null;
+    let staleObs = null;
+    if (appReopened && appl && appl.ok && relogin !== false) {
+      try {
+        staleVerdict = await watchStaleRelogin(ctx, Math.floor(appReopened / 1000) * 1000);
+        if (staleVerdict && staleVerdict.stale)
+          staleObs = _sessionage.noteStale(
+            ctx,
+            Object.assign({}, staleVerdict, {
+              profile: _sessionage.profileForOrg(ctx.configDir, staleVerdict.org) || name,
+            }),
+          );
+      } catch (e) {
+        staleVerdict = null; // advisory — never fail a switch that already landed
+      }
+    }
+    if (staleVerdict && staleVerdict.stale) {
+      print(
+        '  ' +
+          style.warn('⚠') +
+          " claude.ai called the saved sign-in for '" +
+          name +
+          '\' too old for the desktop app (the "Sign in again" banner)' +
+          (staleObs ? ' — it was ' + staleObs.ageDays + ' day(s) old.' : '.'),
+      );
+      print(
+        '     Fix: sign in once in Claude as ' +
+          (em || name) +
+          ' (a claude.ai cookie cannot be refreshed without you), then ' +
+          style.bold('keyflip add ' + name + ' --app') +
+          '. keyflip now warns when a capture reaches that age.',
+      );
+    } else if (appl && appl.ok && !JSON_MODE) {
+      // No refusal (yet) — but say so when the restored sign-in is close to its hard 28-day end.
+      const age = targetAppSignIn(ctx, name);
+      if (age && age.state !== 'fresh')
+        print(
+          '  ' +
+            style.warn('·') +
+            ' the saved app sign-in for ' +
+            name +
+            ' is ' +
+            age.state +
+            ' (' +
+            _sessionage.fmt(age) +
+            ') — sign in again in Claude soon, then ' +
+            style.bold('keyflip add ' + name + ' --app') +
+            '.',
+        );
+    }
     // ---- #38 read-back: prove the switch landed, instead of trusting that the writes returned ok.
     // Re-read the account we just moved to the way its own tools do (verify.js), and compare the CLI
     // credential on disk against the email it should now be. Observation only unless the user asked
@@ -975,6 +1033,10 @@ async function cmdSwitch(ctx, rest) {
       cliSwitched: !!(did && did.cli),
       appSwitched: !!(appl && appl.ok),
       appSignedIn: relogin === null ? undefined : relogin,
+      appStaleRelogin:
+        staleVerdict && staleVerdict.stale
+          ? { at: staleVerdict.at, ageDays: staleObs ? staleObs.ageDays : null }
+          : undefined,
       browser: browserJson(browserRes),
       sessionsShared: (cons && cons.merged) || 0,
       verified: vb ? { state: vb.state, headline: vb.headline, detail: vb.detail || null } : null,
@@ -1059,7 +1121,7 @@ async function cmdSwitch(ctx, rest) {
     const cons = consolidateAndReport(ctx);
     print('Reopening Claude...');
     appctl.openClaude(ctx.platform);
-    appReopened = true;
+    appReopened = Date.now();
     print(style.ok('✅') + ' Switched to: ' + (em || name));
     await emitSwitched(did, appl, cons);
     return;
@@ -10171,6 +10233,132 @@ async function cmdDoctor(ctx, rest) {
     print(style.err('✗') + ' ' + _secretpolicy.FILE_NAME + ': ' + histClass.policyError + ' — no rule was applied.');
 }
 
+// `keyflip freshness [--json]` (alias `age`) — how fresh is every login keyflip would restore?
+//
+// The two credential families age differently, and this command says which is which:
+//   - the CLI OAuth token renews itself (`keyflip refresh`, `--schedule` keeps doing it);
+//   - a claude.ai sign-in (the desktop app's real login, and the browser's) CANNOT be renewed by
+//     anything but a human: it ends 28 days after the sign-in, and the server can call it too old
+//     sooner ("Sign in again"). keyflip measures its age from the cookie's creation time (never its
+//     value) and learns the age at which the server has refused one.
+// The only write: when the app is latched on that refusal right now, the age is recorded (ages only,
+// in <configDir>/freshness/) so later warnings come before the banner.
+async function cmdFreshness(ctx, rest) {
+  const r = _sessionage.report(ctx);
+  let recorded = null;
+  if (r.stale && r.stale.stale) {
+    try {
+      recorded = _sessionage.noteStale(ctx, r.stale);
+    } catch (e) {
+      recorded = null;
+    }
+    if (recorded) r.staleAfterDays = _sessionage.staleAfterDays(ctx.configDir);
+  }
+  let activeEmail = null;
+  try {
+    activeEmail = core.currentEmail(ctx);
+  } catch (e) {
+    activeEmail = null;
+  }
+  const cli = {};
+  r.accounts.forEach(function (a) {
+    const live = !!(activeEmail && profiles.email(ctx.configDir, a.name) === activeEmail);
+    let c;
+    try {
+      c = live ? verifymod.checkLiveCliToken(ctx, {}) : verifymod.checkCliToken(ctx, a.name, {});
+    } catch (e) {
+      c = { state: 'none', detail: 'credential store unreadable' };
+    }
+    cli[a.name] = { live: live, state: c.state, detail: c.detail, refreshable: !!c.refreshable };
+  });
+  if (JSON_MODE) {
+    jsonOut({
+      staleAfterDays: r.staleAfterDays,
+      stale: r.stale,
+      recorded: recorded || undefined,
+      live: r.live,
+      accounts: r.accounts.map(function (a) {
+        return Object.assign({ cli: cli[a.name] }, a);
+      }),
+    });
+    return;
+  }
+  const mark = function (state) {
+    if (state === 'fresh' || state === 'ok') return style.ok('✓');
+    if (state === 'aging' || state === 'expiring' || state === 'warn' || state === 'unreadable') return style.warn('⚠');
+    if (state === 'none' || state === 'signed-out') return style.dim('·');
+    return style.err('✗');
+  };
+  const line = function (label, e) {
+    if (!e) return;
+    const text =
+      e.state === 'unreadable'
+        ? 'could not read the cookie jar'
+        : e.state === 'signed-out'
+          ? 'no claude.ai session'
+          : _sessionage.fmt(e) + (e.state !== 'fresh' ? ' — ' + e.state : '');
+    print('    ' + mark(e.state) + ' ' + (label + '         ').slice(0, 9) + text);
+  };
+  print('keyflip freshness:');
+  print(
+    style.dim(
+      '  the CLI token renews itself (keyflip refresh); a claude.ai sign-in cannot — it lasts 28 days from\n' +
+        '  the moment you signed in, and claude.ai may ask for a new one sooner.',
+    ),
+  );
+  if (r.live.app || r.live.browsers.length) {
+    print('');
+    print('  right now');
+    if (r.live.app) line('app', Object.assign({}, r.live.app));
+    if (r.live.app && r.live.app.profile) print('      ' + style.dim('the desktop app is on ' + r.live.app.profile));
+    r.live.browsers.forEach(function (b) {
+      line(b.browser, b);
+    });
+  }
+  r.accounts.forEach(function (a) {
+    print('');
+    print('  ' + style.bold(a.name) + (cli[a.name].live ? style.dim('  (the CLI is on this one)') : ''));
+    const c = cli[a.name];
+    print(
+      '    ' + mark(c.state) + ' ' + 'cli      ' + (c.state === 'none' ? 'no saved CLI login' : c.detail || c.state),
+    );
+    if (a.app) line('app', a.app);
+    else print('    ' + style.dim('·') + ' app      no saved app login');
+    a.browsers.forEach(function (b) {
+      line(b.browser, b);
+    });
+  });
+  print('');
+  if (r.stale && r.stale.stale)
+    print(
+      '  ' +
+        style.warn('⚠') +
+        ' the desktop app is showing "Sign in again": claude.ai refused ' +
+        (r.stale.profile || 'its') +
+        ' sign-in as too old' +
+        (recorded ? ' (at ' + recorded.ageDays + ' days — recorded)' : '') +
+        '.\n     Fix: sign in once in Claude' +
+        (r.stale.profile ? ' as ' + r.stale.profile : '') +
+        ', then ' +
+        style.bold('keyflip add ' + (r.stale.profile || '<name>') + ' --app') +
+        '.',
+    );
+  print(
+    style.dim(
+      r.staleAfterDays != null
+        ? '  claude.ai has refused a sign-in at ' +
+            r.staleAfterDays +
+            ' days old here — captures at that age are flagged "aging".'
+        : '  no stale-sign-in refusal seen yet; when one happens keyflip records the age and warns before it next time.',
+    ),
+  );
+  const renewable = Object.keys(cli).filter(function (n) {
+    return cli[n].state === 'warn' && cli[n].refreshable;
+  });
+  if (renewable.length)
+    print(style.dim('  renew the CLI token(s) of ' + renewable.join(', ') + ' with: keyflip refresh --all'));
+}
+
 // A history finding is reported as KIND + PATH, never content: the terminal, the log file and any
 // agent reading this output must not become a copy of the secret they are being warned about.
 // `cls` (a secretpolicy.classify() result) adds the toleration verdict — `tolerated` + which rule — so a
@@ -10558,6 +10746,41 @@ async function verifyAppRelogin(ctx, opts) {
     if (last === null) continue; // unreadable (locked jar?) — keep trying
   }
   return last === true;
+}
+
+// After a reopen, watch Claude's log for the server refusing the restored sign-in as too old
+// (session_stale_relogin). Measured: the refusal lands ~2 s after "Starting app", so by the time
+// verifyAppRelogin has polled it is usually there; a couple more short polls cover a slow launch.
+// Returns sessionage.staleRelogin()'s verdict, or null when there is no log to read.
+async function watchStaleRelogin(ctx, since, opts) {
+  opts = opts || {};
+  const nap = opts.sleep || sleep;
+  const read =
+    opts.read ||
+    function () {
+      return _sessionage.staleRelogin(ctx, { since: since });
+    };
+  const polls = typeof opts.polls === 'number' ? opts.polls : 2;
+  const stepMs = typeof opts.stepMs === 'number' ? opts.stepMs : 1500;
+  let v = null;
+  for (let i = 0; i <= polls; i++) {
+    if (i) await nap(stepMs);
+    v = read();
+    if (!v || !v.checked) return null;
+    if (v.stale) return v;
+  }
+  return v;
+}
+
+// The sign-in age of the account's saved desktop-app capture (describe() shape), or null.
+function targetAppSignIn(ctx, name) {
+  try {
+    const t = _sessionage.jarTimes(appauth.profileCookiesPath(ctx, name));
+    if (!t) return null;
+    return _sessionage.describe(t, { staleAfterDays: _sessionage.staleAfterDays(ctx.configDir) });
+  } catch (e) {
+    return null;
+  }
 }
 
 // The saved profile the desktop app's OWN login currently matches (by org uuid).
@@ -11938,6 +12161,24 @@ async function cmdRefresh(ctx, rest) {
   }
   // THE GUARD: rotating a refresh token under a live Claude session logs one surface out, so a
   // refresh is only safe while nothing is holding the credential.
+  // Before it: this is the nightly job, so it is also where the claude.ai side gets LEARNED. A claude.ai
+  // sign-in cannot be refreshed, but if the desktop app is showing "Sign in again" right now, its
+  // sign-in age is recorded (ages only) so freshness/doctor/the switch plan warn before the next one.
+  let staleNoted = null;
+  try {
+    staleNoted = _sessionage.noteStale(ctx, _sessionage.staleRelogin(ctx));
+  } catch (e) {
+    staleNoted = null;
+  }
+  if (staleNoted && !asJson)
+    print(
+      style.warn('·') +
+        ' the desktop app is showing "Sign in again" (' +
+        (staleNoted.profile || 'its account') +
+        ', signed in ' +
+        staleNoted.ageDays +
+        ' days ago) — recorded; see keyflip freshness.',
+    );
   const running = appctl.isClaudeRunning(ctx.platform);
   const instances = appctl.claudeInstances(ctx.home);
   if (running || instances.length) {
@@ -13079,6 +13320,9 @@ async function dispatch(ctx, cmd, rest) {
         return cmdSpeedtest(ctx, rest);
       case 'doctor':
         return cmdDoctor(ctx, rest);
+      case 'freshness':
+      case 'age':
+        return cmdFreshness(ctx, rest);
       case 'scrub-history':
         return cmdScrubHistory(ctx, rest);
       case 'secrets':

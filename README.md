@@ -171,7 +171,7 @@ keyflip verify [acct] [--usage] [--live]   # would switching there WORK right no
 keyflip refresh [acct|--all]  # revive stored OAuth tokens; refuses while a Claude is running them
                               # (rotating one under a live session logs a surface out)
 keyflip refresh --schedule [--at 04:30] | --unschedule | --schedule-status
-                              # put `refresh --all` on a nightly timer (launchd/cron) — tokens expire on
+keyflip freshness [--json]    # how old every saved login is: CLI token + claude.ai sign-ins (alias: age)                              # put `refresh --all` on a nightly timer (launchd/cron) — tokens expire on
                               # the calendar, not on the day you switch; run it unattended while idle
 keyflip chains [acct] [--tighten [--apply]]   # what one login is MADE of: which store each capture was
                               # copied from, who can renew each part (the tool / keyflip on switch / a fresh
@@ -519,6 +519,29 @@ keyflip refresh --unschedule
   green once something is scheduled. Over MCP: `keyflip_refresh_schedule` (`action=status|install|
   remove`, confirm-gated). See `keyflip chains` for the parts of a login that a scheduled refresh
   *cannot* save — a desktop-app session cookie needs a human, and no timer changes that.
+
+### How old is each sign-in? (`keyflip freshness`)
+
+The other half of a login cannot be renewed: the claude.ai `sessionKey` that the desktop app and the
+browser hold lasts a fixed **28 days from the moment a human signed in**, and claude.ai may refuse an
+older one sooner with "Sign in again". No refresh call exists for it. What keyflip can do is measure it
+and warn before it bites:
+
+```bash
+keyflip freshness            # per account: cli token, app sign-in, each browser sign-in — age + days left
+keyflip freshness --json     # the same, machine-readable (alias: keyflip age)
+```
+
+- Ages come from the cookie jar's creation/expiry **timestamps** (read from a private copy of the jar);
+  no cookie value is ever read or printed.
+- When the app answers a restored sign-in with "Sign in again" (`session_stale_relogin` in Claude's
+  `main.log`), keyflip notices it right after the switch and in the nightly `refresh` run, records how old
+  that sign-in was under `freshness/` in the state dir, and warns from then on at the youngest age that
+  was ever refused. The threshold is learned from your own machine, not hardcoded.
+- The same measurement appears as a `keyflip doctor` row (**claude.ai sign-in age**) and in the switch
+  plan, which warns when the account you are switching to has an aging saved app sign-in.
+- The fix is always the same, and only a human can do it: sign in once in Claude as that account, then
+  `keyflip add <account> --app`.
 
 ### Is a secret still readable in the past? (`doctor --history`, `scrub-history`)
 
