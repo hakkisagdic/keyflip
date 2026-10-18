@@ -61,8 +61,8 @@ const CATALOG = [
     name: 'login',
     group: 'accounts',
     safe: false,
-    usage: 'keyflip login [name] [--email x] [--fresh|--manual] [--sso] [--console]',
-    desc: 'Sign in via the official flow and capture it (isolated; current login untouched).',
+    usage: 'keyflip login [name] [--email x] [--fresh|--manual|--long-lived] [--sso] [--console]',
+    desc: 'Sign in via the official flow and capture it (isolated; current login untouched). --long-lived: a one-year CLI token.',
   },
   {
     name: 'logout',
@@ -576,7 +576,7 @@ const CATALOG = [
     name: 'mcp',
     group: 'agents',
     safe: false,
-    usage: 'keyflip mcp [--setup]',
+    usage: 'keyflip mcp [--setup|--register]',
     desc: 'MCP server over stdio for agents (--setup shows the config).',
   },
   {

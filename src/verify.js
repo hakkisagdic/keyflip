@@ -25,6 +25,7 @@ import * as oauth from './oauth.js';
 import * as appauth from './appauth.js';
 import * as chatsession from './chatsession.js';
 import * as profiles from './profiles.js';
+import * as longtoken from './longtoken.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 // A capture older than this is a coin flip: cloudflare/session lifetimes are measured in days, and
@@ -121,13 +122,31 @@ function tokenCheck(label, blob, opts) {
 
 // ---- 1. the CLI credential (the portable, refreshable half) ------------------------------------
 function checkCliToken(ctx, name, opts) {
+  const store = opts.store || ctx.store;
   let blob;
   try {
-    blob = (opts.store || ctx.store).getProfile(name);
+    blob = store.getProfile(name);
   } catch (e) {
     blob = null;
   }
-  return tokenCheck('cli token (stored)', blob, opts);
+  const c = tokenCheck('cli token (stored)', blob, opts);
+  if (c.state !== 'fail' && c.state !== 'none') return c;
+  // The normal login is dead — but a `keyflip login <name> --long-lived` token is what a switch
+  // would hand the CLI instead (longtoken.pick). Report THAT, plus its one limitation.
+  const ll = longtoken.info(store, name, nowMs(opts));
+  if (!ll || !ll.usable) return c;
+  return check(
+    'cli token (stored)',
+    ll.daysLeft !== null && ll.daysLeft < 14 ? 'warn' : 'ok',
+    'one-year --long-lived token, valid ' +
+      (ll.daysLeft === null ? 'with no recorded expiry' : '~' + ll.daysLeft + ' more days') +
+      ' (inference-only: Remote Control / Claude in Chrome still need a full login)',
+    {
+      expiresAt: ll.expiresAt ? ll.expiresAt.slice(0, 16).replace('T', ' ') : null,
+      refreshable: false,
+      longLived: true,
+    },
+  );
 }
 
 // The live credential, when this account is the one the machine is on.

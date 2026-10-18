@@ -35,6 +35,7 @@ import CommandReference from '../../components/CommandReference.astro';
           { cmd: 'keyflip onboard [--manual] [--sso] [--console]', desc: 'Full first-run: sign in per account, point CLI+browser, sync chats' },
           { cmd: 'keyflip setup', desc: 'Lighter wizard: log in, auto-detect & capture new logins' },
           { cmd: 'keyflip login [name] [--email x] [--sso] [--console]', desc: 'Official browser flow, isolated + captured' },
+          { cmd: 'keyflip login <name> --long-lived', desc: 'One browser click for a ONE-YEAR CLI token (inference-only); used when the normal login dies' },
           { cmd: 'keyflip add [name] [--app]', desc: 'Save the currently logged-in account (CLI + desktop app)' },
           { cmd: 'keyflip add [--dry-run]', desc: 'Plan a capture (which account, app session ok?) and write nothing' },
           { cmd: 'keyflip add <name> --token <file|->', desc: 'Headless import of raw credential (CI/provisioning)' },
@@ -220,7 +221,7 @@ import CommandReference from '../../components/CommandReference.astro';
 
       <div id="mcp">
         <CommandReference title="MCP & Skills" commands={[
-          { cmd: 'keyflip mcp [--setup]', desc: 'MCP server over stdio for agents' },
+          { cmd: 'keyflip mcp [--setup|--register]', desc: 'MCP server over stdio for agents (--register: absolute-path self-entry in Claude Code + Desktop)' },
           { cmd: 'keyflip install-skill', desc: 'Install Claude Code skill (~/.claude/skills/keyflip)' },
           { cmd: 'keyflip skill add <repo|dir|tgz>', desc: 'Install any skill from GitHub/dir/file' },
           { cmd: 'keyflip skill list|remove <name>', desc: 'Manage installed skills' },

@@ -12,6 +12,7 @@ import * as _config from '../src/config.js';
 import * as _memory from '../src/memory.js';
 import * as _profiles from '../src/profiles.js';
 import * as _provider from '../src/provider.js';
+import * as _mcpreg from '../src/mcpreg.js';
 import * as _sessionmap from '../src/sessionmap.js';
 import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
@@ -1134,4 +1135,18 @@ test('MCP keyflip_secrets_policy / keyflip_secrets_tolerate: read vs confirm-gat
   assert.strictEqual(removed.ok, true);
   assert.strictEqual(removed.rule.removed.length, 1);
   assert.strictEqual(removed.alarms_now, 1, 'untolerating is instant and complete');
+});
+
+test('mcp --register wires keyflip with absolute paths a GUI launcher can run', function () {
+  const ctx = makeCtx();
+  fs.writeFileSync(ctx.claudeConfigPath, JSON.stringify({ mcpServers: { other: { command: 'x' } } }));
+  const e = _mcpreg.selfEntry();
+  assert.ok(path.isAbsolute(e.command), 'the node binary is an absolute path');
+  assert.ok(path.isAbsolute(e.args[0]), 'the keyflip script is an absolute path');
+  assert.deepStrictEqual(e.args.slice(1), ['mcp']);
+  _mcpreg.add(ctx, 'keyflip', e);
+  assert.strictEqual(_mcpreg.setEnabled(ctx, 'keyflip', 'claude-code', true), 'applied');
+  const cfg = JSON.parse(fs.readFileSync(ctx.claudeConfigPath, 'utf8'));
+  assert.deepStrictEqual(cfg.mcpServers.keyflip, e);
+  assert.deepStrictEqual(cfg.mcpServers.other, { command: 'x' }, 'other servers are untouched');
 });

@@ -11,6 +11,7 @@ import * as _exec from './exec.js';
 import * as _claude from './claude.js';
 import * as _profiles from './profiles.js';
 import * as _core from './core.js';
+import * as _longtoken from './longtoken.js';
 import _os from 'os';
 import _readline from 'readline';
 
@@ -312,6 +313,135 @@ function cliLogout(ctx) {
   return true;
 }
 
+// Open a URL in the default browser. The URL carries only a PKCE challenge + state, never a secret,
+// so argv is fine here. Windows: rundll32, because `cmd /c start` splits the query string on `&`.
+function openUrl(ctx, url, run) {
+  const r = run || _exec.run;
+  const p = ctx.platform;
+  try {
+    if (p === 'darwin') r('/usr/bin/open', [url]);
+    else if (p === 'win32') r('rundll32', ['url.dll,FileProtocolHandler', url]);
+    else r('xdg-open', [url]);
+  } catch (e) {
+    /* the printed URL is the fallback */
+  }
+}
+
+// `keyflip login [name] --long-lived [--email x]` — mint a one-year inference-only CLI token for an
+// account (longtoken.js) and file it where a switch will find it. One browser "Authorize" click.
+//   * The account's expected identity comes from its saved profile (or --email); a token for anyone
+//     else is refused before it is stored.
+//   * It always goes into the `longlived__<name>` slot. It ALSO replaces the normal slot when that is
+//     missing or dead for good (no refresh token) — a dead login is worth nothing, and every reader
+//     that only looks at the normal slot then sees a working CLI credential.
+//   * If this account is the one the machine is on and its live credential is dead, the live item is
+//     replaced too, so the CLI works right now without a switch.
+// Resolves { name, email, expiresAt, status:'added'|'updated', replacedProfile, replacedLive }.
+// opts: { name, email, open(url), print(url), mint (test seam), now }
+async function performLongLived(ctx, opts) {
+  opts = opts || {};
+  const longtoken = _longtoken;
+  const profiles = _profiles;
+  const core = _core;
+  const now = opts.now !== undefined ? opts.now : Date.now();
+  let name = opts.name || null;
+  let meta = name ? profiles.read(ctx.configDir, name) : null;
+  if (!meta && opts.email) {
+    profiles.list(ctx.configDir).forEach(function (n) {
+      if (!meta && (profiles.email(ctx.configDir, n) || '').toLowerCase() === opts.email.toLowerCase()) {
+        meta = profiles.read(ctx.configDir, n);
+        name = n;
+      }
+    });
+  }
+  const metaEmail = (meta && meta.email) || '';
+  if (opts.email && metaEmail && metaEmail.toLowerCase() !== opts.email.toLowerCase()) {
+    const e = new Error("profile '" + name + "' belongs to " + metaEmail + ', not ' + opts.email);
+    e.code = 'name-taken';
+    throw e;
+  }
+  const want = metaEmail || opts.email || null;
+  const org = (meta && meta.oauthAccount && meta.oauthAccount.organizationUuid) || null;
+  let prev = null;
+  if (meta)
+    try {
+      prev = ctx.store.getProfile(name);
+    } catch (e) {
+      prev = null;
+    }
+  const res = await (opts.mint || longtoken.mint)({
+    email: want,
+    org: org,
+    prev: prev,
+    open: opts.open,
+    print: opts.print,
+    now: now,
+  });
+  // No profile matched up front (bare `--long-lived` or a new name): the token says who it is.
+  if (!meta) {
+    const em = res.email || '';
+    profiles.list(ctx.configDir).forEach(function (n) {
+      if (!meta && em && (profiles.email(ctx.configDir, n) || '').toLowerCase() === em.toLowerCase()) {
+        meta = profiles.read(ctx.configDir, n);
+        name = n;
+      }
+    });
+    if (!meta) {
+      name = name || core.autoName(ctx, em);
+      if (!profiles.isValidName(name)) throw new Error("invalid profile name: '" + name + "'");
+      if (profiles.exists(ctx.configDir, name) && profiles.email(ctx.configDir, name) !== em) {
+        const e = new Error("profile '" + name + "' already exists for a different account — pass a name");
+        e.code = 'name-taken';
+        throw e;
+      }
+    }
+  }
+  const status = meta ? 'updated' : 'added';
+  ctx.store.setProfile(longtoken.storeName(name), res.blob);
+  let cur = null;
+  try {
+    cur = ctx.store.getProfile(name);
+  } catch (e) {
+    cur = null;
+  }
+  const replacedProfile = !cur || longtoken.isDead(cur, now);
+  if (replacedProfile) ctx.store.setProfile(name, res.blob);
+  if (!meta) {
+    const oa = {};
+    if (res.org) oa.organizationUuid = res.org;
+    if (res.email) oa.emailAddress = res.email;
+    profiles.write(ctx.configDir, {
+      name: name,
+      email: res.email || '',
+      oauthAccount: oa,
+      userID: '',
+      savedAt: ctx.now(),
+    });
+  }
+  let replacedLive = false;
+  const liveEmail = core.currentEmail(ctx);
+  if (res.email && liveEmail && liveEmail.toLowerCase() === res.email.toLowerCase()) {
+    let live = null;
+    try {
+      live = ctx.store.getLive();
+    } catch (e) {
+      live = undefined; // locked: do not touch what we cannot read
+    }
+    if (live !== undefined && (!live || longtoken.isDead(live, now))) {
+      ctx.store.setLive(res.blob);
+      replacedLive = true;
+    }
+  }
+  return {
+    name: name,
+    email: res.email,
+    expiresAt: res.expiresAt,
+    status: status,
+    replacedProfile: replacedProfile,
+    replacedLive: replacedLive,
+  };
+}
+
 export {
   buildLoginArgs,
   isoKeychainService,
@@ -324,4 +454,6 @@ export {
   captureFromIso,
   extractCode,
   cliLogout,
+  openUrl,
+  performLongLived,
 };

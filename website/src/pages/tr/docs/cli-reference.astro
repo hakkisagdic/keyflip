@@ -34,6 +34,7 @@ import CommandReference from '../../../components/CommandReference.astro';
           { cmd: 'keyflip onboard [--manual] [--sso] [--console]', desc: 'Tam ilk çalıştırma: hesap başına giriş, CLI+tarayıcıyı yönlendir, sohbetleri senkronize et' },
           { cmd: 'keyflip setup', desc: 'Hafif sihirbaz: giriş yap, yeni girişleri otomatik algıla ve yakala' },
           { cmd: 'keyflip login [isim] [--email x] [--sso] [--console]', desc: 'Resmi tarayıcı akışı, izole + yakalanmış' },
+          { cmd: 'keyflip login <isim> --long-lived', desc: 'Tek tarayıcı tıkyla BİR YILLIK CLI token (yalnız çıkarım); normal giriş ölünce o kullanılır' },
           { cmd: 'keyflip add [isim] [--app]', desc: 'Şu anda giriş yapılmış hesabı kaydet (CLI + masaüstü uygulaması)' },
           { cmd: 'keyflip add [--dry-run]', desc: 'Yakalamayı planla (hangi hesap, uygulama oturumu tamam mı?) ve hiçbir şey yazma' },
           { cmd: 'keyflip add <isim> --token <dosya|->', desc: 'Ham kimlik bilgisini başlıksız içeri aktar (CI/sağlamacılık)' },
@@ -219,7 +220,7 @@ import CommandReference from '../../../components/CommandReference.astro';
 
       <div id="mcp">
         <CommandReference title="MCP ve Beceriler" commands={[
-          { cmd: 'keyflip mcp [--setup]', desc: 'Ajanlar için stdio üzerinden MCP sunucusu' },
+          { cmd: 'keyflip mcp [--setup|--register]', desc: 'Ajanlar için stdio üzerinden MCP sunucusu (--register: mutlak yollu kendi kaydı)' },
           { cmd: 'keyflip install-skill', desc: 'Claude Code becerisini kur (~/.claude/skills/keyflip)' },
           { cmd: 'keyflip skill add <repo|dir|tgz>', desc: 'GitHub/dizin/dosyadan beceri kur' },
           { cmd: 'keyflip skill list|remove <isim>', desc: 'Kurulu becerileri yönet' },

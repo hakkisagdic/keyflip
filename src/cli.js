@@ -39,6 +39,7 @@ import * as proxy from './proxy.js';
 import * as uninstallmod from './uninstall.js';
 import * as exec from './exec.js';
 import * as loginmod from './login.js';
+import * as longtoken from './longtoken.js';
 import * as _styleModule from './style.js';
 import * as _browser from './browser.js';
 import * as _browserswitch from './browserswitch.js';
@@ -179,6 +180,9 @@ function usage() {
   print('                                 official flow and capture it (isolated — current login NOT');
   print('                                 disturbed; --fresh clears the browser first; --manual pastes');
   print('                                 the code/URL; --sso = enterprise SSO; --console = Console acct)');
+  print('  keyflip login <name> --long-lived   one browser click for a ONE-YEAR CLI token (setup-token');
+  print('                                 flow); switches use it when the normal login is dead.');
+  print('                                 Inference-only: Remote Control / Claude in Chrome need a full login');
   print('  keyflip logout [--browser] [--desktop] [--close]   sign OUT of the live session(s) — saved accounts kept');
   print('  keyflip add [name] [--app]    save the account(s) you are logged into — Claude Code');
   print('                                 AND the desktop app, auto-detected. Once per account.');
@@ -410,7 +414,8 @@ function usage() {
   print('                                 --force for scripts; NEVER pass the token as an argument)');
   print('  keyflip export [file|-]       back up saved accounts to a file (contains secrets!)');
   print('  keyflip import <file|->       restore accounts from an export (--force overwrites)');
-  print('  keyflip mcp [--setup]         MCP server over stdio for agents (--setup shows config)');
+  print('  keyflip mcp [--setup|--register]  MCP server over stdio for agents (--register wires it');
+  print('                                 into Claude Code + Desktop with absolute paths)');
   print('  keyflip install-skill         install the Claude Code skill that teaches agents keyflip');
   print('  keyflip upgrade               update keyflip itself (auto-detects install method)');
   print('  keyflip reset [--soft] [--logout [--no-desktop]]   FACTORY reset: DELETE all keyflip data');
@@ -814,6 +819,8 @@ async function cmdSwitch(ctx, rest) {
       },
     });
     if (r.status === 'refreshed') print('  ↳ refreshed the saved OAuth token (was expiring).');
+    else if (r.status === 'long-lived')
+      print("  ↳ the saved login is dead — handing the CLI this account's one-year token instead (inference-only).");
     else if (r.status === 'refresh-failed')
       print('  ⚠️ the saved token is expiring and could not be refreshed — you may be asked to log in.');
     else if (r.status === 'persist-failed') {
@@ -3054,15 +3061,35 @@ function cmdSurfaces(ctx, rest) {
 
 // MCP server (stdio) so agents can inspect/switch accounts themselves.
 async function cmdMcp(ctx, rest) {
+  if (rest.indexOf('--register') !== -1) {
+    // Write keyflip's own server entry (absolute node + script paths) into the registry and enable
+    // it on every Anthropic surface whose config exists. Idempotent; other servers are untouched.
+    mcpreg.add(ctx, 'keyflip', mcpreg.selfEntry());
+    const done = [];
+    ['claude-code', 'claude-desktop'].forEach(function (s) {
+      try {
+        const r = mcpreg.setEnabled(ctx, 'keyflip', s, true);
+        if (r === 'applied') done.push(s);
+      } catch (e) {
+        /* surface config unreadable — leave it alone */
+      }
+    });
+    if (JSON_MODE) return jsonOut({ registered: done });
+    print(style.ok('✅') + ' keyflip MCP server registered' + (done.length ? ' on: ' + done.join(', ') : ''));
+    print(style.dim('  absolute paths — works from GUI launchers with a minimal $PATH. Reconnect it in the app.'));
+    return 0;
+  }
   if (rest.indexOf('--setup') !== -1) {
-    print('Add keyflip as an MCP server:');
+    const self = mcpreg.selfEntry();
+    print('Add keyflip as an MCP server (or just run: ' + style.bold('keyflip mcp --register') + '):');
     print('');
     print('  Claude Code (CLI):');
-    print('    claude mcp add keyflip -- keyflip mcp');
+    print('    claude mcp add keyflip -- ' + self.command + ' ' + self.args.join(' '));
     print('');
     print('  Or in .mcp.json / mcp.json:');
-    print(JSON.stringify({ mcpServers: { keyflip: { command: 'keyflip', args: ['mcp'] } } }, null, 2));
+    print(JSON.stringify({ mcpServers: { keyflip: self } }, null, 2));
     print('');
+    print(style.dim('  Absolute paths on purpose: a bare `keyflip` is invisible to GUI launchers (minimal $PATH).'));
     print(mcp.TOOLS.length + ' tools cover the full surface — accounts (status/list/switch/next/add/account_remove),');
     print('providers, sessions (sessions/resume/archive/distill), migrate + transfer, the FLEET control');
     print('plane (fleet_status/switch/send_account/collect/keys/trust), other-agent memory (agents),');
@@ -11080,6 +11107,69 @@ async function cmdAdd(ctx, rest) {
   if (anyIncomplete) print("Tip: 'keyflip list' shows what each account has captured ([cli|app]).");
 }
 
+// `keyflip login [name] --long-lived [--email x]` — one browser "Authorize" for a ONE-YEAR Claude
+// Code token (the `claude setup-token` flow), stored beside the account's normal login. The token
+// never reaches the screen: only the account and the expiry date are printed.
+async function cmdLoginLongLived(ctx, name, email) {
+  if (name && !profiles.exists(ctx.configDir, name) && !email)
+    return fail("no saved account '" + name + "' — pass --email for a new one, or see: keyflip list");
+  print(style.bold('keyflip login --long-lived') + ' — a one-year CLI token, one browser click.');
+  print(
+    'A browser will open' +
+      (name || email ? ' for ' + style.bold(name || email) : '') +
+      '. It must be signed into claude.ai as that account — then click ' +
+      style.bold('Authorize') +
+      '.',
+  );
+  let res;
+  try {
+    res = await loginmod.performLongLived(ctx, {
+      name: name,
+      email: email,
+      open: function (url) {
+        loginmod.openUrl(ctx, url);
+      },
+      print: function (url) {
+        print(style.dim("browser didn't open? open this URL: ") + url + '\n');
+      },
+    });
+  } catch (e) {
+    logmod.log('login --long-lived failed: ' + (e.code || 'error'));
+    if (e.code === 'mismatch')
+      return fail(
+        e.message +
+          ' — nothing was saved.\nFix: sign that browser into claude.ai as the right account (' +
+          style.bold('keyflip browser logout') +
+          ' clears it), then retry.',
+      );
+    if (e.code === 'timeout') return fail('no authorization arrived within 10 minutes — nothing was saved.');
+    return fail(e.message + ' — nothing was saved.');
+  }
+  logmod.log('login --long-lived ' + res.status + ' ' + res.name);
+  print(
+    '\n' +
+      style.ok('✅') +
+      ' ' +
+      style.bold(res.name) +
+      (res.email ? ' (' + res.email + ')' : '') +
+      ' — one-year CLI token stored, valid until ' +
+      style.bold(String(res.expiresAt).slice(0, 10)) +
+      '.',
+  );
+  if (res.replacedProfile) print('   its normal login was dead, so switches now hand the CLI this token.');
+  else print('   its normal login still works; this token takes over when that one dies.');
+  if (res.replacedLive) print('   this is the account the machine is on — the CLI uses it right now.');
+  print(
+    style.dim(
+      '   inference-only: chat, code and tools work; Remote Control and Claude in Chrome still need `keyflip login ' +
+        res.name +
+        '`.',
+    ),
+  );
+  print(style.dim('   check it any time: keyflip verify ' + res.name));
+  return 0;
+}
+
 // `keyflip login [name] [--email x] [--console] [--sso]` — sign in to an account
 // via the OFFICIAL `claude auth login`, in an ISOLATED CLAUDE_CONFIG_DIR so the
 // user's real login is never disturbed, then capture the freshly-minted token as
@@ -11119,6 +11209,8 @@ async function cmdLogin(ctx, rest) {
         );
     });
   }
+
+  if (rest.indexOf('--long-lived') !== -1) return cmdLoginLongLived(ctx, name, email);
 
   print(style.bold('keyflip login') + ' — sign in to a Claude account (your current login stays put).');
   print(
@@ -12223,6 +12315,7 @@ async function cmdRefresh(ctx, rest) {
     refreshed: style.ok('✓'),
     fresh: style.ok('✓'),
     skipped: style.dim('—'),
+    'long-lived': style.ok('✓'),
     'refresh-failed': style.err('✗'),
     'persist-failed': style.err('✗'),
   };
@@ -12230,7 +12323,8 @@ async function cmdRefresh(ctx, rest) {
     refreshed: 'token was expiring — refreshed and saved (the rotated refresh token is stored)',
     fresh: 'token still valid, nothing to do',
     skipped: 'no credential stored for this account',
-    'refresh-failed': 'COULD NOT REFRESH — this account needs a real login',
+    'long-lived': 'normal login is dead, but its one-year --long-lived token covers the CLI (inference-only)',
+    'refresh-failed': 'COULD NOT REFRESH — this account needs a real login (or: keyflip login <name> --long-lived)',
     'persist-failed': 'refreshed but NOT saved — the stored refresh token is now STALE, re-capture it',
   };
   results.forEach(function (r) {
@@ -12467,6 +12561,11 @@ function wipeKeyflipData(ctx) {
       ctx.store.delProfile(n);
     } catch (e) {
       /* keychain locked / already gone */
+    }
+    try {
+      ctx.store.delProfile(longtoken.storeName(n));
+    } catch (e) {
+      /* none stored */
     }
   });
   try {

@@ -650,7 +650,7 @@ function tokenRenewalCheck(ctx, add) {
     'token renewal',
     'warn',
     accounts.length + ' saved account(s) and nothing renews their tokens',
-    'keyflip refresh --schedule — an unused token expires (~6 days) and only a human sign-in revives it; `keyflip verify` shows which are already dead',
+    'keyflip refresh --schedule — an unused token expires (~6 days) and only a human sign-in revives it (or a one-year token: keyflip login <name> --long-lived); `keyflip verify` shows which are already dead',
   );
 }
 

@@ -5,6 +5,7 @@ import * as claude from './claude.js';
 import * as profiles from './profiles.js';
 import * as _stores from './stores/index.js';
 import * as _log from './log.js';
+import * as _longtoken from './longtoken.js';
 
 /**
  * Get the email of the currently logged-in Claude account.
@@ -133,7 +134,9 @@ function validateBlob(name, blob) {
 function applyProfile(ctx, name) {
   const meta = profiles.read(ctx.configDir, name);
   if (!meta) throw new Error("no such profile: '" + name + "'");
-  const blob = ctx.store.getProfile(name);
+  // The normal login while it is alive or refreshable; the account's one-year `--long-lived` token
+  // when the normal login is dead for good (expired, no refresh token). See longtoken.js.
+  const blob = _longtoken.pick(ctx.store, name).blob; // ctx.now() is an ISO string, not ms: wall clock
   if (!blob) throw new Error("profile '" + name + "' has no stored credentials");
   validateBlob(name, blob);
   const cfg = /** @type {any} */ (claude.loadForWrite(ctx.claudeConfigPath)); // {} if missing, throws if corrupt
@@ -222,7 +225,9 @@ function doSwitch(ctx, name) {
  * @returns {{ cli: boolean }} Whether the CLI login was switched.
  */
 function performSwitch(ctx, name) {
-  const hasCli = !!ctx.store.getProfile(name);
+  // getProfile still throws on a locked keychain (that must not read as "no CLI login"); a profile
+  // whose only CLI credential is a `--long-lived` token still counts as having one.
+  const hasCli = !!ctx.store.getProfile(name) || !!_longtoken.pick(ctx.store, name).blob;
   if (hasCli) doSwitch(ctx, name);
   else refreshCurrent(ctx, name); // still preserve the current CLI account's tokens
   // The ONE canonical "this account is now live" record. Switches reach here from the CLI, the
@@ -267,6 +272,11 @@ function resolveProfile(ctx, arg) {
  */
 function removeProfile(ctx, name) {
   ctx.store.delProfile(name);
+  try {
+    ctx.store.delProfile(_longtoken.storeName(name)); // its one-year token, if it had one
+  } catch (e) {
+    /* none stored / keychain locked — the profile itself is already gone */
+  }
   profiles.remove(ctx.configDir, name);
 }
 

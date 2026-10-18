@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`keyflip login <account> --long-lived` — a ONE-YEAR CLI token per account.** Mints it with the
+  same official OAuth flow `claude setup-token` uses (one browser Authorize click), stores it in the
+  credential store as `longlived__<account>` and NEVER prints it. A switch hands the CLI the normal
+  login while it is alive or refreshable, and the one-year token when that login is dead for good —
+  the failure mode where `keyflip verify` said "needs a real login" and nothing else could help.
+  `verify`, `refresh --all` and `doctor` now report it; removing an account removes its token too.
+  Trade-off, printed at mint time: the token is INFERENCE-ONLY — chat, code and tools work; Remote
+  Control and Claude in Chrome still need a full `keyflip login`. Verified live: Claude Code accepts
+  the inference-only credential from the Keychain item.
+- **`keyflip mcp --register` — self-registration with absolute paths.** A bare `keyflip` command in
+  an MCP server entry only works for launchers whose `$PATH` includes it; GUI apps (Claude
+  Desktop/Code) inherit launchd's minimal PATH, and an fnm node switch silently drops global bins —
+  both produced "Executable not found in $PATH". `--register` writes the running node binary +
+  script paths into Claude Code and the desktop config; `--setup` now prints the same absolute
+  entry.
+
 ### Changed
 
 - **`keyflip <account>` now moves EVERY surface by default — CLI, desktop app AND the browser's

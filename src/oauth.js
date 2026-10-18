@@ -70,7 +70,29 @@ async function refreshBlob(blob, opts) {
 // Refresh profile <name>'s stored token if it's expiring — but ONLY when no live
 // Claude instance owns the credential (rotating the refresh token under a live
 // session would log one of them out). Returns:
-//   {status:'skipped'|'fresh'|'refreshed'|'refresh-failed'|'persist-failed'}
+//   {status:'skipped'|'fresh'|'refreshed'|'long-lived'|'refresh-failed'|'persist-failed'}
+// A normal login that is dead for good (expired, no refresh token) is not a failure when the account
+// also holds a usable `keyflip login --long-lived` token: the switch hands the CLI that one instead
+// (longtoken.pick). Read inline rather than importing longtoken.js, which imports this module.
+function longLivedCovers(ctx, name, blob, nowMs) {
+  const now = nowMs !== undefined ? nowMs : Date.now();
+  let o = null,
+    ll = null;
+  try {
+    o = (JSON.parse(blob) || {}).claudeAiOauth || null;
+  } catch (e) {
+    o = null;
+  }
+  if (o && typeof o.refreshToken === 'string' && o.refreshToken) return false; // refreshable: not dead
+  try {
+    ll = ctx.store.getProfile('longlived__' + name);
+    ll = ll ? (JSON.parse(ll) || {}).claudeAiOauth || null : null;
+  } catch (e) {
+    ll = null;
+  }
+  return !!(ll && ll.accessToken && (typeof ll.expiresAt !== 'number' || ll.expiresAt > now));
+}
+
 async function maybeRefreshProfile(ctx, name, opts) {
   opts = opts || {};
   const isRunning =
@@ -93,7 +115,8 @@ async function maybeRefreshProfile(ctx, name, opts) {
   if (!blob) return { status: 'skipped' };
   if (!isExpiring(blob, opts.nowMs)) return { status: 'fresh' };
   const fresh = await refreshBlob(blob, opts);
-  if (!fresh) return { status: 'refresh-failed' };
+  if (!fresh)
+    return longLivedCovers(ctx, name, blob, opts.nowMs) ? { status: 'long-lived' } : { status: 'refresh-failed' };
   try {
     ctx.store.setProfile(name, fresh);
   } catch (e) {

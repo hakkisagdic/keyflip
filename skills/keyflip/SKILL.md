@@ -56,6 +56,13 @@ login and stores it. Two ways:
   OAuth uses the browser's current claude.ai session, so if the browser is signed
   into a different account, keyflip captures THAT and warns (mismatch) — the user
   must sign the browser into the target account first (see `keyflip browser`).
+- **`keyflip login <name> --long-lived`** — mints a ONE-YEAR Claude Code token with the
+  same official flow `claude setup-token` uses (one browser Authorize click; the browser
+  must be signed into claude.ai as that account). Stored in the Keychain as
+  `longlived__<name>`, never printed. A switch hands the CLI the normal login while it is
+  alive or refreshable, and this token when that login is dead for good (expired, no
+  refresh token). The token is INFERENCE-ONLY: chat/code/tools work; Remote Control and
+  Claude in Chrome still need a full login. `keyflip verify` shows its remaining days.
   For an **enterprise / SSO** account add `--sso` (drives `claude auth login --sso`,
   handling the org picker); `--console` captures a Console (API) account. Both flags
   also work on `keyflip onboard` (they apply to every OAuth sign-in in that run).

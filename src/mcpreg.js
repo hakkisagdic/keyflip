@@ -131,4 +131,18 @@ function importLive(ctx) {
   return imported;
 }
 
-export { list, add, remove, setEnabled, importLive, readReg, entryFor, desktopConfigPath };
+// The entry for keyflip's OWN MCP server, in absolute paths. A bare `keyflip` command only works for
+// launchers whose $PATH happens to include it — a GUI app (Claude Desktop/Code) inherits launchd's
+// minimal PATH and reports "Executable not found in $PATH", and an fnm node switch silently drops a
+// global install. The node binary running THIS process plus the script it is running always exist.
+function selfEntry() {
+  let bin = process.argv[1] || '';
+  try {
+    bin = fs.realpathSync(bin);
+  } catch (e) {
+    /* keep the raw path */
+  }
+  return { command: process.execPath, args: [bin, 'mcp'], env: {} };
+}
+
+export { list, add, remove, setEnabled, importLive, readReg, entryFor, desktopConfigPath, selfEntry };

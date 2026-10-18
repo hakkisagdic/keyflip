@@ -138,6 +138,8 @@ keyflip onboard [--manual] [--sso] [--console]   # full first-run: sign in per a
                               #   at it, sync chats, ask for the next ("p" = API-key provider; --sso = enterprise)
 keyflip setup                 # lighter: log in in Claude, keyflip auto-detects & captures
 keyflip login [name] [--email x] [--sso] [--console]   # official browser flow, isolated + captured (--sso = enterprise)
+keyflip login <name> --long-lived   # one browser click for a ONE-YEAR CLI token (inference-only);
+                              #   switches use it when the account's normal login is dead for good
 keyflip add [name] [--app] [--dry-run]   # save the logged-in account(s) — CLI + desktop app (--dry-run = plan only)
 keyflip browser [status|logout|sync]   # check/reset/restore the browser claude.ai account (extension)
 keyflip <name|number>         # switch EVERY surface to that account — CLI, desktop app and the

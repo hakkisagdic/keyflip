@@ -137,6 +137,8 @@ keyflip onboard [--manual] [--sso] [--console]   # tam ilk-kurulum: hesap başı
                               #   hizala, chatleri eşitle, sıradakini sor ("p" = API-key provider; --sso = kurumsal)
 keyflip setup                 # hafif: Claude'da giriş yap, keyflip algılayıp yakalar
 keyflip login [ad] [--email x] [--sso] [--console]   # resmi tarayıcı akışı, izole + yakala (--sso = kurumsal)
+keyflip login <ad> --long-lived   # tek tarayıcı tıkıyla BİR YILLIK CLI token'ı (yalnız çıkarım);
+                              #   hesabın normal girişi tamamen ölünce geçişler bunu kullanır
 keyflip add [ad] [--app] [--dry-run]   # girişli hesap(lar)ı kaydet — CLI + masaüstü uygulaması (--dry-run = yalnız plan)
 keyflip browser [status|logout|sync]   # tarayıcı claude.ai hesabını kontrol/sıfırla/geri yükle (uzantı)
 keyflip <ad|numara>           # TÜM yüzeyleri o hesaba geçirir — CLI, masaüstü uygulaması ve
