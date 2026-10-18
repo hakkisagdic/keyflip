@@ -361,7 +361,7 @@ test('origin-auth: a genuine signed command from a pinned peer passes checkOrigi
     type: 'switch',
     payload: { account: 'work' },
   });
-  const rec = fleet.reconcileKeys(B, fleet.readFleet(B, busOf(B, dir))); // B pins A's key (first sight)
+  const rec = fleet.reconcileKeys(B, fleet.readFleet(B, busOf(B, dir)), { pinNew: true }); // explicit pin
   assert.ok(rec.firstSeen.indexOf(fleet.identity(A).machineId) !== -1);
   const origin = fleet.checkOrigin(B, cmd, rec);
   assert.ok(origin.ok, origin.reason);
@@ -384,7 +384,7 @@ test('origin-auth: a FORGED command (attacker key, claims from=alpha) is REJECTE
     payload: { account: 'work' },
   };
   fleet.signCommand(evil, forged); // attacker has the passphrase + folder write, but only THEIR key
-  const rec = fleet.reconcileKeys(B, fleet.readFleet(B, busOf(B, dir)));
+  const rec = fleet.reconcileKeys(B, fleet.readFleet(B, busOf(B, dir)), { pinNew: true }); // pin A first
   const origin = fleet.checkOrigin(B, forged, rec);
   assert.ok(!origin.ok && /verify/.test(origin.reason), "forgery does not verify against alpha's pinned key");
 });
@@ -415,7 +415,7 @@ test('origin-auth: a pinned key that CHANGES is flagged as a conflict and its co
     B = machine('beta', dir);
   const aId = fleet.identity(A).machineId;
   fleet.publish(A, busOf(A, dir), {});
-  let rec = fleet.reconcileKeys(B, fleet.readFleet(B, busOf(B, dir)));
+  let rec = fleet.reconcileKeys(B, fleet.readFleet(B, busOf(B, dir)), { pinNew: true });
   assert.strictEqual(rec.conflicts.length, 0, 'first sight pins cleanly');
   // A re-keys (fresh install / reset): drop its key file and republish with a new key.
   fs.unlinkSync(path.join(A.configDir, 'fleet-key.json'));
@@ -449,7 +449,7 @@ test('origin-auth: a command signed FOR one machine is REJECTED when replayed in
   });
   // Replayed verbatim into C's inbox: C pins A's real key, the signature is genuine — but it was
   // addressed to B, so C must reject it.
-  const recC = fleet.reconcileKeys(C, fleet.readFleet(C, busOf(C, dir)));
+  const recC = fleet.reconcileKeys(C, fleet.readFleet(C, busOf(C, dir)), { pinNew: true });
   const onC = fleet.checkOrigin(C, cmd, recC);
   assert.ok(!onC.ok && /addressed/.test(onC.reason), 'a command signed for B is not valid on C');
   assert.ok(
@@ -464,7 +464,7 @@ test('origin-auth: a command signed FOR one machine is REJECTED when replayed in
   const tampered = Object.assign({}, cmd, { to: fleet.identity(C).machineId });
   assert.ok(!fleet.checkOrigin(C, tampered, recC).ok, 'rewriting the recipient invalidates the signature');
   // Sanity: the untouched command IS valid on its intended target B.
-  const recB = fleet.reconcileKeys(B, fleet.readFleet(B, busOf(B, dir)));
+  const recB = fleet.reconcileKeys(B, fleet.readFleet(B, busOf(B, dir)), { pinNew: true });
   assert.ok(fleet.checkOrigin(B, cmd, recB).ok, 'the same command is valid on its intended target B');
 });
 
@@ -473,7 +473,7 @@ test('fleet keys: keyReport shows ok / CHANGED / offline per machine (auditabili
   const A = machine('alpha', dir),
     B = machine('beta', dir);
   fleet.publish(A, busOf(A, dir), {});
-  fleet.reconcileKeys(B, fleet.readFleet(B, busOf(B, dir))); // B pins A
+  fleet.reconcileKeys(B, fleet.readFleet(B, busOf(B, dir)), { pinNew: true }); // B pins A
   let rep = fleet.keyReport(B, fleet.readFleet(B, busOf(B, dir)));
   const a1 = rep.find(function (r) {
     return r.name === 'alpha';
@@ -534,4 +534,95 @@ test('P1 DNS-rebinding: the fleet panel rejects a non-loopback Host header', asy
   } finally {
     h.server.close();
   }
+});
+
+// ============================================================================
+// Pairing + trust policy (#60/#61): a machine is NEVER trusted on first sight. Publishing into the
+// folder only makes a peer VISIBLE (pending); trust requires an invite code or an explicit `trust`.
+// ============================================================================
+test('trust policy: a newly-published peer is PENDING, not pinned, and its command is rejected', function () {
+  const dir = sharedDir();
+  const A = machine('alpha', dir),
+    B = machine('beta', dir);
+  fleet.publish(A, busOf(A, dir), {}); // A shows up, but B must NOT auto-trust it
+  const rec = fleet.reconcileKeys(B, fleet.readFleet(B, busOf(B, dir)));
+  assert.strictEqual(rec.firstSeen.length, 0, 'nothing was pinned');
+  assert.strictEqual(rec.pending.length, 1, 'reported as pending instead');
+  assert.strictEqual(rec.pending[0].machineId, fleet.identity(A).machineId);
+  assert.strictEqual(fleet.isPinned(B, fleet.identity(A).machineId), false, 'not pinned');
+  // A genuine command from A is still rejected: no pinned key, so origin cannot be proven.
+  const cmd = fleet.queue(A, busOf(A, dir), fleet.identity(B).machineId, { type: 'note', payload: { text: 'hi' } });
+  const origin = fleet.checkOrigin(B, cmd, rec);
+  assert.ok(!origin.ok && /no pinned key/.test(origin.reason), origin.reason);
+});
+
+test('pairing: invite -> join (joiner pins host) -> accept (host pins joiner), then commands flow', function () {
+  const dir = sharedDir();
+  const A = machine('alpha', dir),
+    B = machine('beta', dir);
+  seedAccount(B, 'work', 'b@x.com', '{"claudeAiOauth":{"accessToken":"BW"}}');
+  const inv = fleet.invite(A, busOf(A, dir), { code: 'TESTCODE' });
+  assert.strictEqual(inv.hostId, fleet.identity(A).machineId);
+  assert.ok(inv.exp > Date.now(), 'invite has a future expiry');
+  // Joiner opens the invite with the code and pins A.
+  const jr = fleet.join(B, busOf(B, dir), { hostId: inv.hostId, code: 'TESTCODE' });
+  assert.strictEqual(jr.hostId, fleet.identity(A).machineId);
+  assert.strictEqual(fleet.isPinned(B, inv.hostId), true, 'B pinned A from the code-opened invite');
+  // Host accepts the join with the same code and pins B.
+  const acc = fleet.acceptJoins(A, busOf(A, dir), { [fleet.identity(A).machineId]: 'TESTCODE' });
+  assert.strictEqual(acc.pinned.length, 1, 'A pinned the joiner');
+  assert.strictEqual(acc.pinned[0].machineId, fleet.identity(B).machineId);
+  assert.strictEqual(fleet.isPinned(A, fleet.identity(B).machineId), true);
+  // Now a real command from A verifies on B against the pinned key.
+  const cmd = fleet.queue(A, busOf(A, dir), fleet.identity(B).machineId, {
+    type: 'switch',
+    payload: { account: 'work' },
+  });
+  const rec = fleet.reconcileKeys(B, fleet.readFleet(B, busOf(B, dir)));
+  const origin = fleet.checkOrigin(B, cmd, rec);
+  assert.ok(origin.ok, origin.reason);
+  const res = fleet.applyCommand(B, cmd, { allowSwitch: true, senderKey: origin.key, requireSignature: true });
+  assert.ok(res.ok && /switched to work/.test(res.detail), res.detail);
+});
+
+test('pairing: a WRONG code cannot open the invite (no pin, no join)', function () {
+  const dir = sharedDir();
+  const A = machine('alpha', dir),
+    B = machine('beta', dir);
+  const inv = fleet.invite(A, busOf(A, dir), { code: 'RIGHTCODE' });
+  assert.throws(function () {
+    fleet.join(B, busOf(B, dir), { hostId: inv.hostId, code: 'WRONGCODE' });
+  }, /wrong code/);
+  assert.strictEqual(fleet.isPinned(B, inv.hostId), false, 'a wrong code pins nothing');
+});
+
+test('pairing: an EXPIRED invite is refused', function () {
+  const dir = sharedDir();
+  const A = machine('alpha', dir),
+    B = machine('beta', dir);
+  const inv = fleet.invite(A, busOf(A, dir), { code: 'EXPIRING', ttlMs: -1000 }); // already in the past
+  assert.throws(function () {
+    fleet.join(B, busOf(B, dir), { hostId: inv.hostId, code: 'EXPIRING' });
+  }, /expired/);
+  assert.strictEqual(fleet.isPinned(B, inv.hostId), false);
+});
+
+test('pairing: a stranger writing a join file the host did not invite is NOT pinned', function () {
+  const dir = sharedDir();
+  const A = machine('alpha', dir),
+    B = machine('beta', dir);
+  // No invite from A; B (or an attacker pretending to be B) writes a join anyway.
+  const b = busOf(B, dir);
+  const code = 'GUESSED0';
+  const forged = { v: 1, kind: 'fleet-join', id: fleet.identity(B).machineId, pub: fleet.publicKey(B), nonce: 'x' };
+  // write it under A's join path, encrypted with a code A never minted
+  busOf(A, dir).rawWrite(
+    'pair-' + fleet.identity(A).machineId + '.join.enc',
+    sync.encrypt(JSON.stringify(forged), code),
+  );
+  const acc = fleet.acceptJoins(A, busOf(A, dir), { [fleet.identity(A).machineId]: 'DIFFERENT' });
+  assert.strictEqual(acc.pinned.length, 0, 'no pin: the code does not open it');
+  assert.strictEqual(acc.rejected.length, 1);
+  assert.strictEqual(fleet.isPinned(A, fleet.identity(B).machineId), false);
+  void b;
 });

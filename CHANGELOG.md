@@ -9,6 +9,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`keyflip fleet invite` / `fleet join <host-id> --code <code>` — pair a new machine with a
+  one-time code, no silent trust.** Adding a machine is now a deliberate, two-sided act: `invite`
+  mints a short one-time code (shown once, ~15 min) and drops an invite file encrypted **with that
+  code** (never cleartext); `join --code` opens it, pins the inviter's real key, and writes a
+  code-encrypted join back; the inviter's next `fleet push --accept-join <host-id> --code-file <f>`
+  pins the joiner. Both ends only ever pin a key that was proven by the code — a leaked passphrase
+  alone cannot add a machine.
+- **`keyflip fleet discover` now announces this machine while it listens** (ON by default;
+  `keyflip fleet announce on|off` to change, `--no-announce` for one run), so two machines
+  discovering at the same time see each other.
+
+### Security
+
+- **Fleet no longer trusts a machine on first sight.** `reconcileKeys` used to pin any peer that
+  published a status and had a valid key — classic TOFU — which meant anyone holding the passphrase
+  and write access to the rendezvous folder could add a machine, have it auto-trusted, and have its
+  commands accepted. Now a new peer is merely **reported** (`pending` on push, `unpinned` in
+  `fleet keys`) and its commands are **rejected**: pinning happens only through the invite/join
+  pairing above or an explicit `keyflip fleet trust` after an out-of-band fingerprint check. A pinned
+  key that CHANGES is still a conflict (possible substitution), never silently overwritten.
+
 - **`keyflip api` — the monthly Claude API credit a Max/Team plan grants its linked Console org.**
   Since 7 Oct 2026 Max 5x carries $100 and Max 20x $200 a month of Claude Platform credit
   (Team per seat, capped at $500), granted to the one Console organization the claude.ai

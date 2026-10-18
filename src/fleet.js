@@ -215,18 +215,32 @@ function saveKnown(ctx, map) {
   }
 }
 const MAX_KNOWN = 1000; // cap the TOFU roster (anti-DoS: a passphrase holder flooding distinct ids)
-// Reconcile pinned keys against what peers currently publish. Pins keys on FIRST sight; NEVER
-// overwrites a pinned key — a mismatch is surfaced as a conflict (possible substitution) instead.
-// Returns { keys: {id->pinnedKey}, conflicts: [{machineId,name}], firstSeen: [id] }.
-function reconcileKeys(ctx, statuses) {
+// Reconcile pinned keys against what peers currently publish.
+//
+// PINNING IS DELIBERATE. This used to pin a peer on FIRST SIGHT (classic TOFU), which meant anyone
+// holding the passphrase and write access to the rendezvous could add a machine just by publishing —
+// a new id would be auto-trusted and its commands accepted. Now a NEW peer is only REPORTED (as
+// `pending`), never pinned: pinning happens through `keyflip fleet trust` or the invite/join pairing
+// flow, both of which require the user's action. A pinned key is still NEVER overwritten — a mismatch
+// stays a conflict (possible substitution). `opts.pinNew` restores the old behaviour and exists only
+// for tests that exercise TOFU in isolation; production callers never pass it.
+// Returns { keys, conflicts, firstSeen, pending }.
+function reconcileKeys(ctx, statuses, opts) {
+  opts = opts || {};
+  const pinNew = opts.pinNew === true; // DEFAULT OFF: pinning is a user decision, not an inference
   const known = knownKeys(ctx);
   const conflicts = [],
-    firstSeen = [];
+    firstSeen = [],
+    pending = [];
   let changed = false;
   (Array.isArray(statuses) ? statuses : []).forEach(function (s) {
     if (!s || !safeId(s.machineId) || !isPubB64(s.pubKey)) return;
     const cur = known[s.machineId];
     if (!cur) {
+      if (!pinNew) {
+        pending.push({ machineId: s.machineId, name: scrub(s.name, 80) || s.machineId }); // seen, not trusted
+        return;
+      }
       if (Object.keys(known).length >= MAX_KNOWN) return; // roster full — don't pin new peers
       known[s.machineId] = s.pubKey;
       firstSeen.push(s.machineId);
@@ -236,7 +250,12 @@ function reconcileKeys(ctx, statuses) {
     }
   });
   if (changed) saveKnown(ctx, known);
-  return { keys: known, conflicts: conflicts, firstSeen: firstSeen };
+  return { keys: known, conflicts: conflicts, firstSeen: firstSeen, pending: pending };
+}
+// Is this machine's published key already pinned here? Used to distinguish "a peer I trust" from
+// "a stranger publishing into the folder" without pinning the stranger.
+function isPinned(ctx, machineId) {
+  return !!knownKeys(ctx)[machineId];
 }
 // Short SHA-256 fingerprint of a public key — shown at trust time so a re-key can be verified
 // out-of-band (compare against the fingerprint the other machine prints).
@@ -378,6 +397,30 @@ function bus(ctx, opts) {
         fs.rmSync(path.join(dir, name), { force: true });
       } catch (e) {
         /* ignore */
+      }
+    },
+    // Raw rendezvous I/O — the exact bytes, no fleet-passphrase (de)encryption. The PAIRING files
+    // are encrypted with the one-time CODE instead, so they must not go through write()/read()
+    // (which would double-encrypt them and make only the passphrase, not the code, the key).
+    // Same 0600 + size guard as the encrypted path.
+    rawWrite: function (name, text) {
+      if (!nameOk(name)) throw new Error('unsafe fleet entry name');
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, name), text, { mode: 0o600 });
+      try {
+        fs.chmodSync(path.join(dir, name), 0o600);
+      } catch (e) {
+        /* non-POSIX */
+      }
+    },
+    rawRead: function (name) {
+      if (!nameOk(name)) return null;
+      try {
+        const f = path.join(dir, name);
+        if (fs.statSync(f).size > MAX_ENC_BYTES) return null;
+        return fs.readFileSync(f, 'utf8');
+      } catch (e) {
+        return null;
       }
     },
   };
@@ -591,6 +634,131 @@ function clearInbox(ctx, b) {
   b.remove(inboxName(b.machineId));
 }
 
+// ---- PAIRING (invite + one-time code) --------------------------------------------------------
+// Adding a machine must be a two-sided, deliberate act, not a side effect of publishing into the
+// folder. The code IS the shared secret that both proves "you invited me" and carries integrity:
+//   * `invite` mints a short one-time code, shows it to the user ONCE, and drops an INVITE file that
+//     is ENCRYPTED WITH THE CODE (sync.encrypt) — so only a machine that was GIVEN the code can open
+//     it and learn the inviter's real public key. Nothing pins on first sight.
+//   * `join --code` opens that invite with the code, PINS the inviter (the code proves this key is
+//     the inviter's), and writes back a JOIN file ALSO encrypted with the code, this time carrying
+//     the joiner's public key.
+//   * on the next `push`, the inviter opens the JOIN file with the SAME code and pins the joiner.
+// Both sides end up pinned, each only after presenting the code — no passphrase-only forgery, no
+// silent auto-trust. The code is never stored in cleartext (only inside these code-encrypted files),
+// expires, and is consumed (the invite file is removed) once a join is accepted.
+function invitePath(b, inviterId) {
+  return 'pair-' + inviterId + '.invite.enc';
+}
+function joinPath(b, inviterId) {
+  return 'pair-' + inviterId + '.join.enc';
+}
+// Random 32-bit nonce, hex — mixed into the code so two invites never collide.
+function pairingNonce() {
+  return crypto.randomBytes(4).toString('hex');
+}
+
+// Step 1 (inviter): mint a code + write the code-encrypted invite. Returns the code to SHOW the user
+// (it is never written anywhere in cleartext; it is the only way to open the invite).
+function invite(ctx, b, opts) {
+  opts = opts || {};
+  const me = identity(ctx);
+  const code = String(opts.code || '')
+    .toUpperCase()
+    .replace(/[^A-Z2-9]/g, '');
+  if (code.length < 6) throw new Error('a pairing code of at least 6 characters is required');
+  const invite = {
+    v: 1,
+    kind: 'fleet-invite',
+    hostId: me.machineId,
+    hostName: scrub(me.name, 80),
+    hostPub: publicKey(ctx), // pinned by the joiner ONLY after the code opens this file
+    at: ctx.now(),
+    // A caller-supplied ttl is honored verbatim (a NON-positive value mints an already-expired
+    // invite, which the tests use); otherwise the default 15-minute window applies.
+    exp: Date.now() + (typeof opts.ttlMs === 'number' ? opts.ttlMs : 15 * 60 * 1000),
+    nonce: pairingNonce(),
+  };
+  const _s = _sync;
+  // Raw write: this file is encrypted with the CODE, not the fleet passphrase (bus.write would
+  // double-encrypt). Nothing here is ever plaintext in the folder.
+  b.rawWrite(invitePath(b, me.machineId), _s.encrypt(JSON.stringify(invite), code));
+  // A stale JOIN from an earlier attempt must not be accepted against a fresh invite.
+  b.remove(joinPath(b, me.machineId));
+  return { code: code, hostId: me.machineId, exp: invite.exp };
+}
+
+// Step 2 (joiner): open an inviter's invite with the code, PIN the inviter, and write the join back
+// (also code-encrypted). Returns { hostId, hostName, hostPub } on success; throws on a wrong/expired
+// code or a missing invite.
+function join(ctx, b, opts) {
+  opts = opts || {};
+  const code = String(opts.code || '')
+    .toUpperCase()
+    .replace(/[^A-Z2-9]/g, '');
+  if (code.length < 6) throw new Error('a pairing code is required');
+  const hostId = String(opts.hostId || '');
+  if (!safeId(hostId)) throw new Error('the inviter machine id is required (from `fleet invite`)');
+  const _s = _sync;
+  const envelope = b.rawRead(invitePath(b, hostId)); // ENCRYPTED WITH THE CODE, not the passphrase
+  if (!envelope) throw new Error('no invite from ' + hostId + ' in the rendezvous folder');
+  let inv = null;
+  try {
+    inv = JSON.parse(_s.decrypt(envelope, code));
+  } catch (e) {
+    throw new Error('wrong code (or no invite from ' + hostId + ')');
+  }
+  if (!inv || inv.kind !== 'fleet-invite' || inv.hostId !== hostId) throw new Error('invite is malformed');
+  if (!(inv.exp > Date.now())) throw new Error('this invite has expired — ask for a fresh `fleet invite`');
+  if (!isPubB64(inv.hostPub)) throw new Error('invite carries no usable host key');
+  // The code opened a file that names hostId and its key → that key is genuinely the inviter's. Pin it.
+  trustKey(ctx, hostId, inv.hostPub);
+  const me = identity(ctx);
+  const back = {
+    v: 1,
+    kind: 'fleet-join',
+    id: me.machineId,
+    name: scrub(me.name, 80),
+    pub: publicKey(ctx),
+    at: ctx.now(),
+    nonce: inv.nonce,
+  };
+  b.rawWrite(joinPath(b, hostId), _s.encrypt(JSON.stringify(back), code));
+  return { hostId: hostId, hostName: inv.hostName, hostPub: inv.hostPub };
+}
+
+// Step 3 (inviter, on the next push): open join files with the SAME code and pin the joiners.
+// `codes` maps hostId -> code (the caller still holds the code it minted). Anything that does not
+// open with a known code is left alone (a stranger cannot get pinned by writing a file).
+function acceptJoins(ctx, b, codes) {
+  codes = codes || {};
+  const me = identity(ctx);
+  const pinned = [],
+    rejected = [];
+  Object.keys(codes).forEach(function (hostId) {
+    if (hostId !== me.machineId) return; // only MY invites
+    const _s = _sync;
+    const envelope = b.rawRead(joinPath(b, me.machineId)); // code-encrypted raw envelope
+    if (!envelope) return;
+    let j = null;
+    try {
+      j = JSON.parse(_s.decrypt(envelope, codes[hostId]));
+    } catch (e) {
+      rejected.push({ hostId: hostId, reason: 'join did not open with the invite code' });
+      return;
+    }
+    if (!j || j.kind !== 'fleet-join' || !safeId(j.id) || !isPubB64(j.pub)) {
+      rejected.push({ hostId: hostId, reason: 'malformed join' });
+      return;
+    }
+    trustKey(ctx, j.id, j.pub); // the code proves this joiner was invited
+    pinned.push({ machineId: j.id, name: scrub(j.name, 80) || j.id });
+    b.remove(joinPath(b, me.machineId)); // consumed — one-time
+    b.remove(invitePath(b, me.machineId));
+  });
+  return { pinned: pinned, rejected: rejected };
+}
+
 // ---- replay protection ----
 // The rendezvous is only semi-trusted (shared passphrase + write access). Even though the inbox is
 // cleared after processing, a hostile peer can RE-INJECT a captured command. So we (1) reject
@@ -746,6 +914,7 @@ export {
   verifyCommand,
   knownKeys,
   reconcileKeys,
+  isPinned,
   checkOrigin,
   trustKey,
   fingerprint,
@@ -753,6 +922,11 @@ export {
   queue,
   readInbox,
   clearInbox,
+  invite,
+  join,
+  acceptJoins,
+  invitePath,
+  joinPath,
   applyCommand,
   wasApplied,
   markApplied,

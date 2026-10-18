@@ -310,8 +310,14 @@ account; `keyflip provider off` restores it. Never put an API key in argv — us
   machine into a control plane through an **encrypted shared folder** (Dropbox/iCloud/synced dir;
   same fleet passphrase everywhere). Before any folder is set up, `keyflip fleet discover` finds the
   other keyflip machines **on the same LAN** via a UDP multicast beacon (public identity + key
-  fingerprint only — no passphrase, safe to print; read-only, MCP `keyflip_fleet_discover`). A
-  discovered peer is only reachable — acting on it still needs the passphrase and TOFU key pinning.
+  fingerprint only — no passphrase, safe to print; MCP `keyflip_fleet_discover`). It also ANNOUNCES
+  this machine while listening (ON by default; `fleet announce off` to opt out). A discovered peer is
+  only reachable — acting on it needs the passphrase AND a **pinned** key. **Adding a machine is
+  deliberate and two-sided:** never trust a peer on first sight. Pair with `keyflip fleet invite`
+  (mints a one-time code, shown once) + `fleet join <host-id> --code <code>` on the other machine +
+  `fleet push --accept-join <host-id> --code-file <f>` here; or `fleet trust <machine>` after
+  comparing fingerprints. A peer that only publishes shows as `pending`/`unpinned` and its commands
+  are IGNORED — offer pairing, don't just trust it.
   `keyflip fleet push [--with-secrets]` publishes this machine's
   status (accounts + cached quota + recent chats with **reply status**: assistant=replied,
   user=waiting) AND applies commands queued for it (consent-gated). `keyflip fleet status` (or the
@@ -321,9 +327,10 @@ account; `keyflip provider off` restores it. Never put an API key in argv — us
   you can hand machine C's account to machine B; `keyflip fleet collect` gathers every published
   account locally. Everything in the rendezvous is encrypted (nothing plaintext at rest).
   **Origin authentication:** each machine owns an Ed25519 signing key (private key 0600, local only,
-  never in the shared folder). Commands are signed; a receiver **trust-on-first-use pins** each peer's
-  public key and REJECTS any command whose signature doesn't verify — so even a leaked passphrase can't
-  let a forger command a machine. If a peer's key later CHANGES it's flagged as possible key
+  never in the shared folder). Commands are signed; a receiver REJECTS any command whose signature
+  doesn't verify against the sender's PINNED key — and a key is pinned only by the invite/join pairing
+  above or an explicit `fleet trust`, never on first sight (so a leaked passphrase can neither forge a
+  command nor add a machine). If a peer's key later CHANGES it's flagged as possible key
   substitution and its commands are rejected until `keyflip fleet trust <machine>` re-pins the new key
   (consent-gated). (MCP: `keyflip_fleet_status` / `keyflip_fleet_keys` (read), `keyflip_fleet_switch` /
   `keyflip_fleet_send_account` / `keyflip_fleet_collect` / `keyflip_fleet_trust` (need `confirm:true`).)

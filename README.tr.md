@@ -259,17 +259,33 @@ blob deposu; Docker yok, daemon yok: her iki makinenin de erişebildiği bir sun
 iki taraftan `--relay http://<o-host>:8788/kf --user ben --pass-file pass.txt` ile ona işaret et. (Auth
 olmadan herkese açık bir arayüze bağlanmayı reddeder; istersen `--allow-open` ile geçersiz kılarsın.)
 
+### Filo — makine eklemek (pairing, sessiz güven yok)
+
+Bir makine **ilk görüşte asla güvenilmez**. Klasöre yayınlamak bir eşi yalnızca *görünür* yapar
+(`push`'ta `pending`, `fleet keys`'te `unpinned`); anahtarı sabitlenene kadar komutları yok sayılır.
+Sabitlemenin iki yolu:
+
+- **`keyflip fleet invite` / `keyflip fleet join <host-id> --code <kod>`** — davet eden, tek
+  kullanımlık bir kod üretir (bir kez gösterilir, ~15 dk) ve davet dosyasını **o kodla şifreleyerek**
+  yazar; katılan kodu girerek açar, davet edeni sabitler ve kodla şifreli bir join geri yazar; davet
+  edenin bir sonraki `fleet push --accept-join <host-id> --code-file <f>`'i katılanı sabitler. İki taraf
+  da yalnızca kodla kanıtlanmış anahtarı sabitler — parola tek başına bir makine ekleyemez.
+- **`keyflip fleet trust <makine>`** — parmak izlerini elle karşılaştırdıktan sonra (`fleet keys`).
+
+Sonradan **DEĞİŞEN** sabitli anahtar bir çakışmadır (olası anahtar-değiştirme) ve sessizce üzerine
+yazılmaz.
+
 ### Filo — diğer makineleri bulmak (LAN keşfi)
 
 Rendezvous klasörü her yerde çalışır, ama her makinede bir yol kurulumu ve eşler görünmeden önce bir
 senkron turu gerektirir. Tek bir ağda daha hızlı bir yol var: `keyflip fleet discover` bir **UDP
 multicast beacon** gönderip dinler ve yanıt veren keyflip makinelerini listeler — henüz paylaşılan
-klasör yok, parola yok. Beacon **yalnız genel kimlik** taşır (makine id'si, görünen ad ve Ed25519 imza
-anahtarının kısa SHA-256 parmak izi) — asla parola, özel anahtar ya da komut — bu yüzden liste
-yazdırılması güvenlidir. Bulunan bir eş yalnızca *erişilebilir*dir: bir komut hâlâ parola gerektirir ve
-parmak izini bant dışı karşılaştırdıktan sonra (`keyflip fleet keys`) anahtarı yine ilk-görüşte-güven
-ile sabitlenir. Multicast'ı engelleyen bir ağ basitçe "kimse bulunamadı" der ve paylaşılan klasör
-yedek yol olarak kalır.
+klasör yok, parola yok. Dinlerken **bu makineyi de ilan eder** (varsayılan AÇIK; `keyflip fleet announce
+off` ya da `--no-announce` ile kapat). Beacon **yalnız genel kimlik** taşır (makine id'si, görünen ad ve
+Ed25519 imza anahtarının kısa SHA-256 parmak izi) — asla parola, özel anahtar ya da komut — bu yüzden
+liste yazdırılması güvenlidir. Bulunan bir eş yalnızca *erişilebilir*dir: bir komut hâlâ parola **ve**
+sabitli bir anahtar gerektirir (yukarıdaki gibi pair et). Multicast'ı engelleyen bir ağ basitçe "kimse
+bulunamadı" der ve paylaşılan klasör yedek yol olarak kalır.
 
 ### Filo — origin authentication
 
@@ -277,12 +293,13 @@ Filo, makineleri **şifreli paylaşılan bir klasör** üzerinden koordine eder;
 başına bir komutu *kimin* kuyruğa aldığını kanıtlayamaz. Bu yüzden her makinenin bir **Ed25519 imza
 anahtarı** vardır: özel anahtar makineden asla çıkmaz (`0600`, asla paylaşılan klasörde/argv'de değil);
 açık anahtar status'te yayınlanır. Kuyruğa alınan her komut **imzalanır** ve alıcısına bağlanır; alıcı
-her peer'in açık anahtarını **ilk görüşte sabitler (TOFU)** ve sonra imzası doğrulanmayan, başka bir
-makineye adreslenmiş ya da anahtarı **değişmiş** bir peer'den gelen komutu **reddeder** (olası
-anahtar-değiştirme saldırısı). Böylece parola sızsa bile bir sahteci bir makineye komut veremez.
-Sabitlemeleri `keyflip fleet keys` ile denetle; bir makine meşru şekilde yeniden anahtarlandığında
-(temiz kurulum / sıfırlama) yeni anahtarını `keyflip fleet trust <makine>` ile yeniden sabitle
-(önce out-of-band doğrulaman için yeni anahtarın parmak izini yazdırır).
+imzası doğrulanmayan, başka bir makineye adreslenmiş ya da anahtarı **değişmiş** bir peer'den gelen
+komutu **reddeder** (olası anahtar-değiştirme saldırısı). Bir peer'in anahtarı yalnızca **invite/join
+pairing** ile (yukarıda) ya da açık bir `fleet trust` ile sabitlenir — asla ilk görüşte değil — böylece
+sızmış bir parola ne komut uydurabilir ne de makine ekleyebilir. Sabitlemeleri `keyflip fleet keys` ile
+denetle; bir makine meşru şekilde yeniden anahtarlandığında (temiz kurulum / sıfırlama) yeni anahtarını
+`keyflip fleet trust <makine>` ile yeniden sabitle (önce out-of-band doğrulaman için yeni anahtarın
+parmak izini yazdırır).
 
 Genel bayraklar: `--json` (makine-okunur stdout — tek JSON nesnesi, `schemaVersion: 1`,
 insan metni stderr'e; script/status-line için ideal) ve `--debug` (ayrıntılı log).

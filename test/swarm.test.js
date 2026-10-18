@@ -25,6 +25,12 @@ function machine(name, dir) {
 function busOf(ctx, dir) {
   return fleet.bus(ctx, { dir: dir, passphrase: PASS });
 }
+// Pin `from`'s signing key on `into` the deliberate way (what pairing/`fleet trust` do in the real
+// flow). New peers are NO LONGER auto-pinned on first sight, so any test that needs a peer's command
+// to pass origin-check must establish the pin explicitly first.
+function pin(from, into) {
+  fleet.trustKey(into, fleet.identity(from).machineId, fleet.publicKey(from));
+}
 // A recording, injectable subprocess runner — nothing real ever spawns.
 function fakeRun(fn) {
   const calls = [];
@@ -45,6 +51,8 @@ test('run across the fleet: A queues an exec for B; B drains + runs it; A aggreg
     B = machine('beta', dir);
   fleet.publish(A, busOf(A, dir), {});
   fleet.publish(B, busOf(B, dir), {});
+  pin(A, B); // B must know A's key deliberately (no auto-pin)
+  pin(B, A); // and A must know B's, to verify B's result signature below
   const q = swarm.queueExec(A, busOf(A, dir), { command: 'echo', args: ['hi'], to: 'beta' });
   assert.strictEqual(q.commands.length, 1, 'one target');
   assert.strictEqual(q.commands[0].machineId, fleet.identity(B).machineId);
@@ -90,6 +98,7 @@ test('consent gate: a drain WITHOUT allowExec runs nothing and keeps the command
     B = machine('beta', dir);
   fleet.publish(A, busOf(A, dir), {});
   fleet.publish(B, busOf(B, dir), {});
+  pin(A, B);
   swarm.queueExec(A, busOf(A, dir), { command: 'rm', args: ['-rf', '/tmp/x'], to: 'beta' });
 
   const run = fakeRun();
@@ -189,6 +198,7 @@ test('replay: an already-applied exec id is remembered and not re-run when re-in
     B = machine('beta', dir);
   fleet.publish(A, busOf(A, dir), {});
   fleet.publish(B, busOf(B, dir), {});
+  pin(A, B);
   swarm.queueExec(A, busOf(A, dir), { command: 'echo', args: ['x'], to: 'beta' });
   const bB = busOf(B, dir);
   const orig = fleet.readInbox(B, bB)[0];
@@ -265,6 +275,8 @@ test('aggregate: only results addressed to this machine are visible; group filte
   [A, B, C].forEach(function (m) {
     fleet.publish(m, busOf(m, dir), {});
   });
+  pin(A, B);
+  pin(C, B); // B must know each sender's key deliberately
   const q1 = swarm.queueExec(A, busOf(A, dir), { command: 'echo', args: ['1'], to: 'beta' });
   swarm.drainExec(B, busOf(B, dir), {
     trustAll: true,
@@ -331,6 +343,7 @@ test('aggregate: peer output is size-capped and control chars are scrubbed (tabs
   fleet.publish(A, busOf(A, dir), {});
   fleet.publish(B, busOf(B, dir), {});
   const big = '\x1b[2Jline\ttab\n' + 'A'.repeat(200000); // control chars up front, within the cap window
+  pin(A, B);
   swarm.queueExec(A, busOf(A, dir), { command: 'cat', args: ['big'], to: 'beta' });
   swarm.drainExec(B, busOf(B, dir), {
     trustAll: true,
@@ -418,9 +431,10 @@ test('exec-trust: a signed exec from an UNTRUSTED (only TOFU-pinned) sender is R
     B = machine('beta', dir);
   fleet.publish(A, busOf(A, dir), {});
   fleet.publish(B, busOf(B, dir), {});
+  pin(A, B); // pair B with A first (this test is about EXEC-trust, a layer ON TOP of the key pin)
   swarm.queueExec(A, busOf(A, dir), { command: 'echo', args: ['x'], to: 'beta' });
   const run = fakeRun();
-  // B has A's key TOFU-pinned (origin verifies) but has NOT exec-trusted A -> refused, kept in inbox.
+  // B has A's key pinned (origin verifies) but has NOT exec-trusted A -> refused, kept in inbox.
   const d = swarm.drainExec(B, busOf(B, dir), { allowExec: true, run: run });
   assert.strictEqual(run.calls.length, 0, 'a rogue/untrusted sender cannot run exec via auto-pin');
   assert.strictEqual(d.results[0].skipped, 'untrusted');

@@ -258,30 +258,47 @@ Docker, no daemon: `keyflip transfer relay --host 0.0.0.0 --auth-user me --auth-
 box both machines can reach, then point `--relay http://<that-host>:8788/kf --user me --pass-file pass.txt`
 at it from each side. (It refuses to bind a public interface without auth unless you pass `--allow-open`.)
 
+### Fleet — adding a machine (pairing, no silent trust)
+
+A machine is **never trusted on first sight**. Publishing into the folder only makes a peer
+*visible* (`pending` on `push`, `unpinned` in `fleet keys`); its commands are ignored until its key
+is pinned. Two ways to pin:
+
+- **`keyflip fleet invite` / `keyflip fleet join <host-id> --code <code>`** — the inviter mints a
+  one-time code (shown once, ~15 min) and writes an invite file **encrypted with that code**; the
+  joiner opens it with the code, pins the inviter, and writes a code-encrypted join back; the
+  inviter's next `fleet push --accept-join <host-id> --code-file <f>` pins the joiner. Both ends pin
+  only a key proven by the code — a leaked passphrase alone can't add a machine.
+- **`keyflip fleet trust <machine>`** — after comparing the fingerprints by hand (`fleet keys`).
+
+A pinned key that later **CHANGES** is a conflict (possible key-substitution) and is never
+overwritten silently.
+
 ### Fleet — finding the other machines (LAN discovery)
 
 The rendezvous folder works anywhere, but it needs a path set up on every machine and a sync
 round-trip before peers show up. On one network there is a faster way: `keyflip fleet discover`
-sends and listens for a **UDP multicast beacon** and lists the keyflip machines that answer —
-no shared folder configured yet, no passphrase. The beacon carries **public identity only** (machine
-id, display name, and the short SHA-256 fingerprint of the Ed25519 signing key) — never the
-passphrase, a private key, or a command — so the listing is safe to print. A discovered peer is only
-*reachable*: acting on one still needs the passphrase, and its key is still pinned by trust-on-first-use
-after you compare fingerprints out-of-band (`keyflip fleet keys`). A network that blocks multicast
-simply reports "found nobody", and the shared folder stays the fallback.
+sends and listens for a **UDP multicast beacon** and lists the keyflip machines that answer — no
+shared folder configured yet, no passphrase. It also **announces this machine** while it listens
+(ON by default; `keyflip fleet announce off` or `--no-announce` opts out). The beacon carries
+**public identity only** (machine id, display name, and the short SHA-256 fingerprint of the Ed25519
+signing key) — never the passphrase, a private key, or a command — so the listing is safe to print.
+A discovered peer is only *reachable*: acting on one still needs the passphrase AND a pinned key
+(pair it as above). A network that blocks multicast simply reports "found nobody", and the shared
+folder stays the fallback.
 
 ### Fleet — origin authentication
 
 The fleet coordinates machines through an **encrypted shared folder**, so the passphrase alone can't
 prove *who* queued a command. Each machine therefore owns an **Ed25519 signing key**: the private key
 never leaves the machine (`0600`, never the shared folder, never argv); the public key is published in
-its status. Every queued command is **signed** and bound to its recipient, and a receiver
-**trust-on-first-use pins** each peer's public key — then **rejects** any command whose signature
-doesn't verify, is addressed to another machine, or comes from a peer whose key **changed** (a
-possible key-substitution attack). So even a leaked passphrase can't let a forger command a machine.
-Audit the pins with `keyflip fleet keys`; after a machine legitimately re-keys (fresh install / reset)
-re-pin its new key with `keyflip fleet trust <machine>` (it prints the new key's fingerprint to verify
-out-of-band first).
+its status. Every queued command is **signed** and bound to its recipient, and a receiver **rejects**
+any command whose signature doesn't verify, is addressed to another machine, or comes from a peer
+whose key **changed** (a possible key-substitution attack). A peer's key is pinned only by the
+**invite/join pairing** (see above) or an explicit `fleet trust` — never on first sight — so a leaked
+passphrase can neither forge a command NOR add a machine. Audit the pins with `keyflip fleet keys`;
+after a machine legitimately re-keys (fresh install / reset) re-pin its new key with
+`keyflip fleet trust <machine>` (it prints the new key's fingerprint to verify out-of-band first).
 
 Global flags: `--json` (machine-readable stdout — one JSON object, `schemaVersion: 1`,
 human text to stderr; ideal for scripts/status lines) and `--debug` (verbose log).

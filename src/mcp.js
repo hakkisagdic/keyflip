@@ -1453,7 +1453,7 @@ const TOOLS = [
     name: 'keyflip_fleet_keys',
     title: 'Audit fleet machine signing keys (origin-auth trust state)',
     description:
-      "List every fleet machine's TOFU-pinned Ed25519 signing-key fingerprint and whether the machine's currently-published key still MATCHES the pin (status: ok / CHANGED = possible key substitution / unpinned / offline). Read-only — use to audit the origin-auth trust store before trusting or acting on a machine.",
+      "List every fleet machine's pinned Ed25519 signing-key fingerprint and whether the machine's currently-published key still MATCHES the pin (status: ok / CHANGED = possible key substitution / unpinned = publishing but NOT trusted yet / offline). Read-only — use to audit the origin-auth trust store before trusting or acting on a machine. A NEW peer is never auto-pinned (it appears as `unpinned` and its commands are ignored); trust it deliberately via `keyflip fleet invite`/`join --code` or `keyflip_fleet_trust` after comparing fingerprints out-of-band.",
     inputSchema: {
       type: 'object',
       properties: { passphrase_file: { type: 'string' } },
@@ -1471,7 +1471,7 @@ const TOOLS = [
     name: 'keyflip_fleet_discover',
     title: 'Find keyflip machines on this LAN (no shared folder needed)',
     description:
-      'Listen for the UDP multicast beacon other keyflip machines announce and report the peers on the same network — the shared rendezvous folder is NOT required. Carries public identity only (machine id, display name, and the short SHA-256 fingerprint of the Ed25519 signing key) — never a passphrase, private key or command, so the result is safe to print. Read-only. A command to a discovered peer still needs the fleet passphrase; verify a peer out-of-band by comparing the fingerprint it prints (`keyflip_fleet_keys`) before trusting it.',
+      'Listen for the UDP multicast beacon other keyflip machines announce and report the peers on the same network — the shared rendezvous folder is NOT required. While listening this also ANNOUNCES this machine (ON by default; the user can turn it off with `keyflip fleet announce off`). Carries public identity only (machine id, display name, and the short SHA-256 fingerprint of the Ed25519 signing key) — never a passphrase, private key or command, so the result is safe to print. A discovered peer is only REACHABLE: acting on one needs the fleet passphrase, and its key must be pinned — NEW peers are never auto-trusted (they show as `pending`), so pairing is a deliberate `keyflip fleet invite` / `fleet join --code` (CLI-only: the one-time code is a secret a human must relay, never routed through this tool) or an explicit `keyflip_fleet_trust` after comparing fingerprints.',
     inputSchema: {
       type: 'object',
       properties: {

@@ -124,7 +124,9 @@ import CommandReference from '../../components/CommandReference.astro';
       <div id="fleet">
         <CommandReference title="Fleet & Transfer" commands={[
           { cmd: 'keyflip fleet init --dir <folder>', desc: 'Link this machine into an encrypted fleet' },
-          { cmd: 'keyflip fleet discover', desc: 'Find keyflip machines on this LAN (multicast; no shared folder)' },
+          { cmd: 'keyflip fleet discover', desc: 'Find keyflip machines on this LAN (multicast; announces by default)' },
+          { cmd: 'keyflip fleet invite | join <host> --code X', desc: 'Pair a new machine with a one-time code (no silent trust)' },
+          { cmd: 'keyflip fleet announce on|off', desc: 'Announce this machine on the LAN (default on)' },
           { cmd: 'keyflip fleet push [--with-secrets]', desc: 'Publish status + apply queued commands' },
           { cmd: 'keyflip fleet status | panel', desc: 'See every machine: accounts, quota, status' },
           { cmd: 'keyflip fleet switch <machine> <account>', desc: 'Switch a remote machine account' },

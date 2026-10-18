@@ -228,9 +228,10 @@ function usage() {
   );
   print("  keyflip agents                 list other agents' memory + config keyflip can carry (Cursor/Gemini/Codex)");
   print(
-    '  keyflip fleet init --dir <shared-folder> | discover | push | status | switch <machine> <acct> | send-account <acct> --to <machine> [--from <machine>] | collect | keys | trust <machine> | panel',
+    '  keyflip fleet init --dir <shared-folder> | discover | invite | join | announce on|off | push | status | switch <machine> <acct> | send-account <acct> --to <machine> [--from <machine>] | collect | keys | trust <machine> | panel',
   );
-  print('                                 discover = find keyflip machines on this LAN (no shared folder needed)');
+  print('                                 discover = find machines on this LAN (announce ON by default)');
+  print('                                 invite/join = pair a new machine with a one-time code (no silent trust)');
   print(
     '                                 manage ALL your machines from one screen (encrypted shared folder): remote switch, collect/distribute accounts, chat status, signed origin-auth',
   );
@@ -6642,31 +6643,46 @@ async function cmdFleet(ctx, rest) {
 
   // LAN discovery (#57): find keyflip machines on this network WITHOUT the shared folder. Public
   // identity only (machine id / name / key fingerprint) — no passphrase, so it runs before any
-  // rendezvous is configured. Read-only: it never writes state.
+  // rendezvous is configured. While listening we ALSO announce, so two machines discovering at the
+  // same time see each other (announce is ON by default; `fleet announce off` opts out, `--no-announce`
+  // opts out for one run). Nothing about a peer is trusted — a peer is only REACHABLE.
   if (sub === 'discover') {
     const tIdx = rest.indexOf('--timeout');
     const timeoutMs = tIdx !== -1 ? Math.max(200, parseInt(rest[tIdx + 1], 10) || 3000) : 3000;
     const self = fleet.identity(ctx);
+    const announced = rest.indexOf('--no-announce') === -1 && self.announce !== false;
     const me = { machineId: self.machineId, name: self.name, fp: fleet.fingerprint(fleet.publicKey(ctx)) };
-    if (!JSON_MODE) print(style.dim('listening for keyflip machines on the LAN for ' + timeoutMs + 'ms…'));
+    if (!JSON_MODE)
+      print(
+        style.dim(
+          'listening for keyflip machines on the LAN for ' +
+            timeoutMs +
+            'ms' +
+            (announced ? ' (announcing ourselves)' : ' (announce OFF)') +
+            '…',
+        ),
+      );
+    const beacon = announced ? _lanfleet.announce(me, { intervalMs: 500 }) : null;
     let peers = [];
     try {
       peers = await _lanfleet.discover({ timeoutMs: timeoutMs, exclude: self.machineId });
     } catch (e) {
       peers = [];
+    } finally {
+      if (beacon) beacon.stop();
     }
     if (JSON_MODE) {
-      jsonOut({ fleetDiscover: { self: me, peers: peers, ms: timeoutMs } });
+      jsonOut({ fleetDiscover: { self: me, announced: announced, peers: peers, ms: timeoutMs } });
       return;
     }
-    print(style.bold('On the LAN now:') + ' ' + style.dim('(announced as ' + self.name + ')'));
+    print(style.bold('On the LAN now:') + ' ' + style.dim('(as ' + self.name + ')'));
     if (!peers.length) {
       print('  ' + style.warn('no other keyflip machine answered in ' + timeoutMs + 'ms.'));
       print(
         '  ' +
           style.dim(
-            'Same Wi-Fi/subnet? macOS may ask to allow incoming connections the first time. A VPN or a' +
-              ' locked-down network can block multicast (falls back to a shared folder).',
+            'Same Wi-Fi/subnet and BOTH running discover? macOS may ask to allow incoming connections' +
+              ' the first time. A VPN or a locked-down network can block multicast (falls back to a shared folder).',
           ),
       );
       return;
@@ -6687,8 +6703,31 @@ async function cmdFleet(ctx, rest) {
     print(
       '  ' +
         style.dim(
-          'Reachable, but a command still needs the fleet passphrase. Verify a peer out-of-band against' +
-            ' the fingerprint it prints (`keyflip fleet keys`), then trust-on-first-use pins it.',
+          'Reachable, but acting on a peer needs the fleet passphrase AND a pinned key: pair with' +
+            ' `keyflip fleet invite` / `fleet join --code`, or `fleet trust` after comparing fingerprints.',
+        ),
+    );
+    return;
+  }
+
+  // Opt in/out of announcing this machine on the LAN. Default is ON.
+  if (sub === 'announce') {
+    const on = rest[1] !== 'off';
+    if (rest[1] !== 'on' && rest[1] !== 'off') return fail('usage: keyflip fleet announce on|off');
+    fleet.setConfig(ctx, { announce: on });
+    if (JSON_MODE) {
+      jsonOut({ fleet: { announce: on } });
+      return;
+    }
+    print(
+      style.ok('✅') +
+        ' LAN announce is now ' +
+        style.bold(on ? 'ON' : 'OFF') +
+        ' — ' +
+        style.dim(
+          on
+            ? '`fleet discover` will announce this machine while it listens.'
+            : 'this machine will not answer `fleet discover` runs by others.',
         ),
     );
     return;
@@ -6697,12 +6736,84 @@ async function cmdFleet(ctx, rest) {
   const b = fleetBus(ctx, rest);
   if (!b) return;
 
+  // PAIRING. `fleet invite` mints a one-time code; only a machine GIVEN that code can open the
+  // code-encrypted invite file and learn this machine's real key. `fleet join --code` opens it there,
+  // pins this machine, and writes a code-encrypted join back — no machine is trusted on first sight.
+  if (sub === 'invite') {
+    const ttlS = parseInt(rest[rest.indexOf('--ttl') + 1], 10);
+    const code = _lan.genCode(8); // same base32 alphabet as a transfer code (no 0/O/1/I)
+    let r;
+    try {
+      r = fleet.invite(ctx, b, { code: code, ttlMs: (ttlS > 0 ? ttlS : 900) * 1000 });
+    } catch (e) {
+      return fail(e.message);
+    }
+    if (JSON_MODE) {
+      jsonOut({ fleetInvite: { machineId: r.hostId, expiresAt: new Date(r.exp).toISOString() } });
+      return;
+    }
+    print(style.bold('Pairing code (shown once — hand it to the other machine):'));
+    print('   ' + style.ok(r.code));
+    print(
+      '   ' +
+        style.dim(
+          'On the other machine:  keyflip fleet join ' + r.hostId + ' --code <that code>   (expires in ~15 min)',
+        ),
+    );
+    print(
+      '   ' +
+        style.dim('Then HERE:  keyflip fleet push --accept-join ' + r.hostId + ' --code-file <f>   (pins the joiner)'),
+    );
+    return;
+  }
+  if (sub === 'join') {
+    const hostId = rest[1] && rest[1].indexOf('-') !== 0 ? rest[1] : null;
+    const code = readSecretArg(rest, '--code-file') || rest[rest.indexOf('--code') + 1] || '';
+    if (!hostId || !code)
+      return fail('usage: keyflip fleet join <host-machine-id> --code <code>  (or --code-file <f>)');
+    let r;
+    try {
+      r = fleet.join(ctx, b, { hostId: hostId, code: code });
+    } catch (e) {
+      return fail(e.message);
+    }
+    if (JSON_MODE) {
+      jsonOut({ fleetJoin: { hostId: r.hostId, hostName: r.hostName, hostPub: r.hostPub } });
+      return;
+    }
+    print(
+      style.ok('🤝') + ' paired with ' + style.bold(r.hostName) + ' (' + r.hostId + ') — its key is now pinned here.',
+    );
+    print(
+      '   ' + style.dim('Finish on that machine:  keyflip fleet push --accept-join ' + r.hostId + ' --code-file <f>'),
+    );
+    return;
+  }
+
   if (sub === 'push') {
     const withSecrets = rest.indexOf('--with-secrets') !== -1;
     const autoYes = rest.indexOf('-y') !== -1 || rest.indexOf('--yes') !== -1;
     const status = fleet.publish(ctx, b, { withSecrets: withSecrets });
-    // Reconcile peer signing keys (TOFU: pin on first sight, flag any that CHANGED) before we trust
-    // any queued command's origin.
+    // Accept any pending JOIN that was made with a code THIS machine minted (si = <hostId>:<code> or
+    // --code-file). Only a matching code opens the join file, so a stranger cannot get pinned here.
+    const joinCodes = {};
+    const ai = rest.indexOf('--accept-join');
+    if (ai !== -1 && rest[ai + 1]) {
+      const code = readSecretArg(rest, '--code-file');
+      if (!code) return fail('--accept-join needs the invite code: add --code-file <f> (or re-run `fleet invite`).');
+      joinCodes[rest[ai + 1]] = code;
+    }
+    const joins = Object.keys(joinCodes).length ? fleet.acceptJoins(ctx, b, joinCodes) : { pinned: [], rejected: [] };
+    if (joins.pinned.length && !JSON_MODE)
+      joins.pinned.forEach(function (p) {
+        print(style.ok('🤝') + ' paired ' + style.bold(p.name) + ' (' + p.machineId + ') — its key is now pinned.');
+      });
+    if (joins.rejected.length && !JSON_MODE)
+      joins.rejected.forEach(function (r) {
+        print(style.warn('⚠') + ' join from ' + r.hostId + ' rejected: ' + r.reason);
+      });
+    // Reconcile peer signing keys: NEW peers are REPORTED (pending), never auto-pinned — pinning is
+    // the invite/join flow above or an explicit `fleet trust`. A pinned key that CHANGED is a conflict.
     const reconcile = fleet.reconcileKeys(ctx, fleet.readFleet(ctx, b));
     // process my inbox: apply queued commands (origin-authenticated, then gated on consent)
     const inbox = fleet.readInbox(ctx, b);
@@ -6794,9 +6905,33 @@ async function cmdFleet(ctx, rest) {
             ' --passphrase-file <f>`.',
         );
       });
+    if (reconcile.pending.length && !JSON_MODE)
+      reconcile.pending.forEach(function (p) {
+        print(
+          style.warn('• new machine') +
+            ' ' +
+            style.bold(p.name) +
+            ' (' +
+            p.machineId +
+            ') is publishing but NOT trusted — its commands are ignored. Pair it: ' +
+            style.bold('keyflip fleet invite') +
+            ' here then ' +
+            style.bold('fleet join --code') +
+            ' there, or ' +
+            style.bold('fleet trust ' + p.machineId) +
+            ' if you verifed its fingerprint.',
+        );
+      });
     if (JSON_MODE) {
       jsonOut({
-        fleetPush: { machine: b.name, accounts: status.accounts.length, chats: status.chats.length, applied: results },
+        fleetPush: {
+          machine: b.name,
+          accounts: status.accounts.length,
+          chats: status.chats.length,
+          applied: results,
+          paired: joins.pinned,
+          pending: reconcile.pending,
+        },
       });
       return;
     }
@@ -6979,7 +7114,9 @@ async function cmdFleet(ctx, rest) {
     print(
       style.bold('Fleet signing keys') +
         ' ' +
-        style.dim('(TOFU-pinned; verify a CHANGED key out-of-band before `fleet trust`):'),
+        style.dim(
+          '(pinned via invite/join or `fleet trust` — verify a CHANGED key out-of-band; unpinned = not yet trusted):',
+        ),
     );
     rep.forEach(function (r) {
       const mark = r.status === 'ok' ? style.ok('●') : r.status === 'CHANGED' ? style.bad('✗') : style.dim('○');
