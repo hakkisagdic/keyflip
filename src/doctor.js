@@ -134,7 +134,7 @@ async function testProvider(ctx, name, opts) {
     headers[meta.authScheme === 'api-key' ? 'x-api-key' : 'authorization'] =
       meta.authScheme === 'api-key' ? key : 'Bearer ' + key;
   const body = JSON.stringify({
-    model: (meta.models && meta.models.default) || 'claude-3-5-haiku-latest',
+    model: (meta.models && meta.models.default) || 'claude-haiku-5-5',
     max_tokens: 1,
     messages: [{ role: 'user', content: 'ping' }],
   });
