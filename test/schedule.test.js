@@ -112,7 +112,7 @@ test('the schedule records which LLM provider it will spend, and drops the recor
   // It lives in the state dir (a git repo), so it must be metadata-only + private.
   const file = path.join(configDir, schedule.RECORD_NAME);
   assert.match(fs.readFileSync(file, 'utf8'), /ollama/);
-  assert.strictEqual(fs.statSync(file).mode & 0o777, 0o600, 'the record is 0600');
+  if (process.platform !== 'win32') assert.strictEqual(fs.statSync(file).mode & 0o777, 0o600, 'the record is 0600');
   schedule.uninstall(ctx, { home: home, run: runner });
   assert.strictEqual(fs.existsSync(file), false, 'unscheduling drops the record');
   assert.strictEqual(schedule.status(ctx, { home: home, run: runner }).recorded, null);
@@ -202,7 +202,8 @@ test('every scheduled job declares AbandonProcessGroup and its own log paths', f
     assert.ok(plist.indexOf('<key>StandardOutPath</key>') !== -1, job + ' stdout is captured');
     assert.ok(plist.indexOf('<key>StandardErrorPath</key>') !== -1, job + ' stderr is captured');
     assert.ok(
-      plist.indexOf('Library/Logs/' + job + '-keyflip.log') !== -1,
+      plist.indexOf('Library/Logs/' + job + '-keyflip.log') !== -1 ||
+        plist.indexOf(['Library', 'Logs', job + '-keyflip.log'].join('\\')) !== -1,
       job + ' logs under its own name — a job nobody can read after it ran cannot be debugged',
     );
   });

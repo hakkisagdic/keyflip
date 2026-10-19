@@ -52,6 +52,9 @@ function run(home, args, extraEnv) {
         HOME: home,
         USERPROFILE: home, // Windows homedir
         XDG_CONFIG_HOME: path.join(home, '.config'),
+        // Windows otherwise resolves the state dir to %APPDATA%\keyflip, while every assertion
+        // here reads under the temp home — pin it so the suite tests the same tree on every OS.
+        KEYFLIP_CONFIG_DIR: path.join(home, '.config', 'keyflip'),
         APPDATA: path.join(home, 'AppData', 'Roaming'),
         KEYFLIP_TEST_CLAUDE: 'stopped', // never touch a real app; deterministic across machines
         // The app bundle path is machine-GLOBAL; point it at a nonexistent dir so an update on the
@@ -568,15 +571,15 @@ test('threads CLI: suggest → create → add by prefix → merged --md → opt-
   assert.ok(pointer.indexOf(ID_A) !== -1 && pointer.indexOf(ID_B) !== -1, 'both pointers are stored as FULL ids');
   assert.strictEqual(pointer.indexOf('sk-ant-PASTEDKEY'), -1, 'a thread is a POINTER file; prose never rides into it');
   assert.strictEqual(pointer.indexOf('fatura akışını'), -1, 'not even the preview label — expand() reads that live');
-  assert.strictEqual(fs.statSync(pf).mode & 0o777, 0o600);
+  if (process.platform !== 'win32') assert.strictEqual(fs.statSync(pf).mode & 0o777, 0o600);
 
   // `--json` is the surface that gets pasted into an agent transcript, so keyflip's own paths come back
   // relative there — the state dir for pointers, ~/.claude/projects for transcripts — exactly as the MCP
   // tools and `keyflip chains` do. What stays absolute is a resume command's cwd, which needs it.
   const listJson = JSON.parse(run(home, ['threads', 'list', '--json']).stdout);
-  assert.strictEqual(listJson.threads[0].file, path.join('threads', 'fatura.json'), 'relative to the state dir');
+  assert.strictEqual(listJson.threads[0].file, 'threads/fatura.json', 'relative to the state dir (POSIX)');
   const showJson = JSON.parse(run(home, ['threads', 'show', 'fatura', '--json']).stdout);
-  assert.strictEqual(showJson.thread.file, path.join('threads', 'fatura.json'));
+  assert.strictEqual(showJson.thread.file, 'threads/fatura.json');
   assert.notStrictEqual(showJson.members[0].file.charAt(0), '/', 'a transcript path is relative too…');
   assert.match(showJson.members[0].file, new RegExp(ID_A + '\\.jsonl$'), '…and still names the session it points at');
   assert.strictEqual(JSON.stringify(showJson).indexOf(cfg), -1, 'never the state dir, which is a home path');
@@ -603,8 +606,8 @@ test('threads CLI: suggest → create → add by prefix → merged --md → opt-
   assert.strictEqual(run(home, ['threads', 'mirror', 'fatura']).status, 0);
   const mf = path.join(cfg, 'thread-mirror', 'fatura.md');
   assert.ok(fs.existsSync(mf), 'the merged text is on disk once both gates say yes');
-  assert.strictEqual(fs.statSync(mf).mode & 0o777, 0o600);
   assert.ok(fs.readFileSync(mf, 'utf8').indexOf('sk-ant-PASTEDKEY') !== -1);
+  if (process.platform !== 'win32') assert.strictEqual(fs.statSync(mf).mode & 0o777, 0o600);
 
   const noConfirm = run(home, ['threads', 'drop', 'fatura']);
   assert.notStrictEqual(noConfirm.status, 0, 'forgetting a name needs confirmation');

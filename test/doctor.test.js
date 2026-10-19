@@ -276,7 +276,8 @@ test('chore provider: a schedule whose cost changed after install is called out'
 // #39 — the credential-chain row. The distinction being tested is the one that keeps doctor honest:
 // a relationship problem (a stale capture, four accounts in one browser profile) is advisory, while
 // a secret keyflip itself left world-readable is the only thing that may turn the row red.
-test('doctor: credential chains are clean until a state-repo secret is world-readable', async function () {
+test('doctor: credential chains are clean until a state-repo secret is world-readable', async function (t) {
+  if (process.platform === 'win32') return t.skip('POSIX permissions not applicable on Windows');
   const ctx = makeCtx();
   const clean = find((await doctor.diagnose(ctx)).checks, 'credential chains');
   assert.ok(clean, 'the row exists');

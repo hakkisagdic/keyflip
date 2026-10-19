@@ -476,7 +476,9 @@ function rootOf(n, map) {
 // being 644 is normal (macOS protects it above the filesystem layer) and warning about it would
 // train the user to ignore the warning. On Windows file modes are not meaningful.
 function looseModeRisks(ctx, nodes) {
-  if (ctx.platform === 'win32') return [];
+  // Both the simulated platform (tests / fleet reports) AND the real OS: a ctx that claims darwin
+  // while running on an NTFS volume still cannot express 0600, so every secret would read 666.
+  if (ctx.platform === 'win32' || process.platform === 'win32') return [];
   const risky = nodes.filter(function (n) {
     // Files only: a 755 directory merely lists names, and its secret CONTENT is caught per file —
     // flagging dirs would make every ordinary `~/.config/keyflip` look exposed.

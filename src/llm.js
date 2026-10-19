@@ -138,9 +138,16 @@ function available(ctx, opts) {
 }
 
 function claudeInstalled(runner) {
+  const r = runner || run;
   try {
-    const r = (runner || run)('claude', ['--version']);
-    return !!(r && r.code === 0);
+    // Windows resolves a global npm bin through a `claude.cmd` shim; spawning the bare name without
+    // a shell never finds it (same reason update.js/uninstall.js name `npm.cmd` explicitly).
+    if (process.platform === 'win32') {
+      const w = r('claude.cmd', ['--version']);
+      if (w && w.code === 0) return true;
+    }
+    const v = r('claude', ['--version']);
+    return !!(v && v.code === 0);
   } catch (e) {
     return false;
   }

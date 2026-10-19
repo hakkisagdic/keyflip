@@ -205,7 +205,9 @@ function threadMemberFromArgs(ctx, args, optional) {
 function statePathForAgent(ctx, p) {
   if (!p) return p;
   const rel = _path.relative(ctx.configDir, String(p));
-  return rel && rel.indexOf('..') !== 0 ? rel : String(p);
+  // POSIX separators regardless of OS: this value is pasted into transcripts, and the contract
+  // (same as `keyflip chains`) is a repo-relative path, never a Windows `threads\design.json`.
+  return rel && rel.indexOf('..') !== 0 ? rel.split(_path.sep).join('/') : String(p);
 }
 function transcriptForAgent(ctx, p) {
   if (!p) return p;

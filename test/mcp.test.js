@@ -816,7 +816,8 @@ test('parity MCP: share builds a pointer link and share_apply imports the provid
 });
 // #39 — the credential-chain tools, reached through the real registry (so this also proves the
 // Wave-2 splice in src/mcp.js actually mounted them).
-test('chains MCP: keyflip_chains maps read-only, keyflip_chains_tighten is confirm-gated', async function () {
+test('chains MCP: keyflip_chains maps read-only, keyflip_chains_tighten is confirm-gated', async function (t) {
+  if (process.platform === 'win32') return t.skip('POSIX permissions not applicable on Windows');
   const ctx = makeCtx();
   const map = toolByName('keyflip_chains');
   const tighten = toolByName('keyflip_chains_tighten');

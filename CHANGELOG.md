@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Windows CI is green again.** The suite had been failing on `windows-latest` since before 1.5.4
+  (19 tests, node 20 and 22 alike), so a red CI built nothing. The failures were two kinds: tests
+  that assert real POSIX mode bits (`chmod 600`, world-readable detection) now skip on Windows —
+  NTFS cannot express them — while genuine portability bugs were fixed in the code: the loose-mode
+  risk scan keys on the real OS as well as `ctx.platform` (a 666-on-NTFS secret is not an exposure),
+  `secrets tolerate` accepts a pasted `C:/…` path, agent-facing thread paths stay POSIX-separated,
+  `llm` finds the `claude.cmd` shim, and the CLI-spawning tests pin `KEYFLIP_CONFIG_DIR` instead of
+  assuming `~/.config/keyflip`.
+
 ## [1.5.6] - 2026-10-19
 
 ### Added

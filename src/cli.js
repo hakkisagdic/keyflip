@@ -8505,11 +8505,16 @@ function threadStamp(iso) {
 // secret.
 function threadJsonForAgent(ctx, value) {
   if (typeof value === 'string') {
-    if (value.charAt(0) !== '/') return value;
+    // A Windows absolute path starts with a drive letter, not '/', so test with path.isAbsolute and
+    // hand back POSIX separators — the contract is a repo-relative path, not `threads\design.json`.
+    if (!path.isAbsolute(value)) return value;
+    const posix = function (r) {
+      return r.split(path.sep).join('/');
+    };
     const inState = path.relative(ctx.configDir, value);
-    if (inState && inState.indexOf('..') !== 0) return inState;
+    if (inState && inState.indexOf('..') !== 0) return posix(inState);
     const inTranscripts = path.relative(sessions.projectsDir(ctx), value);
-    if (inTranscripts && inTranscripts.indexOf('..') !== 0) return inTranscripts;
+    if (inTranscripts && inTranscripts.indexOf('..') !== 0) return posix(inTranscripts);
     return value;
   }
   if (Array.isArray(value)) {

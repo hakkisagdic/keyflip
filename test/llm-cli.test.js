@@ -28,9 +28,15 @@ function mkhome() {
   // on whether the machine running the suite happens to have Claude Code installed.
   const bin = path.join(home, 'stubbin');
   fs.mkdirSync(bin, { recursive: true });
-  const stub = path.join(bin, 'claude');
-  fs.writeFileSync(stub, '#!/bin/sh\necho stub 1.0\n');
-  fs.chmodSync(stub, 0o755);
+  // Windows cannot execute a shebang script and resolves a bare `claude` through a `.cmd` shim only,
+  // so the stub has to exist under the name the platform actually resolves.
+  if (process.platform === 'win32') {
+    fs.writeFileSync(path.join(bin, 'claude.cmd'), '@echo off\r\necho stub 1.0\r\n');
+  } else {
+    const stub = path.join(bin, 'claude');
+    fs.writeFileSync(stub, '#!/bin/sh\necho stub 1.0\n');
+    fs.chmodSync(stub, 0o755);
+  }
   run(home, ['add']);
   return home;
 }
@@ -49,7 +55,7 @@ function run(home, args, env) {
         KEYFLIP_CONFIG_DIR: path.join(home, '.config', 'keyflip'),
         APPDATA: path.join(home, 'AppData', 'Roaming'),
         KEYFLIP_TEST_CLAUDE: 'stopped',
-        PATH: path.join(home, 'stubbin') + ':' + process.env.PATH,
+        PATH: path.join(home, 'stubbin') + path.delimiter + process.env.PATH,
       },
       env || {},
     ),
