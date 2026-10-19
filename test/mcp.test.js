@@ -1045,7 +1045,8 @@ test('#35 MCP: the thread tools are registered, gated, and path-safe', async fun
   _config.set(ctx, 'threads.mirror', true);
   const mirrored = await toolByName('keyflip_thread_mirror').run(ctx, { slug: 'design', confirm: true });
   assert.strictEqual(mirrored.path, 'thread-mirror/design.md', 'and the path it reports is relative');
-  assert.strictEqual(fs.statSync(path.join(ctx.configDir, 'thread-mirror', 'design.md')).mode & 0o777, 0o600);
+  if (process.platform !== 'win32')
+    assert.strictEqual(fs.statSync(path.join(ctx.configDir, 'thread-mirror', 'design.md')).mode & 0o777, 0o600);
 
   await toolByName('keyflip_thread_remove').run(ctx, {
     slug: 'design',

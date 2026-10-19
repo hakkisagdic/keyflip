@@ -140,10 +140,10 @@ function available(ctx, opts) {
 function claudeInstalled(runner) {
   const r = runner || run;
   try {
-    // Windows resolves a global npm bin through a `claude.cmd` shim; spawning the bare name without
-    // a shell never finds it (same reason update.js/uninstall.js name `npm.cmd` explicitly).
+    // Windows resolves a global npm bin through a `claude.cmd` shim, and Node refuses to spawn a
+    // `.cmd` without a shell (CVE-2024-27980), so go through cmd — which also applies PATHEXT.
     if (process.platform === 'win32') {
-      const w = r('claude.cmd', ['--version']);
+      const w = r('cmd', ['/c', 'claude', '--version']);
       if (w && w.code === 0) return true;
     }
     const v = r('claude', ['--version']);
