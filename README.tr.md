@@ -464,6 +464,40 @@ sunucu tarafında; `keyflip chat` bunu bir **claude.ai oturum çerezi**yle okur.
 
 (Uygulama tercihleri, `design/`, worktree'ler global/boş — orada taşınacak hesap-bazlı veri yok.)
 
+### Kiro — CLI ve IDE girişleri ayrıdır (`kiro`, macOS)
+
+Kiro, keyflip'in yönettiği ilk Claude-dışı yüzey. **Birbiriyle bağlantısız iki
+giriş** tutar: CLI'ın token'ı + cihaz kaydı macOS Anahtar Zinciri'nde
+(`kirocli:odic:*`), IDE'nin ise `~/.aws/sso/cache/kiro-auth-token.json` dosyası ve
+yanındaki `<clientIdHash>.json` kaydı. keyflip her yüzeyi ayrı yakalar; böylece
+kayıtlı hesap "ekranda hangi token varsa o" değil, gerçek bir kimlik bilgisi
+çiftidir:
+
+```bash
+keyflip kiro status          # canlı CLI e-postası/son geçerlilik + IDE süresi/hash'i ve kayıtlı hesaplar
+keyflip kiro capture [ad]    # iki yüzeyi de kaydet (--cli-only / --ide-only ile daralt)
+keyflip kiro switch <ad|n> [--dry-run] [--force] [--no-verify]
+keyflip kiro usage [ad]      # IDE'nin kendi q-client.log'undan son kota bloğu
+keyflip kiro list            # kayıtlı hesaplar ve her yüzeyin son geçerliliği
+keyflip kiro import <slug>   # eski keyflip:surface:kiro:<slug>:* kaydını taşı
+keyflip kiro remove <ad> --force
+```
+
+Kayıtlar `~/.config/keyflip/surfaces/kiro/<hesap>/` altında (0600, zaten
+git-ignored `surfaces/` içinde) durur; `meta.json` sır içermez. CLI değeri asla
+argv'den geçmez: keyflip `surfaces/kiro/.bin/` altında küçük bir yardımcı derler,
+değeri stdin'den verir ve `SecItemUpdate` kullanır; böylece `kiro-cli` kendi
+öğesini ve ACL'ini korur. Geçiş iki yüzeyi de bayt bayt geri okur; `whoami`
+pozitif bir uyuşmazlık bildirirse yazım geri alınır. Önce Kiro'yu kapat —
+çalışan `Kiro`/`kiro_cli_desktop` oturumu tutar ve çıkışta yeniden yazabilir; bu
+yüzden komut `--force` olmadan reddeder.
+
+İki yüzey tek bir yenileme zincirini paylaşabilir: IDE'deki bir yenileme CLI
+token'ını, CLI'daki bir yenileme IDE token'ını geçersiz kılabilir. keyflip her
+yüzeyin kendi baytlarını saklar; ama yüzey başına tamamen bağımsız zincir için her
+yüzeye bir tarayıcı girişi gerekir (#33). Süresi geçmiş kayıt `EXPIRED` görünür;
+ona geçiş taze bir giriş ister.
+
 ### Görevleri hangi model koşar (`llm`)
 
 `dream`, `sessions distill` ve `recall --answer` ev işidir — aboneliğin parasını yemesi gereken iş

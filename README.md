@@ -468,6 +468,39 @@ session cookie**. It is **experimental** (undocumented API) and cookie-bound:
 
 (App preferences, `design/`, worktrees etc. are global/empty — nothing per-account to migrate there.)
 
+### Kiro — its CLI and IDE logins are separate (`kiro`, macOS)
+
+Kiro is the first non-Claude surface keyflip manages. It keeps **two unrelated
+logins**: the CLI's token + device registration in the macOS Keychain
+(`kirocli:odic:*`), and the IDE's `~/.aws/sso/cache/kiro-auth-token.json` plus the
+`<clientIdHash>.json` registration next to it. keyflip captures each surface on
+its own, so a saved account is a real pair of credentials — not "whatever token
+happened to be on screen":
+
+```bash
+keyflip kiro status          # live CLI email/expiry + IDE expiry/hash, and saved accounts
+keyflip kiro capture [name]  # save both surfaces (--cli-only / --ide-only to narrow)
+keyflip kiro switch <name|n> [--dry-run] [--force] [--no-verify]
+keyflip kiro usage [name]    # latest quota block from the IDE's own q-client.log
+keyflip kiro list            # saved accounts and each surface's expiry
+keyflip kiro import <slug>   # migrate an old keyflip:surface:kiro:<slug>:* capture
+keyflip kiro remove <name> --force
+```
+
+Captures live in `~/.config/keyflip/surfaces/kiro/<account>/` (0600, under the
+already git-ignored `surfaces/`), and `meta.json` holds no secrets. The CLI value
+never travels through argv: keyflip generates a small helper under
+`surfaces/kiro/.bin/`, feeds it the value on stdin and uses `SecItemUpdate`, so
+`kiro-cli` keeps its own item and ACL. A switch reads both surfaces back
+byte-for-byte; a positive `whoami` mismatch rolls the write back. Quit Kiro first
+— a running `Kiro`/`kiro_cli_desktop` holds the session and may rewrite it on
+exit, so the command refuses without `--force`.
+
+The surfaces can share one refresh chain: a refresh in the IDE can invalidate the
+CLI token and vice versa. keyflip stores each surface's own bytes, but a fully
+independent chain per surface still needs one browser login each (#33). An
+expired capture is shown as `EXPIRED`; switching to it will need a fresh login.
+
 ### Which model runs the chores (`llm`)
 
 `dream`, `sessions distill` and `recall --answer` are housekeeping, not the work you are paying a

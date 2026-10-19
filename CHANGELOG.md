@@ -9,6 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`keyflip kiro` — save, switch and inspect Kiro accounts across its CLI and IDE (macOS).** Kiro
+  keeps two independent login stores: the CLI's Keychain items (`kirocli:odic:token`,
+  `kirocli:odic:device-registration`) and the IDE's `~/.aws/sso/cache/kiro-auth-token.json` plus its
+  registration file. `capture` saves both (or `--cli-only` / `--ide-only`), `switch` writes both and
+  reads every byte back, rolling the touched surfaces back if the identity check fails, `usage` reads
+  the agent's own usage log (plan, limit, overage, reset date), `import` migrates the legacy
+  `keyflip:surface:kiro:*` Keychain captures, and `status`/`list`/`remove` round it out. Saved bundles
+  live under `~/.config/keyflip/surfaces/kiro/<account>/` at mode 0600 with a secret-free `meta.json`
+  (expiries, sizes, registration state and the account label — never a token or credential
+  fingerprint). A Kiro switch refuses
+  while Kiro or the CLI is running unless `--force`; `--dry-run` performs no reads that could refresh
+  a token. The Keychain is written through a small compiled helper that takes the secret on stdin
+  (`SecItemUpdate`, so the item's ACL is preserved) — never in argv and never through a file; the
+  helper retries with an older installed SDK when the default one cannot link. Note: the CLI and IDE
+  share one refresh chain per account, so switching the CLI can rotate the IDE's token too; a
+  post-switch capture records that.
+
 - **Per-profile Chromium support — each account can keep its own browser profile.** One Chromium
   profile holds exactly one claude.ai account, so two live accounts needed two profiles, which
   keyflip could not see. `browser.catalog()` now expands each browser into one entry per profile

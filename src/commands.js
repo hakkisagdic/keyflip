@@ -114,6 +114,13 @@ const CATALOG = [
     usage: 'keyflip browser [status|logout|sync]',
     desc: 'Check/reset/restore the browser claude.ai account so the Chrome extension connects.',
   },
+  {
+    name: 'kiro',
+    group: 'accounts',
+    safe: false,
+    usage: 'keyflip kiro [status|list|capture [name]|switch <name|n>|usage|import <slug>|remove <name>]',
+    desc: 'Kiro CLI (Keychain) + IDE (~/.aws/sso/cache) sessions: capture both, switch with --dry-run, read IDE usage.',
+  },
 
   // ---- providers ----
   {

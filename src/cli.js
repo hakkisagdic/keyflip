@@ -43,6 +43,7 @@ import * as longtoken from './longtoken.js';
 import * as _styleModule from './style.js';
 import * as _browser from './browser.js';
 import * as _browserswitch from './browserswitch.js';
+import * as _kiro from './kiro.js';
 import * as _cfg from './config.js';
 import * as _svc from './autoswitchservice.js';
 import * as _groups from './groups.js';
@@ -318,6 +319,9 @@ function usage() {
   print('  keyflip browser [status|logout|capture|sync]  BROWSER claude.ai account: capture saves it under an');
   print('                                 account (so `keyflip chat --as` can read it), sync restores one;');
   print('                                 logout clears it — the Chrome extension inherits this session');
+  print('  keyflip kiro [status|list|capture|switch|usage]  KIRO CLI (Keychain) + IDE (~/.aws/sso/cache):');
+  print('                                 capture both surfaces, switch with --dry-run/--force, read IDE');
+  print('                                 usage; `kiro import <slug>` migrates keyflip:surface:kiro:* captures');
   print('  keyflip skill add <owner/repo|./dir|file.tgz>   install a skill; also: skill list|remove');
   print('  keyflip proxy start [--wire] | stop | status | stats');
   print('                                 command-started failover proxy (429/5xx → next account)');
@@ -12140,6 +12144,254 @@ function consolidateAndReport(ctx) {
   return c;
 }
 
+// `keyflip kiro [status|list|capture|switch|usage|import|remove]` — the Kiro
+// adapter. Kiro keeps TWO independent logins: the CLI in the macOS Keychain and
+// the IDE in ~/.aws/sso/cache. This captures each surface separately, switches
+// them together, and reads the IDE's own usage log. No token ever reaches stdout,
+// argv or meta.json.
+function kiroStamp(iso) {
+  if (!iso) return 'unknown';
+  return String(iso)
+    .replace('T', ' ')
+    .replace(/\.\d+Z$/, 'Z');
+}
+function kiroExpiry(iso) {
+  if (!iso) return 'expiry unknown';
+  const t = Date.parse(iso);
+  if (!isFinite(t)) return 'expiry unknown';
+  return t <= Date.now() ? 'EXPIRED (' + kiroStamp(iso) + ')' : 'expires ' + kiroStamp(iso);
+}
+function kiroNum(n) {
+  if (typeof n !== 'number' || !isFinite(n)) return '?';
+  return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+}
+function kiroSurfaceLine(surface) {
+  if (!surface) return style.dim('not captured');
+  const bits = [kiroExpiry(surface.expiresAt)];
+  if (surface.hash) bits.push('client ' + surface.hash.slice(0, 8) + '…');
+  bits.push(surface.registration ? 'registration ✓' : style.warn('registration missing'));
+  return bits.join(' · ');
+}
+
+async function cmdKiro(ctx, rest) {
+  logmod.log('kiro invoked');
+  if (ctx.platform !== 'darwin') {
+    return fail('Kiro account management is macOS-only for now (the CLI keeps its login in the macOS Keychain).');
+  }
+  const hasSub = rest[0] && rest[0].indexOf('-') !== 0;
+  const sub = hasSub ? rest[0] : 'status';
+  const args = hasSub ? rest.slice(1) : rest.slice();
+  const positional = args.filter(function (a) {
+    return a && a[0] !== '-';
+  });
+  const has = function (f) {
+    return args.indexOf(f) !== -1;
+  };
+  const force = has('--force') || has('-y');
+  const dryRun = has('--dry-run');
+  const noVerify = has('--no-verify');
+  const cliOnly = has('--cli-only');
+  const ideOnly = has('--ide-only');
+  if (cliOnly && ideOnly) return fail('choose one of --cli-only or --ide-only, not both.');
+
+  if (sub === 'status' || sub === 'show') {
+    const st = _kiro.status(ctx, {});
+    print(style.bold('Kiro live session'));
+    if (st.live.cli) {
+      print('  CLI  ' + style.bold(st.live.email || 'logged in (email unknown)') + '  ' + kiroSurfaceLine(st.live.cli));
+    } else {
+      print('  CLI  ' + style.dim('not logged in (or its Keychain item is unreadable)'));
+    }
+    print(
+      '  IDE  ' +
+        (st.live.ide ? kiroSurfaceLine(st.live.ide) : style.dim('not signed in (' + _kiro.ideTokenPath(ctx) + ')')),
+    );
+    if (st.running.length) {
+      print(style.warn('⚠') + ' running: ' + st.running.join(', ') + ' — quit it before switching (or pass --force).');
+    }
+    if (!st.accounts.length) {
+      print('\nNo Kiro accounts saved yet. Run: ' + style.bold('keyflip kiro capture'));
+    } else {
+      print('\nSaved Kiro accounts (' + st.accounts.length + '):');
+      st.accounts.forEach(function (a, i) {
+        const active = st.live.email && a.email && a.email.toLowerCase() === st.live.email.toLowerCase();
+        print(
+          '  ' +
+            (active ? style.ok('*') : ' ') +
+            ' ' +
+            (i + 1) +
+            '. ' +
+            style.bold(a.name) +
+            (a.email ? '  ' + a.email : '') +
+            (a.source === 'legacy-keychain' ? '  ' + style.dim('(imported)') : ''),
+        );
+        print('       CLI ' + kiroSurfaceLine(a.cli));
+        print('       IDE ' + kiroSurfaceLine(a.ide));
+      });
+    }
+    jsonOut(Object.assign({ surface: 'kiro' }, st));
+    return;
+  }
+
+  if (sub === 'list') {
+    const accounts = _kiro.listAccounts(ctx);
+    if (!accounts.length) print('No Kiro accounts saved. Run: keyflip kiro capture');
+    else {
+      print('Saved Kiro accounts (' + accounts.length + '):');
+      accounts.forEach(function (a, i) {
+        print(
+          '  ' +
+            (i + 1) +
+            '. ' +
+            style.bold(a.name) +
+            '  ' +
+            (a.email || style.dim('(email unknown)')) +
+            (a.source === 'legacy-keychain' ? '  ' + style.dim('(imported)') : ''),
+        );
+        print('       CLI ' + kiroSurfaceLine(a.cli));
+        print('       IDE ' + kiroSurfaceLine(a.ide));
+      });
+    }
+    jsonOut({ accounts: accounts });
+    return;
+  }
+
+  if (sub === 'capture' || sub === 'save') {
+    const surfaces = cliOnly ? ['cli'] : ideOnly ? ['ide'] : ['cli', 'ide'];
+    const required = cliOnly ? ['cli'] : ideOnly ? ['ide'] : [];
+    const r = _kiro.captureAccount(ctx, {
+      name: positional[0],
+      surfaces: surfaces,
+      require: required,
+    });
+    print(
+      style.ok('✓') +
+        ' captured Kiro account ' +
+        style.bold(r.slug) +
+        (r.meta.email ? ' (' + r.meta.email + ')' : '') +
+        ' — ' +
+        [r.captured.cli ? 'CLI' : null, r.captured.ide ? 'IDE' : null]
+          .filter(function (x) {
+            return x;
+          })
+          .join(' + '),
+    );
+    if (r.missing.length) {
+      print(
+        style.warn('·') +
+          ' no live ' +
+          r.missing.join('/') +
+          ' login found — that surface was left as previously captured.',
+      );
+    }
+    print(style.dim('  tokens live in ' + r.dir + ' (0600); meta.json holds no secrets.'));
+    jsonOut({ account: r.meta, captured: r.captured, missing: r.missing });
+    return;
+  }
+
+  if (sub === 'switch' || sub === 'use') {
+    if (!positional[0]) return fail('usage: keyflip kiro switch <name|number|email> [--dry-run] [--force]');
+    const r = _kiro.switchAccount(ctx, positional[0], { dryRun: dryRun, force: force, noVerify: noVerify });
+    if (r.dryRun) {
+      print(style.bold('Kiro switch plan (dry run — nothing was written)'));
+      print(
+        '  target: ' +
+          style.bold(r.plan.target) +
+          (r.plan.email ? '  ' + r.plan.email : '') +
+          '  live now: ' +
+          (r.plan.live.email || 'unknown'),
+      );
+      print('  would write CLI ' + kiroSurfaceLine(r.plan.write.cli));
+      print('  would write IDE ' + kiroSurfaceLine(r.plan.write.ide));
+      if (r.plan.running.length) {
+        print(
+          style.warn('⚠') +
+            ' running: ' +
+            r.plan.running.join(', ') +
+            ' (the real switch will refuse without --force).',
+        );
+      }
+      jsonOut({ dryRun: true, plan: r.plan });
+      return;
+    }
+    print(style.ok('✓') + ' switched Kiro to ' + style.bold(r.target) + (r.email ? ' (' + r.email + ')' : ''));
+    if (r.capturedOutgoing) {
+      print('  ' + style.dim('saved the outgoing session as ') + style.bold(r.capturedOutgoing));
+    }
+    if (r.refreshed) print('  ' + style.dim('the new token rotated while checking it — capture updated.'));
+    if (!r.verified) {
+      print(
+        style.warn('⚠') +
+          (noVerify
+            ? ' identity check skipped (--no-verify).'
+            : ' could not read the live identity after the switch (the token may be expired; run `kiro-cli user login`).'),
+      );
+    }
+    jsonOut(r);
+    return;
+  }
+
+  if (sub === 'usage') {
+    const r = _kiro.usage(ctx, positional[0], {});
+    if (!r.usage) {
+      print('No Kiro IDE usage record found (is the Kiro IDE installed and has it fetched usage?).');
+      jsonOut({ usage: null });
+      return;
+    }
+    const u = r.usage;
+    print(style.bold('Kiro IDE usage') + ' ' + style.dim('(latest log entry: ' + kiroStamp(u.seenAt) + ')'));
+    print(
+      '  ' +
+        kiroNum(u.current) +
+        ' / ' +
+        kiroNum(u.limit) +
+        ' ' +
+        (u.unit || '') +
+        (u.overage ? '  ' + style.warn('over by ' + kiroNum(u.overage)) : ''),
+    );
+    if (u.resetAt) print('  resets ' + kiroStamp(u.resetAt));
+    if (u.subscriptionType) print('  plan ' + u.subscriptionType);
+    if (u.userId) print('  IDE user ' + u.userId);
+    if (r.account) {
+      print(
+        '  account ' +
+          style.bold(r.account.name) +
+          ': ' +
+          (r.attributed
+            ? style.ok('matched to this IDE user')
+            : style.dim('not attributed (no userId recorded in its capture)')),
+      );
+    }
+    jsonOut({ usage: r.usage, account: r.account, attributed: r.attributed });
+    return;
+  }
+
+  if (sub === 'import') {
+    if (!positional.length) return fail('usage: keyflip kiro import <slug> [slug...] [--force]');
+    const r = _kiro.importLegacy(ctx, positional, { force: force });
+    r.imported.forEach(function (a) {
+      print(style.ok('✓') + ' imported ' + style.bold(a.name) + ' (legacy Keychain capture)');
+    });
+    r.skipped.forEach(function (s) {
+      print(style.dim('·') + ' skipped ' + s.name + ': ' + s.reason);
+    });
+    jsonOut(r);
+    return;
+  }
+
+  if (sub === 'remove' || sub === 'rm') {
+    if (!positional[0]) return fail('usage: keyflip kiro remove <name|number> --force');
+    const r = _kiro.removeAccount(ctx, positional[0], { force: force });
+    print(style.ok('✓') + ' removed Kiro account ' + style.bold(r.removed));
+    jsonOut(r);
+    return;
+  }
+
+  return fail(
+    "unknown kiro command: '" + sub + "' (status|list|capture|switch|usage|import|remove). Try `keyflip kiro status`.",
+  );
+}
+
 // `keyflip consolidate [--watch [--interval N]]` — sync every account's chat
 // index so each one shows ALL conversations (gap #3/#4). The desktop app's store
 // is locked while it runs, so a one-shot offers to bounce the app; --watch re-syncs
@@ -13303,6 +13555,7 @@ async function main(argv) {
     'fleet',
     'swarm',
     'ui',
+    'kiro',
   ];
   const skipNotice = JSON_MODE || cmd === undefined || NO_NOTICE.indexOf(cmd) !== -1;
   if (!skipNotice) {
@@ -13693,6 +13946,12 @@ async function dispatch(ctx, cmd, rest) {
         return cmdChat(ctx, rest);
       case 'browser':
         return cmdBrowser(ctx, rest);
+      case 'kiro':
+        return ['capture', 'save', 'switch', 'use', 'import', 'remove', 'rm'].indexOf(rest[0]) !== -1
+          ? withLock(ctx, function () {
+              return cmdKiro(ctx, rest);
+            })
+          : cmdKiro(ctx, rest);
       case 'skill':
         return cmdSkill(ctx, rest);
       case 'proxy':
