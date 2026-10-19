@@ -11886,7 +11886,9 @@ async function cmdBrowser(ctx, rest) {
   const only = bi !== -1 ? rest[bi + 1] : null;
   const force = rest.indexOf('--force') !== -1 || rest.indexOf('-y') !== -1;
   const list = browser.installed(ctx.home).filter(function (b) {
-    return !only || b.id === only;
+    // `--browser chrome` means that browser — every profile it has; a full profile id
+    // (`chrome-Profile-2`) narrows it to one.
+    return !only || b.id === only || b.id.indexOf(only + '-') === 0;
   });
   if (!list.length)
     return fail(

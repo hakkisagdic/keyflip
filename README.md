@@ -452,6 +452,12 @@ session cookie**. It is **experimental** (undocumented API) and cookie-bound:
   `keyflip browser capture <account>` once (`browser sync` is the opposite — it puts a
   saved session back into the browser). Every keyflip switch also refreshes the login
   *and cookie* of the account it leaves.
+- One Chromium **profile** holds exactly one claude.ai account, so two accounts need two
+  profiles to be live at once. keyflip sees every profile (`Default` stays `chrome`;
+  others appear as `chrome-<ProfileDir>`, e.g. `chrome-Profile-2`), captures and restores
+  each one under its own id, and a switch quits/reopens the browser once for all of them.
+  `keyflip browser status --browser chrome` covers every profile; pass a full id to
+  narrow to one.
 - A **403 means the Cloudflare clearance went stale** — not that you are logged out.
   `keyflip chat --flush` closes and reopens the app once, then retries.
 - Search matches chat **titles**; message bodies are in your local transcripts — use

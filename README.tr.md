@@ -448,6 +448,12 @@ sunucu tarafında; `keyflip chat` bunu bir **claude.ai oturum çerezi**yle okur.
   claude.ai'a giriş yap ve bir kez `keyflip browser capture <hesap>` çalıştır
   (`browser sync` tersini yapar — kayıtlı oturumu tarayıcıya geri yazar). Her keyflip
   geçişi ayrıca bırakılan hesabın girişini *ve çerezini* tazeler.
+- Bir Chromium **profili** tam olarak tek bir claude.ai hesabı tutar; iki hesabın aynı anda
+  canlı olması için iki profil gerekir. keyflip her profili görür (`Default` `chrome` olarak
+  kalır; diğerleri `chrome-<ProfilDizini>` olarak görünür, örn. `chrome-Profile-2`), her birini
+  kendi kimliği altında kaydedip geri yükler ve geçiş tarayıcıyı hepsi için bir kez kapatıp
+  açar. `keyflip browser status --browser chrome` tüm profilleri kapsar; tek profile inmek
+  için tam kimliği ver.
 - **403, Cloudflare doğrulamasının bayatladığı** demektir — çıkış yapıldığı değil.
   `keyflip chat --flush` uygulamayı bir kez kapatıp açar ve tekrar dener.
 - Arama yalnızca sohbet **başlıklarında** yapılır; mesaj içerikleri yerel kayıtlarında —

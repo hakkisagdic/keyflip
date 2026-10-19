@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Per-profile Chromium support — each account can keep its own browser profile.** One Chromium
+  profile holds exactly one claude.ai account, so two live accounts needed two profiles, which
+  keyflip could not see. `browser.catalog()` now expands each browser into one entry per profile
+  from `Local State` (`Default` keeps the bare id `chrome`, so every existing capture still
+  resolves; others become `chrome-Profile-2`), the switch leg restores each profile from its own
+  snapshot, and several profiles of one browser quit and reopen that browser only once. Capture age
+  and days-left per surface already came from `keyflip freshness`.
+
 ### Fixed
 
 - **Windows CI is green again.** The suite had been failing on `windows-latest` since before 1.5.4

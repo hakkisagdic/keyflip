@@ -246,3 +246,57 @@ test('orgOwner() maps a claude.ai org back to the saved profile, or to nobody', 
   assert.strictEqual(bs.orgOwner(dir, 'org-unknown'), '');
   assert.strictEqual(bs.orgOwner(dir, null), '');
 });
+
+// #37: several profiles of ONE browser share a single process. Quitting it per profile would
+// kill the browser the previous profile just reopened, so the leg quits once and reopens once.
+test('two profiles of one browser: quit once, restore both, reopen once', async function () {
+  const dir = configDir();
+  const calls = { quit: 0, opened: 0, restored: [] };
+  let running = true;
+  const profiles = [
+    { id: 'chrome', name: 'Chrome', proc: 'Google Chrome', cookies: '/x/Default/Cookies' },
+    { id: 'chrome-Profile-2', name: 'Chrome (Work)', proc: 'Google Chrome', cookies: '/x/Profile 2/Cookies' },
+  ];
+  const br = {
+    installed: function () {
+      return profiles;
+    },
+    readClaudeCookies: function () {
+      return signedInAs('yahoo');
+    },
+    loadSession: function () {
+      return 'SQL-GMAIL';
+    },
+    isRunning: function () {
+      return running;
+    },
+    quit: function () {
+      calls.quit++;
+      running = false;
+    },
+    saveSession: function () {
+      return true;
+    },
+    restoreClaudeCookies: function (b) {
+      calls.restored.push(b.id);
+      return { ok: true };
+    },
+  };
+  const run = function (cmd) {
+    if (cmd === 'open') calls.opened++;
+    return { code: 0, stdout: '' };
+  };
+  const out = await bs.align({ platform: 'darwin', configDir: dir, home: dir }, 'gmail', {
+    browser: br,
+    run: run,
+    sleep: noSleep,
+    restoresTabs: function () {
+      return true;
+    },
+  });
+  assert.strictEqual(calls.restored.length, 2, 'both profiles get their snapshot');
+  assert.deepStrictEqual(calls.restored, ['chrome', 'chrome-Profile-2']);
+  assert.strictEqual(calls.quit, 1, 'one process, one quit');
+  assert.strictEqual(calls.opened, 1, 'and one reopen after BOTH restores');
+  assert.deepStrictEqual(out.synced, ['Chrome', 'Chrome (Work)']);
+});
