@@ -31,6 +31,10 @@ function isMemoryRel(rel) {
   return false;
 }
 const VERSION = 1;
+// `migrate push/pull` still build/read one in-memory payload (streaming WebDAV is
+// a separate change). Refuse a transcript set that would hit the old OOM path and
+// point at the streaming file export instead.
+const LEGACY_MEMORY_MAX = 256 * 1024 * 1024;
 const PROVIDER_KEY = function (name) {
   return 'provider__' + name;
 };
@@ -124,6 +128,66 @@ function collectTranscriptsFiltered(ctx, opts) {
       return;
     }
     out.push({ project: r.project, sessionId: r.sessionId, content: content });
+  });
+  return out;
+}
+
+// The streaming exporter's selection: identical filters to
+// collectTranscriptsFiltered but only paths + sizes — no file content is read.
+function listTranscriptFiles(ctx, opts) {
+  opts = opts || {};
+  if (opts.noSessions) return [];
+  const ids = opts.sessions && opts.sessions.length ? opts.sessions : null;
+  const hasFilter = ids || opts.search || opts.newerThanDays || opts.olderThanDays;
+  if (hasFilter) {
+    const now = opts.now || Date.now();
+    return _sessions
+      .list(ctx, { search: opts.search, limit: 100000 })
+      .filter(function (r) {
+        if (
+          ids &&
+          !ids.some(function (p) {
+            return r.sessionId === p || r.sessionId.indexOf(p) === 0;
+          })
+        )
+          return false;
+        if (opts.newerThanDays && r.mtimeMs < now - opts.newerThanDays * 86400000) return false;
+        if (opts.olderThanDays && r.mtimeMs >= now - opts.olderThanDays * 86400000) return false;
+        return true;
+      })
+      .map(function (r) {
+        return { project: r.project, sessionId: r.sessionId, file: r.file, bytes: r.sizeBytes || 0 };
+      });
+  }
+  const out = [];
+  const root = projectsDir(ctx);
+  let projects;
+  try {
+    projects = fs.readdirSync(root);
+  } catch (e) {
+    return out;
+  }
+  projects.forEach(function (proj) {
+    const dir = path.join(root, proj);
+    let files;
+    try {
+      if (!fs.statSync(dir).isDirectory()) return;
+      files = fs.readdirSync(dir);
+    } catch (e) {
+      return;
+    }
+    files.forEach(function (f) {
+      if (f.slice(-6) !== '.jsonl') return;
+      const file = path.join(dir, f);
+      let st;
+      try {
+        st = fs.statSync(file);
+      } catch (e) {
+        return;
+      }
+      if (!st.isFile()) return;
+      out.push({ project: proj, sessionId: f.slice(0, -6), file: file, bytes: st.size });
+    });
   });
   return out;
 }
@@ -377,6 +441,17 @@ function buildBundle(ctx, opts) {
   };
 }
 
+// Everything the streaming exporter needs, without reading a single transcript:
+// the small tier (as a normal buildBundle result) plus the file list. The caller
+// hands both to migrate-stream.writeBundle.
+function planExport(ctx, opts) {
+  opts = opts || {};
+  const meta = buildBundle(ctx, Object.assign({}, opts, { noSessions: true }));
+  const files = listTranscriptFiles(ctx, opts);
+  meta.counts.transcripts = files.length;
+  return { meta: meta, files: files };
+}
+
 // UNION-merge transcripts into ~/.claude/projects. Never clobber an existing file
 // unless force. This is the MERGE with the target machine's own sessions.
 function mergeTranscripts(ctx, list, opts) {
@@ -515,6 +590,18 @@ async function pushBundle(ctx, o) {
   o = o || {};
   if (!o.passphrase) throw new Error('a passphrase is required (the bundle carries login secrets)');
   const sync = _sync;
+  const txBytes = (o.noSessions ? [] : listTranscriptFiles(ctx, o)).reduce(function (n, f) {
+    return n + (f.bytes || 0);
+  }, 0);
+  if (txBytes > LEGACY_MEMORY_MAX) {
+    throw new Error(
+      'migrate push builds the bundle in memory and this transcript set is ' +
+        Math.round(txBytes / 1048576) +
+        ' MB (safe limit ' +
+        Math.round(LEGACY_MEMORY_MAX / 1048576) +
+        ' MB). Use `keyflip migrate export <file> --passphrase-file <f>` (streams now) and move the file, or add --no-sessions.',
+    );
+  }
   const built = buildBundle(ctx, o);
   if (
     !built.counts.accounts &&
@@ -533,7 +620,7 @@ async function pullBundle(ctx, o) {
   o = o || {};
   if (!o.passphrase) throw new Error('a passphrase is required');
   const sync = _sync;
-  const raw = await sync.davGet(o);
+  const raw = await sync.davGet(Object.assign({}, o, { maxBytes: LEGACY_MEMORY_MAX }));
   if (raw == null) return { found: false };
   let bundle;
   try {
@@ -547,7 +634,10 @@ async function pullBundle(ctx, o) {
 export {
   FORMAT,
   VERSION,
+  LEGACY_MEMORY_MAX,
   buildBundle,
+  planExport,
+  listTranscriptFiles,
   applyBundle,
   pushBundle,
   pullBundle,

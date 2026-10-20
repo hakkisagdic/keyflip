@@ -220,8 +220,10 @@ keyflip migrate export <file> # bundle accounts + providers + transcripts + memo
 keyflip agents                # list other agents' memory + config keyflip can carry (Cursor/Gemini/Codex/Copilot/opencode/Aider; secrets redacted)
 keyflip settings [show|get <k>|set <k> <v>]   # view/edit ~/.claude/settings.json (rides `migrate` to other machines)
 keyflip migrate import <file> # MERGE that bundle into this machine (union; --force overwrites)
-keyflip migrate push --url <webdav>   # relay the bundle to another machine via WebDAV (encrypted)
-keyflip migrate pull --url <webdav>   # pull + MERGE it on the other machine (--force overwrites)
+                              #   file bundles STREAM (metadata first, then 128 KiB transcript chunks;
+                              #   per-record AES-256-GCM with --passphrase-file) — large histories are fine
+keyflip migrate push --url <webdav>   # relay the bundle to another machine via WebDAV (encrypted; in-memory, >256 MB refused)
+keyflip migrate pull --url <webdav>   # pull + MERGE it on the other machine (--force overwrites; in-memory, >256 MB refused)
 keyflip transfer serve [--qr] # LAN: show a one-time code (+ scannable QR) + stream the encrypted bundle to a peer
 keyflip transfer pull --code X # LAN: auto-discover the peer, pull + MERGE (or pass <host:port>)
 keyflip transfer serve --receive   # LAN: WAIT to receive a pushed bundle (reverse direction)

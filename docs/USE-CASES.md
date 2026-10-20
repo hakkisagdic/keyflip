@@ -357,12 +357,22 @@ keyflip migrate export bundle.json --no-sessions --no-providers # accounts only
 ```
 - **MERGE = union:** anything already on the target is **kept, never clobbered**,
   unless `--force`. So you combine with the sessions already there.
+- **The bundle streams, so a large history never has to fit in memory.** Export writes a record
+  stream (`KEYFLIP-MIGRATE-STREAM/2`): the small metadata tier first, then each transcript in
+  128 KiB chunks; import reads it line by line and renames each session only when its byte count
+  agrees. With `--passphrase-file` every record is sealed individually with AES-256-GCM and chained
+  to the previous one, so a tampered, reordered or truncated bundle is rejected. Measured peak RSS:
+  ~300 MB for a 2 GB (4-session) encrypted set. Older one-string bundles still import below 256 MB;
+  above that, re-export on the source machine with a current keyflip.
 
 ### 12.2 By cloud relay (no LAN) — WebDAV
 ```bash
 keyflip migrate push --url https://dav.example/kf.enc --passphrase-file pass.txt   # source
 keyflip migrate pull --url https://dav.example/kf.enc --passphrase-file pass.txt   # target (previews + merges)
 ```
+`push`/`pull` still build the payload in memory, so they refuse a transcript set above 256 MB; use
+the streaming file export in 12.1 for a large history (or add `--no-sessions` and copy transcripts
+out of band).
 
 ### 12.3 Live, device-to-device over the LAN — `keyflip transfer`
 ```bash

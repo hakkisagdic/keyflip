@@ -64,6 +64,7 @@ import * as _codexbar from './codexbar.js';
 import * as _surface from './surface.js';
 import * as _agents from './agents.js';
 import * as _migrate from './migrate.js';
+import * as _migrateStream from './migrate-stream.js';
 import * as _qr from './qr.js';
 import * as _lan from './lantransfer.js';
 import * as _lanfleet from './lanfleet.js';
@@ -4049,7 +4050,11 @@ async function cmdMigrate(ctx, rest) {
   if (sub === 'export') {
     const out = target || 'keyflip-migrate.json';
     const fopts = bundleFilterOpts(rest);
-    const built = migrate.buildBundle(ctx, fopts);
+    // Streaming: the metadata tier stays small and each transcript is copied in
+    // bounded chunks. The old path stringified the whole bundle (OOM at ~830 MB)
+    // and then base64'd the ciphertext into a second giant string.
+    const plan = migrate.planExport(ctx, fopts);
+    const built = plan.meta;
     if (
       !built.counts.accounts &&
       !built.counts.transcripts &&
@@ -4061,8 +4066,6 @@ async function cmdMigrate(ctx, rest) {
     ) {
       return fail('nothing to migrate (no accounts, providers, transcripts, or memory found).');
     }
-    let json = JSON.stringify(built.bundle);
-    if (passphrase) json = sync.encrypt(json, passphrase); // returns the JSON envelope string
     // When writing to stdout (`-`), the bundle IS the stdout payload — the human notes
     // must go to stderr so they don't corrupt a piped/redirected bundle.
     const note =
@@ -4071,14 +4074,17 @@ async function cmdMigrate(ctx, rest) {
             process.stderr.write((s == null ? '' : s) + '\n');
           }
         : print;
-    if (out === '-') process.stdout.write(json + '\n');
-    else {
-      fs.writeFileSync(out, json + '\n', { mode: 0o600 });
-      try {
-        fs.chmodSync(out, 0o600);
-      } catch (e) {
-        /* non-POSIX FS */
-      }
+    try {
+      await _migrateStream.writeBundle({
+        out: out,
+        meta: built,
+        files: plan.files,
+        passphrase: passphrase,
+      });
+    } catch (e) {
+      return fail(e.message);
+    }
+    if (out !== '-') {
       note('📦 migrate bundle written to ' + style.bold("'" + out + "'") + ':');
       note(
         '   ' +
@@ -4135,42 +4141,29 @@ async function cmdMigrate(ctx, rest) {
         ').',
     );
     logmod.log('migrate export: ' + built.counts.accounts + ' acct, ' + built.counts.transcripts + ' tx');
-    jsonOut({ migrateExport: { path: out === '-' ? null : out, encrypted: !!passphrase, counts: built.counts } });
+    // When stdout IS the bundle, a JSON summary must not follow it — the importer
+    // (correctly) rejects trailing data. The summary rides stderr in that case.
+    const summary = {
+      migrateExport: { path: out === '-' ? null : out, encrypted: !!passphrase, counts: built.counts },
+    };
+    if (out === '-' && JSON_MODE) {
+      note(JSON.stringify(Object.assign({ schemaVersion: JSON_SCHEMA_VERSION }, summary)));
+    } else jsonOut(summary);
     return;
   }
 
   if (sub === 'import') {
     if (!target) return fail('usage: keyflip migrate import <file|-> [--force] [--passphrase-file <f>]');
-    let raw;
-    try {
-      raw = target === '-' ? fs.readFileSync(0, 'utf8') : fs.readFileSync(target, 'utf8');
-    } catch (e) {
-      return fail('cannot read ' + target + ': ' + e.message);
-    }
-    let obj;
-    try {
-      obj = JSON.parse(raw);
-    } catch (e) {
-      return fail('that file is not valid JSON');
-    }
-    // Encrypted bundle? (sync.encrypt envelope) — decrypt with the passphrase.
-    if (obj && obj.magic === 'keyflip-sync') {
-      if (!passphrase) return fail('this bundle is encrypted — pass --passphrase-file <file>');
-      let plain;
-      try {
-        plain = sync.decrypt(raw, passphrase);
-      } catch (e) {
-        return fail(e.message);
-      }
-      try {
-        obj = JSON.parse(plain);
-      } catch (e) {
-        return fail('decrypted bundle is not valid JSON');
-      }
-    }
+    // Reads the streaming container record-by-record; a legacy one-string bundle
+    // still imports below the safe cap (or fails with an actionable message).
     let res;
     try {
-      res = migrate.applyBundle(ctx, obj, { force: force });
+      res = await _migrateStream.importBundle({
+        ctx: ctx,
+        input: target,
+        passphrase: passphrase,
+        force: force,
+      });
     } catch (e) {
       return fail(e.message);
     }
@@ -4223,9 +4216,7 @@ async function cmdMigrate(ctx, rest) {
       );
     const agc = res.agentConfig || { total: 0 };
     if (agc.total) {
-      const withKeys = (obj.agentConfig || []).some(function (c) {
-        return c && c.redacted === false;
-      });
+      const withKeys = res.agentConfigWithKeys === true;
       print(
         '  agent-config:' +
           agc.added +

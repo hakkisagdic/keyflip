@@ -72,6 +72,22 @@ async function davGet(o) {
   const res = await doFetch(o.url, { method: 'GET', headers: authHeader(o) });
   if (res && res.status === 404) return null;
   if (!res || res.status >= 300) throw new Error('WebDAV GET failed (http ' + (res && res.status) + ')');
+  // `migrate pull` still parses the payload as one string. Refuse a remote bundle
+  // above the caller's safe size when the server tells us its length, instead of
+  // discovering it through a V8 OOM.
+  const len =
+    o.maxBytes && res.headers && typeof res.headers.get === 'function'
+      ? Number(res.headers.get('content-length'))
+      : NaN;
+  if (isFinite(len) && len > o.maxBytes) {
+    throw new Error(
+      'remote bundle is ' +
+        Math.round(len / 1048576) +
+        ' MB; pull reads it into memory (safe limit ' +
+        Math.round(o.maxBytes / 1048576) +
+        ' MB). Download it with a WebDAV client and run `keyflip migrate import` (streams), or push with --no-sessions.',
+    );
+  }
   return await res.text();
 }
 // DELETE a blob (one-shot cleanup after a relay pickup). A 404 is success — the goal

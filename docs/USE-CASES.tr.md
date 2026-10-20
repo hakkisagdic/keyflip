@@ -352,12 +352,22 @@ keyflip migrate export bundle.json --no-sessions --no-providers # yalnız hesapl
 ```
 - **BİRLEŞTİR = birleşim (union):** hedefte zaten olan hiçbir şey **ezilmez, korunur**;
   `--force` hariç. Böylece oradaki oturumlarla birleşir.
+- **Paket akış (stream) hâlindedir; büyük geçmiş belleğe sığmak zorunda değildir.** Export bir kayıt
+  akışı yazar (`KEYFLIP-MIGRATE-STREAM/2`): önce küçük metadata katmanı, sonra her transkript
+  128 KiB'lik parçalar halinde; import satır satır okur ve her oturumu ancak bildirilen bayt sayısı
+  tuttuğunda yeniden adlandırır. `--passphrase-file` ile her kayıt ayrı ayrı AES-256-GCM ile
+  mühürlenir ve bir öncekine zincirlenir; kurcalanmış, sırası değişmiş veya kesilmiş paket reddedilir.
+  Ölçülen tepe RSS: 2 GB (4 oturumlu) şifreli sette ~300 MB. Eski tek-string paketler 256 MB'ın
+  altında hâlâ içe aktarılır; üstünde kaynak makinede güncel keyflip ile yeniden dışa aktarın.
 
 ### 12.2 Bulut relay ile (LAN yok) — WebDAV
 ```bash
 keyflip migrate push --url https://dav.example/kf.enc --passphrase-file pass.txt   # kaynak
 keyflip migrate pull --url https://dav.example/kf.enc --passphrase-file pass.txt   # hedef (önizler + birleştirir)
 ```
+`push`/`pull` paketi hâlâ bellekte kurar, bu yüzden 256 MB üstündeki transkript setini reddeder;
+büyük geçmiş için 12.1'deki akışlı dosya export'unu kullanın (veya `--no-sessions` ekleyip
+transkriptleri ayrıca kopyalayın).
 
 ### 12.3 Canlı, LAN üstünde makineden makineye — `keyflip transfer`
 ```bash

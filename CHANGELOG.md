@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`migrate export`/`import` stream the transcript tier, ending the large-history OOM (issue #1).**
+  The bundle used to embed every transcript in ONE JSON string: around 830 MB `JSON.stringify`
+  exhausted the heap, and encrypting it then base64-encoded the whole ciphertext into a second giant
+  string past V8's max-string limit. Bundles are now a record stream (`KEYFLIP-MIGRATE-STREAM/2`,
+  one JSON line per record): the small metadata tier first, then each transcript copied in 128 KiB
+  chunks, so memory stays flat — measured 308 MB export / 316 MB import peak RSS on an encrypted
+  2 GB, 4-session set (the bundle itself was 3.6 GB). With `--passphrase-file` every record is
+  sealed on its own with AES-256-GCM under one scrypt-derived key and bound to the previous tag +
+  sequence in the AAD, so tampering, reordering, truncation and trailing data all fail; a missing
+  `end` record is an error. Import stays a union (`--force` overwrites) and renames each session
+  only after its declared byte count agrees. Small legacy bundles (plain or `keyflip-sync`) still
+  import; a legacy file above 256 MB is refused with a pointer to re-export on the source machine.
+  `migrate push`/`pull` still build one in-memory payload, so `push` refuses a transcript set above
+  256 MB and points at the streaming file export, and `pull` refuses a remote bundle whose
+  `content-length` exceeds the same cap.
+
 - **`keyflip kiro` — save, switch and inspect Kiro accounts across its CLI and IDE (macOS).** Kiro
   keeps two independent login stores: the CLI's Keychain items (`kirocli:odic:token`,
   `kirocli:odic:device-registration`) and the IDE's `~/.aws/sso/cache/kiro-auth-token.json` plus its

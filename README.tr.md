@@ -219,8 +219,10 @@ keyflip migrate export <dosya> # hesap + provider + transkript + memory + config
 keyflip agents                # diğer ajanların memory + config'ini listele (Cursor/Gemini/Codex/Copilot/opencode/Aider; sırlar redakte edilir)
 keyflip settings [show|get <k>|set <k> <v>]   # ~/.claude/settings.json'ı gör/düzenle (`migrate` ile diğer makinelere gider)
 keyflip migrate import <dosya> # bu paketi bu makineyle BİRLEŞTİR (birleşim; --force üzerine yazar)
-keyflip migrate push --url <webdav>   # paketi başka makineye WebDAV üzerinden ilet (şifreli)
-keyflip migrate pull --url <webdav>   # diğer makinede çekip BİRLEŞTİR (--force üzerine yazar)
+                              #   dosya paketleri AKIŞ (stream) hâlinde: önce metadata, sonra 128 KiB'lik
+                              #   transkript parçaları; --passphrase-file ile kayıt-başına AES-256-GCM
+keyflip migrate push --url <webdav>   # paketi başka makineye WebDAV üzerinden ilet (şifreli; bellekte, >256 MB reddedilir)
+keyflip migrate pull --url <webdav>   # diğer makinede çekip BİRLEŞTİR (--force üzerine yazar; bellekte, >256 MB reddedilir)
 keyflip transfer serve [--qr] # LAN: tek-kullanımlık kod (+ taranabilir QR) göster + şifreli paketi eşe akıt
 keyflip transfer pull --code X # LAN: eşi otomatik bul, çek + BİRLEŞTİR (ya da <host:port> ver)
 keyflip transfer serve --receive   # LAN: push edilen paketi ALMAK için BEKLE (ters yön)
