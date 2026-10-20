@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`keyflip antigravity` — save, switch and inspect Antigravity (formerly Gemini CLI) accounts.**
+  Antigravity stores its OAuth token in the macOS Keychain under service "gemini", account
+  "antigravity". The adapter captures the current login into a slug directory (`token.json` secret +
+  `meta.json` public), switches by writing the stored token back to the keychain, and lists all saved
+  accounts. Supports `status`, `list`, `capture`, `switch`, `remove` subcommands with `--dry-run`
+  and `--force` flags. macOS-only for now.
+
 - **`migrate push`/`pull` now stream large bundles over WebDAV, removing the 256 MB in-memory cap.**
   Small bundles (≤256 MB) still use the legacy in-memory path for cross-version compatibility with
   older clients. Large bundles build to a temp file, encrypt, and stream-upload via `davPutFile`,

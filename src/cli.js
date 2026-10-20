@@ -44,6 +44,7 @@ import * as _styleModule from './style.js';
 import * as _browser from './browser.js';
 import * as _browserswitch from './browserswitch.js';
 import * as _kiro from './kiro.js';
+import * as _antigravity from './antigravity.js';
 import * as _cfg from './config.js';
 import * as _svc from './autoswitchservice.js';
 import * as _groups from './groups.js';
@@ -323,6 +324,8 @@ function usage() {
   print('  keyflip kiro [status|list|capture|switch|usage]  KIRO CLI (Keychain) + IDE (~/.aws/sso/cache):');
   print('                                 capture both surfaces, switch with --dry-run/--force, read IDE');
   print('                                 usage; `kiro import <slug>` migrates keyflip:surface:kiro:* captures');
+  print('  keyflip antigravity [status|list|capture|switch]  ANTIGRAVITY CLI (Keychain gemini/antigravity):');
+  print('                                 capture/save current login, switch accounts, list saved ones');
   print('  keyflip skill add <owner/repo|./dir|file.tgz>   install a skill; also: skill list|remove');
   print('  keyflip proxy start [--wire] | stop | status | stats');
   print('                                 command-started failover proxy (429/5xx → next account)');
@@ -12423,6 +12426,118 @@ async function cmdKiro(ctx, rest) {
   );
 }
 
+// `keyflip antigravity [status|list|capture|switch|remove]` — manage Antigravity (formerly Gemini CLI) accounts.
+// Antigravity stores its OAuth token in the macOS Keychain under service "gemini", account "antigravity".
+async function cmdAntigravity(ctx, rest) {
+  logmod.log('antigravity invoked');
+  if (ctx.platform !== 'darwin') {
+    return fail(
+      'Antigravity account management is macOS-only for now (the CLI keeps its login in the macOS Keychain).',
+    );
+  }
+  const hasSub = rest[0] && rest[0].indexOf('-') !== 0;
+  const sub = hasSub ? rest[0] : 'status';
+  const args = hasSub ? rest.slice(1) : rest.slice();
+  const positional = args.filter(function (a) {
+    return a && a[0] !== '-';
+  });
+  const has = function (f) {
+    return args.indexOf(f) !== -1;
+  };
+  const force = has('--force') || has('-y');
+  const dryRun = has('--dry-run');
+
+  if (sub === 'status' || sub === 'show') {
+    const st = await _antigravity.status(ctx);
+    print(style.bold('Antigravity live session'));
+    if (st.signedIn) {
+      print('  CLI  ' + style.ok('logged in') + '  (keychain: gemini/antigravity)');
+    } else {
+      print('  CLI  ' + style.dim('not logged in'));
+      if (st.error) print('  ' + style.warn('⚠') + ' ' + st.error);
+    }
+    const captures = _antigravity.listCaptures(ctx);
+    if (!captures.length) {
+      print('\nNo Antigravity accounts saved yet. Run: ' + style.bold('keyflip antigravity capture'));
+    } else {
+      print('\nSaved Antigravity accounts (' + captures.length + '):');
+      captures.forEach(function (a, i) {
+        print('  ' + (i + 1) + '. ' + style.bold(a.slug) + (a.email ? '  ' + a.email : ''));
+      });
+    }
+    jsonOut(Object.assign({ surface: 'antigravity' }, st, { captures: captures }));
+    return;
+  }
+
+  if (sub === 'list') {
+    const captures = _antigravity.listCaptures(ctx);
+    if (!captures.length) print('No Antigravity accounts saved. Run: keyflip antigravity capture');
+    else {
+      print('Saved Antigravity accounts (' + captures.length + '):');
+      captures.forEach(function (a, i) {
+        print('  ' + (i + 1) + '. ' + style.bold(a.slug) + '  ' + (a.email || style.dim('(email unknown)')));
+      });
+    }
+    jsonOut({ accounts: captures });
+    return;
+  }
+
+  if (sub === 'capture' || sub === 'save') {
+    const slug = positional[0];
+    if (!slug) return fail('usage: keyflip antigravity capture <name>');
+    const r = await _antigravity.capture(ctx, slug);
+    print(
+      style.ok('✓') +
+        ' captured Antigravity account ' +
+        style.bold(r.slug) +
+        (r.email ? ' (' + r.email + ')' : '') +
+        ' — CLI',
+    );
+    print(
+      style.dim(
+        '  token lives in ' +
+          path.join(ctx.configDir, 'surfaces', 'antigravity', slug) +
+          ' (0600); meta.json holds no secrets.',
+      ),
+    );
+    jsonOut({ account: r });
+    return;
+  }
+
+  if (sub === 'switch' || sub === 'use') {
+    if (!positional[0]) return fail('usage: keyflip antigravity switch <name|number> [--dry-run] [--force]');
+    if (dryRun) {
+      const captures = _antigravity.listCaptures(ctx);
+      const target = captures.find(function (a) {
+        return a.slug === positional[0] || String(captures.indexOf(a) + 1) === positional[0];
+      });
+      if (!target) return fail('no saved account matching "' + positional[0] + '"');
+      print(style.bold('Antigravity switch plan (dry run — nothing was written)'));
+      print('  target: ' + style.bold(target.slug) + (target.email ? '  ' + target.email : ''));
+      print('  would write CLI token to keychain (gemini/antigravity)');
+      jsonOut({ dryRun: true, target: target });
+      return;
+    }
+    const slug = positional[0];
+    const r = await _antigravity.switchTo(ctx, slug, { skipLogout: !force });
+    print(style.ok('✓') + ' switched Antigravity to ' + style.bold(slug));
+    jsonOut(r);
+    return;
+  }
+
+  if (sub === 'remove' || sub === 'rm') {
+    if (!positional[0]) return fail('usage: keyflip antigravity remove <name|number> --force');
+    const r = _antigravity.removeCapture(ctx, positional[0]);
+    print(style.ok('✓') + ' removed Antigravity account ' + style.bold(r.removed));
+    jsonOut(r);
+    return;
+  }
+
+  return fail(
+    "unknown antigravity command: '" + sub + "' (status|list|capture|switch|remove). Try `keyflip antigravity status`.",
+  );
+}
+
 // `keyflip consolidate [--watch [--interval N]]` — sync every account's chat
 // index so each one shows ALL conversations (gap #3/#4). The desktop app's store
 // is locked while it runs, so a one-shot offers to bounce the app; --watch re-syncs
@@ -14018,6 +14133,13 @@ async function dispatch(ctx, cmd, rest) {
               return cmdKiro(ctx, rest);
             })
           : cmdKiro(ctx, rest);
+      case 'antigravity':
+      case 'agy':
+        return ['capture', 'save', 'switch', 'use', 'remove', 'rm'].indexOf(rest[0]) !== -1
+          ? withLock(ctx, function () {
+              return cmdAntigravity(ctx, rest);
+            })
+          : cmdAntigravity(ctx, rest);
       case 'skill':
         return cmdSkill(ctx, rest);
       case 'proxy':
