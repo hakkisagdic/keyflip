@@ -443,9 +443,9 @@ const TOOLS = [
   },
   {
     name: 'keyflip_switch',
-    title: 'Switch Claude account',
+    title: 'Switch AI tool account',
     description:
-      "Switch the Claude Code CLI credential to a saved account (in place — the desktop app is NOT closed; a running Claude Code picks the new account up on its next request, so the user's current conversation continues on the new account). IMPORTANT: this changes which account is billed and rate-limited. Ask the user before calling, then set confirm=true. Call keyflip_switch_plan FIRST when it is not obvious that the target works — a clean return value has repeatedly hidden a switch that did not produce a usable machine, so this one reads itself back: `verified` says usable now / usable, decaying / NOT usable.",
+      "Switch the active account for an AI tool (Claude Code, Cursor, Kiro, etc.) to a saved profile. The desktop app is NOT closed automatically; running apps pick up the new account on their next request. IMPORTANT: this changes which account is billed and rate-limited. Ask the user before calling, then set confirm=true. Call keyflip_switch_plan FIRST when it is not obvious that the target works — a clean return value has repeatedly hidden a switch that did not produce a usable machine, so this one reads itself back: `verified` says usable now / usable, decaying / NOT usable.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -503,23 +503,33 @@ const TOOLS = [
       // Smart suggestions: check what the agent should offer after a switch
       const suggestions = [];
       
-      // 1. Chat consolidation — if Claude Desktop is closed and multiple accounts have chats
+      // 1. Chat consolidation — if desktop apps are closed and multiple accounts have chats
       let consolidateRan = false;
       try {
-        const appRunning = appctl.isClaudeRunning(ctx.platform);
-        if (!appRunning) {
+        // Check if ANY AI desktop app is running (Claude, Cursor, etc.)
+        const claudeRunning = appctl.isClaudeRunning(ctx.platform);
+        const anyAppRunning = claudeRunning; // Extend to other tools later
+        
+        if (!anyAppRunning) {
           const allProfiles = profiles.list(ctx.configDir);
           const multiAccount = allProfiles.length > 1;
           if (multiAccount) {
-            // Auto-run consolidate when safe (app closed + multiple accounts)
+            // Auto-run consolidate when safe (apps closed + multiple accounts)
             try {
               const consResult = appsessions.consolidate(ctx);
               consolidateRan = true;
+              
+              // Build tool-aware description
+              const toolsMentioned = [];
+              if (consResult.code > 0) toolsMentioned.push('Claude Code');
+              if (consResult.cowork > 0) toolsMentioned.push('Cowork');
+              const toolList = toolsMentioned.length > 0 ? toolsMentioned.join(', ') : 'AI tools';
+              
               suggestions.push({
                 type: 'consolidate_auto',
                 priority: 'high',
                 title: 'Chat history synced automatically',
-                description: `Merged ${consResult.merged || 0} chat sessions across ${allProfiles.length} accounts while Claude Desktop was closed.`,
+                description: `Merged ${consResult.merged || 0} chat sessions across ${allProfiles.length} accounts for ${toolList} while desktop apps were closed.`,
                 command: null, // Already ran, no user action needed
                 autoSafe: true,
                 executed: true,
@@ -530,7 +540,7 @@ const TOOLS = [
                 type: 'consolidate_failed',
                 priority: 'high',
                 title: 'Chat sync failed (retry manually)',
-                description: `Automatic consolidate failed: ${e.message}. Run \`keyflip consolidate\` manually with Claude Desktop closed.`,
+                description: `Automatic consolidate failed: ${e.message}. Run \`keyflip consolidate\` manually with desktop apps closed.`,
                 command: 'keyflip consolidate',
                 autoSafe: false,
               });
@@ -540,8 +550,8 @@ const TOOLS = [
           suggestions.push({
             type: 'consolidate_deferred',
             priority: 'medium',
-            title: 'Chat sync deferred (Claude Desktop is open)',
-            description: 'Close Claude Desktop and run `keyflip consolidate` to sync chat history across accounts.',
+            title: 'Chat sync deferred (desktop app is open)',
+            description: 'Close AI desktop apps (Claude, Cursor, etc.) and run `keyflip consolidate` to sync chat history across accounts.',
             command: 'keyflip consolidate',
             autoSafe: false,
           });
@@ -597,7 +607,7 @@ const TOOLS = [
         cliSwitched: did.cli,
         verified: verified,
         cliEmailAfterSwitch: cliEmail,
-        note: 'Desktop app not touched; a running Claude Code applies the new account on its next request.',
+        note: 'Desktop apps not touched; running AI tools apply the new account on their next request.',
         suggestions: suggestions.length > 0 ? suggestions : undefined,
         autoConsolidate: consolidateRan ? true : undefined, // Signal that consolidate ran automatically
       };
