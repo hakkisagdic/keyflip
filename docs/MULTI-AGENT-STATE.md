@@ -141,3 +141,99 @@ detecting platform-initiated rotations (Kiro IDE/CLI, Claude Desktop re-auth).
 - Claude Desktop: Cannot proactively refresh; requires human re-login every ~30 days
 - Kiro: Hash detection only; cannot prevent AWS SSO revocation if refresh_token used elsewhere
 - Linux: @reboot cron may not run if system doesn't boot (laptop asleep); launchd KeepAlive more reliable
+
+---
+
+## G — Multi-instance architecture for session isolation
+
+Claude Desktop cookies expire every ~30 days, forcing frequent re-logins. keyflip solves this by creating **isolated app clones** — each runs independently with its own user data directory, so sessions persist indefinitely without expiry concerns.
+
+### Architecture overview
+
+**Generic adapter pattern:** The `src/instances.js` module provides a tool-agnostic abstraction layer that can support any AI desktop application requiring multi-account isolation.
+
+```javascript
+const TOOL_ADAPTERS = {
+  claude: {
+    name: 'Claude',
+    appName: 'Claude.app',
+    baseAppPath: '/Applications/Claude.app',
+    userDataFlag: '--user-data-dir',
+    configEnv: 'CLAUDE_CONFIG_DIR',
+    processPattern: 'Claude\\.app',
+    supportsMultiInstance: true,
+    disableAutoUpdate: true,
+  },
+  // cursor: { ... } // planned
+  // copilot: { ... } // planned
+};
+```
+
+### Instance lifecycle
+
+Each instance is created under `~/Library/Application Support/keyflip-instances/<tool>/<account>/`:
+
+1. **APFS clone:** Uses `cp -cR` to create a copy-on-write clone of the base app (near-zero disk overhead)
+2. **Disable auto-update:** Patches `Info.plist` to set `SUEnableAutomaticChecks=false` and clear `SUPublicEDKey`
+3. **Isolated directories:** Creates separate `User Data/` and `Config/` directories per account
+4. **PID tracking:** Writes `instance.pid` file for process lifecycle management
+
+### Commands (generic across all tools)
+
+```bash
+keyflip instance list [tool]                    # List all instances (optionally filtered by tool)
+keyflip instance create <tool> <account>        # Create new isolated instance
+keyflip instance launch <tool> <account>        # Launch specific instance (closes others first)
+keyflip instance focus <tool> <account>         # Bring running instance window to front
+keyflip instance kill <tool> <account>          # Terminate specific instance by PID
+keyflip instance enable-all <tool>              # Launch all saved accounts as separate instances
+```
+
+### Deep link trap avoidance
+
+When launching a specific instance, keyflip closes ALL other instances of that tool first using `pkill -f <processPattern>`. This prevents macOS from routing deep links (e.g., `claude://` URLs) to the wrong instance.
+
+### Disk usage characteristics
+
+- **APFS clone-on-write:** Each clone shares physical storage with the original app
+- **Actual consumption:** Only changed blocks consume space — typically <50 MB per instance (config files, user data, cache)
+- **No duplication:** The ~200 MB app binary is shared across all instances via APFS metadata
+
+### Backward compatibility
+
+The old `keyflip claude-profiles` commands still work via a compatibility wrapper (`cmdClaudeProfilesCompat()` in `src/cli.js`) that maps them to the generic `keyflip instance` system with deprecation warnings.
+
+### MCP endpoints
+
+Five new MCP tools expose instance management to agents:
+
+- `keyflip_instances` — List all instances across all tools
+- `keyflip_instance_create` — Create new isolated instance (requires confirm=true)
+- `keyflip_instance_launch` — Launch specific instance (requires confirm=true)
+- `keyflip_instance_focus` — Focus running instance window
+- `keyflip_instance_kill` — Terminate specific instance (requires confirm=true)
+
+All mutating operations follow the confirmation pattern: ask the user first, then call with `confirm=true`.
+
+### Platform scope
+
+Currently **macOS-only** due to APFS clone-on-write requirement. Linux/Windows support would require alternative isolation strategies (e.g., symlinks, containerization).
+
+### Future expansion
+
+Adding support for new tools requires only adding an entry to `TOOL_ADAPTERS` in `src/instances.js`:
+
+```javascript
+cursor: {
+  name: 'Cursor',
+  appName: 'Cursor.app',
+  baseAppPath: '/Applications/Cursor.app',
+  userDataFlag: '--user-data-dir',
+  configEnv: 'CURSOR_CONFIG_DIR',
+  processPattern: 'Cursor\\.app',
+  supportsMultiInstance: true,
+  disableAutoUpdate: false, // Cursor handles updates differently
+},
+```
+
+The rest of the system (CLI routing, MCP endpoints, PID tracking, launch/focus/kill logic) works automatically for any tool with an adapter entry.

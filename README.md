@@ -1033,6 +1033,49 @@ usable session, without writing anything.
 
 ---
 
+### Multi-instance mode: run several accounts simultaneously (macOS-only)
+
+Claude Desktop cookies expire every ~30 days, forcing frequent re-logins. keyflip solves this by creating **isolated app clones** — each runs independently with its own user data directory, so sessions persist indefinitely.
+
+**How it works:** Each instance is an APFS copy-on-write clone of `/Applications/Claude.app`, consuming near-zero additional disk space. The clone's auto-update is disabled (prevents breaking on updates), and it uses `--user-data-dir` for complete session isolation.
+
+```bash
+# Create an isolated instance for a specific account
+keyflip instance create claude yahoo@gmail.com
+
+# Launch that instance (closes all other Claude instances first to avoid routing traps)
+keyflip instance launch claude yahoo@gmail.com
+
+# List all instances across all tools
+keyflip instance list
+
+# Focus a running instance window
+keyflip instance focus claude yahoo@gmail.com
+
+# Kill a running instance
+keyflip instance kill claude yahoo@gmail.com
+
+# Enable all instances (launches all saved accounts as separate instances)
+keyflip instance enable-all claude
+```
+
+**Supported tools:** Currently supports `claude` (Claude Desktop). The adapter pattern makes it easy to add Cursor, Copilot, Kiro, and other AI tools in the future.
+
+**Instance location:** `~/Library/Application Support/keyflip-instances/<tool>/<account>/`
+- `Claude.app` — isolated app clone
+- `User Data/` — Chromium user data (cookies, cache, extensions)
+- `Config/` — tool-specific config directory (MCP servers, settings)
+- `profile.json` — metadata (creation date, paths, auto-update status)
+- `instance.pid` — running process ID (if active)
+
+**Disk usage:** APFS clone-on-write means each clone shares physical storage with the original app. Only changed blocks (config files, user data) consume actual space — typically <50 MB per instance.
+
+**Deep link trap avoidance:** When launching a specific instance, keyflip closes ALL other Claude instances first. This prevents macOS from routing deep links (e.g., `claude://` URLs) to the wrong instance.
+
+**Backward compatibility:** The old `keyflip claude-profiles` commands still work via a compatibility wrapper that maps them to the generic `keyflip instance` system. Use `keyflip instance --help` for current syntax.
+
+---
+
 ## Alternatives & how keyflip compares
 
 The Claude tooling space is crowded, but most tools do **one** of these jobs;

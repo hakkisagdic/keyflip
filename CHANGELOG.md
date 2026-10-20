@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Generic multi-instance management (`keyflip instance`).** Create isolated app clones for AI tools (Claude, Cursor, Copilot, etc.) using APFS copy-on-write for near-zero disk overhead. Each instance runs independently with its own user data directory, solving the ~30-day cookie expiry problem. Commands: `list`, `create`, `launch`, `focus`, `kill`, `enable-all`. Supports extensible adapter pattern in `src/instances.js` for adding new tools. macOS-only due to APFS requirement. MCP endpoints: `keyflip_instances`, `keyflip_instance_create`, `keyflip_instance_launch`, `keyflip_instance_focus`, `keyflip_instance_kill`. Backward compatible with old `keyflip claude-profiles` commands via compatibility wrapper.
+
 - **Background token refresh daemon (`keyflip refresh --daemon-start`).** Runs continuously as a
   launchd KeepAlive agent (macOS) or @reboot crontab entry (Linux), checking credential expiry every
   5 minutes. Proactively refreshes Antigravity (Google OAuth) and ChatGPT (session token → bearer
