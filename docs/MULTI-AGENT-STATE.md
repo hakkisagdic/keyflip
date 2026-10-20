@@ -99,3 +99,45 @@ surfaced to the user as printable commands, never shell-executed by keyflip.
 - Copilot: `data.db` token extraction (or skip — carry only the memory md).
 - Aider: confirmed no `--resume`/session-list exists (resumeCommand returns null).
 - Cursor: `cursorDiskKV` bubble ordering for a faithful transcript.
+
+## G — background token refresh daemon (SHIPPED 2026-10-20)
+
+**Architecture:** Continuous background daemon (`keyflip refresh --daemon-start`) runs as launchd
+KeepAlive agent (macOS) or @reboot crontab entry (Linux), checking credential expiry every 5 minutes.
+
+**Per-tool refresh strategies:**
+
+| Tool | Strategy | Mechanism | Lifetime | Notes |
+|---|---|---|---|---|
+| **Antigravity** | Proactive | Google OAuth refresh_token → access_token | ~1 hour | Uses public client credentials; exponential backoff on failure (1→5→15 min, max 3 retries) |
+| **ChatGPT** | Proactive | Session token → bearer via `/api/auth/session` | ~7 days | Bearer short-lived, session token ~3 months; backoff same as Antigravity |
+| **Kiro** | Reactive-only | SHA256 hash of refresh_token | N/A | NO proactive refresh (AWS SSO single-use tokens); detects IDE/CLI rotation via hash change |
+| **Claude Desktop** | Reactive-only | AES-128-CBC decryption of cookie DB | ~30 days | Keychain "Claude Safe Storage" → PBKDF2-HMAC-SHA1 (saltysalt, 1003 iter) → decrypt cookies SQLite; cannot refresh without human re-login |
+
+**Security model:**
+- Only reads/writes 0600 files under `~/.config/keyflip/surfaces/`
+- No tokens passed on command lines; Keychain access uses stdin-based helpers
+- Claude cookie decryption: IV = 16 space chars, prefix strip for Chromium ≥ v130 (32-byte host-binding)
+- Metrics file (`refresh-metrics.json`) contains counts/timestamps only — never tokens or secrets
+
+**Error handling:**
+- Exponential backoff: 1min → 5min → 15min between retry attempts
+- Max 3 consecutive failures before giving up until next successful refresh
+- Persistent metrics tracking: total checks, refreshes, failures per account
+- Daemon continues operating even when individual tool refreshes fail
+
+**Observability:**
+- Logs to `~/Library/Logs/refresh-keyflip.log` (macOS launchd)
+- `keyflip refresh --metrics` shows per-account statistics
+- Kiro hash changes logged with old/new hash prefixes for debugging
+- Claude session extraction failures logged but don't stop daemon
+
+**Complementary to nightly scheduler:**
+The existing `keyflip refresh --schedule` runs `refresh --all` once daily as a batch job. The daemon
+provides continuous monitoring between scheduled runs, catching tokens that expire unexpectedly or
+detecting platform-initiated rotations (Kiro IDE/CLI, Claude Desktop re-auth).
+
+**Limitations:**
+- Claude Desktop: Cannot proactively refresh; requires human re-login every ~30 days
+- Kiro: Hash detection only; cannot prevent AWS SSO revocation if refresh_token used elsewhere
+- Linux: @reboot cron may not run if system doesn't boot (laptop asleep); launchd KeepAlive more reliable

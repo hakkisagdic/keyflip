@@ -14,9 +14,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   5 minutes. Proactively refreshes Antigravity (Google OAuth) and ChatGPT (session token → bearer
   conversion) before they expire. Kiro uses reactive-only hash comparison to detect IDE/CLI rotation
   — proactive refresh is forbidden due to single-use refresh_token race conditions. Claude Desktop
-  has no active mechanism; it relies on HTTP Set-Cookie capture during interactive use. Manage with
-  `--daemon-start`, `--daemon-stop`, `--daemon-status`. Logs to `~/Library/Logs/refresh-keyflip.log`
-  (macOS). Complements the existing nightly `--schedule` timer that runs `refresh --all` once per day.
+  session extraction from encrypted cookie database using AES-128-CBC decryption (Keychain "Claude
+  Safe Storage" key, PBKDF2-HMAC-SHA1 derivation). Manage with `--daemon-start`, `--daemon-stop`,
+  `--daemon-status`. Logs to `~/Library/Logs/refresh-keyflip.log` (macOS). Complements the existing
+  nightly `--schedule` timer that runs `refresh --all` once per day.
+
+- **Error handling with retry logic and metrics tracking.** Failed refreshes use exponential backoff
+  (1min → 5min → 15min, max 3 retries). Persistent metrics file at
+  `~/.config/keyflip/refresh-metrics.json` tracks checks, refreshes, failures per account. View with
+  `keyflip refresh --metrics`. Daemon continues operating even when individual tool refreshes fail.
+
+- **Kiro reactive hash change detection.** When Kiro CLI or IDE rotates the refresh token, daemon
+  detects the SHA256 hash change and logs a warning with old/new hash prefixes. No action required —
+  this is expected behavior during normal Kiro re-authentication. Hash history stored in
+  `~/.config/keyflip/surfaces/kiro/<account>/refresh_token_hash.json`.
+
+- **Claude Desktop session extraction.** Extracts `sessionKey` cookie from Claude's encrypted SQLite
+  database (`~/Library/Application Support/Claude/Cookies`) using Keychain-stored AES key. Decryption
+  uses PBKDF2-HMAC-SHA1 (saltysalt, 1003 iterations) + AES-128-CBC (IV: 16 spaces). Session has ~30
+  day lifetime; daemon monitors for changes but cannot proactively refresh (requires human
+  re-login). Extracted sessions tracked via hash comparison similar to Kiro.
 
 - **`keyflip antigravity` — save, switch and inspect Antigravity (formerly Gemini CLI) accounts.**
   Antigravity stores its OAuth token in the macOS Keychain under service "gemini", account

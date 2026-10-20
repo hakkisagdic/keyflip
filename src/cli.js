@@ -342,6 +342,7 @@ function usage() {
   print(
     '                                 proactively refreshs Antigravity/ChatGPT, Kiro uses reactive hash-check only',
   );
+  print('  keyflip refresh --metrics      show refresh daemon statistics (checks, refreshes, failures per account)');
   print('  keyflip list [--usage]        saved accounts; --usage adds 5h/7d quota per account');
   print('  keyflip remove <name|number>  delete a saved account');
   print('  keyflip autoswitch            watch usage; auto-swap the CLI account at a threshold');
@@ -12659,6 +12660,7 @@ async function cmdRefresh(ctx, rest) {
   const daemonStart = rest.indexOf('--daemon-start') !== -1;
   const daemonStop = rest.indexOf('--daemon-stop') !== -1;
   const daemonStatus = rest.indexOf('--daemon-status') !== -1;
+  const showMetrics = rest.indexOf('--metrics') !== -1;
 
   if (schedStatus) {
     const st = _schedule.status(ctx, { job: 'refresh' });
@@ -12768,6 +12770,58 @@ async function cmdRefresh(ctx, rest) {
     }
     return;
   }
+
+  // Metrics display
+  if (showMetrics) {
+    const metricsPath = path.join(ctx.configDir, 'refresh-metrics.json');
+    let metrics;
+    try {
+      metrics = JSON.parse(fs.readFileSync(metricsPath, 'utf8'));
+    } catch (e) {
+      return fail('No metrics available. Start the daemon first with: keyflip refresh --daemon-start');
+    }
+
+    if (asJson) {
+      jsonOut({ refreshMetrics: metrics });
+      return;
+    }
+
+    print('Refresh Daemon Metrics');
+    print('═════════════════════');
+    print('Started: ' + new Date(metrics.startedAt).toLocaleString());
+    print('Last tick: ' + (metrics.totals.lastTick ? new Date(metrics.totals.lastTick).toLocaleString() : 'never'));
+    print('');
+    print('Totals:');
+    print('  Checks:     ' + metrics.totals.checks);
+    print('  Refreshes:  ' + metrics.totals.refreshes);
+    print('  Failures:   ' + metrics.totals.failures);
+    print('');
+
+    const tools = Object.keys(metrics.tools);
+    if (tools.length) {
+      print('Per-account details:');
+      tools.forEach((key) => {
+        const m = metrics.tools[key];
+        print('');
+        print('  ' + style.bold(key));
+        print('    Last check:    ' + (m.lastCheck ? new Date(m.lastCheck).toLocaleString() : 'never'));
+        print('    Last refresh:  ' + (m.lastRefresh ? new Date(m.lastRefresh).toLocaleString() : 'never'));
+        print('    Last failure:  ' + (m.lastFailure ? new Date(m.lastFailure).toLocaleString() : 'none'));
+        print('    Consecutive failures: ' + m.consecutiveFailures);
+        print(
+          '    Stats:         ' +
+            m.totalChecks +
+            ' checks, ' +
+            m.totalRefreshes +
+            ' refreshes, ' +
+            m.totalFailures +
+            ' failures',
+        );
+      });
+    }
+    return;
+  }
+
   if (daemonStop) {
     const r = _schedule.uninstall(ctx, { job: 'daemon' });
     if (!r.ok && r.kind === 'unsupported') return fail('daemon scheduling is macOS/Linux-only for now.');
