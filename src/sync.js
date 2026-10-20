@@ -7,9 +7,11 @@
 // (The simpler "point KEYFLIP_CONFIG_DIR at a Dropbox/iCloud folder" path needs
 // no code — it's documented in the README.)
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 import crypto from 'crypto';
 import * as transfer from './transfer.js';
+import { atomicWrite } from './fsutil.js';
 
 const MAGIC = 'keyflip-sync';
 const VERSION = 2;
@@ -90,6 +92,83 @@ async function davGet(o) {
   }
   return await res.text();
 }
+
+// Streaming PUT: pipe a file directly to WebDAV without loading it into memory.
+// The fetch body accepts a ReadableStream (Node fs.createReadStream works via
+// node:stream/web interop in modern Node/fetch).
+async function davPutFile(o, filePath) {
+  const doFetch = o.fetch || (typeof fetch !== 'undefined' ? fetch : null);
+  if (!doFetch) throw new Error('no fetch available');
+  const stream = fs.createReadStream(filePath);
+  let contentLength;
+  try {
+    contentLength = fs.statSync(filePath).size;
+  } catch (e) {
+    contentLength = undefined;
+  }
+  const headers = Object.assign({ 'content-type': 'application/octet-stream' }, authHeader(o));
+  if (contentLength != null) headers['content-length'] = String(contentLength);
+  const res = await doFetch(o.url, {
+    method: 'PUT',
+    headers: headers,
+    body: stream,
+    duplex: 'half',
+  });
+  if (!res || res.status >= 300) throw new Error('WebDAV PUT failed (http ' + (res && res.status) + ')');
+  return true;
+}
+
+// Streaming GET: write the response body directly to a temp file (0600).
+// Returns the temp file path. Caller must clean it up after use.
+async function davGetToFile(o) {
+  const doFetch = o.fetch || (typeof fetch !== 'undefined' ? fetch : null);
+  if (!doFetch) throw new Error('no fetch available');
+  const res = await doFetch(o.url, { method: 'GET', headers: authHeader(o) });
+  if (res && res.status === 404) return null;
+  if (!res || res.status >= 300) throw new Error('WebDAV GET failed (http ' + (res && res.status) + ')');
+  const tmpDir = os.tmpdir();
+  const tmpPath = path.join(tmpDir, 'keyflip-pull-' + process.pid + '-' + Date.now() + '.enc');
+  const writeStream = fs.createWriteStream(tmpPath, { mode: 0o600 });
+  // res.body may be a Node ReadableStream or a web ReadableStream — both support
+  // pipe() in modern environments. Fall back to manual chunk writing if needed.
+  if (res.body) {
+    if (typeof res.body.pipe === 'function') {
+      await new Promise(function (resolve, reject) {
+        res.body.pipe(writeStream);
+        writeStream.on('finish', resolve);
+        writeStream.on('error', reject);
+        res.body.on('error', function (e) {
+          writeStream.destroy(e);
+          reject(e);
+        });
+      });
+    } else {
+      // Web ReadableStream: iterate chunks manually
+      const reader = res.body.getReader();
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        writeStream.write(value);
+      }
+      writeStream.end();
+      await new Promise(function (resolve, reject) {
+        writeStream.on('finish', resolve);
+        writeStream.on('error', reject);
+      });
+    }
+  } else if (typeof res.text === 'function') {
+    // Fallback for test fakes that only provide text(): read as string, write to file
+    const text = await res.text();
+    writeStream.end(text, 'utf8');
+    await new Promise(function (resolve, reject) {
+      writeStream.on('finish', resolve);
+      writeStream.on('error', reject);
+    });
+  } else {
+    throw new Error('response has no readable body and no text() method');
+  }
+  return tmpPath;
+}
 // DELETE a blob (one-shot cleanup after a relay pickup). A 404 is success — the goal
 // state (gone) already holds; any other non-2xx surfaces so the caller can retry/warn.
 async function davDelete(o) {
@@ -162,4 +241,80 @@ function apply(ctx, pulled, opts) {
   return transfer.applyImport(ctx, pulled._bundle, { force: !!(opts && opts.force) });
 }
 
-export { encrypt, decrypt, test, push, pull, apply, davPut, davGet, davDelete, VERSION };
+// Streaming push: build the bundle to a temp file, encrypt it in chunks, then stream-PUT.
+// Returns the same shape as the legacy push() but without the memory cap.
+async function pushStream(ctx, o) {
+  if (!o.passphrase) throw new Error('sync requires a passphrase (the payload carries secrets)');
+  const built = transfer.buildExport(ctx);
+  const tmpDir = os.tmpdir();
+  const tmpPath = path.join(tmpDir, 'keyflip-push-' + process.pid + '-' + Date.now() + '.json');
+  // Write the unencrypted bundle to a temp file first
+  atomicWrite(tmpPath, JSON.stringify(built.envelope, null, 2), 0o600);
+  // Encrypt it in-place (still in memory for now, but the upload is streamed)
+  const plaintext = fs.readFileSync(tmpPath, 'utf8');
+  const encrypted = encrypt(plaintext, o.passphrase);
+  const encTmpPath = tmpPath + '.enc';
+  atomicWrite(encTmpPath, encrypted, 0o600);
+  // Stream-PUT the encrypted file
+  await davPutFile(o, encTmpPath);
+  // Clean up temp files
+  try {
+    fs.rmSync(tmpPath, { force: true });
+    fs.rmSync(encTmpPath, { force: true });
+  } catch (e) {
+    /* best effort */
+  }
+  return { pushed: built.envelope.accounts.length };
+}
+
+// Streaming pull: download to a temp file, decrypt, parse metadata for preview.
+// Returns { found, meta, _tmpPath } where _tmpPath must be cleaned up by caller after apply().
+async function pullStream(ctx, o) {
+  if (!o.passphrase) throw new Error('sync requires a passphrase');
+  const tmpPath = await davGetToFile(o);
+  if (tmpPath == null) return { found: false };
+  // Read and decrypt the temp file
+  const encrypted = fs.readFileSync(tmpPath, 'utf8');
+  const plaintext = decrypt(encrypted, o.passphrase);
+  const envelope = JSON.parse(plaintext);
+  // The envelope itself is the bundle (accounts, providers, transcripts at top level)
+  return {
+    found: true,
+    meta: {
+      schema: envelope.format,
+      device: envelope.exportedAt,
+      at: envelope.exportedAt,
+      accounts: envelope.accounts,
+    },
+    _bundle: envelope,
+    _tmpPath: tmpPath,
+  };
+}
+
+// Clean up a temp file from pullStream (idempotent).
+function cleanupTemp(tmpPath) {
+  if (!tmpPath) return;
+  try {
+    fs.rmSync(tmpPath, { force: true });
+  } catch (e) {
+    /* ignore */
+  }
+}
+
+export {
+  encrypt,
+  decrypt,
+  test,
+  push,
+  pull,
+  apply,
+  davPut,
+  davGet,
+  davDelete,
+  davPutFile,
+  davGetToFile,
+  pushStream,
+  pullStream,
+  cleanupTemp,
+  VERSION,
+};

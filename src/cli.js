@@ -4342,8 +4342,12 @@ async function cmdMigrate(ctx, rest) {
         return migrate.applyBundle(ctx, b, { force: force });
       });
     } catch (e) {
+      // Clean up temp file even on failure
+      if (pulled._tmpPath) migrate.cleanupPullTemp(pulled._tmpPath);
       return fail(e.message);
     }
+    // Clean up the downloaded temp file after successful apply
+    if (pulled._tmpPath) migrate.cleanupPullTemp(pulled._tmpPath);
     const tx = res.transcripts;
     print(
       style.ok('✅') +

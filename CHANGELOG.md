@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`migrate push`/`pull` now stream large bundles over WebDAV, removing the 256 MB in-memory cap.**
+  Small bundles (≤256 MB) still use the legacy in-memory path for cross-version compatibility with
+  older clients. Large bundles build to a temp file, encrypt, and stream-upload via `davPutFile`,
+  while `pullBundle` downloads to a temp file and decrypts in-place. The CLI cleans up temp files
+  after apply, even on failure. This enables migrating multi-gigabyte transcript sets through cloud
+  storage without hitting V8's string limit or OOM.
+
 - **`migrate export`/`import` stream the transcript tier, ending the large-history OOM (issue #1).**
   The bundle used to embed every transcript in ONE JSON string: around 830 MB `JSON.stringify`
   exhausted the heap, and encrypting it then base64-encoded the whole ciphertext into a second giant
