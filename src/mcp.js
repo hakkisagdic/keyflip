@@ -499,12 +499,89 @@ const TOOLS = [
       } catch (e) {
         cliEmail = null;
       }
+
+      // Smart suggestions: check what the agent should offer after a switch
+      const suggestions = [];
+      
+      // 1. Chat consolidation — if Claude Desktop is closed and multiple accounts have chats
+      try {
+        const appRunning = appctl.isClaudeRunning(ctx.platform);
+        if (!appRunning) {
+          const allProfiles = profiles.list(ctx.configDir);
+          const multiAccount = allProfiles.length > 1;
+          if (multiAccount) {
+            suggestions.push({
+              type: 'consolidate',
+              priority: 'high',
+              title: 'Sync chat history across accounts',
+              description: 'Run `keyflip consolidate` to merge all accounts\' chat indexes so each shows ALL conversations.',
+              command: 'keyflip consolidate',
+              autoSafe: true, // Safe to run automatically when app is closed
+            });
+          }
+        } else {
+          suggestions.push({
+            type: 'consolidate_deferred',
+            priority: 'medium',
+            title: 'Chat sync deferred (Claude Desktop is open)',
+            description: 'Close Claude Desktop and run `keyflip consolidate` to sync chat history across accounts.',
+            command: 'keyflip consolidate',
+            autoSafe: false,
+          });
+        }
+      } catch (_) {
+        // Ignore errors in suggestion generation
+      }
+
+      // 2. Token refresh check — if switching to an account that hasn't been used recently
+      try {
+        const tokenPath = path.join(ctx.configDir, 'creds', name + '.cred');
+        if (fs.existsSync(tokenPath)) {
+          const cred = JSON.parse(fs.readFileSync(tokenPath, 'utf8'));
+          if (cred.expires_at) {
+            const expiresAt = new Date(cred.expires_at).getTime();
+            const hoursLeft = (expiresAt - Date.now()) / (1000 * 60 * 60);
+            if (hoursLeft < 24 && hoursLeft > 0) {
+              suggestions.push({
+                type: 'refresh_token',
+                priority: 'high',
+                title: 'Token expiring soon',
+                description: `This account's token expires in ~${Math.round(hoursLeft)}h. Run \`keyflip refresh ${name}\` to refresh it now.`,
+                command: `keyflip refresh ${name}`,
+                autoSafe: true,
+              });
+            }
+          }
+        }
+      } catch (_) {
+        // Ignore errors
+      }
+
+      // 3. Multi-instance suggestion — if this tool supports isolated instances
+      try {
+        const instanceList = instances.listInstances('claude');
+        const hasInstance = instanceList.claude && instanceList.claude.some(i => i.slug === name);
+        if (!hasInstance && profiles.list(ctx.configDir).length > 1) {
+          suggestions.push({
+            type: 'multi_instance',
+            priority: 'low',
+            title: 'Consider isolated instance for persistent sessions',
+            description: 'Create an isolated Claude instance to avoid ~30-day cookie expiry. Each instance runs independently with its own session.',
+            command: `keyflip instance create claude ${name}`,
+            autoSafe: false,
+          });
+        }
+      } catch (_) {
+        // Ignore errors
+      }
+
       return {
         switched: { name: name, email: em || null },
         cliSwitched: did.cli,
         verified: verified,
         cliEmailAfterSwitch: cliEmail,
         note: 'Desktop app not touched; a running Claude Code applies the new account on its next request.',
+        suggestions: suggestions.length > 0 ? suggestions : undefined,
       };
     },
   },
