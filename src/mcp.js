@@ -504,20 +504,37 @@ const TOOLS = [
       const suggestions = [];
       
       // 1. Chat consolidation — if Claude Desktop is closed and multiple accounts have chats
+      let consolidateRan = false;
       try {
         const appRunning = appctl.isClaudeRunning(ctx.platform);
         if (!appRunning) {
           const allProfiles = profiles.list(ctx.configDir);
           const multiAccount = allProfiles.length > 1;
           if (multiAccount) {
-            suggestions.push({
-              type: 'consolidate',
-              priority: 'high',
-              title: 'Sync chat history across accounts',
-              description: 'Run `keyflip consolidate` to merge all accounts\' chat indexes so each shows ALL conversations.',
-              command: 'keyflip consolidate',
-              autoSafe: true, // Safe to run automatically when app is closed
-            });
+            // Auto-run consolidate when safe (app closed + multiple accounts)
+            try {
+              const consResult = appsessions.consolidate(ctx);
+              consolidateRan = true;
+              suggestions.push({
+                type: 'consolidate_auto',
+                priority: 'high',
+                title: 'Chat history synced automatically',
+                description: `Merged ${consResult.merged || 0} chat sessions across ${allProfiles.length} accounts while Claude Desktop was closed.`,
+                command: null, // Already ran, no user action needed
+                autoSafe: true,
+                executed: true,
+              });
+            } catch (e) {
+              // Consolidate failed - offer manual retry
+              suggestions.push({
+                type: 'consolidate_failed',
+                priority: 'high',
+                title: 'Chat sync failed (retry manually)',
+                description: `Automatic consolidate failed: ${e.message}. Run \`keyflip consolidate\` manually with Claude Desktop closed.`,
+                command: 'keyflip consolidate',
+                autoSafe: false,
+              });
+            }
           }
         } else {
           suggestions.push({
@@ -582,6 +599,7 @@ const TOOLS = [
         cliEmailAfterSwitch: cliEmail,
         note: 'Desktop app not touched; a running Claude Code applies the new account on its next request.',
         suggestions: suggestions.length > 0 ? suggestions : undefined,
+        autoConsolidate: consolidateRan ? true : undefined, // Signal that consolidate ran automatically
       };
     },
   },
