@@ -4,6 +4,7 @@ import path from 'path';
 import { createContext } from './context.js';
 import * as core from './core.js';
 import * as claude from './claude.js';
+import * as claudeProfiles from './claude-profiles.js';
 import * as profiles from './profiles.js';
 import * as appctl from './platform.js';
 import * as appsessions from './appsessions.js';
@@ -343,6 +344,8 @@ function usage() {
     '                                 proactively refreshs Antigravity/ChatGPT, Kiro uses reactive hash-check only',
   );
   print('  keyflip refresh --metrics      show refresh daemon statistics (checks, refreshes, failures per account)');
+  print('  keyflip claude-profiles <list|create|launch|focus|kill|enable-all>');
+  print('                                 manage isolated Claude Desktop instances per account (solves cookie expiry)');
   print('  keyflip list [--usage]        saved accounts; --usage adds 5h/7d quota per account');
   print('  keyflip remove <name|number>  delete a saved account');
   print('  keyflip autoswitch            watch usage; auto-swap the CLI account at a threshold');
@@ -14363,6 +14366,9 @@ async function dispatch(ctx, cmd, rest) {
               return cmdAntigravity(ctx, rest);
             })
           : cmdAntigravity(ctx, rest);
+      case 'claude-profiles':
+      case 'clp':
+        return cmdClaudeProfiles(ctx, rest);
       case 'skill':
         return cmdSkill(ctx, rest);
       case 'proxy':
@@ -14430,6 +14436,195 @@ async function dispatch(ctx, cmd, rest) {
       }
     }
   }
+}
+
+// ---- Claude Desktop multi-profile management ----
+
+async function cmdClaudeProfiles(ctx, rest) {
+  const sub = rest[0];
+
+  if (!sub || sub === 'list' || sub === 'ls') {
+    const profiles = claudeProfiles.listProfiles();
+    if (JSON_MODE) {
+      jsonOut({ profiles: profiles });
+      return;
+    }
+
+    if (!profiles.length) {
+      print('No Claude profiles created yet.');
+      print('');
+      print('Create one:  keyflip claude-profiles create <account-slug>');
+      print('Enable for all accounts:  keyflip claude-profiles enable-all');
+      return;
+    }
+
+    print('Claude Desktop Profiles');
+    print('═══════════════════════');
+    profiles.forEach((p) => {
+      const status = p.running ? style.ok('● running') + ' (PID ' + p.pid + ')' : style.dim('○ stopped');
+      print('  ' + style.bold(p.slug));
+      print('    Status:  ' + status);
+      print('    App:     ' + p.appPath);
+      print('    Data:    ' + p.userDataDir);
+      print('    Config:  ' + p.configDir);
+      if (p.createdAt) {
+        print('    Created: ' + new Date(p.createdAt).toLocaleDateString());
+      }
+      print('');
+    });
+    return;
+  }
+
+  if (sub === 'create') {
+    const accountSlug = rest[1];
+    if (!accountSlug) {
+      return fail('usage: keyflip claude-profiles create <account-slug>');
+    }
+
+    try {
+      const profile = claudeProfiles.createProfile(accountSlug);
+      print('');
+      print(style.ok('✅') + ' Profile created for ' + accountSlug);
+      print('  Launch with: keyflip claude-profiles launch ' + accountSlug);
+      jsonOut({ profile: profile });
+    } catch (e) {
+      return fail(e.message);
+    }
+    return;
+  }
+
+  if (sub === 'launch' || sub === 'start' || sub === 'open') {
+    const accountSlug = rest[1];
+    if (!accountSlug) {
+      return fail('usage: keyflip claude-profiles launch <account-slug>');
+    }
+
+    const profile = claudeProfiles.getProfile(accountSlug);
+    if (!profile) {
+      return fail(`No profile found for ${accountSlug}. Create it first: keyflip claude-profiles create ${accountSlug}`);
+    }
+
+    try {
+      claudeProfiles.launchProfile(profile, accountSlug);
+      print(style.ok('✅') + ' Launching Claude for ' + accountSlug + ' (isolated instance)');
+      print('  It will take a moment to start. Use "keyflip claude-profiles list" to check status.');
+    } catch (e) {
+      return fail(e.message);
+    }
+    return;
+  }
+
+  if (sub === 'focus' || sub === 'bring') {
+    const accountSlug = rest[1];
+    if (!accountSlug) {
+      return fail('usage: keyflip claude-profiles focus <account-slug>');
+    }
+
+    const profile = claudeProfiles.getProfile(accountSlug);
+    if (!profile) {
+      return fail(`No profile found for ${accountSlug}`);
+    }
+
+    if (!profile.running) {
+      print(style.warn('Profile is not running. Launch it first:'));
+      print('  keyflip claude-profiles launch ' + accountSlug);
+      return;
+    }
+
+    try {
+      claudeProfiles.focusProfile(profile);
+      print(style.ok('✅') + ' Focused Claude instance for ' + accountSlug);
+    } catch (e) {
+      return fail(e.message);
+    }
+    return;
+  }
+
+  if (sub === 'kill' || sub === 'stop' || sub === 'close') {
+    const accountSlug = rest[1];
+    if (!accountSlug) {
+      return fail('usage: keyflip claude-profiles kill <account-slug>');
+    }
+
+    try {
+      claudeProfiles.killProfile(accountSlug);
+      print(style.ok('✅') + ' Killed Claude instance for ' + accountSlug);
+    } catch (e) {
+      return fail(e.message);
+    }
+    return;
+  }
+
+  if (sub === 'enable-all') {
+    // Create profiles for all saved accounts
+    const accounts = profiles.list(ctx.configDir);
+    if (!accounts.length) {
+      return fail('No saved accounts found. Capture an account first.');
+    }
+
+    print('Creating profiles for ' + accounts.length + ' accounts...');
+    print('');
+
+    let successCount = 0;
+    let skipCount = 0;
+
+    accounts.forEach((acc) => {
+      const slug = acc.name || acc.slug;
+      if (claudeProfiles.hasProfile(slug)) {
+        print('  ' + style.dim('○') + ' ' + slug + ' (already exists)');
+        skipCount++;
+      } else {
+        try {
+          claudeProfiles.createProfile(slug);
+          print('  ' + style.ok('✅') + ' ' + slug);
+          successCount++;
+        } catch (e) {
+          print('  ' + style.err('✖') + ' ' + slug + ': ' + e.message);
+        }
+      }
+    });
+
+    print('');
+    print(
+      style.ok('✅') +
+        ' Done: ' +
+        successCount +
+        ' created, ' +
+        skipCount +
+        ' skipped, ' +
+        (accounts.length - successCount - skipCount) +
+        ' failed',
+    );
+    print('');
+    print('Launch any profile:  keyflip claude-profiles launch <account>');
+    print('List all:            keyflip claude-profiles list');
+    return;
+  }
+
+  if (sub === 'help' || sub === '--help' || sub === '-h') {
+    print('Claude Desktop Multi-Profile Manager');
+    print('');
+    print('Usage:');
+    print('  keyflip claude-profiles list                  List all profiles and their status');
+    print('  keyflip claude-profiles create <account>      Create isolated profile for an account');
+    print('  keyflip claude-profiles launch <account>      Launch Claude instance for account');
+    print('  keyflip claude-profiles focus <account>       Focus running instance window');
+    print('  keyflip claude-profiles kill <account>        Kill running instance');
+    print('  keyflip claude-profiles enable-all            Create profiles for all saved accounts');
+    print('');
+    print('Each profile gets:');
+    print('  • Independent .app clone (APFS copy-on-write, ~zero disk cost)');
+    print('  • Isolated user data (cookies, sessions never expire across accounts)');
+    print('  • Auto-update disabled (prevents breaking on Claude updates)');
+    print('  • Separate MCP config directory');
+    print('');
+    print('Why use this?');
+    print('  Solves the "~30 day cookie expiry" problem — each account maintains its own');
+    print('  session indefinitely. No more "Sign in again" when switching accounts.');
+    return;
+  }
+
+  return fail("unknown subcommand '" + sub + "'. Use: keyflip claude-profiles help");
 }
 
 export {
