@@ -7064,7 +7064,7 @@ async function cmdFleet(ctx, rest) {
     return;
   }
 
-  // LAN discovery (#57): find keyflip machines on this network WITHOUT the shared folder. Public
+  // LAN discovery (#57) + Tailscale fallback: find keyflip machines on this network WITHOUT the shared folder. Public
   // identity only (machine id / name / key fingerprint) — no passphrase, so it runs before any
   // rendezvous is configured. While listening we ALSO announce, so two machines discovering at the
   // same time see each other (announce is ON by default; `fleet announce off` opts out, `--no-announce`
@@ -7075,42 +7075,90 @@ async function cmdFleet(ctx, rest) {
     const self = fleet.identity(ctx);
     const announced = rest.indexOf('--no-announce') === -1 && self.announce !== false;
     const me = { machineId: self.machineId, name: self.name, fp: fleet.fingerprint(fleet.publicKey(ctx)) };
-    if (!JSON_MODE)
-      print(
-        style.dim(
-          'listening for keyflip machines on the LAN for ' +
-            timeoutMs +
-            'ms' +
-            (announced ? ' (announcing ourselves)' : ' (announce OFF)') +
-            '…',
-        ),
-      );
+    
+    let lanPeers = [];
+    let tailscalePeers = [];
+    let transportUsed = 'lan';
+    
+    // Step 1: Try LAN multicast
+    if (!JSON_MODE) {
+      print(style.dim('Scanning LAN via multicast for ' + timeoutMs + 'ms' + (announced ? ' (announcing)' : '') + '…'));
+    }
     const beacon = announced ? _lanfleet.announce(me, { intervalMs: 500 }) : null;
-    let peers = [];
     try {
-      peers = await _lanfleet.discover({ timeoutMs: timeoutMs, exclude: self.machineId });
+      lanPeers = await _lanfleet.discover({ timeoutMs: timeoutMs, exclude: self.machineId });
     } catch (e) {
-      peers = [];
+      lanPeers = [];
     } finally {
       if (beacon) beacon.stop();
     }
+    
+    // Step 2: If LAN found nothing, try Tailscale
+    if (lanPeers.length === 0) {
+      if (!JSON_MODE) {
+        print(style.dim('No LAN peers found. Checking Tailscale network…'));
+      }
+      try {
+        const tsResult = run('tailscale', ['status', '--json']);
+        if (tsResult.code === 0 && tsResult.stdout) {
+          const tsStatus = JSON.parse(tsResult.stdout);
+          if (tsStatus.Peer && Object.keys(tsStatus.Peer).length > 0) {
+            // Extract Tailscale peers that might be running keyflip
+            tailscalePeers = Object.values(tsStatus.Peer)
+              .filter(function(peer) {
+                return peer.Online && peer.TailscaleIPs && peer.TailscaleIPs.length > 0;
+              })
+              .map(function(peer) {
+                return {
+                  machineId: peer.Hostname.replace(/[^A-Za-z0-9_-]/g, '').slice(0, 40),
+                  name: peer.Hostname,
+                  host: peer.TailscaleIPs[0],
+                  transport: 'tailscale',
+                  online: true,
+                };
+              });
+            if (tailscalePeers.length > 0) {
+              transportUsed = 'tailscale';
+            }
+          }
+        }
+      } catch (_) {
+        // Tailscale not available - that's fine
+      }
+    }
+    
+    // Merge results
+    const allPeers = lanPeers.concat(tailscalePeers);
+    
     if (JSON_MODE) {
-      jsonOut({ fleetDiscover: { self: me, announced: announced, peers: peers, ms: timeoutMs } });
+      jsonOut({ 
+        fleetDiscover: { 
+          self: me, 
+          announced: announced, 
+          peers: allPeers, 
+          lan: lanPeers.length,
+          tailscale: tailscalePeers.length,
+          transport: transportUsed,
+          ms: timeoutMs 
+        } 
+      });
       return;
     }
-    print(style.bold('On the LAN now:') + ' ' + style.dim('(as ' + self.name + ')'));
-    if (!peers.length) {
-      print('  ' + style.warn('no other keyflip machine answered in ' + timeoutMs + 'ms.'));
+    
+    print(style.bold('Discovered machines:') + ' ' + style.dim('(as ' + self.name + ')'));
+    if (!allPeers.length) {
+      print('  ' + style.warn('no other keyflip machine found.'));
       print(
         '  ' +
           style.dim(
-            'Same Wi-Fi/subnet and BOTH running discover? macOS may ask to allow incoming connections' +
-              ' the first time. A VPN or a locked-down network can block multicast (falls back to a shared folder).',
+            'Make sure other machines are running `keyflip fleet push` or are on the same network.',
           ),
       );
       return;
     }
-    peers.forEach(function (p) {
+    
+    allPeers.forEach(function (p) {
+      const transportBadge = p.transport === 'tailscale' ? style.dim('[Tailscale]') : style.dim('[LAN]');
       print(
         '  ' +
           style.ok('●') +
@@ -7119,15 +7167,16 @@ async function cmdFleet(ctx, rest) {
           '  ' +
           style.dim(p.machineId.slice(0, 12) + '…' + (p.fp ? '  key ' + p.fp : '  (no key published yet)')) +
           '  ' +
-          style.dim(p.host),
+          style.dim(p.host) +
+          ' ' +
+          transportBadge,
       );
     });
     print('');
     print(
       '  ' +
         style.dim(
-          'Reachable, but acting on a peer needs the fleet passphrase AND a pinned key: pair with' +
-            ' `keyflip fleet invite` / `fleet join --code`, or `fleet trust` after comparing fingerprints.',
+          'Reachable, but acting on a peer needs the fleet passphrase AND a pinned key: pair with',
         ),
     );
     return;
