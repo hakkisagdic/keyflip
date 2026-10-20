@@ -277,4 +277,147 @@ async function get(ctx, id, opts) {
   return conv;
 }
 
-export { list, get, search, resolveConversation, cookieHeader, cookiesDbFor, decryptCookie, activeOrg, headers };
+// --- Local Claude Code transcripts (disk-based) ---------------------------------
+
+// Find all local Claude Code session transcripts under ~/.claude/projects/<cwd-slug>/*.jsonl
+// Returns [{ id, title, cwd, updatedAt, messageCount, source: 'local' }]
+function listLocal(opts) {
+  opts = opts || {};
+  const baseDir = opts.baseDir || path.join(os.homedir(), '.claude', 'projects');
+  if (!fs.existsSync(baseDir)) return [];
+
+  const sessions = [];
+  const cwdSlugs = fs.readdirSync(baseDir);
+
+  cwdSlugs.forEach(function (cwdSlug) {
+    const cwdPath = path.join(baseDir, cwdSlug);
+    if (!fs.statSync(cwdPath).isDirectory()) return;
+
+    // Read all JSONL files in this cwd directory
+    const files = fs.readdirSync(cwdPath).filter(function (f) {
+      return f.endsWith('.jsonl') && !f.endsWith('.meta.json');
+    });
+
+    files.forEach(function (file) {
+      const uuid = file.replace('.jsonl', '');
+      const jsonlPath = path.join(cwdPath, file);
+      const metaPath = path.join(cwdPath, uuid + '.meta.json');
+
+      // Read metadata if available
+      let title = uuid.slice(0, 8); // fallback to short UUID
+      let updatedAt = null;
+
+      if (fs.existsSync(metaPath)) {
+        try {
+          const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
+          if (meta.title) title = meta.title;
+          if (meta.updatedAt) updatedAt = meta.updatedAt;
+        } catch (e) {
+          // ignore malformed meta
+        }
+      }
+
+      // Count messages by reading first/last lines of JSONL
+      let messageCount = 0;
+      try {
+        const stats = fs.statSync(jsonlPath);
+        if (stats.size > 0) {
+          // Quick count: read file and count newlines (approximate but fast)
+          const content = fs.readFileSync(jsonlPath, 'utf8');
+          const lines = content.split('\n').filter(function (l) {
+            return l.trim();
+          });
+          // Only count user/assistant messages (skip tool results)
+          lines.forEach(function (line) {
+            try {
+              const j = JSON.parse(line);
+              if ((j.type === 'user' || j.type === 'assistant') && j.message) {
+                messageCount++;
+              }
+            } catch (e) {
+              // skip parse errors
+            }
+          });
+        }
+        if (!updatedAt) updatedAt = stats.mtime.toISOString();
+      } catch (e) {
+        // ignore unreadable files
+      }
+
+      if (messageCount > 0) {
+        sessions.push({
+          id: uuid,
+          title: title,
+          cwd: cwdSlug,
+          updatedAt: updatedAt,
+          messageCount: messageCount,
+          source: 'local',
+        });
+      }
+    });
+  });
+
+  // Sort by most recent first
+  sessions.sort(function (a, b) {
+    if (!a.updatedAt) return 1;
+    if (!b.updatedAt) return -1;
+    return new Date(b.updatedAt) - new Date(a.updatedAt);
+  });
+
+  return sessions;
+}
+
+// Read a local transcript file and parse it into chat messages
+// Returns { messages: [{role, text, ts}], cwd, counts }
+async function getLocal(uuid, opts) {
+  opts = opts || {};
+  const baseDir = opts.baseDir || path.join(os.homedir(), '.claude', 'projects');
+
+  // Search for the JSONL file across all cwd directories
+  let jsonlPath = null;
+  let cwdSlug = null;
+
+  if (fs.existsSync(baseDir)) {
+    const cwdSlugs = fs.readdirSync(baseDir);
+    for (let i = 0; i < cwdSlugs.length; i++) {
+      const slug = cwdSlugs[i];
+      const candidate = path.join(baseDir, slug, uuid + '.jsonl');
+      if (fs.existsSync(candidate)) {
+        jsonlPath = candidate;
+        cwdSlug = slug;
+        break;
+      }
+    }
+  }
+
+  if (!jsonlPath) {
+    throw new Error("no local transcript found for '" + uuid + "' in " + baseDir);
+  }
+
+  // Read and parse the JSONL
+  const jsonl = fs.readFileSync(jsonlPath, 'utf8');
+  // Import transcript parser dynamically (avoid circular dependency)
+  const transcriptMod = await import('./transcript.js');
+  const parsed = transcriptMod.parse(jsonl);
+
+  return {
+    messages: parsed.messages,
+    cwd: cwdSlug,
+    counts: parsed.counts,
+    source: 'local',
+  };
+}
+
+export {
+  list,
+  get,
+  search,
+  resolveConversation,
+  cookieHeader,
+  cookiesDbFor,
+  decryptCookie,
+  activeOrg,
+  headers,
+  listLocal,
+  getLocal,
+};

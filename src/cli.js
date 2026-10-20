@@ -5300,6 +5300,94 @@ async function cmdChat(ctx, rest) {
   }
 
   try {
+    // --local flag: show local Claude Code transcripts instead of web chats
+    const localMode = rest.indexOf('--local') !== -1 || rest.indexOf('-l') !== -1;
+
+    if (localMode) {
+      if (sub === 'get') {
+        if (!rest[1]) return fail('usage: keyflip chat get <uuid> --local');
+        const transcript = await chat.getLocal(rest[1]);
+        if (JSON_MODE) return jsonOut(transcript);
+        print(style.bold('Local transcript: ') + transcript.cwd);
+        print(
+          style.dim(
+            '  ' +
+              transcript.counts.messages +
+              ' messages (' +
+              transcript.counts.user +
+              ' user, ' +
+              transcript.counts.assistant +
+              ' assistant)',
+          ),
+        );
+        print('');
+        transcript.messages.forEach(function (m) {
+          const prefix = m.role === 'user' ? '›' : '‹';
+          const text = m.text.replace(/\s+/g, ' ').slice(0, 200);
+          print('  ' + prefix + ' ' + text);
+          if (m.tools && m.tools.length) {
+            print('     ' + style.dim('[used: ' + m.tools.join(', ') + ']'));
+          }
+        });
+        return;
+      }
+
+      if (sub === 'search') {
+        const term = rest[1] && rest[1].indexOf('-') === 0 ? '' : rest[1] || '';
+        const sessions = chat.listLocal();
+        const low = String(term || '').toLowerCase();
+        const matches = sessions.filter(function (s) {
+          return s.title.toLowerCase().indexOf(low) !== -1 || s.cwd.toLowerCase().indexOf(low) !== -1;
+        });
+
+        if (JSON_MODE) return jsonOut({ sessions: matches, scanned: sessions.length });
+        print('Local transcripts matching "' + term + '":');
+        if (!matches.length) {
+          print('  none of the ' + sessions.length + ' transcripts match');
+          return;
+        }
+        matches.forEach(function (s) {
+          print(
+            '  ' +
+              String(s.updatedAt || '')
+                .slice(0, 16)
+                .replace('T', ' ') +
+              '  ' +
+              s.title +
+              '   ' +
+              style.dim(s.cwd + ' · ' + s.messageCount + ' msgs'),
+          );
+        });
+        print('');
+        print('Read one:  keyflip chat get <uuid> --local');
+        return;
+      }
+
+      // Default: list all local transcripts
+      const sessions = chat.listLocal();
+      if (JSON_MODE) return jsonOut({ sessions: sessions });
+      print('Local Claude Code transcripts:');
+      if (!sessions.length) {
+        print('  (none found in ~/.claude/projects/)');
+        return;
+      }
+      sessions.forEach(function (s) {
+        print(
+          '  ' +
+            String(s.updatedAt || '')
+              .slice(0, 16)
+              .replace('T', ' ') +
+            '  ' +
+            s.title +
+            '   ' +
+            style.dim(s.cwd + ' · ' + s.messageCount + ' msgs'),
+        );
+      });
+      print('');
+      print('Read one:  keyflip chat get <uuid> --local   Search:  keyflip chat search "<words>" --local');
+      return;
+    }
+
     if (sub === 'get') {
       if (!rest[1]) return fail('usage: keyflip chat get <conversation-id|short-id|title> [--as <account>]');
       showConversation(
