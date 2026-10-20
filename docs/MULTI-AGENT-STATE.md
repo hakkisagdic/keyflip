@@ -59,6 +59,23 @@ NEEDS-VERIFICATION against a real install — the SQLite *reader* itself is fixt
 into `detect()`/`normalize()` (23/23 tests). Each parser is isolated behind `detect()`, so adding a
 source later is one function + a fixture test.
 
+## ⚠️ Kiro token refresh limitation (platform constraint)
+
+Kiro uses AWS SSO OAuth with **single-use refresh tokens**. When either the CLI or IDE refreshes its
+token, the other surface's refresh token is **automatically invalidated**. If both surfaces attempt
+to refresh concurrently, AWS detects "token reuse" and **revokes the entire token family**, forcing
+a human re-login.
+
+**What this means for keyflip:**
+- ✅ keyflip can capture and switch Kiro accounts across CLI + IDE surfaces
+- ❌ keyflip **cannot** implement background auto-refresh for Kiro without risking session invalidation
+- ✅ Safe approach: only refresh reactively after a 401 error, and check disk first to see if the
+  other surface already refreshed
+
+This is an **AWS/Kiro platform limitation**, not a keyflip bug. Separate client registrations for
+CLI and IDE would be required to enable independent refresh chains — that change must come from the
+Kiro team.
+
 Unified shape: `{ tool, sessionId, created_at, updated_at, resumable, resumeCommand, messages[], metadata }`.
 
 | Tool | Session path | Format | Resumable | Feasibility |
