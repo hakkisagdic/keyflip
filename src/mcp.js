@@ -11,6 +11,7 @@
 import readline from 'readline';
 import * as core from './core.js';
 import * as profiles from './profiles.js';
+import * as instances from './instances.js';
 import * as appauth from './appauth.js';
 import * as verifymod from './verify.js';
 import * as oauth from './oauth.js';
@@ -259,6 +260,150 @@ const TOOLS = [
       return { accounts: accountsPayload(ctx, infos) };
     },
   },
+
+  // ---- generic multi-instance management ----
+  {
+    name: 'keyflip_instances',
+    title: 'List AI tool instances',
+    description:
+      'List all running or available multi-instances for a given AI tool (claude, cursor, copilot, etc.). Each instance runs in an isolated app clone with independent user data. Read-only.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        tool: {
+          type: 'string',
+          description: 'Tool name (e.g., "claude", "cursor"). Defaults to listing all tools if omitted.',
+        },
+      },
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+    run: async function (ctx, args) {
+      const tool = args && args.tool ? String(args.tool) : null;
+      const allInstances = instances.listInstances(tool);
+      return {
+        tools: Object.keys(allInstances).map(function (t) {
+          return {
+            tool: t,
+            instances: allInstances[t].map(function (inst) {
+              return {
+                account: inst.slug,
+                appPath: inst.appPath,
+                userDataDir: inst.userDataDir,
+                configDir: inst.configDir,
+                running: inst.running,
+                pid: inst.pid || null,
+                createdAt: inst.createdAt || null,
+              };
+            }),
+          };
+        }),
+      };
+    },
+  },
+  {
+    name: 'keyflip_instance_create',
+    title: 'Create a new AI tool instance',
+    description:
+      'Create an isolated app clone for a specific AI tool and account. Uses APFS copy-on-write for near-zero disk overhead. Ask the user first, then confirm=true.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        tool: { type: 'string', description: 'Tool name (e.g., "claude", "cursor").' },
+        account: { type: 'string', description: 'Account slug/identifier.' },
+        confirm: { type: 'boolean', description: 'Must be true — set it only after the user has agreed.' },
+      },
+      required: ['tool', 'account', 'confirm'],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+    run: async function (ctx, args) {
+      needConfirm(args);
+      const tool = String(args.tool);
+      const account = String(args.account);
+      const result = instances.createInstance(tool, account);
+      return {
+        created: {
+          tool: result.tool,
+          account: result.slug,
+          appPath: result.appPath,
+          userDataDir: result.userDataDir,
+          configDir: result.configDir,
+        },
+      };
+    },
+  },
+  {
+    name: 'keyflip_instance_launch',
+    title: 'Launch an AI tool instance',
+    description:
+      'Launch a specific isolated instance of an AI tool. Closes all other instances first to avoid deep link routing traps. Ask the user first, then confirm=true.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        tool: { type: 'string', description: 'Tool name (e.g., "claude", "cursor").' },
+        account: { type: 'string', description: 'Account slug/identifier.' },
+        confirm: { type: 'boolean', description: 'Must be true — set it only after the user has agreed.' },
+      },
+      required: ['tool', 'account', 'confirm'],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
+    run: async function (ctx, args) {
+      needConfirm(args);
+      const tool = String(args.tool);
+      const account = String(args.account);
+      instances.launchInstance(tool, account);
+      return { launched: { tool: tool, account: account } };
+    },
+  },
+  {
+    name: 'keyflip_instance_focus',
+    title: 'Focus a running AI tool instance',
+    description:
+      'Bring a specific running AI tool instance window to the front using AppleScript. Fails if the instance is not running.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        tool: { type: 'string', description: 'Tool name (e.g., "claude", "cursor").' },
+        account: { type: 'string', description: 'Account slug/identifier.' },
+      },
+      required: ['tool', 'account'],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    run: async function (ctx, args) {
+      const tool = String(args.tool);
+      const account = String(args.account);
+      instances.focusInstance(tool, account);
+      return { focused: { tool: tool, account: account } };
+    },
+  },
+  {
+    name: 'keyflip_instance_kill',
+    title: 'Kill an AI tool instance',
+    description:
+      'Terminate a specific running AI tool instance by PID. Ask the user first, then confirm=true.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        tool: { type: 'string', description: 'Tool name (e.g., "claude", "cursor").' },
+        account: { type: 'string', description: 'Account slug/identifier.' },
+        confirm: { type: 'boolean', description: 'Must be true — set it only after the user has agreed.' },
+      },
+      required: ['tool', 'account', 'confirm'],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
+    run: async function (ctx, args) {
+      needConfirm(args);
+      const tool = String(args.tool);
+      const account = String(args.account);
+      instances.killInstance(tool, account);
+      return { killed: { tool: tool, account: account } };
+    },
+  },
+
   {
     name: 'keyflip_switch_plan',
     title: 'Plan a switch without performing it',
