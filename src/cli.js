@@ -3,8 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import { createContext } from './context.js';
 import * as core from './core.js';
-import * as claude from './claude.js';
-import * as claudeProfiles from './claude-profiles.js';
+import * as instances from './instances.js';
 import * as profiles from './profiles.js';
 import * as appctl from './platform.js';
 import * as appsessions from './appsessions.js';
@@ -14366,9 +14365,13 @@ async function dispatch(ctx, cmd, rest) {
               return cmdAntigravity(ctx, rest);
             })
           : cmdAntigravity(ctx, rest);
+      case 'instance':
+      case 'inst':
+        return cmdInstance(ctx, rest);
+      // Backward compat alias for claude-profiles
       case 'claude-profiles':
       case 'clp':
-        return cmdClaudeProfiles(ctx, rest);
+        return cmdClaudeProfilesCompat(ctx, rest);
       case 'skill':
         return cmdSkill(ctx, rest);
       case 'proxy':
@@ -14438,55 +14441,68 @@ async function dispatch(ctx, cmd, rest) {
   }
 }
 
-// ---- Claude Desktop multi-profile management ----
+// ---- Generic multi-instance management (tool-agnostic) ----
 
-async function cmdClaudeProfiles(ctx, rest) {
+async function cmdInstance(ctx, rest) {
   const sub = rest[0];
+  const tool = rest[1];
+  const account = rest[2];
 
   if (!sub || sub === 'list' || sub === 'ls') {
-    const profiles = claudeProfiles.listProfiles();
+    // If tool specified, filter by tool; else show all
+    const allInstances = tool ? instances.listInstances(tool) : getAllInstances();
+
     if (JSON_MODE) {
-      jsonOut({ profiles: profiles });
+      jsonOut({ instances: allInstances });
       return;
     }
 
-    if (!profiles.length) {
-      print('No Claude profiles created yet.');
+    if (!allInstances.length) {
+      print('No instances created yet.');
       print('');
-      print('Create one:  keyflip claude-profiles create <account-slug>');
-      print('Enable for all accounts:  keyflip claude-profiles enable-all');
+      print('Create one:  keyflip instance create <tool> <account-slug>');
+      print('Example:     keyflip instance create claude yahoo');
       return;
     }
 
-    print('Claude Desktop Profiles');
-    print('═══════════════════════');
-    profiles.forEach((p) => {
-      const status = p.running ? style.ok('● running') + ' (PID ' + p.pid + ')' : style.dim('○ stopped');
-      print('  ' + style.bold(p.slug));
-      print('    Status:  ' + status);
-      print('    App:     ' + p.appPath);
-      print('    Data:    ' + p.userDataDir);
-      print('    Config:  ' + p.configDir);
-      if (p.createdAt) {
-        print('    Created: ' + new Date(p.createdAt).toLocaleDateString());
-      }
-      print('');
+    print('AI Tool Instances (Isolated)');
+    print('═════════════════════════════');
+
+    // Group by tool
+    const byTool = {};
+    allInstances.forEach((inst) => {
+      if (!byTool[inst.tool]) byTool[inst.tool] = [];
+      byTool[inst.tool].push(inst);
     });
+
+    Object.keys(byTool).forEach((toolName) => {
+      print('');
+      print('  ' + style.bold(toolName.toUpperCase()));
+      byTool[toolName].forEach((p) => {
+        const status = p.running ? style.ok('● running') + ' (PID ' + p.pid + ')' : style.dim('○ stopped');
+        print('    ' + style.bold(p.slug));
+        print('      Status:  ' + status);
+        print('      Data:    ' + p.userDataDir);
+        if (p.createdAt) {
+          print('      Created: ' + new Date(p.createdAt).toLocaleDateString());
+        }
+      });
+    });
+    print('');
     return;
   }
 
   if (sub === 'create') {
-    const accountSlug = rest[1];
-    if (!accountSlug) {
-      return fail('usage: keyflip claude-profiles create <account-slug>');
+    if (!tool || !account) {
+      return fail('usage: keyflip instance create <tool> <account-slug>');
     }
 
     try {
-      const profile = claudeProfiles.createProfile(accountSlug);
+      const inst = instances.createInstance(tool, account);
       print('');
-      print(style.ok('✅') + ' Profile created for ' + accountSlug);
-      print('  Launch with: keyflip claude-profiles launch ' + accountSlug);
-      jsonOut({ profile: profile });
+      print(style.ok('✅') + ' Instance created for ' + tool + '/' + account);
+      print('  Launch with: keyflip instance launch ' + tool + ' ' + account);
+      jsonOut({ instance: inst });
     } catch (e) {
       return fail(e.message);
     }
@@ -14494,20 +14510,14 @@ async function cmdClaudeProfiles(ctx, rest) {
   }
 
   if (sub === 'launch' || sub === 'start' || sub === 'open') {
-    const accountSlug = rest[1];
-    if (!accountSlug) {
-      return fail('usage: keyflip claude-profiles launch <account-slug>');
-    }
-
-    const profile = claudeProfiles.getProfile(accountSlug);
-    if (!profile) {
-      return fail(`No profile found for ${accountSlug}. Create it first: keyflip claude-profiles create ${accountSlug}`);
+    if (!tool || !account) {
+      return fail('usage: keyflip instance launch <tool> <account-slug>');
     }
 
     try {
-      claudeProfiles.launchProfile(profile, accountSlug);
-      print(style.ok('✅') + ' Launching Claude for ' + accountSlug + ' (isolated instance)');
-      print('  It will take a moment to start. Use "keyflip claude-profiles list" to check status.');
+      instances.launchInstance(tool, account);
+      print(style.ok('✅') + ' Launching ' + tool + ' for ' + account + ' (isolated instance)');
+      print('  It will take a moment to start. Use "keyflip instance list" to check status.');
     } catch (e) {
       return fail(e.message);
     }
@@ -14515,25 +14525,13 @@ async function cmdClaudeProfiles(ctx, rest) {
   }
 
   if (sub === 'focus' || sub === 'bring') {
-    const accountSlug = rest[1];
-    if (!accountSlug) {
-      return fail('usage: keyflip claude-profiles focus <account-slug>');
-    }
-
-    const profile = claudeProfiles.getProfile(accountSlug);
-    if (!profile) {
-      return fail(`No profile found for ${accountSlug}`);
-    }
-
-    if (!profile.running) {
-      print(style.warn('Profile is not running. Launch it first:'));
-      print('  keyflip claude-profiles launch ' + accountSlug);
-      return;
+    if (!tool || !account) {
+      return fail('usage: keyflip instance focus <tool> <account-slug>');
     }
 
     try {
-      claudeProfiles.focusProfile(profile);
-      print(style.ok('✅') + ' Focused Claude instance for ' + accountSlug);
+      instances.focusInstance(tool, account);
+      print(style.ok('✅') + ' Focused ' + tool + ' instance for ' + account);
     } catch (e) {
       return fail(e.message);
     }
@@ -14541,14 +14539,13 @@ async function cmdClaudeProfiles(ctx, rest) {
   }
 
   if (sub === 'kill' || sub === 'stop' || sub === 'close') {
-    const accountSlug = rest[1];
-    if (!accountSlug) {
-      return fail('usage: keyflip claude-profiles kill <account-slug>');
+    if (!tool || !account) {
+      return fail('usage: keyflip instance kill <tool> <account-slug>');
     }
 
     try {
-      claudeProfiles.killProfile(accountSlug);
-      print(style.ok('✅') + ' Killed Claude instance for ' + accountSlug);
+      instances.killInstance(tool, account);
+      print(style.ok('✅') + ' Killed ' + tool + ' instance for ' + account);
     } catch (e) {
       return fail(e.message);
     }
@@ -14556,13 +14553,17 @@ async function cmdClaudeProfiles(ctx, rest) {
   }
 
   if (sub === 'enable-all') {
-    // Create profiles for all saved accounts
+    if (!tool) {
+      return fail('usage: keyflip instance enable-all <tool>');
+    }
+
+    // Create instances for all saved accounts
     const accounts = profiles.list(ctx.configDir);
     if (!accounts.length) {
       return fail('No saved accounts found. Capture an account first.');
     }
 
-    print('Creating profiles for ' + accounts.length + ' accounts...');
+    print('Creating instances for ' + accounts.length + ' ' + tool + ' accounts...');
     print('');
 
     let successCount = 0;
@@ -14570,12 +14571,12 @@ async function cmdClaudeProfiles(ctx, rest) {
 
     accounts.forEach((acc) => {
       const slug = acc.name || acc.slug;
-      if (claudeProfiles.hasProfile(slug)) {
+      if (instances.hasInstance(tool, slug)) {
         print('  ' + style.dim('○') + ' ' + slug + ' (already exists)');
         skipCount++;
       } else {
         try {
-          claudeProfiles.createProfile(slug);
+          instances.createInstance(tool, slug);
           print('  ' + style.ok('✅') + ' ' + slug);
           successCount++;
         } catch (e) {
@@ -14596,35 +14597,102 @@ async function cmdClaudeProfiles(ctx, rest) {
         ' failed',
     );
     print('');
-    print('Launch any profile:  keyflip claude-profiles launch <account>');
-    print('List all:            keyflip claude-profiles list');
+    print('Launch any instance:  keyflip instance launch <tool> <account>');
+    print('List all:             keyflip instance list');
     return;
   }
 
   if (sub === 'help' || sub === '--help' || sub === '-h') {
-    print('Claude Desktop Multi-Profile Manager');
+    print('Generic AI Tool Instance Manager');
     print('');
     print('Usage:');
-    print('  keyflip claude-profiles list                  List all profiles and their status');
-    print('  keyflip claude-profiles create <account>      Create isolated profile for an account');
-    print('  keyflip claude-profiles launch <account>      Launch Claude instance for account');
-    print('  keyflip claude-profiles focus <account>       Focus running instance window');
-    print('  keyflip claude-profiles kill <account>        Kill running instance');
-    print('  keyflip claude-profiles enable-all            Create profiles for all saved accounts');
+    print('  keyflip instance list [tool]                  List all instances (optionally filter by tool)');
+    print('  keyflip instance create <tool> <account>      Create isolated instance for a tool+account');
+    print('  keyflip instance launch <tool> <account>      Launch isolated instance');
+    print('  keyflip instance focus <tool> <account>       Focus running instance window');
+    print('  keyflip instance kill <tool> <account>        Kill running instance');
+    print('  keyflip instance enable-all <tool>            Create instances for all saved accounts');
     print('');
-    print('Each profile gets:');
+    print('Supported tools:');
+    Object.keys(instances.TOOL_ADAPTERS).forEach((t) => {
+      const adapter = instances.TOOL_ADAPTERS[t];
+      print('  • ' + t + ' — ' + adapter.name + (adapter.supportsMultiInstance ? ' (multi-instance)' : ''));
+    });
+    print('');
+    print('Each instance gets:');
     print('  • Independent .app clone (APFS copy-on-write, ~zero disk cost)');
     print('  • Isolated user data (cookies, sessions never expire across accounts)');
-    print('  • Auto-update disabled (prevents breaking on Claude updates)');
-    print('  • Separate MCP config directory');
+    print('  • Auto-update disabled (prevents breaking on app updates)');
+    print('  • Separate config directory (MCP servers, settings)');
     print('');
     print('Why use this?');
-    print('  Solves the "~30 day cookie expiry" problem — each account maintains its own');
-    print('  session indefinitely. No more "Sign in again" when switching accounts.');
+    print('  Solves session expiry/rotation problems — each account maintains its own');
+    print('  session indefinitely. No more "Sign in again" or token rotation issues.');
     return;
   }
 
-  return fail("unknown subcommand '" + sub + "'. Use: keyflip claude-profiles help");
+  return fail("unknown subcommand '" + sub + "'. Use: keyflip instance help");
+}
+
+// Helper: get all instances across all tools
+function getAllInstances() {
+  const all = [];
+  Object.keys(instances.TOOL_ADAPTERS).forEach((tool) => {
+    all.push(...instances.listInstances(tool));
+  });
+  return all;
+}
+
+// Backward compat: claude-profiles → instance claude
+async function cmdClaudeProfilesCompat(ctx, rest) {
+  const sub = rest[0];
+
+  // Map old subcommands to new generic ones
+  if (!sub || sub === 'list' || sub === 'ls') {
+    return cmdInstance(ctx, ['list', 'claude']);
+  }
+
+  if (sub === 'create') {
+    const account = rest[1];
+    if (!account) return fail('usage: keyflip claude-profiles create <account>');
+    return cmdInstance(ctx, ['create', 'claude', account]);
+  }
+
+  if (sub === 'launch' || sub === 'start' || sub === 'open') {
+    const account = rest[1];
+    if (!account) return fail('usage: keyflip claude-profiles launch <account>');
+    return cmdInstance(ctx, ['launch', 'claude', account]);
+  }
+
+  if (sub === 'focus' || sub === 'bring') {
+    const account = rest[1];
+    if (!account) return fail('usage: keyflip claude-profiles focus <account>');
+    return cmdInstance(ctx, ['focus', 'claude', account]);
+  }
+
+  if (sub === 'kill' || sub === 'stop' || sub === 'close') {
+    const account = rest[1];
+    if (!account) return fail('usage: keyflip claude-profiles kill <account>');
+    return cmdInstance(ctx, ['kill', 'claude', account]);
+  }
+
+  if (sub === 'enable-all') {
+    return cmdInstance(ctx, ['enable-all', 'claude']);
+  }
+
+  if (sub === 'help' || sub === '--help' || sub === '-h') {
+    print('⚠️  DEPRECATED: keyflip claude-profiles is now part of generic instance manager');
+    print('');
+    print('Use instead:');
+    print('  keyflip instance list claude');
+    print('  keyflip instance create claude <account>');
+    print('  keyflip instance launch claude <account>');
+    print('');
+    print('Full help: keyflip instance help');
+    return;
+  }
+
+  return fail("unknown subcommand. Use: keyflip instance help");
 }
 
 export {
