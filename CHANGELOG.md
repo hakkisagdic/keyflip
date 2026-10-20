@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Background token refresh daemon (`keyflip refresh --daemon-start`).** Runs continuously as a
+  launchd KeepAlive agent (macOS) or @reboot crontab entry (Linux), checking credential expiry every
+  5 minutes. Proactively refreshes Antigravity (Google OAuth) and ChatGPT (session token → bearer
+  conversion) before they expire. Kiro uses reactive-only hash comparison to detect IDE/CLI rotation
+  — proactive refresh is forbidden due to single-use refresh_token race conditions. Claude Desktop
+  has no active mechanism; it relies on HTTP Set-Cookie capture during interactive use. Manage with
+  `--daemon-start`, `--daemon-stop`, `--daemon-status`. Logs to `~/Library/Logs/refresh-keyflip.log`
+  (macOS). Complements the existing nightly `--schedule` timer that runs `refresh --all` once per day.
+
 - **`keyflip antigravity` — save, switch and inspect Antigravity (formerly Gemini CLI) accounts.**
   Antigravity stores its OAuth token in the macOS Keychain under service "gemini", account
   "antigravity". The adapter captures the current login into a slug directory (`token.json` secret +

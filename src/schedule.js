@@ -15,6 +15,8 @@ const LABEL = 'com.keyflip.dream';
 const CRON_MARK = '# keyflip-dream (managed by keyflip)';
 const REFRESH_LABEL = 'com.keyflip.refresh';
 const REFRESH_CRON_MARK = '# keyflip-refresh (managed by keyflip)';
+const DAEMON_LABEL = 'com.keyflip.refresh-daemon';
+const DAEMON_CRON_MARK = '# keyflip-refresh-daemon (managed by keyflip)';
 
 // Where the keyflip binary is: the installed `keyflip`, else this checkout. Injectable runner so
 // tests never shell out. Returns the resolved path UNCHANGED — how to run it is argvFor's call alone.
@@ -57,6 +59,13 @@ function refreshCommand(opts) {
   return argvFor(keyflipBin(opts), ['refresh', '--all']);
 }
 
+// Background refresh daemon: runs continuously as a KeepAlive process, checking expiry every 5 min
+function daemonCommand(opts) {
+  const bin = path.join(__dirname, '..', 'bin', 'keyflip-refresh.js');
+  // The daemon binary must be run by node regardless of installation state
+  return { exec: process.execPath, args: [bin] };
+}
+
 function parseAt(at) {
   const m = /^(\d{1,2}):(\d{2})$/.exec(String(at || '03:00'));
   return m ? { h: Math.min(23, parseInt(m[1], 10)), m: Math.min(59, parseInt(m[2], 10)) } : { h: 3, m: 0 };
@@ -86,6 +95,15 @@ const JOBS = {
     command: refreshCommand,
     llm: false,
   },
+  daemon: {
+    name: 'daemon',
+    label: DAEMON_LABEL,
+    cronMark: DAEMON_CRON_MARK,
+    record: 'refresh-daemon-schedule.json',
+    at: null, // daemon runs continuously, no schedule time
+    command: daemonCommand,
+    llm: false,
+  },
 };
 function jobOf(opts) {
   const j = opts && opts.job;
@@ -93,8 +111,11 @@ function jobOf(opts) {
 }
 // The time a job runs: its own `--at`, else its own default (a dream at 03:00, a refresh at 04:30 —
 // deliberately NOT the same hour, so a token rotation cannot race the distill that reads those chats).
+// Daemon jobs have no schedule time (they run continuously), so return null for them.
 function whenOf(opts) {
-  return parseAt((opts && opts.at) || jobOf(opts).at);
+  const job = jobOf(opts);
+  if (job.name === 'daemon') return null;
+  return parseAt((opts && opts.at) || job.at);
 }
 
 // ---- macOS launchd ----
@@ -119,6 +140,20 @@ function buildPlist(opts) {
     })
     .join('\n');
   const log = xmlEsc(logPath(opts.home, opts));
+
+  // Daemon jobs use KeepAlive instead of StartCalendarInterval
+  let startSection;
+  if (job.name === 'daemon') {
+    startSection = '    <key>KeepAlive</key><true/>\n';
+  } else {
+    startSection =
+      '    <key>StartCalendarInterval</key>\n    <dict><key>Hour</key><integer>' +
+      t.h +
+      '</integer><key>Minute</key><integer>' +
+      t.m +
+      '</integer></dict>\n';
+  }
+
   return (
     '<?xml version="1.0" encoding="UTF-8"?>\n' +
     '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n' +
@@ -129,11 +164,7 @@ function buildPlist(opts) {
     '    <key>ProgramArguments</key>\n    <array>\n' +
     prog +
     '\n    </array>\n' +
-    '    <key>StartCalendarInterval</key>\n    <dict><key>Hour</key><integer>' +
-    t.h +
-    '</integer><key>Minute</key><integer>' +
-    t.m +
-    '</integer></dict>\n' +
+    startSection +
     // launchd kills the job's whole process group when the job exits. That is exactly what murdered
     // the nohup workers a scheduled dream used to start (verified live: the supervisor's exit took
     // them with it). AbandonProcessGroup lets detached children finish their work.
@@ -178,9 +209,16 @@ function uninstallLaunchd(opts) {
 // ---- Linux crontab ----
 function cronLine(opts) {
   opts = opts || {};
-  const c = jobOf(opts).command(opts);
+  const job = jobOf(opts);
+  const c = job.command(opts);
+
+  // Daemon jobs run via @reboot instead of time-based scheduling
+  if (job.name === 'daemon') {
+    return '@reboot ' + [c.exec].concat(c.args).join(' ') + '  ' + job.cronMark;
+  }
+
   const t = whenOf(opts);
-  return t.m + ' ' + t.h + ' * * * ' + [c.exec].concat(c.args).join(' ') + '  ' + jobOf(opts).cronMark;
+  return t.m + ' ' + t.h + ' * * * ' + [c.exec].concat(c.args).join(' ') + '  ' + job.cronMark;
 }
 function readCron(runner) {
   const r = runner('crontab', ['-l']);

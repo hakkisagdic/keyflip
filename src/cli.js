@@ -337,6 +337,11 @@ function usage() {
   print('  keyflip refresh --schedule [--at 04:30] | --unschedule | --schedule-status');
   print('                                 put `refresh --all` on a nightly timer (launchd/cron): tokens');
   print('                                 expire on the calendar, not on the day you happen to switch');
+  print('  keyflip refresh --daemon-start | --daemon-stop | --daemon-status');
+  print('                                 run a continuous background daemon that checks expiry every 5 min;');
+  print(
+    '                                 proactively refreshs Antigravity/ChatGPT, Kiro uses reactive hash-check only',
+  );
   print('  keyflip list [--usage]        saved accounts; --usage adds 5h/7d quota per account');
   print('  keyflip remove <name|number>  delete a saved account');
   print('  keyflip autoswitch            watch usage; auto-swap the CLI account at a threshold');
@@ -12649,6 +12654,12 @@ async function cmdRefresh(ctx, rest) {
   const sched = rest.indexOf('--schedule') !== -1;
   const unsched = rest.indexOf('--unschedule') !== -1;
   const schedStatus = rest.indexOf('--schedule-status') !== -1;
+
+  // Daemon mode flags for continuous background refresh
+  const daemonStart = rest.indexOf('--daemon-start') !== -1;
+  const daemonStop = rest.indexOf('--daemon-stop') !== -1;
+  const daemonStatus = rest.indexOf('--daemon-status') !== -1;
+
   if (schedStatus) {
     const st = _schedule.status(ctx, { job: 'refresh' });
     if (asJson) {
@@ -12731,6 +12742,76 @@ async function cmdRefresh(ctx, rest) {
         style.dim('  It logs to ' + r.log + ' — an unattended job you cannot read after it ran cannot be debugged.'),
       );
     jsonOut({ refreshSchedule: { installed: true, at: at, kind: r.kind, log: r.log || null } });
+    return;
+  }
+
+  // Daemon management commands
+  if (daemonStatus) {
+    const st = _schedule.status(ctx, { job: 'daemon' });
+    if (asJson) {
+      jsonOut({ refreshDaemon: st });
+      return;
+    }
+    print(
+      'Background refresh daemon: ' +
+        (st.installed
+          ? style.ok('running') + ' (' + st.kind + (st.path ? ', ' + st.path : '') + ')'
+          : style.warn('not running')),
+    );
+    if (st.installed) {
+      if (st.log) print('  ' + style.dim('logs to ' + st.log));
+      print(
+        style.dim(
+          '  Checks credential expiry every 5 minutes. Proactively refreshes Antigravity/ChatGPT; Kiro uses reactive hash-check only.',
+        ),
+      );
+    }
+    return;
+  }
+  if (daemonStop) {
+    const r = _schedule.uninstall(ctx, { job: 'daemon' });
+    if (!r.ok && r.kind === 'unsupported') return fail('daemon scheduling is macOS/Linux-only for now.');
+    print(style.ok('✅') + ' background refresh daemon ' + (r.existed === false ? 'was not running.' : 'stopped.'));
+    jsonOut({ refreshDaemon: { installed: false } });
+    return;
+  }
+  if (daemonStart) {
+    if (!profiles.list(ctx.configDir).length)
+      print(
+        style.warn('·') + ' there are no saved accounts yet — the daemon has nothing to monitor until you capture one.',
+      );
+    print(
+      'This installs a ' +
+        (ctx.platform === 'darwin' ? 'launchd KeepAlive agent' : '@reboot crontab entry') +
+        ' that runs the ' +
+        style.bold('background token refresh daemon') +
+        ' continuously.',
+    );
+    print(
+      style.dim(
+        '  It checks credential expiry every 5 minutes and proactively refreshes Antigravity/ChatGPT tokens. Kiro uses reactive-only hash comparison.',
+      ),
+    );
+    print(style.dim('  Stop with: keyflip refresh --daemon-stop.'));
+    if (rest.indexOf('-y') === -1 && rest.indexOf('--force') === -1) {
+      if (!process.stdin.isTTY) return fail('re-run with -y to confirm.');
+      if (!(await confirm('Install the background refresh daemon? [y/N] '))) {
+        print('Cancelled.');
+        return;
+      }
+    }
+    const r = _schedule.install(ctx, { job: 'daemon' });
+    if (!r.ok) return fail('could not start daemon: ' + (r.reason || r.detail || 'unknown'));
+    print(
+      style.ok('✅') +
+        ' background refresh daemon started (' +
+        r.kind +
+        '). ' +
+        style.dim('Status: keyflip refresh --daemon-status'),
+    );
+    if (r.log)
+      print(style.dim('  It logs to ' + r.log + ' — a long-running process you can tail to watch refresh events.'));
+    jsonOut({ refreshDaemon: { installed: true, kind: r.kind, log: r.log || null } });
     return;
   }
   const all = profiles.list(ctx.configDir);
