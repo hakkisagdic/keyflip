@@ -38,6 +38,42 @@ import * as mcp from './mcp.js';
 import * as proxy from './proxy.js';
 import * as uninstallmod from './uninstall.js';
 import * as exec from './exec.js';
+import { run } from './exec.js';
+
+// Transport auto-detection for fleet (LAN → Tailscale → shared folder)
+function detectTransport() {
+  // Priority 1: LAN multicast (zero-dep, fastest)
+  try {
+    const dgram = require('dgram');
+    const socket = dgram.createSocket('udp4');
+    socket.bind(0);
+    socket.setBroadcast(true);
+    const canMulticast = true;
+    socket.close();
+    if (canMulticast) {
+      return { type: 'lan', reason: 'Local network detected (multicast available)' };
+    }
+  } catch (_) {
+    // Multicast not available
+  }
+
+  // Priority 2: Tailscale VPN (optional, requires user install)
+  try {
+    const result = run('tailscale', ['status', '--json']);
+    if (result.code === 0 && result.stdout) {
+      const status = JSON.parse(result.stdout);
+      if (status.Self && status.Self.Online) {
+        return { type: 'tailscale', reason: 'Tailscale VPN detected and online' };
+      }
+    }
+  } catch (_) {
+    // Tailscale not installed or not running - that's fine
+  }
+
+  // Priority 3: Shared folder (universal fallback)
+  return { type: 'shared_folder', reason: 'Using Dropbox/iCloud/WebDAV sync (universal fallback)' };
+}
+
 import * as loginmod from './login.js';
 import * as longtoken from './longtoken.js';
 import * as _styleModule from './style.js';
@@ -6962,16 +6998,52 @@ async function cmdFleet(ctx, rest) {
   if (sub === 'init') {
     const ni = rest.indexOf('--name');
     const di = rest.indexOf('--dir');
+    const preferTransport = rest.indexOf('--prefer-lan') !== -1 ? 'lan' : 
+                           rest.indexOf('--prefer-tailscale') !== -1 ? 'tailscale' : 
+                           rest.indexOf('--transport') !== -1 ? rest[rest.indexOf('--transport') + 1] : null;
+    
     const patch = {};
     if (di !== -1 && rest[di + 1]) patch.dir = path.resolve(rest[di + 1]);
     if (ni !== -1 && rest[ni + 1]) patch.name = rest[ni + 1];
-    if (!patch.dir && !_fleet.identity(ctx).dir)
+    
+    // Auto-detect transport if no --dir specified and user didn't force a preference
+    if (!patch.dir && !preferTransport) {
+      const detected = detectTransport();
+      if (!JSON_MODE) {
+        print(style.dim('Detected transport: ') + style.bold(detected.type) + ' — ' + detected.reason);
+        if (detected.type === 'shared_folder') {
+          print(style.dim('Specify --dir <path> to use shared folder mode explicitly.'));
+        }
+      }
+      
+      // If LAN or Tailscale detected, we don't need --dir
+      if (detected.type === 'lan' || detected.type === 'tailscale') {
+        patch.transport = detected.type;
+      }
+    } else if (preferTransport) {
+      patch.transport = preferTransport;
+      if (!JSON_MODE) {
+        print(style.dim('Using preferred transport: ') + style.bold(preferTransport));
+      }
+    }
+    
+    if (!patch.dir && !_fleet.identity(ctx).dir && !patch.transport)
       return fail(
-        'usage: keyflip fleet init --dir <shared-folder> [--name <this-machine>]\n  the folder must be reachable by every machine (a Dropbox/iCloud/synced dir).',
+        'usage: keyflip fleet init --dir <shared-folder> [--name <this-machine>]\n' +
+        '       keyflip fleet init [--prefer-lan|--prefer-tailscale]  # auto-detect transport\n' +
+        '  the folder must be reachable by every machine (a Dropbox/iCloud/synced dir).',
       );
+    
     const id = fleet.setConfig(ctx, patch);
     if (JSON_MODE) {
-      jsonOut({ fleet: { machineId: id.machineId, name: id.name, dir: id.dir } });
+      jsonOut({ 
+        fleet: { 
+          machineId: id.machineId, 
+          name: id.name, 
+          dir: id.dir,
+          transport: id.transport || 'auto'
+        } 
+      });
       return;
     }
     print(
@@ -6980,8 +7052,8 @@ async function cmdFleet(ctx, rest) {
         style.bold(id.name) +
         ' ' +
         style.dim('(' + id.machineId + ')') +
-        ' in the fleet at ' +
-        style.bold(id.dir),
+        (id.dir ? ' in the fleet at ' + style.bold(id.dir) : '') +
+        (id.transport ? ' using ' + style.bold(id.transport) + ' transport' : ''),
     );
     print(
       '   ' +
