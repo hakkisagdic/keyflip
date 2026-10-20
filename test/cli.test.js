@@ -329,6 +329,47 @@ test('list and doctor tell when the desktop app is signed out on disk (macOS)', 
   assert.match(doc.stdout, /sign in once/);
 });
 
+// The gap this closes: the cookie jar can hold a valid sessionKey (the swap landed) but the
+// server calls it too old for the app's scope expansion — the "Sign in again" banner. list/status
+// must treat that as signed-out and name the fix, not claim the app is healthy.
+test('list and status call out a latched session_stale_relogin (macOS)', function (t) {
+  if (process.platform !== 'darwin') return t.skip('the desktop app store is macOS-only');
+  const home = setupHome();
+  run(home, ['add']); // profile "alice"
+  const appCfgDir = path.join(home, 'Library', 'Application Support', 'Claude');
+  fs.mkdirSync(appCfgDir, { recursive: true });
+  const ALICE_ORG = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+  const cfg = { 'oauth:tokenCacheV2': 'ALICE-APP' };
+  cfg['dxt:allowlistLastUpdated:' + ALICE_ORG] = '2026-07-05T00:00:00.000Z';
+  fs.writeFileSync(path.join(appCfgDir, 'config.json'), JSON.stringify(cfg));
+  fs.writeFileSync(path.join(appCfgDir, 'Cookies'), 'sessionKey ALICE-APP');
+  assert.strictEqual(run(home, ['add', 'alice', '--app']).status, 0);
+
+  // Fake the log so staleRelogin sees the refusal.
+  const logDir = path.join(home, 'Library', 'Logs', 'Claude');
+  fs.mkdirSync(logDir, { recursive: true });
+  const logLines = [
+    '2026-10-20 15:23:40 INFO  authorize failed for orgId=' + ALICE_ORG + ' code=session_stale_relogin',
+    '2026-10-20 15:23:40 WARN  session_stale_relogin latched',
+  ];
+  fs.writeFileSync(path.join(logDir, 'main.log'), logLines.join('\n') + '\n');
+
+  const list = run(home, ['list']);
+  assert.strictEqual(list.status, 0, 'a stale latch is not an error exit');
+  assert.match(list.stdout, /claude\.ai refused the saved sign-in/, 'human output names the refusal');
+  assert.match(list.stdout, /Fix: sign in once in Claude/, 'human output gives the fix');
+  const j = JSON.parse(run(home, ['list', '--json']).stdout);
+  assert.strictEqual(j.appSessionLive, false, 'JSON says the app session is NOT live');
+  assert.ok(j.appStaleRelogin && j.appStaleRelogin.at, 'JSON carries the stale verdict');
+  assert.strictEqual(j.appStaleRelogin.org, ALICE_ORG);
+
+  const st = run(home, ['status']);
+  assert.strictEqual(st.status, 0);
+  assert.match(st.stdout, /claude\.ai refused the saved sign-in/, 'status also names the refusal');
+  const sj = JSON.parse(run(home, ['status', '--json']).stdout);
+  assert.ok(sj.appStaleRelogin && sj.appStaleRelogin.at, 'status JSON carries the stale verdict');
+});
+
 test('chat --as rejects an unknown account before touching any cookie', function (t) {
   if (process.platform !== 'darwin') return t.skip('claude.ai Chat reading is macOS-only');
   const home = setupHome();

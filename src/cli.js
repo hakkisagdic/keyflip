@@ -10708,6 +10708,16 @@ function cmdStatus(ctx) {
       (appDet && appDet.org ? appDet.org.slice(0, 8) + '… (unsaved)' : null);
   }
   const activeProvider = provider.readActive(ctx);
+  // The server's verdict on the restored sign-in: session_stale_relogin latches mean the
+  // app shows "Sign in again" even though the cookie jar looks healthy.
+  let staleSt = null;
+  if (ctx.appDataDir) {
+    try {
+      staleSt = _sessionage.staleRelogin(ctx, {});
+    } catch (e) {
+      staleSt = null;
+    }
+  }
   jsonOut({
     cli: cliEmail ? { email: cliEmail } : null,
     app: appName
@@ -10715,6 +10725,14 @@ function cmdStatus(ctx) {
       : appLabel
         ? { name: null, email: (appDet && appDet.email) || null, org: (appDet && appDet.org) || null, saved: false }
         : null,
+    appStaleRelogin:
+      staleSt && staleSt.stale
+        ? {
+            at: staleSt.at,
+            org: staleSt.org || null,
+            profile: _sessionage.profileForOrg(ctx.configDir, staleSt.org) || null,
+          }
+        : undefined,
     provider: activeProvider ? activeProvider.name : null,
   });
   if (!JSON_MODE) {
@@ -10724,7 +10742,25 @@ function cmdStatus(ctx) {
         (ctx.appDataDir
           ? '   ·   Desktop app: ' +
             (appLabel || 'unknown') +
-            (!appLabel && appDet && appDetectHint(appDet.reason) ? '  (' + appDetectHint(appDet.reason) + ')' : '')
+            (!appLabel && appDet && appDetectHint(appDet.reason) ? '  (' + appDetectHint(appDet.reason) + ')' : '') +
+            (staleSt && staleSt.stale
+              ? '\n     ' +
+                style.warn(
+                  '⚠ claude.ai refused the saved sign-in (' +
+                    staleSt.at.replace(/T.*$/, '') +
+                    ') — it shows "Sign in again"',
+                ) +
+                '\n     Fix: sign in once in Claude as ' +
+                (staleSt.profile ||
+                  _sessionage.profileForOrg(ctx.configDir, staleSt.org) ||
+                  appLabel ||
+                  'this account') +
+                ', then run: ' +
+                style.bold(
+                  'keyflip add ' +
+                    (staleSt.profile || _sessionage.profileForOrg(ctx.configDir, staleSt.org) || appName),
+                )
+              : '')
           : ''),
     );
     if (activeProvider) print('Endpoint: provider "' + activeProvider.name + '" (overrides the account for API calls)');
@@ -13239,6 +13275,16 @@ async function cmdList(ctx, rest) {
       liveApp = null;
     }
   }
+  // The server's verdict on the restored sign-in: session_stale_relogin latches mean the
+  // app shows "Sign in again" even though the cookie jar looks healthy.
+  let staleSt = null;
+  if (ctx.appDataDir) {
+    try {
+      staleSt = _sessionage.staleRelogin(ctx, {});
+    } catch (e) {
+      staleSt = null;
+    }
+  }
   const withUsage = (rest || []).indexOf('--usage') !== -1;
   let infos = null;
   if (withUsage && list.length) {
@@ -13299,8 +13345,16 @@ async function cmdList(ctx, rest) {
       }),
       activeCli: core.currentEmail(ctx) || null,
       activeApp: appActive ? profiles.email(ctx.configDir, appActive) || appActive : null,
-      appSessionLive: liveApp ? !!liveApp.signedIn : null,
+      appSessionLive: liveApp ? !!liveApp.signedIn && !(staleSt && staleSt.stale) : null,
       appSessionExpires: liveApp && liveApp.expiresAt ? liveApp.expiresAt : null,
+      appStaleRelogin:
+        staleSt && staleSt.stale
+          ? {
+              at: staleSt.at,
+              org: staleSt.org || null,
+              profile: _sessionage.profileForOrg(ctx.configDir, staleSt.org) || null,
+            }
+          : undefined,
     });
     return;
   }
@@ -13347,9 +13401,26 @@ async function cmdList(ctx, rest) {
       (ctx.appDataDir
         ? '   ·   desktop app: ' +
           (appActive ? profiles.email(ctx.configDir, appActive) || appActive : appFallbackLabel || 'unknown') +
-          (liveApp && !liveApp.signedIn
-            ? style.dim('  (signed out on disk — it will open on its sign-in screen; see `keyflip doctor`)')
-            : '')
+          (staleSt && staleSt.stale
+            ? '   ' +
+              style.warn(
+                '⚠ claude.ai refused the saved sign-in (' +
+                  staleSt.at.replace(/T.*$/, '') +
+                  ') — it shows "Sign in again"',
+              ) +
+              '\n     Fix: sign in once in Claude as ' +
+              (staleSt.profile ||
+                _sessionage.profileForOrg(ctx.configDir, staleSt.org) ||
+                appActive ||
+                'this account') +
+              ', then run: ' +
+              style.bold(
+                'keyflip add ' +
+                  (staleSt.profile || _sessionage.profileForOrg(ctx.configDir, staleSt.org) || appActive),
+              )
+            : liveApp && !liveApp.signedIn
+              ? style.dim('  (signed out on disk — it will open on its sign-in screen; see `keyflip doctor`)')
+              : '')
         : ''),
   );
   if (browsersPresent > 0) {
