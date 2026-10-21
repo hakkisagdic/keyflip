@@ -14628,8 +14628,23 @@ async function cmdInstance(ctx, rest) {
       print('  ' + style.bold(toolName.toUpperCase()));
       byTool[toolName].forEach((p) => {
         const status = p.running ? style.ok('● running') + ' (PID ' + p.pid + ')' : style.dim('○ stopped');
+
+        // Get LIVE update state
+        const updateInfo = instances.updateState(p.tool, p.userDataDir, p.appPath);
+        let updateStatus = '';
+        if (updateInfo.state === 'disabled') {
+          updateStatus = style.ok('updates off');
+        } else if (updateInfo.state === 'enabled') {
+          updateStatus = style.warn('updates ON');
+        } else if (updateInfo.state === 'uncontrollable') {
+          updateStatus = style.dim('uncontrollable (' + updateInfo.mechanism + ')');
+        } else if (updateInfo.state === 'invalid') {
+          updateStatus = style.warn('config unreadable');
+        }
+
         print('    ' + style.bold(p.slug));
         print('      Status:  ' + status);
+        print('      Updates: ' + updateStatus);
         print('      Data:    ' + p.userDataDir);
         if (p.createdAt) {
           print('      Created: ' + new Date(p.createdAt).toLocaleDateString());

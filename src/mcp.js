@@ -283,6 +283,8 @@ const TOOLS = [
       const all = tool ? instances.listInstances(tool) : instances.listAllInstances();
       return {
         instances: all.map(function (inst) {
+          // Get LIVE update state instead of stale metadata
+          const updateInfo = instances.updateState(inst.tool, inst.userDataDir, inst.appPath);
           return {
             tool: inst.tool,
             account: inst.slug,
@@ -292,7 +294,13 @@ const TOOLS = [
             running: inst.running,
             pid: inst.pid || null,
             createdAt: inst.createdAt || null,
-            autoUpdateDisabled: !!inst.autoUpdateDisabled,
+            // Live update state (not stale metadata)
+            autoUpdate: {
+              state: updateInfo.state, // 'disabled' | 'enabled' | 'uncontrollable' | 'invalid'
+              mechanism: updateInfo.mechanism || null, // 'config' | 'plist' | 'none'
+              control: updateInfo.control || null, // path to config/plist being checked
+              reason: updateInfo.reason || null,
+            },
           };
         }),
         supportedTools: Object.keys(instances.TOOL_ADAPTERS),
