@@ -1037,7 +1037,7 @@ usable session, without writing anything.
 
 Claude Desktop cookies expire every ~30 days, forcing frequent re-logins. keyflip solves this by creating **isolated app clones** — each runs independently with its own user data directory, so sessions persist indefinitely.
 
-**How it works:** Each instance is an APFS copy-on-write clone of `/Applications/Claude.app`, consuming near-zero additional disk space. The clone's auto-update is disabled (prevents breaking on updates), and it uses `--user-data-dir` for complete session isolation.
+**How it works:** Each instance is an APFS copy-on-write clone of the tool's `/Applications/<Tool>.app`, consuming near-zero additional disk space. It uses `--user-data-dir` for complete session isolation. Auto-update hardening is best-effort and applies only where the updater reads Info.plist keys (ChatGPT bundles Sparkle; Claude uses Squirrel, which ignores them).
 
 ```bash
 # Create an isolated instance for a specific account
@@ -1059,18 +1059,18 @@ keyflip instance kill claude yahoo@gmail.com
 keyflip instance enable-all claude
 ```
 
-**Supported tools:** Currently supports `claude` (Claude Desktop). The adapter pattern makes it easy to add Cursor, Copilot, Kiro, and other AI tools in the future.
+**Supported tools:** `claude`, `kiro`, `chatgpt` (verified against installed apps — Claude.app, Kiro.app, ChatGPT.app) and `cursor` (standard path; defined but not present on the verification machine). All are Electron apps, so `--user-data-dir` gives real cookie/session isolation. Adding another tool is one entry in `TOOL_ADAPTERS` (`src/instances.js`).
 
 **Instance location:** `~/Library/Application Support/keyflip-instances/<tool>/<account>/`
-- `Claude.app` — isolated app clone
+- `<Tool>.app` — isolated app clone
 - `User Data/` — Chromium user data (cookies, cache, extensions)
-- `Config/` — tool-specific config directory (MCP servers, settings)
+- `Config/` — config directory, passed to the app when the adapter defines a config env (Claude: `CLAUDE_CONFIG_DIR`)
 - `profile.json` — metadata (creation date, paths, auto-update status)
 - `instance.pid` — running process ID (if active)
 
 **Disk usage:** APFS clone-on-write means each clone shares physical storage with the original app. Only changed blocks (config files, user data) consume actual space — typically <50 MB per instance.
 
-**Deep link trap avoidance:** When launching a specific instance, keyflip closes ALL other Claude instances first. This prevents macOS from routing deep links (e.g., `claude://` URLs) to the wrong instance.
+**Deep link trap avoidance:** When launching a specific instance, keyflip closes ALL other instances of that tool first. This prevents macOS from routing deep links (e.g., `claude://` URLs) to the wrong instance.
 
 **Backward compatibility:** The old `keyflip claude-profiles` commands still work via a compatibility wrapper that maps them to the generic `keyflip instance` system. Use `keyflip instance --help` for current syntax.
 

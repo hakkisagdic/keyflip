@@ -146,7 +146,7 @@ detecting platform-initiated rotations (Kiro IDE/CLI, Claude Desktop re-auth).
 
 ## G — Multi-instance architecture for session isolation
 
-Claude Desktop cookies expire every ~30 days, forcing frequent re-logins. keyflip solves this by creating **isolated app clones** — each runs independently with its own user data directory, so sessions persist indefinitely without expiry concerns.
+Desktop-app cookies expire every ~30 days, forcing frequent re-logins. keyflip solves this by creating **isolated app clones** for any supported AI tool — each runs independently with its own user data directory, so sessions persist indefinitely without expiry concerns.
 
 ### Architecture overview
 
@@ -162,19 +162,38 @@ const TOOL_ADAPTERS = {
     configEnv: 'CLAUDE_CONFIG_DIR',
     processPattern: 'Claude\\.app',
     supportsMultiInstance: true,
-    disableAutoUpdate: true,
+    disableAutoUpdate: false, // Claude ships Squirrel, which ignores the Info.plist keys
   },
-  // cursor: { ... } // planned
-  // copilot: { ... } // planned
+  kiro:      { /* /Applications/Kiro.app,     dev.kiro.desktop,  no config env */ },
+  chatgpt:   { /* /Applications/ChatGPT.app,  com.openai.codex,  Sparkle updater */ },
+  cursor:    { /* /Applications/Cursor.app,   standard path, not on the verification machine */ },
 };
 ```
+
+**Verification status (2026-10-21):** `claude`, `kiro` and `chatgpt` adapters were checked against
+the real installs on the dev machine — the app bundles and bundle ids were read from
+`Contents/Info.plist`, and all three are Electron (`ElectronAsarIntegrity` present), which is what
+makes `--user-data-dir` isolation work. Three facts worth knowing:
+
+- **The base plists have no `SUEnableAutomaticChecks` key.** `plutil -replace` therefore fails with
+  a nonzero exit; the code now falls back to `-insert`, and clears `SUFeedURL` instead of
+  `SUPublicEDKey` (an empty feed disables update checks without breaking signature data).
+- **Only ChatGPT actually bundles Sparkle** (`Sparkle.framework`); Claude ships
+  `Squirrel.framework`, whose updater ignores these Info.plist keys. Claude's
+  `disableAutoUpdate` is therefore `false` — the earlier `true` patched keys nothing reads.
+  ChatGPT's hardening stays best-effort (its `SUFeedURL` is absent, so a programmatic feed
+  cannot be ruled out).
+- **`cursor` is defined but was not installed on the verification machine.** `createInstance()`
+  checks the base path first and fails with a clear message, so a missing app can never produce a
+  half-created instance. A live launch test per app is still outstanding.
+
 
 ### Instance lifecycle
 
 Each instance is created under `~/Library/Application Support/keyflip-instances/<tool>/<account>/`:
 
 1. **APFS clone:** Uses `cp -cR` to create a copy-on-write clone of the base app (near-zero disk overhead)
-2. **Disable auto-update:** Patches `Info.plist` to set `SUEnableAutomaticChecks=false` and clear `SUPublicEDKey`
+2. **Auto-update hardening (best-effort):** Inserts `SUEnableAutomaticChecks=false` and clears `SUFeedURL` in `Info.plist` when the adapter opts in — only apps whose updater reads these keys (Sparkle, e.g. ChatGPT) are affected
 3. **Isolated directories:** Creates separate `User Data/` and `Config/` directories per account
 4. **PID tracking:** Writes `instance.pid` file for process lifecycle management
 
@@ -221,19 +240,23 @@ Currently **macOS-only** due to APFS clone-on-write requirement. Linux/Windows s
 
 ### Future expansion
 
-Adding support for new tools requires only adding an entry to `TOOL_ADAPTERS` in `src/instances.js`:
+Adding support for a new tool requires one entry in `TOOL_ADAPTERS` (`src/instances.js`) plus two
+facts checked against a real install: the bundle path and whether it is Electron (Chromium switch
+support). Example of the minimal shape:
 
 ```javascript
-cursor: {
-  name: 'Cursor',
-  appName: 'Cursor.app',
-  baseAppPath: '/Applications/Cursor.app',
+windsurf: {
+  name: 'Windsurf',
+  appName: 'Windsurf.app',
+  baseAppPath: '/Applications/Windsurf.app',
   userDataFlag: '--user-data-dir',
-  configEnv: 'CURSOR_CONFIG_DIR',
-  processPattern: 'Cursor\\.app',
+  configEnv: null,          // only set when the tool documents one
+  processPattern: 'Windsurf\\.app',
   supportsMultiInstance: true,
-  disableAutoUpdate: false, // Cursor handles updates differently
+  disableAutoUpdate: false, // true only when the plist carries Sparkle keys
 },
 ```
 
-The rest of the system (CLI routing, MCP endpoints, PID tracking, launch/focus/kill logic) works automatically for any tool with an adapter entry.
+The rest of the system (CLI routing, MCP endpoints, PID tracking, launch/focus/kill logic) works
+automatically for any tool with an adapter entry. `keyflip instance list` and the MCP
+`keyflip_instances` tool enumerate every adapter via `listAllInstances()`.

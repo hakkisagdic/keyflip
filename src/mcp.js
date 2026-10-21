@@ -266,13 +266,13 @@ const TOOLS = [
     name: 'keyflip_instances',
     title: 'List AI tool instances',
     description:
-      'List all running or available multi-instances for a given AI tool (claude, cursor, copilot, etc.). Each instance runs in an isolated app clone with independent user data. Read-only.',
+      'List isolated multi-instances (each runs in its own APFS-cloned app with independent user data). Supported tools: claude, kiro, chatgpt, cursor. Omit `tool` to list every tool. Read-only.',
     inputSchema: {
       type: 'object',
       properties: {
         tool: {
           type: 'string',
-          description: 'Tool name (e.g., "claude", "cursor"). Defaults to listing all tools if omitted.',
+          description: 'Tool name (claude | kiro | chatgpt | cursor). Omit to list all tools.',
         },
       },
       additionalProperties: false,
@@ -280,24 +280,21 @@ const TOOLS = [
     annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     run: async function (ctx, args) {
       const tool = args && args.tool ? String(args.tool) : null;
-      const allInstances = instances.listInstances(tool);
+      const all = tool ? instances.listInstances(tool) : instances.listAllInstances();
       return {
-        tools: Object.keys(allInstances).map(function (t) {
+        instances: all.map(function (inst) {
           return {
-            tool: t,
-            instances: allInstances[t].map(function (inst) {
-              return {
-                account: inst.slug,
-                appPath: inst.appPath,
-                userDataDir: inst.userDataDir,
-                configDir: inst.configDir,
-                running: inst.running,
-                pid: inst.pid || null,
-                createdAt: inst.createdAt || null,
-              };
-            }),
+            tool: inst.tool,
+            account: inst.slug,
+            appPath: inst.appPath,
+            userDataDir: inst.userDataDir,
+            configDir: inst.configDir,
+            running: inst.running,
+            pid: inst.pid || null,
+            createdAt: inst.createdAt || null,
           };
         }),
+        supportedTools: Object.keys(instances.TOOL_ADAPTERS),
       };
     },
   },
@@ -309,7 +306,7 @@ const TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        tool: { type: 'string', description: 'Tool name (e.g., "claude", "cursor").' },
+        tool: { type: 'string', description: 'Tool name (claude | kiro | chatgpt | cursor).' },
         account: { type: 'string', description: 'Account slug/identifier.' },
         confirm: { type: 'boolean', description: 'Must be true — set it only after the user has agreed.' },
       },
@@ -341,7 +338,7 @@ const TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        tool: { type: 'string', description: 'Tool name (e.g., "claude", "cursor").' },
+        tool: { type: 'string', description: 'Tool name (claude | kiro | chatgpt | cursor).' },
         account: { type: 'string', description: 'Account slug/identifier.' },
         confirm: { type: 'boolean', description: 'Must be true — set it only after the user has agreed.' },
       },
@@ -361,18 +358,20 @@ const TOOLS = [
     name: 'keyflip_instance_focus',
     title: 'Focus a running AI tool instance',
     description:
-      'Bring a specific running AI tool instance window to the front using AppleScript. Fails if the instance is not running.',
+      'Bring a specific running AI tool instance window to the front using AppleScript. Fails if the instance is not running. Ask the user first, then confirm=true.',
     inputSchema: {
       type: 'object',
       properties: {
-        tool: { type: 'string', description: 'Tool name (e.g., "claude", "cursor").' },
+        tool: { type: 'string', description: 'Tool name (claude | kiro | chatgpt | cursor).' },
         account: { type: 'string', description: 'Account slug/identifier.' },
+        confirm: { type: 'boolean', description: 'Must be true — set it only after the user has agreed.' },
       },
-      required: ['tool', 'account'],
+      required: ['tool', 'account', 'confirm'],
       additionalProperties: false,
     },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     run: async function (ctx, args) {
+      needConfirm(args);
       const tool = String(args.tool);
       const account = String(args.account);
       instances.focusInstance(tool, account);
@@ -382,12 +381,11 @@ const TOOLS = [
   {
     name: 'keyflip_instance_kill',
     title: 'Kill an AI tool instance',
-    description:
-      'Terminate a specific running AI tool instance by PID. Ask the user first, then confirm=true.',
+    description: 'Terminate a specific running AI tool instance by PID. Ask the user first, then confirm=true.',
     inputSchema: {
       type: 'object',
       properties: {
-        tool: { type: 'string', description: 'Tool name (e.g., "claude", "cursor").' },
+        tool: { type: 'string', description: 'Tool name (claude | kiro | chatgpt | cursor).' },
         account: { type: 'string', description: 'Account slug/identifier.' },
         confirm: { type: 'boolean', description: 'Must be true — set it only after the user has agreed.' },
       },
@@ -443,9 +441,9 @@ const TOOLS = [
   },
   {
     name: 'keyflip_switch',
-    title: 'Switch AI tool account',
+    title: 'Switch Claude account',
     description:
-      "Switch the active account for an AI tool (Claude Code, Cursor, Kiro, etc.) to a saved profile. The desktop app is NOT closed automatically; running apps pick up the new account on their next request. IMPORTANT: this changes which account is billed and rate-limited. Ask the user before calling, then set confirm=true. Call keyflip_switch_plan FIRST when it is not obvious that the target works — a clean return value has repeatedly hidden a switch that did not produce a usable machine, so this one reads itself back: `verified` says usable now / usable, decaying / NOT usable.",
+      'Switch the active Claude account (CLI credential + desktop-app login) to a saved profile. Other tools have their own flows: keyflip_instances / keyflip_instance_* manage isolated desktop instances for claude, kiro, chatgpt and cursor. The desktop app is NOT closed automatically; a running Claude app picks up the new account on its next request. IMPORTANT: this changes which account is billed and rate-limited. Ask the user before calling, then set confirm=true. Call keyflip_switch_plan FIRST when it is not obvious that the target works — a clean return value has repeatedly hidden a switch that did not produce a usable machine, so this one reads itself back: `verified` says usable now / usable, decaying / NOT usable.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -502,14 +500,14 @@ const TOOLS = [
 
       // Smart suggestions: check what the agent should offer after a switch
       const suggestions = [];
-      
+
       // 1. Chat consolidation — if desktop apps are closed and multiple accounts have chats
       let consolidateRan = false;
       try {
-        // Check if ANY AI desktop app is running (Claude, Cursor, etc.)
-        const claudeRunning = appctl.isClaudeRunning(ctx.platform);
-        const anyAppRunning = claudeRunning; // Extend to other tools later
-        
+        // consolidate writes Claude's own session stores, so only the Claude app must be closed.
+        // Other tools' instances do not touch these files.
+        const anyAppRunning = appctl.isClaudeRunning(ctx.platform);
+
         if (!anyAppRunning) {
           const allProfiles = profiles.list(ctx.configDir);
           const multiAccount = allProfiles.length > 1;
@@ -518,18 +516,18 @@ const TOOLS = [
             try {
               const consResult = appsessions.consolidate(ctx);
               consolidateRan = true;
-              
+
               // Build tool-aware description
               const toolsMentioned = [];
               if (consResult.code > 0) toolsMentioned.push('Claude Code');
               if (consResult.cowork > 0) toolsMentioned.push('Cowork');
-              const toolList = toolsMentioned.length > 0 ? toolsMentioned.join(', ') : 'AI tools';
-              
+              const toolList = toolsMentioned.length > 0 ? toolsMentioned.join(', ') : 'Claude';
+
               suggestions.push({
                 type: 'consolidate_auto',
                 priority: 'high',
                 title: 'Chat history synced automatically',
-                description: `Merged ${consResult.merged || 0} chat sessions across ${allProfiles.length} accounts for ${toolList} while desktop apps were closed.`,
+                description: `Merged ${consResult.merged || 0} chat sessions across ${allProfiles.length} accounts for ${toolList} while the Claude app was closed.`,
                 command: null, // Already ran, no user action needed
                 autoSafe: true,
                 executed: true,
@@ -550,8 +548,9 @@ const TOOLS = [
           suggestions.push({
             type: 'consolidate_deferred',
             priority: 'medium',
-            title: 'Chat sync deferred (desktop app is open)',
-            description: 'Close AI desktop apps (Claude, Cursor, etc.) and run `keyflip consolidate` to sync chat history across accounts.',
+            title: 'Chat sync deferred (Claude app is open)',
+            description:
+              'Close the Claude desktop app and run `keyflip consolidate` to sync Claude/Cowork chat history across accounts.',
             command: 'keyflip consolidate',
             autoSafe: false,
           });
@@ -562,7 +561,7 @@ const TOOLS = [
 
       // 2. Token refresh check — if switching to an account that hasn't been used recently
       try {
-        const tokenPath = path.join(ctx.configDir, 'creds', name + '.cred');
+        const tokenPath = _path.join(ctx.configDir, 'creds', name + '.cred');
         if (fs.existsSync(tokenPath)) {
           const cred = JSON.parse(fs.readFileSync(tokenPath, 'utf8'));
           if (cred.expires_at) {
@@ -587,13 +586,14 @@ const TOOLS = [
       // 3. Multi-instance suggestion — if this tool supports isolated instances
       try {
         const instanceList = instances.listInstances('claude');
-        const hasInstance = instanceList.claude && instanceList.claude.some(i => i.slug === name);
+        const hasInstance = instanceList.some((i) => i.slug === name);
         if (!hasInstance && profiles.list(ctx.configDir).length > 1) {
           suggestions.push({
             type: 'multi_instance',
             priority: 'low',
             title: 'Consider isolated instance for persistent sessions',
-            description: 'Create an isolated Claude instance to avoid ~30-day cookie expiry. Each instance runs independently with its own session.',
+            description:
+              'Create an isolated Claude instance to avoid ~30-day cookie expiry. Each instance runs independently with its own session.',
             command: `keyflip instance create claude ${name}`,
             autoSafe: false,
           });

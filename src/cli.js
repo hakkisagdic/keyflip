@@ -39,12 +39,12 @@ import * as proxy from './proxy.js';
 import * as uninstallmod from './uninstall.js';
 import * as exec from './exec.js';
 import { run } from './exec.js';
+import dgram from 'dgram';
 
 // Transport auto-detection for fleet (LAN → Tailscale → shared folder)
 function detectTransport() {
   // Priority 1: LAN multicast (zero-dep, fastest)
   try {
-    const dgram = require('dgram');
     const socket = dgram.createSocket('udp4');
     socket.bind(0);
     socket.setBroadcast(true);
@@ -6998,14 +6998,19 @@ async function cmdFleet(ctx, rest) {
   if (sub === 'init') {
     const ni = rest.indexOf('--name');
     const di = rest.indexOf('--dir');
-    const preferTransport = rest.indexOf('--prefer-lan') !== -1 ? 'lan' : 
-                           rest.indexOf('--prefer-tailscale') !== -1 ? 'tailscale' : 
-                           rest.indexOf('--transport') !== -1 ? rest[rest.indexOf('--transport') + 1] : null;
-    
+    const preferTransport =
+      rest.indexOf('--prefer-lan') !== -1
+        ? 'lan'
+        : rest.indexOf('--prefer-tailscale') !== -1
+          ? 'tailscale'
+          : rest.indexOf('--transport') !== -1
+            ? rest[rest.indexOf('--transport') + 1]
+            : null;
+
     const patch = {};
     if (di !== -1 && rest[di + 1]) patch.dir = path.resolve(rest[di + 1]);
     if (ni !== -1 && rest[ni + 1]) patch.name = rest[ni + 1];
-    
+
     // Auto-detect transport if no --dir specified and user didn't force a preference
     if (!patch.dir && !preferTransport) {
       const detected = detectTransport();
@@ -7015,7 +7020,7 @@ async function cmdFleet(ctx, rest) {
           print(style.dim('Specify --dir <path> to use shared folder mode explicitly.'));
         }
       }
-      
+
       // If LAN or Tailscale detected, we don't need --dir
       if (detected.type === 'lan' || detected.type === 'tailscale') {
         patch.transport = detected.type;
@@ -7026,23 +7031,23 @@ async function cmdFleet(ctx, rest) {
         print(style.dim('Using preferred transport: ') + style.bold(preferTransport));
       }
     }
-    
+
     if (!patch.dir && !_fleet.identity(ctx).dir && !patch.transport)
       return fail(
         'usage: keyflip fleet init --dir <shared-folder> [--name <this-machine>]\n' +
-        '       keyflip fleet init [--prefer-lan|--prefer-tailscale]  # auto-detect transport\n' +
-        '  the folder must be reachable by every machine (a Dropbox/iCloud/synced dir).',
+          '       keyflip fleet init [--prefer-lan|--prefer-tailscale]  # auto-detect transport\n' +
+          '  the folder must be reachable by every machine (a Dropbox/iCloud/synced dir).',
       );
-    
+
     const id = fleet.setConfig(ctx, patch);
     if (JSON_MODE) {
-      jsonOut({ 
-        fleet: { 
-          machineId: id.machineId, 
-          name: id.name, 
+      jsonOut({
+        fleet: {
+          machineId: id.machineId,
+          name: id.name,
           dir: id.dir,
-          transport: id.transport || 'auto'
-        } 
+          transport: id.transport || 'auto',
+        },
       });
       return;
     }
@@ -7075,11 +7080,11 @@ async function cmdFleet(ctx, rest) {
     const self = fleet.identity(ctx);
     const announced = rest.indexOf('--no-announce') === -1 && self.announce !== false;
     const me = { machineId: self.machineId, name: self.name, fp: fleet.fingerprint(fleet.publicKey(ctx)) };
-    
+
     let lanPeers = [];
     let tailscalePeers = [];
     let transportUsed = 'lan';
-    
+
     // Step 1: Try LAN multicast
     if (!JSON_MODE) {
       print(style.dim('Scanning LAN via multicast for ' + timeoutMs + 'ms' + (announced ? ' (announcing)' : '') + '…'));
@@ -7092,7 +7097,7 @@ async function cmdFleet(ctx, rest) {
     } finally {
       if (beacon) beacon.stop();
     }
-    
+
     // Step 2: If LAN found nothing, try Tailscale
     if (lanPeers.length === 0) {
       if (!JSON_MODE) {
@@ -7105,10 +7110,10 @@ async function cmdFleet(ctx, rest) {
           if (tsStatus.Peer && Object.keys(tsStatus.Peer).length > 0) {
             // Extract Tailscale peers that might be running keyflip
             tailscalePeers = Object.values(tsStatus.Peer)
-              .filter(function(peer) {
+              .filter(function (peer) {
                 return peer.Online && peer.TailscaleIPs && peer.TailscaleIPs.length > 0;
               })
-              .map(function(peer) {
+              .map(function (peer) {
                 return {
                   machineId: peer.Hostname.replace(/[^A-Za-z0-9_-]/g, '').slice(0, 40),
                   name: peer.Hostname,
@@ -7126,37 +7131,32 @@ async function cmdFleet(ctx, rest) {
         // Tailscale not available - that's fine
       }
     }
-    
+
     // Merge results
     const allPeers = lanPeers.concat(tailscalePeers);
-    
+
     if (JSON_MODE) {
-      jsonOut({ 
-        fleetDiscover: { 
-          self: me, 
-          announced: announced, 
-          peers: allPeers, 
+      jsonOut({
+        fleetDiscover: {
+          self: me,
+          announced: announced,
+          peers: allPeers,
           lan: lanPeers.length,
           tailscale: tailscalePeers.length,
           transport: transportUsed,
-          ms: timeoutMs 
-        } 
+          ms: timeoutMs,
+        },
       });
       return;
     }
-    
+
     print(style.bold('Discovered machines:') + ' ' + style.dim('(as ' + self.name + ')'));
     if (!allPeers.length) {
       print('  ' + style.warn('no other keyflip machine found.'));
-      print(
-        '  ' +
-          style.dim(
-            'Make sure other machines are running `keyflip fleet push` or are on the same network.',
-          ),
-      );
+      print('  ' + style.dim('Make sure other machines are running `keyflip fleet push` or are on the same network.'));
       return;
     }
-    
+
     allPeers.forEach(function (p) {
       const transportBadge = p.transport === 'tailscale' ? style.dim('[Tailscale]') : style.dim('[LAN]');
       print(
@@ -7173,12 +7173,7 @@ async function cmdFleet(ctx, rest) {
       );
     });
     print('');
-    print(
-      '  ' +
-        style.dim(
-          'Reachable, but acting on a peer needs the fleet passphrase AND a pinned key: pair with',
-        ),
-    );
+    print('  ' + style.dim('Reachable, but acting on a peer needs the fleet passphrase AND a pinned key: pair with'));
     return;
   }
 
@@ -14571,7 +14566,12 @@ async function cmdInstance(ctx, rest) {
 
   if (!sub || sub === 'list' || sub === 'ls') {
     // If tool specified, filter by tool; else show all
-    const allInstances = tool ? instances.listInstances(tool) : getAllInstances();
+    let allInstances;
+    try {
+      allInstances = tool ? instances.listInstances(tool) : getAllInstances();
+    } catch (e) {
+      return fail(e.message); // unknown tool: list the supported adapters, don't dump a stack
+    }
 
     if (JSON_MODE) {
       jsonOut({ instances: allInstances });
@@ -14581,6 +14581,7 @@ async function cmdInstance(ctx, rest) {
     if (!allInstances.length) {
       print('No instances created yet.');
       print('');
+      print('Supported tools: ' + Object.keys(instances.TOOL_ADAPTERS).join(', '));
       print('Create one:  keyflip instance create <tool> <account-slug>');
       print('Example:     keyflip instance create claude yahoo');
       return;
@@ -14743,8 +14744,8 @@ async function cmdInstance(ctx, rest) {
     print('Each instance gets:');
     print('  • Independent .app clone (APFS copy-on-write, ~zero disk cost)');
     print('  • Isolated user data (cookies, sessions never expire across accounts)');
-    print('  • Auto-update disabled (prevents breaking on app updates)');
-    print('  • Separate config directory (MCP servers, settings)');
+    print('  • Best-effort update hardening where the updater reads Info.plist (chatgpt)');
+    print('  • Separate config directory, passed to the app when the tool defines a config env');
     print('');
     print('Why use this?');
     print('  Solves session expiry/rotation problems — each account maintains its own');
@@ -14757,11 +14758,7 @@ async function cmdInstance(ctx, rest) {
 
 // Helper: get all instances across all tools
 function getAllInstances() {
-  const all = [];
-  Object.keys(instances.TOOL_ADAPTERS).forEach((tool) => {
-    all.push(...instances.listInstances(tool));
-  });
-  return all;
+  return instances.listAllInstances();
 }
 
 // Backward compat: claude-profiles → instance claude
@@ -14813,7 +14810,7 @@ async function cmdClaudeProfilesCompat(ctx, rest) {
     return;
   }
 
-  return fail("unknown subcommand. Use: keyflip instance help");
+  return fail('unknown subcommand. Use: keyflip instance help');
 }
 
 export {

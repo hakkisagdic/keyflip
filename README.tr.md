@@ -500,6 +500,37 @@ yüzeyin kendi baytlarını saklar; ama yüzey başına tamamen bağımsız zinc
 yüzeye bir tarayıcı girişi gerekir (#33). Süresi geçmiş kayıt `EXPIRED` görünür;
 ona geçiş taze bir giriş ister.
 
+### Aynı anda birden çok hesap — izole uygulama kopyaları (`instance`, macOS)
+
+Masaüstü uygulamalarının çerezleri ~30 günde düşer. `keyflip instance` her hesap için
+uygulamanın APFS copy-on-write kopyasını (`cp -cR`, neredeyse sıfır disk) ve ayrı bir
+`--user-data-dir` oluşturur; oturumlar birbirine karışmaz ve yeniden giriş istemez.
+
+```bash
+keyflip instance list                     # tüm araçlar (ya da: list claude)
+keyflip instance create <araç> <hesap>    # ör. create claude yahoo@gmail.com
+keyflip instance launch <araç> <hesap>    # önce aynı aracın diğer örneklerini kapatır (deep-link tuzağı)
+keyflip instance focus <araç> <hesap>
+keyflip instance kill <araç> <hesap>
+keyflip instance enable-all <araç>        # kayıtlı tüm hesaplar için örnek oluşturur
+keyflip instance help                     # desteklenen araçlar adaptörlerden okunur
+```
+
+**Desteklenen araçlar:** `claude`, `kiro`, `chatgpt` (kurulu uygulamalara karşı doğrulandı —
+Claude.app, Kiro.app, ChatGPT.app) ve `cursor` (standart yol; doğrulama makinesinde kurulu değil).
+Dördü de Electron olduğu için `--user-data-dir` gerçek çerez/oturum izolasyonu verir. Yeni araç =
+`src/instances.js` içindeki `TOOL_ADAPTERS`'a tek kayıt; CLI yönlendirmesi, MCP uçları, PID takibi ve
+launch/focus/kill mantığı otomatik çalışır.
+
+**Konum:** `~/Library/Application Support/keyflip-instances/<araç>/<hesap>/` — `<Araç>.app` kopyası,
+`User Data/`, `Config/` (adaptör config env tanımlıyorsa uygulamaya geçirilir; Claude:
+`CLAUDE_CONFIG_DIR`), `profile.json`, `instance.pid`.
+
+Otomatik güncelleme sertleştirmesi en-iyi-çabadır ve yalnızca güncelleyicisi Info.plist
+anahtarlarını okuyan araçlarda işe yarar (ChatGPT Sparkle taşır; Claude Squirrel kullanır ve bu
+anahtarları yok sayar). Kiro/Cursor kendi kanalından güncellenir. Eski `keyflip claude-profiles`
+komutları uyumluluk sarmalayıcısıyla çalışmaya devam eder.
+
 ### Görevleri hangi model koşar (`llm`)
 
 `dream`, `sessions distill` ve `recall --answer` ev işidir — aboneliğin parasını yemesi gereken iş

@@ -139,6 +139,7 @@ Claude masaustu uygulamasi, tarayici otomasyonu ve uygulama duzeyi oturum yoneti
 | `claude.js` | Claude masaustu uygulamasi entegrasyonu |
 | `appauth.js` | Masaustu uygulamasi kimlik dogrulama |
 | `appsessions.js` | Masaustu uygulamasi oturum yonetimi |
+| `instances.js` | Arac/hesap basina izole coklu-ornek uygulama kopyalari (Claude, Kiro, ChatGPT, Cursor) |
 | `browser.js` | Tarayici profili ve cerez yonetimi |
 | `chat.js` | Sohbet arayuzu entegrasyonu |
 | `cowork.js` | Birlikte calisma ve is birligi ozellikleri |

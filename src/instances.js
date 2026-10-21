@@ -2,7 +2,8 @@
 // Each instance gets:
 // - Independent .app clone (APFS copy-on-write, near-zero disk overhead)
 // - Isolated user data directory (cookies, sessions, configs)
-// - Auto-update disabled (prevents breaking the clone on app updates)
+// - Best-effort auto-update hardening (Info.plist keys only work when the app's updater
+//   reads them; verified: ChatGPT bundles Sparkle, Claude ships Squirrel and ignores them)
 // - Custom config env var for MCP/server isolation
 //
 // Tool adapters define per-app behavior. Currently supported: claude, cursor (planned).
@@ -17,7 +18,21 @@ const INSTANCES_BASE = path.join(os.homedir(), 'Library/Application Support/keyf
 const INFO_PLIST_PATH = 'Contents/Info.plist';
 
 // --- Tool adapters ---
-
+//
+// Verification status (checked against real installs, 2026-10-21):
+// - claude:  /Applications/Claude.app installed, Electron (ElectronAsarIntegrity present).
+//            Ships Squirrel.framework, NOT Sparkle — Info.plist keys cannot stop its updater,
+//            so disableAutoUpdate is false (it used to claim otherwise).
+// - kiro:    /Applications/Kiro.app installed, bundle dev.kiro.desktop, Electron (ElectronAsarIntegrity)
+// - chatgpt: /Applications/ChatGPT.app installed, bundle com.openai.codex, Electron +
+//            Sparkle.framework (SUPublicEDKey present; SUFeedURL/SUEnableAutomaticChecks are
+//            absent and get inserted). Plist hardening applies here, best-effort.
+// - cursor:  standard path, NOT installed on the verification machine — createInstance()
+//            fails with a clear error if the app is missing, so no silent wrong behavior.
+//
+// All four are Electron/Chromium apps, so --user-data-dir isolates cookies + sessions.
+// configEnv is best-effort: `open` goes through LaunchServices, which may not inherit our
+// environment, so the flag is the reliable isolation mechanism; the env var is only a hint.
 const TOOL_ADAPTERS = {
   claude: {
     name: 'Claude',
@@ -27,26 +42,47 @@ const TOOL_ADAPTERS = {
     configEnv: 'CLAUDE_CONFIG_DIR',
     processPattern: 'Claude\\.app',
     supportsMultiInstance: true,
-    disableAutoUpdate: true,
+    // Squirrel updater, not Sparkle: no documented plist kill-switch. Patching was inert.
+    disableAutoUpdate: false,
   },
-  // cursor: {
-  //   name: 'Cursor',
-  //   appName: 'Cursor.app',
-  //   baseAppPath: '/Applications/Cursor.app',
-  //   userDataFlag: '--user-data-dir',
-  //   configEnv: 'CURSOR_CONFIG_DIR',
-  //   processPattern: 'Cursor\\.app',
-  //   supportsMultiInstance: true,
-  //   disableAutoUpdate: false, // Cursor doesn't auto-update aggressively
-  // },
+  kiro: {
+    name: 'Kiro',
+    appName: 'Kiro.app',
+    baseAppPath: '/Applications/Kiro.app',
+    userDataFlag: '--user-data-dir',
+    configEnv: null, // no documented config-dir env for the desktop app
+    processPattern: 'Kiro\\.app',
+    supportsMultiInstance: true,
+    // Kiro ships no Sparkle keys; its updater (if any) is not plist-controlled, so do not
+    // pretend to disable it. An updated clone is harmless — it just replaces that clone's bundle.
+    disableAutoUpdate: false,
+  },
+  chatgpt: {
+    name: 'ChatGPT',
+    appName: 'ChatGPT.app',
+    baseAppPath: '/Applications/ChatGPT.app',
+    userDataFlag: '--user-data-dir',
+    configEnv: null,
+    processPattern: 'ChatGPT\\.app',
+    supportsMultiInstance: true,
+    disableAutoUpdate: true, // Sparkle present; keys are inserted (best-effort)
+  },
+  cursor: {
+    name: 'Cursor',
+    appName: 'Cursor.app',
+    baseAppPath: '/Applications/Cursor.app',
+    userDataFlag: '--user-data-dir',
+    configEnv: null, // VS Code-style apps take --extensions-dir / --user-data-dir per profile
+    processPattern: 'Cursor\\.app',
+    supportsMultiInstance: true,
+    disableAutoUpdate: false, // Cursor updates via its own channel; not plist-controlled
+  },
 };
 
 function getAdapter(tool) {
   const adapter = TOOL_ADAPTERS[tool];
   if (!adapter) {
-    throw new Error(
-      `Unsupported tool: ${tool}. Available: ${Object.keys(TOOL_ADAPTERS).join(', ')}`,
-    );
+    throw new Error(`Unsupported tool: ${tool}. Available: ${Object.keys(TOOL_ADAPTERS).join(', ')}`);
   }
   return adapter;
 }
@@ -68,6 +104,7 @@ function pidFile(tool, accountSlug) {
 // --- Profile discovery & metadata ---
 
 function listInstances(tool) {
+  getAdapter(tool); // reject unknown tools instead of silently returning []
   const toolDir = path.join(INSTANCES_BASE, tool);
   if (!fs.existsSync(toolDir)) return [];
 
@@ -113,6 +150,20 @@ function getInstance(tool, accountSlug) {
 
   const instances = listInstances(tool);
   return instances.find((p) => p.slug === accountSlug) || null;
+}
+
+// Every instance across every known adapter — what `keyflip instance list` and the MCP
+// `keyflip_instances` tool render when no tool is given.
+function listAllInstances() {
+  const all = [];
+  Object.keys(TOOL_ADAPTERS).forEach((tool) => {
+    try {
+      all.push(...listInstances(tool));
+    } catch (_) {
+      // an adapter whose dir is unreadable must not hide the others
+    }
+  });
+  return all;
 }
 
 // --- PID tracking ---
@@ -172,9 +223,7 @@ function findRunningPid(tool, accountSlug) {
 
 function ensureBaseApp(adapter) {
   if (!fs.existsSync(adapter.baseAppPath)) {
-    throw new Error(
-      `${adapter.appName} not found at ${adapter.baseAppPath}. Please install it first.`,
-    );
+    throw new Error(`${adapter.appName} not found at ${adapter.baseAppPath}. Please install it first.`);
   }
   return adapter.baseAppPath;
 }
@@ -210,30 +259,24 @@ function createInstance(tool, accountSlug) {
     }
   }
 
-  // Disable auto-update by patching Info.plist (if supported)
+  // Best-effort auto-update hardening by patching Info.plist. Only apps whose updater reads
+  // these keys (Sparkle) are affected; Squirrel-based apps ignore them.
   if (adapter.disableAutoUpdate) {
     const plistPath = path.join(appClone, INFO_PLIST_PATH);
     if (fs.existsSync(plistPath)) {
-      console.log('[instances] Disabling auto-update...');
-      try {
-        // Use plutil to modify plist
-        run('plutil', [
-          '-replace',
-          'SUEnableAutomaticChecks',
-          '-bool',
-          'false',
-          plistPath,
-        ]);
-        run('plutil', [
-          '-replace',
-          'SUPublicEDKey',
-          '-string',
-          '',
-          plistPath,
-        ]);
-      } catch (_) {
-        console.warn('[instances] Failed to disable auto-update via plutil');
-        // Non-fatal: instance still works, just might auto-update
+      console.log('[instances] Hardening auto-update keys (best-effort)...');
+      // The base plist often has NO SUEnableAutomaticChecks key (verified on Claude + Kiro),
+      // so -replace alone fails with a nonzero exit. Try replace, fall back to insert.
+      const setKey = (key, type, value) => {
+        const replaced = run('plutil', ['-replace', key, type, value, plistPath]);
+        if (replaced.code === 0) return true;
+        const inserted = run('plutil', ['-insert', key, type, value, plistPath]);
+        return inserted.code === 0;
+      };
+      const okChecks = setKey('SUEnableAutomaticChecks', '-bool', 'false');
+      const okFeed = setKey('SUFeedURL', '-string', '');
+      if (!okChecks && !okFeed) {
+        console.warn('[instances] Could not patch auto-update keys (non-fatal: this clone may update itself)');
       }
     }
   }
@@ -299,19 +342,13 @@ function launchInstance(tool, accountSlug) {
 
   console.log(`[instances] Launching ${adapter.name} for ${accountSlug}...`);
 
-  // Launch with --user-data-dir and config env var
-  const launchArgs = [
-    '-a',
-    instance.appPath,
-    '--args',
-    `${adapter.userDataFlag}=${instance.userDataDir}`,
-  ];
+  // Launch with --user-data-dir and (when the tool defines one) a config env var
+  const launchArgs = ['-a', instance.appPath, '--args', `${adapter.userDataFlag}=${instance.userDataDir}`];
 
-  const result = run('open', launchArgs, {
-    env: Object.assign({}, process.env, {
-      [adapter.configEnv]: instance.configDir,
-    }),
-  });
+  const env = Object.assign({}, process.env);
+  if (adapter.configEnv) env[adapter.configEnv] = instance.configDir;
+
+  const result = run('open', launchArgs, { env: env });
 
   if (result.code !== 0) {
     throw new Error(`Failed to launch ${adapter.name}: ${result.stderr}`);
@@ -395,6 +432,7 @@ function ensureInstance(tool, accountSlug) {
 export {
   instancesDir,
   listInstances,
+  listAllInstances,
   getInstance,
   createInstance,
   ensureInstance,
