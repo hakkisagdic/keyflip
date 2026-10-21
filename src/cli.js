@@ -232,9 +232,10 @@ function usage() {
   print('                                 Claude; --restart = no prompt, --force = swap without closing,');
   print('                                 --only cli|app|browser = just those surfaces; a browser that');
   print('                                 would lose its tabs is skipped unless --only browser/--browser,');
-  print('                                 --dry-run = show the plan and touch NOTHING; the switch');
-  print('                                 then reads itself back (--no-verify skips that, and');
-  print('                                 --rollback-on-fail puts the previous account back)');
+  print('                                 --instance tool/slug = restore the app login into an isolated');
+  print('                                 clone instead of the base app, --dry-run = show the plan and');
+  print('                                 touch NOTHING; the switch then reads itself back (--no-verify');
+  print('                                 skips that, and --rollback-on-fail puts the previous account back)');
   print('  keyflip next [--strategy best|next-available]');
   print('                                 rotate to the next account — or pick by remaining quota');
   print('  keyflip provider add <name> --base-url <url> [--key-file <f|->]');
@@ -666,7 +667,7 @@ async function cmdSwitch(ctx, rest) {
   const arg = rest[0];
   if (!arg)
     return fail(
-      'usage: keyflip <name|number> [--restart|--force] [--only cli|app|browser] [--browser] [--dry-run] [--no-verify] [--rollback-on-fail]',
+      'usage: keyflip <name|number> [--restart|--force] [--only cli|app|browser] [--browser] [--instance tool/slug] [--dry-run] [--no-verify] [--rollback-on-fail]',
     );
   const autoYes = rest.indexOf('--restart') !== -1 || rest.indexOf('-y') !== -1 || rest.indexOf('--yes') !== -1;
   const force = rest.indexOf('--force') !== -1;
@@ -684,6 +685,29 @@ async function cmdSwitch(ctx, rest) {
   const dryRun = rest.indexOf('--dry-run') !== -1 || rest.indexOf('--plan') !== -1;
   const noVerify = rest.indexOf('--no-verify') !== -1;
   const rollbackOnFail = rest.indexOf('--rollback-on-fail') !== -1;
+
+  // Parse --instance <tool>/<slug> or --instance=<tool>/<slug>
+  let instanceTarget = null;
+  for (let i = 0; i < rest.length; i++) {
+    if (rest[i] === '--instance') {
+      instanceTarget = rest[i + 1] || '';
+      break;
+    } else if (String(rest[i]).indexOf('--instance=') === 0) {
+      instanceTarget = String(rest[i]).slice(11);
+      break;
+    }
+  }
+  let instanceUserDataDir = null;
+  if (instanceTarget) {
+    const parts = instanceTarget.split('/');
+    if (parts.length !== 2)
+      return fail("--instance must be tool/slug (e.g. claude/work), got '" + instanceTarget + "'");
+    const [tool, slug] = parts;
+    const inst = instances.getInstance(tool, slug, ctx.instancesBase);
+    if (!inst) return fail("no such instance: '" + instanceTarget + "' (see: keyflip instance list)");
+    instanceUserDataDir = inst.userDataDir;
+  }
+
   const name = core.resolveProfile(ctx, arg);
   if (!name) return fail("no such profile: '" + arg + "' (see: keyflip list)");
   const em = profiles.email(ctx.configDir, name);
@@ -786,7 +810,7 @@ async function cmdSwitch(ctx, rest) {
       }
     }
     preserveOutgoingAppLogin(ctx);
-    const lagApp = switchDesktopLogin(ctx, name);
+    const lagApp = switchDesktopLogin(ctx, name, { instanceUserDataDir: instanceUserDataDir });
     const lagCons = consolidateAndReport(ctx);
     if (appRunning) {
       print('Reopening Claude...');
@@ -1176,7 +1200,7 @@ async function cmdSwitch(ctx, rest) {
     const did = core.performSwitch(ctx, name);
     if (!did.cli) print("  ↳ CLI login for this profile isn't captured — switched the desktop app only.");
     preserveOutgoingAppLogin(ctx);
-    const appl = switchDesktopLogin(ctx, name);
+    const appl = switchDesktopLogin(ctx, name, { instanceUserDataDir: instanceUserDataDir });
     const cons = consolidateAndReport(ctx);
     print('Reopening Claude...');
     appctl.openClaude(ctx.platform);
@@ -1202,7 +1226,7 @@ async function cmdSwitch(ctx, rest) {
   const did = core.performSwitch(ctx, name);
   if (!did.cli) print("  ↳ CLI login for this profile isn't captured — switched the desktop app only.");
   preserveOutgoingAppLogin(ctx);
-  const appl = switchDesktopLogin(ctx, name);
+  const appl = switchDesktopLogin(ctx, name, { instanceUserDataDir: instanceUserDataDir });
   const cons = consolidateAndReport(ctx);
   print(style.ok('✅') + ' Switched to: ' + (em || name) + (manage ? '' : '. Restart Claude Code to apply.'));
   await emitSwitched(did, appl, cons);
@@ -10986,11 +11010,13 @@ function cmdStatus(ctx) {
   }
 }
 
-function switchDesktopLogin(ctx, name) {
+function switchDesktopLogin(ctx, name, opts) {
+  opts = opts || {};
   // Only touch config.json while the app is closed.
   if (appctl.isClaudeRunning(ctx.platform)) return { ok: false };
-  const a = appauth.applyFromProfile(ctx, name);
-  if (a.ok) print('  ↳ switched the Claude desktop-app login too.');
+  const a = appauth.applyFromProfile(ctx, name, { instanceUserDataDir: opts.instanceUserDataDir });
+  if (a.ok)
+    print('  ↳ switched the Claude desktop-app login' + (opts.instanceUserDataDir ? ' into instance' : '') + '.');
   else if (a.reason && a.reason !== 'no saved desktop login for this profile') {
     print('  ⚠️ desktop app NOT switched: ' + a.reason);
   }
