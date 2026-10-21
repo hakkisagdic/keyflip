@@ -139,6 +139,12 @@ test('MCP lifecycle: initialize negotiates a supported protocol version and decl
     'keyflip_skill_add',
     'keyflip_proxy_status',
     'keyflip_proxy_control',
+    'keyflip_instances',
+    'keyflip_instance_create',
+    'keyflip_instance_launch',
+    'keyflip_instance_focus',
+    'keyflip_instance_kill',
+    'keyflip_instance_harden',
   ].forEach(function (n) {
     assert.ok(names.indexOf(n) !== -1, 'missing MCP tool: ' + n);
   });

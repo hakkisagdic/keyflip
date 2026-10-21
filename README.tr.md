@@ -158,7 +158,7 @@ keyflip next                  # sıradaki kayıtlı hesaba dön
 keyflip next --strategy best  # ...veya kalan kotaya göre seç (ayrıca: next-available)
 keyflip provider add <ad> --base-url <url> --key-file -   # 3. taraf endpoint kaydet
 keyflip use <ad>              # Claude Code'u bir provider'a yönlendir (geri: keyflip provider off)
-keyflip doctor                # sağlık kontrolü: git-e-sır, orphan oturumlar, versiyonlama, config, giriş, endpointler, masaüstü oturumu
+keyflip doctor                # sağlık kontrolü: git-e-sır, orphan oturumlar, versiyonlama, config, giriş, endpointler, masaüstü oturumu, otomatik güncelleme durumu
                               #   --history ekle: keyflip'in commit ettiği her blob'da hâlâ okunabilir bir sır var mı?
 keyflip backup now|list|restore <n>   # keyflip metadata anlık görüntüsü (sırsız)
 keyflip usage --history       # hesap-başına kullanım eğilimi + failover olayları
@@ -341,7 +341,7 @@ keyflip use openrouter          # Claude Code'u ona yönlendir
 keyflip provider off            # aboneliğine geri dön (OAuth)
 keyflip speedtest openrouter    # endpoint'leri ölç, en hızlısını kullan
 keyflip test openrouter         # tek gerçek istek: auth çalışıyor mu?
-keyflip doctor                  # sağlık kontrolü: git-e-sır + orphan + versiyonlama + config + giriş + endpointler + masaüstü oturumu
+keyflip doctor                  # sağlık kontrolü: git-e-sır + orphan + versiyonlama + config + giriş + endpointler + masaüstü oturumu + otomatik güncelleme durumu
 ```
 
 - **API anahtarı sırdır** → OS kimlik deposunda saklanır, asla metadata dosyasında
@@ -512,6 +512,7 @@ keyflip instance create <araç> <hesap>    # ör. create claude yahoo@gmail.com
 keyflip instance launch <araç> <hesap>    # önce aynı aracın diğer örneklerini kapatır (deep-link tuzağı)
 keyflip instance focus <araç> <hesap>
 keyflip instance kill <araç> <hesap>
+keyflip instance harden [araç] [hesap]    # uygulamanın sunduğu güncelleme anahtarını uygular (varsayılan: hepsi)
 keyflip instance enable-all <araç>        # kayıtlı tüm hesaplar için örnek oluşturur
 keyflip instance help                     # desteklenen araçlar adaptörlerden okunur
 ```
@@ -526,10 +527,13 @@ launch/focus/kill mantığı otomatik çalışır.
 `User Data/`, `Config/` (adaptör config env tanımlıyorsa uygulamaya geçirilir; Claude:
 `CLAUDE_CONFIG_DIR`), `profile.json`, `instance.pid`.
 
-Otomatik güncelleme sertleştirmesi en-iyi-çabadır ve yalnızca güncelleyicisi Info.plist
-anahtarlarını okuyan araçlarda işe yarar (ChatGPT Sparkle taşır; Claude Squirrel kullanır ve bu
-anahtarları yok sayar). Kiro/Cursor kendi kanalından güncellenir. Eski `keyflip claude-profiles`
-komutları uyumluluk sarmalayıcısıyla çalışmaya devam eder.
+Otomatik güncelleme: uygulama kendi anahtarını sunuyorsa `create` onu kapatır — Claude kopyasının
+`User Data/config.json` dosyasına `disableAutoUpdates: true` yazar; ChatGPT'nin Sparkle
+`Info.plist` feed'i boşaltılır (en-iyi-çaba). Kiro/Cursor böyle bir anahtar sunmaz. Eski
+`keyflip instance harden [araç] [hesap]` mevcut kopyalara anahtarı yeniden uygular (hedefsiz
+çağrı tümüne; çalışan kopyayı önce kapatın — `config.json` uygulamanın elindedir ve üzerine yazar). `keyflip doctor` **canlı** durumu okur: kapatılabilir olduğu hâlde hâlâ açık bir
+kopya uyarıdır, anahtarı olmayan araç ise olduğu gibi — `uncontrollable` — raporlanır. Eski
+`keyflip claude-profiles` komutları uyumluluk sarmalayıcısıyla çalışmaya devam eder.
 
 ### Görevleri hangi model koşar (`llm`)
 
@@ -947,7 +951,8 @@ okunabilir olduğu — yol ve stat, asla değer; `keyflip_chains_tighten` chmod 
 migrate + LAN
 (`keyflip_migrate_*`, `keyflip_transfer_pull`), WebDAV sync (`keyflip_sync_test/push/pull`),
 `keyflip://` linkleri (`keyflip_share/share_apply`), masaüstü gateway (`keyflip_gateway_*`), MCP-sunucu
-kaydı (`keyflip_mcpreg_*`), dizin pin'leri (`keyflip_link/links`), tanılama
+kaydı (`keyflip_mcpreg_*`), dizin pin'leri (`keyflip_link/links`), izole uygulama örnekleri
+(`keyflip_instances`, `keyflip_instance_*`), tanılama
 (`keyflip_doctor`, `keyflip_usage_history`), yedekler, skill'ler ve failover proxy. Her aracın düzgün JSON Şeması ve
 salt-okunur/yıkıcı anotasyonu var; **değiştiren araçlar `confirm: true` ister**
 ve açıklamaları agent'a önce kullanıcıya sormasını söyler. Sırlar MCP üzerinden

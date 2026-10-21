@@ -6,7 +6,7 @@
 //   reads them; verified: ChatGPT bundles Sparkle, Claude ships Squirrel and ignores them)
 // - Custom config env var for MCP/server isolation
 //
-// Tool adapters define per-app behavior. Currently supported: claude, cursor (planned).
+// Tool adapters define per-app behavior. Currently supported: claude, kiro, chatgpt, cursor.
 // Security: No secrets in git, 0600 permissions on sensitive dirs, zero-dep (macOS only).
 import fs from 'fs';
 import path from 'path';
@@ -42,8 +42,10 @@ const TOOL_ADAPTERS = {
     configEnv: 'CLAUDE_CONFIG_DIR',
     processPattern: 'Claude\\.app',
     supportsMultiInstance: true,
-    // Squirrel updater, not Sparkle: no documented plist kill-switch. Patching was inert.
+    // Squirrel updater, not Sparkle: Info.plist patching is inert. Claude does expose its own
+    // config switch (`disableAutoUpdates` in userData/config.json), which is what we seed.
     disableAutoUpdate: false,
+    autoUpdateConfig: { file: 'config.json', key: 'disableAutoUpdates', value: true },
   },
   kiro: {
     name: 'Kiro',
@@ -97,15 +99,168 @@ function instanceDir(tool, accountSlug) {
   return path.join(INSTANCES_BASE, tool, accountSlug);
 }
 
-function pidFile(tool, accountSlug) {
-  return path.join(instanceDir(tool, accountSlug), 'instance.pid');
+// --- Auto-update policy ---
+//
+// An isolated clone is only useful if a self-update does not replace its bundle underneath a
+// signed-in session. There is no universal switch, so the adapter decides:
+//   claude  → the app's own config.json key `disableAutoUpdates` (seeded on create)
+//   chatgpt → the Info.plist Sparkle keys inserted on create
+//   others  → nothing keyflip can flip; report it instead of pretending
+function readConfigUpdateState(file) {
+  let raw;
+  try {
+    raw = fs.readFileSync(file, 'utf8');
+  } catch (_) {
+    return {
+      state: 'enabled',
+      present: false,
+      path: file,
+      reason: 'config.json absent (the app default is auto-updates on)',
+    };
+  }
+  let cfg;
+  try {
+    cfg = JSON.parse(raw);
+  } catch (_) {
+    return { state: 'invalid', present: true, path: file, reason: 'config.json is not valid JSON' };
+  }
+  // Claude resolves `autoUpdate.disabled ?? disableAutoUpdates` — mirror that precedence.
+  const value =
+    cfg && cfg.autoUpdate && cfg.autoUpdate.disabled !== undefined
+      ? cfg.autoUpdate.disabled
+      : cfg && cfg.disableAutoUpdates;
+  return { state: value === true ? 'disabled' : 'enabled', present: true, path: file };
+}
+
+function readSparkleUpdateState(plistPath) {
+  if (!fs.existsSync(plistPath)) {
+    return { state: 'unknown', path: plistPath, reason: 'Info.plist missing' };
+  }
+  const r = run('plutil', ['-p', plistPath]);
+  if (r.code !== 0) {
+    return { state: 'unknown', path: plistPath, reason: 'Info.plist unreadable' };
+  }
+  // Both keys are required: checks explicitly off AND an empty feed.
+  const checksOff = /"SUEnableAutomaticChecks"\s*=>\s*false/.test(r.stdout);
+  const feedEmpty = /"SUFeedURL"\s*=>\s*""/.test(r.stdout);
+  return { state: checksOff && feedEmpty ? 'disabled' : 'enabled', path: plistPath };
+}
+
+function updateMechanism(appPath) {
+  if (!appPath) return null;
+  if (fs.existsSync(path.join(appPath, 'Contents/Frameworks/Sparkle.framework'))) return 'sparkle';
+  if (fs.existsSync(path.join(appPath, 'Contents/Frameworks/Squirrel.framework'))) return 'squirrel';
+  return null;
+}
+
+// Live update state for one app (base install or instance clone), read on demand so doctor
+// never trusts the creation-time metadata.
+function updateState(tool, userDataDir, appPath) {
+  const mechanism = updateMechanism(appPath);
+  if (tool === 'claude' && userDataDir) {
+    return Object.assign(
+      { mechanism: mechanism || 'squirrel', control: 'config' },
+      readConfigUpdateState(path.join(userDataDir, 'config.json')),
+    );
+  }
+  if (tool === 'chatgpt' && appPath) {
+    return Object.assign(
+      { mechanism: mechanism || 'sparkle', control: 'plist' },
+      readSparkleUpdateState(path.join(appPath, INFO_PLIST_PATH)),
+    );
+  }
+  return {
+    state: mechanism ? 'uncontrollable' : 'unknown',
+    mechanism: mechanism || 'unknown',
+    control: null,
+    path: appPath || null,
+    reason: mechanism ? 'no keyflip switch for this updater' : 'no recognized updater framework',
+  };
+}
+
+// Write the app's own switch into a userData/config.json that may not exist yet. Electron apps
+// create this file on first launch, so an empty/absent file is the normal pre-launch state.
+function seedConfigSwitch(adapter, userDataDir) {
+  const cfgPath = path.join(userDataDir, adapter.autoUpdateConfig.file);
+  let cfg = {};
+  try {
+    if (fs.existsSync(cfgPath)) cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
+  } catch (_) {
+    cfg = {}; // unreadable config: start clean rather than refusing to harden
+  }
+  if (!cfg || typeof cfg !== 'object' || Array.isArray(cfg)) cfg = {};
+  cfg[adapter.autoUpdateConfig.key] = adapter.autoUpdateConfig.value;
+  // Claude's nested `autoUpdate.disabled` wins over the flat key; flip it too when present so the
+  // switch is actually effective, while leaving the rest of that object untouched.
+  if (cfg.autoUpdate && typeof cfg.autoUpdate === 'object' && !Array.isArray(cfg.autoUpdate)) {
+    cfg.autoUpdate.disabled = adapter.autoUpdateConfig.value;
+  }
+  atomicWrite(cfgPath, JSON.stringify(cfg, null, 2) + '\n', 0o600);
+  return cfgPath;
+}
+
+// Best-effort Sparkle hardening. The base plist often has NO SUEnableAutomaticChecks key
+// (verified on Claude + Kiro), so -replace alone fails; fall back to insert.
+function hardenPlist(appPath) {
+  const plistPath = path.join(appPath, INFO_PLIST_PATH);
+  if (!fs.existsSync(plistPath)) return false;
+  const setKey = (key, type, value) => {
+    const replaced = run('plutil', ['-replace', key, type, value, plistPath]);
+    if (replaced.code === 0) return true;
+    const inserted = run('plutil', ['-insert', key, type, value, plistPath]);
+    return inserted.code === 0;
+  };
+  const okChecks = setKey('SUEnableAutomaticChecks', '-bool', 'false');
+  const okFeed = setKey('SUFeedURL', '-string', '');
+  return okChecks || okFeed;
+}
+
+// Apply whatever switch this adapter has to an existing instance, then re-read the live state so
+// callers (doctor, CLI) report what actually landed instead of what was intended.
+function hardenInstance(tool, accountSlug, base) {
+  const adapter = getAdapter(tool);
+  const instance = getInstance(tool, accountSlug, base);
+  if (!instance) {
+    throw new Error(`No instance found for ${tool}/${accountSlug}`);
+  }
+  // A running app owns config.json in memory and rewrites it on exit; writing underneath it would
+  // look hardened now and silently revert later. Only config-controlled tools need the guard.
+  if (adapter.autoUpdateConfig && instance.running) {
+    throw new Error(
+      `Instance ${tool}/${accountSlug} is running — quit it first with ` +
+        `\`keyflip instance kill ${tool} ${accountSlug}\`, then re-run harden`,
+    );
+  }
+  if (adapter.autoUpdateConfig) seedConfigSwitch(adapter, instance.userDataDir);
+  if (adapter.disableAutoUpdate) hardenPlist(instance.appPath);
+  const state = updateState(tool, instance.userDataDir, instance.appPath);
+  // Keep profile.json honest: in old instances it echoed the adapter flag, not the live state.
+  try {
+    const metaPath = path.join(instance.dir, 'profile.json');
+    let meta = {};
+    try {
+      meta = JSON.parse(fs.readFileSync(metaPath, 'utf8')) || {};
+    } catch (_) {
+      meta = {};
+    }
+    meta.autoUpdateDisabled = state.state === 'disabled';
+    meta.autoUpdateMethod = state.control || null;
+    atomicWrite(metaPath, JSON.stringify(meta, null, 2) + '\n', 0o600);
+  } catch (_) {
+    // metadata is advisory
+  }
+  return state;
+}
+
+function pidFile(tool, accountSlug, base) {
+  return path.join(base || instancesDir(), tool, accountSlug, 'instance.pid');
 }
 
 // --- Profile discovery & metadata ---
 
-function listInstances(tool) {
+function listInstances(tool, base) {
   getAdapter(tool); // reject unknown tools instead of silently returning []
-  const toolDir = path.join(INSTANCES_BASE, tool);
+  const toolDir = path.join(base || instancesDir(), tool);
   if (!fs.existsSync(toolDir)) return [];
 
   const entries = fs.readdirSync(toolDir);
@@ -127,7 +282,7 @@ function listInstances(tool) {
       }
 
       const adapter = getAdapter(tool);
-      const pid = findRunningPid(tool, slug);
+      const pid = findRunningPid(tool, slug, base);
 
       return {
         tool: tool,
@@ -144,21 +299,21 @@ function listInstances(tool) {
     });
 }
 
-function getInstance(tool, accountSlug) {
-  const dir = instanceDir(tool, accountSlug);
+function getInstance(tool, accountSlug, base) {
+  const dir = path.join(base || instancesDir(), tool, accountSlug);
   if (!fs.existsSync(dir)) return null;
 
-  const instances = listInstances(tool);
+  const instances = listInstances(tool, base);
   return instances.find((p) => p.slug === accountSlug) || null;
 }
 
 // Every instance across every known adapter — what `keyflip instance list` and the MCP
 // `keyflip_instances` tool render when no tool is given.
-function listAllInstances() {
+function listAllInstances(base) {
   const all = [];
   Object.keys(TOOL_ADAPTERS).forEach((tool) => {
     try {
-      all.push(...listInstances(tool));
+      all.push(...listInstances(tool, base));
     } catch (_) {
       // an adapter whose dir is unreadable must not hide the others
     }
@@ -177,8 +332,8 @@ function writePid(tool, accountSlug, pid) {
   }
 }
 
-function readPid(tool, accountSlug) {
-  const p = pidFile(tool, accountSlug);
+function readPid(tool, accountSlug, base) {
+  const p = pidFile(tool, accountSlug, base);
   try {
     if (fs.existsSync(p)) {
       return parseInt(fs.readFileSync(p, 'utf8').trim(), 10);
@@ -189,8 +344,8 @@ function readPid(tool, accountSlug) {
   return null;
 }
 
-function clearPid(tool, accountSlug) {
-  const p = pidFile(tool, accountSlug);
+function clearPid(tool, accountSlug, base) {
+  const p = pidFile(tool, accountSlug, base);
   try {
     if (fs.existsSync(p)) {
       fs.unlinkSync(p);
@@ -200,8 +355,8 @@ function clearPid(tool, accountSlug) {
   }
 }
 
-function findRunningPid(tool, accountSlug) {
-  const pid = readPid(tool, accountSlug);
+function findRunningPid(tool, accountSlug, base) {
+  const pid = readPid(tool, accountSlug, base);
   if (!pid) return null;
 
   // Check if process is actually alive
@@ -215,7 +370,7 @@ function findRunningPid(tool, accountSlug) {
   }
 
   // Stale PID file
-  clearPid(tool, accountSlug);
+  clearPid(tool, accountSlug, base);
   return null;
 }
 
@@ -246,6 +401,12 @@ function createInstance(tool, accountSlug) {
   fs.mkdirSync(userDataDir, { recursive: true });
   fs.mkdirSync(configDir, { recursive: true });
 
+  // Seed the app's own update switch before first launch (Claude: userData/config.json).
+  if (adapter.autoUpdateConfig) {
+    console.log('[instances] Disabling auto-updates via the app config...');
+    seedConfigSwitch(adapter, userDataDir);
+  }
+
   // Clone app using APFS copy-on-write (-c flag)
   const appClone = path.join(dir, adapter.appName);
   console.log(`[instances] Cloning ${adapter.appName} (APFS clone, near-zero disk cost)...`);
@@ -262,22 +423,9 @@ function createInstance(tool, accountSlug) {
   // Best-effort auto-update hardening by patching Info.plist. Only apps whose updater reads
   // these keys (Sparkle) are affected; Squirrel-based apps ignore them.
   if (adapter.disableAutoUpdate) {
-    const plistPath = path.join(appClone, INFO_PLIST_PATH);
-    if (fs.existsSync(plistPath)) {
-      console.log('[instances] Hardening auto-update keys (best-effort)...');
-      // The base plist often has NO SUEnableAutomaticChecks key (verified on Claude + Kiro),
-      // so -replace alone fails with a nonzero exit. Try replace, fall back to insert.
-      const setKey = (key, type, value) => {
-        const replaced = run('plutil', ['-replace', key, type, value, plistPath]);
-        if (replaced.code === 0) return true;
-        const inserted = run('plutil', ['-insert', key, type, value, plistPath]);
-        return inserted.code === 0;
-      };
-      const okChecks = setKey('SUEnableAutomaticChecks', '-bool', 'false');
-      const okFeed = setKey('SUFeedURL', '-string', '');
-      if (!okChecks && !okFeed) {
-        console.warn('[instances] Could not patch auto-update keys (non-fatal: this clone may update itself)');
-      }
+    console.log('[instances] Hardening auto-update keys (best-effort)...');
+    if (!hardenPlist(appClone)) {
+      console.warn('[instances] Could not patch auto-update keys (non-fatal: this clone may update itself)');
     }
   }
 
@@ -290,13 +438,17 @@ function createInstance(tool, accountSlug) {
     // ignore
   }
 
+  // Read the live switch rather than echoing adapter intent: plutil/config writes can fail.
+  const liveUpdate = updateState(tool, userDataDir, appClone);
+
   // Write instance metadata
   const meta = {
     tool: tool,
     slug: accountSlug,
     createdAt: new Date().toISOString(),
     baseApp: baseApp,
-    autoUpdateDisabled: adapter.disableAutoUpdate,
+    autoUpdateDisabled: liveUpdate.state === 'disabled',
+    autoUpdateMethod: liveUpdate.control || null,
     userDataDir: userDataDir,
     configDir: configDir,
   };
@@ -441,5 +593,7 @@ export {
   focusInstance,
   killInstance,
   killAllToolInstances,
+  updateState,
+  hardenInstance,
   TOOL_ADAPTERS,
 };

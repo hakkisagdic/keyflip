@@ -159,7 +159,7 @@ keyflip next                  # rotate to the next saved account
 keyflip next --strategy best  # ...or pick by remaining quota (also: next-available)
 keyflip provider add <name> --base-url <url> --key-file -   # save a 3rd-party endpoint
 keyflip use <name>            # route Claude Code to a provider (keyflip provider off = back)
-keyflip doctor                # health check: secrets-in-git, orphaned sessions, versioning, config, login, endpoints, desktop app session
+keyflip doctor                # health check: secrets-in-git, orphaned sessions, versioning, config, login, endpoints, desktop app session, auto-update state
                               #   add --history to also scan every blob keyflip ever committed for a reachable secret
 keyflip backup now|list|restore <n>   # snapshot keyflip metadata (no secrets)
 keyflip usage --history       # per-account usage trend + failover events
@@ -341,7 +341,7 @@ keyflip provider off            # back to your subscription (OAuth)
 keyflip provider list           # what's saved / active
 keyflip speedtest openrouter    # time the endpoints, use the fastest
 keyflip test openrouter         # one real request: is auth working?
-keyflip doctor                  # health check: secrets-in-git + orphans + versioning + config + login + endpoints + desktop app session + is the desktop app really signed in
+keyflip doctor                  # health check: secrets-in-git + orphans + versioning + config + login + endpoints + desktop app session + is the desktop app really signed in + auto-update state
 ```
 
 - The **API key is a secret** → stored in the OS credential store, never in the
@@ -913,7 +913,8 @@ shared or world-readable — paths and stats, never a value; `keyflip_chains_tig
 confirm-gated), migrate + LAN
 (`keyflip_migrate_*`, `keyflip_transfer_pull`), WebDAV sync (`keyflip_sync_test/push/pull`),
 `keyflip://` links (`keyflip_share/share_apply`), desktop gateway (`keyflip_gateway_*`), MCP-server
-registry (`keyflip_mcpreg_*`), directory pins (`keyflip_link/links`), diagnostics
+registry (`keyflip_mcpreg_*`), directory pins (`keyflip_link/links`), isolated app instances
+(`keyflip_instances`, `keyflip_instance_*`), diagnostics
 (`keyflip_doctor`, `keyflip_usage_history`), backups, skills, and the failover proxy. Every tool has a proper JSON Schema and read-only/
 destructive annotations; **mutating tools require `confirm: true`** and their
 descriptions tell the agent to ask the user first. Secrets are never accepted
@@ -1037,7 +1038,7 @@ usable session, without writing anything.
 
 Claude Desktop cookies expire every ~30 days, forcing frequent re-logins. keyflip solves this by creating **isolated app clones** — each runs independently with its own user data directory, so sessions persist indefinitely.
 
-**How it works:** Each instance is an APFS copy-on-write clone of the tool's `/Applications/<Tool>.app`, consuming near-zero additional disk space. It uses `--user-data-dir` for complete session isolation. Auto-update hardening is best-effort and applies only where the updater reads Info.plist keys (ChatGPT bundles Sparkle; Claude uses Squirrel, which ignores them).
+**How it works:** Each instance is an APFS copy-on-write clone of the tool's `/Applications/<Tool>.app`, consuming near-zero additional disk space. It uses `--user-data-dir` for complete session isolation. Where the app exposes an auto-update switch, `create` turns it off so an update cannot replace the clone's bundle under a signed-in account: Claude reads `disableAutoUpdates` from the clone's `User Data/config.json`, and ChatGPT gets its Sparkle `Info.plist` feed emptied (best-effort). Kiro and Cursor expose no such switch. `keyflip instance harden` re-applies it to existing clones (quit a running clone first — the app owns `config.json` and would rewrite it), and `keyflip doctor` reports the LIVE state — a controllable clone that is still ON is a warning; a tool with no switch is reported plainly, never nagged.
 
 ```bash
 # Create an isolated instance for a specific account
@@ -1055,6 +1056,9 @@ keyflip instance focus claude yahoo@gmail.com
 # Kill a running instance
 keyflip instance kill claude yahoo@gmail.com
 
+# Re-apply the app's auto-update switch (all instances when no target is given)
+keyflip instance harden
+
 # Enable all instances (launches all saved accounts as separate instances)
 keyflip instance enable-all claude
 ```
@@ -1065,7 +1069,7 @@ keyflip instance enable-all claude
 - `<Tool>.app` — isolated app clone
 - `User Data/` — Chromium user data (cookies, cache, extensions)
 - `Config/` — config directory, passed to the app when the adapter defines a config env (Claude: `CLAUDE_CONFIG_DIR`)
-- `profile.json` — metadata (creation date, paths, auto-update status)
+- `profile.json` — metadata (creation date, paths, auto-update state read back after the write)
 - `instance.pid` — running process ID (if active)
 
 **Disk usage:** APFS clone-on-write means each clone shares physical storage with the original app. Only changed blocks (config files, user data) consume actual space — typically <50 MB per instance.

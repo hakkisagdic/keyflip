@@ -163,6 +163,7 @@ const TOOL_ADAPTERS = {
     processPattern: 'Claude\\.app',
     supportsMultiInstance: true,
     disableAutoUpdate: false, // Claude ships Squirrel, which ignores the Info.plist keys
+    autoUpdateConfig: { file: 'config.json', key: 'disableAutoUpdates', value: true },
   },
   kiro:      { /* /Applications/Kiro.app,     dev.kiro.desktop,  no config env */ },
   chatgpt:   { /* /Applications/ChatGPT.app,  com.openai.codex,  Sparkle updater */ },
@@ -183,6 +184,11 @@ makes `--user-data-dir` isolation work. Three facts worth knowing:
   `disableAutoUpdate` is therefore `false` — the earlier `true` patched keys nothing reads.
   ChatGPT's hardening stays best-effort (its `SUFeedURL` is absent, so a programmatic feed
   cannot be ruled out).
+- **Claude does expose its own switch.** The app resolves
+  `(config.autoUpdate?.disabled ?? config.disableAutoUpdates) === true` from
+  `userData/config.json` (verified by reading `app.asar`). `createInstance()` seeds
+  `"disableAutoUpdates": true` into the clone's config before first launch; the nested
+  `autoUpdate.disabled` key, when present, wins — keyflip mirrors that precedence when reading.
 - **`cursor` is defined but was not installed on the verification machine.** `createInstance()`
   checks the base path first and fails with a clear message, so a missing app can never produce a
   half-created instance. A live launch test per app is still outstanding.
@@ -193,9 +199,22 @@ makes `--user-data-dir` isolation work. Three facts worth knowing:
 Each instance is created under `~/Library/Application Support/keyflip-instances/<tool>/<account>/`:
 
 1. **APFS clone:** Uses `cp -cR` to create a copy-on-write clone of the base app (near-zero disk overhead)
-2. **Auto-update hardening (best-effort):** Inserts `SUEnableAutomaticChecks=false` and clears `SUFeedURL` in `Info.plist` when the adapter opts in — only apps whose updater reads these keys (Sparkle, e.g. ChatGPT) are affected
+2. **Auto-update switch, where one exists:** Writes `"disableAutoUpdates": true` into the clone's `User Data/config.json` (Claude) and/or inserts `SUEnableAutomaticChecks=false` plus an empty `SUFeedURL` in `Info.plist` (Sparkle apps such as ChatGPT, best-effort). Kiro/Cursor expose neither.
 3. **Isolated directories:** Creates separate `User Data/` and `Config/` directories per account
 4. **PID tracking:** Writes `instance.pid` file for process lifecycle management
+
+`profile.json` records the **live state read back after the write** (`autoUpdateDisabled`,
+`autoUpdateMethod`), not the adapter's intent. `keyflip instance harden [tool] [account]` re-applies
+the switch to existing clones; with no target it applies to every instance and reports tools whose
+updater has no switch instead of pretending. It refuses to write a running Claude instance's config:
+the app owns that file in memory and rewrites it on exit, so the fix is quit → harden → relaunch.
+
+### Doctor: `desktop auto-updates`
+
+`keyflip doctor` has a `desktop auto-updates` row that reads the live state of the base Claude app
+and every clone. Only a **controllable clone whose switch is still ON** is a warning, with
+`keyflip instance harden …` as the fix. A base app that updates itself is normal, and a Kiro/Cursor
+instance with no switch is reported as `uncontrollable (<mechanism>)` rather than nagged.
 
 ### Commands (generic across all tools)
 
@@ -205,6 +224,7 @@ keyflip instance create <tool> <account>        # Create new isolated instance
 keyflip instance launch <tool> <account>        # Launch specific instance (closes others first)
 keyflip instance focus <tool> <account>         # Bring running instance window to front
 keyflip instance kill <tool> <account>          # Terminate specific instance by PID
+keyflip instance harden [tool] [account]        # Re-apply the available auto-update switch (all by default)
 keyflip instance enable-all <tool>              # Launch all saved accounts as separate instances
 ```
 
@@ -224,13 +244,14 @@ The old `keyflip claude-profiles` commands still work via a compatibility wrappe
 
 ### MCP endpoints
 
-Five new MCP tools expose instance management to agents:
+Six MCP tools expose instance management to agents:
 
 - `keyflip_instances` — List all instances across all tools
 - `keyflip_instance_create` — Create new isolated instance (requires confirm=true)
 - `keyflip_instance_launch` — Launch specific instance (requires confirm=true)
-- `keyflip_instance_focus` — Focus running instance window
+- `keyflip_instance_focus` — Focus running instance window (requires confirm=true)
 - `keyflip_instance_kill` — Terminate specific instance (requires confirm=true)
+- `keyflip_instance_harden` — Apply the app's own auto-update switch and read the live state back (requires confirm=true)
 
 All mutating operations follow the confirmation pattern: ask the user first, then call with `confirm=true`.
 

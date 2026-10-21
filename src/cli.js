@@ -14674,6 +14674,52 @@ async function cmdInstance(ctx, rest) {
     return;
   }
 
+  if (sub === 'harden') {
+    // Universal across adapters: each one knows its own switch (Claude config, ChatGPT plist),
+    // and tools without one are reported as such instead of silently "fixed".
+    let targets;
+    try {
+      targets = !tool
+        ? instances.listAllInstances()
+        : account
+          ? [{ tool: tool, slug: account }]
+          : instances.listInstances(tool);
+    } catch (e) {
+      return fail(e.message);
+    }
+    if (!targets.length) {
+      return fail(tool ? 'No instances found for ' + tool + '.' : 'No instances created yet.');
+    }
+
+    const results = [];
+    targets.forEach((t) => {
+      try {
+        const state = instances.hardenInstance(t.tool, t.slug);
+        results.push({ tool: t.tool, slug: t.slug, state: state.state, method: state.control || null });
+        if (JSON_MODE) return;
+        const label = t.tool + '/' + t.slug;
+        if (state.state === 'disabled') {
+          print(
+            style.ok('✅') +
+              ' ' +
+              label +
+              ' — auto-updates disabled' +
+              (state.control ? ' (' + state.control + ')' : ''),
+          );
+        } else if (state.state === 'uncontrollable') {
+          print(style.dim('○') + ' ' + label + ' — no keyflip switch for its updater (' + state.mechanism + ')');
+        } else {
+          print(style.warn('⚠') + ' ' + label + ' — still ' + state.state + (state.reason ? ': ' + state.reason : ''));
+        }
+      } catch (e) {
+        results.push({ tool: t.tool, slug: t.slug, error: e.message });
+        if (!JSON_MODE) print(style.err('✖') + ' ' + t.tool + '/' + t.slug + ': ' + e.message);
+      }
+    });
+    if (JSON_MODE) jsonOut({ hardened: results });
+    return;
+  }
+
   if (sub === 'enable-all') {
     if (!tool) {
       return fail('usage: keyflip instance enable-all <tool>');
@@ -14733,6 +14779,7 @@ async function cmdInstance(ctx, rest) {
     print('  keyflip instance launch <tool> <account>      Launch isolated instance');
     print('  keyflip instance focus <tool> <account>       Focus running instance window');
     print('  keyflip instance kill <tool> <account>        Kill running instance');
+    print('  keyflip instance harden [tool] [account]      Apply the available auto-update switch (all by default)');
     print('  keyflip instance enable-all <tool>            Create instances for all saved accounts');
     print('');
     print('Supported tools:');
@@ -14744,7 +14791,7 @@ async function cmdInstance(ctx, rest) {
     print('Each instance gets:');
     print('  • Independent .app clone (APFS copy-on-write, ~zero disk cost)');
     print('  • Isolated user data (cookies, sessions never expire across accounts)');
-    print('  • Best-effort update hardening where the updater reads Info.plist (chatgpt)');
+    print('  • Auto-updates off where the app exposes a switch (Claude config, ChatGPT Info.plist)');
     print('  • Separate config directory, passed to the app when the tool defines a config env');
     print('');
     print('Why use this?');

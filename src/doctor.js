@@ -18,6 +18,7 @@ import * as _memory from './memory.js';
 import * as _profiles from './profiles.js';
 import * as _threads from './threads.js';
 import * as _sessionage from './sessionage.js';
+import * as _instances from './instances.js';
 
 async function probe(url, opts) {
   opts = opts || {};
@@ -71,6 +72,7 @@ async function diagnose(ctx, opts) {
   secretsInGit(ctx, add);
   versioningState(ctx, add);
   appSession(ctx, add, opts);
+  autoUpdates(ctx, add);
   signInAge(ctx, add, opts);
   orphanSessions(ctx, add);
   rebindBackups(ctx, add);
@@ -248,6 +250,63 @@ function appSession(ctx, add, opts) {
     "the app's cookie jar has no claude.ai session cookie — it opens on its sign-in screen " +
       'even though the saved capture is intact',
     'sign in once in Claude (a restore cannot mint that cookie), then `keyflip add` to refresh the capture',
+  );
+}
+
+// An isolated clone only stays isolated if it does not replace its bundle underneath a signed-in
+// account. There is no universal switch: Claude reads `disableAutoUpdates` from its own
+// userData/config.json, ChatGPT's Sparkle reads the Info.plist keys keyflip inserts, and
+// Kiro/Cursor expose neither. Report the LIVE state (never creation metadata), so a failed write
+// cannot masquerade as "disabled". The base app updating is normal — only a clone that CAN update
+// and still has its switch ON is a warning.
+function autoUpdates(ctx, add) {
+  const NAME = 'desktop auto-updates';
+  const rows = [];
+  const flagged = [];
+  const label = function (u) {
+    if (u.state === 'disabled') return 'updates off';
+    if (u.state === 'enabled') return 'updates ON';
+    if (u.state === 'uncontrollable') return 'uncontrollable (' + u.mechanism + ')';
+    if (u.state === 'invalid') return 'config unreadable';
+    return 'unknown';
+  };
+  if (ctx.appDataDir) {
+    const baseApp = _instances.TOOL_ADAPTERS.claude.baseAppPath;
+    const base = _instances.updateState('claude', ctx.appDataDir, baseApp);
+    rows.push('Claude app: ' + label(base));
+  }
+  let instances = [];
+  try {
+    instances = ctx.instancesBase ? _instances.listAllInstances(ctx.instancesBase) : [];
+  } catch (_) {
+    instances = [];
+  }
+  instances.forEach(function (i) {
+    const u = _instances.updateState(i.tool, i.userDataDir, i.appPath);
+    rows.push(i.tool + '/' + i.slug + ': ' + label(u));
+    // control===null means this updater has no switch keyflip can flip — report, never nag.
+    if (u.control && u.state !== 'disabled') flagged.push({ tool: i.tool, slug: i.slug, state: u.state });
+  });
+  if (!rows.length) return;
+  if (!flagged.length) {
+    add(NAME, true, rows.join('; '));
+    return;
+  }
+  const fixTarget = flagged.length === 1 ? ' ' + flagged[0].tool + ' ' + flagged[0].slug : '';
+  add(
+    NAME,
+    'warn',
+    rows.join('; ') +
+      ' — ' +
+      flagged
+        .map(function (f) {
+          return f.tool + '/' + f.slug + ' (' + f.state + ')';
+        })
+        .join(', ') +
+      ' can replace its bundle under a signed-in account',
+    'keyflip instance harden' +
+      fixTarget +
+      '  (Claude: "disableAutoUpdates": true in config.json; ChatGPT: empty Sparkle feed)',
   );
 }
 

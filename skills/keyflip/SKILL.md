@@ -213,7 +213,7 @@ keyflip provider off          # back to the subscription (OAuth)
 keyflip provider list         # which providers exist / which is active
 keyflip speedtest <name>      # pick the fastest of a provider's endpoints
 keyflip test <name>           # one real request → auth ok? (auth/network/4xx/5xx)
-keyflip doctor                # health check: secrets-in-git, orphaned sessions, versioning, config, login, endpoints, desktop app session (MCP: keyflip_doctor)
+keyflip doctor                # health check: secrets-in-git, orphaned sessions, versioning, config, login, endpoints, desktop app session, live auto-update state of the app + clones (MCP: keyflip_doctor)
 keyflip doctor --history      # + scan every blob the state repo ever committed: a secret in an OLD commit (MCP: keyflip_history_audit)
 keyflip scrub-history [--apply]  # remove them from history (dry run by default; git-filter-repo + bundle backup)
 keyflip secrets [list [--alarms]] | tolerate <path> [--kind K] [--note "..."] | untolerate <path>   # which findings the user has declared EXPECTED: mutes the alarm + rotation nag, never the scrub (MCP: keyflip_secrets_policy / _tolerate)
@@ -226,6 +226,18 @@ keyflip freshness [--json]    # (alias: age) how old each saved login is: cli to
 `status` shows the active provider. Switching a provider does NOT change the OAuth
 account; `keyflip provider off` restores it. Never put an API key in argv — use
 `--key-file -` (stdin) or a file.
+
+## Isolated app instances (one desktop app per account, macOS)
+
+`keyflip instance list|create|launch|focus|kill|enable-all|harden` manages APFS
+clones of claude / kiro / chatgpt / cursor, each with its own `--user-data-dir`.
+MCP: `keyflip_instances` (read) and the `keyflip_instance_*` tools (confirm=true).
+A clone that can self-update may replace its bundle under a signed-in account;
+`create` writes the app's own switch where one exists (Claude: `disableAutoUpdates`
+in `User Data/config.json`; ChatGPT: Sparkle Info.plist), and
+`keyflip instance harden` re-applies it. `keyflip doctor` reports the live state —
+a controllable clone still ON is a warning; Kiro/Cursor have no switch and are
+reported as such.
 
 ## Reliability, history, backup, sharing, sync
 

@@ -14,6 +14,7 @@ import * as config from '../src/config.js';
 import * as profiles from '../src/profiles.js';
 import * as schedule from '../src/schedule.js';
 import * as threads from '../src/threads.js';
+import * as instances from '../src/instances.js';
 import { makeCtx } from './helpers.js';
 
 const HAS_GIT = vcs.gitAvailable();
@@ -21,6 +22,22 @@ function find(checks, name) {
   return checks.filter(function (c) {
     return c.name === name;
   })[0];
+}
+
+// Synthesize what createInstance() leaves on disk — without cloning a real /Applications app.
+function fakeInstance(ctx, tool, slug, opts) {
+  opts = opts || {};
+  const dir = path.join(ctx.instancesBase, tool, slug);
+  const userDataDir = path.join(dir, 'User Data');
+  fs.mkdirSync(userDataDir, { recursive: true });
+  fs.mkdirSync(path.join(dir, 'Config'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'profile.json'), JSON.stringify({ tool: tool, slug: slug }));
+  if (opts.framework) {
+    const app = path.join(dir, instances.TOOL_ADAPTERS[tool].appName, 'Contents', 'Frameworks');
+    fs.mkdirSync(path.join(app, opts.framework + '.framework'), { recursive: true });
+  }
+  if (opts.config) fs.writeFileSync(path.join(userDataDir, 'config.json'), JSON.stringify(opts.config));
+  return { dir: dir, userDataDir: userDataDir };
 }
 
 test('secrets in git: clean repo passes', async function (t) {
@@ -403,4 +420,97 @@ test('doctor: threads are named, checked and fixed — and the row never prints 
     /mirror ON — 1 text file\(s\) in thread-mirror\/ \(0600, never versioned or backed up\)/,
   );
   assert.strictEqual(mirrored.detail.indexOf(ctx.configDir), -1, 'even with the mirror on, no absolute path leaks');
+});
+
+test('desktop auto-updates: the base Claude app updating is normal, not a warning', async function () {
+  const ctx = makeCtx();
+  ctx.appDataDir = path.join(ctx.home, 'Claude');
+  fs.mkdirSync(ctx.appDataDir, { recursive: true });
+  const c = find((await doctor.diagnose(ctx)).checks, 'desktop auto-updates');
+  assert.ok(c, 'the check is present whenever there is a Claude app dir');
+  assert.strictEqual(c.ok, true, 'the unmodified base install updates itself by design');
+  assert.match(c.detail, /Claude app: updates ON/);
+});
+
+test('desktop auto-updates: the base Claude config switch is read live', async function () {
+  const ctx = makeCtx();
+  ctx.appDataDir = path.join(ctx.home, 'Claude');
+  fs.mkdirSync(ctx.appDataDir, { recursive: true });
+  fs.writeFileSync(path.join(ctx.appDataDir, 'config.json'), JSON.stringify({ disableAutoUpdates: true }));
+  const c = find((await doctor.diagnose(ctx)).checks, 'desktop auto-updates');
+  assert.strictEqual(c.ok, true);
+  assert.match(c.detail, /Claude app: updates off/);
+});
+
+test('desktop auto-updates: an unhardened Claude clone warns with the universal harden command', async function () {
+  const ctx = makeCtx();
+  ctx.instancesBase = path.join(ctx.home, 'instances');
+  fakeInstance(ctx, 'claude', 'yahoo');
+  const c = find((await doctor.diagnose(ctx)).checks, 'desktop auto-updates');
+  assert.ok(c, 'instances alone are enough to run the check');
+  assert.strictEqual(c.ok, 'warn', 'a clone that can self-update is a real risk');
+  assert.match(c.detail, /claude\/yahoo: updates ON/);
+  assert.match(c.fix, /keyflip instance harden claude yahoo/);
+});
+
+test('desktop auto-updates: a hardened Claude clone passes', async function () {
+  const ctx = makeCtx();
+  ctx.instancesBase = path.join(ctx.home, 'instances');
+  fakeInstance(ctx, 'claude', 'yahoo', { config: { disableAutoUpdates: true } });
+  const c = find((await doctor.diagnose(ctx)).checks, 'desktop auto-updates');
+  assert.strictEqual(c.ok, true);
+  assert.match(c.detail, /claude\/yahoo: updates off/);
+  assert.strictEqual(c.fix, undefined, 'nothing to fix');
+});
+
+test('desktop auto-updates: autoUpdate.disabled wins over the flat key, exactly like Claude', async function () {
+  const ctx = makeCtx();
+  ctx.instancesBase = path.join(ctx.home, 'instances');
+  const inst = fakeInstance(ctx, 'claude', 'yahoo', {
+    config: { disableAutoUpdates: true, autoUpdate: { disabled: false } },
+  });
+  const st = instances.updateState('claude', inst.userDataDir, path.join(inst.dir, 'Claude.app'));
+  assert.strictEqual(st.state, 'enabled', 'the nested key has precedence in Claude, so mirror it');
+});
+
+test('desktop auto-updates: a tool with no switch is reported, never nagged', async function () {
+  const ctx = makeCtx();
+  ctx.instancesBase = path.join(ctx.home, 'instances');
+  fakeInstance(ctx, 'kiro', 'work', { framework: 'Squirrel' });
+  const c = find((await doctor.diagnose(ctx)).checks, 'desktop auto-updates');
+  assert.strictEqual(c.ok, true, 'keyflip cannot disable Kiro updates, so this is not the user’s fault');
+  assert.match(c.detail, /kiro\/work: uncontrollable \(squirrel\)/);
+});
+
+test('instance harden: writes the Claude switch without clobbering existing config', async function () {
+  const ctx = makeCtx();
+  ctx.instancesBase = path.join(ctx.home, 'instances');
+  const inst = fakeInstance(ctx, 'claude', 'yahoo');
+  // The nested key outranks the flat one, so harden must flip both when it is already present.
+  fs.writeFileSync(
+    path.join(inst.userDataDir, 'config.json'),
+    JSON.stringify({ locale: 'en-US', autoUpdate: { disabled: false, channel: 'stable' } }),
+  );
+
+  const st = instances.hardenInstance('claude', 'yahoo', ctx.instancesBase);
+  assert.strictEqual(st.state, 'disabled');
+  const cfg = JSON.parse(fs.readFileSync(path.join(inst.userDataDir, 'config.json'), 'utf8'));
+  assert.strictEqual(cfg.locale, 'en-US', 'unrelated keys survive');
+  assert.strictEqual(cfg.disableAutoUpdates, true);
+  assert.strictEqual(cfg.autoUpdate.disabled, true, 'the winning nested key is flipped too');
+  assert.strictEqual(cfg.autoUpdate.channel, 'stable', 'siblings inside autoUpdate survive');
+
+  const meta = JSON.parse(fs.readFileSync(path.join(inst.dir, 'profile.json'), 'utf8'));
+  assert.strictEqual(meta.autoUpdateDisabled, true, 'metadata now reflects the live state');
+  assert.strictEqual(meta.autoUpdateMethod, 'config');
+});
+
+test('instance harden: refuses while the Claude instance runs, because it would rewrite the config', async function (t) {
+  if (process.platform === 'win32') return t.skip('PID liveness uses kill -0 (POSIX)');
+  const ctx = makeCtx();
+  ctx.instancesBase = path.join(ctx.home, 'instances');
+  const inst = fakeInstance(ctx, 'claude', 'yahoo');
+  fs.writeFileSync(path.join(inst.dir, 'instance.pid'), String(process.pid));
+  assert.throws(() => instances.hardenInstance('claude', 'yahoo', ctx.instancesBase), /is running/);
+  assert.ok(!fs.existsSync(path.join(inst.userDataDir, 'config.json')), 'nothing written while running');
 });

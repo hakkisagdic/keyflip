@@ -292,6 +292,7 @@ const TOOLS = [
             running: inst.running,
             pid: inst.pid || null,
             createdAt: inst.createdAt || null,
+            autoUpdateDisabled: !!inst.autoUpdateDisabled,
           };
         }),
         supportedTools: Object.keys(instances.TOOL_ADAPTERS),
@@ -399,6 +400,33 @@ const TOOLS = [
       const account = String(args.account);
       instances.killInstance(tool, account);
       return { killed: { tool: tool, account: account } };
+    },
+  },
+
+  {
+    name: 'keyflip_instance_harden',
+    title: 'Disable auto-updates for an AI tool instance',
+    description:
+      'Apply the auto-update switch the app actually exposes (Claude: disableAutoUpdates in userData/config.json; ChatGPT: Sparkle Info.plist keys), then read the live state back. Tools with no such switch are reported as uncontrollable rather than faked. Ask the user first, then confirm=true.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        tool: { type: 'string', description: 'Tool name (claude | kiro | chatgpt | cursor).' },
+        account: { type: 'string', description: 'Account slug/identifier.' },
+        confirm: { type: 'boolean', description: 'Must be true — set it only after the user has agreed.' },
+      },
+      required: ['tool', 'account', 'confirm'],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    run: async function (ctx, args) {
+      needConfirm(args);
+      const tool = String(args.tool);
+      const account = String(args.account);
+      const state = instances.hardenInstance(tool, account);
+      return {
+        hardened: { tool: tool, account: account, state: state.state, method: state.control || null },
+      };
     },
   },
 
@@ -1069,7 +1097,7 @@ const TOOLS = [
     name: 'keyflip_doctor',
     title: 'Diagnose config + connectivity',
     description:
-      'Health report: Claude config dir, login present, desktop app data, and each provider endpoint reachability. Read-only.',
+      'Health report: Claude config dir, login present, desktop app data, live auto-update state of the base app and every isolated instance, and each provider endpoint reachability. Read-only.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
     annotations: RO_NET,
     run: async function (ctx) {
