@@ -1,0 +1,84 @@
+version: '3.8'
+
+services:
+  machine-a:
+    build: .
+    container_name: fleet-machine-a
+    hostname: machine-a
+    volumes:
+      - fleet-rendezvous:/rendezvous
+      - ../..:/keyflip:ro
+    environment:
+      - FLEET_MACHINE_ID=machine-a
+      - FLEET_PASSPHRASE=test-fleet-secret-2026
+      - HOME=/tmp/keyflip-home
+    command: >
+      sh -c "
+        mkdir -p /tmp/keyflip-home/.config/keyflip &&
+        cd /keyflip &&
+        node bin/keyflip.js fleet init --dir /rendezvous --passphrase test-fleet-secret-2026 &&
+        echo '=== Machine A initialized ===' &&
+        tail -f /dev/null
+      "
+    networks:
+      - fleet-net
+
+  machine-b:
+    build: .
+    container_name: fleet-machine-b
+    hostname: machine-b
+    volumes:
+      - fleet-rendezvous:/rendezvous
+      - ../..:/keyflip:ro
+    environment:
+      - FLEET_MACHINE_ID=machine-b
+      - FLEET_PASSPHRASE=test-fleet-secret-2026
+      - HOME=/tmp/keyflip-home
+    depends_on:
+      - machine-a
+    command: >
+      sh -c "
+        sleep 3 &&
+        mkdir -p /tmp/keyflip-home/.config/keyflip &&
+        cd /keyflip &&
+        node bin/keyflip.js fleet join --dir /rendezvous --passphrase test-fleet-secret-2026 &&
+        echo '=== Machine B joined fleet ===' &&
+        node bin/keyflip.js fleet status &&
+        tail -f /dev/null
+      "
+    networks:
+      - fleet-net
+
+  machine-c:
+    build: .
+    container_name: fleet-machine-c
+    hostname: machine-c
+    volumes:
+      - fleet-rendezvous:/rendezvous
+      - ../..:/keyflip:ro
+    environment:
+      - FLEET_MACHINE_ID=machine-c
+      - FLEET_PASSPHRASE=test-fleet-secret-2026
+      - HOME=/tmp/keyflip-home
+    depends_on:
+      - machine-a
+    command: >
+      sh -c "
+        sleep 5 &&
+        mkdir -p /tmp/keyflip-home/.config/keyflip &&
+        cd /keyflip &&
+        node bin/keyflip.js fleet join --dir /rendezvous --passphrase test-fleet-secret-2026 &&
+        echo '=== Machine C joined fleet ===' &&
+        node bin/keyflip.js fleet status &&
+        tail -f /dev/null
+      "
+    networks:
+      - fleet-net
+
+volumes:
+  fleet-rendezvous:
+    driver: local
+
+networks:
+  fleet-net:
+    driver: bridge
