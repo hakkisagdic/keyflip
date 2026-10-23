@@ -1,113 +1,109 @@
 # Fleet Docker Simulation
 
-Real multi-machine fleet coordination test using Docker containers.
+A real multi-machine test of `keyflip fleet`: three separate containers coordinate **only** through
+a shared rendezvous volume, driving the actual `node bin/keyflip.js fleet ...` CLI.
 
-## What This Tests
-
-Unlike the unit tests in `test/fleet.test.js` which mock multiple machines in a single process, this simulation runs **actual separate containers** that coordinate through a shared rendezvous volume, testing:
-
-1. **Real cross-process communication** - Each machine is a separate container with its own filesystem
-2. **Encrypted file exchange** - Files written to shared volume are encrypted via `sync.encrypt()`
-3. **Fleet protocol** - Status publishing, command queuing, and account distribution
-4. **Multi-machine topology** - 3 machines (A, B, C) simulating real-world deployment
+The unit tests in `test/fleet.test.js` simulate machines in one process. This harness runs the
+protocol across real process and filesystem boundaries — the same code path a second laptop uses.
 
 ## Prerequisites
 
-- Docker Desktop installed and running
-- Docker Compose v2+ (`docker compose` or `docker-compose`)
+- Docker Desktop (or another Docker daemon) up and running
+- Docker Compose v2 — the `docker compose` subcommand, not the old `docker-compose` binary
+- Host `node` (used only to parse the CLI's `--json` output)
 
-## Quick Start
+## Run
 
 ```bash
-# Run the full simulation
 cd test/fleet-docker
-./run-simulation.sh
-
-# Or run interactively to inspect containers
-./run-simulation.sh --interactive
+./run-simulation.sh          # build, run every check, then remove containers + volume
+./run-simulation.sh --keep   # leave the three machines running for manual inspection
 ```
 
-## Manual Testing
+A failing run keeps the containers so you can inspect the state; the last line prints the removal
+command.
 
-Once containers are running:
+## What it asserts
 
-```bash
-# Access any machine
-docker exec -it fleet-machine-a sh
+1. Three containers start from one image built on the repo root (code baked in, no bind mount).
+2. Each machine initialises into the same `/rendezvous` folder and gets a stable machine id.
+3. Each publishes exactly one account; every machine sees all three statuses.
+4. `fleet status --json` is creds-free, and the human status lists all three machines.
+5. `fleet invite` + `fleet join --code` pins A↔B on **both** sides; `fleet trust` pins A↔C.
+6. `fleet keys` reports `ok` for pinned+published, `unpinned` for a machine never paired (and for
+   the local machine, which never pins itself), and `CHANGED` after a re-key.
+7. The shared folder holds only encrypted files (no plaintext e-mail or `accounts` field) with mode
+   `0600`; a wrong passphrase decrypts nothing.
+8. A queued `switch` from A is signature-verified by B but **refused without consent** (non-TTY,
+   no `-y`) — the `skipped (needs consent)` path.
+9. The same switch applies with `-y`, and the consumed inbox is not replayed on the next push.
+10. A command from a machine B never pinned is rejected even though its signature is valid; after
+    B is re-keyed, A reports `CHANGED` and rejects B's commands until an explicit re-trust.
 
-# Inside container, try fleet commands
-cd /keyflip
-node bin/keyflip.js fleet status
-node bin/keyflip.js fleet init --dir /rendezvous --passphrase my-secret
+Not covered here: LAN multicast discovery (`fleet discover`), Tailscale transport, and credential
+relay (`send-account`) with real tokens. Those need distinct network namespaces or real credentials
+and stay in the unit/integration suites.
+
+## How it is built
+
 ```
-
-## Architecture
+test/fleet-docker/Dockerfile          node:20-alpine + git/sqlite/bash; copies bin/ + src/
+test/fleet-docker/docker-compose.yml  three services, one named volume, one bridge network
+test/fleet-docker/passphrase.txt      dummy simulation passphrase (not a real secret)
+test/fleet-docker/run-simulation.sh   the driver: docker exec per step, assertions on real output
+```
 
 ```
 ┌─────────────┐     ┌─────────────┐     ┌─────────────┐
-│ Machine A   │     │ Machine B   │     │ Machine C   │
-│ (initiator) │     │ (joiner)    │     │ (joiner)    │
+│ machine-a   │     │ machine-b   │     │ machine-c   │
+│ initiator   │     │ joiner      │     │ trust test  │
 └──────┬──────┘     └──────┬──────┘     └──────┬──────┘
        │                   │                   │
        └───────────────────┼───────────────────┘
                            │
                   ┌────────▼────────┐
-                  │ Shared Volume   │
-                  │ (rendezvous)    │
-                  │                 │
-                  │ Encrypted files │
+                  │ named volume    │
+                  │ /rendezvous     │
                   │ *.status.enc    │
-                  │ *.cmd.enc       │
+                  │ *.inbox.enc     │
+                  │ pair-*.enc      │
                   └─────────────────┘
 ```
 
-Each container:
-- Runs Alpine Linux with Node.js 20
-- Mounts the keyflip codebase read-only at `/keyflip`
-- Has isolated HOME directory (`/tmp/keyflip-home`)
-- Shares the `fleet-rendezvous` volume for coordination
+Each container has its own `HOME` (`/home/keyflip`) and config dir (`~/.config/keyflip`). The image
+runs as UID/GID 10001 (node:20-alpine already owns 1000); the driver chowns the named volume once
+before the first fleet write, then every CLI call runs as that user via `docker exec`.
 
-## Test Scenarios
+The passphrase is supplied per command with `--passphrase-file /run/keyflip/pass` — keyflip never
+stores it, and neither does this harness.
 
-The simulation validates:
+## Manual inspection
 
-1. ✅ Fleet initialization on Machine A
-2. ✅ Machine B and C joining the fleet
-3. ✅ Cross-machine status visibility
-4. ✅ Encrypted file creation in rendezvous volume
-5. ✅ Existing fleet test suite passing in containerized environment
-
-## Troubleshooting
-
-### Containers won't start
 ```bash
-docker-compose logs machine-a
-docker-compose logs machine-b
+docker exec -it fleet-machine-a sh
+cd /keyflip
+node bin/keyflip.js fleet status --passphrase-file /run/keyflip/pass
+node bin/keyflip.js fleet keys   --passphrase-file /run/keyflip/pass
+ls -l /rendezvous
 ```
-
-### Rendezvous volume empty
-Normal initially - files appear when machines publish status or send commands.
-
-### Permission errors
-The Dockerfile creates a `keyflip` user (UID 1000). Ensure your host system can access the mounted volumes.
 
 ## Cleanup
 
 ```bash
-# Stop and remove containers + volumes
-docker-compose down -v
-
-# Remove images
-docker-compose down --rmi all
+docker compose -p keyflip-fleet-sim -f docker-compose.yml down -v
 ```
 
-## Why Docker?
+`down -v` removes the named volume too. Without `-v`, the encrypted state survives and the next run
+would start from a stale fleet — the script always starts from `down -v` for that reason.
 
-The existing fleet tests use `makeCtx()` to simulate multiple machines in-memory. While good for unit testing, they can't verify:
+## Troubleshooting
 
-- Real filesystem isolation between machines
-- Actual encrypted file I/O across a shared directory
-- Network-level coordination (future: LAN multicast)
-- Race conditions in concurrent file access
+**`permission denied` writing `/rendezvous`** — the named volume was recreated outside the script
+and is root-owned. Re-run the script (it chowns the volume), or:
+`docker run --rm -u root -v keyflip-fleet-sim_fleet-rendezvous:/rendezvous keyflip-fleet-sim chown -R keyflip:keyflip /rendezvous`
 
-Docker provides true process isolation while remaining reproducible and fast to spin up.
+**`no such image: keyflip-fleet-sim`** — run `docker compose -p keyflip-fleet-sim -f docker-compose.yml build`
+first, or just use `run-simulation.sh`, which builds before starting.
+
+**A check fails and containers stay** — inspect with the commands above, then remove with
+`docker compose -p keyflip-fleet-sim -f docker-compose.yml down -v`.
