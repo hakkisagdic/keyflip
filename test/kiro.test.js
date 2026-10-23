@@ -179,6 +179,9 @@ test('capture writes 0600 surface files and a secret-free meta', function () {
   const dir = kiro.accountDir(ctx, 'live');
   ['cli-token.json', 'cli-registration.json', 'ide-token.json', 'ide-registration.json', 'meta.json'].forEach(
     function (f) {
+      // NTFS cannot express POSIX mode bits, so the mode assertion is POSIX-only (the file
+      // contents below still prove the capture wrote what it promised).
+      if (process.platform === 'win32') return;
       const st = fs.statSync(path.join(dir, f));
       assert.strictEqual(st.mode & 0o777, 0o600, f);
     },

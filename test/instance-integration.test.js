@@ -5,6 +5,7 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import { fileURLToPath } from 'url';
+import { describe, it, before, after } from 'node:test';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const KEYFLIP_BIN = path.join(__dirname, '..', 'bin', 'keyflip.js');
@@ -29,87 +30,86 @@ function makeTempHome() {
   return dir;
 }
 
-describe('Instance CLI Integration', function () {
-  this.timeout(30000);
+// APFS clones and /Applications bundles make this suite macOS-only. `node:test` has no
+// `this.timeout()`; each spawn carries its own timeout and the suite is skipped by option.
+describe(
+  'Instance CLI Integration',
+  { skip: process.platform !== 'darwin' ? 'macOS-only (APFS)' : false },
+  function () {
+    let tempHome;
+    let originalHome;
 
-  let tempHome;
-  let originalHome;
+    before(function () {
+      originalHome = process.env.HOME;
+      tempHome = makeTempHome();
+      process.env.HOME = tempHome;
+    });
 
-  before(function () {
-    // Only run on macOS (APFS requirement)
-    if (process.platform !== 'darwin') {
-      this.skip();
-      return;
-    }
-    originalHome = process.env.HOME;
-    tempHome = makeTempHome();
-    process.env.HOME = tempHome;
-  });
+    after(function () {
+      if (originalHome) {
+        process.env.HOME = originalHome;
+      }
+      if (tempHome && fs.existsSync(tempHome)) {
+        fs.rmSync(tempHome, { recursive: true, force: true });
+      }
+    });
 
-  after(function () {
-    if (originalHome) {
-      process.env.HOME = originalHome;
-    }
-    if (tempHome && fs.existsSync(tempHome)) {
-      fs.rmSync(tempHome, { recursive: true, force: true });
-    }
-  });
+    it('shows instance help', function () {
+      const r = run(['instance', 'help']);
+      assert.strictEqual(r.code, 0);
+      assert.ok(r.output.includes('Generic AI Tool Instance Manager'));
+      assert.ok(r.output.includes('Supported tools:'));
+    });
 
-  it('shows instance help', function () {
-    const r = run(['instance', 'help']);
-    assert.strictEqual(r.code, 0);
-    assert.ok(r.output.includes('Generic AI Tool Instance Manager'));
-    assert.ok(r.output.includes('Supported tools:'));
-  });
+    it('lists no instances initially', function () {
+      const r = run(['instance', 'list']);
+      assert.strictEqual(r.code, 0);
+      assert.ok(r.output.includes('No instances created yet'));
+    });
 
-  it('lists no instances initially', function () {
-    const r = run(['instance', 'list']);
-    assert.strictEqual(r.code, 0);
-    assert.ok(r.output.includes('No instances created yet'));
-  });
+    it('fails to create instance with invalid tool name', function () {
+      const r = run(['instance', 'create', 'invalid-tool', 'test-account']);
+      assert.notStrictEqual(r.code, 0);
+      assert.ok(r.output.includes('Unsupported tool') || r.output.includes('Available:'));
+    });
 
-  it('fails to create instance with invalid tool name', function () {
-    const r = run(['instance', 'create', 'invalid-tool', 'test-account']);
-    assert.notStrictEqual(r.code, 0);
-    assert.ok(r.output.includes('Unsupported tool') || r.output.includes('Available:'));
-  });
+    it('creates a Claude instance successfully', function () {
+      const r = run(['instance', 'create', 'claude', 'test-yahoo']);
+      // Note: This will fail if Claude.app is not installed, which is expected in CI
+      // The test verifies the command structure and error handling
+      if (r.code !== 0) {
+        assert.ok(
+          r.output.includes('not found') || r.output.includes('Please install'),
+          'Should fail gracefully when app not installed',
+        );
+      } else {
+        assert.ok(r.output.includes('Instance created'));
+        assert.ok(r.output.includes('test-yahoo'));
+      }
+    });
 
-  it('creates a Claude instance successfully', function () {
-    const r = run(['instance', 'create', 'claude', 'test-yahoo']);
-    // Note: This will fail if Claude.app is not installed, which is expected in CI
-    // The test verifies the command structure and error handling
-    if (r.code !== 0) {
+    it('shows --instance flag in switch help', function () {
+      const r = run(['--help']);
+      assert.strictEqual(r.code, 0);
+      assert.ok(r.output.includes('--instance'));
+      assert.ok(r.output.includes('tool/slug'));
+    });
+
+    it('rejects invalid --instance format', function () {
+      // Use a non-existent profile name so we hit the --instance parsing before profile resolution
+      const r = run(['nonexistent-profile', '--instance', 'invalid-format']);
+      // Should fail either on profile resolution or instance format validation
+      assert.notStrictEqual(r.code, 0);
+      // Either "no such profile" OR "must be tool/slug" is acceptable
       assert.ok(
-        r.output.includes('not found') || r.output.includes('Please install'),
-        'Should fail gracefully when app not installed',
+        r.output.includes('must be tool/slug') ||
+          r.output.includes('no such profile') ||
+          r.output.includes('unknown command'),
+        'Should reject invalid instance format or missing profile',
       );
-    } else {
-      assert.ok(r.output.includes('Instance created'));
-      assert.ok(r.output.includes('test-yahoo'));
-    }
-  });
-
-  it('shows --instance flag in switch help', function () {
-    const r = run(['--help']);
-    assert.strictEqual(r.code, 0);
-    assert.ok(r.output.includes('--instance'));
-    assert.ok(r.output.includes('tool/slug'));
-  });
-
-  it('rejects invalid --instance format', function () {
-    // Use a non-existent profile name so we hit the --instance parsing before profile resolution
-    const r = run(['nonexistent-profile', '--instance', 'invalid-format']);
-    // Should fail either on profile resolution or instance format validation
-    assert.notStrictEqual(r.code, 0);
-    // Either "no such profile" OR "must be tool/slug" is acceptable
-    assert.ok(
-      r.output.includes('must be tool/slug') ||
-        r.output.includes('no such profile') ||
-        r.output.includes('unknown command'),
-      'Should reject invalid instance format or missing profile',
-    );
-  });
-});
+    });
+  },
+);
 
 describe('Instance MCP Tool Registration', function () {
   it('registers keyflip_instances MCP tool', async function () {

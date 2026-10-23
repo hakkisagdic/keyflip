@@ -297,7 +297,7 @@ test('switch to an already-active CLI account still flips a lagging desktop app 
   const sw = run(home, ['alice', '--restart']);
   assert.strictEqual(sw.status, 0, sw.stderr);
   assert.match(sw.stdout, /the desktop app is on yahoo/);
-  assert.match(sw.stdout, /switched the Claude desktop-app login too/);
+  assert.match(sw.stdout, /switched the Claude desktop-app login/);
   assert.match(fs.readFileSync(path.join(appCfgDir, 'config.json'), 'utf8'), /ALICE-APP/);
 });
 

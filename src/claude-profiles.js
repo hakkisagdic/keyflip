@@ -12,10 +12,7 @@ import os from 'os';
 import { run } from './exec.js';
 import { atomicWrite } from './fsutil.js';
 
-const PROFILES_BASE = path.join(
-  os.homedir(),
-  'Library/Application Support/Claude-Profiles',
-);
+const PROFILES_BASE = path.join(os.homedir(), 'Library/Application Support/Claude-Profiles');
 const BASE_APP = '/Applications/Claude.app';
 const INFO_PLIST_PATH = 'Contents/Info.plist';
 
@@ -136,9 +133,7 @@ function findRunningPid(accountSlug) {
 
 function ensureBaseApp() {
   if (!fs.existsSync(BASE_APP)) {
-    throw new Error(
-      `Claude.app not found at ${BASE_APP}. Please install Claude Desktop first.`,
-    );
+    throw new Error(`Claude.app not found at ${BASE_APP}. Please install Claude Desktop first.`);
   }
   return BASE_APP;
 }
@@ -162,7 +157,7 @@ function createProfile(accountSlug) {
 
   // Clone Claude.app using APFS copy-on-write (-c flag)
   const appClone = path.join(dir, 'Claude.app');
-  console.log(`[claude-profiles] Cloning Claude.app (APFS clone, near-zero disk cost)...`);
+  console.log('[claude-profiles] Cloning Claude.app (APFS clone, near-zero disk cost)...');
   const cpResult = run('cp', ['-cR', baseApp, appClone]);
   if (cpResult.code !== 0) {
     // Fallback to regular copy if -c not supported
@@ -179,20 +174,8 @@ function createProfile(accountSlug) {
     console.log('[claude-profiles] Disabling auto-update...');
     try {
       // Use plutil to modify plist
-      run('plutil', [
-        '-replace',
-        'SUEnableAutomaticChecks',
-        '-bool',
-        'false',
-        plistPath,
-      ]);
-      run('plutil', [
-        '-replace',
-        'SUPublicEDKey',
-        '-string',
-        '',
-        plistPath,
-      ]);
+      run('plutil', ['-replace', 'SUEnableAutomaticChecks', '-bool', 'false', plistPath]);
+      run('plutil', ['-replace', 'SUPublicEDKey', '-string', '', plistPath]);
     } catch (_) {
       console.warn('[claude-profiles] Failed to disable auto-update via plutil');
       // Non-fatal: profile still works, just might auto-update
@@ -252,12 +235,7 @@ function launchProfile(profile, accountSlug) {
   console.log(`[claude-profiles] Launching Claude for ${accountSlug}...`);
 
   // Launch with --user-data-dir and CLAUDE_CONFIG_DIR
-  const result = run('open', [
-    '-a',
-    profile.appPath,
-    '--args',
-    '--user-data-dir=' + profile.userDataDir,
-  ], {
+  const result = run('open', ['-a', profile.appPath, '--args', '--user-data-dir=' + profile.userDataDir], {
     env: Object.assign({}, process.env, {
       CLAUDE_CONFIG_DIR: profile.configDir,
     }),
