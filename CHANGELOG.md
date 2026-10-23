@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.5.7] - 2026-10-23
 
 ### Added
 
@@ -697,6 +697,7 @@ is now folded into the Tooling section below, under a wrong date.
 
 Earlier history is not recorded in this file.
 
-[Unreleased]: https://github.com/hakkisagdic/keyflip/compare/v1.5.2...HEAD
+[Unreleased]: https://github.com/hakkisagdic/keyflip/compare/v1.5.7...HEAD
+[1.5.7]: https://github.com/hakkisagdic/keyflip/compare/v1.5.6...v1.5.7
 [1.5.2]: https://github.com/hakkisagdic/keyflip/compare/v1.5.0...v1.5.2
 [1.5.0]: https://github.com/hakkisagdic/keyflip/releases/tag/v1.5.0
