@@ -1627,6 +1627,54 @@ const TOOLS = [
     },
   },
   {
+    name: 'keyflip_fleet_push',
+    title: 'Check in with the fleet (publish status, process the inbox)',
+    description:
+      "Publish THIS machine's status (accounts, active account, recent chats) to the shared encrypted rendezvous and process whatever other machines queued for it — the same operation as `keyflip fleet push`. Publishing is safe. Queued switch/save-account commands are origin-verified but stay SKIPPED unless apply=true, which mutates this machine (ask the user first). with_secrets additionally puts this machine's account credentials into the encrypted rendezvous so another machine can receive them — only with explicit consent. Mutating (writes the rendezvous; may apply commands) — confirm=true.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        passphrase_file: { type: 'string' },
+        with_secrets: {
+          type: 'boolean',
+          description: 'Also publish account credentials (encrypted) for relay. Ask the user first.',
+        },
+        apply: {
+          type: 'boolean',
+          description: 'Apply queued switch/save-account commands. Ask the user first; false leaves them skipped.',
+        },
+        confirm: confirmProp.confirm,
+      },
+      required: ['passphrase_file', 'confirm'],
+      additionalProperties: false,
+    },
+    annotations: MUT,
+    run: async function (ctx, args) {
+      needConfirm(args);
+      const fleet = _fleet;
+      const b = fleet.bus(ctx, { passphrase: fs.readFileSync(String(args.passphrase_file), 'utf8').trim() });
+      const status = fleet.publish(ctx, b, { withSecrets: !!args.with_secrets });
+      const reconcile = fleet.reconcileKeys(ctx, fleet.readFleet(ctx, b));
+      const outcome = await fleet.processInbox(ctx, b, {
+        reconcile: reconcile,
+        allowSwitch: !!args.apply,
+        allowSave: !!args.apply,
+      });
+      // Counts only — never echo the status (or creds, with with_secrets) back into the transcript.
+      return {
+        published: {
+          machine: b.name,
+          accounts: status.accounts.length,
+          chats: (status.chats || []).length,
+          withSecrets: !!args.with_secrets,
+        },
+        applied: outcome.results,
+        pending: reconcile.pending,
+        conflicts: reconcile.conflicts,
+      };
+    },
+  },
+  {
     name: 'keyflip_fleet_switch',
     title: 'Queue an account switch on a remote machine',
     description:

@@ -229,12 +229,14 @@ function reconcileKeys(ctx, statuses, opts) {
   opts = opts || {};
   const pinNew = opts.pinNew === true; // DEFAULT OFF: pinning is a user decision, not an inference
   const known = knownKeys(ctx);
+  const selfId = identity(ctx).machineId; // a machine is never its own peer: skip its own status
   const conflicts = [],
     firstSeen = [],
     pending = [];
   let changed = false;
   (Array.isArray(statuses) ? statuses : []).forEach(function (s) {
     if (!s || !safeId(s.machineId) || !isPubB64(s.pubKey)) return;
+    if (s.machineId === selfId) return; // otherwise every push warns "new machine <self>"
     const cur = known[s.machineId];
     if (!cur) {
       if (!pinNew) {
@@ -850,6 +852,67 @@ function applyCommand(ctx, cmd, opts) {
   return { ok: false, detail: 'unknown command type: ' + cmd.type };
 }
 
+// Process this machine's inbox exactly as `fleet push` does: replay/expiry checks, origin auth, the
+// exec deferral, per-command consent, and clearing what was consumed. Shared by the CLI and the MCP
+// `keyflip_fleet_push` tool so the two surfaces cannot drift on a security-sensitive path.
+//   opts.reconcile  — a reconcileKeys() result (callers that already accepted joins pass theirs)
+//   opts.consent    — optional async (cmd) => { allowSwitch, allowSave }; called only for mutations
+//   opts.allowSwitch/allowSave — consent defaults when no callback is supplied (MCP `apply`)
+//   opts.force      — overwrite an existing account on save-account
+async function processInbox(ctx, b, opts) {
+  opts = opts || {};
+  const reconcile = opts.reconcile || reconcileKeys(ctx, readFleet(ctx, b));
+  const inbox = readInbox(ctx, b);
+  const results = [];
+  const kept = []; // 'exec' commands belong to `keyflip swarm drain --allow-exec`; leave them queued
+  for (let i = 0; i < inbox.length; i++) {
+    const cmd = inbox[i];
+    if (cmd && cmd.type === 'exec') {
+      kept.push(cmd);
+      results.push({ ok: false, applied: 'exec', detail: 'deferred → run `keyflip swarm drain --allow-exec`' });
+      continue;
+    }
+    if (cmd && cmd.id && wasApplied(ctx, cmd.id)) {
+      results.push({ ok: false, applied: cmd.type, detail: 'skipped (already applied)' });
+      continue;
+    }
+    if (!commandFresh(ctx, cmd)) {
+      results.push({ ok: false, applied: cmd && cmd.type, detail: 'skipped (expired)' });
+      continue;
+    }
+    const origin = checkOrigin(ctx, cmd, reconcile);
+    if (!origin.ok) {
+      results.push({ ok: false, applied: cmd && cmd.type, detail: 'rejected: ' + origin.reason });
+      continue;
+    }
+    let consent = { allowSwitch: !!opts.allowSwitch, allowSave: !!opts.allowSave };
+    if (opts.consent && cmd && (cmd.type === 'switch' || cmd.type === 'save-account')) {
+      const c = await opts.consent(cmd);
+      if (c) consent = { allowSwitch: !!c.allowSwitch, allowSave: !!c.allowSave };
+    }
+    const allow = {
+      allowSwitch: consent.allowSwitch,
+      allowSave: consent.allowSave,
+      force: !!opts.force,
+      senderKey: origin.key,
+      requireSignature: true,
+    };
+    const r = applyCommand(ctx, cmd, allow);
+    if (r.ok && cmd.id) markApplied(ctx, cmd.id); // ledger EVERY applied command (incl. notes)
+    results.push(r);
+  }
+  if (kept.length) {
+    try {
+      b.write(inboxName(b.machineId), kept);
+    } catch (e) {
+      /* leave inbox as-is */
+    }
+  } else if (inbox.length) {
+    clearInbox(ctx, b);
+  }
+  return { results: results, reconcile: reconcile };
+}
+
 // Pull one account's full credential from a machine's published status (needs it published
 // --with-secrets) → an account object suitable for a save-account command.
 function accountFrom(status, accountName) {
@@ -928,6 +991,7 @@ export {
   invitePath,
   joinPath,
   applyCommand,
+  processInbox,
   wasApplied,
   markApplied,
   commandFresh,

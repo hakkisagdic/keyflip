@@ -7306,48 +7306,15 @@ async function cmdFleet(ctx, rest) {
     // Reconcile peer signing keys: NEW peers are REPORTED (pending), never auto-pinned — pinning is
     // the invite/join flow above or an explicit `fleet trust`. A pinned key that CHANGED is a conflict.
     const reconcile = fleet.reconcileKeys(ctx, fleet.readFleet(ctx, b));
-    // process my inbox: apply queued commands (origin-authenticated, then gated on consent)
-    const inbox = fleet.readInbox(ctx, b);
-    const results = [];
-    const kept = []; // 'exec' commands are NOT handled here — they are consent-gated and belong to `keyflip swarm drain --allow-exec`; leave them in the inbox.
-    for (let i = 0; i < inbox.length; i++) {
-      const cmd = inbox[i];
-      if (cmd && cmd.type === 'exec') {
-        kept.push(cmd);
-        results.push({ ok: false, applied: 'exec', detail: 'deferred → run `keyflip swarm drain --allow-exec`' });
-        continue;
-      }
-      // Replay protection: never re-run a command we already applied, and drop stale/far-future
-      // ones — the rendezvous is only semi-trusted, so a captured command could be re-injected.
-      if (cmd && cmd.id && fleet.wasApplied(ctx, cmd.id)) {
-        results.push({ ok: false, applied: cmd.type, detail: 'skipped (already applied)' });
-        continue;
-      }
-      if (!fleet.commandFresh(ctx, cmd)) {
-        results.push({ ok: false, applied: cmd && cmd.type, detail: 'skipped (expired)' });
-        continue;
-      }
-      // Origin authentication: the command MUST carry a signature that verifies against the sender's
-      // TOFU-pinned public key. This is what defeats a leaked passphrase — an attacker who can write
-      // to the folder still cannot forge a command "from" a machine whose private key they lack.
-      const origin = fleet.checkOrigin(ctx, cmd, reconcile);
-      if (!origin.ok) {
-        results.push({ ok: false, applied: cmd && cmd.type, detail: 'rejected: ' + origin.reason });
-        continue;
-      }
-      let allow = {
-        allowSwitch: false,
-        allowSave: false,
-        force: rest.indexOf('--force') !== -1,
-        senderKey: origin.key,
-        requireSignature: true,
-      };
-      if (cmd.type === 'note') {
-        /* no consent */
-      } else if (autoYes) {
-        allow.allowSwitch = true;
-        allow.allowSave = true;
-      } else if (!JSON_MODE && process.stdin.isTTY) {
+    // Process my inbox: replay/expiry checks, origin auth, exec deferral and per-command consent all
+    // live in fleet.processInbox — the same gate the MCP `keyflip_fleet_push` tool calls.
+    const outcome = await fleet.processInbox(ctx, b, {
+      reconcile: reconcile,
+      force: rest.indexOf('--force') !== -1,
+      consent: async function (cmd) {
+        // Origin authentication already passed; this is the mutation decision.
+        if (autoYes) return { allowSwitch: true, allowSave: true };
+        if (JSON_MODE || !process.stdin.isTTY) return { allowSwitch: false, allowSave: false };
         const fromLabel = String(cmd.from || '?')
           .replace(/[^\w.-]/g, '')
           .slice(0, 40);
@@ -7367,22 +7334,10 @@ async function cmdFleet(ctx, rest) {
         const ok = await confirm(
           style.warn('⚠') + ' ' + style.ok('✓ verified') + ' ' + fromLabel + ' asks to ' + desc + ' — allow? [y/N] ',
         );
-        allow.allowSwitch = allow.allowSave = ok;
-      }
-      const r = fleet.applyCommand(ctx, cmd, allow);
-      if (r.ok && cmd.id) fleet.markApplied(ctx, cmd.id); // ledger EVERY applied command (incl. notes) so it can't be verbatim-replayed
-      results.push(r);
-    }
-    // Keep exec commands for `swarm drain`; only clear the ones we consumed here.
-    if (kept.length) {
-      try {
-        b.write(fleet.inboxName(b.machineId), kept);
-      } catch (e) {
-        /* leave inbox as-is */
-      }
-    } else if (inbox.length) {
-      fleet.clearInbox(ctx, b);
-    }
+        return { allowSwitch: ok, allowSave: ok };
+      },
+    });
+    const results = outcome.results;
     if (reconcile.conflicts.length && !JSON_MODE)
       reconcile.conflicts.forEach(function (c) {
         print(
