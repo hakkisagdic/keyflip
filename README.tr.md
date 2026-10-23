@@ -292,8 +292,10 @@ klasör yok, parola yok. Dinlerken **bu makineyi de ilan eder** (varsayılan AÇ
 off` ya da `--no-announce` ile kapat). Beacon **yalnız genel kimlik** taşır (makine id'si, görünen ad ve
 Ed25519 imza anahtarının kısa SHA-256 parmak izi) — asla parola, özel anahtar ya da komut — bu yüzden
 liste yazdırılması güvenlidir. Bulunan bir eş yalnızca *erişilebilir*dir: bir komut hâlâ parola **ve**
-sabitli bir anahtar gerektirir (yukarıdaki gibi pair et). Multicast'ı engelleyen bir ağ basitçe "kimse
-bulunamadı" der ve paylaşılan klasör yedek yol olarak kalır.
+sabitli bir anahtar gerektirir (yukarıdaki gibi pair et). Multicast kimseyi bulamazsa `fleet discover`
+`tailscale status --json`'a düşer ve çevrimiçi tailnet eşlerini (`[Tailscale]` işaretli) listeler —
+aynı genel-kimlik kuralları, hiç aynı LAN'da olmayan makineler için. İki taşıma da kimseyi bulamazsa
+bunu söyler ve paylaşılan klasör yedek yol olarak kalır.
 
 ### Filo — origin authentication
 
@@ -439,6 +441,14 @@ birleştirir; her hesap hepsini görür. **claude.ai Chat** ise bulutta, hesap-b
 sunucu tarafında; `keyflip chat` bunu bir **claude.ai oturum çerezi**yle okur.
 **Deneyseldir** (belgesiz API) ve çerez-bağımlıdır:
 
+**Kiro ve ChatGPT için birleştirme gerekmez.** Kiro sohbet durumunu tek IDE profilinde,
+hesaba göre değil çalışma alanına göre saklar (`User/workspaceStorage/<hash>/state.vscdb`
+ve `User/globalStorage/kiro.kiroagent/artifacts/sess_*`); hesap değişince yalnızca kimlik
+bilgisi değişir, yerel geçmiş yerinde kalır. ChatGPT sohbetleri hesap başına sunucuda tutar
+(claude.ai Chat gibi) ve yerel veri kökü (`~/Library/Application Support/Codex`) ortaktır —
+birleştirilecek hesap-başına sohbet dizini yoktur. Yalnızca Claude Desktop, Recents dizinini
+`<accountUuid>/<orgUuid>/` klasörlerine yazar; `consolidate` tam olarak bunları birleştirir.
+
 - Oturum çerezi otomatik bulunur ve her listeleme nereden okunduğunu yazar: uygulamanın
   kendi çerezi, yoksa claude.ai'a girişli bir tarayıcı (güncel masaüstü sürümleri
   `sessionKey`'i bellekte tutar; diskteki çerez kavanozu genelde *kullanılabilir olmaz*),
@@ -529,13 +539,19 @@ Dördü de Electron olduğu için `--user-data-dir` gerçek çerez/oturum izolas
 `src/instances.js` içindeki `TOOL_ADAPTERS`'a tek kayıt; CLI yönlendirmesi, MCP uçları, PID takibi ve
 launch/focus/kill mantığı otomatik çalışır.
 
-**Konum:** `~/Library/Application Support/keyflip-instances/<araç>/<hesap>/` — `<Araç>.app` kopyası,
+**Konum:** `~/.keyflip-instances/<araç>/<hesap>/` — `<Araç>.app` kopyası,
 `User Data/`, `Config/` (adaptör config env tanımlıyorsa uygulamaya geçirilir; Claude:
 `CLAUDE_CONFIG_DIR`), `profile.json`, `instance.pid`.
 
+Kısa yol bilinçli: Kiro kendi user-data dizininde bir Unix soketi açar ve macOS bu yolları 103
+karakterle sınırlar; eski `~/Library/Application Support/keyflip-instances` konumu her Kiro
+kopyasını `listen EINVAL` ile düşürüyordu. Mevcut örnekler ilk kullanımda otomatik taşınır.
+
 Otomatik güncelleme: uygulama kendi anahtarını sunuyorsa `create` onu kapatır — Claude kopyasının
 `User Data/config.json` dosyasına `disableAutoUpdates: true` yazar; ChatGPT'nin Sparkle
-`Info.plist` feed'i boşaltılır (en-iyi-çaba). Kiro/Cursor böyle bir anahtar sunmaz. Eski
+`Info.plist` feed'i boşaltılır (en-iyi-çaba). Plist imza kapsamında olduğu için anahtar yazıldıktan
+sonra kopya ad-hoc yeniden imzalanır (Apple'ın iç yardımcılarına dokunulmaz); imzalama başarısız
+olursa özgün plist geri konur ki kopya açılmaya devam etsin. Kiro/Cursor böyle bir anahtar sunmaz. Eski
 `keyflip instance harden [araç] [hesap]` mevcut kopyalara anahtarı yeniden uygular (hedefsiz
 çağrı tümüne; çalışan kopyayı önce kapatın — `config.json` uygulamanın elindedir ve üzerine yazar). `keyflip doctor` **canlı** durumu okur: kapatılabilir olduğu hâlde hâlâ açık bir
 kopya uyarıdır, anahtarı olmayan araç ise olduğu gibi — `uncontrollable` — raporlanır. Eski

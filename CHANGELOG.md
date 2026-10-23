@@ -102,7 +102,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   so the two paths cannot drift; the MCP result carries counts and per-command outcomes, never
   credentials.
 
+### Changed
+
+- **Chat consolidation is explicitly Claude-Desktop-only.** Kiro stores chat state in one IDE
+  profile keyed by workspace (`workspaceStorage/<hash>/state.vscdb` and
+  `globalStorage/kiro.kiroagent/artifacts/sess_*`), not by account, so switching credentials leaves
+  the local history in place. ChatGPT keeps conversations server-side per account (like claude.ai
+  Chat) and shares one local data root, so there is no per-account index to merge. The README,
+  Turkish README and agent skill now say this instead of leaving “Kiro/ChatGPT consolidation” as an
+  open gap; only Claude Desktop writes the per-account Recents folders that `consolidate` joins.
+
 ### Fixed
+
+- **`keyflip instance launch` now actually starts the app.** The launch passed `{ env }` in
+  `exec.run`'s stdin slot instead of its options slot, so every tool failed with
+  “options.stdio[0] must be a string or Buffer” before `open` was even called. Found by the first
+  live GUI launch test.
+
+- **Kiro clones launch: instance storage moved to a short path.** Kiro's main process creates a
+  Unix-domain socket at `<user-data-dir>/1.3.-main.sock`, and macOS caps `sun_path` at 103
+  characters. Under `~/Library/Application Support/keyflip-instances` every Kiro clone died with
+  `listen EINVAL`, even with a short account slug. Instances now live in
+  `~/.keyflip-instances/` (with an automatic same-volume move of the old tree on first use), which
+  leaves room for normal account names. Verified by creating and launching real Kiro and ChatGPT
+  clones, checking the `--user-data-dir` in `ps`, and killing them again.
+
+- **ChatGPT clones stay launchable after Sparkle hardening.** The Sparkle keys live in
+  `Info.plist`, which is sealed by the code signature; patching it produced a clone that
+  LaunchServices refused to start (`launchd job spawn failed`). `create`/`harden` now re-sign the
+  outer bundle ad-hoc with a minimal entitlement set (nested Apple-signed helpers untouched); if
+  signing fails, the original plist is restored so the clone still starts, and the live update
+  state is reported honestly.
+
+- **`instance kill` no longer leaves helper processes behind.** Killing only the PID that `open`
+  started left ChatGPT's crashpad handlers and its global `bare-modifier-monitor` running. The
+  kill now terminates every process whose command line points into that instance directory, then
+  SIGKILLs anything left after a two-second grace period.
 
 - **The fleet no longer reports a machine as its own untrusted peer.** `fleet push` compared every
   published status against the pinned keys without skipping the local machine, so each push warned
@@ -120,6 +155,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   assuming `~/.config/keyflip`.
 
 ### Tooling
+
+- **Live fleet discovery tests (`test/fleet-discovery.test.js`).** Two real `keyflip --json fleet
+  discover` processes start at once with separate HOMEs and find each other over actual multicast
+  (each excludes its own machine id), and `--no-announce` is proven silent while still hearing an
+  announcer. The Tailscale fallback runs the production code path with a fake `tailscale`
+  executable on PATH (including failure and malformed JSON), because Tailscale is not installed
+  on the test host. The fallback mapping moved into pure `lanfleet.peersFromTailscale`, which now
+  drops offline/addressless peers and deduplicates hostnames that sanitise to one machine id.
 
 - **Docker fleet simulation (`test/fleet-docker/`).** Three keyflip machines in containers share one
   rendezvous volume and exercise the real CLI end to end: encrypted status at rest (no plaintext

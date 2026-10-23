@@ -235,7 +235,7 @@ function launchProfile(profile, accountSlug) {
   console.log(`[claude-profiles] Launching Claude for ${accountSlug}...`);
 
   // Launch with --user-data-dir and CLAUDE_CONFIG_DIR
-  const result = run('open', ['-a', profile.appPath, '--args', '--user-data-dir=' + profile.userDataDir], {
+  const result = run('open', ['-a', profile.appPath, '--args', '--user-data-dir=' + profile.userDataDir], undefined, {
     env: Object.assign({}, process.env, {
       CLAUDE_CONFIG_DIR: profile.configDir,
     }),

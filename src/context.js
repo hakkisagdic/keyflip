@@ -106,7 +106,7 @@ function createContext(opts) {
     opts.instancesBase !== undefined
       ? opts.instancesBase
       : platform === 'darwin'
-        ? path.join(home, 'Library', 'Application Support', 'keyflip-instances')
+        ? path.join(home, '.keyflip-instances') // short on purpose: Kiro's 103-char socket path
         : null;
 
   let account = opts.account;

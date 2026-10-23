@@ -292,8 +292,10 @@ shared folder configured yet, no passphrase. It also **announces this machine** 
 **public identity only** (machine id, display name, and the short SHA-256 fingerprint of the Ed25519
 signing key) — never the passphrase, a private key, or a command — so the listing is safe to print.
 A discovered peer is only *reachable*: acting on one still needs the passphrase AND a pinned key
-(pair it as above). A network that blocks multicast simply reports "found nobody", and the shared
-folder stays the fallback.
+(pair it as above). If multicast finds nobody, `fleet discover` falls back to `tailscale status
+--json` and lists online tailnet peers (marked `[Tailscale]`) — same public-identity rules, useful
+for machines that are never on one LAN. If neither transport finds anyone, it says so and the
+shared folder stays the fallback.
 
 ### Fleet — origin authentication
 
@@ -446,6 +448,15 @@ session cookie**. It is **experimental** (undocumented API) and cookie-bound:
   desktop app's own cookie, else a browser signed into claude.ai (current desktop
   builds keep `sessionKey` in memory and only write analytics cookies, so the app's
   on-disk jar is often *not* the usable one), else that account's saved snapshot.
+
+**Kiro and ChatGPT need no consolidation.** Kiro keeps chat state inside one IDE profile,
+keyed by workspace (`User/workspaceStorage/<hash>/state.vscdb`, plus
+`User/globalStorage/kiro.kiroagent/artifacts/sess_*`), not by account — switching accounts
+swaps credentials while the local history stays in place. ChatGPT keeps conversations
+server-side per account (like claude.ai Chat) and its local data root
+(`~/Library/Application Support/Codex`) is shared, so there is no per-account chat index to
+merge. Only Claude Desktop writes a Recents index into per-account `<accountUuid>/<orgUuid>/`
+folders, which is exactly what `consolidate` joins.
 - `--as <account>` reads ANOTHER saved account's chats from its **captured browser
   session** (`~/.config/keyflip/browser-sessions/<name>__<browser>.sql`, then the
   app snapshot at `app/<name>.cookies`) without switching anything — so you can
@@ -1045,7 +1056,7 @@ usable session, without writing anything.
 
 Claude Desktop cookies expire every ~30 days, forcing frequent re-logins. keyflip solves this by creating **isolated app clones** — each runs independently with its own user data directory, so sessions persist indefinitely.
 
-**How it works:** Each instance is an APFS copy-on-write clone of the tool's `/Applications/<Tool>.app`, consuming near-zero additional disk space. It uses `--user-data-dir` for complete session isolation. Where the app exposes an auto-update switch, `create` turns it off so an update cannot replace the clone's bundle under a signed-in account: Claude reads `disableAutoUpdates` from the clone's `User Data/config.json`, and ChatGPT gets its Sparkle `Info.plist` feed emptied (best-effort). Kiro and Cursor expose no such switch. `keyflip instance harden` re-applies it to existing clones (quit a running clone first — the app owns `config.json` and would rewrite it), and `keyflip doctor` reports the LIVE state — a controllable clone that is still ON is a warning; a tool with no switch is reported plainly, never nagged.
+**How it works:** Each instance is an APFS copy-on-write clone of the tool's `/Applications/<Tool>.app`, consuming near-zero additional disk space. It uses `--user-data-dir` for complete session isolation. Where the app exposes an auto-update switch, `create` turns it off so an update cannot replace the clone's bundle under a signed-in account: Claude reads `disableAutoUpdates` from the clone's `User Data/config.json`, and ChatGPT gets its Sparkle `Info.plist` feed emptied (best-effort). Because the plist is sealed by the code signature, the clone is then re-signed ad-hoc (Apple's nested helpers are left alone); if signing fails the original plist is restored so the clone still launches. Kiro and Cursor expose no such switch. `keyflip instance harden` re-applies it to existing clones (quit a running clone first — the app owns `config.json` and would rewrite it), and `keyflip doctor` reports the LIVE state — a controllable clone that is still ON is a warning; a tool with no switch is reported plainly, never nagged.
 
 ```bash
 # Create an isolated instance for a specific account
@@ -1072,7 +1083,7 @@ keyflip instance enable-all claude
 
 **Supported tools:** `claude`, `kiro`, `chatgpt` (verified against installed apps — Claude.app, Kiro.app, ChatGPT.app) and `cursor` (standard path; defined but not present on the verification machine). All are Electron apps, so `--user-data-dir` gives real cookie/session isolation. Adding another tool is one entry in `TOOL_ADAPTERS` (`src/instances.js`).
 
-**Instance location:** `~/Library/Application Support/keyflip-instances/<tool>/<account>/`
+**Instance location:** `~/.keyflip-instances/<tool>/<account>/` (a short path on purpose: Kiro opens a Unix socket under its user-data dir, and macOS caps those paths at 103 characters — the old `~/Library/Application Support/keyflip-instances` location made every Kiro clone fail with `listen EINVAL`. Existing instances are moved there automatically on first use.)
 - `<Tool>.app` — isolated app clone
 - `User Data/` — Chromium user data (cookies, cache, extensions)
 - `Config/` — config directory, passed to the app when the adapter defines a config env (Claude: `CLAUDE_CONFIG_DIR`)

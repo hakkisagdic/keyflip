@@ -7130,25 +7130,10 @@ async function cmdFleet(ctx, rest) {
       try {
         const tsResult = run('tailscale', ['status', '--json']);
         if (tsResult.code === 0 && tsResult.stdout) {
-          const tsStatus = JSON.parse(tsResult.stdout);
-          if (tsStatus.Peer && Object.keys(tsStatus.Peer).length > 0) {
-            // Extract Tailscale peers that might be running keyflip
-            tailscalePeers = Object.values(tsStatus.Peer)
-              .filter(function (peer) {
-                return peer.Online && peer.TailscaleIPs && peer.TailscaleIPs.length > 0;
-              })
-              .map(function (peer) {
-                return {
-                  machineId: peer.Hostname.replace(/[^A-Za-z0-9_-]/g, '').slice(0, 40),
-                  name: peer.Hostname,
-                  host: peer.TailscaleIPs[0],
-                  transport: 'tailscale',
-                  online: true,
-                };
-              });
-            if (tailscalePeers.length > 0) {
-              transportUsed = 'tailscale';
-            }
+          // Online tailnet peers, shaped exactly like LAN results and carrying reachability only.
+          tailscalePeers = _lanfleet.peersFromTailscale(JSON.parse(tsResult.stdout));
+          if (tailscalePeers.length > 0) {
+            transportUsed = 'tailscale';
           }
         }
       } catch (_) {

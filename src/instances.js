@@ -14,7 +14,27 @@ import os from 'os';
 import { run } from './exec.js';
 import { atomicWrite } from './fsutil.js';
 
-const INSTANCES_BASE = path.join(os.homedir(), 'Library/Application Support/keyflip-instances');
+// A SHORT base on purpose. Kiro's main process puts a Unix-domain socket at
+// <userData>/1.3.-main.sock, and macOS caps sun_path at 103 characters; under
+// ~/Library/Application Support/keyflip-instances EVERY Kiro clone failed to start with
+// `listen EINVAL` (even a 10-char account slug reached 104). ~/.keyflip-instances leaves
+// ~65 characters for the slug, which covers normal account names.
+const INSTANCES_BASE = path.join(os.homedir(), '.keyflip-instances');
+const LEGACY_INSTANCES_BASE = path.join(os.homedir(), 'Library/Application Support/keyflip-instances');
+let legacyChecked = false;
+// Instances created before the move are still the user's data; keep them visible. Renaming is
+// same-volume and atomic. If it fails (permissions, foreign mount) we do NOT delete anything.
+function adoptLegacyBase() {
+  if (legacyChecked) return;
+  legacyChecked = true;
+  try {
+    if (!fs.existsSync(INSTANCES_BASE) && fs.existsSync(LEGACY_INSTANCES_BASE)) {
+      fs.renameSync(LEGACY_INSTANCES_BASE, INSTANCES_BASE);
+    }
+  } catch (e) {
+    /* best-effort: a failed move leaves the old tree untouched */
+  }
+}
 const INFO_PLIST_PATH = 'Contents/Info.plist';
 
 // --- Tool adapters ---
@@ -92,10 +112,12 @@ function getAdapter(tool) {
 // --- Instance paths ---
 
 function instancesDir() {
+  adoptLegacyBase();
   return INSTANCES_BASE;
 }
 
 function instanceDir(tool, accountSlug) {
+  adoptLegacyBase();
   return path.join(INSTANCES_BASE, tool, accountSlug);
 }
 
@@ -199,6 +221,62 @@ function seedConfigSwitch(adapter, userDataDir) {
   return cfgPath;
 }
 
+// The Info.plist keys above are sealed by the app's code signature, so patching them makes the
+// clone unlaunchable (`launchd job spawn failed`, POSIX 163). Re-signing only the OUTER bundle
+// ad-hoc is enough and leaves Apple's nested helpers untouched; the entitlements must not contain
+// Apple-issued identifiers (application-identifier/team-id/aps/keychain groups) or AMFI rejects
+// the signature. disable-library-validation is required because the main binary now has a
+// different signer from the bundled Electron/Codex frameworks it loads.
+const ADHOC_ENTITLEMENTS =
+  '<?xml version="1.0" encoding="UTF-8"?>\n' +
+  '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n' +
+  '<plist version="1.0"><dict>\n' +
+  '<key>com.apple.security.cs.allow-jit</key><true/>\n' +
+  '<key>com.apple.security.cs.allow-unsigned-executable-memory</key><true/>\n' +
+  '<key>com.apple.security.cs.disable-library-validation</key><true/>\n' +
+  '<key>com.apple.security.network.client</key><true/>\n' +
+  '<key>com.apple.security.device.audio-input</key><true/>\n' +
+  '<key>com.apple.security.device.camera</key><true/>\n' +
+  '<key>com.apple.security.automation.apple-events</key><true/>\n' +
+  '<key>com.apple.security.files.user-selected.read-write</key><true/>\n' +
+  '<key>com.apple.security.personal-information.calendars</key><true/>\n' +
+  '</dict></plist>\n';
+
+function resignAdhoc(appPath, instanceDir) {
+  const entPath = path.join(instanceDir, '.sign-entitlements.plist');
+  try {
+    atomicWrite(entPath, ADHOC_ENTITLEMENTS, 0o600);
+    const r = run(
+      'codesign',
+      ['--force', '--sign', '-', '--options', 'runtime', '--entitlements', entPath, appPath],
+      null,
+      { timeoutMs: 120000 },
+    );
+    return r.code === 0;
+  } catch (e) {
+    return false;
+  } finally {
+    try {
+      fs.unlinkSync(entPath);
+    } catch (_) {
+      /* ignore */
+    }
+  }
+}
+
+// Patch the plist AND keep the clone launchable. If signing fails, put the original plist back:
+// the untouched clone still verifies and starts, it just keeps its updater (honest but useful).
+function hardenPlistKeepingSignature(appPath, baseApp, instanceDir) {
+  if (!hardenPlist(appPath)) return false;
+  if (resignAdhoc(appPath, instanceDir)) return true;
+  try {
+    fs.copyFileSync(path.join(baseApp, INFO_PLIST_PATH), path.join(appPath, INFO_PLIST_PATH));
+  } catch (_) {
+    /* If the restore fails the caller still reports the live plist state honestly. */
+  }
+  return false;
+}
+
 // Best-effort Sparkle hardening. The base plist often has NO SUEnableAutomaticChecks key
 // (verified on Claude + Kiro), so -replace alone fails; fall back to insert.
 function hardenPlist(appPath) {
@@ -232,7 +310,7 @@ function hardenInstance(tool, accountSlug, base) {
     );
   }
   if (adapter.autoUpdateConfig) seedConfigSwitch(adapter, instance.userDataDir);
-  if (adapter.disableAutoUpdate) hardenPlist(instance.appPath);
+  if (adapter.disableAutoUpdate) hardenPlistKeepingSignature(instance.appPath, adapter.baseAppPath, instance.dir);
   const state = updateState(tool, instance.userDataDir, instance.appPath);
   // Keep profile.json honest: in old instances it echoed the adapter flag, not the live state.
   try {
@@ -424,8 +502,8 @@ function createInstance(tool, accountSlug) {
   // these keys (Sparkle) are affected; Squirrel-based apps ignore them.
   if (adapter.disableAutoUpdate) {
     console.log('[instances] Hardening auto-update keys (best-effort)...');
-    if (!hardenPlist(appClone)) {
-      console.warn('[instances] Could not patch auto-update keys (non-fatal: this clone may update itself)');
+    if (!hardenPlistKeepingSignature(appClone, baseApp, dir)) {
+      console.warn('[instances] Could not disable auto-updates (non-fatal: this clone may update itself)');
     }
   }
 
@@ -500,7 +578,9 @@ function launchInstance(tool, accountSlug) {
   const env = Object.assign({}, process.env);
   if (adapter.configEnv) env[adapter.configEnv] = instance.configDir;
 
-  const result = run('open', launchArgs, { env: env });
+  // run(cmd, args, input, opts): the third slot is stdin, not options — passing { env } there threw
+  // ("options.stdio[0] must be a string or Buffer") on every launch.
+  const result = run('open', launchArgs, undefined, { env: env });
 
   if (result.code !== 0) {
     throw new Error(`Failed to launch ${adapter.name}: ${result.stderr}`);
@@ -543,28 +623,67 @@ function focusInstance(tool, accountSlug) {
   }
 }
 
+// Every live process whose command line points into this instance dir. Killing only the PID that
+// `open` started left Electron helpers behind (ChatGPT's crashpad handlers and its global
+// bare-modifier-monitor survived indefinitely), so cleanup must be by instance path — the one
+// string every process of that clone shares. Exact substring match, no regex from user data.
+function pidsForDir(dir) {
+  const r = run('ps', ['-axo', 'pid=,command=']);
+  if (r.code !== 0) return [];
+  const needle = dir + path.sep; // boundary-safe: "work" must not match "work2"
+  const out = [];
+  String(r.stdout)
+    .split('\n')
+    .forEach(function (line) {
+      if (line.indexOf(needle) === -1) return;
+      const pid = parseInt(line.trim().split(/\s+/)[0], 10);
+      if (pid > 0 && pid !== process.pid) out.push(pid);
+    });
+  return out;
+}
+
 function killInstance(tool, accountSlug) {
   const instance = getInstance(tool, accountSlug);
   if (!instance) {
     throw new Error(`No instance found for ${tool}/${accountSlug}`);
   }
 
-  if (!instance.running) {
+  const adapter = getAdapter(tool);
+  const pids = pidsForDir(instance.dir);
+  if (!instance.running && !pids.length) {
     console.log(`[instances] Instance ${tool}/${accountSlug} is not running`);
     return;
   }
 
-  const adapter = getAdapter(tool);
   console.log(`[instances] Killing ${adapter.name} instance for ${accountSlug}...`);
 
-  try {
-    run('kill', [String(instance.pid)]);
+  if (pids.indexOf(instance.pid) === -1 && instance.pid) pids.push(instance.pid);
+  pids.forEach(function (pid) {
+    try {
+      run('kill', [String(pid)]);
+    } catch (_) {
+      /* already gone */
+    }
+  });
+
+  // Children may take a moment to unwind; anything still holding the clone gets SIGKILL.
+  setTimeout(function () {
+    const left = pidsForDir(instance.dir);
+    left.forEach(function (pid) {
+      try {
+        run('kill', ['-9', String(pid)]);
+      } catch (_) {
+        /* ignore */
+      }
+    });
     clearPid(tool, accountSlug);
-    console.log(`[instances] Instance killed (PID: ${instance.pid})`);
-  } catch (_) {
-    console.error('[instances] Failed to kill instance');
-    clearPid(tool, accountSlug);
-  }
+    if (left.length) console.log(`[instances] Force-killed ${left.length} leftover process(es)`);
+    console.log(
+      '[instances] Instance killed' + (instance.pid ? ` (PID: ${instance.pid})` : ' (cleaned up leftover processes)'),
+    );
+  }, 2000);
+  // The pending timer keeps the CLI alive until the sweep completes; the caller prints success
+  // after this function returns (the process exits only once the timer has fired).
 }
 
 // --- Integration helpers ---

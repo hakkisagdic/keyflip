@@ -334,8 +334,10 @@ reported as such.
   same fleet passphrase everywhere). Before any folder is set up, `keyflip fleet discover` finds the
   other keyflip machines **on the same LAN** via a UDP multicast beacon (public identity + key
   fingerprint only — no passphrase, safe to print; MCP `keyflip_fleet_discover`). It also ANNOUNCES
-  this machine while listening (ON by default; `fleet announce off` to opt out). A discovered peer is
-  only reachable — acting on it needs the passphrase AND a **pinned** key. **Adding a machine is
+  this machine while listening (ON by default; `fleet announce off` to opt out). If multicast finds
+  nobody it falls back to `tailscale status --json` and lists online tailnet peers (marked
+  `[Tailscale]`). A discovered peer is only reachable — acting on it needs the passphrase AND a
+  **pinned** key. **Adding a machine is
   deliberate and two-sided:** never trust a peer on first sight. Pair with `keyflip fleet invite`
   (mints a one-time code, shown once) + `fleet join <host-id> --code <code>` on the other machine +
   `fleet push --accept-join <host-id> --code-file <f>` here; or `fleet trust <machine>` after
@@ -364,6 +366,9 @@ reported as such.
   ALL conversations. The desktop app's store is locked while it runs, so a one-shot
   offers to close→sync→reopen the app; `--watch` re-syncs on an interval whenever the
   app is closed. Also runs automatically on a switch. (MCP: `keyflip_consolidate`.)
+  Claude Desktop is the only app with per-account chat folders; Kiro's chat state is
+  keyed by workspace and ChatGPT's conversations are server-side per account, so
+  neither needs (or has) a consolidation step.
 - `keyflip history` / `keyflip undo` / `keyflip restore <ref>` — keyflip's config/state dir
   is a git repo; every mutation auto-commits (**secrets are git-ignored** — creds/*.cred,
   browser sessions, tokens stay in the OS store), so any change is inspectable and
