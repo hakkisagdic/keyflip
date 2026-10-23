@@ -210,7 +210,8 @@ import CommandReference from '../../../components/CommandReference.astro';
       <div id="desktop">
         <CommandReference title="Masaüstü ve Tarayıcı" commands={[
           { cmd: 'keyflip browser status|logout|sync', desc: 'Tarayıcı claude.ai hesabını kontrol et/sıfırla/geri yükle' },
-          { cmd: 'keyflip consolidate [--watch]', desc: 'Her hesap sohbet dizinini senkronize et' },
+          { cmd: 'keyflip consolidate [--watch] [--no-instances]', desc: 'Her hesabın ve instance kopyasının sohbet dizinini birleştir' },
+          { cmd: 'keyflip chatgpt status|list|capture|switch|refresh|remove', desc: 'Ortak ChatGPT.app + Codex girişini kaydet/değiştir/yenile (takma ad: codex)' },
           { cmd: 'keyflip agents', desc: 'Diğer ajanların bellek + yapılandırmasını listele' },
           { cmd: 'keyflip settings show|get|set', desc: '~/.claude/settings.json dosyasını görüntüle/düzenle' },
           { cmd: 'keyflip surfaces', desc: 'Bu makinedeki diğer AI araçlarını algıla' },

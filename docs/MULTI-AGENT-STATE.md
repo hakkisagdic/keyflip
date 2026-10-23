@@ -193,6 +193,24 @@ makes `--user-data-dir` isolation work. Three facts worth knowing:
   checks the base path first and fails with a clear message, so a missing app can never produce a
   half-created instance. A live launch test per app is still outstanding.
 
+**What an instance clone does — and does not — isolate:** the clone's `--user-data-dir` separates
+the app *profile* (cookies, cache, window state). It does not relocate credentials the tool keeps
+outside that profile:
+
+| Tool | Login store | Isolated by a clone? | What to do for a second account |
+|---|---|---|---|
+| Claude | CLI config + desktop user data | yes (`CLAUDE_CONFIG_DIR` + `User Data`) | `keyflip <name> --instance claude/<slug>` |
+| ChatGPT/Codex | `~/.codex/auth.json` (shared by app + CLI) | no — global | `keyflip chatgpt switch <name>` first |
+| Kiro | CLI Keychain + `~/.aws/sso/cache` | no — global | `keyflip kiro switch <name>` first |
+| Antigravity | Keychain `gemini/antigravity` | no instance adapter | `keyflip antigravity switch <name>` |
+| Qoder | `~/.qoder/.auth/user` | no instance adapter | sign in as the account you want |
+| Cursor | not verified | — | adapter defined, path unverified |
+
+`consolidate` follows the same boundary for chat history: Claude Desktop's Recents/Cowork stores are
+per-account and are unioned across the base app **and** every non-running clone
+(`~/.keyflip-instances/<tool>/<slug>/User Data/`); ChatGPT conversations stay server-side per account,
+so only the login is managed, not the history.
+
 
 ### Instance lifecycle
 

@@ -1,31 +1,39 @@
 // @ts-check
 // Background token refresh daemon for keyflip. Runs as a launchd KeepAlive process,
 // checking credential expiry every 5 minutes and proactively refreshing tools that
-// support it (Antigravity, ChatGPT). Kiro is EXCLUDED from proactive refresh due to
-// single-use refresh_token race conditions — it's handled reactively during switch.
+// support it (Antigravity, and the live ChatGPT/Codex auth). Kiro is EXCLUDED from
+// proactive refresh due to single-use refresh_token race conditions — it's handled
+// reactively during switch.
 //
-// Security: Only reads/writes 0600 files under ~/.config/keyflip/surfaces/. No tokens
-// are passed on command lines; Keychain access uses stdin-based helpers.
+// Security: Only reads/writes 0600 files under the keyflip config dir and the
+// tool-owned auth.json. No tokens are passed on command lines; Keychain access
+// uses stdin-based helpers.
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 import os from 'os';
 import { run } from './exec.js';
+import * as codex from './codex.js';
 
 const REFRESH_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 const PROACTIVE_THRESHOLD_MS = 30 * 60 * 1000; // refresh if expires within 30 min
 const MAX_RETRIES = 3;
 const RETRY_BACKOFF_MS = [60000, 300000, 900000]; // 1min, 5min, 15min
 
-// Metrics file path
-const METRICS_PATH = path.join(os.homedir(), '.config', 'keyflip', 'refresh-metrics.json');
+// Metrics file path — under the context's config dir so tests and relocated
+// installs never write to the real ~/.config/keyflip.
+function metricsPath(ctx) {
+  const base = (ctx && ctx.configDir) || path.join(os.homedir(), '.config', 'keyflip');
+  return path.join(base, 'refresh-metrics.json');
+}
 
 // --- Metrics tracking ---
 
-function loadMetrics() {
+function loadMetrics(ctx) {
   try {
-    if (fs.existsSync(METRICS_PATH)) {
-      return JSON.parse(fs.readFileSync(METRICS_PATH, 'utf8'));
+    const p = metricsPath(ctx);
+    if (fs.existsSync(p)) {
+      return JSON.parse(fs.readFileSync(p, 'utf8'));
     }
   } catch (e) {
     // ignore corrupt metrics
@@ -43,16 +51,16 @@ function loadMetrics() {
   };
 }
 
-function saveMetrics(metrics) {
+function saveMetrics(ctx, metrics) {
   try {
-    fs.writeFileSync(METRICS_PATH, JSON.stringify(metrics, null, 2), { mode: 0o600 });
+    fs.writeFileSync(metricsPath(ctx), JSON.stringify(metrics, null, 2), { mode: 0o600 });
   } catch (e) {
     console.error('[refresh] Failed to save metrics:', e.message);
   }
 }
 
-function updateMetrics(tool, slug, event, details) {
-  const metrics = loadMetrics();
+function updateMetrics(ctx, tool, slug, event, details) {
+  const metrics = loadMetrics(ctx);
   const key = `${tool}/${slug}`;
 
   if (!metrics.tools[key]) {
@@ -92,7 +100,7 @@ function updateMetrics(tool, slug, event, details) {
   }
 
   metrics.totals.lastTick = new Date().toISOString();
-  saveMetrics(metrics);
+  saveMetrics(ctx, metrics);
 }
 
 // --- Retry logic with exponential backoff ---
@@ -133,10 +141,14 @@ const STRATEGIES = {
     thresholdMs: PROACTIVE_THRESHOLD_MS,
     refreshFn: refreshAntigravity,
   },
-  chatgpt: {
+  // ChatGPT.app and Codex CLI share ONE auth.json, so this is a tool-level strategy
+  // (`once`) rather than a per-slug loop: refresh ONLY the live file, and only while
+  // neither owner process is running. Captures are never refreshed on their own.
+  codex: {
     proactive: true,
-    thresholdMs: 60 * 60 * 1000, // bearer ~5-9 days, but session token ~3 months
-    refreshFn: refreshChatGPT,
+    thresholdMs: codex.REFRESH_THRESHOLD_MS,
+    once: true,
+    refreshFn: refreshCodex,
   },
   kiro: {
     proactive: false, // NEVER proactively refresh Kiro
@@ -182,7 +194,7 @@ async function refreshAntigravity(ctx, cred) {
       const err = await resp.text();
       console.error(`[refresh] Antigravity refresh failed: ${err}`);
       recordRetryAttempt('antigravity', cred.slug, false);
-      updateMetrics('antigravity', cred.slug, 'failure', { error: err });
+      updateMetrics(ctx, 'antigravity', cred.slug, 'failure', { error: err });
       return null;
     }
 
@@ -196,64 +208,54 @@ async function refreshAntigravity(ctx, cred) {
     console.log(`[refresh] Antigravity token refreshed (${cred.slug})`);
 
     recordRetryAttempt('antigravity', cred.slug, true);
-    updateMetrics('antigravity', cred.slug, 'refresh');
+    updateMetrics(ctx, 'antigravity', cred.slug, 'refresh');
     return updated;
   } catch (e) {
     console.error(`[refresh] Antigravity refresh error: ${e.message}`);
     recordRetryAttempt('antigravity', cred.slug, false);
-    updateMetrics('antigravity', cred.slug, 'failure', { error: e.message });
+    updateMetrics(ctx, 'antigravity', cred.slug, 'failure', { error: e.message });
     return null;
   }
 }
 
-// --- ChatGPT refresh (session token → bearer) ---
+// --- ChatGPT / Codex refresh (live auth.json only) ---
 
-async function refreshChatGPT(ctx, cred) {
-  if (!shouldRetry('chatgpt', cred.slug)) {
-    console.log(`[refresh] Skipping ChatGPT refresh for ${cred.slug} (in backoff period)`);
+async function refreshCodex(ctx) {
+  if (!shouldRetry('codex', 'live')) {
+    console.log('[refresh] Skipping Codex refresh (in backoff period)');
     return null;
   }
-
-  // Read the session token from cookies snapshot
-  const cookieData = JSON.parse(fs.readFileSync(cred.cookiePath, 'utf8'));
-  const sessionToken = cookieData['__Secure-next-auth.session-token'];
-  if (!sessionToken) return null;
-
   try {
-    // Call the session endpoint to get a fresh bearer
-    const resp = await fetch('https://chatgpt.com/api/auth/session', {
-      headers: {
-        Cookie: `__Secure-next-auth.session-token=${sessionToken}`,
-        'User-Agent':
-          'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
-      },
-    });
-
-    if (!resp.ok) {
-      console.error(`[refresh] ChatGPT session refresh failed: ${resp.status}`);
-      recordRetryAttempt('chatgpt', cred.slug, false);
-      updateMetrics('chatgpt', cred.slug, 'failure', { status: resp.status });
-      return null;
+    const r = await codex.refreshLive(ctx, {});
+    if (r.refreshed) {
+      console.log(
+        '[refresh] ChatGPT/Codex token refreshed' +
+          (r.updatedCaptures && r.updatedCaptures.length
+            ? ' (updated capture: ' + r.updatedCaptures.join(', ') + ')'
+            : ''),
+      );
+      recordRetryAttempt('codex', 'live', true);
+      updateMetrics(ctx, 'codex', 'live', 'refresh');
+      return r;
     }
-
-    const session = await resp.json();
-    if (!session.accessToken) return null;
-
-    // Update the bearer in the credential file
-    const updated = Object.assign({}, cookieData, {
-      accessToken: session.accessToken,
-      accessTokenExpiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(), // ~7 days
-    });
-    fs.writeFileSync(cred.cookiePath, JSON.stringify(updated, null, 2), { mode: 0o600 });
-    console.log(`[refresh] ChatGPT bearer refreshed (${cred.slug})`);
-
-    recordRetryAttempt('chatgpt', cred.slug, true);
-    updateMetrics('chatgpt', cred.slug, 'refresh');
-    return updated;
+    if (r.skipped === 'running') {
+      // A running ChatGPT/Codex owns auth.json and would overwrite the rotation.
+      console.log('[refresh] ChatGPT/Codex is running — deferring its token refresh.');
+      updateMetrics(ctx, 'codex', 'live', 'check', { changed: false });
+      return r;
+    }
+    if (r.skipped === 'no-live-auth' || r.skipped === 'not-due') {
+      updateMetrics(ctx, 'codex', 'live', 'check', { changed: false });
+      return r;
+    }
+    console.error('[refresh] ChatGPT/Codex auth is unreadable: ' + (r.error || r.skipped));
+    recordRetryAttempt('codex', 'live', false);
+    updateMetrics(ctx, 'codex', 'live', 'failure', { error: r.error || r.skipped });
+    return r;
   } catch (e) {
-    console.error(`[refresh] ChatGPT refresh error: ${e.message}`);
-    recordRetryAttempt('chatgpt', cred.slug, false);
-    updateMetrics('chatgpt', cred.slug, 'failure', { error: e.message });
+    console.error('[refresh] ChatGPT/Codex refresh error: ' + e.message);
+    recordRetryAttempt('codex', 'live', false);
+    updateMetrics(ctx, 'codex', 'live', 'failure', { error: e.message });
     return null;
   }
 }
@@ -281,14 +283,14 @@ function checkKiroHash(ctx, cred) {
       }
     }
   } catch (e) {
-    updateMetrics('kiro', cred.slug, 'failure', { error: e.message });
+    updateMetrics(ctx, 'kiro', cred.slug, 'failure', { error: e.message });
     return null;
   }
 
   if (!tokenData || !tokenData.refresh_token) return null;
 
   const hash = crypto.createHash('sha256').update(tokenData.refresh_token).digest('hex');
-  updateMetrics('kiro', cred.slug, 'check');
+  updateMetrics(ctx, 'kiro', cred.slug, 'check');
   return {
     refresh_token_hash: hash,
     expires_at: tokenData.expires_at,
@@ -441,11 +443,11 @@ function checkClaudeSession(ctx, cred) {
   // Reactive check: extract current session and compare with stored one
   const session = extractClaudeSession();
   if (!session) {
-    updateMetrics('claude', cred.slug || 'desktop', 'failure', { error: 'extraction_failed' });
+    updateMetrics(ctx, 'claude', cred.slug || 'desktop', 'failure', { error: 'extraction_failed' });
     return null;
   }
 
-  updateMetrics('claude', cred.slug || 'desktop', 'check');
+  updateMetrics(ctx, 'claude', cred.slug || 'desktop', 'check');
   return {
     sessionKey_hash: crypto.createHash('sha256').update(session.sessionKey).digest('hex'),
     lastActiveOrg: session.lastActiveOrg,
@@ -458,13 +460,25 @@ function checkClaudeSession(ctx, cred) {
 
 async function tick(ctx) {
   const surfacesDir = path.join(ctx.configDir, 'surfaces');
-  if (!fs.existsSync(surfacesDir)) return;
 
-  const tools = fs.readdirSync(surfacesDir);
+  // Tool-level strategies own their own credential file (Codex: one live
+  // auth.json shared by ChatGPT.app + the CLI), so they run once and do not
+  // require a per-account surface directory to exist.
+  for (const name of Object.keys(STRATEGIES)) {
+    const st = STRATEGIES[name];
+    if (!st.once || typeof st.refreshFn !== 'function') continue;
+    try {
+      await st.refreshFn(ctx);
+    } catch (e) {
+      console.error(`[refresh] Error running ${name}: ${e.message}`);
+    }
+  }
+
+  const tools = fs.existsSync(surfacesDir) ? fs.readdirSync(surfacesDir) : [];
 
   for (const tool of tools) {
     const strategy = STRATEGIES[tool];
-    if (!strategy) continue;
+    if (!strategy || strategy.once) continue;
 
     const accountsDir = path.join(surfacesDir, tool);
     if (!fs.statSync(accountsDir).isDirectory()) continue;

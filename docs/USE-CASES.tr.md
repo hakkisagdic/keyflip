@@ -254,14 +254,19 @@ keyflip consolidate --watch            # uygulama kapalıyken periyodik olarak y
 keyflip consolidate --watch --interval 60
 ```
 - Uygulama çalışırken deposu kilitli olur; tek atış modu kapat→eşitle→aç önerir
-  (`-y` ile soruyu atla).
-- Ayrıca her geçişte otomatik çalışır.
-- Hesap klasörleri UUID adlarından tanınır; uygulamanın kendi kayıt klason
-  (`skills-plugin/<org>/<hesap>/`, aynı düzende dizilir) ne okunur ne yazılır — önceden bir
-  consolidate geçişi içine pointer dağıtırdı. Bir hesapta kullanıcının sildiği sohbet (uygulama
-  dizinin yanına `deleted_<id>` bırakır) başka hesabın klasöründen geri kopyalanmaz.
-  `keyflip cowork` eşitlenmiş sohbeti bir kez listeler: veri klasörü hâlâ yanında duran kopya,
-  o yoksa en son aktif olan.
+  (`-y` ile soruyu atla). Her geçişte de otomatik çalışır.
+- Birleşim, Claude Desktop'ın Recents ve Cowork depolarını temel uygulamada **ve çalışmayan her
+  instance kopyasında** kapsar (`~/.keyflip-instances/<araç>/<slug>/User Data/`); bir kopyada
+  açılan sohbet hepsinde görünür. `instance.pid`'i canlı kopya atlanır ve sonuçta adıyla bildirilir;
+  `--no-instances` yalnızca temel uygulamayla sınırlar.
+- İki hesap farklı transcript'ler için aynı `local_*.json` adını meşru olarak kullanabilir; keyflip
+  birini sessizce düşürmek yerine `local_<cliSessionId>.json` adına (gerçek çakışmada sayı ekiyle)
+  geri düşer.
+- Yalnızca UUID adlı klasörler hesap sayılır; uygulamanın kendi defteri
+  (`skills-plugin/<org>/<hesap>/`, aynı düzende) ne okunur ne yazılır — önceden bir consolidate
+  geçişi içine pointer dağıtırdı. Bir hesapta kullanıcının sildiği sohbet (uygulama dizinin yanına
+  `deleted_<id>` bırakır) başka hesabın klasöründen geri kopyalanmaz. `keyflip cowork` eşitlenmiş
+  sohbeti bir kez listeler: veri klasörü hâlâ yanında duran kopya, o yoksa en son aktif olan.
 
 ### 9.1 Hesaplar arası tek adlandırılmış görev — `keyflip threads`
 

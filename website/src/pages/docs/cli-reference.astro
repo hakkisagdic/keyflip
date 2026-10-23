@@ -211,7 +211,8 @@ import CommandReference from '../../components/CommandReference.astro';
       <div id="desktop">
         <CommandReference title="Desktop & Browser" commands={[
           { cmd: 'keyflip browser status|logout|sync', desc: 'Check/reset/restore browser claude.ai account' },
-          { cmd: 'keyflip consolidate [--watch]', desc: 'Sync every account chat index' },
+          { cmd: 'keyflip consolidate [--watch] [--no-instances]', desc: 'Union every account and instance clone chat index' },
+          { cmd: 'keyflip chatgpt status|list|capture|switch|refresh|remove', desc: 'Save/switch/refresh the shared ChatGPT.app + Codex login (alias: codex)' },
           { cmd: 'keyflip agents', desc: 'List other agents memory + config keyflip can carry' },
           { cmd: 'keyflip settings show|get|set', desc: 'View/edit ~/.claude/settings.json' },
           { cmd: 'keyflip surfaces', desc: 'Detect other AI tools on this machine' },

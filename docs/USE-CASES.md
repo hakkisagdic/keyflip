@@ -253,14 +253,14 @@ keyflip consolidate --watch            # re-sync on an interval whenever the app
 keyflip consolidate --watch --interval 60
 ```
 - The desktop app's store is locked while it runs, so a one-shot offers to
-  close→sync→reopen the app (`-y` to skip the prompt).
-- Also runs automatically on every switch.
-- Account folders are recognised by their UUID name, so the app's own bookkeeping
-  (`skills-plugin/<org>/<account>/`, laid out the same way) is neither read nor written — before,
-  a consolidate pass spread pointers into it. A session the user deleted in one account (the app
-  leaves a `deleted_<id>` tombstone beside the index) is not copied back from another account's
-  folder. `keyflip cowork` then lists a consolidated session once: the copy whose data folder
-  still sits beside it, otherwise the most recently active.
+  close→sync→reopen the app (`-y` to skip the prompt). Also runs automatically on every switch.
+- The union covers Claude Desktop's Recents and Cowork stores in the base app **and in every
+  non-running instance clone** (`~/.keyflip-instances/<tool>/<slug>/User Data/`), so a chat opened
+  in one clone appears in all of them. A clone with a live `instance.pid` is skipped and named in
+  the result; `--no-instances` keeps the pass to the base app only.
+- Two accounts can legitimately use the same `local_*.json` filename for different transcripts.
+  keyflip then falls back to `local_<cliSessionId>.json` (with a numeric suffix on a true
+  collision) instead of silently dropping one.
 - Only UUID-named folders count as accounts: the app's own bookkeeping
   (`skills-plugin/<org>/<account>/`) is laid out the same way but is neither read nor written,
   and a session the user deleted in an account (its `deleted_<id>` tombstone) is not copied back

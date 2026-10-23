@@ -138,7 +138,8 @@ Claude desktop app, browser automation, and app-level session management.
 |--------|---------------|
 | `claude.js` | Claude desktop application integration |
 | `appauth.js` | Desktop app authentication |
-| `appsessions.js` | Desktop app session management |
+| `appsessions.js` | Desktop app session management (Recents/Cowork union across accounts and instance clones) |
+| `codex.js` | ChatGPT.app + Codex CLI shared login (`~/.codex/auth.json`): capture, switch, lineage-safe refresh |
 | `instances.js` | Isolated multi-instance app clones per tool/account (Claude, Kiro, ChatGPT, Cursor) |
 | `browser.js` | Browser profile and cookie management |
 | `chat.js` | Chat interface integration |

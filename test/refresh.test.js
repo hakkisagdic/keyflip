@@ -26,9 +26,10 @@ test('STRATEGIES object has correct structure', () => {
   assert.equal(STRATEGIES.antigravity.proactive, true);
   assert.ok(typeof STRATEGIES.antigravity.refreshFn === 'function');
 
-  assert.ok(STRATEGIES.chatgpt);
-  assert.equal(STRATEGIES.chatgpt.proactive, true);
-  assert.ok(typeof STRATEGIES.chatgpt.refreshFn === 'function');
+  assert.ok(STRATEGIES.codex);
+  assert.equal(STRATEGIES.codex.proactive, true);
+  assert.equal(STRATEGIES.codex.once, true);
+  assert.ok(typeof STRATEGIES.codex.refreshFn === 'function');
 
   assert.ok(STRATEGIES.kiro);
   assert.equal(STRATEGIES.kiro.proactive, false);
@@ -122,9 +123,9 @@ test('Claude session extraction handles missing database gracefully', () => {
 
 test('Proactive strategies have valid thresholds', () => {
   assert.ok(STRATEGIES.antigravity.thresholdMs > 0);
-  assert.ok(STRATEGIES.chatgpt.thresholdMs > 0);
+  assert.ok(STRATEGIES.codex.thresholdMs > 0);
 
   // Thresholds should be in reasonable range (minutes to hours)
   assert.ok(STRATEGIES.antigravity.thresholdMs <= 60 * 60 * 1000); // ≤ 1 hour
-  assert.ok(STRATEGIES.chatgpt.thresholdMs <= 24 * 60 * 60 * 1000); // ≤ 1 day
+  assert.ok(STRATEGIES.codex.thresholdMs <= 24 * 60 * 60 * 1000); // ≤ 1 day
 });

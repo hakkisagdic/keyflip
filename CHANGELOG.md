@@ -5,6 +5,55 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **`keyflip chatgpt` (alias `codex`) — save, switch and refresh the ChatGPT.app + Codex CLI login.**
+  Both surfaces authenticate with the same `~/.codex/auth.json` (or `$CODEX_HOME/auth.json`, 0600), so
+  one adapter covers them. `status` reports the live e-mail/plan/expiry without printing a token;
+  `capture` saves the live bytes plus a secret-free `meta.json` under
+  `~/.config/keyflip/surfaces/codex/<slug>/`; `switch` backs up the live file, captures the outgoing
+  login, writes the stored bytes and reads them back (raw content + e-mail identity), refusing while
+  ChatGPT/Codex runs unless `--force`; `refresh` rotates one-shot; `list`/`remove` round it out.
+  Captures without `meta.json` (from the earlier account work) still resolve from their stored JWT.
+  MCP: `keyflip_chatgpt` (read-only status), `keyflip_chatgpt_capture`, `keyflip_chatgpt_switch`,
+  `keyflip_chatgpt_refresh` (all confirm-gated; never return a credential).
+
+- **The refresh daemon now rotates the live ChatGPT/Codex login.** Within 24 hours of access-token
+  expiry it refreshes `auth.json` against `https://auth.openai.com/oauth/token` — never while
+  ChatGPT/Codex is running. Rotation is lineage-safe: a saved capture holding the exact refresh token
+  that was just spent is updated too, while dormant captures are never refreshed independently, so one
+  account cannot end up with two competing refresh tokens. A failed refresh leaves the file untouched
+  and reports the provider error.
+
+### Changed
+
+- **`keyflip consolidate` now unions the base Claude Desktop store with every instance clone.**
+  Recents (`claude-code-sessions`) and Cowork (`local-agent-mode-sessions`) pointers are merged across
+  `~/.keyflip-instances/<tool>/<slug>/User Data/` as well as the base app, so a chat opened in one
+  clone appears in all of them. A clone whose `instance.pid` is alive is skipped and reported;
+  `--no-instances` limits a pass to the base app. Each store is backed up separately (clone backups are
+  named per tool/slug) and the merge still only adds files.
+
+- **The old ChatGPT cookie refresh strategy was removed; it could never have worked.** ChatGPT's
+  on-disk cookie jar holds only Cloudflare/analytics entries, not a credential. The strategy now reads
+  the real shared `auth.json`, and refresh metrics live under the active config dir instead of a
+  hard-coded home path.
+
+### Fixed
+
+- **Consolidation no longer drops a session when two accounts use the same `local_*.json` filename.**
+  The app names index files by its own local id, and two account folders can legitimately use the same
+  name for different transcripts; the old `existsSync` check skipped one of them. keyflip now falls
+  back to `local_<cliSessionId>.json` (with a numeric suffix on a true collision) and still respects a
+  `deleted_<id>` tombstone.
+
+- **The stale “repair with `codesign --force --deep --sign -`” troubleshooting line is gone.** Current
+  keyflip re-signs the outer bundle ad-hoc after patching `Info.plist` and restores the original plist
+  if signing fails; the README (EN/TR) now says to re-run `keyflip instance harden` or recreate the
+  clone, and warns that `--deep` rewrites Apple's nested helpers.
+
 ## [1.5.7] - 2026-10-23
 
 ### Added

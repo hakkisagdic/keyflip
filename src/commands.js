@@ -121,6 +121,14 @@ const CATALOG = [
     usage: 'keyflip kiro [status|list|capture [name]|switch <name|n>|usage|import <slug>|remove <name>]',
     desc: 'Kiro CLI (Keychain) + IDE (~/.aws/sso/cache) sessions: capture both, switch with --dry-run, read IDE usage.',
   },
+  {
+    name: 'chatgpt',
+    group: 'accounts',
+    safe: false,
+    aliases: ['codex'],
+    usage: 'keyflip chatgpt [status|list|capture [name]|switch <name|n|email>|refresh|remove <name>]',
+    desc: 'ChatGPT.app + Codex CLI share one login (~/.codex/auth.json): capture, switch and refresh it.',
+  },
 
   // ---- providers ----
   {
@@ -229,8 +237,8 @@ const CATALOG = [
     name: 'consolidate',
     group: 'sessions',
     safe: false,
-    usage: 'keyflip consolidate [--watch]',
-    desc: "Sync every account's chat index so each shows all conversations.",
+    usage: 'keyflip consolidate [--watch] [--no-instances]',
+    desc: "Sync every account's chat index (base app + clone User Data stores) so each shows all conversations.",
   },
   {
     name: 'dream',

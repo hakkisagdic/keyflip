@@ -240,7 +240,7 @@ keyflip fleet send-account <acct> --to <machine> [--from <machine>]   # distribu
 keyflip fleet collect         # gather every account published across the fleet onto this machine
 keyflip fleet keys            # audit every machine's signing-key fingerprint (ok / CHANGED / unpinned)
 keyflip fleet trust <machine> # re-pin a machine's signing key AFTER a legitimate re-key (see "Fleet — origin authentication" below)
-keyflip consolidate [--watch] # sync every account's chat index so each shows ALL conversations
+keyflip consolidate [--watch] [--no-instances]   # union every account's + clone's chat index so each shows ALL conversations
 keyflip remove <name|number>  # delete a saved account (confirms; --force to skip)
 keyflip logout [--browser] [--desktop]   # sign OUT of the live session(s) — saved accounts are kept
 keyflip history | undo | restore <ref>   # git-versioned config: inspect / undo / roll back any change (secrets never committed)
@@ -449,14 +449,25 @@ session cookie**. It is **experimental** (undocumented API) and cookie-bound:
   builds keep `sessionKey` in memory and only write analytics cookies, so the app's
   on-disk jar is often *not* the usable one), else that account's saved snapshot.
 
+**Consolidation spans the base app *and* its keyflip clones.** Claude Desktop writes
+its Recents/Cowork pointers into per-account `<accountUuid>/<orgUuid>/` folders;
+each `keyflip instance` clone carries its own copy under
+`~/.keyflip-instances/<tool>/<slug>/User Data/`. `consolidate` unions every account
+folder across all of those stores, so a chat opened in one clone shows up in the base
+app and every other clone. Two accounts can legitimately use the same `local_*.json`
+filename for different transcripts: instead of silently dropping one, keyflip falls
+back to `local_<cliSessionId>.json`, and a `deleted_<id>` tombstone still wins. A
+clone with a live `instance.pid` is skipped (the app owns its index and rewrites it
+on exit) and named in the result; `--no-instances` limits the pass to the base app.
+The merge only ever adds files, and backs each store up first.
+
 **Kiro and ChatGPT need no consolidation.** Kiro keeps chat state inside one IDE profile,
 keyed by workspace (`User/workspaceStorage/<hash>/state.vscdb`, plus
 `User/globalStorage/kiro.kiroagent/artifacts/sess_*`), not by account — switching accounts
 swaps credentials while the local history stays in place. ChatGPT keeps conversations
 server-side per account (like claude.ai Chat) and its local data root
 (`~/Library/Application Support/Codex`) is shared, so there is no per-account chat index to
-merge. Only Claude Desktop writes a Recents index into per-account `<accountUuid>/<orgUuid>/`
-folders, which is exactly what `consolidate` joins.
+merge. keyflip manages ChatGPT's *login* (`keyflip chatgpt`), not its chat history.
 - `--as <account>` reads ANOTHER saved account's chats from its **captured browser
   session** (`~/.config/keyflip/browser-sessions/<name>__<browser>.sql`, then the
   app snapshot at `app/<name>.cookies`) without switching anything — so you can
@@ -513,6 +524,43 @@ The surfaces can share one refresh chain: a refresh in the IDE can invalidate th
 CLI token and vice versa. keyflip stores each surface's own bytes, but a fully
 independent chain per surface still needs one browser login each (#33). An
 expired capture is shown as `EXPIRED`; switching to it will need a fresh login.
+
+### ChatGPT + Codex — one shared login (`chatgpt`, all platforms)
+
+ChatGPT.app and the Codex CLI authenticate with the **same file**:
+`~/.codex/auth.json` (or `$CODEX_HOME/auth.json`, mode 0600). It holds the OAuth
+tokens — and, after an API-key login, `OPENAI_API_KEY`. The id_token carries the
+account e-mail, plan and account id, which is what keyflip reads. The app's on-disk
+cookies are **not** a credential here: they contain only Cloudflare/analytics entries.
+
+```bash
+keyflip chatgpt status          # live e-mail/plan/expiry + saved accounts, never a token value
+keyflip chatgpt capture [name]  # save the live login (auto-named from its e-mail)
+keyflip chatgpt switch <name|n|email> [--dry-run] [--force] [--no-verify]
+keyflip chatgpt refresh [--force]   # rotate now; --force ignores the 24h threshold
+keyflip chatgpt list            # saved accounts and each token's expiry
+keyflip chatgpt remove <name> --force
+```
+
+`codex` is an alias for `chatgpt`. Captures live under
+`~/.config/keyflip/surfaces/codex/<slug>/`: `auth.json` at 0600 plus a secret-free
+`meta.json` (e-mail, plan, account id, expiry — never a token). A switch backs up the
+live file, captures the outgoing login best-effort, writes the stored bytes, then
+reads them back (raw content + e-mail identity). It refuses while ChatGPT/Codex is
+running unless `--force`, because the app caches tokens and rewrites the file on exit.
+
+**Refresh is live-only and lineage-safe.** Access tokens last about ten days (observed
+as short as five). The background refresh daemon (`keyflip refresh --daemon-start`)
+checks every five minutes and rotates the **live** file once it is within 24 hours of
+expiry — never while ChatGPT/Codex runs. If a saved capture holds the exact refresh
+token that was just spent, it is updated too, so a switch back does not replay a dead
+token. Dormant captures are never refreshed on their own: one lineage per account, no
+two refresh tokens fighting each other. A capture that was already stale before this
+feature still needs a fresh sign-in (its old refresh token was spent by the app); a
+failed refresh leaves the file untouched and reports the provider error; `refresh`
+also says when it deferred (not due / running / no refresh token). The nightly
+`refresh --schedule` covers the Claude OAuth tokens; `keyflip chatgpt refresh` is the
+one-shot for this login.
 
 ### Which model runs the chores (`llm`)
 
@@ -573,6 +621,10 @@ keyflip refresh --unschedule
   green once something is scheduled. Over MCP: `keyflip_refresh_schedule` (`action=status|install|
   remove`, confirm-gated). See `keyflip chains` for the parts of a login that a scheduled refresh
   *cannot* save — a desktop-app session cookie needs a human, and no timer changes that.
+- **Other tools have their own clocks.** The ChatGPT/Codex access token (~10 days) is rotated by the
+  separately installed refresh daemon (`keyflip refresh --daemon-start`, every 5 minutes) within 24
+  hours of expiry — never while ChatGPT/Codex runs. `keyflip chatgpt refresh` does it once by hand;
+  the nightly schedule above stays Claude-OAuth-only.
 
 ### How old is each sign-in? (`keyflip freshness`)
 
@@ -927,7 +979,8 @@ confirm-gated), migrate + LAN
 (`keyflip_migrate_*`, `keyflip_transfer_pull`), WebDAV sync (`keyflip_sync_test/push/pull`),
 `keyflip://` links (`keyflip_share/share_apply`), desktop gateway (`keyflip_gateway_*`), MCP-server
 registry (`keyflip_mcpreg_*`), directory pins (`keyflip_link/links`), isolated app instances
-(`keyflip_instances`, `keyflip_instance_*`), diagnostics
+(`keyflip_instances`, `keyflip_instance_*`), the shared ChatGPT/Codex login
+(`keyflip_chatgpt`, `_chatgpt_capture`, `_chatgpt_switch`, `_chatgpt_refresh`), diagnostics
 (`keyflip_doctor`, `keyflip_usage_history`), backups, skills, and the failover proxy. Every tool has a proper JSON Schema and read-only/
 destructive annotations; **mutating tools require `confirm: true`** and their
 descriptions tell the agent to ask the user first. Secrets are never accepted
@@ -985,8 +1038,13 @@ so by default each account only shows the Code sessions you started under it.
 
 On every switch (while the app is closed), keyflip **consolidates** that index —
 copying the Code-session pointers from your other accounts into the active one, so
-its Recents shows them all. It backs up the store first and only ever *adds* files
-(never deletes).
+its Recents shows them all. The same pass covers **Cowork** session pointers, and
+also merges the base app with every **instance clone** (`User Data/claude-code-sessions`
+and `local-agent-mode-sessions`), so a chat opened in a clone appears everywhere.
+Same-name files from different accounts are kept apart by falling back to
+`local_<cliSessionId>.json`; a running clone is skipped (quit it and re-run), and
+`--no-instances` keeps the pass to the base app. It backs up each store first and
+only ever *adds* files (never deletes).
 
 > Your `~/.claude/projects` transcripts are account-independent already; this just
 > makes the app's list surface them. **Cloud "Chat" conversations (claude.ai) are
@@ -1094,6 +1152,17 @@ keyflip instance enable-all claude
 
 **Deep link trap avoidance:** When launching a specific instance, keyflip closes ALL other instances of that tool first. This prevents macOS from routing deep links (e.g., `claude://` URLs) to the wrong instance.
 
+**Which logins are actually isolated:** a clone isolates the app's *profile* (cookies,
+caches, window state), not every credential the tool owns. Claude is the only fully
+clone-isolated tool: its CLI config (`CLAUDE_CONFIG_DIR`) and desktop user data both
+live inside the instance. ChatGPT/Kiro keep their login in a global store
+(`~/.codex/auth.json`, the Keychain and `~/.aws/sso/cache`) that every clone shares —
+using a clone for a different account still needs `keyflip chatgpt switch` /
+`keyflip kiro switch` first. Antigravity (Keychain `gemini/antigravity`) and Qoder
+(`~/.qoder/.auth/user`) have no instance adapter and keep their auth in a global
+store — cloning would not separate them. Cursor is defined but unverified on the
+test machine.
+
 **Troubleshooting:**
 
 - *“No instance found for claude/work”* — create it first; the slug is the account name, so `yahoo@gmail.com` and `yahoo` are different slugs. `keyflip instance list` prints the exact `tool/slug` pairs.
@@ -1102,7 +1171,12 @@ keyflip instance enable-all claude
 - *`harden` refuses while the clone is running* — quit it first (`keyflip instance kill claude/<slug>`). A running app owns `config.json` and rewrites it on exit, so writing underneath it would silently revert.
 - *Launching one instance closes the others* — deliberate; two live copies would make macOS route deep links to the wrong one.
 - *`du` reports hundreds of MB per clone* — expected on APFS: untouched blocks are shared physically. Judge real cost with a before/after `df`.
-- *The clone will not launch after `harden` patched `Info.plist`* — editing the plist invalidates the app's code signature. Repair it with an ad-hoc signature: `codesign --force --deep --sign - "<instance>/<Tool>.app"`. This is a macOS-level repair, not something keyflip automates.
+- *The clone will not launch after `harden` patched `Info.plist`* — current keyflip re-signs the outer bundle
+  ad-hoc immediately after patching and puts the original plist back if signing fails, so this should not
+  happen. If a clone created by an older version is stuck, quit it and re-run
+  `keyflip instance harden <tool>/<slug>`; as a last resort recreate the clone. Do **not** repair it with
+  `codesign --deep`: deep-signing rewrites Apple's nested helpers, which the automated path deliberately
+  leaves untouched.
 
 **Backward compatibility:** The old `keyflip claude-profiles` commands still work via a compatibility wrapper that maps them to the generic `keyflip instance` system. Use `keyflip instance --help` for current syntax.
 

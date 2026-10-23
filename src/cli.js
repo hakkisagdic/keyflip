@@ -81,6 +81,7 @@ import * as _browser from './browser.js';
 import * as _browserswitch from './browserswitch.js';
 import * as _kiro from './kiro.js';
 import * as _antigravity from './antigravity.js';
+import * as _codex from './codex.js';
 import * as _cfg from './config.js';
 import * as _svc from './autoswitchservice.js';
 import * as _groups from './groups.js';
@@ -289,7 +290,10 @@ function usage() {
     '  keyflip transfer serve [--receive] | pull [<host>] --code X | push <host> --code X   LIVE device-to-device over the LAN',
   );
   print('                                 add --qr to `serve` to show a scannable QR of the pairing code');
-  print("  keyflip consolidate [--watch]  sync every account's chat index so each shows ALL conversations");
+  print(
+    "  keyflip consolidate [--watch] [--no-instances]  sync every account's chat index so each shows ALL conversations",
+  );
+  print('                                 (base app + keyflip clone User Data stores; --no-instances skips clones)');
   print('  keyflip sessions [--search T] [--here]   browse Claude Code conversations (all accounts)');
   print("  keyflip sessions rebind <old-path> <new-path>   re-link a project's chat history after you");
   print('                                 renamed/moved its folder (transcripts + desktop-app records)');
@@ -363,6 +367,8 @@ function usage() {
   print('                                 usage; `kiro import <slug>` migrates keyflip:surface:kiro:* captures');
   print('  keyflip antigravity [status|list|capture|switch]  ANTIGRAVITY CLI (Keychain gemini/antigravity):');
   print('                                 capture/save current login, switch accounts, list saved ones');
+  print('  keyflip chatgpt [status|list|capture|switch|refresh]  CHATGPT.app + CODEX CLI share ONE');
+  print('                                 login (~/.codex/auth.json): capture/switch/remove it, refresh in place');
   print('  keyflip skill add <owner/repo|./dir|file.tgz>   install a skill; also: skill list|remove');
   print('  keyflip proxy start [--wire] | stop | status | stats');
   print('                                 command-started failover proxy (429/5xx → next account)');
@@ -377,7 +383,7 @@ function usage() {
   print('  keyflip refresh --daemon-start | --daemon-stop | --daemon-status');
   print('                                 run a continuous background daemon that checks expiry every 5 min;');
   print(
-    '                                 proactively refreshs Antigravity/ChatGPT, Kiro uses reactive hash-check only',
+    '                                 proactively refreshes Antigravity and the live ChatGPT/Codex auth; Kiro uses reactive hash-check only',
   );
   print('  keyflip refresh --metrics      show refresh daemon statistics (checks, refreshes, failures per account)');
   print('  keyflip claude-profiles <list|create|launch|focus|kill|enable-all>');
@@ -12353,6 +12359,12 @@ function consolidateAndReport(ctx) {
   if (appctl.isClaudeRunning(ctx.platform)) return { ok: false, merged: 0, reason: 'Claude still running' };
   const c = appsessions.consolidate(ctx);
   if (c.ok && c.merged) print('  ↳ shared ' + c.merged + ' session pointer(s) so every account shows them all.');
+  if (c.skippedRunning)
+    print(
+      '  ↳ skipped ' +
+        c.skippedRunning +
+        ' running instance clone(s); quit them and run `keyflip consolidate` to include their chats.',
+    );
   return c;
 }
 
@@ -12716,10 +12728,222 @@ async function cmdAntigravity(ctx, rest) {
   );
 }
 
-// `keyflip consolidate [--watch [--interval N]]` — sync every account's chat
-// index so each one shows ALL conversations (gap #3/#4). The desktop app's store
-// is locked while it runs, so a one-shot offers to bounce the app; --watch re-syncs
-// on an interval whenever the app is closed (a foreground watcher, Ctrl-C to stop).
+// `keyflip chatgpt [status|list|capture|switch|refresh|remove]` — ChatGPT.app and
+// the Codex CLI share ONE credential file (~/.codex/auth.json), so one command
+// manages both. Alias: `keyflip codex`.
+function codexLeft(iso) {
+  if (!iso) return 'unknown';
+  const ms = new Date(iso).getTime() - Date.now();
+  if (!isFinite(ms)) return 'unknown';
+  if (ms <= 0) return 'expired';
+  const m = Math.round(ms / 60000);
+  if (m < 60) return m + 'm';
+  const h = Math.round(m / 60);
+  if (h < 48) return h + 'h';
+  return Math.round(h / 24) + 'd';
+}
+
+async function cmdChatGPT(ctx, rest) {
+  logmod.log('chatgpt invoked');
+  const hasSub = rest[0] && rest[0].indexOf('-') !== 0;
+  const sub = hasSub ? rest[0] : 'status';
+  const args = hasSub ? rest.slice(1) : rest.slice();
+  const positional = args.filter(function (a) {
+    return a && a[0] !== '-';
+  });
+  const has = function (f) {
+    return args.indexOf(f) !== -1;
+  };
+  const force = has('--force') || has('-y');
+  const dryRun = has('--dry-run');
+  const noVerify = has('--no-verify');
+
+  if (sub === 'status' || sub === 'show') {
+    const st = _codex.status(ctx);
+    print(style.bold('ChatGPT / Codex live session') + '  ' + style.dim('(shared ' + st.path + ')'));
+    if (st.live) {
+      print(
+        '  live  ' +
+          style.bold(st.live.email || 'signed in (e-mail unknown)') +
+          (st.live.plan ? '  ' + st.live.plan : '') +
+          '  ' +
+          style.dim('expires in ' + codexLeft(st.live.expiresAt)) +
+          (st.live.hasRefreshToken ? '' : '  ' + style.warn('(no refresh token)')),
+      );
+      if (st.live.needsRefresh)
+        print(
+          '  ' +
+            style.warn('⚠') +
+            ' access token ' +
+            (st.live.refreshReason === 'expired' ? 'has expired' : 'expires within 24h') +
+            ' — run `keyflip chatgpt refresh`' +
+            (st.live.hasRefreshToken ? '.' : ' (or sign in again).'),
+        );
+    } else {
+      print('  live  ' + style.dim('not signed in') + (st.error ? '  ' + style.warn(st.error) : ''));
+    }
+    if (st.running.length)
+      print('  app   ' + style.warn(st.running.join(', ') + ' running') + ' — quit before switching.');
+    if (!st.accounts.length) {
+      print('\nNo ChatGPT/Codex accounts saved yet. Run: ' + style.bold('keyflip chatgpt capture'));
+    } else {
+      print('\nSaved accounts (' + st.accounts.length + '):');
+      st.accounts.forEach(function (a, i) {
+        const active = st.live && a.email && st.live.email && a.email === st.live.email;
+        print(
+          '  ' +
+            (active ? style.ok('*') : ' ') +
+            ' ' +
+            (i + 1) +
+            '. ' +
+            style.bold(a.slug) +
+            (a.email ? '  ' + a.email : '') +
+            (a.plan ? '  ' + style.dim(a.plan) : '') +
+            '  ' +
+            style.dim('expires in ' + codexLeft(a.expiresAt)) +
+            (a.needsRefresh ? '  ' + style.warn('refresh due') : ''),
+        );
+      });
+    }
+    jsonOut(Object.assign({ surface: 'codex' }, st));
+    return;
+  }
+
+  if (sub === 'list') {
+    const accounts = _codex.listCaptures(ctx);
+    if (!accounts.length) print('No ChatGPT/Codex accounts saved. Run: keyflip chatgpt capture');
+    else {
+      print('Saved ChatGPT/Codex accounts (' + accounts.length + '):');
+      accounts.forEach(function (a, i) {
+        print(
+          '  ' +
+            (i + 1) +
+            '. ' +
+            style.bold(a.slug) +
+            '  ' +
+            (a.email || style.dim('(email unknown)')) +
+            (a.plan ? '  ' + a.plan : '') +
+            '  ' +
+            style.dim('expires in ' + codexLeft(a.expiresAt)),
+        );
+      });
+    }
+    jsonOut({ accounts: accounts });
+    return;
+  }
+
+  if (sub === 'capture' || sub === 'save') {
+    const r = _codex.capture(ctx, { name: positional[0] });
+    print(
+      style.ok('✓') + ' captured ChatGPT/Codex account ' + style.bold(r.slug) + (r.email ? ' (' + r.email + ')' : ''),
+    );
+    print(
+      style.dim(
+        '  auth.json lives in ' +
+          _codex.accountDir(ctx, r.slug) +
+          ' (0600); meta.json holds no secrets. ChatGPT.app and Codex CLI share this one login.',
+      ),
+    );
+    jsonOut({ account: r });
+    return;
+  }
+
+  if (sub === 'switch' || sub === 'use') {
+    if (!positional[0])
+      return fail('usage: keyflip chatgpt switch <name|number|email> [--dry-run] [--force] [--no-verify]');
+    const r = _codex.switchTo(ctx, positional[0], { dryRun: dryRun, force: force, noVerify: noVerify });
+    if (r.dryRun) {
+      print(style.bold('ChatGPT/Codex switch plan (dry run — nothing was written)'));
+      print(
+        '  target: ' +
+          style.bold(r.plan.target) +
+          (r.plan.email ? '  ' + r.plan.email : '') +
+          '  live now: ' +
+          (r.plan.live.email || 'nobody'),
+      );
+      print(
+        '  would write ' +
+          r.plan.path +
+          '  (' +
+          r.plan.write.bytes +
+          ' bytes, expires in ' +
+          codexLeft(r.plan.write.expiresAt) +
+          ')',
+      );
+      if (r.plan.running.length)
+        print(
+          style.warn('⚠') +
+            ' running: ' +
+            r.plan.running.join(', ') +
+            ' (the real switch will refuse without --force).',
+        );
+      jsonOut({ dryRun: true, plan: r.plan });
+      return;
+    }
+    print(style.ok('✓') + ' switched ChatGPT/Codex to ' + style.bold(r.slug) + (r.email ? ' (' + r.email + ')' : ''));
+    if (r.capturedOutgoing) print('  ' + style.dim('saved the outgoing login as ') + style.bold(r.capturedOutgoing));
+    if (r.backup) print('  ' + style.dim('previous auth.json backed up to ' + r.backup));
+    if (!r.verified) print('  ' + style.warn('⚠') + ' identity check skipped (--no-verify).');
+    else print('  ' + style.dim('read back and verified; restart ChatGPT/Codex to pick it up.'));
+    if (r.expiresAt && new Date(r.expiresAt).getTime() <= Date.now())
+      print(
+        '  ' +
+          style.warn('·') +
+          ' the stored access token has expired — Codex will refresh it with its refresh token on first use.',
+      );
+    jsonOut(r);
+    return;
+  }
+
+  if (sub === 'refresh') {
+    const r = await _codex.refreshLive(ctx, { force: force });
+    if (r.skipped === 'no-live-auth') return fail('no live ChatGPT/Codex login at ' + r.path + ' — sign in first.');
+    if (r.skipped === 'unreadable') return fail('live auth.json is unreadable: ' + (r.error || 'unknown error'));
+    if (r.skipped === 'not-due') {
+      print(
+        style.dim(
+          'not due: the access token still has ' +
+            codexLeft(r.expiresAt) +
+            ' left (threshold 24h). Use --force to rotate now.',
+        ),
+      );
+      jsonOut({ refresh: r });
+      return;
+    }
+    if (r.skipped === 'running') {
+      return fail(
+        'quit ' +
+          r.running.join(' and ') +
+          ' first — a running app owns auth.json and would overwrite the rotated token.',
+      );
+    }
+    print(
+      style.ok('✓') +
+        ' refreshed the live ChatGPT/Codex token' +
+        (r.expiresAt ? '  (' + style.dim('expires in ' + codexLeft(r.expiresAt)) + ')' : ''),
+    );
+    if (r.updatedCaptures && r.updatedCaptures.length)
+      print('  ' + style.dim('updated saved capture(s): ' + r.updatedCaptures.join(', ')));
+    jsonOut({ refresh: r });
+    return;
+  }
+
+  if (sub === 'remove' || sub === 'rm') {
+    if (!positional[0]) return fail('usage: keyflip chatgpt remove <name|number> --force');
+    const slug = _codex.resolveCapture(ctx, positional[0]);
+    if (!slug) return fail("no such ChatGPT/Codex account: '" + positional[0] + "' (see `keyflip chatgpt list`)");
+    if (!force) return fail('this deletes the saved credential for good; re-run with --force.');
+    const r = _codex.removeCapture(ctx, slug);
+    print(style.ok('✓') + ' removed ChatGPT/Codex account ' + style.bold(r.removed));
+    jsonOut(r);
+    return;
+  }
+
+  return fail(
+    "unknown chatgpt command: '" + sub + "' (status|list|capture|switch|refresh|remove). Try `keyflip chatgpt status`.",
+  );
+}
+
 // `keyflip refresh [--all] [--json]` — revive stored OAuth tokens BEFORE you need them.
 // Switching is the wrong time to discover a token died: Anthropic rotates the refresh token on every
 // use, so a capture that sat unused while the live session kept refreshing is now stale, and the
@@ -12848,7 +13072,7 @@ async function cmdRefresh(ctx, rest) {
       if (st.log) print('  ' + style.dim('logs to ' + st.log));
       print(
         style.dim(
-          '  Checks credential expiry every 5 minutes. Proactively refreshes Antigravity/ChatGPT; Kiro uses reactive hash-check only.',
+          '  Checks credential expiry every 5 minutes. Proactively refreshes Antigravity and the live ChatGPT/Codex login; Kiro uses reactive hash-check only.',
         ),
       );
     }
@@ -12927,7 +13151,7 @@ async function cmdRefresh(ctx, rest) {
     );
     print(
       style.dim(
-        '  It checks credential expiry every 5 minutes and proactively refreshes Antigravity/ChatGPT tokens. Kiro uses reactive-only hash comparison.',
+        '  It checks credential expiry every 5 minutes and proactively refreshes Antigravity and the live ChatGPT/Codex login (never while the app runs). Kiro uses reactive-only hash comparison.',
       ),
     );
     print(style.dim('  Stop with: keyflip refresh --daemon-stop.'));
@@ -13160,8 +13384,15 @@ async function cmdVerify(ctx, rest) {
   return 0;
 }
 
+// `keyflip consolidate [--watch [--interval N]] [--no-instances]` — sync every account's chat
+// index so each one shows ALL conversations (gap #3/#4). The desktop app's store
+// is locked while it runs, so a one-shot offers to bounce the app; --watch re-syncs
+// on an interval whenever the app is closed (a foreground watcher, Ctrl-C to stop).
 async function cmdConsolidate(ctx, rest) {
-  if (!ctx.appDataDir) return fail('desktop chat sync is macOS/Windows-only (no Claude Desktop data dir here).');
+  const includeInstances = rest.indexOf('--no-instances') === -1;
+  const instanceRoots = includeInstances ? appsessions.instanceRootsWithStore(ctx, appsessions.instanceRoots(ctx)) : [];
+  if (!ctx.appDataDir && !instanceRoots.length)
+    return fail('desktop chat sync is macOS/Windows-only (no Claude Desktop data dir here).');
   const watch = rest.indexOf('--watch') !== -1;
   const ii = rest.indexOf('--interval');
   const interval = ii !== -1 ? Math.max(5, parseInt(rest[ii + 1], 10) || 30) : 30;
@@ -13170,7 +13401,7 @@ async function cmdConsolidate(ctx, rest) {
   async function syncLocked() {
     const l = await lock.acquire(ctx.configDir);
     try {
-      return appsessions.consolidate(ctx);
+      return appsessions.consolidate(ctx, { includeInstances: includeInstances });
     } finally {
       l.release();
     }
@@ -13180,7 +13411,9 @@ async function cmdConsolidate(ctx, rest) {
     print(
       'Watching — re-syncing chats across accounts every ' +
         interval +
-        's while Claude Desktop is closed. Ctrl-C to stop.',
+        's while Claude Desktop is closed' +
+        (includeInstances ? ' (including non-running instance clones)' : '') +
+        '. Ctrl-C to stop.',
     );
     logmod.log('consolidate --watch started (' + interval + 's)');
 
@@ -13220,10 +13453,28 @@ async function cmdConsolidate(ctx, rest) {
           (c.code || 0) +
           ', Cowork: ' +
           (c.cowork || 0) +
+          (c.instances ? ', instance clones: ' + c.instances : '') +
           ').',
       );
     else print(style.warn('·') + ' nothing to sync' + (c.reason ? ' (' + c.reason + ')' : '') + '.');
-    jsonOut({ consolidated: { merged: c.merged || 0, code: c.code || 0, cowork: c.cowork || 0 } });
+    if (c.skippedRunning)
+      print(
+        style.warn('⚠') +
+          ' skipped ' +
+          c.skippedRunning +
+          ' running clone(s): ' +
+          (c.runningLabels || []).join(', ') +
+          ' — quit them and re-run to include their chats.',
+      );
+    jsonOut({
+      consolidated: {
+        merged: c.merged || 0,
+        code: c.code || 0,
+        cowork: c.cowork || 0,
+        instances: c.instances || 0,
+        skippedRunning: c.skippedRunning || 0,
+      },
+    });
     return;
   }
   // App is open — its session store is locked. Offer to bounce it, else defer.
@@ -13240,9 +13491,20 @@ async function cmdConsolidate(ctx, rest) {
     await waitForQuit(ctx);
     const c = await syncLocked();
     print(style.ok('✅') + ' synced ' + (c.merged || 0) + ' session pointer(s) across accounts.');
+    if (c.skippedRunning)
+      print(
+        style.warn('⚠') + ' skipped ' + c.skippedRunning + ' running clone(s) — quit them and re-run to include them.',
+      );
     print('Reopening Claude...');
     appctl.openClaude(ctx.platform);
-    jsonOut({ consolidated: { merged: c.merged || 0, bounced: true } });
+    jsonOut({
+      consolidated: {
+        merged: c.merged || 0,
+        instances: c.instances || 0,
+        skippedRunning: c.skippedRunning || 0,
+        bounced: true,
+      },
+    });
     return;
   }
   return fail(
@@ -14447,6 +14709,13 @@ async function dispatch(ctx, cmd, rest) {
               return cmdAntigravity(ctx, rest);
             })
           : cmdAntigravity(ctx, rest);
+      case 'chatgpt':
+      case 'codex':
+        return ['capture', 'save', 'switch', 'use', 'remove', 'rm', 'refresh'].indexOf(rest[0]) !== -1
+          ? withLock(ctx, function () {
+              return cmdChatGPT(ctx, rest);
+            })
+          : cmdChatGPT(ctx, rest);
       case 'instance':
       case 'inst':
         return cmdInstance(ctx, rest);

@@ -95,6 +95,7 @@ import * as _teampool from './teampool.js';
 import * as _swarm from './swarm.js';
 import * as _config from './config.js';
 import * as _codexbar from './codexbar.js';
+import * as _codex from './codex.js';
 import * as _fsutil from './fsutil.js';
 
 // Mutating tools all gate on confirm:true — the agent must ask the user first.
@@ -479,7 +480,7 @@ const TOOLS = [
     name: 'keyflip_switch',
     title: 'Switch Claude account',
     description:
-      'Switch the active Claude account (CLI credential + desktop-app login) to a saved profile. Other tools have their own flows: keyflip_instances / keyflip_instance_* manage isolated desktop instances for claude, kiro, chatgpt and cursor. The desktop app is NOT closed automatically; a running Claude app picks up the new account on its next request. IMPORTANT: this changes which account is billed and rate-limited. Ask the user before calling, then set confirm=true. Call keyflip_switch_plan FIRST when it is not obvious that the target works — a clean return value has repeatedly hidden a switch that did not produce a usable machine, so this one reads itself back: `verified` says usable now / usable, decaying / NOT usable.',
+      'Switch the active Claude account (CLI credential + desktop-app login) to a saved profile. Other tools have their own flows: keyflip_instances / keyflip_instance_* manage isolated desktop instances for claude, kiro, chatgpt and cursor; keyflip_chatgpt* manage the ONE shared ChatGPT.app/Codex CLI login. The desktop app is NOT closed automatically; a running Claude app picks up the new account on its next request. IMPORTANT: this changes which account is billed and rate-limited. Ask the user before calling, then set confirm=true. Call keyflip_switch_plan FIRST when it is not obvious that the target works — a clean return value has repeatedly hidden a switch that did not produce a usable machine, so this one reads itself back: `verified` says usable now / usable, decaying / NOT usable.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -757,6 +758,96 @@ const TOOLS = [
             .join(', '),
       );
       return { refreshed: out };
+    },
+  },
+  {
+    name: 'keyflip_chatgpt',
+    title: 'ChatGPT/Codex account status',
+    description:
+      'Report the live ChatGPT.app / Codex CLI login and every saved one. Both apps share ONE credential file (~/.codex/auth.json), so this is the only surface for them; identity comes from the token claims, expiry is the access-token exp, and a save is listed even when it predates keyflip metadata. Never returns a token. Read-only.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    annotations: RO,
+    run: async function (ctx) {
+      return _codex.status(ctx);
+    },
+  },
+  {
+    name: 'keyflip_chatgpt_capture',
+    title: 'Save the live ChatGPT/Codex login',
+    description:
+      'Copy the live ~/.codex/auth.json into a saved, secret-free-metadata capture under the keyflip config dir (0600; never git-versioned). The slug defaults to the e-mail local part; pass name to override. Ask the user before writing, then confirm=true.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Optional slug (default: e-mail local part).' },
+        confirm: { type: 'boolean', description: 'Must be true — set it only after the user has agreed.' },
+      },
+      required: ['confirm'],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    run: async function (ctx, args) {
+      needConfirm(args);
+      const r = _codex.capture(ctx, { name: args && args.name ? String(args.name) : undefined });
+      return { account: r };
+    },
+  },
+  {
+    name: 'keyflip_chatgpt_switch',
+    title: 'Switch ChatGPT/Codex account',
+    description:
+      'Write a saved login back to ~/.codex/auth.json, which BOTH ChatGPT.app and the Codex CLI read. Refuses while either is running unless force=true; backs up the outgoing auth.json first and captures it so it is not lost; reads the file back and checks the identity. This changes which account is billed. Ask the user first, then confirm=true. dry_run=true plans without writing.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        account: { type: 'string', description: 'Saved slug, 1-based number, or e-mail (from keyflip_chatgpt).' },
+        dry_run: { type: 'boolean', description: 'Plan only; write nothing.' },
+        force: {
+          type: 'boolean',
+          description: 'Switch even while ChatGPT/Codex is running (they may overwrite it on exit).',
+        },
+        confirm: { type: 'boolean', description: 'Must be true — set it only after the user has agreed.' },
+      },
+      required: ['account', 'confirm'],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
+    run: async function (ctx, args) {
+      needConfirm(args);
+      if (args.dry_run === true) {
+        return { switch: _codex.switchTo(ctx, String(args.account), { dryRun: true }) };
+      }
+      const l = await lock.acquire(ctx.configDir);
+      try {
+        return { switch: _codex.switchTo(ctx, String(args.account), { force: args.force === true }) };
+      } finally {
+        l.release();
+      }
+    },
+  },
+  {
+    name: 'keyflip_chatgpt_refresh',
+    title: 'Refresh the live ChatGPT/Codex token',
+    description:
+      'Rotate the live ~/.codex/auth.json access token through the documented refresh_token grant. Only runs when less than 24h remain (force=true overrides), and never while ChatGPT/Codex is running — a running app owns the file and would overwrite the rotation. Saved captures sharing the same refresh-token lineage are updated too. Ask the user first, then confirm=true.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        force: { type: 'boolean', description: 'Refresh even when the current token is not near expiry.' },
+        confirm: { type: 'boolean', description: 'Must be true — set it only after the user has agreed.' },
+      },
+      required: ['confirm'],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
+    run: async function (ctx, args) {
+      needConfirm(args);
+      const l = await lock.acquire(ctx.configDir);
+      try {
+        return { refresh: await _codex.refreshLive(ctx, { force: args.force === true }) };
+      } finally {
+        l.release();
+      }
     },
   },
   {
@@ -1332,7 +1423,7 @@ const TOOLS = [
     name: 'keyflip_consolidate',
     title: 'Sync chats across accounts',
     description:
-      'Merge the Claude desktop app\'s session stores so EVERY account sees all conversations (Cowork + Claude Code sessions). Requires the Claude desktop app to be CLOSED (it writes the app\'s store) — returns {ok:false, reason:"Claude still running"} otherwise. Mutating — ask the user, then confirm=true.',
+      "Merge the Claude desktop app's session stores — the base app AND every non-running keyflip instance clone — so EVERY account sees all conversations (Cowork + Claude Code sessions). Filename collisions between accounts are resolved with a transcript-derived name instead of dropping a pointer. Requires the base Claude desktop app to be CLOSED; a clone counted by a live instance.pid is skipped and reported. Mutating — ask the user, then confirm=true.",
     inputSchema: {
       type: 'object',
       properties: { confirm: confirmProp.confirm },
@@ -1345,7 +1436,16 @@ const TOOLS = [
       if (appctl.isClaudeRunning(ctx.platform))
         return { ok: false, reason: 'Claude still running — close the desktop app first' };
       const c = appsessions.consolidate(ctx);
-      return { ok: !!c.ok, merged: c.merged || 0, reason: c.reason || null };
+      return {
+        ok: !!c.ok,
+        merged: c.merged || 0,
+        code: c.code || 0,
+        cowork: c.cowork || 0,
+        instances: c.instances || 0,
+        skippedRunning: c.skippedRunning || 0,
+        runningLabels: c.runningLabels || [],
+        reason: c.reason || null,
+      };
     },
   },
   {

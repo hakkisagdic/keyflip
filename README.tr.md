@@ -239,7 +239,7 @@ keyflip fleet send-account <hesap> --to <makine> [--from <makine>]   # hesabı d
 keyflip fleet collect         # filoda yayınlanmış tüm hesapları bu makineye topla
 keyflip fleet keys            # her makinenin imza-anahtarı parmak izini denetle (ok / CHANGED / unpinned)
 keyflip fleet trust <makine>  # meşru bir yeniden-anahtarlama SONRASI makinenin imza anahtarını yeniden sabitle (aşağıdaki "Filo — origin authentication")
-keyflip consolidate [--watch] # her hesabın sohbet dizinini eşitle; her biri TÜM sohbetleri görsün
+keyflip consolidate [--watch] [--no-instances]   # her hesabın + kopyanın sohbet dizinini birleştir; her biri TÜM sohbetleri görsün
 keyflip remove <ad|numara>    # kayıtlı hesabı sil (onay ister; --force ile atla)
 keyflip logout [--browser] [--desktop]   # canlı oturum(lar)dan çık — kayıtlı hesaplar korunur
 keyflip history | undo | restore <ref>   # git-versiyonlu config: her değişikliği incele / geri al / geri dön (sırlar asla commit edilmez)
@@ -441,13 +441,26 @@ birleştirir; her hesap hepsini görür. **claude.ai Chat** ise bulutta, hesap-b
 sunucu tarafında; `keyflip chat` bunu bir **claude.ai oturum çerezi**yle okur.
 **Deneyseldir** (belgesiz API) ve çerez-bağımlıdır:
 
+**Birleştirme hem temel uygulamayı hem de keyflip kopyalarını kapsar.** Claude
+Desktop Recents/Cowork işaretçilerini hesap-başına `<accountUuid>/<orgUuid>/`
+klasörlerine yazar; her `keyflip instance` kopyası bunların kendi kopyasını
+`~/.keyflip-instances/<araç>/<slug>/User Data/` altında taşır. `consolidate` bütün
+bu depoları hesap klasörleriyle birlikte birleştirir; bir kopyada açılan sohbet
+temel uygulamada ve diğer tüm kopyalarda görünür. İki hesap farklı transcript'ler
+için aynı `local_*.json` adını meşru olarak kullanabilir: keyflip birini sessizce
+düşürmek yerine `local_<cliSessionId>.json` adına geri düşer ve `deleted_<id>`
+mezar taşı yine kazanır. `instance.pid`'i canlı bir kopya atlanır (dizini uygulama
+sahiplenir ve çıkışta yeniden yazar) ve sonuçta adıyla bildirilir; `--no-instances`
+yalnızca temel uygulamayla sınırlar. Birleştirme yalnızca dosya ekler ve önce her
+depoyu yedekler.
+
 **Kiro ve ChatGPT için birleştirme gerekmez.** Kiro sohbet durumunu tek IDE profilinde,
 hesaba göre değil çalışma alanına göre saklar (`User/workspaceStorage/<hash>/state.vscdb`
 ve `User/globalStorage/kiro.kiroagent/artifacts/sess_*`); hesap değişince yalnızca kimlik
 bilgisi değişir, yerel geçmiş yerinde kalır. ChatGPT sohbetleri hesap başına sunucuda tutar
 (claude.ai Chat gibi) ve yerel veri kökü (`~/Library/Application Support/Codex`) ortaktır —
-birleştirilecek hesap-başına sohbet dizini yoktur. Yalnızca Claude Desktop, Recents dizinini
-`<accountUuid>/<orgUuid>/` klasörlerine yazar; `consolidate` tam olarak bunları birleştirir.
+birleştirilecek hesap-başına sohbet dizini yoktur. keyflip ChatGPT'nin *girişini* yönetir
+(`keyflip chatgpt`), sohbet geçmişini değil.
 
 - Oturum çerezi otomatik bulunur ve her listeleme nereden okunduğunu yazar: uygulamanın
   kendi çerezi, yoksa claude.ai'a girişli bir tarayıcı (güncel masaüstü sürümleri
@@ -510,6 +523,46 @@ yüzeyin kendi baytlarını saklar; ama yüzey başına tamamen bağımsız zinc
 yüzeye bir tarayıcı girişi gerekir (#33). Süresi geçmiş kayıt `EXPIRED` görünür;
 ona geçiş taze bir giriş ister.
 
+### ChatGPT + Codex — tek ortak giriş (`chatgpt`, tüm platformlar)
+
+ChatGPT.app ve Codex CLI **aynı dosyayla** kimlik doğrular:
+`~/.codex/auth.json` (veya `$CODEX_HOME/auth.json`, kip 0600). Dosya OAuth
+token'larını — API-key girişinden sonra `OPENAI_API_KEY`'i de — tutar. Hesap
+e-postası, plan ve hesap kimliği id_token'dan okunur. Uygulamanın diskteki
+çerezleri burada **kimlik bilgisi değildir**: yalnızca Cloudflare/analytics
+kayıtları içerir.
+
+```bash
+keyflip chatgpt status          # canlı e-posta/plan/son geçerlilik + kayıtlı hesaplar; asla token değeri
+keyflip chatgpt capture [ad]    # canlı girişi kaydet (e-postasından otomatik adlandırır)
+keyflip chatgpt switch <ad|n|e-posta> [--dry-run] [--force] [--no-verify]
+keyflip chatgpt refresh [--force]   # şimdi döndür; --force 24s eşiğini yok sayar
+keyflip chatgpt list            # kayıtlı hesaplar ve token son geçerlilikleri
+keyflip chatgpt remove <ad> --force
+```
+
+`codex`, `chatgpt` için takma addır. Kayıtlar
+`~/.config/keyflip/surfaces/codex/<slug>/` altında: 0600 kipinde `auth.json` ve
+sır içermeyen `meta.json` (e-posta, plan, hesap kimliği, son geçerlilik — asla
+token). Geçiş canlı dosyayı yedekler, giden girişi en-iyi-çabayla yakalar, saklı
+baytları yazar ve geri okur (ham içerik + e-posta kimliği). ChatGPT/Codex
+çalışırken `--force` olmadan reddeder; çünkü uygulama token'ları önbelleğe alır ve
+çıkışta dosyayı yeniden yazar.
+
+**Yenileme yalnızca canlı dosyada ve soy-güvenlidir.** Erişim token'ları yaklaşık
+on gün yaşar (beş güne indiği görüldü). Arka plan yenileme daemon'ı (`keyflip
+refresh --daemon-start`) beş dakikada bir kontrol eder ve son geçerliliğe 24 saat
+kala **canlı** dosyayı döndürür — ChatGPT/Codex çalışırken asla. Az önce
+harcanan refresh token'ını aynen tutan kayıtlı bir kopya varsa o da güncellenir;
+böylece ona geri dönüş ölü bir token'ı tekrar oynatmaz. Uyuyan kayıtlar kendi
+başlarına yenilenmez: hesap başına tek soy, birbiriyle yarışan iki refresh token
+yok. Bu özellikten önce zaten bayatlamış bir kayıt yine taze giriş ister (eski
+refresh token'ı uygulama tarafından harcanmıştır); başarısız yenileme dosyayı olduğu
+gibi bırakır ve sağlayıcı hatasını bildirir; `refresh` ayrıca neden ertelediğini
+yazar (vadesi gelmedi / çalışıyor / refresh token yok). Gece `refresh --schedule`
+işi Claude OAuth token'larını kapsar; bu giriş için tek seferlik komut
+`keyflip chatgpt refresh`'tir.
+
 ### Aynı anda birden çok hesap — izole uygulama kopyaları (`instance`, macOS)
 
 > **Yalnızca macOS.** Bu komutlar bir macOS `.app` paketini `~/Library/Application Support`
@@ -557,6 +610,16 @@ olursa özgün plist geri konur ki kopya açılmaya devam etsin. Kiro/Cursor bö
 kopya uyarıdır, anahtarı olmayan araç ise olduğu gibi — `uncontrollable` — raporlanır. Eski
 `keyflip claude-profiles` komutları uyumluluk sarmalayıcısıyla çalışmaya devam eder.
 
+**Hangi girişler gerçekten izole:** bir kopya uygulamanın *profilini* (çerezler,
+önbellekler, pencere durumu) izole eder; aracın sahip olduğu her kimlik bilgisini değil.
+Tamamen kopya-izole tek araç Claude'dur: CLI yapılandırması (`CLAUDE_CONFIG_DIR`) ve
+masaüstü kullanıcı verisi kopyanın içinde yaşar. ChatGPT/Kiro girişi global bir depoda
+tutar (`~/.codex/auth.json`, Anahtar Zinciri ve `~/.aws/sso/cache`); her kopya bu depoyu
+paylaşır — farklı hesap için kopya kullanmak yine önce `keyflip chatgpt switch` /
+`keyflip kiro switch` ister. Antigravity (Anahtar Zinciri `gemini/antigravity`) ve Qoder
+(`~/.qoder/.auth/user`) için instance adaptörü yoktur ve girişleri globaldir; kopyalamak
+onları ayırmaz. Cursor tanımlı ama doğrulama makinesinde denenmedi.
+
 **Sorun giderme:**
 
 - *"No instance found for claude/work"* — önce oluşturun; slug hesap adıdır, yani `yahoo@gmail.com` ile
@@ -572,9 +635,12 @@ kopya uyarıdır, anahtarı olmayan araç ise olduğu gibi — `uncontrollable` 
   bağlantılarını yanlış olana yönlendirmesine yol açar.
 - *`du` kopya başına yüzlerce MB gösteriyor* — APFS'te beklenen: dokunulmamış bloklar fiziksel olarak
   paylaşılır. Gerçek maliyeti öncesi/sonrası `df` ile ölçün.
-- *`harden` `Info.plist`'i düzenledikten sonra kopya açılmıyor* — plist düzenlemesi uygulamanın kod
-  imzasını geçersiz kılar. Ad-hoc imzayla onarın: `codesign --force --deep --sign - "<örnek>/<Araç>.app"`.
-  Bu macOS düzeyinde bir onarımdır; keyflip otomatikleştirmez.
+- *`harden` `Info.plist`'i düzenledikten sonra kopya açılmıyor* — güncel keyflip plist'i yamaladıktan
+  hemen sonra dış paketi ad-hoc yeniden imzalar; imzalama başarısız olursa özgün plist'i geri koyar, yani
+  bu artık olmamalı. Eski sürümle oluşturulmuş bir kopya takıldıysa kapatıp
+  `keyflip instance harden <araç>/<slug>` komutunu yeniden koşun; son çare kopyayı yeniden oluşturun.
+  Onarım için `codesign --deep` **kullanmayın**: derin imzalama Apple'ın iç yardımcılarını yeniden yazar;
+  otomatik yol bilinçli olarak onlara dokunmaz.
 
 ### Görevleri hangi model koşar (`llm`)
 
@@ -635,6 +701,10 @@ keyflip refresh --unschedule
   bir şey zamanlanınca yeşile döner. MCP tarafında: `keyflip_refresh_schedule` (`action=status|install|
   remove`, `confirm` ister). Zamanlanmış bir yenilemenin *kurtaramayacağı* kısımlar için `keyflip
   chains`'e bak — masaüstü uygulamasının session cookie'si insan ister, hiçbir zamanlayıcı bunu değiştirmez.
+- **Diğer araçların kendi saatleri var.** ChatGPT/Codex erişim token'ı (~10 gün) ayrıca kurulan
+  yenileme daemon'ıyla (`keyflip refresh --daemon-start`, 5 dakikada bir) son geçerliliğe 24 saat
+  kala döndürülür — ChatGPT/Codex çalışırken asla. `keyflip chatgpt refresh` bunu elle bir kez yapar;
+  yukarıdaki gece zamanlayıcısı yalnızca Claude OAuth içindir.
 
 ### Her giriş ne kadar eski? (`keyflip freshness`)
 
@@ -995,7 +1065,8 @@ migrate + LAN
 (`keyflip_migrate_*`, `keyflip_transfer_pull`), WebDAV sync (`keyflip_sync_test/push/pull`),
 `keyflip://` linkleri (`keyflip_share/share_apply`), masaüstü gateway (`keyflip_gateway_*`), MCP-sunucu
 kaydı (`keyflip_mcpreg_*`), dizin pin'leri (`keyflip_link/links`), izole uygulama örnekleri
-(`keyflip_instances`, `keyflip_instance_*`), tanılama
+(`keyflip_instances`, `keyflip_instance_*`), ortak ChatGPT/Codex girişi
+(`keyflip_chatgpt`, `_chatgpt_capture`, `_chatgpt_switch`, `_chatgpt_refresh`), tanılama
 (`keyflip_doctor`, `keyflip_usage_history`), yedekler, skill'ler ve failover proxy. Her aracın düzgün JSON Şeması ve
 salt-okunur/yıkıcı anotasyonu var; **değiştiren araçlar `confirm: true` ister**
 ve açıklamaları agent'a önce kullanıcıya sormasını söyler. Sırlar MCP üzerinden
@@ -1054,7 +1125,13 @@ oturumlarını gösterir.
 
 keyflip her geçişte (uygulama kapalıyken) bu dizini **birleştirir** — diğer
 hesapların oturum işaretçilerini aktif olana kopyalar; böylece Recents hepsini
-gösterir. Önce yedek alır ve yalnızca dosya *ekler* (asla silmez).
+gösterir. Aynı geçiş **Cowork** oturum işaretçilerini de kapsar ve temel
+uygulamayı her **instance kopyasıyla** birleştirir (`User Data/claude-code-sessions`
+ve `local-agent-mode-sessions`); bir kopyada açılan sohbet her yerde görünür.
+Farklı hesapların aynı adlı dosyaları `local_<cliSessionId>.json` adına geri
+düşülerek ayrı tutulur; çalışan bir kopya atlanır (kapatıp yeniden koşun) ve
+`--no-instances` birleştirmeyi temel uygulamayla sınırlar. Önce her depoyu yedekler
+ve yalnızca dosya *ekler* (asla silmez).
 
 > `~/.claude/projects` transcript'leriniz zaten hesaptan bağımsızdır; bu sadece
 > uygulamanın listesinin onları göstermesini sağlar. **Bulut "Chat" sohbetlerine

@@ -151,4 +151,7 @@ test('the whole dispatch surface is covered (key commands present)', function ()
   ];
   for (const n of must) assert.ok(get(n), 'missing command: ' + n);
   assert.ok(CATALOG.length >= 60, 'catalog covers the bulk of the CLI surface');
+  // The ChatGPT/Codex adapter is reachable under both names.
+  assert.strictEqual(get('chatgpt').name, 'chatgpt');
+  assert.strictEqual(get('codex').name, 'chatgpt');
 });

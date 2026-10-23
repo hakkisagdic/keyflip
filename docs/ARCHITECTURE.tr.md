@@ -138,7 +138,8 @@ Claude masaustu uygulamasi, tarayici otomasyonu ve uygulama duzeyi oturum yoneti
 |-------|------------|
 | `claude.js` | Claude masaustu uygulamasi entegrasyonu |
 | `appauth.js` | Masaustu uygulamasi kimlik dogrulama |
-| `appsessions.js` | Masaustu uygulamasi oturum yonetimi |
+| `appsessions.js` | Masaustu uygulamasi oturum yonetimi (hesaplar ve instance kopyalari arasi Recents/Cowork birlesimi) |
+| `codex.js` | ChatGPT.app + Codex CLI ortak girisi (`~/.codex/auth.json`): yakala, degistir, soy-guvenli yenile |
 | `instances.js` | Arac/hesap basina izole coklu-ornek uygulama kopyalari (Claude, Kiro, ChatGPT, Cursor) |
 | `browser.js` | Tarayici profili ve cerez yonetimi |
 | `chat.js` | Sohbet arayuzu entegrasyonu |

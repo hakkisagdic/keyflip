@@ -82,7 +82,8 @@ what `keyflip chat --as <name>` reads, so it is the way to make another account'
 Chat history readable without switching to it.
 
 **Via MCP:** almost everything here is also an MCP tool — `keyflip_login`, `keyflip_logout`,
-`keyflip_browser_status`/`_logout`/`_sync`, `keyflip_consolidate`, `keyflip_switch`/`_next`,
+`keyflip_browser_status`/`_logout`/`_sync`, `keyflip_chatgpt` (read-only status) and
+`keyflip_chatgpt_capture`/`_switch`/`_refresh` (need `confirm`), `keyflip_consolidate`, `keyflip_switch`/`_next`,
 `keyflip_switch_plan` (read-only: the dry run, no confirm needed), `keyflip_verify` (per-account
 liveness), `keyflip_refresh` (guarded token revival), `keyflip_refresh_schedule`
 (`action=status|install|remove` for the nightly `refresh --all`; install/remove need `confirm`),
@@ -227,6 +228,31 @@ keyflip freshness [--json]    # (alias: age) how old each saved login is: cli to
 account; `keyflip provider off` restores it. Never put an API key in argv — use
 `--key-file -` (stdin) or a file.
 
+## ChatGPT + Codex (one shared login)
+
+ChatGPT.app and the Codex CLI authenticate with the same `~/.codex/auth.json`
+(or `$CODEX_HOME/auth.json`, mode 0600). The app's cookies are NOT a credential —
+they hold only Cloudflare/analytics entries.
+
+```bash
+keyflip chatgpt status          # live e-mail/plan/expiry + saved accounts, never a token value
+keyflip chatgpt list
+keyflip chatgpt capture [name]  # auto-named from the id_token e-mail
+keyflip chatgpt switch <name|n|email> [--dry-run] [--force] [--no-verify]
+keyflip chatgpt refresh [--force]   # one-shot; --force ignores the 24h threshold
+keyflip chatgpt remove <name> --force
+```
+
+`codex` is an alias. Captures live under `~/.config/keyflip/surfaces/codex/<slug>/`
+(`auth.json` 0600 + secret-free `meta.json`). A switch refuses while ChatGPT/Codex
+runs unless `--force`, backs up the live file, captures the outgoing login
+best-effort, writes the stored bytes and verifies by raw read-back + e-mail identity.
+The refresh daemon rotates the **live** file within 24 hours of expiry — never while
+the app runs — and updates a capture only when it holds the exact refresh token that
+was just spent (lineage-safe; dormant captures never refresh independently). A failed
+refresh leaves the file untouched. MCP: `keyflip_chatgpt` (read) plus confirm-gated
+`keyflip_chatgpt_capture` / `_switch` / `_refresh`; none returns a token.
+
 ## Isolated app instances (one desktop app per account, macOS)
 
 `keyflip instance list|create|launch|focus|kill|enable-all|harden` manages APFS
@@ -237,7 +263,11 @@ A clone that can self-update may replace its bundle under a signed-in account;
 in `User Data/config.json`; ChatGPT: Sparkle Info.plist), and
 `keyflip instance harden` re-applies it. `keyflip doctor` reports the live state —
 a controllable clone still ON is a warning; Kiro/Cursor have no switch and are
-reported as such.
+reported as such. A clone isolates the app *profile* (cookies/cache/window state),
+not every credential: Claude is fully clone-isolated (`CLAUDE_CONFIG_DIR` + user
+data), but ChatGPT/Codex (`~/.codex/auth.json`), Kiro (Keychain + `~/.aws/sso/cache`),
+Antigravity and Qoder keep a global login — switch it first (`keyflip chatgpt` /
+`keyflip kiro`) before using that clone for another account.
 
 ## Reliability, history, backup, sharing, sync
 
@@ -362,13 +392,17 @@ reported as such.
   (consent-gated). (MCP: `keyflip_fleet_status` / `keyflip_fleet_keys` (read), `keyflip_fleet_push` /
   `keyflip_fleet_switch` / `keyflip_fleet_send_account` / `keyflip_fleet_collect` / `keyflip_fleet_trust`
   (need `confirm:true`; push also needs `passphrase_file`).)
-- `keyflip consolidate [--watch]` — sync every account's chat index so each shows
-  ALL conversations. The desktop app's store is locked while it runs, so a one-shot
-  offers to close→sync→reopen the app; `--watch` re-syncs on an interval whenever the
-  app is closed. Also runs automatically on a switch. (MCP: `keyflip_consolidate`.)
-  Claude Desktop is the only app with per-account chat folders; Kiro's chat state is
-  keyed by workspace and ChatGPT's conversations are server-side per account, so
-  neither needs (or has) a consolidation step.
+- `keyflip consolidate [--watch] [--no-instances]` — union every account's chat index so each shows
+  ALL conversations. It covers Claude Desktop's Recents AND Cowork stores in the base app **and in
+  every non-running instance clone** (`User Data/…`); a live `instance.pid` is skipped and reported,
+  and `--no-instances` limits the pass to the base app. Two accounts can use the same `local_*.json`
+  filename for different transcripts — keyflip then falls back to `local_<cliSessionId>.json` rather
+  than dropping one, and a `deleted_<id>` tombstone still wins. The desktop app's store is locked
+  while it runs, so a one-shot offers to close→sync→reopen the app; `--watch` re-syncs on an interval
+  whenever the app is closed. Also runs automatically on a switch. (MCP: `keyflip_consolidate`.)
+  Kiro's chat state is keyed by workspace and ChatGPT's conversations are server-side per account, so
+  neither has a per-account chat index to merge — but their **logins** are managed
+  (`keyflip kiro`, `keyflip chatgpt`).
 - `keyflip history` / `keyflip undo` / `keyflip restore <ref>` — keyflip's config/state dir
   is a git repo; every mutation auto-commits (**secrets are git-ignored** — creds/*.cred,
   browser sessions, tokens stay in the OS store), so any change is inspectable and
