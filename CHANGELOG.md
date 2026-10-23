@@ -94,7 +94,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   snapshot, and several profiles of one browser quit and reopen that browser only once. Capture age
   and days-left per surface already came from `keyflip freshness`.
 
+- **`keyflip_fleet_push` — an agent can check in with the fleet over MCP.** One confirm-gated tool
+  publishes this machine's encrypted status and processes the inbox, with two independent consent
+  flags: `with_secrets` decides whether credentials are published, and `apply` decides whether queued
+  switch / save-account commands are honoured (`false` reports them as skipped, which stays the safe
+  default). The inbox gate now lives in one shared `fleet.processInbox` used by both the CLI and MCP,
+  so the two paths cannot drift; the MCP result carries counts and per-command outcomes, never
+  credentials.
+
 ### Fixed
+
+- **The fleet no longer reports a machine as its own untrusted peer.** `fleet push` compared every
+  published status against the pinned keys without skipping the local machine, so each push warned
+  "new machine `<self>` is publishing but NOT trusted" and `keys` counted a phantom pending
+  entry. `reconcileKeys` now skips the local `machineId`; a Docker simulation asserts a machine never
+  flags itself.
 
 - **Windows CI is green again.** The suite had been failing on `windows-latest` since before 1.5.4
   (19 tests, node 20 and 22 alike), so a red CI built nothing. The failures were two kinds: tests
@@ -104,6 +118,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `secrets tolerate` accepts a pasted `C:/…` path, agent-facing thread paths stay POSIX-separated,
   `llm` finds the `claude.cmd` shim, and the CLI-spawning tests pin `KEYFLIP_CONFIG_DIR` instead of
   assuming `~/.config/keyflip`.
+
+### Tooling
+
+- **Docker fleet simulation (`test/fleet-docker/`).** Three keyflip machines in containers share one
+  rendezvous volume and exercise the real CLI end to end: encrypted status at rest (no plaintext
+  account data, mode 0600, wrong passphrase sees nothing), invite/join plus explicit trust pinning,
+  the keys audit, consent-gated switch apply and replay protection, and rejection of both an unpinned
+  sender and a peer whose key changed. `./run-simulation.sh` runs 10 checks and exits non-zero on
+  failure; `--keep` preserves the containers for inspection. Scope limits are documented: LAN
+  multicast discovery and token-bearing `send-account` are not simulated.
 
 ## [1.5.6] - 2026-10-19
 

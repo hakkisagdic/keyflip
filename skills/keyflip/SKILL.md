@@ -343,7 +343,9 @@ reported as such.
   are IGNORED — offer pairing, don't just trust it.
   `keyflip fleet push [--with-secrets]` publishes this machine's
   status (accounts + cached quota + recent chats with **reply status**: assistant=replied,
-  user=waiting) AND applies commands queued for it (consent-gated). `keyflip fleet status` (or the
+  user=waiting) AND applies commands queued for it (consent-gated). An agent can do the same over MCP
+  with `keyflip_fleet_push`: `with_secrets` and `apply` are SEPARATE consents, and omitting `apply`
+  reports queued switch/save commands as skipped. `keyflip fleet status` (or the
   web `fleet panel`) shows EVERY machine on one screen + flags chats that got a **new reply** since
   last check. `keyflip fleet switch <machine> <account>` queues a remote switch; `keyflip fleet
   send-account <acct> --to <machine> [--from <machine>]` distributes an account — so from machine A
@@ -355,8 +357,9 @@ reported as such.
   above or an explicit `fleet trust`, never on first sight (so a leaked passphrase can neither forge a
   command nor add a machine). If a peer's key later CHANGES it's flagged as possible key
   substitution and its commands are rejected until `keyflip fleet trust <machine>` re-pins the new key
-  (consent-gated). (MCP: `keyflip_fleet_status` / `keyflip_fleet_keys` (read), `keyflip_fleet_switch` /
-  `keyflip_fleet_send_account` / `keyflip_fleet_collect` / `keyflip_fleet_trust` (need `confirm:true`).)
+  (consent-gated). (MCP: `keyflip_fleet_status` / `keyflip_fleet_keys` (read), `keyflip_fleet_push` /
+  `keyflip_fleet_switch` / `keyflip_fleet_send_account` / `keyflip_fleet_collect` / `keyflip_fleet_trust`
+  (need `confirm:true`; push also needs `passphrase_file`).)
 - `keyflip consolidate [--watch]` — sync every account's chat index so each shows
   ALL conversations. The desktop app's store is locked while it runs, so a one-shot
   offers to close→sync→reopen the app; `--watch` re-syncs on an interval whenever the

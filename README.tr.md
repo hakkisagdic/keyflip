@@ -502,6 +502,12 @@ ona geçiş taze bir giriş ister.
 
 ### Aynı anda birden çok hesap — izole uygulama kopyaları (`instance`, macOS)
 
+> **Yalnızca macOS.** Bu komutlar bir macOS `.app` paketini `~/Library/Application Support`
+> altına kopyalar, `open` ile başlatır ve AppleScript ile sürer — bunların hiçbiri Linux/Windows'ta
+> yoktur. Oralarda komut *"`<Araç>.app` /Applications/… konumunda bulunamadı"* diyerek erken durur.
+> Bunun yerine `keyflip switch` kullanın: kimlik bilgisi geçişi her platformda çalışır, uygulama
+> kopyaları ise yalnızca macOS'tadır.
+
 Masaüstü uygulamalarının çerezleri ~30 günde düşer. `keyflip instance` her hesap için
 uygulamanın APFS copy-on-write kopyasını (`cp -cR`, neredeyse sıfır disk) ve ayrı bir
 `--user-data-dir` oluşturur; oturumlar birbirine karışmaz ve yeniden giriş istemez.
@@ -534,6 +540,25 @@ Otomatik güncelleme: uygulama kendi anahtarını sunuyorsa `create` onu kapatı
 çağrı tümüne; çalışan kopyayı önce kapatın — `config.json` uygulamanın elindedir ve üzerine yazar). `keyflip doctor` **canlı** durumu okur: kapatılabilir olduğu hâlde hâlâ açık bir
 kopya uyarıdır, anahtarı olmayan araç ise olduğu gibi — `uncontrollable` — raporlanır. Eski
 `keyflip claude-profiles` komutları uyumluluk sarmalayıcısıyla çalışmaya devam eder.
+
+**Sorun giderme:**
+
+- *"No instance found for claude/work"* — önce oluşturun; slug hesap adıdır, yani `yahoo@gmail.com` ile
+  `yahoo` ayrı slug'lardır. `keyflip instance list` tam `araç/slug` çiftlerini yazar.
+- *"`<Araç>.app` /Applications/… konumunda bulunamadı"* — keyflip uygulamayı indirmez, kopyalar.
+  Temel uygulamayı kurun ya da kurulu bir aracı seçin.
+- *Kopya açılışta oturumsuz görünüyor* — `create` uygulamayı kopyalar, girişi değil. Hesabın kayıtlı
+  uygulama oturumunu **o kopyaya** geri yükleyin: `keyflip switch <hesap> --instance claude/<slug>`
+  (`keyflip <hesap> --instance …` kısayolu da geçerli). Düz `keyflip switch` yalnızca temel uygulamaya dokunur.
+- *`harden` çalışan kopyayı reddediyor* — önce kapatın (`keyflip instance kill claude/<slug>`). Çalışan
+  uygulama `config.json`'ı belleğinde tutar ve çıkışta üzerine yazar; altına yazmak sessizce geri alınırdı.
+- *Bir örneği başlatmak diğerlerini kapatıyor* — bilinçli: iki canlı kopya, macOS'un `claude://`
+  bağlantılarını yanlış olana yönlendirmesine yol açar.
+- *`du` kopya başına yüzlerce MB gösteriyor* — APFS'te beklenen: dokunulmamış bloklar fiziksel olarak
+  paylaşılır. Gerçek maliyeti öncesi/sonrası `df` ile ölçün.
+- *`harden` `Info.plist`'i düzenledikten sonra kopya açılmıyor* — plist düzenlemesi uygulamanın kod
+  imzasını geçersiz kılar. Ad-hoc imzayla onarın: `codesign --force --deep --sign - "<örnek>/<Araç>.app"`.
+  Bu macOS düzeyinde bir onarımdır; keyflip otomatikleştirmez.
 
 ### Görevleri hangi model koşar (`llm`)
 
@@ -934,7 +959,9 @@ claude mcp add keyflip -- keyflip mcp     # veya: keyflip mcp --setup
 **Tüm CLI yüzeyi 160+ MCP aracı olarak sunulur** — agent hiçbir şeyi kabuğa
 dökmeden yapabilir: hesaplar (`keyflip_status/list/switch/next/add/account_remove`), provider'lar
 (`keyflip_providers`, `keyflip_provider_use/add/remove`, `keyflip_test_provider`, `keyflip_speedtest`),
-**filo** kontrol düzlemi (`keyflip_fleet_status/switch/send_account/collect/keys/trust`),
+**filo** kontrol düzlemi (`keyflip_fleet_status/push/switch/send_account/collect/keys/trust`;
+`push` bu makinenin durumunu yayınlar ve gelen kutusunu işler — sırlar ve kuyruktaki
+switch/save komutlarının uygulanması ayrı izin bayraklarıdır),
 oturumlar (`keyflip_sessions`, `keyflip_resume_command`, archive/distill/compact), **hesaplar arası tek
 görev** (`keyflip_threads` salt-okunurdur: liste / `slug` / `timeline` / `suggest` / tersten `id` arama;
 `keyflip_thread_create|add|remove|drop|mirror` yazar ve `confirm` ister), **geçiş ön kontrolü**

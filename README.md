@@ -896,7 +896,9 @@ claude mcp add keyflip -- keyflip mcp     # or see: keyflip mcp --setup
 **The full CLI surface is exposed as 160+ MCP tools**, so an agent can do
 everything without shelling out — accounts (`keyflip_status/list/switch/next/add/account_remove`),
 providers (`keyflip_providers`, `keyflip_provider_use/add/remove`, `keyflip_test_provider`,
-`keyflip_speedtest`), the **fleet** control plane (`keyflip_fleet_status/switch/send_account/collect/keys/trust`),
+`keyflip_speedtest`), the **fleet** control plane (`keyflip_fleet_status/push/switch/send_account/collect/keys/trust`
+— `push` publishes this machine's status and processes the inbox, with separate consent flags for
+secrets and for applying queued switch/save commands),
 sessions (`keyflip_sessions`, `keyflip_resume_command`, archive/distill/compact), **one named task
 across accounts** (`keyflip_threads` is read-only: list / `slug` / `timeline` / `suggest` / reverse `id`
 lookup; `keyflip_thread_create|add|remove|drop|mirror` mutate and require `confirm`), **switch preflight**
@@ -1036,6 +1038,11 @@ usable session, without writing anything.
 
 ### Multi-instance mode: run several accounts simultaneously (macOS-only)
 
+> **macOS only.** These commands clone a macOS `.app` bundle into `~/Library/Application Support`,
+> launch it with `open`, and drive it through AppleScript — none of which exists on Linux/Windows.
+> There they fail early with *"`<Tool>.app` not found at `/Applications/...`"*. Use `keyflip switch`
+> instead: credential switching works on every platform; only app clones are macOS-only.
+
 Claude Desktop cookies expire every ~30 days, forcing frequent re-logins. keyflip solves this by creating **isolated app clones** — each runs independently with its own user data directory, so sessions persist indefinitely.
 
 **How it works:** Each instance is an APFS copy-on-write clone of the tool's `/Applications/<Tool>.app`, consuming near-zero additional disk space. It uses `--user-data-dir` for complete session isolation. Where the app exposes an auto-update switch, `create` turns it off so an update cannot replace the clone's bundle under a signed-in account: Claude reads `disableAutoUpdates` from the clone's `User Data/config.json`, and ChatGPT gets its Sparkle `Info.plist` feed emptied (best-effort). Kiro and Cursor expose no such switch. `keyflip instance harden` re-applies it to existing clones (quit a running clone first — the app owns `config.json` and would rewrite it), and `keyflip doctor` reports the LIVE state — a controllable clone that is still ON is a warning; a tool with no switch is reported plainly, never nagged.
@@ -1075,6 +1082,16 @@ keyflip instance enable-all claude
 **Disk usage:** APFS clone-on-write means each clone shares physical storage with the original app. Only changed blocks (config files, user data) consume actual space — typically <50 MB per instance.
 
 **Deep link trap avoidance:** When launching a specific instance, keyflip closes ALL other instances of that tool first. This prevents macOS from routing deep links (e.g., `claude://` URLs) to the wrong instance.
+
+**Troubleshooting:**
+
+- *“No instance found for claude/work”* — create it first; the slug is the account name, so `yahoo@gmail.com` and `yahoo` are different slugs. `keyflip instance list` prints the exact `tool/slug` pairs.
+- *“`<Tool>.app` not found at `/Applications/…`”* — keyflip clones the app, it does not download it. Install the base app or choose a tool that is installed.
+- *The clone opens signed out* — `create` copies the app, not a login. Restore the account's saved app session **into that clone**: `keyflip switch <account> --instance claude/<slug>` (the `keyflip <account> --instance …` shorthand works too). A plain `keyflip switch` only touches the base app.
+- *`harden` refuses while the clone is running* — quit it first (`keyflip instance kill claude/<slug>`). A running app owns `config.json` and rewrites it on exit, so writing underneath it would silently revert.
+- *Launching one instance closes the others* — deliberate; two live copies would make macOS route deep links to the wrong one.
+- *`du` reports hundreds of MB per clone* — expected on APFS: untouched blocks are shared physically. Judge real cost with a before/after `df`.
+- *The clone will not launch after `harden` patched `Info.plist`* — editing the plist invalidates the app's code signature. Repair it with an ad-hoc signature: `codesign --force --deep --sign - "<instance>/<Tool>.app"`. This is a macOS-level repair, not something keyflip automates.
 
 **Backward compatibility:** The old `keyflip claude-profiles` commands still work via a compatibility wrapper that maps them to the generic `keyflip instance` system. Use `keyflip instance --help` for current syntax.
 
