@@ -239,7 +239,8 @@ keyflip fleet send-account <hesap> --to <makine> [--from <makine>]   # hesabı d
 keyflip fleet collect         # filoda yayınlanmış tüm hesapları bu makineye topla
 keyflip fleet keys            # her makinenin imza-anahtarı parmak izini denetle (ok / CHANGED / unpinned)
 keyflip fleet trust <makine>  # meşru bir yeniden-anahtarlama SONRASI makinenin imza anahtarını yeniden sabitle (aşağıdaki "Filo — origin authentication")
-keyflip consolidate [--watch] [--no-instances]   # her hesabın + kopyanın sohbet dizinini birleştir; her biri TÜM sohbetleri görsün
+keyflip consolidate [--dry-run] [--watch] [--no-instances]  # her hesabın + kopyanın sohbet dizinini birleştir; her biri TÜM sohbetleri görsün
+                                                 #   --dry-run yalnızca planı gösterir (uygulama açıkken de çalışır)
 keyflip remove <ad|numara>    # kayıtlı hesabı sil (onay ister; --force ile atla)
 keyflip logout [--browser] [--desktop]   # canlı oturum(lar)dan çık — kayıtlı hesaplar korunur
 keyflip history | undo | restore <ref>   # git-versiyonlu config: her değişikliği incele / geri al / geri dön (sırlar asla commit edilmez)

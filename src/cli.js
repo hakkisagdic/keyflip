@@ -294,9 +294,11 @@ function usage() {
   );
   print('                                 add --qr to `serve` to show a scannable QR of the pairing code');
   print(
-    "  keyflip consolidate [--watch] [--no-instances]  sync every account's chat index so each shows ALL conversations",
+    "  keyflip consolidate [--dry-run] [--watch] [--no-instances]  sync every account's chat index so each shows ALL conversations",
   );
-  print('                                 (base app + keyflip clone User Data stores; --no-instances skips clones)');
+  print(
+    '                                 (base app + keyflip clone User Data stores; --dry-run prints the plan, --no-instances skips clones)',
+  );
   print('  keyflip sessions [--search T] [--here]   browse Claude Code conversations (all accounts)');
   print("  keyflip sessions rebind <old-path> <new-path>   re-link a project's chat history after you");
   print('                                 renamed/moved its folder (transcripts + desktop-app records)');
@@ -14066,6 +14068,54 @@ async function cmdConsolidate(ctx, rest) {
     } finally {
       l.release();
     }
+  }
+
+  // A dry run only READS the stores, so it works even while the app is open: its whole job
+  // is to show the plan before anyone closes anything.
+  if (rest.indexOf('--dry-run') !== -1) {
+    const c = appsessions.consolidate(ctx, { includeInstances: includeInstances, dryRun: true });
+    if (!c.ok) return fail('nothing to plan' + (c.reason ? ' (' + c.reason + ')' : '') + '.');
+    print(
+      'Dry run — would sync ' +
+        style.bold(String(c.wouldMerge || 0)) +
+        ' session pointer(s) across accounts (Recents: ' +
+        (c.wouldCode || 0) +
+        ', Cowork: ' +
+        (c.wouldCowork || 0) +
+        (c.instances ? ', instance clones: ' + c.instances : '') +
+        ').',
+    );
+    (c.plan || []).slice(0, 10).forEach(function (p) {
+      print('  ' + style.dim((p.instance || 'base') + ' ← ') + p.to);
+    });
+    if (c.planTotal > (c.plan || []).length)
+      print(style.dim('  … ' + (c.planTotal - (c.plan || []).length) + ' more (see --json for 50)'));
+    if (c.skippedRunning)
+      print(
+        style.warn('⚠') +
+          ' would skip ' +
+          c.skippedRunning +
+          ' running clone(s): ' +
+          (c.runningLabels || []).join(', ') +
+          '.',
+      );
+    print('Nothing was written. Apply with ' + style.bold('keyflip consolidate') + '.');
+    return jsonOut({
+      consolidated: {
+        dryRun: true,
+        wouldMerge: c.wouldMerge || 0,
+        wouldCode: c.wouldCode || 0,
+        wouldCowork: c.wouldCowork || 0,
+        instances: c.instances || 0,
+        skippedRunning: c.skippedRunning || 0,
+        runningLabels: c.runningLabels || [],
+        plan: (c.plan || []).map(function (p) {
+          return { to: p.to, from: path.basename(p.from), instance: p.instance };
+        }),
+        planTotal: c.planTotal || 0,
+        planTruncated: !!c.planTruncated,
+      },
+    });
   }
 
   if (watch) {

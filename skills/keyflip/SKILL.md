@@ -83,7 +83,7 @@ Chat history readable without switching to it.
 
 **Via MCP:** almost everything here is also an MCP tool — `keyflip_login`, `keyflip_logout`,
 `keyflip_browser_status`/`_logout`/`_sync`, `keyflip_chatgpt` (read-only status) and
-`keyflip_chatgpt_capture`/`_switch`/`_refresh` (need `confirm`), `keyflip_consolidate`, `keyflip_switch`/`_next`,
+`keyflip_chatgpt_capture`/`_switch`/`_refresh` (need `confirm`), `keyflip_consolidate` (plan first with the read-only `keyflip_consolidate_plan` — it works while the desktop app is open), `keyflip_switch`/`_next`,
 `keyflip_switch_plan` (read-only: the dry run, no confirm needed), `keyflip_verify` (per-account
 liveness), `keyflip_refresh` (guarded token revival), `keyflip_refresh_schedule`
 (`action=status|install|remove` for the nightly `refresh --all`; install/remove need `confirm`),

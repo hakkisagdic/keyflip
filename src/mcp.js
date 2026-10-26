@@ -1909,13 +1909,63 @@ const TOOLS = [
 
   // ---- browser session (Claude Chrome extension) ----
   {
+    name: 'keyflip_consolidate_plan',
+    title: 'Plan a chat sync (dry run)',
+    description:
+      'Read-only dry run of keyflip_consolidate: compute the exact merge plan — how many session pointers each account folder (base app + non-running instance clones) would gain, up to 50 destinations as store-relative paths — WITHOUT writing anything, so it also works while the desktop app is open. Use this to show the user what would happen; the actual merge is keyflip_consolidate with confirm=true. Read-only.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        include_instances: {
+          type: 'boolean',
+          description: 'Also scan instance clones (default true; running clones are always skipped).',
+        },
+      },
+      additionalProperties: false,
+    },
+    annotations: RO,
+    run: async function (ctx, args) {
+      if (appctl.isClaudeRunning(ctx.platform)) {
+        // Read-only planning stays available; note that the apply will need the app closed.
+      }
+      const r = appsessions.consolidate(ctx, {
+        dryRun: true,
+        includeInstances: !args || args.include_instances !== false,
+      });
+      return {
+        ok: !!r.ok,
+        reason: r.reason || null,
+        instances: r.instances || 0,
+        skippedRunning: r.skippedRunning || 0,
+        runningLabels: r.runningLabels || [],
+        dryRun: true,
+        wouldMerge: r.wouldMerge || 0,
+        wouldCode: r.wouldCode || 0,
+        wouldCowork: r.wouldCowork || 0,
+        plan: (r.plan || []).map(function (p) {
+          return { to: p.to, from: _path.basename(p.from), instance: p.instance };
+        }),
+        planTotal: r.planTotal || 0,
+        planTruncated: !!r.planTruncated,
+        appRunning: appctl.isClaudeRunning(ctx.platform),
+        note: 'nothing was written — the apply is keyflip_consolidate with confirm=true (app must be closed)',
+      };
+    },
+  },
+  {
     name: 'keyflip_consolidate',
     title: 'Sync chats across accounts',
     description:
-      "Merge the Claude desktop app's session stores — the base app AND every non-running keyflip instance clone — so EVERY account sees all conversations (Cowork + Claude Code sessions). Filename collisions between accounts are resolved with a transcript-derived name instead of dropping a pointer. Requires the base Claude desktop app to be CLOSED; a clone counted by a live instance.pid is skipped and reported. Mutating — ask the user, then confirm=true.",
+      "Merge the Claude desktop app's session stores — the base app AND every non-running keyflip instance clone — so EVERY account sees all conversations (Cowork + Claude Code sessions). Filename collisions between accounts are resolved with a transcript-derived name instead of dropping a pointer. Requires the base Claude desktop app to be CLOSED; a clone counted by a live instance.pid is skipped and reported. Plan first with keyflip_consolidate_plan (read-only, works while the app is open). Mutating — ask the user, then confirm=true.",
     inputSchema: {
       type: 'object',
-      properties: { confirm: confirmProp.confirm },
+      properties: {
+        include_instances: {
+          type: 'boolean',
+          description: 'Also merge instance clones (default true; running clones are always skipped).',
+        },
+        confirm: confirmProp.confirm,
+      },
       required: ['confirm'],
       additionalProperties: false,
     },
@@ -1924,16 +1974,23 @@ const TOOLS = [
       needConfirm(args);
       if (appctl.isClaudeRunning(ctx.platform))
         return { ok: false, reason: 'Claude still running — close the desktop app first' };
-      const c = appsessions.consolidate(ctx);
+      const includeInstances = !args || args.include_instances !== false;
+      let r;
+      const l = await lock.acquire(ctx.configDir);
+      try {
+        r = appsessions.consolidate(ctx, { includeInstances: includeInstances });
+      } finally {
+        l.release();
+      }
       return {
-        ok: !!c.ok,
-        merged: c.merged || 0,
-        code: c.code || 0,
-        cowork: c.cowork || 0,
-        instances: c.instances || 0,
-        skippedRunning: c.skippedRunning || 0,
-        runningLabels: c.runningLabels || [],
-        reason: c.reason || null,
+        ok: !!r.ok,
+        merged: r.merged || 0,
+        code: r.code || 0,
+        cowork: r.cowork || 0,
+        instances: r.instances || 0,
+        skippedRunning: r.skippedRunning || 0,
+        runningLabels: r.runningLabels || [],
+        reason: r.reason || null,
       };
     },
   },

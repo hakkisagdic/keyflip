@@ -237,8 +237,8 @@ const CATALOG = [
     name: 'consolidate',
     group: 'sessions',
     safe: false,
-    usage: 'keyflip consolidate [--watch] [--no-instances]',
-    desc: "Sync every account's chat index (base app + clone User Data stores) so each shows all conversations.",
+    usage: 'keyflip consolidate [--dry-run] [--watch] [--no-instances]',
+    desc: "Sync every account's chat index (base app + clone User Data stores) so each shows all conversations; --dry-run prints the plan without writing (MCP: keyflip_consolidate_plan / keyflip_consolidate).",
   },
   {
     name: 'dream',

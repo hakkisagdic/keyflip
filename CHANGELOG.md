@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`keyflip consolidate --dry-run` + read-only `keyflip_consolidate_plan` (MCP).** The chat-index
+  merge now computes its plan without writing: how many session pointers each account folder (base
+  app + non-running instance clones) would gain, the first 50 destinations as store-relative paths,
+  and which running clones would be skipped. A dry run only READS the stores, so it works while the
+  desktop app is open — plan first, then close Claude for the actual merge. `--json` carries
+  `wouldMerge`/`wouldCode`/`wouldCowork` + the plan; the MCP side keeps the repo's invariant that
+  every mutating tool requires `confirm` by exposing planning as a separate read-only tool.
+
 - **`keyflip conv` — every local AI tool's chats in one searchable shape.** A canonical conversation
   layer reads Claude Code, Codex/ChatGPT rollouts (`.jsonl` and `.zst`), Kiro (CLI + IDE) and the
   foreign adapters (Qoder, Cursor, opencode, Gemini/Antigravity, Copilot, Aider) into one form

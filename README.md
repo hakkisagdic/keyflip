@@ -240,7 +240,8 @@ keyflip fleet send-account <acct> --to <machine> [--from <machine>]   # distribu
 keyflip fleet collect         # gather every account published across the fleet onto this machine
 keyflip fleet keys            # audit every machine's signing-key fingerprint (ok / CHANGED / unpinned)
 keyflip fleet trust <machine> # re-pin a machine's signing key AFTER a legitimate re-key (see "Fleet — origin authentication" below)
-keyflip consolidate [--watch] [--no-instances]   # union every account's + clone's chat index so each shows ALL conversations
+keyflip consolidate [--dry-run] [--watch] [--no-instances]  # union every account's + clone's chat index so each shows ALL conversations
+                                                 #   --dry-run prints the plan only (works while the app is open)
 keyflip remove <name|number>  # delete a saved account (confirms; --force to skip)
 keyflip logout [--browser] [--desktop]   # sign OUT of the live session(s) — saved accounts are kept
 keyflip history | undo | restore <ref>   # git-versioned config: inspect / undo / roll back any change (secrets never committed)

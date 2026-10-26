@@ -205,6 +205,7 @@ test('MCP: login/logout/browser tools are exposed, gated, and structured', async
     'keyflip_browser_status',
     'keyflip_browser_logout',
     'keyflip_consolidate',
+    'keyflip_consolidate_plan',
   ].forEach(function (n) {
     assert.ok(names.indexOf(n) !== -1, 'missing MCP tool: ' + n);
   });
@@ -1254,4 +1255,23 @@ test('MCP conversation tools: list, search, context, show, and a handoff bundle'
   assert.strictEqual(bundle.target, 'claude');
   assert.ok(fs.existsSync(path.join(out, 'CONTINUE.md')));
   assert.ok(fs.existsSync(path.join(out, 'conversation.json')));
+});
+
+test('MCP keyflip_consolidate: plan is read-only; apply is gated', async function () {
+  const home = mkhome();
+  const got = await mcpSession(
+    home,
+    [call(1, 'keyflip_consolidate_plan', {}), call(2, 'keyflip_consolidate', {})],
+    [1, 2],
+  );
+  // The plan tool answers without confirm: ok/reason shape, never an MCP error.
+  assert.strictEqual(got[1].result.isError, false);
+  const plan = got[1].result.structuredContent;
+  assert.strictEqual(plan.dryRun, true);
+  assert.strictEqual(typeof plan.wouldMerge, 'number');
+  assert.ok(Array.isArray(plan.plan));
+  assert.match(plan.note, /nothing was written/);
+  // The apply refuses without confirm.
+  assert.strictEqual(got[2].result.isError, true);
+  assert.match(got[2].result.content[0].text, /confirm/i);
 });

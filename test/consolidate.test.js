@@ -55,3 +55,22 @@ test('consolidate --json returns a consolidated object, or the platform guard', 
   assert.strictEqual(obj.schemaVersion, 1);
   assert.ok(obj.consolidated && typeof obj.consolidated.merged === 'number');
 });
+
+test('consolidate --dry-run prints the plan and refuses to write', function () {
+  const h = tmp();
+  const r = run(h, ['consolidate', '--dry-run', '--json']);
+  const out = r.stdout + r.stderr;
+  if (/macOS\/Windows-only/.test(out)) {
+    assert.notStrictEqual(r.status, 0); // platform guard, as above
+    return;
+  }
+  if (/nothing to plan/.test(out)) {
+    assert.notStrictEqual(r.status, 0); // no store here: refused cleanly, nothing written
+    return;
+  }
+  const obj = JSON.parse(r.stdout.trim().split('\n').filter(Boolean).pop());
+  assert.strictEqual(obj.consolidated.dryRun, true);
+  assert.strictEqual(typeof obj.consolidated.wouldMerge, 'number');
+  assert.ok(Array.isArray(obj.consolidated.plan));
+  assert.match(r.stdout, /Dry run|would sync/);
+});
