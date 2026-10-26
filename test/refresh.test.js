@@ -129,3 +129,56 @@ test('Proactive strategies have valid thresholds', () => {
   assert.ok(STRATEGIES.antigravity.thresholdMs <= 60 * 60 * 1000); // ≤ 1 hour
   assert.ok(STRATEGIES.codex.thresholdMs <= 24 * 60 * 60 * 1000); // ≤ 1 day
 });
+
+// ---- expired-capture warnings: once per set, not once per tick ------------------------------
+test('tick warns about expired non-refreshable captures once per set', async function () {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'kf-refresh-exp-'));
+  const ctx = {
+    home: home,
+    configDir: path.join(home, '.config', 'keyflip'),
+    env: {},
+    now: function () {
+      return '2026-01-01T00:00:00.000Z';
+    },
+  };
+  fs.mkdirSync(ctx.configDir, { recursive: true });
+
+  function fakeJwt(claims) {
+    const b64 = function (o) {
+      return Buffer.from(JSON.stringify(o)).toString('base64url');
+    };
+    return b64({ alg: 'none' }) + '.' + b64(claims) + '.';
+  }
+  const dir = path.join(ctx.configDir, 'surfaces', 'codex', 'deadacct');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(
+    path.join(dir, 'auth.json'),
+    JSON.stringify({
+      tokens: {
+        id_token: fakeJwt({ email: 'dead@example.com', exp: Math.floor(Date.now() / 1000) - 86400 }),
+        access_token: fakeJwt({ exp: Math.floor(Date.now() / 1000) - 3600 }),
+      },
+    }),
+  );
+  fs.writeFileSync(path.join(dir, 'meta.json'), JSON.stringify({ email: 'dead@example.com' }));
+
+  const logs = [];
+  const orig = console.log;
+  console.log = function () {
+    logs.push(Array.prototype.join.call(arguments, ' '));
+  };
+  try {
+    await refreshModule.tick(ctx); // first tick: writes the marker, warns
+    await refreshModule.tick(ctx); // second tick: same set — stays silent
+  } finally {
+    console.log = orig;
+  }
+  const warns = logs.filter(function (l) {
+    return /deadacct/.test(l) && /expired/.test(l);
+  });
+  assert.strictEqual(warns.length, 1, 'exactly one warning for the set, got: ' + JSON.stringify(logs));
+  // The marker is state, not a credential, and it is small.
+  const marker = path.join(ctx.configDir, 'expired-captures.json');
+  assert.ok(fs.existsSync(marker));
+  assert.deepStrictEqual(JSON.parse(fs.readFileSync(marker, 'utf8')), ['deadacct']);
+});

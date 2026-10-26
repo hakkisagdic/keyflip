@@ -514,3 +514,68 @@ test('instance harden: refuses while the Claude instance runs, because it would 
   assert.throws(() => instances.hardenInstance('claude', 'yahoo', ctx.instancesBase), /is running/);
   assert.ok(!fs.existsSync(path.join(inst.userDataDir, 'config.json')), 'nothing written while running');
 });
+
+// ---- #106: expired ChatGPT/Codex captures must be visible in doctor ------------------------
+
+function fakeJwt(claims) {
+  const b64 = function (o) {
+    return Buffer.from(JSON.stringify(o)).toString('base64url');
+  };
+  return b64({ alg: 'none' }) + '.' + b64(claims) + '.';
+}
+
+function fakeCodexCapture(ctx, slug, opts) {
+  opts = opts || {};
+  const dir = path.join(ctx.configDir, 'surfaces', 'codex', slug);
+  fs.mkdirSync(dir, { recursive: true });
+  const tokens = {
+    id_token: fakeJwt({ email: (opts.email || slug) + '@example.com', exp: Math.floor(Date.now() / 1000) - 86400 }),
+    access_token: fakeJwt({ exp: Math.floor(Date.now() / 1000) + (opts.expiresInSec || -3600) }),
+  };
+  if (opts.refreshable) tokens.refresh_token = 'rt-' + slug;
+  const auth = { tokens: tokens, auth_mode: opts.authMode || 'chatgpt' };
+  if (opts.apiKey) auth.OPENAI_API_KEY = 'sk-test';
+  fs.writeFileSync(path.join(dir, 'auth.json'), JSON.stringify(auth));
+  fs.writeFileSync(
+    path.join(dir, 'meta.json'),
+    JSON.stringify({ email: (opts.email || slug) + '@example.com', capturedAt: '2026-01-01T00:00:00.000Z' }),
+  );
+  return dir;
+}
+
+test('doctor: a ChatGPT/Codex capture that expired with no refresh token is a failed check', async function () {
+  const ctx = makeCtx();
+  fakeCodexCapture(ctx, 'dead', { refreshable: false }); // past expiry, nothing to rotate
+  const r = await doctor.diagnose(ctx, {});
+  const c = find(r.checks, 'chatgpt/codex captures');
+  assert.ok(c, 'the check exists');
+  assert.strictEqual(c.ok, false);
+  assert.match(c.detail, /dead.*expired/);
+  assert.match(c.fix, /keyflip chatgpt capture dead/);
+});
+
+test('doctor: a refreshable-due capture is only a warning (the daemon rotates it)', async function () {
+  const ctx = makeCtx();
+  fakeCodexCapture(ctx, 'soon', { refreshable: true, expiresInSec: 60 * 60 * 12 }); // inside the 24h window
+  const r = await doctor.diagnose(ctx, {});
+  const c = find(r.checks, 'chatgpt/codex captures');
+  assert.ok(c);
+  assert.strictEqual(c.ok, 'warn');
+  assert.match(c.detail, /due for refresh/);
+  assert.match(c.fix, /keyflip chatgpt refresh soon/);
+});
+
+test('doctor: a fresh capture passes and no codex surface adds no check', async function () {
+  const ctx = makeCtx();
+  fakeCodexCapture(ctx, 'fresh', { refreshable: true, expiresInSec: 60 * 60 * 24 * 8 });
+  let r = await doctor.diagnose(ctx, {});
+  let c = find(r.checks, 'chatgpt/codex captures');
+  assert.ok(c);
+  assert.strictEqual(c.ok, true);
+  assert.match(c.detail, /1 capture\(s\) usable/);
+
+  const bare = makeCtx(); // nothing captured: the check is simply absent, not an error
+  r = await doctor.diagnose(bare, {});
+  c = find(r.checks, 'chatgpt/codex captures');
+  assert.strictEqual(c, undefined);
+});

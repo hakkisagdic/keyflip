@@ -19,6 +19,7 @@ import * as _profiles from './profiles.js';
 import * as _threads from './threads.js';
 import * as _sessionage from './sessionage.js';
 import * as _instances from './instances.js';
+import * as _codex from './codex.js';
 
 async function probe(url, opts) {
   opts = opts || {};
@@ -74,6 +75,7 @@ async function diagnose(ctx, opts) {
   appSession(ctx, add, opts);
   autoUpdates(ctx, add);
   signInAge(ctx, add, opts);
+  codexCaptures(ctx, add);
   orphanSessions(ctx, add);
   rebindBackups(ctx, add);
   threadsCheck(ctx, add);
@@ -379,6 +381,80 @@ function signInAge(ctx, add, opts) {
     return;
   }
   add(NAME, true, total + ' saved sign-in(s) fresh — oldest ' + _sessionage.fmt(oldest) + learned);
+}
+
+// ChatGPT/Codex captures: a stored login whose access token has expired AND cannot be
+// refreshed is a capture that will NOT work at switch time — say so before the user plans
+// around it. Refreshable-due captures are the daemon's job, not a warning here.
+function codexCaptures(ctx, add) {
+  let captures;
+  try {
+    captures = _codex.listCaptures(ctx);
+  } catch {
+    return; // no codex surface at all — nothing to report
+  }
+  const dead = [];
+  const expiring = [];
+  captures.forEach(function (c) {
+    if (!c.usable) return; // never had a credential shape worth expiring
+    const reason = c.refreshReason || '';
+    const left = c.expiresAt ? Date.parse(c.expiresAt) - Date.now() : null;
+    // "expired" = past expiry with no refresh token left; "not-refreshable" = past expiry
+    // holding only an API key or a one-shot that cannot rotate.
+    if (reason === 'expired' || reason === 'not-refreshable' || (left != null && left <= 0))
+      dead.push({ c: c, why: reason || 'expired' });
+    else if (c.needsRefresh || (left != null && left <= _codex.REFRESH_THRESHOLD_MS))
+      expiring.push({ c: c, why: reason || 'expiring' });
+  });
+  const NAME = 'chatgpt/codex captures';
+  if (dead.length) {
+    const first = dead[0].c;
+    add(
+      NAME,
+      false,
+      dead
+        .map(function (d) {
+          return (
+            d.c.slug +
+            (d.c.email ? ' (' + d.c.email + ')' : '') +
+            ' expired' +
+            (d.c.expiresAt ? ' ' + String(d.c.expiresAt).slice(0, 16).replace('T', ' ') + 'Z' : '') +
+            (d.why === 'not-refreshable' ? ' and not refreshable' : '')
+          );
+        })
+        .join('; '),
+      'sign in once as ' +
+        (first.email || first.slug) +
+        ' in ChatGPT/Codex, then `keyflip chatgpt capture ' +
+        first.slug +
+        '` (an expired capture cannot be renewed without you)',
+    );
+    return;
+  }
+  if (expiring.length) {
+    const first = expiring[0].c;
+    add(
+      NAME,
+      'warn',
+      expiring
+        .map(function (d) {
+          return d.c.slug + ' due for refresh (' + d.why + ')';
+        })
+        .join('; ') + ' — the refresh daemon rotates these automatically while ChatGPT/Codex is not running',
+      'keyflip chatgpt refresh ' + first.slug + ' (or wait for the daemon)',
+    );
+    return;
+  }
+  if (captures.length)
+    add(
+      NAME,
+      true,
+      captures.length +
+        ' capture(s) usable — ' +
+        (captures[0].expiresAt
+          ? 'next expiry ' + String(captures[0].expiresAt).slice(0, 16).replace('T', ' ') + 'Z'
+          : 'no expiry recorded'),
+    );
 }
 
 function orphanSessions(ctx, add) {

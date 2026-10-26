@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`keyflip doctor` now reports expired ChatGPT/Codex captures, and so does the refresh daemon.**
+  A stored login whose access token has expired AND has nothing left to rotate (no refresh token,
+  or apikey mode) will not work at switch time — `doctor`'s **chatgpt/codex captures** check fails
+  with the exact slugs, expiry times and the one human fix (`keyflip chatgpt capture <slug>` after
+  signing in once). Captures that are merely due for refresh stay a warning: the daemon rotates
+  those on its own while ChatGPT/Codex is not running. The daemon's tick logs the dead-capture set
+  once per SET (a small marker file in the state dir), not once per tick, and clears the note when
+  the set empties.
+
 - **`keyflip consolidate --dry-run` + read-only `keyflip_consolidate_plan` (MCP).** The chat-index
   merge now computes its plan without writing: how many session pointers each account folder (base
   app + non-running instance clones) would gain, the first 50 destinations as store-relative paths,

@@ -626,6 +626,11 @@ keyflip refresh --unschedule
   separately installed refresh daemon (`keyflip refresh --daemon-start`, every 5 minutes) within 24
   hours of expiry — never while ChatGPT/Codex runs. `keyflip chatgpt refresh` does it once by hand;
   the nightly schedule above stays Claude-OAuth-only.
+- **Expired with nothing to rotate is a doctor failure, not a silent surprise.** A ChatGPT/Codex
+  capture whose token has expired with no refresh token left (or apikey mode) will not work at
+  switch time; `keyflip doctor`'s **chatgpt/codex captures** row names the slugs, the expiry times
+  and the one fix — sign in once, then `keyflip chatgpt capture <slug>`. The daemon also logs that
+  dead set once (per set, not per tick) so it surfaces in `~/Library/Logs/`-adjacent daemon output.
 
 ### How old is each sign-in? (`keyflip freshness`)
 

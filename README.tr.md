@@ -706,6 +706,11 @@ keyflip refresh --unschedule
   yenileme daemon'ıyla (`keyflip refresh --daemon-start`, 5 dakikada bir) son geçerliliğe 24 saat
   kala döndürülür — ChatGPT/Codex çalışırken asla. `keyflip chatgpt refresh` bunu elle bir kez yapar;
   yukarıdaki gece zamanlayıcısı yalnızca Claude OAuth içindir.
+- **Döndürülecek bir şey kalmadan süresi dolmuşsa bu sessiz bir sürpriz değil, doctor hatası.**
+  Token'ı dolmuş ve döndürecek refresh token'ı kalmamış (ya da apikey modunda) bir ChatGPT/Codex
+  yakalaması geçiş anında çalışmaz; `keyflip doctor`'ın **chatgpt/codex captures** satırı slug'ları,
+  geçerlilik bitişlerini ve tek çareyi söyler — bir kez giriş yap, sonra `keyflip chatgpt capture
+  <slug>`. Daemon da bu ölü kümeyi (tick başına değil, küme başına bir kez) log'lar.
 
 ### Her giriş ne kadar eski? (`keyflip freshness`)
 
