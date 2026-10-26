@@ -135,6 +135,9 @@ import * as _projctx from './projctx.js';
 import * as _rules from './rulesmodel.js';
 import * as _checkpoint from './checkpoint.js';
 import * as _handoffmod from './handoff.js';
+import * as _conversations from './conversations.js';
+import * as _convindex from './convindex.js';
+import * as _convexport from './convexport.js';
 import * as _pii from './pii.js';
 import * as _onboard from './onboard.js';
 import * as _vcs from './vcs.js';
@@ -335,6 +338,9 @@ function usage() {
   print(
     '  keyflip recall "<query>" [--semantic] [--answer]   search your chats (BM25; --semantic = embeddings; --answer = `claude -p` synthesis)',
   );
+  print("  keyflip conv [list|search|show|index|context|export|transfer|status]   EVERY local tool's chats in one");
+  print('                                 shape: browse, search (BM25 + optional embeddings), build a RAG context');
+  print('                                 block, export to Obsidian/MD/HTML/JSON, hand off to another AI tool');
   print(
     '  keyflip settings [show | get <k> | set <k> <v>]   view/edit ~/.claude/settings.json (rides `migrate` to other machines)',
   );
@@ -6741,6 +6747,661 @@ async function cmdRecall(ctx, rest) {
       '   ·   resume its chat: ' +
       style.bold('keyflip resume <session> --run'),
   );
+}
+
+// ---- cross-app conversations: browse, search, RAG context, export, handoff --------------------
+// One canonical layer (src/conversations.js), one local index (src/convindex.js), one exporter
+// (src/convexport.js). Every subcommand is tool-agnostic: it reads Claude Code, Codex/ChatGPT,
+// Kiro, Gemini and the foreign adapters through the same shape, and no live store is modified.
+const CONV_USAGE = [
+  'usage: keyflip conv [list] [--app claude,codex,kiro] [--since 7d] [--cwd <dir>] [--search T] [--limit N] [--json]',
+  '       keyflip conv search "<query>" [--hybrid|--semantic|--lexical] [--per-conv N] [--limit N] [--since 7d]',
+  '       keyflip conv context "<query>" [--hybrid] [--budget 12000] [--expand 1]   RAG block for an LLM prompt',
+  '       keyflip conv show <id|prefix|title> [--format md|html|json] [--out <file|dir>] [--no-redact]',
+  '       keyflip conv index [--app a] [--embed] [--force]   build/refresh the local retrieval index',
+  '       keyflip conv export (--all | <id>) [--obsidian] --out <dir> [--format md|html|json] [--no-redact]',
+  '       keyflip conv transfer <id> --to <claude|codex|cursor|kiro|opencode|windsurf|gemini|copilot|aider>',
+  '       keyflip conv capabilities | status',
+].join('\n');
+const CONV_SUBS = ['list', 'search', 'show', 'get', 'index', 'context', 'export', 'transfer', 'capabilities', 'status'];
+const CONV_VALUE_FLAGS = [
+  '--app',
+  '--since',
+  '--cwd',
+  '--limit',
+  '--per-conv',
+  '--mode',
+  '--format',
+  '--out',
+  '--to',
+  '--budget',
+  '--expand',
+  '--limit-sources',
+  '--search',
+];
+
+function convClip(s, n) {
+  const t = String(s == null ? '' : s)
+    .replace(/\s+/g, ' ')
+    .trim();
+  return t.length > n ? t.slice(0, n - 1) + '…' : t;
+}
+function convWhen(ts) {
+  const t = Date.parse(ts || '');
+  if (Number.isNaN(t)) return '';
+  const s = Math.max(0, Math.round((Date.now() - t) / 1000));
+  if (s < 90) return s + 's';
+  if (s < 5400) return Math.round(s / 60) + 'm';
+  if (s < 129600) return Math.round(s / 3600) + 'h';
+  if (s < 31536000) return Math.round(s / 86400) + 'd';
+  return String(ts).slice(0, 10);
+}
+function convInt(rest, flag, dflt, min, max) {
+  const raw = flagVal(rest, flag);
+  if (raw == null) return { ok: true, value: dflt };
+  const n = parseInt(raw, 10);
+  if (!Number.isFinite(n) || n < min) return { ok: false, error: flag + ' needs a number >= ' + min };
+  return { ok: true, value: Math.min(n, max) };
+}
+// --app may be repeated and comma-separated; --since accepts 7d/12h/ISO.
+function convFilter(rest) {
+  const apps = [];
+  for (let i = 0; i < rest.length; i++) {
+    if (rest[i] !== '--app' || rest[i + 1] == null) continue;
+    String(rest[i + 1])
+      .split(',')
+      .forEach(function (a) {
+        a = a.trim().toLowerCase();
+        if (a && apps.indexOf(a) === -1) apps.push(a);
+      });
+  }
+  const sinceRaw = flagVal(rest, '--since');
+  let sinceMs = null;
+  if (sinceRaw) {
+    sinceMs = _convindex.parseSince(sinceRaw);
+    if (sinceMs == null) return { error: "unknown --since '" + sinceRaw + "' (use 7d, 12h or an ISO date)" };
+  }
+  return {
+    apps: apps,
+    sinceMs: sinceMs,
+    cwd: flagVal(rest, '--cwd') || null,
+    q: flagVal(rest, '--search') || null,
+  };
+}
+function convMode(rest) {
+  if (rest.indexOf('--hybrid') !== -1) return 'hybrid';
+  if (rest.indexOf('--semantic') !== -1) return 'semantic';
+  if (rest.indexOf('--lexical') !== -1) return 'lexical';
+  const m = flagVal(rest, '--mode');
+  return m === 'hybrid' || m === 'semantic' || m === 'lexical' ? m : null;
+}
+function convRedact(rest) {
+  return rest.indexOf('--no-redact') === -1;
+}
+// Resolve an id/prefix/title to a loaded conversation. The catalog is a manifest read when the
+// index exists, so the common path parses exactly one transcript.
+function convLoad(ctx, ref) {
+  const cat = _convindex.catalog(ctx, {});
+  const m = _conversations.matchRef(cat.conversations, ref);
+  if (!m.match) {
+    const e = new Error(
+      m.reason === 'ambiguous'
+        ? "'" + ref + "' matches several conversations — use more of the id"
+        : "no conversation matching '" + ref + "'",
+    );
+    e.code = m.reason === 'ambiguous' ? 'CONV_AMBIGUOUS' : 'CONV_NOT_FOUND';
+    e.candidates = m.candidates || [];
+    throw e;
+  }
+  if (m.match.path) return _conversations.loadPath(ctx, m.match.path);
+  return _conversations.get(ctx, ref);
+}
+function convFailLoad(e) {
+  if (e && e.candidates && e.candidates.length) {
+    return fail(
+      e.message +
+        '\n  candidates: ' +
+        e.candidates
+          .map(function (c) {
+            return c.id + '  (' + convClip(c.title, 60) + ')';
+          })
+          .join('\n              '),
+    );
+  }
+  return fail((e && e.message) || String(e));
+}
+function convPrintHits(query, r, limit) {
+  const label = r.mode || (r.semanticCoverage ? 'hybrid' : 'lexical');
+  print(
+    'Conversations matching "' +
+      style.bold(query) +
+      '" — ' +
+      r.hits.length +
+      ' result(s) ' +
+      style.dim('[' + label + ']'),
+  );
+  r.hits.forEach(function (h, i) {
+    print(
+      '  [' +
+        (i + 1) +
+        '] ' +
+        style.bold(h.app || '?') +
+        '  ' +
+        convClip(h.title, 70) +
+        '   ' +
+        style.dim(convWhen(h.updatedAt) + '  #' + (h.chunk + 1)),
+    );
+    if (h.snippet) print('      ' + style.dim('↳ ' + convClip(h.snippet, 220)));
+  });
+  // `no-vectors` was already announced before the search (hybrid fallback); don't repeat it.
+  if (r.semanticError && r.semanticError !== 'no-vectors')
+    print(style.warn('·') + ' vectors unavailable (' + r.semanticError + ') — lexical ranking only.');
+  if (limit && r.hits.length >= limit)
+    print(style.dim('· more may match: raise --limit, or narrow with --app/--since/--cwd.'));
+  print(
+    '\nRead one: ' +
+      style.bold('keyflip conv show <id>') +
+      '   ·   prompt context: ' +
+      style.bold('keyflip conv context "<query>"'),
+  );
+}
+async function convBuild(ctx, rest, embedDefault) {
+  const f = convFilter(rest);
+  if (f.error) throw new Error(f.error);
+  const ls = convInt(rest, '--limit-sources', null, 1, 100000);
+  if (!ls.ok) throw new Error(ls.error);
+  const embed = embedDefault != null ? embedDefault : rest.indexOf('--embed') !== -1;
+  const t0 = Date.now();
+  let lastPct = -1;
+  const report = await _convindex.build(ctx, {
+    apps: f.apps,
+    limitSources: ls.value,
+    embed: embed,
+    force: rest.indexOf('--force') !== -1,
+    onProgress: function (p) {
+      if (JSON_MODE) return;
+      const pct = Math.floor((p.done / Math.max(1, p.total)) * 100);
+      if (pct === lastPct || pct % 5 !== 0) return;
+      lastPct = pct;
+      print(style.dim('  ' + p.phase + ' ' + pct + '% (' + p.done + '/' + p.total + ')'));
+    },
+  });
+  report.ms = Date.now() - t0;
+  return report;
+}
+function convReportText(r) {
+  const s = r.stats || {};
+  const parts = [
+    r.indexed + ' parsed',
+    r.reused + ' reused',
+    r.changed + ' changed',
+    r.removed + ' removed',
+    r.empty + ' empty',
+    r.skipped + ' skipped',
+  ];
+  let line =
+    'Indexed ' +
+    (s.sources || 0) +
+    ' conversations · ' +
+    (s.messages || 0) +
+    ' messages · ' +
+    (s.chunks || 0) +
+    ' chunks';
+  line += '\n' + style.dim(parts.join(' · ') + ' · ' + fmtBytes(s.bytes || 0) + ' · ' + (r.ms / 1000).toFixed(1) + 's');
+  if (r.embedding) {
+    line +=
+      '\n' +
+      (r.embedding.error
+        ? style.warn('Vectors failed: ' + r.embedding.error)
+        : 'Vectors: ' + r.embedded + ' conversation(s) embedded · ' + r.embedding.model + ' @ ' + r.embedding.host);
+  } else {
+    line += '\n' + style.dim('No vectors yet — `keyflip conv index --embed` enables semantic + hybrid search.');
+  }
+  if (r.errors && r.errors.length) {
+    line +=
+      '\n' +
+      style.warn('· ' + r.errors.length + ' source(s) skipped') +
+      '\n' +
+      r.errors
+        .slice(0, 5)
+        .map(function (e) {
+          return '    ' + e.path + ': ' + e.error;
+        })
+        .join('\n');
+  }
+  return line;
+}
+async function cmdConv(ctx, rest) {
+  const first = rest[0];
+  const sub = CONV_SUBS.indexOf(first) !== -1 ? first : 'list';
+  const args = CONV_SUBS.indexOf(first) !== -1 ? rest.slice(1) : rest;
+  const f = convFilter(args);
+  if (f.error) return fail(f.error);
+  const limit = convInt(args, '--limit', sub === 'search' ? 10 : 20, 1, 500);
+  if (!limit.ok) return fail(limit.error);
+  const perConv = convInt(args, '--per-conv', 1, 1, 20);
+  if (!perConv.ok) return fail(perConv.error);
+
+  if (sub === 'list') {
+    const cat = _convindex.catalog(ctx, f);
+    if (!cat.indexed)
+      print(style.dim('· no index yet — this pass parsed every transcript; `keyflip conv index` makes it fast.'));
+    const rows = cat.conversations.slice(0, limit.value);
+    if (JSON_MODE)
+      return jsonOut({
+        indexed: cat.indexed,
+        builtAt: cat.builtAt,
+        conversations: rows,
+        total: cat.conversations.length,
+        errors: cat.errors,
+      });
+    if (!rows.length) {
+      return print(
+        cat.conversations.length === 0
+          ? 'No conversations found in any tool on this machine yet.'
+          : 'No conversation matches those filters.',
+      );
+    }
+    print('Conversations (' + cat.conversations.length + (cat.indexed ? ', from the index' : '') + '):');
+    rows.forEach(function (r) {
+      const id = String(r.id || '')
+        .split(':')
+        .pop()
+        .slice(0, 8);
+      const msgs = (r.counts && r.counts.messages) || 0;
+      print(
+        '  ' +
+          id.padEnd(9) +
+          ' ' +
+          String(r.app || '?').padEnd(8) +
+          ' ' +
+          convWhen(r.updatedAt).padStart(4) +
+          '  ' +
+          String(msgs).padStart(6) +
+          ' msg  ' +
+          convClip(r.title, 78),
+      );
+    });
+    print('\n' + style.dim('Read one: keyflip conv show <id>   ·   search: keyflip conv search "<query>"'));
+    return;
+  }
+
+  if (sub === 'status') {
+    const st = _convindex.status(ctx);
+    if (JSON_MODE) return jsonOut(st);
+    if (!st.exists) {
+      print('No conversation index yet.');
+      print('  build it: ' + style.bold('keyflip conv index') + '   (add --embed for semantic search)');
+      return;
+    }
+    const s = st.stats || {};
+    print('Conversation index · ' + st.dir);
+    print(
+      '  built ' +
+        convWhen(st.builtAt) +
+        ' ago · ' +
+        (s.sources || 0) +
+        ' conversations · ' +
+        (s.messages || 0) +
+        ' messages',
+    );
+    print('  ' + (s.chunks || 0) + ' chunks · ' + fmtBytes(s.bytes || 0));
+    if (st.embedding)
+      print(
+        '  embeddings: ' +
+          st.vectorChunks +
+          '/' +
+          (s.chunks || 0) +
+          ' chunks (' +
+          st.coverage +
+          '%) · ' +
+          st.embedding.model +
+          ' @ ' +
+          st.embedding.host,
+      );
+    else print('  embeddings: none — `keyflip conv index --embed` turns on semantic/hybrid search');
+    if (s.byApp) {
+      print('  by app:');
+      Object.keys(s.byApp)
+        .sort()
+        .forEach(function (app) {
+          const a = s.byApp[app];
+          print(
+            '    ' +
+              app.padEnd(10) +
+              String(a.sources).padStart(5) +
+              ' conv · ' +
+              String(a.messages).padStart(7) +
+              ' msg · ' +
+              fmtBytes(a.bytes),
+          );
+        });
+    }
+    return;
+  }
+
+  if (sub === 'index') {
+    let r;
+    try {
+      r = await convBuild(ctx, args);
+    } catch (e) {
+      return fail((e && e.message) || String(e));
+    }
+    if (JSON_MODE) return jsonOut(r);
+    print(convReportText(r));
+    return;
+  }
+
+  if (sub === 'capabilities') {
+    const caps = _convexport.capabilities();
+    if (JSON_MODE) return jsonOut({ targets: caps });
+    print('Conversation handoff targets (all read-only: no target store is modified):');
+    caps.forEach(function (c) {
+      print('  ' + c.id.padEnd(10) + c.label + (c.nativeImport ? '  (native import)' : '  (file context only)'));
+      print('    ' + style.dim(c.note));
+    });
+    return;
+  }
+
+  if (sub === 'search' || sub === 'context') {
+    const query = positionals(args, CONV_VALUE_FLAGS).join(' ').trim();
+    if (!query) return fail(CONV_USAGE);
+    const mode = convMode(args) || 'hybrid';
+    const st = _convindex.status(ctx);
+    if (!st.exists) {
+      print(style.dim('· no index yet — building it once before searching.'));
+      try {
+        await convBuild(ctx, args, false);
+      } catch (e) {
+        return fail((e && e.message) || String(e));
+      }
+    } else if ((mode === 'semantic' || mode === 'hybrid') && !st.vectorChunks) {
+      if (mode === 'semantic')
+        return fail(
+          'no embeddings yet — run `keyflip conv index --embed` (local Ollama by default), or use --lexical.',
+        );
+      print(
+        style.warn('·') + ' no embeddings yet — hybrid falls back to lexical (`keyflip conv index --embed` fixes it).',
+      );
+    }
+    const qopts = {
+      mode: mode,
+      apps: f.apps,
+      sinceMs: f.sinceMs,
+      cwd: f.cwd,
+      limit: sub === 'context' ? Math.max(limit.value, 8) : limit.value,
+      perConv: perConv.value,
+    };
+    let r;
+    try {
+      r = await _convindex.search(ctx, query, qopts);
+    } catch (e) {
+      return fail('search failed: ' + ((e && e.message) || String(e)));
+    }
+    if (!r.ok) {
+      if (r.reason === 'no-index') return fail('no index yet — run `keyflip conv index` first.');
+      if (r.reason === 'embed-failed')
+        return fail(
+          'embedding endpoint failed: ' +
+            (r.detail || 'unknown') +
+            ' — use --lexical, or start Ollama (`ollama serve`) / set KEYFLIP_EMBED_URL.',
+        );
+      return fail('search failed: ' + (r.reason || 'unknown'));
+    }
+    if (sub === 'context') {
+      const budget = convInt(args, '--budget', 12000, 500, 200000);
+      if (!budget.ok) return fail(budget.error);
+      const expand = convInt(args, '--expand', 1, 0, 5);
+      if (!expand.ok) return fail(expand.error);
+      const pack = _convindex.contextPack(ctx, query, r.hits || [], {
+        budget: budget.value,
+        expand: expand.value,
+      });
+      if (JSON_MODE) return jsonOut({ query: query, mode: r.mode || mode, hits: r.hits || [], context: pack });
+      process.stdout.write(pack.slice(-1) === '\n' ? pack : pack + '\n');
+      return;
+    }
+    if (JSON_MODE)
+      return jsonOut({
+        query: query,
+        mode: r.mode || mode,
+        hits: r.hits,
+        coverage: r.semanticCoverage || r.coverage || null,
+        semanticError: r.semanticError || null,
+      });
+    if (!r.hits.length) return print('No conversation matched "' + query + '".');
+    return convPrintHits(query, r, limit.value);
+  }
+
+  if (sub === 'show' || sub === 'get') {
+    const ref = positionals(args, CONV_VALUE_FLAGS).join(' ').trim();
+    if (!ref) return fail(CONV_USAGE);
+    let conv;
+    try {
+      conv = convLoad(ctx, ref);
+    } catch (e) {
+      return convFailLoad(e);
+    }
+    const format = flagVal(args, '--format');
+    const out = flagVal(args, '--out');
+    if (format || out) {
+      const chosen = format || 'md';
+      if (['md', 'html', 'json'].indexOf(chosen) === -1)
+        return fail("unknown --format '" + chosen + "' (md|html|json)");
+      if (out) {
+        let res;
+        try {
+          res = _convexport.exportOne(conv, {
+            out: out,
+            format: chosen,
+            force: args.indexOf('--force') !== -1,
+            redact: convRedact(args),
+          });
+        } catch (e) {
+          return fail((e && e.message) || String(e));
+        }
+        if (JSON_MODE) return jsonOut(res);
+        print(
+          style.ok('✅') +
+            ' wrote ' +
+            res.file +
+            '  ' +
+            style.dim(fmtBytes(res.bytes) + (res.redacted ? ' · redacted ' + res.redacted : '')),
+        );
+        return;
+      }
+      let rendered;
+      try {
+        rendered = _convexport.render(conv, { format: chosen, redact: convRedact(args) });
+      } catch (e) {
+        return fail((e && e.message) || String(e));
+      }
+      process.stdout.write(rendered.content.slice(-1) === '\n' ? rendered.content : rendered.content + '\n');
+      return;
+    }
+    if (JSON_MODE) return jsonOut({ conversation: conv });
+    const head = [conv.app, conv.surface, conv.id, conv.counts.messages + ' messages', conv.updatedAt, conv.cwd]
+      .filter(Boolean)
+      .join(' · ');
+    print(style.bold(conv.title));
+    print(style.dim(head));
+    conv.messages.forEach(function (m) {
+      print('');
+      print(
+        style.bold(m.role === 'assistant' ? conv.app || 'assistant' : 'You') +
+          (m.ts ? style.dim('  ' + String(m.ts).slice(0, 16).replace('T', ' ')) : ''),
+      );
+      if (m.text) print(m.text);
+      if (m.tools && m.tools.length) print(style.dim('→ used ' + m.tools.join(', ')));
+    });
+    return;
+  }
+
+  if (sub === 'transfer') {
+    const ref = positionals(args, CONV_VALUE_FLAGS).join(' ').trim();
+    if (!ref) return fail(CONV_USAGE);
+    const to = flagVal(args, '--to') || 'generic';
+    let conv;
+    try {
+      conv = convLoad(ctx, ref);
+    } catch (e) {
+      return convFailLoad(e);
+    }
+    let res;
+    try {
+      res = _convexport.writeBundle(conv, to, {
+        out: flagVal(args, '--out') || undefined,
+        force: args.indexOf('--force') !== -1,
+        redact: convRedact(args),
+        now: ctx.now ? ctx.now() : undefined,
+      });
+    } catch (e) {
+      return fail((e && e.message) || String(e));
+    }
+    if (JSON_MODE) return jsonOut(res);
+    print(style.ok('✅') + ' handoff for ' + style.bold(res.label) + ' → ' + res.dir);
+    res.files.forEach(function (file) {
+      print('  ' + file);
+    });
+    if (!res.nativeImport)
+      print(style.dim('  · no native import exists for this target — paste or attach CONTINUE.md.'));
+    if (res.redacted)
+      print(style.dim('  · redacted ' + res.redacted + ' known secret shape(s); --no-redact keeps fidelity.'));
+    print(style.dim('  · 0600 files; no tool store was modified. Delete the folder when the handoff is done.'));
+    return;
+  }
+
+  if (sub === 'export') {
+    const ref = positionals(args, CONV_VALUE_FLAGS).join(' ').trim();
+    const all = args.indexOf('--all') !== -1;
+    const obsidian = args.indexOf('--obsidian') !== -1;
+    const out = flagVal(args, '--out');
+    const format = flagVal(args, '--format') || 'md';
+    if (['md', 'html', 'json'].indexOf(format) === -1) return fail("unknown --format '" + format + "' (md|html|json)");
+    if (obsidian) {
+      if (!out)
+        return fail('Obsidian export needs a vault: keyflip conv export --all --obsidian --out ~/Documents/Vault');
+      const rows = _convindex.catalog(ctx, f).conversations;
+      if (!rows.length) return fail('no conversations match those filters.');
+      let n = 0;
+      function* loadRows() {
+        const srcs = _conversations.discover(ctx, {});
+        const byPath = Object.create(null);
+        srcs.forEach(function (s) {
+          byPath[path.resolve(s.path)] = s;
+        });
+        for (const row of rows) {
+          const src = row.path ? byPath[path.resolve(row.path)] : null;
+          if (!src) continue;
+          try {
+            n++;
+            if (!JSON_MODE && n % 100 === 0) print(style.dim('  reading ' + n + '/' + rows.length));
+            yield _conversations.load(ctx, src, {});
+          } catch {
+            /* a single unreadable source must not abort the vault export */
+          }
+        }
+      }
+      let report;
+      try {
+        report = _convexport.obsidianExport(ctx, loadRows(), {
+          out: out,
+          force: args.indexOf('--force') !== -1,
+          redact: convRedact(args),
+          now: ctx.now ? ctx.now() : undefined,
+        });
+      } catch (e) {
+        return fail((e && e.message) || String(e));
+      }
+      if (JSON_MODE) return jsonOut(report);
+      print(style.ok('✅') + ' Obsidian vault updated at ' + report.root);
+      print(
+        '  ' +
+          report.written +
+          ' written · ' +
+          report.updated +
+          ' updated · ' +
+          report.skipped +
+          ' unchanged · ' +
+          report.conflicts +
+          ' conflict copy(ies)' +
+          (report.renamed ? ' · ' + report.renamed + ' old note(s) renamed' : ''),
+      );
+      if (report.redacted) print(style.dim('  · redacted ' + report.redacted + ' known secret shape(s)'));
+      report.stale.forEach(function (s) {
+        print(style.warn('· kept ' + s.file + ' — ' + s.reason));
+      });
+      print('  index note: ' + report.index);
+      return;
+    }
+    if (all) {
+      const dest = out || path.join(process.cwd(), 'keyflip-conversations');
+      const rows = _convindex.catalog(ctx, f).conversations;
+      if (!rows.length) return fail('no conversations match those filters.');
+      const srcs = _conversations.discover(ctx, {});
+      const byPath = Object.create(null);
+      srcs.forEach(function (s) {
+        byPath[path.resolve(s.path)] = s;
+      });
+      const results = [];
+      const errors = [];
+      let done = 0;
+      for (const row of rows) {
+        const src = row.path ? byPath[path.resolve(row.path)] : null;
+        if (!src) {
+          errors.push({ id: row.id, error: 'source is gone' });
+          continue;
+        }
+        try {
+          const conv = _conversations.load(ctx, src, {});
+          const res = _convexport.exportOne(conv, {
+            out: dest + path.sep,
+            format: format,
+            force: args.indexOf('--force') !== -1,
+            redact: convRedact(args),
+          });
+          results.push(res);
+        } catch (e) {
+          errors.push({ id: row.id, error: (e && e.message) || String(e) });
+        }
+        done++;
+        if (!JSON_MODE && done % 100 === 0) print(style.dim('  exported ' + done + '/' + rows.length));
+      }
+      if (JSON_MODE) return jsonOut({ dir: dest, files: results, errors: errors });
+      print(style.ok('✅') + ' exported ' + results.length + ' conversation(s) to ' + dest);
+      if (errors.length) print(style.warn('· ' + errors.length + ' failed (first: ' + (errors[0].error || '') + ')'));
+      return;
+    }
+    if (!ref) return fail(CONV_USAGE);
+    let conv;
+    try {
+      conv = convLoad(ctx, ref);
+    } catch (e) {
+      return convFailLoad(e);
+    }
+    let res;
+    try {
+      res = _convexport.exportOne(conv, {
+        out: out || undefined,
+        format: format,
+        force: args.indexOf('--force') !== -1,
+        redact: convRedact(args),
+      });
+    } catch (e) {
+      return fail((e && e.message) || String(e));
+    }
+    if (JSON_MODE) return jsonOut(res);
+    print(
+      style.ok('✅') +
+        ' wrote ' +
+        res.file +
+        '  ' +
+        style.dim(fmtBytes(res.bytes) + (res.redacted ? ' · redacted ' + res.redacted : '')),
+    );
+    return;
+  }
+
+  return fail(CONV_USAGE);
 }
 
 // `keyflip memory [list | show <key> | remove <key>]` — browse keyflip's distilled keepsakes.
@@ -14622,6 +15283,9 @@ async function dispatch(ctx, cmd, rest) {
         return cmdDream(ctx, rest);
       case 'recall':
         return cmdRecall(ctx, rest);
+      case 'conv':
+      case 'conversations':
+        return cmdConv(ctx, rest);
       case 'settings':
         return rest[0] === 'set' || rest[0] === 'unset'
           ? withLock(

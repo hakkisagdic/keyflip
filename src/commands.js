@@ -255,6 +255,14 @@ const CATALOG = [
     desc: 'Search your chats (BM25; --semantic embeddings; --answer synthesis).',
   },
   {
+    name: 'conv',
+    group: 'sessions',
+    safe: true,
+    usage:
+      'keyflip conv [list|search|show|context|status] | index [--embed] | export --all [--obsidian] --out <dir> | transfer <id> --to <tool>',
+    desc: "Every local AI tool's chats in one shape: browse, search, RAG context, Obsidian/MD/HTML export, handoff.",
+  },
+  {
     name: 'foreign',
     group: 'sessions',
     safe: false,

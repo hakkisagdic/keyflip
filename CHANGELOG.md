@@ -9,6 +9,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`keyflip conv` — every local AI tool's chats in one searchable shape.** A canonical conversation
+  layer reads Claude Code, Codex/ChatGPT rollouts (`.jsonl` and `.zst`), Kiro (CLI + IDE) and the
+  foreign adapters (Qoder, Cursor, opencode, Gemini/Antigravity, Copilot, Aider) into one form
+  (`id/app/surface/title/cwd` + `{role,text,ts,tools}` messages), stripping host harness noise
+  (`<system-reminder>`, `<task-notification>`, command plumbing, malformed `<pasted_content>` tags).
+  Sources are strictly read-only. `list` browses (id prefix/app/age/count/title, filters `--app`,
+  `--since`, `--cwd`); `index` builds an incremental chunk index keyflip owns in the secret-dir
+  `~/.config/keyflip/conv-index` (0600, never versioned/backed up; mtime+size+hash reuse, prefix
+  vector reuse for appended chats, filtered builds keep the rest, full builds drop gone sources);
+  `search` ranks with BM25, or embeddings (local Ollama `nomic-embed-text` by default, or
+  `KEYFLIP_EMBED_URL` with remote text secret-redacted first) or reciprocal-rank-fusion hybrid — and
+  labels the result honestly (`lexical` + note when no vectors exist, instead of a silent "hybrid";
+  no query-vector round-trip is spent when nothing is embedded); `context` returns a char-budgeted
+  RAG block with cited sources and neighbouring chunks (`--expand`, `--budget`); `show` reads one
+  conversation; `export` writes MD/self-contained HTML/canonical JSON, or an **Obsidian vault**
+  (`keyflip/Conversations` + index note + hidden hash manifest: keyflip's own notes update in place,
+  a user edit becomes a `… (conflict <ts>).md` copy, a renamed note is removed only while still
+  byte-identical, ownership never points at a conflict copy); `transfer` writes a 0600 handoff bundle
+  (`conversation.json` + per-target `CONTINUE.md` + README) for claude/codex/kiro/cursor/opencode/windsurf/gemini/copilot/aider/generic and states plainly that no target has a documented import. Exports mask credential-shaped
+  lines by default (`--no-redact` for fidelity), refuse overwrite without `--force`, and writes are
+  0600. `search`/`context` auto-build the index once on first use.
+
+- **MCP: conversation tools.** Read-only `keyflip_conv_list`, `keyflip_conv_show`, `keyflip_conv_search`,
+  `keyflip_conv_context` and `keyflip_conv_status` never build the index and mask snippets/context for
+  credential shapes before anything reaches an agent transcript; `keyflip_conv_index` and
+  `keyflip_conv_export` (single file, bulk with `limit`/`offset`, Obsidian, or a `target` bundle) are
+  confirm-gated. The index path is reported relative to the state dir, never as a home path.
+
+- **`recall`'s BM25 now lives in one shared module** (`src/bm25.js`) used by both the keepsake search
+  and the conversation index, so stemming and scoring behave identically everywhere.
+
 - **`keyflip chatgpt` (alias `codex`) — save, switch and refresh the ChatGPT.app + Codex CLI login.**
   Both surfaces authenticate with the same `~/.codex/auth.json` (or `$CODEX_HOME/auth.json`, 0600), so
   one adapter covers them. `status` reports the live e-mail/plan/expiry without printing a token;

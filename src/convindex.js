@@ -1,0 +1,912 @@
+// Cross-app conversation retrieval: a local, incremental index over every chat keyflip can
+// read (src/conversations.js). Nothing is uploaded. Text is stored 0600 under
+// <configDir>/conv-index/, which secretpaths registers as a SECRET_DIR, so it never enters
+// keyflip's git repo, metadata backups or `migrate`.
+//
+// Design notes (best practice, zero runtime deps):
+//   * One directory per conversation (`chunks/<key>.jsonl`) instead of one giant file: a
+//     changed chat rewrites only its own slice, and a search streams sources it needs.
+//   * Lexical ranking is BM25 (src/bm25.js) over ALL documents; a cheap prefix prefilter
+//     avoids tokenizing 100+ MB for every query while df/avgdl stay exact (every document
+//     that can contain a term passes the prefilter).
+//   * Embeddings are OPT-IN (`--semantic`). Vectors are per-source Float32LE files, keyed by
+//     an embedding-space hash (url+model). A changed conversation reuses the unchanged
+//     prefix's vectors, so an append-only chat only embeds its new turns.
+//   * A remote embedding endpoint is treated as untrusted: text is secret-scanned/redacted
+//     before it leaves the machine. Localhost (the Ollama default) keeps full fidelity.
+//   * `--hybrid` fuses lexical + vector rankings with Reciprocal Rank Fusion.
+import fs from 'fs';
+import path from 'path';
+import crypto from 'crypto';
+import * as conversations from './conversations.js';
+import * as _bm25 from './bm25.js';
+import * as _embed from './embed.js';
+import * as _secretscan from './secretscan.js';
+import * as _fsutil from './fsutil.js';
+
+const SCHEMA_VERSION = 1;
+const INDEX_DIR = 'conv-index';
+const CHUNK_TARGET = 1400; // characters per chunk
+const CHUNK_OVERLAP = 180; // only for a single oversized message
+const EMBED_BATCH = 32;
+const EMBED_MAX_CHARS = 6000;
+const RRF_K = 60;
+
+function dirOf(ctx) {
+  return path.join(ctx.configDir, INDEX_DIR);
+}
+function metaPath(ctx) {
+  return path.join(dirOf(ctx), 'meta.json');
+}
+function chunksDir(ctx) {
+  return path.join(dirOf(ctx), 'chunks');
+}
+function vectorsDir(ctx) {
+  return path.join(dirOf(ctx), 'vectors');
+}
+function keyOf(id) {
+  return crypto.createHash('sha1').update(String(id)).digest('hex').slice(0, 16);
+}
+function chunkPath(ctx, id) {
+  return path.join(chunksDir(ctx), keyOf(id) + '.jsonl');
+}
+function vectorPath(ctx, id) {
+  return path.join(vectorsDir(ctx), keyOf(id) + '.f32');
+}
+function hashText(text) {
+  return crypto.createHash('sha1').update(String(text)).digest('hex').slice(0, 16);
+}
+
+function readMeta(ctx) {
+  try {
+    const m = JSON.parse(fs.readFileSync(metaPath(ctx), 'utf8'));
+    if (m && m.schemaVersion === SCHEMA_VERSION && m.sources && typeof m.sources === 'object') return m;
+  } catch {
+    /* no index yet */
+  }
+  return null;
+}
+
+function writeMeta(ctx, meta) {
+  _fsutil.atomicWrite(metaPath(ctx), JSON.stringify(meta, null, 2) + '\n', 0o600);
+}
+
+function emptyMeta() {
+  return {
+    schemaVersion: SCHEMA_VERSION,
+    builtAt: null,
+    embedding: null,
+    stats: { sources: 0, chunks: 0, messages: 0, bytes: 0 },
+    sources: Object.create(null),
+  };
+}
+
+// ---- chunking ------------------------------------------------------------------------------
+
+function splitLong(text) {
+  const out = [];
+  const step = CHUNK_TARGET - CHUNK_OVERLAP;
+  for (let i = 0; i < text.length; i += step) {
+    out.push(text.slice(i, i + CHUNK_TARGET));
+    if (i + CHUNK_TARGET >= text.length) break;
+  }
+  return out;
+}
+
+// Group short turns into ~CHUNK_TARGET windows so a retrieved chunk carries a real exchange;
+// split a giant turn with overlap. `len` is stored so search never tokenizes a non-matching
+// document just to compute avgdl.
+function chunkConversation(conv) {
+  const out = [];
+  let buf = [];
+  let size = 0;
+  const flush = () => {
+    if (!buf.length) return;
+    const text = buf.join('\n\n').trim();
+    if (text) out.push({ role: buf[0].role, ts: buf[0].ts || null, text: text });
+    buf = [];
+    size = 0;
+  };
+  for (const m of conv.messages || []) {
+    const body = String(m.text || '').trim();
+    if (!body) continue;
+    if (body.length > CHUNK_TARGET * 1.5) {
+      flush();
+      splitLong(body).forEach((part) => out.push({ role: m.role, ts: m.ts || null, text: part }));
+      continue;
+    }
+    if (size && size + body.length > CHUNK_TARGET) flush();
+    const label = m.role === 'assistant' ? 'Assistant: ' : m.role === 'user' ? 'User: ' : '';
+    buf.push(label + body);
+    size += body.length + label.length + 2;
+  }
+  flush();
+  return out.map((c, i) => ({
+    n: i,
+    role: c.role,
+    ts: c.ts,
+    h: hashText(c.text),
+    len: _bm25.tokenize(c.text).length,
+    text: c.text,
+  }));
+}
+
+function readChunks(file) {
+  const out = [];
+  let raw;
+  try {
+    raw = fs.readFileSync(file, 'utf8');
+  } catch {
+    return out;
+  }
+  raw.split('\n').forEach((line) => {
+    if (!line.trim()) return;
+    try {
+      const c = JSON.parse(line);
+      if (c && typeof c.text === 'string') out.push(c);
+    } catch {
+      /* torn line (interrupted write) — the next build replaces it */
+    }
+  });
+  return out;
+}
+
+function writeChunks(ctx, id, chunks) {
+  const body = chunks.map((c) => JSON.stringify(c)).join('\n') + '\n';
+  _fsutil.atomicWrite(chunkPath(ctx, id), body, 0o600);
+}
+
+// ---- embedding space & safety --------------------------------------------------------------
+
+function isLoopback(url) {
+  try {
+    const h = new URL(url).hostname;
+    return h === 'localhost' || h === '127.0.0.1' || h === '::1' || h.endsWith('.localhost');
+  } catch {
+    return false;
+  }
+}
+
+function spaceOf(opts) {
+  const url = (opts && opts.url) || _embed.defaultUrl();
+  const model = (opts && opts.model) || _embed.defaultModel();
+  return {
+    hash: crypto
+      .createHash('sha1')
+      .update(url + '\0' + model)
+      .digest('hex')
+      .slice(0, 16),
+    urlHash: crypto.createHash('sha1').update(url).digest('hex').slice(0, 12),
+    host: (function () {
+      try {
+        return new URL(url).host;
+      } catch {
+        return 'invalid';
+      }
+    })(),
+    model: model,
+    remote: !isLoopback(url),
+  };
+}
+
+function safeForEmbedding(text, space) {
+  // Remote endpoints get redacted text; a local Ollama keeps full fidelity.
+  return space.remote ? _secretscan.redactLines(String(text || '')).text : String(text || '');
+}
+
+function readVectorFile(file, dim, count) {
+  let buf;
+  try {
+    buf = fs.readFileSync(file);
+  } catch {
+    return null;
+  }
+  if (!dim || buf.length !== dim * count * 4) return null;
+  return buf;
+}
+
+async function embedSource(ctx, id, chunks, prev, space, opts) {
+  const file = vectorPath(ctx, id);
+  let prefix = 0;
+  let prefixBuf = null;
+  let dim = (prev && prev.vec && prev.vec.dim) || 0;
+  const canReuse = prev && prev.vec && prev.vec.space === space.hash && prev.vec.dim && Array.isArray(prev.chunkHashes);
+  if (canReuse) {
+    const oldHashes = prev.chunkHashes;
+    while (prefix < oldHashes.length && prefix < chunks.length && oldHashes[prefix] === chunks[prefix].h) prefix++;
+    const old = prefix ? readVectorFile(file, prev.vec.dim, oldHashes.length) : null;
+    if (old) {
+      prefixBuf = old.subarray(0, prefix * prev.vec.dim * 4);
+      dim = prev.vec.dim;
+    } else {
+      prefix = 0;
+    }
+  }
+  const need = chunks.slice(prefix);
+  if (!need.length && prefix) {
+    return {
+      space: space.hash,
+      dim: dim,
+      count: chunks.length,
+      model: space.model,
+      host: space.host,
+      remote: space.remote,
+    };
+  }
+  const fresh = [];
+  for (let i = 0; i < need.length; i += EMBED_BATCH) {
+    const batch = need.slice(i, i + EMBED_BATCH).map((c) => safeForEmbedding(c.text, space).slice(0, EMBED_MAX_CHARS));
+    const got = await _embed.embed(batch, opts);
+    if (!Array.isArray(got) || got.length !== batch.length)
+      throw new Error(
+        'embedding endpoint returned ' + (got ? got.length : 0) + ' vectors for ' + batch.length + ' inputs',
+      );
+    got.forEach((v) => {
+      if (!Array.isArray(v) || !v.length) throw new Error('embedding endpoint returned an empty vector');
+      if (!dim) dim = v.length;
+      else if (v.length !== dim)
+        throw new Error('embedding dimension changed mid-build (' + v.length + ' vs ' + dim + ')');
+      fresh.push(v);
+    });
+    if (opts && opts.onProgress)
+      opts.onProgress({ phase: 'embed', done: prefix + Math.min(i + EMBED_BATCH, need.length), total: chunks.length });
+  }
+  if (!dim || prefix + fresh.length !== chunks.length) return null;
+  const freshBuf = Buffer.alloc(fresh.length * dim * 4);
+  let off = 0;
+  for (const v of fresh) {
+    for (let j = 0; j < dim; j++) {
+      freshBuf.writeFloatLE(Number(v[j]) || 0, off);
+      off += 4;
+    }
+  }
+  _fsutil.atomicWrite(file, prefixBuf ? Buffer.concat([prefixBuf, freshBuf]) : freshBuf, 0o600);
+  return {
+    space: space.hash,
+    dim: dim,
+    count: chunks.length,
+    model: space.model,
+    host: space.host,
+    remote: space.remote,
+  };
+}
+
+// ---- build ---------------------------------------------------------------------------------
+
+function countStats(sources) {
+  const stats = { sources: 0, chunks: 0, messages: 0, bytes: 0, byApp: Object.create(null) };
+  Object.keys(sources).forEach((id) => {
+    const s = sources[id];
+    stats.sources++;
+    stats.chunks += s.chunks || 0;
+    stats.messages += (s.counts && s.counts.messages) || 0;
+    stats.bytes += s.bytes || 0;
+    const app = s.app || 'other';
+    const a = stats.byApp[app] || (stats.byApp[app] = { sources: 0, chunks: 0, messages: 0, bytes: 0 });
+    a.sources++;
+    a.chunks += s.chunks || 0;
+    a.messages += (s.counts && s.counts.messages) || 0;
+    a.bytes += s.bytes || 0;
+  });
+  return stats;
+}
+
+// Parse every source, compare mtime/size (+ content hash after parse), write changed chunk
+// files, and optionally embed them. Returns a report; never mutates a tool's own store.
+async function build(ctx, opts) {
+  opts = opts || {};
+  const dsOpts = { apps: opts.apps, foreign: opts.foreign, limitSources: opts.limitSources };
+  const sources = conversations.discover(ctx, dsOpts);
+  const meta = readMeta(ctx) || emptyMeta();
+  // A source is looked up by its PATH, not by a computed id: the id is assigned by the
+  // parser (Codex may take it from session_meta rather than the filename), so guessing it
+  // here would miss and re-parse every file on every run.
+  const byPath = Object.create(null);
+  Object.keys(meta.sources).forEach((id) => {
+    const s = meta.sources[id];
+    if (s && s.path) byPath[s.path] = s;
+  });
+  const next = Object.create(null);
+  const report = {
+    ok: true,
+    candidateSources: sources.length,
+    indexed: 0,
+    reused: 0,
+    changed: 0,
+    removed: 0,
+    skipped: 0,
+    empty: 0,
+    errors: [],
+    embedded: 0,
+    embedding: null,
+  };
+  const space = opts.embed ? spaceOf(opts) : null;
+  let done = 0;
+  for (const src of sources) {
+    done++;
+    if (opts.onProgress) opts.onProgress({ phase: 'scan', done: done, total: sources.length, id: src.path });
+    const prev = byPath[src.path];
+    try {
+      const conv = conversations.load(ctx, src, opts);
+      const bytes = conv.messages.reduce((n, m) => n + Buffer.byteLength(m.text || ''), 0);
+      if (!conv.messages.length) {
+        report.empty++;
+        if (prev) report.removed++;
+        continue;
+      }
+      const id = conv.id;
+      const had = meta.sources[id] || prev;
+      if (!opts.force && had && had.mtimeMs === src.mtimeMs && had.size === src.size) {
+        next[id] = had;
+        report.reused++;
+        continue;
+      }
+      if (!opts.force && had && had.hash === conv.hash && fs.existsSync(chunkPath(ctx, id))) {
+        next[id] = Object.assign({}, had, {
+          mtimeMs: src.mtimeMs,
+          size: src.size,
+          path: src.path,
+          updatedAt: conv.updatedAt,
+          title: conv.title,
+          cwd: conv.cwd,
+        });
+        report.reused++;
+        continue;
+      }
+      const chunks = chunkConversation(conv);
+      if (!chunks.length) {
+        report.empty++;
+        continue;
+      }
+      const oldHashes = had ? had.chunkHashes || readChunks(chunkPath(ctx, id)).map((c) => c.h) : [];
+      const entry = {
+        id: id,
+        app: conv.app,
+        surface: conv.surface,
+        title: conv.title,
+        cwd: conv.cwd,
+        account: conv.account,
+        createdAt: conv.createdAt,
+        updatedAt: conv.updatedAt,
+        counts: conv.counts,
+        path: src.path,
+        mtimeMs: src.mtimeMs,
+        size: src.size,
+        hash: conv.hash,
+        chunks: chunks.length,
+        bytes: bytes,
+        chunkHashes: chunks.map((c) => c.h),
+        // Changed text invalidates the vector alignment. Keep the OLD vector/hash pair only
+        // so an appended chat can reuse its unchanged prefix instead of embedding 8k chunks again.
+        vec: null,
+        _oldVec: had && space && had.vec && had.vec.space === space.hash ? had.vec : null,
+        _oldHashes: had && space && had.vec && had.vec.space === space.hash ? oldHashes : null,
+      };
+      writeChunks(ctx, id, chunks);
+      next[id] = entry;
+      report.changed++;
+      report.indexed++;
+    } catch (e) {
+      report.skipped++;
+      report.errors.push({ path: src.path, app: src.app, error: (e && e.message) || String(e) });
+    }
+  }
+
+  // Full discovery means anything absent is gone. Filtered builds must not delete the rest.
+  const full = !opts.apps && !opts.limitSources;
+  if (full) {
+    Object.keys(meta.sources).forEach((id) => {
+      if (!next[id]) {
+        report.removed++;
+        try {
+          fs.rmSync(chunkPath(ctx, id), { force: true });
+          fs.rmSync(vectorPath(ctx, id), { force: true });
+        } catch {
+          /* best-effort */
+        }
+      }
+    });
+  } else {
+    // Keep sources outside this filtered build untouched.
+    Object.keys(meta.sources).forEach((id) => {
+      if (!next[id]) next[id] = meta.sources[id];
+    });
+  }
+
+  if (space && (opts.embed || opts.semantic)) {
+    report.embedding = {
+      space: space.hash,
+      model: space.model,
+      host: space.host,
+      remote: space.remote,
+      error: null,
+      sources: 0,
+      chunks: 0,
+    };
+    const toEmbed = Object.keys(next).filter((id) => {
+      const entry = next[id];
+      const needVec = !entry.vec || entry.vec.space !== space.hash || entry.vec.count !== entry.chunks;
+      const hasVec = entry.vec && fs.existsSync(vectorPath(ctx, id));
+      return needVec || !hasVec;
+    });
+    let embedDone = 0;
+    for (const id of toEmbed) {
+      const entry = next[id];
+      embedDone++;
+      if (opts.onProgress) opts.onProgress({ phase: 'embed', done: embedDone, total: toEmbed.length, id: id });
+      const chunks = readChunks(chunkPath(ctx, id));
+      try {
+        const prev = Object.assign({}, entry, {
+          vec: entry._oldVec || entry.vec,
+          chunkHashes: entry._oldHashes || entry.chunkHashes,
+        });
+        const vec = await embedSource(ctx, id, chunks, prev, space, opts);
+        if (vec) {
+          entry.vec = vec;
+          report.embedded++;
+          report.embedding.sources++;
+          report.embedding.chunks += chunks.length;
+        }
+      } catch (e) {
+        report.embedding.error = (e && e.message) || String(e);
+        report.ok = false;
+        break;
+      }
+    }
+  }
+  Object.keys(next).forEach((id) => {
+    delete next[id]._oldHashes;
+    delete next[id]._oldVec;
+  });
+
+  const built = {
+    schemaVersion: SCHEMA_VERSION,
+    builtAt: (ctx.now && ctx.now()) || new Date().toISOString(),
+    embedding: report.embedding
+      ? {
+          space: report.embedding.space,
+          model: report.embedding.model,
+          host: report.embedding.host,
+          remote: report.embedding.remote,
+        }
+      : meta.embedding || null,
+    stats: countStats(next),
+    sources: next,
+  };
+  writeMeta(ctx, built);
+  report.stats = built.stats;
+  return report;
+}
+
+// ---- catalog / status ----------------------------------------------------------------------
+
+// Metadata rows for every conversation. When the index exists this is a manifest read (no
+// transcript parsing); otherwise it falls back to a full discovery pass. Both branches return
+// the same row shape so callers (CLI, MCP) never branch on which source produced it.
+function catalog(ctx, opts) {
+  opts = opts || {};
+  const meta = readMeta(ctx);
+  if (meta && !opts.refresh) {
+    const rows = Object.keys(meta.sources)
+      .map((id) => meta.sources[id])
+      .filter((s) => !opts.apps || !opts.apps.length || opts.apps.indexOf(s.app) !== -1)
+      .filter((s) => !opts.sinceMs || Date.parse(s.updatedAt || '') >= opts.sinceMs)
+      .filter(
+        (s) =>
+          !opts.cwd ||
+          String(s.cwd || '')
+            .toLowerCase()
+            .indexOf(String(opts.cwd).toLowerCase()) !== -1,
+      )
+      .filter(
+        (s) =>
+          !opts.q ||
+          String(s.title || '')
+            .toLowerCase()
+            .indexOf(String(opts.q).toLowerCase()) !== -1,
+      )
+      .sort((a, b) => String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')));
+    return { indexed: true, builtAt: meta.builtAt, conversations: rows, stats: meta.stats, errors: [] };
+  }
+  const r = conversations.list(ctx, opts);
+  const rows = r.conversations
+    .map((c) =>
+      Object.assign({}, c, {
+        path: c.source && c.source.path,
+        mtimeMs: c.source && c.source.mtimeMs,
+        size: c.source && c.source.size,
+      }),
+    )
+    .filter((s) => !opts.sinceMs || Date.parse(s.updatedAt || '') >= opts.sinceMs)
+    .filter(
+      (s) =>
+        !opts.cwd ||
+        String(s.cwd || '')
+          .toLowerCase()
+          .indexOf(String(opts.cwd).toLowerCase()) !== -1,
+    )
+    .filter(
+      (s) =>
+        !opts.q ||
+        String(s.title || '')
+          .toLowerCase()
+          .indexOf(String(opts.q).toLowerCase()) !== -1,
+    );
+  return { indexed: false, builtAt: null, conversations: rows, stats: null, errors: r.errors };
+}
+
+function status(ctx) {
+  const meta = readMeta(ctx);
+  if (!meta) return { exists: false, dir: dirOf(ctx), sources: 0, chunks: 0 };
+  let vectorSources = 0;
+  let vectorChunks = 0;
+  Object.keys(meta.sources).forEach((id) => {
+    const s = meta.sources[id];
+    if (s.vec && fs.existsSync(vectorPath(ctx, id))) {
+      vectorSources++;
+      vectorChunks += s.vec.count || 0;
+    }
+  });
+  return {
+    exists: true,
+    dir: dirOf(ctx),
+    builtAt: meta.builtAt,
+    stats: meta.stats,
+    embedding: meta.embedding,
+    vectorSources: vectorSources,
+    vectorChunks: vectorChunks,
+    coverage: meta.stats && meta.stats.chunks ? Math.round((vectorChunks / meta.stats.chunks) * 1000) / 10 : 0,
+  };
+}
+
+// Parse a user duration (`7d`, `12h`, `2026-10-01`) into epoch ms. Returns null when absent.
+function parseSince(s, nowMs) {
+  if (s == null || s === '') return null;
+  const str = String(s).trim();
+  const rel = /^(\d+)\s*([hdwmy])$/i.exec(str);
+  if (rel) {
+    const n = parseInt(rel[1], 10);
+    const unit = { h: 3600e3, d: 86400e3, w: 7 * 86400e3, m: 30 * 86400e3, y: 365 * 86400e3 }[rel[2].toLowerCase()];
+    return (nowMs == null ? Date.now() : nowMs) - n * unit;
+  }
+  const t = Date.parse(str);
+  return Number.isNaN(t) ? null : t;
+}
+
+function activeSources(ctx, meta, opts) {
+  opts = opts || {};
+  const keys = [];
+  Object.keys(meta.sources).forEach((id) => {
+    const s = meta.sources[id];
+    if (opts.apps && opts.apps.length && opts.apps.indexOf(s.app) === -1) return;
+    if (opts.sinceMs && Date.parse(s.updatedAt || '') < opts.sinceMs) return;
+    if (
+      opts.cwd &&
+      String(s.cwd || '')
+        .toLowerCase()
+        .indexOf(String(opts.cwd).toLowerCase()) === -1
+    )
+      return;
+    if (opts.ids && opts.ids.length && opts.ids.indexOf(id) === -1) return;
+    keys.push(id);
+  });
+  return keys;
+}
+
+// ---- lexical search ------------------------------------------------------------------------
+
+function needles(qterms, rawQuery) {
+  // Prefix (>=4 chars) so "retry" matches "retries"/"retrying"; short words stay exact.
+  const set = Object.create(null);
+  const add = (w) => {
+    if (!w) return;
+    set[w.length >= 5 ? w.slice(0, 4) : w] = 1;
+  };
+  qterms.forEach(add);
+  String(rawQuery || '')
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .forEach((w) => {
+      if (w.length > 1 && !_bm25.STOP.has(w)) add(w);
+    });
+  return Object.keys(set);
+}
+
+function makeSnippet(text, terms) {
+  const low = String(text || '').toLowerCase();
+  let at = -1;
+  for (const t of terms) {
+    const p = low.indexOf(t);
+    if (p !== -1 && (at === -1 || p < at)) at = p;
+  }
+  if (at === -1) at = 0;
+  const start = Math.max(0, at - 80);
+  const end = Math.min(low.length, at + 220);
+  return (
+    (start > 0 ? '…' : '') + String(text).slice(start, end).replace(/\s+/g, ' ').trim() + (end < low.length ? '…' : '')
+  );
+}
+
+// Top chunks often all come from the same long session. A result list should answer "which
+// conversations discuss this", so keep at most `perConv` chunks per conversation (default 1)
+// while preserving rank order. Context packs may ask for more.
+function diversify(hits, perConv) {
+  const cap = perConv == null ? 1 : Math.max(1, perConv);
+  const seen = Object.create(null);
+  const out = [];
+  for (const h of hits) {
+    const n = seen[h.id] || 0;
+    if (n >= cap) continue;
+    seen[h.id] = n + 1;
+    out.push(h);
+  }
+  return out;
+}
+
+function lexical(ctx, query, opts) {
+  opts = opts || {};
+  const meta = readMeta(ctx);
+  const qterms = _bm25.tokenize(query);
+  if (!meta) return { ok: false, reason: 'no-index', hits: [] };
+  if (!qterms.length) return { ok: true, hits: [], scanned: 0 };
+  const keys = activeSources(ctx, meta, opts);
+  const need = needles(qterms, query);
+  const docs = [];
+  let totalLen = 0;
+  let totalDocs = 0;
+  for (const id of keys) {
+    const chunks = readChunks(chunkPath(ctx, id));
+    for (const c of chunks) {
+      totalDocs++;
+      totalLen += typeof c.len === 'number' ? c.len : _bm25.tokenize(c.text).length;
+      const low = c.text.toLowerCase();
+      if (!need.some((n) => low.indexOf(n) !== -1)) continue;
+      const toks = _bm25.tokenize(c.text);
+      const tf = Object.create(null);
+      toks.forEach((t) => {
+        tf[t] = (tf[t] || 0) + 1;
+      });
+      let any = false;
+      const hits = [];
+      qterms.forEach((q) => {
+        if (tf[q]) {
+          any = true;
+          hits.push([q, tf[q]]);
+        }
+      });
+      if (any) docs.push({ id: id, n: c.n, role: c.role, ts: c.ts, len: toks.length, tf: hits, text: c.text });
+    }
+  }
+  if (!docs.length) return { ok: true, hits: [], scanned: totalDocs };
+  const avgdl = totalLen / (totalDocs || 1);
+  const df = Object.create(null);
+  docs.forEach((d) => {
+    d.tf.forEach((pair) => {
+      df[pair[0]] = (df[pair[0]] || 0) + 1;
+    });
+  });
+  const N = totalDocs;
+  const scored = docs.map((d) => {
+    let score = 0;
+    d.tf.forEach((pair) => {
+      const q = pair[0];
+      const f = pair[1];
+      const n = df[q] || 1;
+      const idf = Math.log(1 + (N - n + 0.5) / (n + 0.5));
+      score += (idf * (f * (_bm25.K1 + 1))) / (f + _bm25.K1 * (1 - _bm25.B + (_bm25.B * d.len) / (avgdl || 1)));
+    });
+    return {
+      id: d.id,
+      app: meta.sources[d.id].app,
+      title: meta.sources[d.id].title,
+      cwd: meta.sources[d.id].cwd,
+      updatedAt: meta.sources[d.id].updatedAt,
+      chunk: d.n,
+      role: d.role,
+      ts: d.ts,
+      score: score,
+      snippet: makeSnippet(d.text, need),
+    };
+  });
+  scored.sort((a, b) => b.score - a.score);
+  return { ok: true, hits: diversify(scored, opts.perConv).slice(0, opts.limit || 10), scanned: totalDocs };
+}
+
+// ---- semantic search -----------------------------------------------------------------------
+
+async function semantic(ctx, query, opts) {
+  opts = opts || {};
+  const meta = readMeta(ctx);
+  if (!meta) return { ok: false, reason: 'no-index', hits: [] };
+  const space = spaceOf(opts);
+  const keys = activeSources(ctx, meta, opts);
+  // Do not ask the embedding endpoint for a query vector when no source has one: hybrid search
+  // used to spend a network round-trip on every call and then silently rank by BM25 only.
+  const hasVectors = keys.some((id) => {
+    const s = meta.sources[id];
+    return s && s.vec && s.vec.space === space.hash && s.vec.dim && fs.existsSync(vectorPath(ctx, id));
+  });
+  if (!hasVectors) return { ok: false, reason: 'no-vectors', hits: [] };
+  let qv;
+  try {
+    const got = await _embed.embed([safeForEmbedding(query, space)], opts);
+    qv = got && got[0];
+  } catch (e) {
+    return { ok: false, reason: 'embed-failed', detail: (e && e.message) || String(e), hits: [] };
+  }
+  if (!Array.isArray(qv) || !qv.length) return { ok: false, reason: 'no-query-vector', hits: [] };
+  const hits = [];
+  let covered = 0;
+  for (const id of keys) {
+    const src = meta.sources[id];
+    if (!src.vec || src.vec.space !== space.hash || !src.vec.dim) continue;
+    const file = vectorPath(ctx, id);
+    const buf = readVectorFile(file, src.vec.dim, src.vec.count);
+    if (!buf) continue;
+    covered++;
+    const chunks = readChunks(chunkPath(ctx, id));
+    const dim = src.vec.dim;
+    for (let i = 0; i < src.vec.count && i < chunks.length; i++) {
+      let dot = 0,
+        na = 0,
+        nb = 0;
+      for (let j = 0; j < dim; j++) {
+        const a = buf.readFloatLE((i * dim + j) * 4);
+        const b = qv[j] || 0;
+        dot += a * b;
+        na += a * a;
+        nb += b * b;
+      }
+      const score = na && nb ? dot / (Math.sqrt(na) * Math.sqrt(nb)) : 0;
+      if (score > 0) {
+        const c = chunks[i];
+        hits.push({
+          id: id,
+          app: src.app,
+          title: src.title,
+          cwd: src.cwd,
+          updatedAt: src.updatedAt,
+          chunk: c.n,
+          role: c.role,
+          ts: c.ts,
+          score: score,
+          snippet: makeSnippet(c.text, needles(_bm25.tokenize(query), query)),
+        });
+      }
+    }
+  }
+  hits.sort((a, b) => b.score - a.score);
+  return {
+    ok: true,
+    hits: diversify(hits, opts.perConv).slice(0, opts.limit || 10),
+    coverage: { sources: covered, total: keys.length },
+    model: space.model,
+  };
+}
+
+// Reciprocal Rank Fusion: independent rankings are combined by position, so scores from
+// BM25 and cosine (different scales) never have to be comparable.
+function rrf(lists, limit, perConv) {
+  const byId = Object.create(null);
+  lists.forEach((hits, li) => {
+    (hits || []).forEach((h, i) => {
+      const key = h.id + '#' + h.chunk;
+      const cur = byId[key];
+      const add = 1 / (RRF_K + i + 1);
+      if (cur) {
+        cur.rrf += add;
+        cur.sources[li] = true;
+        if (h.score > cur.score) Object.assign(cur, { score: h.score, snippet: h.snippet || cur.snippet });
+      } else {
+        byId[key] = Object.assign({}, h, { rrf: add, sources: { [li]: true } });
+      }
+    });
+  });
+  const out = Object.keys(byId).map((k) => byId[k]);
+  out.sort((a, b) => b.rrf - a.rrf);
+  return diversify(out, perConv)
+    .slice(0, limit || 10)
+    .map((h) => Object.assign(h, { score: h.rrf }));
+}
+
+async function search(ctx, query, opts) {
+  opts = opts || {};
+  const mode = opts.mode || (opts.semantic ? 'semantic' : 'lexical');
+  if (mode === 'lexical') return lexical(ctx, query, opts);
+  if (mode === 'semantic') return semantic(ctx, query, opts);
+  if (mode === 'hybrid') {
+    const lex = lexical(ctx, query, Object.assign({}, opts, { limit: Math.max(opts.limit || 10, 50) }));
+    const sem = await semantic(ctx, query, Object.assign({}, opts, { limit: Math.max(opts.limit || 10, 50) }));
+    if (!sem.ok) {
+      // Say what actually ranked: an agent/user reading `mode` must not believe vectors were used
+      // when the endpoint was never asked (no-vectors) or failed.
+      return Object.assign({}, lex, {
+        mode: 'lexical',
+        semanticError: sem.reason,
+        semanticDetail: sem.detail || null,
+      });
+    }
+    const fused = rrf([lex.hits, sem.hits], opts.limit || 10, opts.perConv);
+    return { ok: true, hits: fused, mode: 'hybrid', semanticCoverage: sem.coverage };
+  }
+  return { ok: false, reason: 'bad-mode', hits: [] };
+}
+
+// ---- context pack --------------------------------------------------------------------------
+
+function expandHit(ctx, hit, opts) {
+  const meta = readMeta(ctx);
+  if (!meta || !meta.sources[hit.id]) return null;
+  const chunks = readChunks(chunkPath(ctx, hit.id));
+  const span = Math.max(0, Number(opts.expand) || 0);
+  const from = Math.max(0, hit.chunk - span);
+  const to = Math.min(chunks.length - 1, hit.chunk + span);
+  if (from > to) return null;
+  const parts = [];
+  for (let i = from; i <= to; i++) parts.push(chunks[i].text);
+  return { source: meta.sources[hit.id], text: parts.join('\n\n'), from: from, to: to };
+}
+
+// A portable RAG context block: stable headings, source ids, paths and dates, char-budgeted.
+function contextPack(ctx, query, hits, opts) {
+  opts = opts || {};
+  const budget = Number(opts.budget) || 12000;
+  const expand = opts.expand == null ? 1 : Number(opts.expand);
+  const lines = [
+    '# Conversation context',
+    '',
+    'Query: ' + query,
+    'Retrieved from ' + (hits.length || 0) + ' local conversation chunks. Read-only; no conversation was uploaded.',
+    '',
+  ];
+  let used = lines.join('\n').length;
+  let n = 0;
+  for (const hit of hits) {
+    const ex = expandHit(ctx, hit, { expand: expand });
+    if (!ex) continue;
+    const s = ex.source;
+    const head = [
+      '## ' + (n + 1) + '. [' + s.app + '] ' + s.title,
+      'source: `' + s.id + '` · updated: ' + (s.updatedAt || '?') + (s.cwd ? ' · cwd: ' + s.cwd : ''),
+      '',
+    ].join('\n');
+    let body = ex.text;
+    const room = budget - used - head.length;
+    // Count the source only once it is actually included: `n` drives the "no chunks" line.
+    if (room < 200) break;
+    n++;
+    if (body.length > room) body = body.slice(0, room) + '\n…[trimmed by keyflip]';
+    lines.push(head + body + '\n');
+    used += head.length + body.length + 1;
+    if (used >= budget) break;
+  }
+  if (!n) lines.push('_No matching chunks._');
+  return lines.join('\n');
+}
+
+export {
+  SCHEMA_VERSION,
+  INDEX_DIR,
+  CHUNK_TARGET,
+  RRF_K,
+  dirOf,
+  metaPath,
+  chunkPath,
+  vectorPath,
+  keyOf,
+  chunkConversation,
+  readChunks,
+  build,
+  catalog,
+  status,
+  parseSince,
+  lexical,
+  semantic,
+  search,
+  rrf,
+  contextPack,
+  expandHit,
+  spaceOf,
+  safeForEmbedding,
+  isLoopback,
+};

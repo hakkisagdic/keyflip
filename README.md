@@ -820,6 +820,57 @@ keyflip threads drop dugum-acmak -y    # forgets the NAME; every transcript and 
   absolute (running it needs that, and a working directory is not a secret), and the human output keeps
   real paths so you can open them.
 
+### Every tool's chats, searchable (`conv`)
+
+Claude Code writes `~/.claude/projects`, Codex writes `~/.codex/sessions` (sometimes zstd-compressed),
+Kiro writes both `~/.kiro/sessions/cli` and its IDE store, and Cursor/opencode/Qoder/Gemini/Copilot/Aider
+each have their own. `keyflip conv` reads **all of them** into one canonical shape — id, app, surface,
+title, cwd, timestamps, `{role, text, ts, tools}` messages — with the host apps' harness noise stripped:
+`<system-reminder>`, `<task-notification>`, `<command-name>` plumbing, environment contexts and
+`<pasted_content>` wrappers (including the malformed closing tags some hosts emit) never reach the
+index or an export. Sources are read-only; keyflip never writes into any tool's store.
+
+```bash
+keyflip conv list --app claude,codex --since 7d   # browse: id prefix, app, age, message count, title
+keyflip conv index                                # parse once into chunks keyflip owns (incremental)
+keyflip conv index --embed                        # + local embeddings (Ollama nomic-embed-text by default)
+keyflip conv search "database migration"          # BM25 now; hybrid once vectors exist
+keyflip conv context "database migration"         # a ready-to-paste RAG block with cited sources
+keyflip conv show a7dc93d0                        # read one chat, noise stripped
+keyflip conv export --all --obsidian --out ~/Documents/Vault
+keyflip conv transfer a7dc93d0 --to codex         # a handoff bundle for another AI tool
+```
+
+- **Search that tells the truth about how it ranked.** Lexical is BM25 with a light stemmer and exact
+  document frequencies. `--embed` computes vectors with a local Ollama by default (or `KEYFLIP_EMBED_URL`;
+  text sent to a remote endpoint is secret-redacted first). Hybrid fuses both lists with reciprocal rank
+  fusion — and when no vectors exist, the result is labelled `lexical` with a note, never silently
+  "hybrid". `search` builds the index once on first use so the very first query just works.
+- **`conv context` is the RAG entry point.** It returns one portable, char-budgeted block (default
+  12,000 chars) with stable headings, source ids, cwds and dates, and `--expand N` pulls in neighbouring
+  chunks so a decision is not cut mid-thread. Nothing is uploaded; retrieval runs on your disk.
+- **Exports redact by default.** MD / self-contained HTML / canonical JSON, and Obsidian notes with YAML
+  frontmatter, tags and an index note. Credential-shaped lines are masked unless you pass `--no-redact`.
+  Files are `0600`, and `export` refuses to overwrite without `--force`.
+- **Obsidian export is ownership-tracked, not a blind sync.** Notes land in
+  `<vault>/keyflip/Conversations/` with a hidden manifest of content hashes. A note keyflip wrote is
+  updated in place; a note you edited becomes a **conflict copy** (`<name> (conflict <ts>).md`) instead of
+  being overwritten; a note whose title changed is removed only while it is still byte-identical to what
+  keyflip wrote. Your vault is never reorganized.
+- **Transfer is honest about what exists.** `keyflip conv transfer <id> --to claude|codex|kiro|cursor|opencode|windsurf|gemini|copilot|aider|generic`
+  writes a 0600 bundle — `conversation.json` (lossless), `CONTINUE.md` (a continuation prompt tuned per
+  target) and a README stating the truth: **no target tool has a documented import**, so the bundle is
+  context to attach/paste, and nothing in the target's own store is modified.
+- **The index is treated like a secret-adjacent artifact.** It lives in
+  `~/.config/keyflip/conv-index` (a registered secret dir: never versioned, never backed up, excluded
+  from `migrate`), `0600`, incremental by mtime+size+hash, and an appended chat re-embeds only its new
+  tail. Deletes are real: a full rebuild drops conversations that are gone; a filtered rebuild
+  (`--app`, `--limit-sources`) leaves the rest untouched.
+- Over MCP: read-only `keyflip_conv_list`, `_show`, `_search`, `_context`, `_status` (they never build
+  the index — that is `keyflip_conv_index`, confirm-gated, like `keyflip_conv_export`). Snippets and
+  context blocks are secret-masked before they reach an agent transcript, and the index path is reported
+  relative to the state dir, never as your home path.
+
 ## Context Layer — portable project memory (`.keyflip/`)
 
 AI coding tools change; your project memory shouldn't. The Context Layer keeps a small,

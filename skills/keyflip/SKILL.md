@@ -104,7 +104,12 @@ returns content snippets + an `orphan` flag), `keyflip_sessions_rebind` (folder-
 markdown/HTML/json for sharing), `keyflip_foreign_export` (normalize ANOTHER agent's session
 log — message-event JSONL (Claude Code, opencode, Gemini, **Qoder CLI**) / Cursor SQLite /
 generic JSON / Copilot YAML / Aider MD — into the same view
-via from-scratch zero-dep SQLite + YAML readers); cross-machine: `keyflip_migrate_export`/
+via from-scratch zero-dep SQLite + YAML readers); conversation layer:
+`keyflip_conv_list`/`_show`/`_search`/`_context`/`_status` read EVERY local tool's chats
+(Claude Code, Codex, Kiro, Gemini, Qoder, Cursor, opencode, Copilot, Aider) in one shape and
+never build the index themselves — `keyflip_conv_index` and `keyflip_conv_export` (single file,
+bulk, Obsidian vault, or a `target` handoff bundle) need `confirm` (see the conversations
+section below); cross-machine: `keyflip_migrate_export`/
 `_import`/`_push`/`_pull` (export takes `agents:true` to also carry other agents' memory) and
 `keyflip_agents` (inspect); git versioning: `keyflip_history`/`_undo`/`_restore`. The mutating
 ones require `confirm: true`; `keyflip_login` opens a browser for the human. Only the
@@ -140,6 +145,38 @@ live jar reads signed-out while the capture is fine. `doctor` dates the installe
 says "the app was UPDATED <date>" in that case — that is a post-update timing gap, still fixed
 by one human sign-in, NOT a broken capture. `keyflip add --dry-run` shows whether the jar
 currently holds a usable session without writing anything.
+
+## Conversations across every tool (read, search, RAG context)
+
+`keyflip conv*` tools read the LOCAL transcripts of every AI coding tool on this machine —
+Claude Code, Codex/ChatGPT, Kiro (CLI + IDE), Gemini/Antigravity, Qoder, Cursor, opencode,
+Copilot, Aider — normalized into one shape, harness noise stripped. Use them when the user asks
+"what did we decide about X?", "find the chat where Y", or wants a new agent to continue old work.
+
+- **`keyflip_conv_list`** — browse (title/`search` filter only, `app`, `cwd`, `since`, `limit`).
+  Instant when the index exists; otherwise it parses live and says `indexed:false`.
+- **`keyflip_conv_search`** — content search, `mode` lexical|semantic|hybrid. It refuses with a
+  clear error when there is no index (read-only tools never build one — ask the user, then
+  `keyflip_conv_index` with `confirm=true`), and the result honestly says `lexical` + a
+  `warning` when no embeddings exist. Snippets are credential-masked by default.
+- **`keyflip_conv_context`** — the RAG block to paste into a prompt: char-budgeted
+  (`budget`, default 12000), sources cited with id/app/cwd/date, `expand` pulls neighbouring
+  chunks so a decision is not cut mid-thread. Prefer this over dumping a whole transcript.
+- **`keyflip_conv_show`** — one conversation rendered md/html/json (`max_chars` caps it).
+- **`keyflip_conv_status`** — what is indexed, per-app counts, embedding coverage.
+- **`keyflip_conv_index` / `keyflip_conv_export`** — confirm-gated writes. A first full
+  embedding pass can take many minutes and may outlive an MCP request: for that, tell the user
+  to run `keyflip conv index --embed` in a terminal. Export modes: one `id` to a file, `all`
+  with `limit`/`offset` paging, `obsidian:true` into a vault (user-edited notes become conflict
+  copies, never overwritten), or a `target` handoff bundle for
+  claude/codex/kiro/cursor/opencode/windsurf/gemini/copilot/aider/generic — no target tool has a
+  native import, the bundle is context to attach.
+
+Privacy rules that apply to you: nothing is uploaded (embeddings are local Ollama by default or
+the user's `KEYFLIP_EMBED_URL`, with remote text redacted first), the index lives in the
+secret-dir `conv-index` and its path is reported relative to the state dir, and conversation
+text reaches your transcript only after credential-shaped lines are masked (unless the user
+explicitly passes `redact:false`).
 
 ## Switching (get consent first)
 

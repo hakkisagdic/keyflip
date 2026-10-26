@@ -145,6 +145,13 @@ test('MCP lifecycle: initialize negotiates a supported protocol version and decl
     'keyflip_instance_focus',
     'keyflip_instance_kill',
     'keyflip_instance_harden',
+    'keyflip_conv_list',
+    'keyflip_conv_show',
+    'keyflip_conv_search',
+    'keyflip_conv_context',
+    'keyflip_conv_status',
+    'keyflip_conv_index',
+    'keyflip_conv_export',
   ].forEach(function (n) {
     assert.ok(names.indexOf(n) !== -1, 'missing MCP tool: ' + n);
   });
@@ -1157,4 +1164,94 @@ test('mcp --register wires keyflip with absolute paths a GUI launcher can run', 
   const cfg = JSON.parse(fs.readFileSync(ctx.claudeConfigPath, 'utf8'));
   assert.deepStrictEqual(cfg.mcpServers.keyflip, e);
   assert.deepStrictEqual(cfg.mcpServers.other, { command: 'x' }, 'other servers are untouched');
+});
+
+// ---- unified conversation layer -------------------------------------------------------------
+function seedConversation(home) {
+  const dir = path.join(home, '.claude', 'projects', '-work-proj');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(
+    path.join(dir, 'sess-mcp.jsonl'),
+    [
+      {
+        type: 'user',
+        timestamp: '2026-01-01T10:00:00.000Z',
+        cwd: '/work/proj',
+        message: { role: 'user', content: 'Index the MCP conversations safely.' },
+      },
+      {
+        type: 'assistant',
+        timestamp: '2026-01-01T10:00:01.000Z',
+        message: { role: 'assistant', content: 'The database migration is a dry run first.' },
+      },
+    ]
+      .map((l) => JSON.stringify(l))
+      .join('\n') + '\n',
+  );
+}
+
+function call(id, name, args) {
+  return { jsonrpc: '2.0', id: id, method: 'tools/call', params: { name: name, arguments: args } };
+}
+
+test('MCP conversation tools: read-only tools never build, index needs confirm', async function () {
+  const home = mkhome();
+  seedConversation(home);
+  const noIndex = await mcpSession(home, [call(1, 'keyflip_conv_search', { query: 'database' })], [1]);
+  assert.strictEqual(noIndex[1].result.isError, true);
+  assert.match(noIndex[1].result.content[0].text, /no conversation index/i);
+
+  const guarded = await mcpSession(home, [call(1, 'keyflip_conv_index', {})], [1]);
+  assert.strictEqual(guarded[1].result.isError, true);
+  assert.match(guarded[1].result.content[0].text, /confirm/i);
+
+  const built = await mcpSession(home, [call(1, 'keyflip_conv_index', { confirm: true, limit_sources: 5 })], [1]);
+  const r = built[1].result.structuredContent;
+  assert.strictEqual(r.ok, true);
+  assert.ok(r.indexed >= 1);
+  assert.ok(r.stats.sources >= 1);
+  assert.strictEqual(r.coverage, 0);
+});
+
+test('MCP conversation tools: list, search, context, show, and a handoff bundle', async function () {
+  const home = mkhome();
+  seedConversation(home);
+  const out = path.join(home, 'handoff-out');
+  const got = await mcpSession(
+    home,
+    [
+      call(1, 'keyflip_conv_index', { confirm: true }),
+      call(2, 'keyflip_conv_list', { limit: 5 }),
+      call(3, 'keyflip_conv_search', { query: 'database migration', limit: 3 }),
+      call(4, 'keyflip_conv_context', { query: 'database migration', budget: 2000 }),
+      call(5, 'keyflip_conv_show', { id: 'sess-mcp', max_chars: 2000 }),
+      call(6, 'keyflip_conv_export', { confirm: true, id: 'sess-mcp', target: 'claude', out: out }),
+    ],
+    [2, 3, 4, 5, 6],
+  );
+  const list = got[2].result.structuredContent;
+  assert.strictEqual(list.indexed, true);
+  assert.strictEqual(list.total, 1);
+  assert.strictEqual(list.conversations[0].id, 'claude:local:sess-mcp');
+  assert.strictEqual(list.conversations[0].messages, 2);
+
+  const search = got[3].result.structuredContent;
+  assert.strictEqual(search.mode, 'lexical'); // no vectors: never claim hybrid
+  assert.strictEqual(search.count, 1);
+  assert.strictEqual(search.hits[0].id, 'claude:local:sess-mcp');
+
+  const ctxRes = got[4].result.structuredContent;
+  assert.match(ctxRes.context, /^# Conversation context/);
+  assert.match(ctxRes.context, /database migration/i);
+  assert.ok(ctxRes.sources.length >= 1);
+
+  const show = got[5].result.structuredContent;
+  assert.strictEqual(show.id, 'claude:local:sess-mcp');
+  assert.match(show.content, /Index the MCP conversations safely/);
+  assert.strictEqual(show.truncated, false);
+
+  const bundle = got[6].result.structuredContent;
+  assert.strictEqual(bundle.target, 'claude');
+  assert.ok(fs.existsSync(path.join(out, 'CONTINUE.md')));
+  assert.ok(fs.existsSync(path.join(out, 'conversation.json')));
 });

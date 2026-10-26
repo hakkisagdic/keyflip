@@ -21,6 +21,9 @@ const SECRET_DIRS = [
   // the basename is innocent (`<slug>.md`) and the file sits inside the git-versioned state dir, so the
   // DIR is the boundary. Thread POINTERS stay versioned on purpose; their transcripts never do.
   'thread-mirror',
+  // Cross-app retrieval index (`keyflip conv index`): chunked CONVERSATION TEXT plus embedding
+  // vectors. Rebuildable, but still raw prose — 0600, never versioned, backed up or synced.
+  'conv-index',
 ];
 // Secret-shaped files, by extension (no leading dot).
 // `pre-scrub` is the reversible-copy suffix `memory audit --apply` leaves behind: a redacted keepsake

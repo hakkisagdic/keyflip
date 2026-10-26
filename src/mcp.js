@@ -97,6 +97,10 @@ import * as _config from './config.js';
 import * as _codexbar from './codexbar.js';
 import * as _codex from './codex.js';
 import * as _fsutil from './fsutil.js';
+import * as _secretmask from './secretscan.js';
+import * as _conversations from './conversations.js';
+import * as _convindex from './convindex.js';
+import * as _convexport from './convexport.js';
 
 // Mutating tools all gate on confirm:true — the agent must ask the user first.
 function needConfirm(args) {
@@ -215,6 +219,70 @@ function transcriptForAgent(ctx, p) {
   if (!p) return p;
   const rel = _path.relative(sessions.projectsDir(ctx), String(p));
   return rel && rel.indexOf('..') !== 0 ? rel : _path.basename(String(p));
+}
+
+// ---- unified conversation layer (every tool's chats) --------------------------------------
+// Filters are shared by list/search/context/export so an agent can narrow once and reuse the
+// same vocabulary. Durations use convindex.parseSince (`7d`, `12h`, `2026-10-01`).
+function convFilters(args) {
+  const a = args || {};
+  let apps = null;
+  if (a.app) {
+    apps = (Array.isArray(a.app) ? a.app : String(a.app).split(','))
+      .map(function (s) {
+        return String(s).trim().toLowerCase();
+      })
+      .filter(Boolean);
+  }
+  let sinceMs = null;
+  if (a.since) {
+    sinceMs = _convindex.parseSince(a.since);
+    if (!sinceMs) throw new Error("invalid since '" + a.since + "' (use 7d, 12h or 2026-10-01)");
+  }
+  return { apps: apps, cwd: a.cwd ? String(a.cwd) : null, sinceMs: sinceMs, q: a.search ? String(a.search) : null };
+}
+// Resolve an id/prefix/title from the index manifest (cheap) and load the real conversation.
+function convByRef(ctx, ref) {
+  const cat = _convindex.catalog(ctx, {});
+  const m = _conversations.matchRef(cat.conversations, ref);
+  if (!m.match) {
+    const e = new Error(
+      m.reason === 'ambiguous'
+        ? "'" + ref + "' matches several conversations — use more of the id"
+        : "no conversation matching '" + ref + "'",
+    );
+    e.candidates = m.candidates || [];
+    throw e;
+  }
+  return m.match.path ? _conversations.loadPath(ctx, m.match.path, {}) : _conversations.get(ctx, m.match.id, {});
+}
+// Conversation text goes into an agent transcript, so credential-shaped lines are masked unless
+// the caller explicitly opts out (`redact:false`). Same rule as every export path in the CLI.
+function convRedactText(text, opts) {
+  if (opts && opts.redact === false) return { text: text, count: 0 };
+  const r = _secretmask.redactLines(text);
+  return { text: r.text, count: r.count };
+}
+function convSlim(r) {
+  return {
+    id: r.id,
+    app: r.app || null,
+    surface: r.surface || null,
+    title: r.title,
+    cwd: r.cwd || null,
+    account: r.account || null,
+    createdAt: r.createdAt || null,
+    updatedAt: r.updatedAt || null,
+    messages: (r.counts && r.counts.messages) || 0,
+  };
+}
+function convHint() {
+  return {
+    browse: 'keyflip_conv_list',
+    read: 'keyflip_conv_show',
+    ask: 'keyflip_conv_context (a ready RAG block)',
+    build: 'keyflip_conv_index with confirm=true',
+  };
 }
 
 const TOOLS = [
@@ -1122,6 +1190,427 @@ const TOOLS = [
             ? JSON.stringify(norm, null, 2)
             : transcript.toMarkdown(norm, { id: norm.tool });
       return { tool: norm.tool, format: fmt, counts: norm.counts, content: content };
+    },
+  },
+
+  // ---- unified conversation layer: every local AI tool's chats ----
+  {
+    name: 'keyflip_conv_list',
+    title: 'List conversations from every local AI tool',
+    description:
+      'Browse the chats keyflip can read on this machine — Claude Code, Codex/ChatGPT, Kiro, Gemini/Antigravity and foreign agents (Qoder, Cursor, opencode, Copilot, Aider) — in ONE normalized shape: id, app, surface, title, cwd, message count, dates. `search` filters TITLES only; use keyflip_conv_search for content. When the index exists this reads its manifest and is instant; otherwise it parses transcripts live (slow, reported as indexed:false). Read-only, local.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        search: { type: 'string', description: 'Title substring filter (not content).' },
+        app: { type: 'string', description: 'Comma-separated app ids, e.g. "claude,codex".' },
+        cwd: { type: 'string', description: 'Only conversations whose working dir contains this path.' },
+        since: { type: 'string', description: 'Only conversations updated within e.g. 7d, 24h, or since 2026-10-01.' },
+        limit: { type: 'integer', description: 'Default 20, max 500.' },
+      },
+      additionalProperties: false,
+    },
+    annotations: RO,
+    run: async function (ctx, args) {
+      const f = convFilters(args);
+      const cat = _convindex.catalog(ctx, f);
+      const limit = Math.max(1, Math.min(500, Number(args && args.limit) || 20));
+      return {
+        indexed: cat.indexed,
+        builtAt: cat.builtAt || null,
+        total: cat.conversations.length,
+        conversations: cat.conversations.slice(0, limit).map(convSlim),
+        stats: cat.stats || null,
+        errors: (cat.errors || []).slice(0, 5).map(function (e) {
+          return { app: e.app || null, error: e.error };
+        }),
+        note: cat.indexed ? null : 'no index yet — this pass parsed every transcript; keyflip_conv_index makes it fast',
+        hints: convHint(),
+      };
+    },
+  },
+  {
+    name: 'keyflip_conv_show',
+    title: 'Read one conversation in full',
+    description:
+      'Load one conversation by id, unique id prefix, or unique title, and return it rendered as markdown (default), self-contained HTML, or normalized JSON. Tool calls are summarized, not dumped. `max_chars` caps the returned content (default 60000) — read a narrower slice or export the file for a huge chat. Credential-shaped lines are masked by default; pass redact:false only when the user asked for exact fidelity. Read-only, local.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: 'Conversation id, unique prefix, or unique title.' },
+        format: { type: 'string', enum: ['md', 'html', 'json'] },
+        max_chars: { type: 'integer', description: 'Default 60000, max 400000.' },
+        redact: { type: 'boolean', description: 'Default true; false keeps secret shapes verbatim.' },
+      },
+      required: ['id'],
+      additionalProperties: false,
+    },
+    annotations: RO,
+    run: async function (ctx, args) {
+      const conv = convByRef(ctx, String(args.id));
+      const format = args.format === 'html' ? 'html' : args.format === 'json' ? 'json' : 'md';
+      const r = _convexport.render(conv, { format: format, redact: args.redact !== false });
+      const cap = Math.max(1000, Math.min(400000, Number(args.max_chars) || 60000));
+      const truncated = r.content.length > cap;
+      return {
+        id: conv.id,
+        app: conv.app,
+        surface: conv.surface,
+        title: conv.title,
+        cwd: conv.cwd || null,
+        updatedAt: conv.updatedAt || null,
+        counts: conv.counts,
+        format: format,
+        redacted: r.redacted || 0,
+        truncated: truncated,
+        content: truncated ? r.content.slice(0, cap) + '\n…[truncated by keyflip]' : r.content,
+      };
+    },
+  },
+  {
+    name: 'keyflip_conv_search',
+    title: 'Search every conversation (BM25, embeddings, hybrid)',
+    description:
+      'Search the CONTENT of every local conversation keyflip has indexed. Modes: lexical (BM25, always available), semantic (needs embeddings), hybrid (reciprocal-rank fusion; falls back to lexical with a warning when no vectors exist). Filters narrow by app/cwd/since. Snippets are masked for credential shapes by default. Results are chunk-level, one per conversation by default, so raise limit to page. Never uploads anything; embeddings run locally (Ollama) or at the URL the user configured. Read-only: it does NOT build an index — if none exists, ask the user and call keyflip_conv_index with confirm=true. Hints return the id to read with keyflip_conv_show and the query to feed keyflip_conv_context.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        query: { type: 'string' },
+        mode: { type: 'string', enum: ['lexical', 'semantic', 'hybrid'] },
+        limit: { type: 'integer', description: 'Default 10, max 100.' },
+        per_conv: { type: 'integer', description: 'Chunks per conversation, default 1, max 20.' },
+        app: { type: 'string' },
+        cwd: { type: 'string' },
+        since: { type: 'string' },
+        redact: { type: 'boolean', description: 'Default true; false returns raw snippets.' },
+      },
+      required: ['query'],
+      additionalProperties: false,
+    },
+    annotations: RO,
+    run: async function (ctx, args) {
+      const q = String(args.query || '').trim();
+      if (!q) throw new Error('query is required');
+      const mode = ['lexical', 'semantic', 'hybrid'].indexOf(args.mode) !== -1 ? args.mode : 'hybrid';
+      const st = _convindex.status(ctx);
+      if (!st.exists) {
+        throw new Error(
+          'no conversation index yet: ask the user, then call keyflip_conv_index with confirm=true (or run `keyflip conv index`) — this tool never builds one on its own',
+        );
+      }
+      if (mode !== 'lexical' && !st.vectorChunks) {
+        if (mode === 'semantic')
+          throw new Error(
+            'no embeddings yet: mode=semantic needs keyflip_conv_index with embed=true, or use mode=lexical',
+          );
+      }
+      const f = convFilters(args);
+      const limit = Math.max(1, Math.min(100, Number(args.limit) || 10));
+      const r = await _convindex.search(ctx, q, {
+        mode: mode,
+        apps: f.apps,
+        sinceMs: f.sinceMs,
+        cwd: f.cwd,
+        limit: limit,
+        perConv: Math.max(1, Math.min(20, Number(args.per_conv) || 1)),
+      });
+      if (!r.ok) {
+        const why =
+          r.reason === 'no-index'
+            ? 'no index yet — call keyflip_conv_index with confirm=true'
+            : r.reason === 'embed-failed'
+              ? 'embedding endpoint failed: ' +
+                (r.detail || 'unknown') +
+                ' — use mode=lexical, or start Ollama / set KEYFLIP_EMBED_URL'
+              : 'search failed: ' + (r.reason || 'unknown');
+        throw new Error(why);
+      }
+      return {
+        query: q,
+        mode: r.mode || (r.semanticCoverage ? 'hybrid' : 'lexical'),
+        count: r.hits.length,
+        hits: r.hits.map(function (h) {
+          const snip = convRedactText(h.snippet || '', args);
+          return {
+            id: h.id,
+            app: h.app || null,
+            title: h.title,
+            cwd: h.cwd || null,
+            updatedAt: h.updatedAt || null,
+            chunk: h.chunk,
+            role: h.role || null,
+            ts: h.ts || null,
+            score: Math.round((h.score || 0) * 1000) / 1000,
+            snippet: snip.text,
+            redacted: snip.count || 0,
+          };
+        }),
+        warning: r.semanticError
+          ? r.semanticError === 'no-vectors'
+            ? 'no embeddings yet — ranked lexically; keyflip_conv_index with embed=true enables semantic/hybrid'
+            : 'vectors unavailable (' + r.semanticError + ') — lexical ranking only'
+          : null,
+        hints: {
+          read: 'keyflip_conv_show { id }',
+          context: 'keyflip_conv_context { query } for a ready-to-paste RAG block',
+        },
+      };
+    },
+  },
+  {
+    name: 'keyflip_conv_context',
+    title: 'Build a RAG context block from past chats',
+    description:
+      "Retrieve the most relevant chunks across every local conversation and return ONE portable, char-budgeted context block with stable headings, source ids, cwd and dates. This is the tool to call when the user asks 'what did we decide about X?' or wants a new agent to continue prior work: pass the block to the model as context. `expand` includes neighbouring chunks so a decision is not cut mid-thread. `redact` (default true) masks credential-shaped lines. Local only — never uploaded. Read-only: does NOT build an index; ask the user and call keyflip_conv_index with confirm=true.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        query: { type: 'string' },
+        budget: { type: 'integer', description: 'Character budget, default 12000, max 200000.' },
+        expand: { type: 'integer', description: 'Neighbouring chunks per hit, default 1, max 5.' },
+        mode: { type: 'string', enum: ['lexical', 'semantic', 'hybrid'] },
+        app: { type: 'string' },
+        cwd: { type: 'string' },
+        since: { type: 'string' },
+        redact: { type: 'boolean', description: 'Default true.' },
+      },
+      required: ['query'],
+      additionalProperties: false,
+    },
+    annotations: RO,
+    run: async function (ctx, args) {
+      const q = String(args.query || '').trim();
+      if (!q) throw new Error('query is required');
+      const mode = ['lexical', 'semantic', 'hybrid'].indexOf(args.mode) !== -1 ? args.mode : 'hybrid';
+      const st = _convindex.status(ctx);
+      if (!st.exists) {
+        throw new Error(
+          'no conversation index yet: ask the user, then call keyflip_conv_index with confirm=true (or run `keyflip conv index`)',
+        );
+      }
+      if (mode === 'semantic' && !st.vectorChunks)
+        throw new Error('no embeddings yet: pass embed=true to keyflip_conv_index, or use mode=lexical');
+      const f = convFilters(args);
+      const r = await _convindex.search(ctx, q, {
+        mode: mode,
+        apps: f.apps,
+        sinceMs: f.sinceMs,
+        cwd: f.cwd,
+        limit: 12,
+        perConv: 1,
+      });
+      if (!r.ok) {
+        throw new Error(
+          r.reason === 'embed-failed'
+            ? 'embedding endpoint failed: ' + (r.detail || 'unknown') + ' — use mode=lexical'
+            : 'search failed: ' + (r.reason || 'unknown'),
+        );
+      }
+      const pack = _convindex.contextPack(ctx, q, r.hits || [], {
+        budget: Math.max(500, Math.min(200000, Number(args.budget) || 12000)),
+        expand: Math.max(0, Math.min(5, args.expand == null ? 1 : Number(args.expand))),
+      });
+      const red = convRedactText(pack, args);
+      return {
+        query: q,
+        mode: r.mode || (r.semanticCoverage ? 'hybrid' : 'lexical'),
+        sources: (r.hits || []).map(function (h) {
+          return { id: h.id, app: h.app || null, title: h.title, updatedAt: h.updatedAt || null, score: h.score };
+        }),
+        redacted: red.count || 0,
+        chars: red.text.length,
+        context: red.text,
+        warning: r.semanticError
+          ? r.semanticError === 'no-vectors'
+            ? 'no embeddings yet — ranked lexically; keyflip_conv_index with embed=true enables semantic/hybrid'
+            : 'vectors unavailable (' + r.semanticError + ') — lexical ranking only'
+          : null,
+      };
+    },
+  },
+  {
+    name: 'keyflip_conv_status',
+    title: 'Conversation index status',
+    description:
+      'What keyflip can search on this machine: index location, build time, conversation/message/chunk counts per app, embedding model+host and vector coverage. `exists:false` means keyflip_conv_search/context will refuse until keyflip_conv_index runs. Read-only.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    annotations: RO,
+    run: async function (ctx) {
+      const st = _convindex.status(ctx);
+      return Object.assign({}, st, {
+        dir: statePathForAgent(ctx, st.dir),
+        hints: st.exists ? convHint() : { build: 'keyflip_conv_index with confirm=true' },
+      });
+    },
+  },
+  {
+    name: 'keyflip_conv_index',
+    title: 'Build/refresh the conversation index',
+    description:
+      "Parse every local conversation once into chunk files keyflip owns (configDir/conv-index, never versioned or backed up) so search and RAG context are instant. Incremental: unchanged files are reused by mtime+hash, appended chats reuse their vector prefix. `embed:true` also computes local embeddings (Ollama nomic-embed-text by default, or KEYFLIP_EMBED_URL) — a FIRST full embedding pass over a large corpus takes many minutes and can outlive an MCP request; for that, tell the user to run `keyflip conv index --embed` in a terminal. Filter with app/limit_sources for a quick slice. Writes only keyflip's own index; no conversation is modified. Ask the user first, then set confirm=true.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        embed: { type: 'boolean', description: 'Also compute embeddings (needed for semantic/hybrid).' },
+        force: { type: 'boolean', description: 'Re-parse even when mtime+size are unchanged.' },
+        app: { type: 'string', description: 'Comma-separated app ids for a partial build.' },
+        limit_sources: { type: 'integer', description: 'Parse at most N sources (quick slice).' },
+        confirm: confirmProp.confirm,
+      },
+      required: ['confirm'],
+      additionalProperties: false,
+    },
+    annotations: MUT,
+    run: async function (ctx, args) {
+      needConfirm(args);
+      const f = convFilters(args);
+      const ls = Number(args.limit_sources) || null;
+      const report = await _convindex.build(ctx, {
+        apps: f.apps,
+        limitSources: ls,
+        embed: !!args.embed,
+        force: !!args.force,
+      });
+      const st = _convindex.status(ctx);
+      return {
+        ok: report.ok,
+        indexed: report.indexed,
+        reused: report.reused,
+        changed: report.changed,
+        removed: report.removed,
+        empty: report.empty,
+        skipped: report.skipped,
+        embedded: report.embedded,
+        embedding: report.embedding || null,
+        stats: st.stats || report.stats || null,
+        vectorChunks: st.vectorChunks || 0,
+        coverage: st.coverage || 0,
+        errors: (report.errors || []).slice(0, 5),
+        note: report.embedding
+          ? report.embedding.error
+            ? 'embeddings failed: ' + report.embedding.error + ' — lexical search still works'
+            : 'semantic + hybrid search are available'
+          : 'no vectors yet — rerun with embed=true for semantic/hybrid',
+      };
+    },
+  },
+  {
+    name: 'keyflip_conv_export',
+    title: 'Export conversations or hand one to another AI tool',
+    description:
+      "Write conversation documents OUTSIDE keyflip's stores: (1) one conversation with `id` to a file, (2) `all:true` to a folder as md/html/json, (3) `obsidian:true` into an Obsidian vault (`out`) — notes get YAML frontmatter, tags and an index, and keyflip only overwrites a note whose content still matches what it wrote last time (a user edit becomes a conflict copy, never a silent overwrite), (4) `target` with `id` writes a handoff bundle (conversation.json + CONTINUE.md + README.md) for claude/codex/kiro/opencode/windsurf/generic. No target tool's live store is modified; no native import exists. Credential-shaped lines are masked unless redact:false. Large vaults: use limit/offset. Ask the user before writing, then set confirm=true.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: 'One conversation; required for target bundles.' },
+        all: { type: 'boolean', description: 'Export every conversation matching the filters.' },
+        obsidian: { type: 'boolean', description: 'Write an ownership-tracked Obsidian vault.' },
+        target: { type: 'string', description: 'Handoff target: claude, codex, kiro, opencode, windsurf, generic.' },
+        out: { type: 'string', description: 'Destination file or folder (required for all/obsidian/target).' },
+        format: { type: 'string', enum: ['md', 'html', 'json'] },
+        redact: { type: 'boolean', description: 'Default true.' },
+        force: { type: 'boolean', description: 'Overwrite existing files (Obsidian: also user edits).' },
+        limit: { type: 'integer', description: 'Max conversations per call, default 200.' },
+        offset: { type: 'integer', description: 'Skip this many conversations (stable updatedAt order).' },
+        confirm: confirmProp.confirm,
+      },
+      required: ['confirm'],
+      additionalProperties: false,
+    },
+    annotations: MUT,
+    run: async function (ctx, args) {
+      needConfirm(args);
+      const opts = { redact: args.redact !== false, force: !!args.force, now: ctx.now ? ctx.now() : undefined };
+      const format = args.format === 'html' ? 'html' : args.format === 'json' ? 'json' : 'md';
+      const out = args.out ? String(args.out) : null;
+
+      if (args.target) {
+        if (!args.id) throw new Error('target bundles need one conversation: pass id');
+        if (!out) throw new Error('target bundles need a destination folder: pass out');
+        const conv = convByRef(ctx, String(args.id));
+        return _convexport.writeBundle(conv, String(args.target), Object.assign({}, opts, { out: out }));
+      }
+
+      const f = convFilters(args);
+      const cap = Math.max(1, Math.min(5000, Number(args.limit) || 200));
+      const offset = Math.max(0, Number(args.offset) || 0);
+
+      if (args.obsidian) {
+        if (!out) throw new Error('Obsidian export needs a vault folder: pass out');
+        const rows = _convindex.catalog(ctx, f).conversations;
+        const slice = rows.slice(offset, offset + cap);
+        if (!slice.length) throw new Error('no conversations match those filters');
+        const srcs = _conversations.discover(ctx, {});
+        const byPath = Object.create(null);
+        srcs.forEach(function (s) {
+          byPath[_path.resolve(s.path)] = s;
+        });
+        function* loadRows() {
+          for (const row of slice) {
+            const src = row.path ? byPath[_path.resolve(row.path)] : null;
+            if (!src) continue;
+            try {
+              yield _conversations.load(ctx, src, {});
+            } catch {
+              /* one unreadable source must not abort the vault */
+            }
+          }
+        }
+        const report = _convexport.obsidianExport(ctx, loadRows(), Object.assign({}, opts, { out: out }));
+        return Object.assign({}, report, {
+          total: rows.length,
+          exported: slice.length,
+          remaining: Math.max(0, rows.length - offset - slice.length),
+          next_offset: offset + slice.length < rows.length ? offset + slice.length : null,
+        });
+      }
+
+      if (args.id) {
+        const conv = convByRef(ctx, String(args.id));
+        return _convexport.exportOne(conv, Object.assign({}, opts, { out: out, format: format }));
+      }
+
+      if (!args.all) throw new Error('choose one: id (one conversation), all:true (bulk), obsidian:true, or target');
+      const dest = out || _path.join(process.cwd(), 'keyflip-conversations');
+      const rows = _convindex.catalog(ctx, f).conversations;
+      const slice = rows.slice(offset, offset + cap);
+      if (!slice.length) throw new Error('no conversations match those filters');
+      const srcs = _conversations.discover(ctx, {});
+      const byPath = Object.create(null);
+      srcs.forEach(function (s) {
+        byPath[_path.resolve(s.path)] = s;
+      });
+      const files = [];
+      const errors = [];
+      for (const row of slice) {
+        const src = row.path ? byPath[_path.resolve(row.path)] : null;
+        if (!src) {
+          errors.push({ id: row.id, error: 'source is gone' });
+          continue;
+        }
+        try {
+          files.push(
+            _convexport.exportOne(
+              _conversations.load(ctx, src, {}),
+              Object.assign({}, opts, {
+                out: dest + _path.sep,
+                format: format,
+              }),
+            ),
+          );
+        } catch (e) {
+          errors.push({ id: row.id, error: (e && e.message) || String(e) });
+        }
+      }
+      return {
+        dir: dest,
+        exported: files.length,
+        total: rows.length,
+        remaining: Math.max(0, rows.length - offset - slice.length),
+        next_offset: offset + slice.length < rows.length ? offset + slice.length : null,
+        files: files,
+        errors: errors.slice(0, 10),
+      };
     },
   },
 

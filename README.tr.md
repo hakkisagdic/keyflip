@@ -907,6 +907,58 @@ keyflip threads drop dugum-acmak -y    # yalnız ADI unutur; her transkript ve h
   mutlak kalır (çalıştırmak onu ister, bir çalışma dizini sır değildir) ve insan çıktısı, açılabilsin diye
   gerçek yolları korur.
 
+### Her aracın sohbetleri, aranabilir hâlde (`conv`)
+
+Claude Code `~/.claude/projects`'e, Codex `~/.codex/sessions`'a (bazen zstd sıkıştırılmış), Kiro hem
+`~/.kiro/sessions/cli`'ye hem IDE deposuna, Cursor/opencode/Qoder/Gemini/Copilot/Aider da kendine göre
+yazar. `keyflip conv` hepsini **tek kanonik biçimde** okur — id, uygulama, yüzey, başlık, çalışma dizini,
+zaman damgaları, `{role, text, ts, tools}` mesajları — ve araçların kendi gürültüsünü ayıklar:
+`<system-reminder>`, `<task-notification>`, `<command-name>` tesisatı, ortam bağlamları ve
+`<pasted_content>` sarmalayıcıları (bazı araçların bozuk kapanış etiketleri dahil) indekse ya da
+dışa aktarıma asla ulaşmaz. Kaynaklar salt-okunur; keyflip hiçbir aracın deposuna yazmaz.
+
+```bash
+keyflip conv list --app claude,codex --since 7d   # gez: id öneki, uygulama, yaş, mesaj sayısı, başlık
+keyflip conv index                                # bir kez çözümle, parçaları keyflip tutsun (artımlı)
+keyflip conv index --embed                        # + yerel embedding (varsayılan Ollama nomic-embed-text)
+keyflip conv search "database migration"          # şimdi BM25; vektörler varsa hibrit
+keyflip conv context "database migration"         # yapıştırmaya hazır RAG bloğu, kaynak atıflı
+keyflip conv show a7dc93d0                        # tek sohbeti oku, gürültüsüz
+keyflip conv export --all --obsidian --out ~/Documents/Vault
+keyflip conv transfer a7dc93d0 --to codex         # başka bir yapay zekâ aracına devir paketi
+```
+
+- **Sıralamayı nasıl yaptığını dürüstçe söyleyen arama.** Leksiksel taraf BM25: hafif bir stemmer ve
+  gerçek belge frekansları. `--embed` varsayılan olarak yerel bir Ollama ile vektör hesaplar (ya da
+  `KEYFLIP_EMBED_URL`; uzak uç noktaya giden metin önce sır-ayıklamadan geçer). Hibrit iki listeyi
+  reciprocal rank fusion ile kaynaştırır — vektör yoksa sonuç `lexical` etiketiyle ve notla döner,
+  asla sessizce "hibrit" olmaz. İlk sorguda `search` indeksi bir kez kurar; ilk arama da çalışır.
+- **`conv context` RAG giriş noktasıdır.** Karakter bütçeli (varsayılan 12.000) taşınabilir tek blok
+  döndürür: kararlı başlıklar, kaynak id'leri, çalışma dizinleri ve tarihler; `--expand N` komşu
+  parçaları da çeker ki bir karar ikiye bölünmesin. Hiçbir şey yüklenmez; erişim diskte çalışır.
+- **Dışa aktarım varsayılan olarak sır ayıklar.** MD / kendi kendine yeten HTML / kanonik JSON, ve
+  YAML başlıklı, etiketli, indeks notlu Obsidian notları. Kimlik-bilgisi biçimli satırlar maske edilir;
+  `--no-redact` ile birebir kalır. Dosyalar `0600`'dır ve `export`, `--force` olmadan üzerine yazmayı
+  reddeder.
+- **Obsidian aktarımı sahiplik izler, kör senkron değildir.** Notlar
+  `<vault>/keyflip/Conversations/`'a, içerik özetlerinin gizli manifestosuyla yazılır. keyflip'in
+  yazdığı not yerinde güncellenir; sizin düzenlediğiniz not üzerine yazılmaz, **çakışma kopyası**
+  (`<ad> (conflict <zaman damgası>).md`) bırakılır; başlığı değişen not, hâlâ keyflip'in yazdığıyla
+  bayt-bayt aynıysa kaldırılır. Vault'unuz asla yeniden düzenlenmez.
+- **Devir, neyin var olduğunu dürüstçe anlatır.** `keyflip conv transfer <id> --to claude|codex|kiro|cursor|opencode|windsurf|gemini|copilot|aider|generic`
+  0600 bir paket yazar — `conversation.json` (kayıpsız), `CONTINUE.md` (hedefe göre ayarlanmış devam
+  istemi) ve gerçeği söyleyen bir README: **hiçbir hedef aracın belgelenmiş bir içe aktarımı yok**;
+  paket eklenip/yapıştırılacak bağlamdır ve hedef aracın kendi deposunda hiçbir şey değişmez.
+- **İndeks, sıra-komşusu bir artefakt gibi muamele görür.** `~/.config/keyflip/conv-index` içinde
+  yaşar (kayıtlı sır dizini: asla versiyonlanmaz, yedeklenmez, `migrate` dışlanır), `0600`, mtime+boyut+
+  özete göre artımlıdır; uzayan bir sohbet yalnızca yeni kuyruğunu yeniden embed eder. Silmek gerçektir:
+  tam yeniden kurulum gitmiş sohbetleri düşürür; filtreli kurulum (`--app`, `--limit-sources`) geri
+  kalanına dokunmaz.
+- MCP tarafında: salt-okunur `keyflip_conv_list`, `_show`, `_search`, `_context`, `_status` (indeksi
+  asla kendileri kurmaz — o iş `keyflip_conv_index`'in, `keyflip_conv_export` gibi `confirm` ister).
+  Kesitler ve bağlam blokları bir agent kaydına ulaşmadan önce sır-maskelenir, indeks yolu durum
+  dizinine göreli raporlanır, asla ev yolu olarak değil.
+
 ## Bağlam Katmanı — taşınabilir proje hafızası (`.keyflip/`)
 
 Yapay zeka araçları değişir; proje hafızanız değişmemeli. Bağlam Katmanı, projenizin dizininde
