@@ -444,6 +444,12 @@ keyflip mcpreg list | enable | disable | remove | import
   store with a rival, or world-readable — all before asking for consent.
   `keyflip_refresh_schedule` puts `refresh --all` on a nightly timer (it calls no model and spends no
   quota) and refuses with `changed: false` while a Claude session still holds the credential.
+- **Keeping chat search current.** `keyflip conv index --schedule [--interval N]` puts the conversation
+  index on a timer (launchd on macOS, cron on Linux) so `keyflip conv search` finds the chat you just had
+  rather than a day-old one. It runs on an **interval**, not at a nightly hour, because a daily index
+  would be a day behind; the pass is incremental (an unchanged transcript costs one `stat()`) and embeds
+  only new or changed chunks with the **local** model — no cloud model, no quota. Over MCP the same job
+  is `keyflip_conv_index_schedule` (`action:"status"|"install"|"remove"`, `interval` in minutes).
 
 ---
 

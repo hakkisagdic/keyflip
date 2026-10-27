@@ -47,6 +47,10 @@ keyflip mcp --setup`} />
           <p class="text-sm text-surface-700 dark:text-surface-300 mt-1"><code>keyflip_history_audit</code> (splits <code>alarm_count</code> from <code>tolerated_count</code>), <code>keyflip_memory_audit</code>, <code>keyflip_history_scrub</code> (plan by default, bundle before any rewrite), <code>keyflip_secrets_policy</code> (read-only) / <code>keyflip_secrets_tolerate</code></p>
         </div>
         <div class="p-4 bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-800 rounded-lg">
+          <h3 class="font-semibold text-surface-900 dark:text-surface-100">Conversations</h3>
+          <p class="text-sm text-surface-700 dark:text-surface-300 mt-1"><code>keyflip_conv_list</code> / <code>keyflip_conv_search</code> / <code>keyflip_conv_context</code> / <code>keyflip_conv_show</code> / <code>keyflip_conv_status</code> (read-only, never build the index themselves), <code>keyflip_conv_index</code> / <code>keyflip_conv_export</code> / <code>keyflip_conv_index_schedule</code> (confirm-gated)</p>
+        </div>
+        <div class="p-4 bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-800 rounded-lg">
           <h3 class="font-semibold text-surface-900 dark:text-surface-100">Context Layer</h3>
           <p class="text-sm text-surface-700 dark:text-surface-300 mt-1"><code>keyflip_context_read</code>, <code>keyflip_context_task_set</code>, <code>keyflip_context_decision_add</code>, <code>keyflip_checkpoint_*</code>, <code>keyflip_handoff</code></p>
         </div>

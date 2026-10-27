@@ -6762,6 +6762,7 @@ const CONV_USAGE = [
   '       keyflip conv show <id|prefix|title> [--format md|html|json] [--out <file|dir>] [--no-redact]',
   '       keyflip conv index [--embed] [--force] [--watch] [--interval N]  build/refresh the local retrieval index',
   '                                     --watch re-indexes every N minutes (default 30) so search stays current',
+  '       keyflip conv index --schedule [--interval N]   keep it current unattended (launchd/cron); --unschedule removes it',
   '       keyflip conv export (--all | <id>) [--obsidian] --out <dir> [--format md|html|json] [--no-redact]',
   '       keyflip conv transfer <id> --to <claude|codex|cursor|kiro|opencode|windsurf|gemini|copilot|aider>',
   '       keyflip conv capabilities | status',
@@ -6781,6 +6782,7 @@ const CONV_VALUE_FLAGS = [
   '--expand',
   '--limit-sources',
   '--search',
+  '--interval',
 ];
 
 function convClip(s, n) {
@@ -7101,6 +7103,88 @@ async function cmdConv(ctx, rest) {
   }
 
   if (sub === 'index') {
+    // `--schedule` / `--unschedule` / `--schedule-status` put the index on a timer, so it stays
+    // current without a `--watch` loop the user has to remember to keep alive. Same shape as
+    // `keyflip refresh --schedule`: a flag, not a subcommand.
+    if (args.indexOf('--schedule-status') !== -1) {
+      const st = _schedule.status(ctx, { job: 'conv' });
+      if (JSON_MODE) {
+        jsonOut({ convIndexSchedule: st });
+        return;
+      }
+      print(
+        'Conversation index: ' +
+          (st.installed
+            ? style.ok('scheduled') + ' (' + st.kind + (st.path ? ', ' + st.path : '') + ')'
+            : style.warn('not scheduled')),
+      );
+      if (st.installed) {
+        const iv = st.recorded && st.recorded.interval;
+        print(
+          '  ' +
+            style.dim(
+              'runs `keyflip conv index --embed` every ' +
+                (iv ? iv + ' min' : '30 min') +
+                ' — search sees new chats without a rebuild.',
+            ),
+        );
+        if (st.log) print('  ' + style.dim('output lands in ' + st.log));
+      } else {
+        print('  ' + style.dim('install it with: keyflip conv index --schedule [--interval N]'));
+      }
+      return;
+    }
+    if (args.indexOf('--unschedule') !== -1) {
+      const r = _schedule.uninstall(ctx, { job: 'conv' });
+      if (!r.ok && r.kind === 'unsupported') return fail('scheduling is macOS/Linux-only for now.');
+      print(style.ok('✅') + ' conversation index ' + (r.existed === false ? 'was not scheduled.' : 'unscheduled.'));
+      jsonOut({ convIndexSchedule: { installed: false } });
+      return;
+    }
+    if (args.indexOf('--schedule') !== -1) {
+      const ii = args.indexOf('--interval');
+      const wanted = ii !== -1 ? parseInt(args[ii + 1], 10) : 30;
+      const minutes = _schedule.intervalOf({ job: 'conv', interval: wanted });
+      print(
+        'This installs a ' +
+          (ctx.platform === 'darwin' ? 'launchd agent' : 'crontab entry') +
+          ' that runs ' +
+          style.bold('keyflip conv index --embed') +
+          ' every ' +
+          minutes +
+          ' min.',
+      );
+      print(
+        style.dim(
+          '  The pass is incremental: an unchanged conversation costs one stat(), and only new or changed chunks are embedded.',
+        ),
+      );
+      print(style.dim('  It runs the local embedding model; it calls no cloud model and spends no quota.'));
+      print(style.dim('  Remove with: keyflip conv index --unschedule.'));
+      if (args.indexOf('-y') === -1 && args.indexOf('--force') === -1) {
+        if (!process.stdin.isTTY) return fail('re-run with -y to confirm.');
+        if (!(await confirm('Install the conversation-index schedule? [y/N] '))) {
+          print('Cancelled.');
+          return;
+        }
+      }
+      const r = _schedule.install(ctx, { job: 'conv', interval: minutes });
+      if (!r.ok) return fail('could not schedule: ' + (r.reason || r.detail || 'unknown'));
+      print(
+        style.ok('✅') +
+          ' scheduled the conversation index every ' +
+          minutes +
+          ' min (' +
+          r.kind +
+          '). ' +
+          style.dim('Status: keyflip conv index --schedule-status'),
+      );
+      if (r.log)
+        print(
+          style.dim('  It logs to ' + r.log + ' — an unattended job you cannot read after it ran cannot be debugged.'),
+        );
+      return;
+    }
     if (args.indexOf('--watch') !== -1) {
       // Continuous freshness: an incremental pass every N minutes. Embed-less watches keep the
       // lexical index current; --embed also covers new chunks (only when something changed, so an

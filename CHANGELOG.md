@@ -84,6 +84,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`keyflip conv index --schedule` — the conversation index keeps itself current.** Until now the
+  index only moved when someone ran `conv index`, kept a `--watch` loop alive in a terminal, or an
+  agent called `keyflip_conv_index` — so "search my chats" quietly answered from yesterday. It is
+  now a scheduled job like the nightly token refresh: a launchd agent on macOS, a crontab line on
+  Linux. It runs on an **interval** (default every 30 minutes), not at a wall-clock hour, because a
+  daily index would be a day behind. The pass is incremental — an unchanged transcript costs one
+  `stat()`, and only new or changed chunks are embedded — so a tick costs seconds. It runs the
+  **local** embedding model: no cloud model, no quota. `--schedule-status` shows the state,
+  `--unschedule` removes it, and `--watch` stays as the foreground equivalent. MCP adds the
+  confirm-gated `keyflip_conv_index_schedule` (`action:"status"|"install"|"remove"`, `interval` in
+  minutes); the cadence is restricted to values that mean the same thing in launchd and cron.
+
 - **`keyflip chatgpt backups` — undo a bad ChatGPT/Codex switch.** Every switch and token refresh
   already copied the live `~/.codex/auth.json` to `<configDir>/backups/`; now they are listable by
   account e-mail/plan/expiry (never a token) and restorable by number, file name or unique prefix.

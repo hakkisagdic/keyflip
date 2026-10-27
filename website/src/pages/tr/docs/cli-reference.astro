@@ -121,6 +121,7 @@ import CommandReference from '../../../components/CommandReference.astro';
           { cmd: 'keyflip threads mirror <slug> | unmirror <slug>', desc: 'Opsiyonel birleşik metin (threads.mirror=true ister)' },
           { cmd: 'keyflip conv list [--app claude,codex] [--since 7d] [--cwd <dizin>]', desc: 'Yerel tüm yapay zekâ araçlarının sohbetleri tek biçimde (Claude Code, Codex, Kiro, Gemini, Qoder, Cursor, opencode, Copilot, Aider)' },
           { cmd: 'keyflip conv index [--embed] [--force] [--watch]', desc: 'Sohbet indeksini kur (artımlı; --embed yerel vektör ekler; --watch her N dakikada güncel tutar)' },
+          { cmd: 'keyflip conv index --schedule [--interval N]', desc: 'Sohbet indeksini gözetimsiz güncel tut (macOS\'ta launchd, Linux\'ta cron); --schedule-status / --unschedule' },
           { cmd: 'keyflip conv search "<sorgu>" [--lexical|--semantic]', desc: 'Tüm sohbetlerde BM25 / embedding / hibrit içerik araması' },
           { cmd: 'keyflip conv context "<sorgu>" [--budget 12000]', desc: 'Yapıştırılmaya hazır RAG bloğu: kaynak atıflı + komşu parçalar, karakter bütçeli' },
           { cmd: 'keyflip conv show <id|önek|başlık> [--format md|html|json]', desc: 'Tek sohbeti oku; araç gürültüsü ayıklanmış' },

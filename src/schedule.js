@@ -17,6 +17,14 @@ const REFRESH_LABEL = 'com.keyflip.refresh';
 const REFRESH_CRON_MARK = '# keyflip-refresh (managed by keyflip)';
 const DAEMON_LABEL = 'com.keyflip.refresh-daemon';
 const DAEMON_CRON_MARK = '# keyflip-refresh-daemon (managed by keyflip)';
+const CONV_LABEL = 'com.keyflip.conv-index';
+const CONV_CRON_MARK = '# keyflip-conv-index (managed by keyflip)';
+
+// The conversation index runs on an INTERVAL, not at a wall-clock time: search must find the chat
+// you just had, not the chat you had before lunch. These are the intervals the flag accepts, in
+// minutes. Only values that are valid in BOTH launchd (seconds) and cron (`*/N` minutes) are
+// allowed, so one flag means the same thing on macOS and Linux.
+const CONV_INTERVALS = [5, 10, 15, 30, 60, 120, 180, 360, 720, 1440];
 
 // Where the keyflip binary is: the installed `keyflip`, else this checkout. Injectable runner so
 // tests never shell out. Returns the resolved path UNCHANGED — how to run it is argvFor's call alone.
@@ -66,6 +74,17 @@ function daemonCommand(opts) {
   return { exec: process.execPath, args: [bin] };
 }
 
+// The conversation index, refreshed on an interval so `keyflip conv search` never returns a
+// stale answer. The pass is incremental: an unchanged transcript is one `stat()`, and `--embed`
+// only covers chunks that are new or changed, so a tick costs seconds, not an hour.
+function convCommand(opts) {
+  const args = ['conv', 'index', '--embed'];
+  // `--no-embed` keeps the lexical index current without asking the embedding endpoint for
+  // anything — useful when the local model is not running.
+  if (opts && opts.embed === false) args.pop();
+  return argvFor(keyflipBin(opts), args);
+}
+
 function parseAt(at) {
   const m = /^(\d{1,2}):(\d{2})$/.exec(String(at || '03:00'));
   return m ? { h: Math.min(23, parseInt(m[1], 10)), m: Math.min(59, parseInt(m[2], 10)) } : { h: 3, m: 0 };
@@ -104,6 +123,16 @@ const JOBS = {
     command: daemonCommand,
     llm: false,
   },
+  conv: {
+    name: 'conv',
+    label: CONV_LABEL,
+    cronMark: CONV_CRON_MARK,
+    record: 'conv-index-schedule.json',
+    at: null, // interval-based, no wall-clock time
+    interval: 30, // minutes between passes
+    command: convCommand,
+    llm: false,
+  },
 };
 function jobOf(opts) {
   const j = opts && opts.job;
@@ -111,11 +140,23 @@ function jobOf(opts) {
 }
 // The time a job runs: its own `--at`, else its own default (a dream at 03:00, a refresh at 04:30 —
 // deliberately NOT the same hour, so a token rotation cannot race the distill that reads those chats).
-// Daemon jobs have no schedule time (they run continuously), so return null for them.
+// Daemon and interval jobs have no schedule time (they run continuously / on a cadence), so return
+// null for them.
 function whenOf(opts) {
   const job = jobOf(opts);
-  if (job.name === 'daemon') return null;
+  if (!job.at) return null;
   return parseAt((opts && opts.at) || job.at);
+}
+
+// How often an interval-based job runs, in MINUTES. Only the allowed values are honoured, so the
+// same flag cannot mean "every 7 minutes" on launchd and "every 7 hours" on cron. An unknown value
+// falls back to the job's default.
+function intervalOf(opts) {
+  const job = jobOf(opts);
+  if (!job.interval) return null;
+  const raw = opts && opts.interval != null ? parseInt(opts.interval, 10) : job.interval;
+  for (const m of CONV_INTERVALS) if (m === raw) return m;
+  return job.interval;
 }
 
 // ---- macOS launchd ----
@@ -141,9 +182,12 @@ function buildPlist(opts) {
     .join('\n');
   const log = xmlEsc(logPath(opts.home, opts));
 
-  // Daemon jobs use KeepAlive instead of StartCalendarInterval
+  // An interval job runs every N minutes (StartInterval), a daemon runs continuously (KeepAlive),
+  // and a nightly job runs at a wall-clock time (StartCalendarInterval).
   let startSection;
-  if (job.name === 'daemon') {
+  if (job.interval) {
+    startSection = '    <key>StartInterval</key>\n    <integer>' + intervalOf(opts) * 60 + '</integer>\n';
+  } else if (job.name === 'daemon') {
     startSection = '    <key>KeepAlive</key><true/>\n';
   } else {
     startSection =
@@ -215,6 +259,12 @@ function cronLine(opts) {
   // Daemon jobs run via @reboot instead of time-based scheduling
   if (job.name === 'daemon') {
     return '@reboot ' + [c.exec].concat(c.args).join(' ') + '  ' + job.cronMark;
+  }
+
+  // An interval job runs every N minutes. The minutes are restricted to divisors of 60 that
+  // cron accepts in a `*/N` field, so this line means the same thing as the launchd one.
+  if (job.interval) {
+    return '*/' + intervalOf(opts) + ' * * * * ' + [c.exec].concat(c.args).join(' ') + '  ' + job.cronMark;
   }
 
   const t = whenOf(opts);
@@ -311,6 +361,9 @@ function install(ctx, opts) {
       kind: r.kind,
       at: whenOf(opts),
     };
+    // An interval job records its cadence, so `status` can say how fresh the index is without
+    // re-reading the plist.
+    if (job.interval) rec.interval = intervalOf(opts);
     // Only an LLM-running job has a provider to receipts. Recording "claude" against a refresh job
     // would be a lie about a bill it cannot incur.
     if (job.llm) {
@@ -364,13 +417,18 @@ export {
   CRON_MARK,
   REFRESH_LABEL,
   REFRESH_CRON_MARK,
+  CONV_LABEL,
+  CONV_CRON_MARK,
+  CONV_INTERVALS,
   RECORD_NAME,
   REFRESH_RECORD_NAME,
   JOBS,
   jobOf,
   whenOf,
+  intervalOf,
   dreamCommand,
   refreshCommand,
+  convCommand,
   parseAt,
   buildPlist,
   logPath,

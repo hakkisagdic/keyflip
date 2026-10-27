@@ -936,6 +936,7 @@ dışa aktarıma asla ulaşmaz. Kaynaklar salt-okunur; keyflip hiçbir aracın d
 keyflip conv list --app claude,codex --since 7d   # gez: id öneki, uygulama, yaş, mesaj sayısı, başlık
 keyflip conv index                                # bir kez çözümle, parçaları keyflip tutsun (artımlı)
 keyflip conv index --embed                        # + yerel embedding (varsayılan Ollama nomic-embed-text)
+keyflip conv index --schedule --interval 30        # kendini güncel tut (macOS'ta launchd, Linux'ta cron)
 keyflip conv search "database migration"          # şimdi BM25; vektörler varsa hibrit
 keyflip conv context "database migration"         # yapıştırmaya hazır RAG bloğu, kaynak atıflı
 keyflip conv show a7dc93d0                        # tek sohbeti oku, gürültüsüz
@@ -949,6 +950,13 @@ keyflip conv transfer a7dc93d0 --to codex         # başka bir yapay zekâ arac�
   reciprocal rank fusion ile kaynaştırır; leksiksel liste ağır basar, yani sadece vektörden gelen
   bir eşleşme BM25 sonucunu sayfadan düşüremez — vektör yoksa sonuç `lexical` etiketiyle ve notla döner,
   asla sessizce "hibrit" olmaz. İlk sorguda `search` indeksi bir kez kurar; ilk arama da çalışır.
+- **İndeks kendini güncel tutar.** `keyflip conv index --schedule [--interval N]` indeksi bir zamanlayıcıya
+  koyar (macOS'ta launchd ajanı, Linux'ta crontab satırı) böylece `conv search` az önce yaptığınız sohbeti
+  bulur, bayat olanı değil — **gece saatinde değil, aralıkla** çalışır, çünkü günlük indeks bir gün geride
+  kalırdı. Geçiş kademeli: değişmeyen bir transcript tek `stat()` demektir, yalnızca yeni ya da değişen
+  parçalar gömülür, dolayısıyla bir tur saniyeler sürer. **Yerel** embedding modelini çalıştırır — bulut
+  modeli yok, kota yok. Durumu `--schedule-status` gösterir, `--unschedule` kaldırır; terminali açık
+  tutmayı severseniz ön planlı karşılığı `--watch`.
 - **`conv context` RAG giriş noktasıdır.** Karakter bütçeli (varsayılan 12.000) taşınabilir tek blok
   döndürür: kararlı başlıklar, kaynak id'leri, çalışma dizinleri ve tarihler; `--expand N` komşu
   parçaları da çeker ki bir karar ikiye bölünmesin. Hiçbir şey yüklenmez; erişim diskte çalışır.

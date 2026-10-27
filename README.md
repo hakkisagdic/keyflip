@@ -849,6 +849,7 @@ index or an export. Sources are read-only; keyflip never writes into any tool's 
 keyflip conv list --app claude,codex --since 7d   # browse: id prefix, app, age, message count, title
 keyflip conv index                                # parse once into chunks keyflip owns (incremental)
 keyflip conv index --embed                        # + local embeddings (Ollama nomic-embed-text by default)
+keyflip conv index --schedule --interval 30        # keep it current unattended (launchd on macOS, cron on Linux)
 keyflip conv search "database migration"          # BM25 now; hybrid once vectors exist
 keyflip conv context "database migration"         # a ready-to-paste RAG block with cited sources
 keyflip conv show a7dc93d0                        # read one chat, noise stripped
@@ -865,6 +866,13 @@ keyflip conv transfer a7dc93d0 --to codex         # a handoff bundle for another
 - **`conv context` is the RAG entry point.** It returns one portable, char-budgeted block (default
   12,000 chars) with stable headings, source ids, cwds and dates, and `--expand N` pulls in neighbouring
   chunks so a decision is not cut mid-thread. Nothing is uploaded; retrieval runs on your disk.
+- **The index keeps itself current.** `keyflip conv index --schedule [--interval N]` puts the index on a
+  timer (a launchd agent on macOS, a crontab line on Linux) so `conv search` finds the chat you just had
+  instead of a stale one — it runs on an **interval**, not at a nightly hour, because a daily index would
+  be a day behind. The pass is incremental: an unchanged transcript costs one `stat()`, and only new or
+  changed chunks are embedded, so a tick costs seconds. It runs the **local** embedding model — no cloud
+  model, no quota. `--schedule-status` shows the state, `--unschedule` removes it, and `--watch` is the
+  foreground equivalent if you would rather keep a terminal open.
 - **Exports redact by default.** MD / self-contained HTML / canonical JSON, and Obsidian notes with YAML
   frontmatter, tags and an index note. Credential-shaped lines are masked unless you pass `--no-redact`.
   Files are `0600`, and `export` refuses to overwrite without `--force`.

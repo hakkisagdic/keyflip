@@ -446,6 +446,12 @@ keyflip mcpreg list | enable | disable | remove | import
   olduğunu kontrol edebilir.
   `keyflip_refresh_schedule`, `refresh --all`'ı her geceki zamanlayıcıya koyar (model çağırmaz, kota
   harcamaz) ve bir Claude oturumu kimlik bilgisini hâlâ tutuyorsa `changed: false` ile reddeder.
+- **Sohbet aramasını güncel tutmak.** `keyflip conv index --schedule [--interval N]` sohbet indeksini bir
+  zamanlayıcıya koyar (macOS'ta launchd, Linux'ta cron) böylece `keyflip conv search` az önce yaptığınız
+  sohbeti bulur, bir günlük bayat olana değil. **Gece saatinde değil, aralıkla** çalışır, çünkü günlük
+  indeks bir gün geride kalırdı; geçiş kademelidir (değişmeyen bir transcript tek `stat()` demektir) ve
+  yalnızca yeni ya da değişen parçaları **yerel** modelle gömer — bulut modeli yok, kota yok. MCP'de aynı
+  iş `keyflip_conv_index_schedule` (`action:"status"|"install"|"remove"`, `interval` dakika cinsinden).
 
 ---
 

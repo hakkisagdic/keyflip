@@ -171,6 +171,12 @@ Copilot, Aider — normalized into one shape, harness noise stripped. Use them w
   copies, never overwritten), or a `target` handoff bundle for
   claude/codex/kiro/cursor/opencode/windsurf/gemini/copilot/aider/generic — no target tool has a
   native import, the bundle is context to attach.
+- **`keyflip_conv_index_schedule`** — keep the index current without the user remembering to
+  rebuild it: `action:"install"` puts `keyflip conv index --embed` on a timer (launchd on
+  macOS, cron on Linux) every `interval` minutes (default 30), `action:"status"` reads it,
+  `action:"remove"` takes it away. It runs the LOCAL embedding model — no cloud model, no
+  quota. Propose it when the user asks "how do I keep my chat search up to date?"; ask before
+  installing, then `confirm=true`.
 
 Privacy rules that apply to you: nothing is uploaded (embeddings are local Ollama by default or
 the user's `KEYFLIP_EMBED_URL`, with remote text redacted first), the index lives in the

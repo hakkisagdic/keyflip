@@ -5019,6 +5019,35 @@ const TOOLS = [
     },
   },
   {
+    name: 'keyflip_conv_index_schedule',
+    title: 'Keep the conversation index current on a timer',
+    description:
+      'Install/remove/inspect a schedule (launchd on macOS, cron on Linux) that runs `keyflip conv index --embed` unattended every N minutes, so `keyflip conv search` finds chats you just had instead of a stale index. action="status" (read) | "install" | "remove". The pass is incremental (an unchanged conversation costs one stat) and embeds only new or changed chunks with the local model; it calls NO cloud model and spends no quota. For install/remove, ask the user, then confirm=true.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', enum: ['status', 'install', 'remove'] },
+        interval: {
+          type: 'number',
+          description: 'minutes between passes (5|10|15|30|60|120|180|360|720|1440, default 30)',
+        },
+        confirm: confirmProp.confirm,
+      },
+      required: ['action', 'confirm'],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    run: async function (ctx, args) {
+      const schedule = _schedule;
+      if (args.action === 'status') return { schedule: schedule.status(ctx, { job: 'conv' }) };
+      needConfirm(args);
+      if (args.action === 'remove') return { removed: schedule.uninstall(ctx, { job: 'conv' }) };
+      const r = schedule.install(ctx, { job: 'conv', interval: args.interval });
+      if (!r.ok) throw new Error('could not schedule: ' + (r.reason || r.detail || 'unknown'));
+      return { scheduled: r, spendsQuota: false };
+    },
+  },
+  {
     name: 'keyflip_statusline',
     title: 'Claude Code status line (active account + quota)',
     description:
