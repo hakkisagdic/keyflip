@@ -6942,6 +6942,8 @@ function convReportText(ctx, r) {
     r.empty + ' empty',
     r.skipped + ' skipped',
   ];
+  if (r.rechunk) parts.push(r.rechunk + ' re-chunked (disk disagreed with the index)');
+  if (r.duplicates) parts.push(r.duplicates + ' id collision(s) kept apart');
   let line =
     'Indexed ' +
     (s.sources || 0) +

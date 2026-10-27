@@ -9,11 +9,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **Codex resumed/forked threads no longer collapse into one index entry.** A continued rollout
-  logs the parent as `session_id` and its own thread as `id`; the parser kept the parent, so dozens
-  of distinct rollouts overwrote each other's chunk files and the index reported more chunks than
-  it held (coverage stalled at 99.2%). Each rollout now keeps its own id (titles still resolve
-  through the parent), so every segment is searchable.
+- **The conversation index can no longer claim chunks or vectors that are not on disk.**
+  An index row copied from a colliding id, or whose chunk file was deleted, is now re-chunked
+  instead of reused; a source with zero chunks on disk is never recorded as embedded (that used to
+  leave a 0-byte vector file and a healthy-looking count); a torn chunk file is reconciled to what
+  the disk actually holds before embedding, and `status` counts a vector only when its file is
+  exactly `dim × count × 4` bytes. The build report gained a `rechunk` count, and `stats.chunks`
+  now always equals the chunk lines on disk.
+
+- **Codex Desktop rollouts no longer collapse into one index entry.** A continued rollout logs
+  the parent thread as `session_id`, and Codex Desktop writes a *second* `session_meta` line that
+  repeats the parent — the parser kept the last one, so a fork was filed under its parent's id.
+  Two transcripts then shared one id: the second overwrote the first's chunk file while the
+  manifest kept a single row, so the counts described a conversation that was not on disk. A
+  rollout now keeps its own id (from its own `session_meta`, or from the file name for a fork
+  whose name is `parent_own`); titles still resolve through the parent thread. Live: 4 colliding
+  pairs became 4 extra conversations, and every index row now matches its own chunk file.
+
+- **One id can no longer hold two conversations, and a row is only reused when its file is
+  really there.** If two transcripts still resolve to the same id, the newcomer gets a stable,
+  path-derived id and the build reports it (`duplicates` in the CLI and the MCP tool) instead of
+  overwriting the first one. Every index row also stores the byte size of its chunk file, so a
+  file that was replaced by a colliding source is re-chunked from its transcript rather than
+  reused with a count that the disk does not back.
+
+### Changed
+
+- **Search over a 120k-chunk index is roughly 4× faster.** Lexical BM25 now reads a per-source
+  token sidecar (`tokens/<key>.t32`: per-chunk `len` + `[token hash, tf]`, written with the chunks
+  and derivable from them) instead of re-tokenizing ~150 MB of transcript text per query; snippets
+  are built only for candidates that can reach the page, semantic search hydrates text only for its
+  top hits, and hybrid runs lexical + semantic concurrently. Measured live (1850 conversations,
+  121k chunks): lexical 4.2 s → 1.0 s, semantic minutes → 1.0 s, hybrid 4.2 s → 1.9 s. A missing or
+  torn sidecar falls back to the text path, so an older index stays searchable and re-heals itself.
+
+- **Incremental `keyflip conv index` passes no longer re-parse unchanged transcripts.** A source
+  whose path, mtime and size match its manifest row reuses the row directly, so a no-op build is
+  one `stat()` per source instead of re-reading every conversation (the previous code parsed all
+  1850 of them, ~1 h, only to reuse the result). The post-parse mtime/hash checks remain for
+  anything that did change. The manifest records which id scheme produced each row, so a change
+  to how ids are derived re-parses the sources once instead of keeping ids that no longer belong
+  to their transcript.
 
 ### Added
 

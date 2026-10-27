@@ -966,9 +966,15 @@ keyflip conv transfer a7dc93d0 --to codex         # başka bir yapay zekâ arac�
   paket eklenip/yapıştırılacak bağlamdır ve hedef aracın kendi deposunda hiçbir şey değişmez.
 - **İndeks, sıra-komşusu bir artefakt gibi muamele görür.** `~/.config/keyflip/conv-index` içinde
   yaşar (kayıtlı sır dizini: asla versiyonlanmaz, yedeklenmez, `migrate` dışlanır), `0600`, mtime+boyut+
-  özete göre artımlıdır; uzayan bir sohbet yalnızca yeni kuyruğunu yeniden embed eder. Silmek gerçektir:
-  tam yeniden kurulum gitmiş sohbetleri düşürür; filtreli kurulum (`--app`, `--limit-sources`) geri
-  kalanına dokunmaz.
+  özete göre artımlıdır: değişmemiş bir konuşma manifest satırından, yeniden ayrıştırılmadan kullanılır;
+  uzayan bir sohbet yalnızca yeni kuyruğunu yeniden embed eder. Bir token yan dosyası (`tokens/`, yine
+  0600, parçalardan türetilir) metni yeniden tokenize etmeden BM25'i hızlı tutar. Sayılar diskten ileri gidemez — parça
+  dosyası kaybolan satır yeniden parçalanır, parçası olmayan kaynak asla "embed edildi" sayılmaz ve
+  yarım parça dosyası vektörü yazılmadan önce diskle uzlaştırılır. Her satır kendi parça dosyasının
+  parmak izini de tutar: dosya başka bir konuşma tarafından ezilmişse diskte karşılığı olmayan bir
+  sayıyla yeniden kullanılmaz, kaynak konuşmadan yeniden parçalanır; aynı id'yi isteyen iki transcript
+  birbirinden ayrılır ve raporlanır (`id çakışması ayrı tutuldu`). Silmek gerçektir: tam yeniden kurulum
+  gitmiş sohbetleri düşürür; filtreli kurulum (`--app`, `--limit-sources`) geri kalanına dokunmaz.
 - MCP tarafında: salt-okunur `keyflip_conv_list`, `_show`, `_search`, `_context`, `_status` (indeksi
   asla kendileri kurmaz — o iş `keyflip_conv_index`'in, `keyflip_conv_export` gibi `confirm` ister).
   Kesitler ve bağlam blokları bir agent kaydına ulaşmadan önce sır-maskelenir, indeks yolu durum

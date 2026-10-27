@@ -6,9 +6,10 @@
 // Design notes (best practice, zero runtime deps):
 //   * One directory per conversation (`chunks/<key>.jsonl`) instead of one giant file: a
 //     changed chat rewrites only its own slice, and a search streams sources it needs.
-//   * Lexical ranking is BM25 (src/bm25.js) over ALL documents; a cheap prefix prefilter
-//     avoids tokenizing 100+ MB for every query while df/avgdl stay exact (every document
-//     that can contain a term passes the prefilter).
+//   * Lexical ranking is BM25 (src/bm25.js) over ALL documents. A per-source token sidecar
+//     (`tokens/<key>.t32`: per chunk len + [token hash, tf]) is written with the chunks, so a
+//     query compares 32-bit hashes instead of re-tokenizing 150 MB of text; df/avgdl stay exact
+//     because every chunk is scanned. The sidecar is derived data and can be rebuilt from chunks.
 //   * Embeddings are OPT-IN (`--semantic`). Vectors are per-source Float32LE files, keyed by
 //     an embedding-space hash (url+model). A changed conversation reuses the unchanged
 //     prefix's vectors, so an append-only chat only embeds its new turns.
@@ -25,6 +26,9 @@ import * as _secretscan from './secretscan.js';
 import * as _fsutil from './fsutil.js';
 
 const SCHEMA_VERSION = 1;
+// Bump when the way a conversation id is derived changes. A row written by an older scheme
+// is re-parsed once (so its id is re-derived) instead of being reused with the old id.
+const ID_SCHEME = 2;
 const INDEX_DIR = 'conv-index';
 const CHUNK_TARGET = 1400; // characters per chunk
 const CHUNK_OVERLAP = 180; // only for a single oversized message
@@ -52,6 +56,12 @@ function chunkPath(ctx, id) {
 }
 function vectorPath(ctx, id) {
   return path.join(vectorsDir(ctx), keyOf(id) + '.f32');
+}
+function tokensDir(ctx) {
+  return path.join(dirOf(ctx), 'tokens');
+}
+function tokenPath(ctx, id) {
+  return path.join(tokensDir(ctx), keyOf(id) + '.t32');
 }
 function hashText(text) {
   return crypto.createHash('sha1').update(String(text)).digest('hex').slice(0, 16);
@@ -154,6 +164,80 @@ function readChunks(file) {
 function writeChunks(ctx, id, chunks) {
   const body = chunks.map((c) => JSON.stringify(c)).join('\n') + '\n';
   _fsutil.atomicWrite(chunkPath(ctx, id), body, 0o600);
+  return Buffer.byteLength(body);
+}
+
+// The chunk file must be the one this entry describes. Another source can write to the same
+// path when two transcripts claim one id, so the byte size is fingerprinted: a file with a
+// different size is not ours, and the entry must be re-chunked instead of reused.
+function chunkBytesOk(ctx, entry) {
+  if (!entry || !entry.chunkBytes) return false;
+  try {
+    return fs.statSync(chunkPath(ctx, entry.id)).size === entry.chunkBytes;
+  } catch {
+    return false;
+  }
+}
+
+// ---- lexical sidecar -----------------------------------------------------------------------
+//
+// BM25 used to re-tokenize every chunk that matched a raw prefilter, per query: ~4 s on a
+// 120k-chunk index. Tokens are already computed when a chunk is built, so store them next to
+// the chunks: per chunk `uint32 len, uint16 uniqueTokens, [uint32 tokenHash, uint16 tf]*`.
+// A query then compares 32-bit hashes instead of running the tokenizer over transcript text,
+// and reads the text only for the handful of hits it returns. Exact same tokenizer (bm25.js),
+// so rankings do not change; a 32-bit collision can only add a small tf to a chunk.
+function tokenHash(t) {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < t.length; i++) {
+    h ^= t.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return h >>> 0;
+}
+
+function tokensForChunk(text) {
+  const toks = _bm25.tokenize(text);
+  const tf = new Map();
+  for (const t of toks) {
+    const h = tokenHash(t);
+    tf.set(h, (tf.get(h) || 0) + 1);
+  }
+  return { len: toks.length, tf: tf };
+}
+
+function writeTokens(ctx, id, chunks) {
+  const parts = [];
+  for (const c of chunks) {
+    const { len, tf } = tokensForChunk(c.text);
+    const buf = Buffer.alloc(6 + tf.size * 6);
+    buf.writeUInt32LE(Math.min(len, 0xffffffff), 0);
+    buf.writeUInt16LE(Math.min(tf.size, 0xffff), 4);
+    let off = 6;
+    for (const [h, n] of tf) {
+      buf.writeUInt32LE(h, off);
+      buf.writeUInt16LE(Math.min(n, 0xffff), off + 4);
+      off += 6;
+    }
+    parts.push(buf);
+  }
+  _fsutil.atomicWrite(tokenPath(ctx, id), Buffer.concat(parts), 0o600);
+}
+
+function dropTokens(ctx, id) {
+  try {
+    fs.rmSync(tokenPath(ctx, id), { force: true });
+  } catch {
+    /* best-effort */
+  }
+}
+
+// First build after an upgrade (or a lost sidecar): derive tokens from the chunk file, no
+// transcript parse needed.
+function ensureTokens(ctx, id) {
+  if (fs.existsSync(tokenPath(ctx, id))) return;
+  const chunks = readChunks(chunkPath(ctx, id));
+  if (chunks.length) writeTokens(ctx, id, chunks);
 }
 
 // ---- embedding space & safety --------------------------------------------------------------
@@ -205,7 +289,21 @@ function readVectorFile(file, dim, count) {
   return buf;
 }
 
+// Cheap (stat-only) check that a recorded vector really is on disk at the expected size.
+function vectorFileOk(ctx, id, vec) {
+  if (!vec || !vec.dim || !vec.count) return false;
+  try {
+    return fs.statSync(vectorPath(ctx, id)).size === vec.dim * vec.count * 4;
+  } catch {
+    return false;
+  }
+}
+
 async function embedSource(ctx, id, chunks, prev, space, opts) {
+  // A source with no chunks on disk has nothing to embed. Never record it as vectorized:
+  // doing so used to leave a 0-byte vector file and a meta row claiming "embedded", which
+  // hid the real problem (missing/torn chunk file) behind a healthy-looking count.
+  if (!chunks.length) return null;
   const file = vectorPath(ctx, id);
   let prefix = 0;
   let prefixBuf = null;
@@ -263,7 +361,11 @@ async function embedSource(ctx, id, chunks, prev, space, opts) {
       fresh.push(v);
     });
     if (opts && opts.onProgress)
-      opts.onProgress({ phase: 'embed', done: prefix + Math.min(i + EMBED_BATCH, need.length), total: chunks.length });
+      opts.onProgress({
+        phase: 'embed-chunks',
+        done: prefix + Math.min(i + EMBED_BATCH, need.length),
+        total: chunks.length,
+      });
   }
   if (!dim || prefix + fresh.length !== chunks.length) return null;
   const freshBuf = Buffer.alloc(fresh.length * dim * 4);
@@ -330,10 +432,37 @@ async function build(ctx, opts) {
     removed: 0,
     skipped: 0,
     empty: 0,
+    rechunk: 0,
+    duplicates: 0,
+    duplicateIds: [],
     errors: [],
     embedded: 0,
     embedding: null,
   };
+  // One id, one conversation. If two DIFFERENT transcripts resolve to the same id, the second
+  // one would overwrite the first one's chunk file while the manifest keeps a single row — the
+  // counts then disagree with the disk. The newcomer gets a stable, path-derived id instead and
+  // the collision is reported, never swallowed.
+  const claimed = new Map(); // id -> path that owns it in this build
+  const counted = new Set(); // "id|path" pairs already reported
+  function claimId(id, srcPath) {
+    const owner = claimed.get(id);
+    if (owner && owner !== srcPath) {
+      const alt = id + '-' + crypto.createHash('sha1').update(String(srcPath)).digest('hex').slice(0, 8);
+      claimed.set(alt, srcPath);
+      const key = id + '|' + srcPath;
+      if (!counted.has(key)) {
+        counted.add(key);
+        report.duplicates++;
+        if (report.duplicateIds.length < 5) {
+          report.duplicateIds.push({ id: id, path: srcPath, keptFor: owner, as: alt });
+        }
+      }
+      return alt;
+    }
+    claimed.set(id, srcPath);
+    return id;
+  }
   const space = opts.embed ? spaceOf(opts) : null;
   let done = 0;
   for (const src of sources) {
@@ -341,6 +470,29 @@ async function build(ctx, opts) {
     if (opts.onProgress) opts.onProgress({ phase: 'scan', done: done, total: sources.length, id: src.path });
     const prev = byPath[src.path];
     try {
+      // Fast path BEFORE parsing: an unchanged file keeps its id and hash by definition, so a
+      // no-op build is a stat() per source instead of re-reading every transcript. A row from
+      // an older id scheme is re-parsed once, so the id is re-derived under the current one.
+      if (
+        !opts.force &&
+        prev &&
+        prev.id &&
+        prev.hash &&
+        prev.scheme === ID_SCHEME &&
+        prev.mtimeMs === src.mtimeMs &&
+        prev.size === src.size &&
+        chunkBytesOk(ctx, prev)
+      ) {
+        const id = claimId(prev.id, src.path);
+        if (id === prev.id) {
+          next[prev.id] = prev;
+          report.reused++;
+          ensureTokens(ctx, prev.id);
+          continue;
+        }
+        // A collision: reusing the row would point two paths at ONE chunk file. Fall through
+        // to the full parse so this source gets its own chunk file under the new id.
+      }
       const conv = conversations.load(ctx, src, opts);
       const bytes = conv.messages.reduce((n, m) => n + Buffer.byteLength(m.text || ''), 0);
       if (!conv.messages.length) {
@@ -348,15 +500,27 @@ async function build(ctx, opts) {
         if (prev) report.removed++;
         continue;
       }
-      const id = conv.id;
+      const id = claimId(conv.id, src.path);
       const had = meta.sources[id] || prev;
-      if (!opts.force && had && had.mtimeMs === src.mtimeMs && had.size === src.size) {
+      // Reuse is only safe when the entry really belongs to THIS id and its chunk file is
+      // still on disk. Checking the id matters: entries are looked up by path, and before the
+      // Codex id fix several rollouts shared one id, so reusing `had` blind could copy a
+      // neighbour's chunk count onto a source whose own chunk file was never written.
+      // An entry with hash null asked to be re-chunked (see the embed loop's disk check).
+      // The chunk file must also still be the one this entry describes: two transcripts that
+      // claimed one id could have overwritten it, and a reused count would then describe a
+      // conversation that is not on disk.
+      const sameEntry =
+        !!had && had.id === id && had.hash && fs.existsSync(chunkPath(ctx, id)) && chunkBytesOk(ctx, had);
+      if (!opts.force && sameEntry && had.mtimeMs === src.mtimeMs && had.size === src.size) {
         next[id] = had;
         report.reused++;
+        ensureTokens(ctx, id);
         continue;
       }
-      if (!opts.force && had && had.hash === conv.hash && fs.existsSync(chunkPath(ctx, id))) {
+      if (!opts.force && sameEntry && had.hash === conv.hash) {
         next[id] = Object.assign({}, had, {
+          scheme: ID_SCHEME,
           mtimeMs: src.mtimeMs,
           size: src.size,
           path: src.path,
@@ -365,6 +529,7 @@ async function build(ctx, opts) {
           cwd: conv.cwd,
         });
         report.reused++;
+        ensureTokens(ctx, id);
         continue;
       }
       const chunks = chunkConversation(conv);
@@ -372,9 +537,13 @@ async function build(ctx, opts) {
         report.empty++;
         continue;
       }
-      const oldHashes = had ? had.chunkHashes || readChunks(chunkPath(ctx, id)).map((c) => c.h) : [];
+      // Old hashes/vectors may only seed prefix reuse when they belong to this same id —
+      // a path that changed id (or an entry copied from a colliding id) must start clean.
+      const sameOwner = !!had && had.id === id;
+      const oldHashes = sameOwner ? had.chunkHashes || readChunks(chunkPath(ctx, id)).map((c) => c.h) : [];
       const entry = {
         id: id,
+        scheme: ID_SCHEME,
         app: conv.app,
         surface: conv.surface,
         title: conv.title,
@@ -393,10 +562,12 @@ async function build(ctx, opts) {
         // Changed text invalidates the vector alignment. Keep the OLD vector/hash pair only
         // so an appended chat can reuse its unchanged prefix instead of embedding 8k chunks again.
         vec: null,
-        _oldVec: had && space && had.vec && had.vec.space === space.hash ? had.vec : null,
-        _oldHashes: had && space && had.vec && had.vec.space === space.hash ? oldHashes : null,
+        _oldVec: sameOwner && space && had.vec && had.vec.space === space.hash ? had.vec : null,
+        _oldHashes: sameOwner && space && had.vec && had.vec.space === space.hash ? oldHashes : null,
       };
-      writeChunks(ctx, id, chunks);
+      const chunkBytes = writeChunks(ctx, id, chunks);
+      writeTokens(ctx, id, chunks);
+      entry.chunkBytes = chunkBytes;
       next[id] = entry;
       report.changed++;
       report.indexed++;
@@ -418,12 +589,28 @@ async function build(ctx, opts) {
         } catch {
           /* best-effort */
         }
+        dropTokens(ctx, id);
       }
     });
   } else {
-    // Keep sources outside this filtered build untouched.
+    // Keep sources outside this filtered build untouched — but never keep a count the disk
+    // cannot back: a row whose chunk file vanished is blanked and flagged (hash null) for the
+    // next full build instead of inflating stats and coverage.
     Object.keys(meta.sources).forEach((id) => {
-      if (!next[id]) next[id] = meta.sources[id];
+      if (next[id]) return;
+      const s = meta.sources[id];
+      if (s && !fs.existsSync(chunkPath(ctx, id))) {
+        report.rechunk = (report.rechunk || 0) + 1;
+        try {
+          fs.rmSync(vectorPath(ctx, id), { force: true });
+        } catch {
+          /* best-effort */
+        }
+        next[id] = Object.assign({}, s, { chunks: 0, chunkHashes: [], hash: null, vec: null });
+        dropTokens(ctx, id);
+        return;
+      }
+      next[id] = s;
     });
   }
 
@@ -440,8 +627,7 @@ async function build(ctx, opts) {
     const toEmbed = Object.keys(next).filter((id) => {
       const entry = next[id];
       const needVec = !entry.vec || entry.vec.space !== space.hash || entry.vec.count !== entry.chunks;
-      const hasVec = entry.vec && fs.existsSync(vectorPath(ctx, id));
-      return needVec || !hasVec;
+      return needVec || !vectorFileOk(ctx, id, entry.vec);
     });
     let embedDone = 0;
     let consecutiveFails = 0;
@@ -450,6 +636,24 @@ async function build(ctx, opts) {
       embedDone++;
       if (opts.onProgress) opts.onProgress({ phase: 'embed', done: embedDone, total: toEmbed.length, id: id });
       const chunks = readChunks(chunkPath(ctx, id));
+      // Metadata must never outrun the disk. A missing or torn chunk file used to reach
+      // embedSource as "0 chunks", which wrote a 0-byte vector and still recorded a healthy
+      // source. Trust the chunk file, keep the stats truthful, and clear the content hash so
+      // the next plain build re-parses and rebuilds this source.
+      if (chunks.length !== (entry.chunks || 0)) {
+        entry.chunks = chunks.length;
+        entry.chunkHashes = chunks.map((c) => c.h);
+        entry.hash = null;
+        entry.vec = null;
+        try {
+          fs.rmSync(vectorPath(ctx, id), { force: true }); // stale: it described other chunks
+        } catch {
+          /* best-effort */
+        }
+        if (chunks.length) writeTokens(ctx, id, chunks);
+        else dropTokens(ctx, id);
+        report.rechunk = (report.rechunk || 0) + 1;
+      }
       try {
         const prev = Object.assign({}, entry, {
           vec: entry._oldVec || entry.vec,
@@ -563,7 +767,7 @@ function status(ctx) {
   let vectorChunks = 0;
   Object.keys(meta.sources).forEach((id) => {
     const s = meta.sources[id];
-    if (s.vec && fs.existsSync(vectorPath(ctx, id))) {
+    if (s.vec && vectorFileOk(ctx, id, s.vec)) {
       vectorSources++;
       vectorChunks += s.vec.count || 0;
     }
@@ -672,31 +876,72 @@ function lexical(ctx, query, opts) {
   if (!qterms.length) return { ok: true, hits: [], scanned: 0 };
   const keys = activeSources(ctx, meta, opts);
   const need = needles(qterms, query);
+  const qhash = new Map();
+  qterms.forEach((t) => qhash.set(tokenHash(t), t));
   const docs = [];
   let totalLen = 0;
   let totalDocs = 0;
-  for (const id of keys) {
+  // A source without a token sidecar (older index, torn file) is still searchable: tokenize
+  // its text directly. Same tokenizer, same result — just slower.
+  const textFallback = function (id) {
     const chunks = readChunks(chunkPath(ctx, id));
     for (const c of chunks) {
       totalDocs++;
-      totalLen += typeof c.len === 'number' ? c.len : _bm25.tokenize(c.text).length;
-      const low = c.text.toLowerCase();
-      if (!need.some((n) => low.indexOf(n) !== -1)) continue;
       const toks = _bm25.tokenize(c.text);
+      totalLen += typeof c.len === 'number' ? c.len : toks.length;
       const tf = Object.create(null);
       toks.forEach((t) => {
         tf[t] = (tf[t] || 0) + 1;
       });
-      let any = false;
-      const hits = [];
+      const hit = [];
       qterms.forEach((q) => {
-        if (tf[q]) {
-          any = true;
-          hits.push([q, tf[q]]);
-        }
+        if (tf[q]) hit.push([q, tf[q]]);
       });
-      if (any) docs.push({ id: id, n: c.n, role: c.role, ts: c.ts, len: toks.length, tf: hits, text: c.text });
+      if (hit.length) docs.push({ id: id, n: c.n, len: toks.length, tf: hit });
     }
+  };
+  for (const id of keys) {
+    let buf = null;
+    try {
+      buf = fs.readFileSync(tokenPath(ctx, id));
+    } catch {
+      /* no sidecar yet */
+    }
+    if (!buf || !buf.length) {
+      textFallback(id);
+      continue;
+    }
+    const local = [];
+    const expect = (meta.sources[id] && meta.sources[id].chunks) || 0;
+    let localLen = 0;
+    let off = 0;
+    let n = 0;
+    let ok = true;
+    while (off + 6 <= buf.length) {
+      const len = buf.readUInt32LE(off);
+      const count = buf.readUInt16LE(off + 4);
+      const end = off + 6 + count * 6;
+      if (end > buf.length) {
+        ok = false; // torn sidecar — do not trust a partial scan
+        break;
+      }
+      localLen += len;
+      let hit = null;
+      for (let p = off + 6; p < end; p += 6) {
+        const term = qhash.get(buf.readUInt32LE(p));
+        if (term !== undefined) (hit || (hit = [])).push([term, buf.readUInt16LE(p + 4)]);
+      }
+      if (hit) local.push({ id: id, n: n, len: len, tf: hit });
+      n++;
+      off = end;
+    }
+    if (!ok || n !== expect) {
+      textFallback(id);
+      continue;
+    }
+    totalDocs += n;
+    totalLen += localLen;
+    for (const d of local) docs.push(d);
   }
   if (!docs.length) return { ok: true, hits: [], scanned: totalDocs };
   const avgdl = totalLen / (totalDocs || 1);
@@ -716,21 +961,36 @@ function lexical(ctx, query, opts) {
       const idf = Math.log(1 + (N - n + 0.5) / (n + 0.5));
       score += (idf * (f * (_bm25.K1 + 1))) / (f + _bm25.K1 * (1 - _bm25.B + (_bm25.B * d.len) / (avgdl || 1)));
     });
-    return {
-      id: d.id,
-      app: meta.sources[d.id].app,
-      title: meta.sources[d.id].title,
-      cwd: meta.sources[d.id].cwd,
-      updatedAt: meta.sources[d.id].updatedAt,
-      chunk: d.n,
-      role: d.role,
-      ts: d.ts,
-      score: score,
-      snippet: makeSnippet(d.text, need),
-    };
+    return { id: d.id, chunk: d.n, score: score };
   });
   scored.sort((a, b) => b.score - a.score);
-  return { ok: true, hits: diversify(scored, opts.perConv).slice(0, opts.limit || 10), scanned: totalDocs };
+  // Hydrate only what can reach the page: text, role and ts come from the chunk file.
+  const want = Math.max(50, (opts.limit || 10) * 20);
+  const chunkCache = new Map();
+  const hits = [];
+  for (const h of scored.slice(0, want)) {
+    let chunks = chunkCache.get(h.id);
+    if (!chunks) {
+      chunks = readChunks(chunkPath(ctx, h.id));
+      chunkCache.set(h.id, chunks);
+    }
+    const c = chunks[h.chunk];
+    if (!c) continue;
+    const src = meta.sources[h.id];
+    hits.push({
+      id: h.id,
+      app: src.app,
+      title: src.title,
+      cwd: src.cwd,
+      updatedAt: src.updatedAt,
+      chunk: c.n,
+      role: c.role,
+      ts: c.ts,
+      score: h.score,
+      snippet: makeSnippet(c.text, need),
+    });
+  }
+  return { ok: true, hits: diversify(hits, opts.perConv).slice(0, opts.limit || 10), scanned: totalDocs };
 }
 
 // ---- semantic search -----------------------------------------------------------------------
@@ -756,18 +1016,19 @@ async function semantic(ctx, query, opts) {
     return { ok: false, reason: 'embed-failed', detail: (e && e.message) || String(e), hits: [] };
   }
   if (!Array.isArray(qv) || !qv.length) return { ok: false, reason: 'no-query-vector', hits: [] };
-  const hits = [];
+  // Score first, hydrate later. Building a snippet (and reading the chunk file) for every one of
+  // ~120k chunks — almost all of which score > 0 on cosine — made one query take minutes. The
+  // ranking only needs id/index/score; text is read for the top candidates that can reach the page.
+  const scored = [];
   let covered = 0;
   for (const id of keys) {
     const src = meta.sources[id];
     if (!src.vec || src.vec.space !== space.hash || !src.vec.dim) continue;
-    const file = vectorPath(ctx, id);
-    const buf = readVectorFile(file, src.vec.dim, src.vec.count);
+    const buf = readVectorFile(vectorPath(ctx, id), src.vec.dim, src.vec.count);
     if (!buf) continue;
     covered++;
-    const chunks = readChunks(chunkPath(ctx, id));
     const dim = src.vec.dim;
-    for (let i = 0; i < src.vec.count && i < chunks.length; i++) {
+    for (let i = 0; i < src.vec.count; i++) {
       let dot = 0,
         na = 0,
         nb = 0;
@@ -779,24 +1040,36 @@ async function semantic(ctx, query, opts) {
         nb += b * b;
       }
       const score = na && nb ? dot / (Math.sqrt(na) * Math.sqrt(nb)) : 0;
-      if (score > 0) {
-        const c = chunks[i];
-        hits.push({
-          id: id,
-          app: src.app,
-          title: src.title,
-          cwd: src.cwd,
-          updatedAt: src.updatedAt,
-          chunk: c.n,
-          role: c.role,
-          ts: c.ts,
-          score: score,
-          snippet: makeSnippet(c.text, needles(_bm25.tokenize(query), query)),
-        });
-      }
+      if (score > 0) scored.push({ id: id, i: i, score: score });
     }
   }
-  hits.sort((a, b) => b.score - a.score);
+  scored.sort((a, b) => b.score - a.score);
+  const want = Math.max(50, (opts.limit || 10) * 20); // enough to survive diversify
+  const needlesForQuery = needles(_bm25.tokenize(query), query);
+  const chunkCache = new Map();
+  const hits = [];
+  for (const h of scored.slice(0, want)) {
+    let chunks = chunkCache.get(h.id);
+    if (!chunks) {
+      chunks = readChunks(chunkPath(ctx, h.id));
+      chunkCache.set(h.id, chunks);
+    }
+    const c = chunks[h.i];
+    if (!c) continue;
+    const src = meta.sources[h.id];
+    hits.push({
+      id: h.id,
+      app: src.app,
+      title: src.title,
+      cwd: src.cwd,
+      updatedAt: src.updatedAt,
+      chunk: c.n,
+      role: c.role,
+      ts: c.ts,
+      score: h.score,
+      snippet: makeSnippet(c.text, needlesForQuery),
+    });
+  }
   return {
     ok: true,
     mode: 'semantic',
@@ -837,8 +1110,11 @@ async function search(ctx, query, opts) {
   if (mode === 'lexical') return lexical(ctx, query, opts);
   if (mode === 'semantic') return semantic(ctx, query, opts);
   if (mode === 'hybrid') {
-    const lex = lexical(ctx, query, Object.assign({}, opts, { limit: Math.max(opts.limit || 10, 50) }));
-    const sem = await semantic(ctx, query, Object.assign({}, opts, { limit: Math.max(opts.limit || 10, 50) }));
+    // Independent retrievers: run them together so a hybrid is not the sum of both latencies.
+    const wide = Object.assign({}, opts, { limit: Math.max(opts.limit || 10, 50) });
+    const both = await Promise.all([lexical(ctx, query, wide), semantic(ctx, query, wide)]);
+    const lex = both[0];
+    const sem = both[1];
     if (!sem.ok) {
       // Say what actually ranked: an agent/user reading `mode` must not believe vectors were used
       // when the endpoint was never asked (no-vectors) or failed.
@@ -915,6 +1191,7 @@ export {
   metaPath,
   chunkPath,
   vectorPath,
+  tokenPath,
   keyOf,
   chunkConversation,
   readChunks,

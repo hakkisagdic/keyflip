@@ -878,9 +878,16 @@ keyflip conv transfer a7dc93d0 --to codex         # a handoff bundle for another
   context to attach/paste, and nothing in the target's own store is modified.
 - **The index is treated like a secret-adjacent artifact.** It lives in
   `~/.config/keyflip/conv-index` (a registered secret dir: never versioned, never backed up, excluded
-  from `migrate`), `0600`, incremental by mtime+size+hash, and an appended chat re-embeds only its new
-  tail. Deletes are real: a full rebuild drops conversations that are gone; a filtered rebuild
-  (`--app`, `--limit-sources`) leaves the rest untouched.
+  from `migrate`), `0600`, incremental by mtime+size+hash: an unchanged transcript is reused by its
+  manifest row without being parsed again, and an appended chat re-embeds only its new tail. A token
+  sidecar (`tokens/`, also 0600, derived from the chunks) keeps BM25 fast without re-tokenizing text.
+  Counts never outrun the disk — a row whose chunk file went missing is re-chunked, a source with no chunks
+  is never marked embedded, and a torn chunk file is reconciled before its vector is written. Every row
+  also fingerprints its chunk file, so a file that was replaced by another conversation is rebuilt from
+  its transcript instead of being reused with a count the disk does not back; two transcripts that
+  resolve to one id are kept apart and reported (`id collision(s) kept apart`). Deletes
+  are real: a full rebuild drops conversations that are gone; a filtered rebuild (`--app`,
+  `--limit-sources`) leaves the rest untouched.
 - Over MCP: read-only `keyflip_conv_list`, `_show`, `_search`, `_context`, `_status` (they never build
   the index — that is `keyflip_conv_index`, confirm-gated, like `keyflip_conv_export`). Snippets and
   context blocks are secret-masked before they reach an agent transcript, and the index path is reported

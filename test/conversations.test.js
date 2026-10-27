@@ -164,6 +164,43 @@ test('Codex rollout: a resumed thread keeps its own id, not the parent session_i
   assert.deepStrictEqual(ids, ['codex:own00001', 'codex:own00002']);
 });
 
+test('Codex Desktop: a fork and a parent echoed in a second session_meta keep their own id', function () {
+  const ctx = ctxFor();
+  const PARENT = '11111111-1111-4111-8111-111111111111';
+  const FORK = '22222222-2222-4222-8222-222222222222';
+  const OWN = '44444444-4444-4444-8444-444444444444';
+  const RESUMED = '33333333-3333-4333-8333-333333333333';
+  const meta = (id, sid) => ({
+    type: 'session_meta',
+    timestamp: '2026-10-01T10:00:00.000Z',
+    payload: { id: id, session_id: sid, cwd: '/work/codex', originator: 'codex_desktop' },
+  });
+  const turn = (text) => ({
+    type: 'response_item',
+    timestamp: '2026-10-01T10:00:01.000Z',
+    payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: text }] },
+  });
+  // A fork: the file is named parent_own and its session_meta only knows the parent.
+  writeCodex(ctx, 'rollout-2026-10-19T11-26-02-' + PARENT + '_' + FORK + '.jsonl', [
+    meta(PARENT, PARENT),
+    turn('Fork.'),
+  ]);
+  // A resumed rollout: two session_meta lines, the second repeats the parent thread.
+  writeCodex(ctx, 'rollout-2026-10-16T09-40-34-' + RESUMED + '.jsonl', [
+    meta(OWN, RESUMED),
+    meta(RESUMED, RESUMED),
+    turn('Resumed.'),
+  ]);
+  // The parent's own rollout: the only id it has is the parent thread.
+  writeCodex(ctx, 'rollout-2026-10-16T08-38-34-' + RESUMED + '.jsonl', [meta(RESUMED, RESUMED), turn('Parent.')]);
+
+  const ids = loadAll(ctx)
+    .map((c) => c.id)
+    .sort();
+  assert.deepStrictEqual(ids, ['codex:' + FORK, 'codex:' + RESUMED, 'codex:' + OWN].sort());
+  assert.strictEqual(new Set(ids).size, 3, 'three rollouts, three conversations');
+});
+
 test('Kiro CLI: Prompt/AssistantMessage blocks become user/assistant turns', function () {
   const ctx = ctxFor();
   const dir = path.join(ctx.home, '.kiro', 'sessions', 'cli');

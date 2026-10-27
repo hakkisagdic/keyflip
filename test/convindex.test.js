@@ -52,6 +52,47 @@ function seed(ctx) {
   );
 }
 
+test('two transcripts that claim one id are kept apart, and the counts still match the disk', async function () {
+  const ctx = ctxFor();
+  const dir = path.join(ctx.home, '.codex', 'sessions', '2026', '01', '01');
+  fs.mkdirSync(dir, { recursive: true });
+  // Both files resolve to the same thread id (a rollout and a copy of it).
+  const SHARED = '55555555-5555-4555-8555-555555555555';
+  const meta = (id, sid) => ({ type: 'session_meta', payload: { id: id, session_id: sid, cwd: '/work/codex' } });
+  const turn = (text) => ({
+    type: 'response_item',
+    payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: text }] },
+  });
+  fs.writeFileSync(
+    path.join(dir, 'rollout-2026-01-01T10-00-00-' + SHARED + '.jsonl'),
+    [meta(SHARED, SHARED), turn('First copy of the thread.')].map((l) => JSON.stringify(l)).join('\n') + '\n',
+  );
+  fs.writeFileSync(
+    path.join(dir, 'rollout-2026-01-02T10-00-00-' + SHARED + '.jsonl'),
+    [meta(SHARED, SHARED), turn('Second copy.'), turn('And a third turn.')].map((l) => JSON.stringify(l)).join('\n') +
+      '\n',
+  );
+
+  const r = await convindex.build(ctx, {});
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(r.duplicates, 1, 'the collision is reported, not swallowed');
+  assert.strictEqual(r.duplicateIds.length, 1);
+  assert.strictEqual(r.duplicateIds[0].id, 'codex:' + SHARED);
+  assert.ok(r.duplicateIds[0].as.startsWith('codex:' + SHARED + '-'));
+
+  const meta1 = readManifest(ctx);
+  const rows = Object.values(meta1.sources);
+  assert.strictEqual(rows.length, 2, 'both conversations are indexed');
+  // The point of the guard: every row is backed by its OWN chunk file.
+  for (const row of rows) {
+    const disk = chunkLineCount(ctx, row.id);
+    assert.strictEqual(disk, row.chunks, 'row ' + row.id + ' must match its chunk file');
+  }
+  const texts = rows.map((r2) => fs.readFileSync(convindex.chunkPath(ctx, r2.id), 'utf8')).join('\n');
+  assert.match(texts, /First copy of the thread\./);
+  assert.match(texts, /Second copy\./);
+});
+
 test('build parses every app, writes chunk files, and reports real counts', async function () {
   const ctx = ctxFor();
   seed(ctx);
@@ -275,4 +316,181 @@ test('semantic search reports mode=semantic and no-vectors before touching an en
   assert.strictEqual(sem.ok, true);
   assert.strictEqual(sem.mode, 'semantic', 'a semantic hit is labelled semantic');
   assert.strictEqual(sem.hits.length, 1);
+});
+
+// ---- disk/meta integrity -------------------------------------------------------------------
+
+function readManifest(ctx) {
+  return JSON.parse(fs.readFileSync(convindex.metaPath(ctx), 'utf8'));
+}
+
+function chunkLineCount(ctx, id) {
+  const file = convindex.chunkPath(ctx, id);
+  if (!fs.existsSync(file)) return 0;
+  return fs
+    .readFileSync(file, 'utf8')
+    .split('\n')
+    .filter((line) => line.trim()).length;
+}
+
+function totalDiskChunks(ctx) {
+  const meta = readManifest(ctx);
+  return Object.keys(meta.sources).reduce((n, id) => n + chunkLineCount(ctx, id), 0);
+}
+
+test('a meta row that belongs to another id is re-chunked, never reused', async function () {
+  const ctx = ctxFor();
+  writeClaude(ctx, 'db-1', [
+    { type: 'user', message: { role: 'user', content: 'How do we run the database migration safely?' } },
+    { type: 'assistant', message: { role: 'assistant', content: 'Dry run first.' } },
+  ]);
+  await convindex.build(ctx, {});
+  const id = 'claude:local:db-1';
+  // Reproduce the old collision shape: the row filed under this id actually belongs to a
+  // different conversation, and this id never got a chunk file. mtime/size still match.
+  const meta = readManifest(ctx);
+  meta.sources[id].id = 'claude:local:somebody-else';
+  fs.writeFileSync(convindex.metaPath(ctx), JSON.stringify(meta));
+  fs.rmSync(convindex.chunkPath(ctx, id));
+
+  const r = await convindex.build(ctx, {});
+  assert.strictEqual(r.changed, 1);
+  assert.strictEqual(r.reused, 0);
+  assert.strictEqual(readManifest(ctx).sources[id].id, id);
+  assert.ok(chunkLineCount(ctx, id) > 0, 'the chunk file was rebuilt');
+  assert.strictEqual(r.stats.chunks, totalDiskChunks(ctx));
+});
+
+test('a missing chunk file can never be recorded as embedded; the next build heals it', async function () {
+  const ctx = ctxFor();
+  seed(ctx);
+  await convindex.build(ctx, { embed: true, post: stubPost({}) });
+  assert.strictEqual(convindex.status(ctx).coverage, 100);
+  const id = 'claude:local:db-1';
+  assert.strictEqual(convindex.readChunks(convindex.chunkPath(ctx, id)).length, chunkLineCount(ctx, id));
+
+  fs.rmSync(convindex.chunkPath(ctx, id));
+  // A build filtered to codex carries the claude rows over untouched. The embedding pass
+  // used to read 0 chunks for the deleted one, write a 0-byte vector and count it embedded.
+  const r = await convindex.build(ctx, { apps: ['codex'], embed: true, post: stubPost({}) });
+  assert.strictEqual(r.rechunk, 1);
+  assert.strictEqual(fs.existsSync(convindex.vectorPath(ctx, id)), false, 'no empty vector file');
+  const manifest = readManifest(ctx);
+  assert.strictEqual(manifest.sources[id].chunks, 0);
+  assert.strictEqual(manifest.sources[id].hash, null, 'flagged for a re-chunk');
+  assert.strictEqual(manifest.sources[id].vec, null);
+  assert.strictEqual(manifest.stats.chunks, totalDiskChunks(ctx), 'stats never outrun the disk');
+
+  // hash=null defeats the mtime/size shortcut, so a plain build restores the source.
+  const heal = await convindex.build(ctx, {});
+  assert.strictEqual(heal.changed, 1);
+  assert.ok(chunkLineCount(ctx, id) > 0);
+  assert.strictEqual(heal.stats.chunks, totalDiskChunks(ctx));
+});
+
+test('a torn chunk file is reconciled to the disk, never embedded as if complete', async function () {
+  const ctx = ctxFor();
+  writeClaude(ctx, 'expand-1', [
+    { type: 'user', message: { role: 'user', content: 'ALPHAMARKER ' + 'a'.repeat(1000) } },
+    { type: 'assistant', message: { role: 'assistant', content: 'BRAVOMARKER ' + 'b'.repeat(1000) } },
+    { type: 'user', message: { role: 'user', content: 'CHARLIEMARKER ' + 'c'.repeat(1000) } },
+  ]);
+  await convindex.build(ctx, { embed: true, post: stubPost({}) });
+  const id = 'claude:local:expand-1';
+  const file = convindex.chunkPath(ctx, id);
+  const full = convindex.readChunks(file).length;
+  assert.ok(full >= 3);
+  // Keep only the first line and drop the vector, so the source is picked up for embedding
+  // with fewer chunks than the manifest claims.
+  fs.writeFileSync(file, JSON.stringify(convindex.readChunks(file)[0]) + '\n');
+  fs.rmSync(convindex.vectorPath(ctx, id));
+
+  const r = await convindex.build(ctx, { embed: true, post: stubPost({}) });
+  assert.strictEqual(r.changed, 1, 'the torn file is re-chunked from its source');
+  const manifest = readManifest(ctx);
+  assert.strictEqual(manifest.sources[id].chunks, full);
+  assert.strictEqual(chunkLineCount(ctx, id), full);
+  assert.strictEqual(manifest.sources[id].vec.count, full, 'the vector matches what is on disk');
+  assert.strictEqual(r.stats.chunks, totalDiskChunks(ctx));
+
+  const heal = await convindex.build(ctx, {});
+  assert.strictEqual(heal.changed, 0);
+  assert.strictEqual(chunkLineCount(ctx, id), full, 'the healed file stays whole');
+  assert.strictEqual(heal.stats.chunks, totalDiskChunks(ctx));
+});
+
+test('a manifest row that lies about the chunk count is reconciled to the file, not trusted', async function () {
+  const ctx = ctxFor();
+  writeClaude(ctx, 'db-1', [
+    { type: 'user', message: { role: 'user', content: 'How do we run the database migration safely?' } },
+    { type: 'assistant', message: { role: 'assistant', content: 'Dry run first.' } },
+  ]);
+  await convindex.build(ctx, { embed: true, post: stubPost({}) });
+  const id = 'claude:local:db-1';
+  // The file on disk still holds N chunks; only the manifest row lies.
+  const metaFile = convindex.metaPath(ctx);
+  const lying = JSON.parse(fs.readFileSync(metaFile, 'utf8'));
+  lying.sources[id].chunks = 999;
+  fs.writeFileSync(metaFile, JSON.stringify(lying));
+
+  const r = await convindex.build(ctx, { embed: true, post: stubPost({}) });
+  assert.strictEqual(r.rechunk, 1);
+  const after = readManifest(ctx);
+  assert.strictEqual(after.sources[id].chunks, chunkLineCount(ctx, id));
+  assert.strictEqual(after.sources[id].vec.count, chunkLineCount(ctx, id));
+  assert.strictEqual(r.stats.chunks, totalDiskChunks(ctx));
+});
+
+test('the token sidecar speeds lexical search without changing it, and a torn/missing one falls back', async function () {
+  const ctx = ctxFor();
+  seed(ctx);
+  await convindex.build(ctx, {});
+  const id = 'claude:local:db-1';
+  const tok = convindex.tokenPath(ctx, id);
+  assert.ok(fs.existsSync(tok), 'the sidecar is written with the chunks');
+  if (process.platform !== 'win32') assert.strictEqual(fs.statSync(tok).mode & 0o777, 0o600);
+  const want = convindex.lexical(ctx, 'database migration', { limit: 5 });
+  assert.strictEqual(want.hits[0].id, id);
+  assert.match(want.hits[0].snippet, /migration/i);
+  assert.ok('role' in want.hits[0] && 'ts' in want.hits[0], 'hit metadata is hydrated from the chunk');
+
+  // Missing sidecar: the per-source text fallback must rank identically.
+  fs.rmSync(tok);
+  const fallback = convindex.lexical(ctx, 'database migration', { limit: 5 });
+  assert.deepStrictEqual(
+    fallback.hits.map((h) => h.id),
+    want.hits.map((h) => h.id),
+  );
+
+  // The next build regenerates it from the chunk file alone (still a reuse, no re-parse).
+  const r = await convindex.build(ctx, {});
+  assert.strictEqual(r.reused, 4);
+  assert.ok(fs.existsSync(tok));
+
+  // A torn sidecar is caught by the chunk-count check, not trusted silently.
+  fs.writeFileSync(tok, Buffer.from([1, 0, 0, 0]));
+  const torn = convindex.lexical(ctx, 'database migration', { limit: 5 });
+  assert.deepStrictEqual(
+    torn.hits.map((h) => h.id),
+    want.hits.map((h) => h.id),
+  );
+});
+
+test('status only counts vector files that really hold dim*count floats', async function () {
+  const ctx = ctxFor();
+  writeClaude(ctx, 'db-1', [{ type: 'user', message: { role: 'user', content: 'alpha beta gamma' } }]);
+  await convindex.build(ctx, { embed: true, post: stubPost({}) });
+  assert.strictEqual(convindex.status(ctx).coverage, 100);
+
+  fs.writeFileSync(convindex.vectorPath(ctx, 'claude:local:db-1'), '');
+  const st = convindex.status(ctx);
+  assert.strictEqual(st.vectorSources, 0, 'a 0-byte vector is not coverage');
+  assert.strictEqual(st.vectorChunks, 0);
+  assert.strictEqual(st.coverage, 0);
+
+  // ...and the next embed pass treats it as missing and rewrites it.
+  const r = await convindex.build(ctx, { embed: true, post: stubPost({}) });
+  assert.strictEqual(r.rechunk, 0);
+  assert.strictEqual(r.embedded, 1);
+  assert.strictEqual(convindex.status(ctx).coverage, 100);
 });

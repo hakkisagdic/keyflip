@@ -298,9 +298,37 @@ function codexContentText(content) {
   return out.join('\n');
 }
 
+const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
+
+// Which thread does THIS rollout file belong to?
+// Two things make the answer non-obvious:
+//   * Codex Desktop writes a second `session_meta` line that repeats the PARENT thread, so the
+//     last meta in the file is the parent, not this rollout.
+//   * A fork is named `rollout-<date>-<parent>_<own>.jsonl`: the file's own thread is the LAST
+//     uuid in the name, and its session_meta may carry the parent's id.
+// Taking the parent id for a fork gives two different files the same conversation id; they then
+// overwrite each other's chunk file while the manifest keeps one row. So: prefer an id that is
+// not a parent thread, and fall back to the file name before the parent.
+function codexOwnId(metas, src) {
+  const parents = new Set();
+  for (const m of metas) {
+    const sid = safeStr(m.session_id, 120);
+    if (sid) parents.add(sid);
+  }
+  const candidates = [];
+  for (const m of metas) {
+    const v = safeStr(m.id, 120);
+    if (v) candidates.push(v);
+  }
+  const uuids = String((src && src.path) || '').match(UUID_RE) || [];
+  for (let i = uuids.length - 1; i >= 0; i--) candidates.push(uuids[i].toLowerCase());
+  for (const c of candidates) if (!parents.has(c)) return c;
+  return candidates[0] || null;
+}
+
 function parseCodexRollout(text, src, opts) {
   const titles = (opts && opts.titles) || Object.create(null);
-  let meta = null;
+  const metas = [];
   const messages = [];
   let lastTs = null;
   const lines = String(text || '').split('\n');
@@ -314,7 +342,7 @@ function parseCodexRollout(text, src, opts) {
       continue;
     }
     if (j.type === 'session_meta' && j.payload && typeof j.payload === 'object') {
-      meta = j.payload;
+      metas.push(j.payload);
       if (j.timestamp) lastTs = j.timestamp;
       continue;
     }
@@ -333,12 +361,9 @@ function parseCodexRollout(text, src, opts) {
   // Resumed/forked threads log `session_id` = the PARENT thread while `id` is this rollout's
   // own thread. Preferring session_id collapsed dozens of distinct rollouts into one index
   // entry (their chunk files overwrote each other). Titles still come from the parent thread.
+  const meta = metas[0] || null;
   const threadId = (meta && safeStr(meta.session_id, 120)) || null;
-  const sessionId =
-    (meta && safeStr(meta.id, 120)) ||
-    threadId ||
-    /^rollout-[^-]+-([0-9a-f-]{8,})/i.exec(path.basename(src.path))?.[1] ||
-    src.idHint;
+  const sessionId = codexOwnId(metas, src) || threadId || src.idHint;
   const conv = makeConv({
     id: 'codex:' + sessionId,
     app: 'codex',
