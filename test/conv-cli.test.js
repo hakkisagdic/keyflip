@@ -123,3 +123,52 @@ test('an unknown subcommand falls back to list rather than "unknown command"', f
   const out = json(r);
   assert.strictEqual(out.conversations.length, 1);
 });
+
+test('conv index --watch reports changes on stdout as JSON and stays incremental', async function () {
+  const h = home();
+  const r = await new Promise(function (resolve) {
+    const p = _child_process.spawn(process.execPath, [BIN, 'conv', 'index', '--watch', '--interval', '1', '--json'], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: Object.assign({}, process.env, {
+        HOME: h,
+        USERPROFILE: h,
+        XDG_CONFIG_HOME: path.join(h, '.config'),
+        KEYFLIP_CONFIG_DIR: path.join(h, '.config', 'keyflip'),
+        APPDATA: path.join(h, 'AppData', 'Roaming'),
+        CODEX_HOME: path.join(h, '.codex'),
+        KEYFLIP_TEST_CLAUDE: 'stopped',
+      }),
+    });
+    let out = '';
+    p.stdout.on('data', function (d) {
+      out += d;
+    });
+    // The FIRST tick indexes the seeded transcript and must report it. We do not wait a full
+    // interval for a second tick: the incremental re-pickup is proven by the follow-up build.
+    setTimeout(function () {
+      p.kill();
+      resolve(out);
+    }, 8000);
+  });
+  const line = r.trim().split('\n').filter(Boolean).pop();
+  const report = JSON.parse(line);
+  assert.strictEqual(report.watched, true);
+  assert.strictEqual(report.report.ok, true);
+  assert.strictEqual(report.report.changed, 1);
+
+  // A turn appended AFTER the watcher ran is picked up by the next incremental pass...
+  const dir = path.join(h, '.claude', 'projects', '-work-proj');
+  fs.appendFileSync(
+    path.join(dir, 'sess-cli.jsonl'),
+    JSON.stringify({
+      type: 'user',
+      message: { role: 'user', content: 'A totally new topic appeared: zeppelin maintenance.' },
+    }) + '\n',
+  );
+  const again = json(run(h, ['conv', 'index', '--json']));
+  assert.strictEqual(again.changed, 1); // only the appended conversation
+  // ...and search finds it immediately.
+  const found = run(h, ['conv', 'search', 'zeppelin maintenance', '--json']);
+  assert.strictEqual(found.status, 0, found.stderr);
+  assert.strictEqual(json(found).hits.length, 1);
+});

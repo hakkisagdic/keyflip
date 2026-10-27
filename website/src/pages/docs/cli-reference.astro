@@ -121,7 +121,7 @@ import CommandReference from '../../components/CommandReference.astro';
           { cmd: 'keyflip threads drop <slug> -y', desc: 'Forget only the NAME; transcripts and assignments stay' },
           { cmd: 'keyflip threads mirror <slug> | unmirror <slug>', desc: 'Opt-in merged text on disk (needs threads.mirror=true)' },
           { cmd: 'keyflip conv list [--app claude,codex] [--since 7d] [--cwd <dir>]', desc: 'Every local AI tool\'s chats in one shape (Claude Code, Codex, Kiro, Gemini, Qoder, Cursor, opencode, Copilot, Aider)' },
-          { cmd: 'keyflip conv index [--embed] [--force]', desc: 'Build the conversation index once (incremental; --embed adds local vectors for semantic search)' },
+          { cmd: 'keyflip conv index [--embed] [--force] [--watch]', desc: 'Build the conversation index (incremental; --embed adds local vectors; --watch keeps it current every N min)' },
           { cmd: 'keyflip conv search "<query>" [--lexical|--semantic]', desc: 'BM25 / embedding / hybrid content search across all chats' },
           { cmd: 'keyflip conv context "<query>" [--budget 12000]', desc: 'A ready-to-paste RAG block: cited sources + neighbouring chunks, char-budgeted' },
           { cmd: 'keyflip conv show <id|prefix|title> [--format md|html|json]', desc: 'Read one conversation, harness noise stripped' },

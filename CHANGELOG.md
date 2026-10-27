@@ -26,6 +26,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `wouldMerge`/`wouldCode`/`wouldCowork` + the plan; the MCP side keeps the repo's invariant that
   every mutating tool requires `confirm` by exposing planning as a separate read-only tool.
 
+- **`keyflip conv index --watch` keeps the index current.** An incremental pass every N minutes
+  (default 30, `--interval N`): new transcripts indexed, gone ones dropped, and with `--embed` only
+  conversations that actually changed get their new chunks embedded — idle ticks cost one manifest
+  read, not an embedding pass. The embed-less report also stopped claiming "no vectors" when an
+  earlier `--embed` pass left them: it now states the real coverage left by the last pass.
+
 - **`keyflip conv` — every local AI tool's chats in one searchable shape.** A canonical conversation
   layer reads Claude Code, Codex/ChatGPT rollouts (`.jsonl` and `.zst`), Kiro (CLI + IDE) and the
   foreign adapters (Qoder, Cursor, opencode, Gemini/Antigravity, Copilot, Aider) into one form

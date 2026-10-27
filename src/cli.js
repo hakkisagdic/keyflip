@@ -6760,7 +6760,8 @@ const CONV_USAGE = [
   '       keyflip conv search "<query>" [--hybrid|--semantic|--lexical] [--per-conv N] [--limit N] [--since 7d]',
   '       keyflip conv context "<query>" [--hybrid] [--budget 12000] [--expand 1]   RAG block for an LLM prompt',
   '       keyflip conv show <id|prefix|title> [--format md|html|json] [--out <file|dir>] [--no-redact]',
-  '       keyflip conv index [--app a] [--embed] [--force]   build/refresh the local retrieval index',
+  '       keyflip conv index [--embed] [--force] [--watch] [--interval N]  build/refresh the local retrieval index',
+  '                                     --watch re-indexes every N minutes (default 30) so search stays current',
   '       keyflip conv export (--all | <id>) [--obsidian] --out <dir> [--format md|html|json] [--no-redact]',
   '       keyflip conv transfer <id> --to <claude|codex|cursor|kiro|opencode|windsurf|gemini|copilot|aider>',
   '       keyflip conv capabilities | status',
@@ -6931,7 +6932,7 @@ async function convBuild(ctx, rest, embedDefault) {
   report.ms = Date.now() - t0;
   return report;
 }
-function convReportText(r) {
+function convReportText(ctx, r) {
   const s = r.stats || {};
   const parts = [
     r.indexed + ' parsed',
@@ -6957,7 +6958,22 @@ function convReportText(r) {
         ? style.warn('Vectors failed: ' + r.embedding.error)
         : 'Vectors: ' + r.embedded + ' conversation(s) embedded · ' + r.embedding.model + ' @ ' + r.embedding.host);
   } else {
-    line += '\n' + style.dim('No vectors yet — `keyflip conv index --embed` enables semantic + hybrid search.');
+    // Embed-less passes must not claim there are no vectors at all: the previous embedding
+    // survives, only chunks born in THIS pass are missing theirs.
+    const st = _convindex.status(ctx);
+    line +=
+      '\n' +
+      style.dim(
+        st.vectorChunks
+          ? 'Vectors kept from the last --embed pass: ' +
+              st.vectorChunks +
+              '/' +
+              (s.chunks || 0) +
+              ' chunks (' +
+              st.coverage +
+              '%) — rerun with --embed to cover new chunks.'
+          : 'No vectors yet — `keyflip conv index --embed` enables semantic + hybrid search.',
+      );
   }
   if (r.errors && r.errors.length) {
     line +=
@@ -7083,6 +7099,41 @@ async function cmdConv(ctx, rest) {
   }
 
   if (sub === 'index') {
+    if (args.indexOf('--watch') !== -1) {
+      // Continuous freshness: an incremental pass every N minutes. Embed-less watches keep the
+      // lexical index current; --embed also covers new chunks (only when something changed, so an
+      // idle night costs one manifest read, not an embedding pass).
+      const ii = args.indexOf('--interval');
+      const minutes = ii !== -1 ? Math.max(1, parseInt(args[ii + 1], 10) || 30) : 30;
+      const embed = args.indexOf('--embed') !== -1;
+      print(
+        'Watching — re-indexing conversations every ' +
+          minutes +
+          ' min' +
+          (embed ? ' (new chunks embedded via local Ollama)' : '') +
+          '. Ctrl-C to stop.',
+      );
+      logmod.log('conv index --watch started (' + minutes + 'min, embed=' + embed + ')');
+      for (;;) {
+        let r;
+        try {
+          r = await convBuild(ctx, args, embed);
+        } catch (e) {
+          logmod.log('conv watch tick failed: ' + ((e && e.message) || String(e)));
+          r = null;
+        }
+        if (r && (r.changed || r.removed)) {
+          const when = new Date().toISOString();
+          if (JSON_MODE) {
+            jsonOut({ watched: true, at: when, report: r });
+          } else {
+            print('  ' + style.ok('↳') + ' ' + r.changed + ' changed · ' + r.removed + ' removed (' + when + ')');
+            if (r.embedded) print('    ' + style.dim(r.embedded + ' conversation(s) re-embedded'));
+          }
+        }
+        await sleep(minutes * 60 * 1000);
+      }
+    }
     let r;
     try {
       r = await convBuild(ctx, args);
@@ -7090,7 +7141,7 @@ async function cmdConv(ctx, rest) {
       return fail((e && e.message) || String(e));
     }
     if (JSON_MODE) return jsonOut(r);
-    print(convReportText(r));
+    print(convReportText(ctx, r));
     return;
   }
 
