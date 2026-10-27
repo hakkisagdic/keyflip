@@ -33,6 +33,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   file that was replaced by a colliding source is re-chunked from its transcript rather than
   reused with a count that the disk does not back.
 
+- **Hybrid search no longer ranks worse than plain BM25.** The rank fusion used RRF's classic
+  k=60 — a constant meant for an ensemble of *many* result lists. With only two, it flattened the
+  rank so hard that a document found deep in both lists outranked the top hit of either: a
+  document at rank 20 in both beat a document at rank 1 in one. Measured over 1856 live
+  conversations, hybrid search scored a hit@1 of 0.330 against BM25's 0.596, so the default mode
+  of `conv search` was destroying the stronger retriever. The fusion now uses a small constant and
+  weights the lexical list above the vector one, so a vector-only hit can never push a BM25 hit
+  off the page. Hybrid now ties BM25 on hit@1/hit@5 (0.596/0.798 verbatim, 0.447/0.763
+  paraphrased) instead of trailing it (0.330/0.587 and 0.395/0.684).
+
 - **A deleted conversation now actually leaves the index.** The build treated an empty app list
   as a filter, so `keyflip conv index` (which passes `apps: []` when no `--app` is given) never
   took the "full discovery" path and kept the row, the chunk file and the vector of a

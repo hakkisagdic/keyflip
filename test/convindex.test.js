@@ -225,6 +225,48 @@ test('RRF ranks a document found by both retrievers above a single-list hit', fu
   assert.strictEqual(fused[0].score, fused[0].rrf);
 });
 
+test('fusion keeps BM25 in front: a vector-only hit never displaces a lexical hit', function () {
+  // With the classic RRF constant (k=60) "deep in both lists" outranked "rank 1 in one", which
+  // made hybrid search worse than plain BM25 on every measured metric. The rank has to mean
+  // something, and the vector list must not push a BM25 hit off the page.
+  const lex = ['a', 'b', 'c', 'd', 'e'].map((id, i) => ({ id, chunk: i, score: 9 - i }));
+  const sem = [
+    { id: 'f', chunk: 0, score: 0.9 },
+    { id: 'a', chunk: 0, score: 0.8 },
+  ];
+  const fused = convindex.rrf([lex, sem], 10, 1);
+  const ids = fused.map((h) => h.id);
+  assert.deepStrictEqual(ids.slice(0, 5), ['a', 'b', 'c', 'd', 'e'], 'the lexical order survives the fusion');
+  assert.ok(ids.includes('f'), 'the vector list still contributes a candidate');
+  assert.ok(
+    fused.find((h) => h.id === 'f').rrf < fused.find((h) => h.id === 'e').rrf,
+    'a vector-only hit scores below every lexical hit',
+  );
+  // The semantic list is deliberately the lighter one: the lexical rank still decides the page.
+  assert.ok(convindex.RRF_WEIGHTS[1] < convindex.RRF_WEIGHTS[0], 'the semantic list carries less weight');
+});
+
+test('fusion promotes a chunk that both retrievers found', function () {
+  const fused = convindex.rrf(
+    [
+      [
+        { id: 'a', chunk: 0, score: 9 },
+        { id: 'b', chunk: 1, score: 8 },
+        { id: 'c', chunk: 2, score: 7 },
+      ],
+      [
+        { id: 'c', chunk: 2, score: 0.9 },
+        { id: 'z', chunk: 0, score: 0.5 },
+      ],
+    ],
+    10,
+    1,
+  );
+  const ids = fused.map((h) => h.id);
+  assert.ok(ids.indexOf('c') < ids.indexOf('b'), 'agreement outranks a lexical-only hit');
+  assert.deepStrictEqual(fused.find((h) => h.id === 'c').sources, { 0: true, 1: true });
+});
+
 test('context pack is budgeted, sourced, and expand pulls in neighbouring chunks', async function () {
   const ctx = ctxFor();
   seed(ctx);

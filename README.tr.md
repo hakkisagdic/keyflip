@@ -946,7 +946,8 @@ keyflip conv transfer a7dc93d0 --to codex         # başka bir yapay zekâ arac�
 - **Sıralamayı nasıl yaptığını dürüstçe söyleyen arama.** Leksiksel taraf BM25: hafif bir stemmer ve
   gerçek belge frekansları. `--embed` varsayılan olarak yerel bir Ollama ile vektör hesaplar (ya da
   `KEYFLIP_EMBED_URL`; uzak uç noktaya giden metin önce sır-ayıklamadan geçer). Hibrit iki listeyi
-  reciprocal rank fusion ile kaynaştırır — vektör yoksa sonuç `lexical` etiketiyle ve notla döner,
+  reciprocal rank fusion ile kaynaştırır; leksiksel liste ağır basar, yani sadece vektörden gelen
+  bir eşleşme BM25 sonucunu sayfadan düşüremez — vektör yoksa sonuç `lexical` etiketiyle ve notla döner,
   asla sessizce "hibrit" olmaz. İlk sorguda `search` indeksi bir kez kurar; ilk arama da çalışır.
 - **`conv context` RAG giriş noktasıdır.** Karakter bütçeli (varsayılan 12.000) taşınabilir tek blok
   döndürür: kararlı başlıklar, kaynak id'leri, çalışma dizinleri ve tarihler; `--expand N` komşu

@@ -859,7 +859,8 @@ keyflip conv transfer a7dc93d0 --to codex         # a handoff bundle for another
 - **Search that tells the truth about how it ranked.** Lexical is BM25 with a light stemmer and exact
   document frequencies. `--embed` computes vectors with a local Ollama by default (or `KEYFLIP_EMBED_URL`;
   text sent to a remote endpoint is secret-redacted first). Hybrid fuses both lists with reciprocal rank
-  fusion — and when no vectors exist, the result is labelled `lexical` with a note, never silently
+  fusion, weighted so the lexical list leads and a vector-only hit can never push a BM25 hit off the
+  page — and when no vectors exist, the result is labelled `lexical` with a note, never silently
   "hybrid". `search` builds the index once on first use so the very first query just works.
 - **`conv context` is the RAG entry point.** It returns one portable, char-budgeted block (default
   12,000 chars) with stable headings, source ids, cwds and dates, and `--expand N` pulls in neighbouring

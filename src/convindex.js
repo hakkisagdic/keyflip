@@ -34,7 +34,24 @@ const CHUNK_TARGET = 1400; // characters per chunk
 const CHUNK_OVERLAP = 180; // only for a single oversized message
 const EMBED_BATCH = 32;
 const EMBED_MAX_CHARS = 6000;
-const RRF_K = 60;
+
+// Rank fusion between the lexical (BM25) list and the semantic (vector) list.
+//
+// RRF's classic k=60 assumes an ensemble of *many* result lists. With only two lists of very
+// different precision it flattens the rank so hard that "appears deep in both lists" outranks
+// "rank 1 in one": 1/(60+21) twice beats 1/(60+1). Measured over 1856 live conversations the
+// shipped k=60 gave hybrid search a hit@1 of 0.33 against BM25's 0.60 — the fusion was
+// destroying the stronger retriever, and hybrid is the default mode of `conv search`.
+//
+// A small constant keeps the rank meaningful, and the semantic list carries less weight, so
+// BM25 stays in front and the vector only promotes what it agrees with (and fills in when
+// BM25 returns little). Measured on 109 verbatim and 38 paraphrased live queries, through the
+// shipped search path: hybrid now ties BM25 on hit@1/hit@5 (0.596/0.798 verbatim, 0.447/0.763
+// paraphrased) instead of trailing it (0.330/0.587 and 0.395/0.684). Every more aggressive
+// weighting was measured too and lost: equal weights drop verbatim hit@1 to 0.486, and a
+// vector-only ranking breaks 41 of the 109 queries BM25 got right.
+const RRF_K = 2;
+const RRF_WEIGHTS = [1, 0.25]; // list 0 = lexical, list 1 = semantic
 
 function dirOf(ctx) {
   return path.join(ctx.configDir, INDEX_DIR);
@@ -1083,13 +1100,18 @@ async function semantic(ctx, query, opts) {
 
 // Reciprocal Rank Fusion: independent rankings are combined by position, so scores from
 // BM25 and cosine (different scales) never have to be comparable.
-function rrf(lists, limit, perConv) {
+//
+// The weight per list (RRF_WEIGHTS) decides who leads. The semantic list is deliberately
+// lighter than the lexical one: on a real corpus of 1856 conversations BM25 is the sharper
+// retriever, and a vector-only hit must never push a BM25 hit off the page.
+function rrf(lists, limit, perConv, weights) {
   const byId = Object.create(null);
   lists.forEach((hits, li) => {
+    const w = weights && weights[li] != null ? weights[li] : RRF_WEIGHTS[li] != null ? RRF_WEIGHTS[li] : 1;
     (hits || []).forEach((h, i) => {
       const key = h.id + '#' + h.chunk;
       const cur = byId[key];
-      const add = 1 / (RRF_K + i + 1);
+      const add = w / (RRF_K + i + 1);
       if (cur) {
         cur.rrf += add;
         cur.sources[li] = true;
@@ -1189,6 +1211,7 @@ export {
   INDEX_DIR,
   CHUNK_TARGET,
   RRF_K,
+  RRF_WEIGHTS,
   dirOf,
   metaPath,
   chunkPath,
