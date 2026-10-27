@@ -539,6 +539,8 @@ keyflip chatgpt capture [ad]    # canlı girişi kaydet (e-postasından otomatik
 keyflip chatgpt switch <ad|n|e-posta> [--dry-run] [--force] [--no-verify]
 keyflip chatgpt refresh [--force]   # şimdi döndür; --force 24s eşiğini yok sayar
 keyflip chatgpt list            # kayıtlı hesaplar ve token son geçerlilikleri
+keyflip chatgpt backups         # geçmiş geçiş/yenilemelerden auth.json kopyaları
+keyflip chatgpt backups restore <n|dosya> [--dry-run] [--force]
 keyflip chatgpt remove <ad> --force
 ```
 
@@ -549,6 +551,13 @@ token). Geçiş canlı dosyayı yedekler, giden girişi en-iyi-çabayla yakalar,
 baytları yazar ve geri okur (ham içerik + e-posta kimliği). ChatGPT/Codex
 çalışırken `--force` olmadan reddeder; çünkü uygulama token'ları önbelleğe alır ve
 çıkışta dosyayı yeniden yazar.
+
+**Kötü bir geçiş geri alınabilir.** Her geçiş ve token yenilemesi canlı `auth.json`
+dosyasını `~/.config/keyflip/backups/` altına kopyalar (en yeni 10 tanesi saklanır).
+`keyflip chatgpt backups` bunları hesap e-postası/plan/son geçerlilikle listeler —
+asla token — ve `backups restore <n|dosya>` birini geri yazar; önce mevcut canlı
+girişi yedeklediği için geri yükleme de geri alınabilir. ChatGPT/Codex çalışırken
+`--force` olmadan reddeder ve dosyayı geri okuyup doğrular.
 
 **Yenileme yalnızca canlı dosyada ve soy-güvenlidir.** Erişim token'ları yaklaşık
 on gün yaşar (beş güne indiği görüldü). Arka plan yenileme daemon'ı (`keyflip
@@ -1124,7 +1133,7 @@ migrate + LAN
 `keyflip://` linkleri (`keyflip_share/share_apply`), masaüstü gateway (`keyflip_gateway_*`), MCP-sunucu
 kaydı (`keyflip_mcpreg_*`), dizin pin'leri (`keyflip_link/links`), izole uygulama örnekleri
 (`keyflip_instances`, `keyflip_instance_*`), ortak ChatGPT/Codex girişi
-(`keyflip_chatgpt`, `_chatgpt_capture`, `_chatgpt_switch`, `_chatgpt_refresh`), tanılama
+(`keyflip_chatgpt`, `_chatgpt_capture`, `_chatgpt_switch`, `_chatgpt_refresh`, salt-okunur `_chatgpt_backups`, onay-gerektiren `_chatgpt_restore`), tanılama
 (`keyflip_doctor`, `keyflip_usage_history`), yedekler, skill'ler ve failover proxy. Her aracın düzgün JSON Şeması ve
 salt-okunur/yıkıcı anotasyonu var; **değiştiren araçlar `confirm: true` ister**
 ve açıklamaları agent'a önce kullanıcıya sormasını söyler. Sırlar MCP üzerinden

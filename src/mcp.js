@@ -919,6 +919,53 @@ const TOOLS = [
     },
   },
   {
+    name: 'keyflip_chatgpt_backups',
+    title: 'List ChatGPT/Codex auth.json backups',
+    description:
+      'List the ~/.codex/auth.json snapshots keyflip wrote before each switch or token refresh (newest first, capped by the backup policy). Each row carries the account e-mail, plan, expiry, whether a refresh token is present, and the exact file name to restore. Never returns a token. Read-only.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    annotations: RO,
+    run: async function (ctx) {
+      return { backups: _codex.listBackups(ctx) };
+    },
+  },
+  {
+    name: 'keyflip_chatgpt_restore',
+    title: 'Restore a ChatGPT/Codex auth.json backup',
+    description:
+      'Write a previous ~/.codex/auth.json snapshot back to the live file — the undo for a bad switch. The current live login is backed up first, so the restore is itself reversible; it refuses while ChatGPT/Codex is running unless force=true, and reads the file back to verify. This changes which account is billed. Ask the user first, then confirm=true. dry_run=true plans without writing.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        backup: {
+          type: 'string',
+          description: 'File name from keyflip_chatgpt_backups, a unique prefix, or 1-based index.',
+        },
+        dry_run: { type: 'boolean', description: 'Plan only; write nothing.' },
+        force: {
+          type: 'boolean',
+          description: 'Restore even while ChatGPT/Codex is running (it may overwrite on exit).',
+        },
+        confirm: { type: 'boolean', description: 'Must be true — set it only after the user has agreed.' },
+      },
+      required: ['backup', 'confirm'],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+    run: async function (ctx, args) {
+      needConfirm(args);
+      if (args.dry_run === true) {
+        return { restore: _codex.restoreBackup(ctx, String(args.backup), { dryRun: true }) };
+      }
+      const l = await lock.acquire(ctx.configDir);
+      try {
+        return { restore: _codex.restoreBackup(ctx, String(args.backup), { force: args.force === true }) };
+      } finally {
+        l.release();
+      }
+    },
+  },
+  {
     name: 'keyflip_next',
     title: 'Rotate to another Claude account',
     description:

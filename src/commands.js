@@ -126,7 +126,8 @@ const CATALOG = [
     group: 'accounts',
     safe: false,
     aliases: ['codex'],
-    usage: 'keyflip chatgpt [status|list|capture [name]|switch <name|n|email>|refresh|remove <name>]',
+    usage:
+      'keyflip chatgpt [status|list|capture [name]|switch <name|n|email>|refresh|backups [restore <n|file>]|remove <name>]',
     desc: 'ChatGPT.app + Codex CLI share one login (~/.codex/auth.json): capture, switch and refresh it.',
   },
 

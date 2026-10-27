@@ -540,6 +540,8 @@ keyflip chatgpt capture [name]  # save the live login (auto-named from its e-mai
 keyflip chatgpt switch <name|n|email> [--dry-run] [--force] [--no-verify]
 keyflip chatgpt refresh [--force]   # rotate now; --force ignores the 24h threshold
 keyflip chatgpt list            # saved accounts and each token's expiry
+keyflip chatgpt backups         # auth.json snapshots from past switches/refreshes
+keyflip chatgpt backups restore <n|file> [--dry-run] [--force]
 keyflip chatgpt remove <name> --force
 ```
 
@@ -549,6 +551,13 @@ keyflip chatgpt remove <name> --force
 live file, captures the outgoing login best-effort, writes the stored bytes, then
 reads them back (raw content + e-mail identity). It refuses while ChatGPT/Codex is
 running unless `--force`, because the app caches tokens and rewrites the file on exit.
+
+**A bad switch is undoable.** Every switch and token refresh first copies the live
+`auth.json` into `~/.config/keyflip/backups/` (newest 10 kept). `keyflip chatgpt backups`
+lists them by account e-mail/plan/expiry — never a token — and
+`backups restore <n|file>` writes one back, backing up the current live login first, so
+the restore is itself reversible. It refuses while ChatGPT/Codex runs unless `--force`
+and reads the file back to verify.
 
 **Refresh is live-only and lineage-safe.** Access tokens last about ten days (observed
 as short as five). The background refresh daemon (`keyflip refresh --daemon-start`)
@@ -1037,7 +1046,7 @@ confirm-gated), migrate + LAN
 `keyflip://` links (`keyflip_share/share_apply`), desktop gateway (`keyflip_gateway_*`), MCP-server
 registry (`keyflip_mcpreg_*`), directory pins (`keyflip_link/links`), isolated app instances
 (`keyflip_instances`, `keyflip_instance_*`), the shared ChatGPT/Codex login
-(`keyflip_chatgpt`, `_chatgpt_capture`, `_chatgpt_switch`, `_chatgpt_refresh`), diagnostics
+(`keyflip_chatgpt`, `_chatgpt_capture`, `_chatgpt_switch`, `_chatgpt_refresh`, read-only `_chatgpt_backups`, confirm-gated `_chatgpt_restore`), diagnostics
 (`keyflip_doctor`, `keyflip_usage_history`), backups, skills, and the failover proxy. Every tool has a proper JSON Schema and read-only/
 destructive annotations; **mutating tools require `confirm: true`** and their
 descriptions tell the agent to ask the user first. Secrets are never accepted

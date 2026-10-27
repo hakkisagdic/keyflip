@@ -277,6 +277,8 @@ keyflip chatgpt list
 keyflip chatgpt capture [name]  # auto-named from the id_token e-mail
 keyflip chatgpt switch <name|n|email> [--dry-run] [--force] [--no-verify]
 keyflip chatgpt refresh [--force]   # one-shot; --force ignores the 24h threshold
+keyflip chatgpt backups             # auth.json snapshots from past switches/refreshes
+keyflip chatgpt backups restore <n|file> [--dry-run] [--force]
 keyflip chatgpt remove <name> --force
 ```
 
@@ -288,7 +290,8 @@ The refresh daemon rotates the **live** file within 24 hours of expiry — never
 the app runs — and updates a capture only when it holds the exact refresh token that
 was just spent (lineage-safe; dormant captures never refresh independently). A failed
 refresh leaves the file untouched. MCP: `keyflip_chatgpt` (read) plus confirm-gated
-`keyflip_chatgpt_capture` / `_switch` / `_refresh`; none returns a token.
+`keyflip_chatgpt_capture` / `_switch` / `_refresh`, plus read-only `keyflip_chatgpt_backups`
+and confirm-gated `keyflip_chatgpt_restore`; none returns a token.
 
 ## Isolated app instances (one desktop app per account, macOS)
 

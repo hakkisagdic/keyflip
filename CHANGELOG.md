@@ -17,6 +17,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`keyflip chatgpt backups` — undo a bad ChatGPT/Codex switch.** Every switch and token refresh
+  already copied the live `~/.codex/auth.json` to `<configDir>/backups/`; now they are listable by
+  account e-mail/plan/expiry (never a token) and restorable by number, file name or unique prefix.
+  A restore backs up the login it replaces first, so it is itself reversible, refuses while
+  ChatGPT/Codex runs unless `--force`, and reads the file back byte-for-byte. `--dry-run` plans;
+  MCP adds read-only `keyflip_chatgpt_backups` and confirm-gated `keyflip_chatgpt_restore`.
+
 - **Embedding passes survive a flaky local endpoint.** Each batch is retried up to three times
   with backoff before its source is given up, and a failing source is skipped instead of aborting
   the run — only three consecutive source failures (the endpoint is actually down) stop it. The

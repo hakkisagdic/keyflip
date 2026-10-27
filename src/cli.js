@@ -375,7 +375,7 @@ function usage() {
   print('                                 usage; `kiro import <slug>` migrates keyflip:surface:kiro:* captures');
   print('  keyflip antigravity [status|list|capture|switch]  ANTIGRAVITY CLI (Keychain gemini/antigravity):');
   print('                                 capture/save current login, switch accounts, list saved ones');
-  print('  keyflip chatgpt [status|list|capture|switch|refresh]  CHATGPT.app + CODEX CLI share ONE');
+  print('  keyflip chatgpt [status|list|capture|switch|refresh|backups]  CHATGPT.app + CODEX CLI share ONE');
   print('                                 login (~/.codex/auth.json): capture/switch/remove it, refresh in place');
   print('  keyflip skill add <owner/repo|./dir|file.tgz>   install a skill; also: skill list|remove');
   print('  keyflip proxy start [--wire] | stop | status | stats');
@@ -13442,7 +13442,7 @@ async function cmdAntigravity(ctx, rest) {
   );
 }
 
-// `keyflip chatgpt [status|list|capture|switch|refresh|remove]` — ChatGPT.app and
+// `keyflip chatgpt [status|list|capture|switch|refresh|backups|remove]` — ChatGPT.app and
 // the Codex CLI share ONE credential file (~/.codex/auth.json), so one command
 // manages both. Alias: `keyflip codex`.
 function codexLeft(iso) {
@@ -13642,6 +13642,70 @@ async function cmdChatGPT(ctx, rest) {
     return;
   }
 
+  if (sub === 'backups' || sub === 'backup') {
+    const ref = positional[0];
+    if (!ref) {
+      const rows = _codex.listBackups(ctx);
+      if (JSON_MODE) {
+        jsonOut({ backups: rows });
+        return;
+      }
+      if (!rows.length) {
+        print(style.dim('No auth.json backups yet — one is written before every switch or token refresh.'));
+        return;
+      }
+      print(style.bold('Codex auth.json backups') + style.dim('  (' + rows.length + ', newest first)'));
+      rows.forEach(function (b, i) {
+        print(
+          '  ' +
+            String(i + 1).padStart(2) +
+            '. ' +
+            (b.email || style.warn('unreadable')) +
+            (b.plan ? '  ' + b.plan : '') +
+            '  ' +
+            style.dim(codexLeft(b.expiresAt) + ' · ' + b.file),
+        );
+      });
+      print(style.dim('Restore one with `keyflip chatgpt backups restore <number|file>`.'));
+      return;
+    }
+    const restoreRef = positional[1] || ref;
+    const r = _codex.restoreBackup(ctx, restoreRef, { dryRun: dryRun, force: force });
+    if (!r.ok) {
+      if (r.reason === 'not-found') return fail("no such backup: '" + restoreRef + "' (see `keyflip chatgpt backups`)");
+      if (r.reason === 'corrupt') return fail('backup ' + r.file + ' is not a readable auth.json; not restoring.');
+      if (r.reason === 'running')
+        return fail(
+          'quit ' +
+            r.running.join(' and ') +
+            ' first — a running app owns auth.json; use --force only if you know why.',
+        );
+      return fail('restore failed: ' + (r.reason || 'unknown'));
+    }
+    if (r.dryRun) {
+      print(style.bold('Codex auth restore plan (dry run — nothing was written)'));
+      print('  backup:  ' + r.plan.file);
+      print('  account: ' + (r.plan.email || 'unreadable') + (r.plan.plan ? '  ' + r.plan.plan : ''));
+      print('  would write ' + r.plan.path + '  (expires ' + codexLeft(r.plan.expiresAt) + ')');
+      if (r.plan.running.length)
+        print(
+          style.warn('⚠') + ' running: ' + r.plan.running.join(', ') + ' (the real restore refuses without --force)',
+        );
+      jsonOut({ dryRun: true, plan: r.plan });
+      return;
+    }
+    print(style.ok('✓') + ' restored ' + style.bold(r.email || r.restored) + ' to ' + r.path);
+    if (r.previous) print('  ' + style.dim('the login it replaced was backed up to ' + r.previous));
+    print(
+      '  ' +
+        (r.verified
+          ? style.dim('read back byte-identical; restart ChatGPT/Codex to pick it up.')
+          : style.warn('⚠') + ' read-back did not match the backup.'),
+    );
+    jsonOut(r);
+    return;
+  }
+
   if (sub === 'remove' || sub === 'rm') {
     if (!positional[0]) return fail('usage: keyflip chatgpt remove <name|number> --force');
     const slug = _codex.resolveCapture(ctx, positional[0]);
@@ -13654,7 +13718,9 @@ async function cmdChatGPT(ctx, rest) {
   }
 
   return fail(
-    "unknown chatgpt command: '" + sub + "' (status|list|capture|switch|refresh|remove). Try `keyflip chatgpt status`.",
+    "unknown chatgpt command: '" +
+      sub +
+      "' (status|list|capture|switch|refresh|backups|remove). Try `keyflip chatgpt status`.",
   );
 }
 
