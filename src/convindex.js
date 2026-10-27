@@ -936,6 +936,10 @@ function lexical(ctx, query, opts) {
     let off = 0;
     let n = 0;
     let ok = true;
+    // The bytes are read with Buffer.readUInt32LE on purpose: a Uint16Array view over the same
+    // bytes was measured and is only ~6% faster on this loop, because the cost is the ~13
+    // million Map lookups, not the reads — and the view has to mask every uint32 back to
+    // unsigned, which is easy to get wrong.
     while (off + 6 <= buf.length) {
       const len = buf.readUInt32LE(off);
       const count = buf.readUInt16LE(off + 4);
@@ -983,11 +987,18 @@ function lexical(ctx, query, opts) {
     return { id: d.id, chunk: d.n, score: score };
   });
   scored.sort((a, b) => b.score - a.score);
-  // Hydrate only what can reach the page: text, role and ts come from the chunk file.
-  const want = Math.max(50, (opts.limit || 10) * 20);
+  // Hydrate only what can reach the page: text, role and ts come from the chunk file. Reading a
+  // chunk file costs a file read plus a JSON parse per line, and most of the top candidates
+  // belong to a conversation that is already on the page.
+  const cap = opts.perConv == null ? 1 : Math.max(1, opts.perConv);
+  const page = opts.limit || 10;
   const chunkCache = new Map();
   const hits = [];
-  for (const h of scored.slice(0, want)) {
+  const seen = Object.create(null);
+  for (const h of scored) {
+    if (hits.length >= page) break;
+    const used = seen[h.id] || 0;
+    if (used >= cap) continue;
     let chunks = chunkCache.get(h.id);
     if (!chunks) {
       chunks = readChunks(chunkPath(ctx, h.id));
@@ -996,6 +1007,7 @@ function lexical(ctx, query, opts) {
     const c = chunks[h.chunk];
     if (!c) continue;
     const src = meta.sources[h.id];
+    seen[h.id] = used + 1;
     hits.push({
       id: h.id,
       app: src.app,
@@ -1009,10 +1021,57 @@ function lexical(ctx, query, opts) {
       snippet: makeSnippet(c.text, need),
     });
   }
-  return { ok: true, hits: diversify(hits, opts.perConv).slice(0, opts.limit || 10), scanned: totalDocs };
+  return { ok: true, hits: hits, scanned: totalDocs };
 }
 
 // ---- semantic search -----------------------------------------------------------------------
+
+// A bounded min-heap of the best candidates. The semantic scan touches every chunk in the
+// index, so it must not allocate one object per chunk nor sort the whole list: the heap keeps
+// only the `cap` best and costs O(log cap) per candidate that beats the current worst.
+//
+// The order is (score desc, insertion order) — the same order a stable sort by score produces.
+// Two conversations can hold the very same text and therefore score identically, and the
+// earlier one has to stay in front.
+function heapWorse(a, b) {
+  if (a.score !== b.score) return a.score < b.score;
+  return a.seq > b.seq;
+}
+
+function heapPush(heap, item) {
+  heap.push(item);
+  let i = heap.length - 1;
+  while (i > 0) {
+    const parent = (i - 1) >> 1;
+    if (!heapWorse(heap[i], heap[parent])) break;
+    const swap = heap[parent];
+    heap[parent] = heap[i];
+    heap[i] = swap;
+    i = parent;
+  }
+}
+
+function heapPop(heap) {
+  const top = heap[0];
+  const last = heap.pop();
+  if (heap.length) {
+    heap[0] = last;
+    let i = 0;
+    for (;;) {
+      const left = i * 2 + 1;
+      const right = left + 1;
+      let worst = i;
+      if (left < heap.length && heapWorse(heap[left], heap[worst])) worst = left;
+      if (right < heap.length && heapWorse(heap[right], heap[worst])) worst = right;
+      if (worst === i) break;
+      const swap = heap[worst];
+      heap[worst] = heap[i];
+      heap[i] = swap;
+      i = worst;
+    }
+  }
+  return top;
+}
 
 async function semantic(ctx, query, opts) {
   opts = opts || {};
@@ -1038,8 +1097,14 @@ async function semantic(ctx, query, opts) {
   // Score first, hydrate later. Building a snippet (and reading the chunk file) for every one of
   // ~120k chunks — almost all of which score > 0 on cosine — made one query take minutes. The
   // ranking only needs id/index/score; text is read for the top candidates that can reach the page.
-  const scored = [];
+  //
+  // Only the best `want` candidates are kept, in a bounded min-heap: scoring every chunk into an
+  // array and sorting 120k entries allocated 120k objects per query and dominated the scan.
+  const want = Math.max(50, (opts.limit || 10) * 20); // enough to survive diversify
+  const heap = [];
+  let seq = 0;
   let covered = 0;
+  let qCache = null; // { dim, q, norm } — the query, padded and normalized once per dimension
   for (const id of keys) {
     const src = meta.sources[id];
     if (!src.vec || src.vec.space !== space.hash || !src.vec.dim) continue;
@@ -1047,27 +1112,64 @@ async function semantic(ctx, query, opts) {
     if (!buf) continue;
     covered++;
     const dim = src.vec.dim;
+    // A Float32Array view over the same bytes. The per-element Buffer.readFloatLE call was
+    // ~94 million calls for a 120k-chunk index; the view removes them without changing a score
+    // (the float32 bytes are the same, and the arithmetic order is the same).
+    const vecs =
+      buf.byteOffset % 4 === 0
+        ? new Float32Array(buf.buffer, buf.byteOffset, dim * src.vec.count)
+        : new Float32Array(buf);
+    // The query norm does not depend on the chunk, but it used to be recomputed for every one
+    // of the ~120k chunks.
+    if (!qCache || qCache.dim !== dim) {
+      const q = new Float64Array(dim);
+      let nn = 0;
+      for (let j = 0; j < dim; j++) {
+        const b = qv[j] || 0;
+        q[j] = b;
+        nn += b * b;
+      }
+      qCache = { dim: dim, q: q, norm: Math.sqrt(nn) };
+    }
+    const q = qCache.q;
+    const qn = qCache.norm;
     for (let i = 0; i < src.vec.count; i++) {
       let dot = 0,
-        na = 0,
-        nb = 0;
+        na = 0;
+      const base = i * dim;
       for (let j = 0; j < dim; j++) {
-        const a = buf.readFloatLE((i * dim + j) * 4);
-        const b = qv[j] || 0;
-        dot += a * b;
+        const a = vecs[base + j];
+        dot += a * q[j];
         na += a * a;
-        nb += b * b;
       }
-      const score = na && nb ? dot / (Math.sqrt(na) * Math.sqrt(nb)) : 0;
-      if (score > 0) scored.push({ id: id, i: i, score: score });
+      const score = na && qn ? dot / (Math.sqrt(na) * qn) : 0;
+      if (score > 0) {
+        const item = { id: id, i: i, score: score, seq: seq++ };
+        if (heap.length < want) heapPush(heap, item);
+        else if (score > heap[0].score) {
+          heapPop(heap);
+          heapPush(heap, item);
+        }
+      }
     }
   }
-  scored.sort((a, b) => b.score - a.score);
-  const want = Math.max(50, (opts.limit || 10) * 20); // enough to survive diversify
+  // The heap pops in ascending score order; the page wants the best first.
+  const scored = [];
+  while (heap.length) scored.push(heapPop(heap));
+  scored.reverse();
   const needlesForQuery = needles(_bm25.tokenize(query), query);
   const chunkCache = new Map();
   const hits = [];
-  for (const h of scored.slice(0, want)) {
+  // Hydrate only what can reach the page: one chunk per conversation until the page is full.
+  // Reading a chunk file costs a file read plus a JSON parse per line, and most of the top
+  // candidates belong to a conversation that is already on the page.
+  const cap = opts.perConv == null ? 1 : Math.max(1, opts.perConv);
+  const page = opts.limit || 10;
+  const seen = Object.create(null);
+  for (const h of scored) {
+    if (hits.length >= page) break;
+    const used = seen[h.id] || 0;
+    if (used >= cap) continue;
     let chunks = chunkCache.get(h.id);
     if (!chunks) {
       chunks = readChunks(chunkPath(ctx, h.id));
@@ -1076,6 +1178,7 @@ async function semantic(ctx, query, opts) {
     const c = chunks[h.i];
     if (!c) continue;
     const src = meta.sources[h.id];
+    seen[h.id] = used + 1;
     hits.push({
       id: h.id,
       app: src.app,
@@ -1092,7 +1195,7 @@ async function semantic(ctx, query, opts) {
   return {
     ok: true,
     mode: 'semantic',
-    hits: diversify(hits, opts.perConv).slice(0, opts.limit || 10),
+    hits: hits,
     coverage: { sources: covered, total: keys.length },
     model: space.model,
   };

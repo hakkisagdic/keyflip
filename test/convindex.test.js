@@ -267,6 +267,46 @@ test('fusion promotes a chunk that both retrievers found', function () {
   assert.deepStrictEqual(fused.find((h) => h.id === 'c').sources, { 0: true, 1: true });
 });
 
+test('the result page is filled with distinct conversations, not with one long chat', async function () {
+  const ctx = ctxFor();
+  // One chat holds 120 chunks that all match, and they outrank everything else, so the top of
+  // the ranking is a single conversation. The page must still be filled: a result list answers
+  // "which conversations discuss this", so it needs more than one chat even when one chat wins.
+  const long = [];
+  for (let i = 0; i < 120; i++) {
+    long.push({
+      type: 'user',
+      message: { role: 'user', content: 'migration '.repeat(30) + 'step ' + i + ' ' + 'x'.repeat(1100) },
+    });
+  }
+  writeClaude(ctx, 'long-1', long);
+  for (const id of ['other-1', 'other-2', 'other-3', 'other-4']) {
+    writeClaude(ctx, id, [{ type: 'user', message: { role: 'user', content: 'a small migration note' } }]);
+  }
+  await convindex.build(ctx, {});
+  const r = await convindex.lexical(ctx, 'migration', { limit: 5 });
+  assert.strictEqual(r.hits.length, 5, 'the page is full');
+  const ids = r.hits.map((h) => h.id);
+  assert.strictEqual(new Set(ids).size, 5, 'one chunk per conversation');
+  assert.ok(ids.includes('claude:local:long-1'), 'the winning chat is on the page');
+});
+
+test('equal scores keep the earlier conversation in front', async function () {
+  const ctx = ctxFor();
+  // Two chats with the same text get the same vector and therefore the same score. The
+  // candidate heap has to break that tie the way a stable sort does, or the same query would
+  // return a different conversation on every run.
+  writeClaude(ctx, 'twin-a', [{ type: 'user', message: { role: 'user', content: 'identical text here' } }]);
+  writeClaude(ctx, 'twin-b', [{ type: 'user', message: { role: 'user', content: 'identical text here' } }]);
+  await convindex.build(ctx, { embed: true, post: stubPost({}) });
+  const r = await convindex.semantic(ctx, 'identical text', { post: stubPost({}), limit: 5 });
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(r.hits.length, 2);
+  assert.strictEqual(r.hits[0].score, r.hits[1].score, 'the scores are identical');
+  const order = Object.keys(readManifest(ctx).sources);
+  assert.ok(order.indexOf(r.hits[0].id) < order.indexOf(r.hits[1].id), 'the earlier conversation stays in front');
+});
+
 test('context pack is budgeted, sourced, and expand pulls in neighbouring chunks', async function () {
   const ctx = ctxFor();
   seed(ctx);

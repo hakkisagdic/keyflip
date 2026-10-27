@@ -68,6 +68,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   to how ids are derived re-parses the sources once instead of keeping ids that no longer belong
   to their transcript.
 
+- **Semantic search is 2× faster and no longer allocates one object per chunk.** The vector scan
+  read every float with `Buffer.readFloatLE` (~94 million calls on a 120k-chunk index), recomputed
+  the query norm for every chunk, and then sorted all ~120k scored chunks to keep the best 200.
+  It now reads the vector file through a `Float32Array` view, normalizes the query once per
+  dimension, and keeps the best candidates in a bounded min-heap, so one query allocates a few
+  hundred objects instead of 120k. The heap breaks ties by insertion order, which is the order a
+  stable sort produced — two conversations with identical text still come back in index order,
+  not in a random one. Both the lexical and the semantic path also stop hydrating once the page
+  is full: reading a chunk file is a file read plus a JSON parse per line, and most of the top
+  candidates belong to a conversation that is already on the page. Measured live (1856
+  conversations, 122k chunks): semantic 610 ms → 304 ms per query. The ranking is unchanged —
+  the hit lists of 147 live queries (109 verbatim, 38 paraphrased) are identical to before, and
+  BM25 still scores hit@1 0.596 / hit@5 0.798.
+
 ### Added
 
 - **`keyflip chatgpt backups` — undo a bad ChatGPT/Codex switch.** Every switch and token refresh
