@@ -144,6 +144,26 @@ test('Codex rollout: session_meta names the id/cwd and consecutive echoes collap
   assert.strictEqual(c.title, 'Ship the release.');
 });
 
+test('Codex rollout: a resumed thread keeps its own id, not the parent session_id', function () {
+  const ctx = ctxFor();
+  const head = (own) => ({
+    type: 'session_meta',
+    timestamp: '2026-01-01T10:00:00.000Z',
+    payload: { session_id: 'parent0001', id: own, cwd: '/work/codex', originator: 'codex_cli' },
+  });
+  const turn = (text) => ({
+    type: 'response_item',
+    timestamp: '2026-01-01T10:00:01.000Z',
+    payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text }] },
+  });
+  writeCodex(ctx, 'rollout-2026-01-01T10-00-00-own00001.jsonl', [head('own00001'), turn('First segment.')]);
+  writeCodex(ctx, 'rollout-2026-01-01T11-00-00-own00002.jsonl', [head('own00002'), turn('Second segment.')]);
+  const ids = loadAll(ctx)
+    .map((c) => c.id)
+    .sort();
+  assert.deepStrictEqual(ids, ['codex:own00001', 'codex:own00002']);
+});
+
 test('Kiro CLI: Prompt/AssistantMessage blocks become user/assistant turns', function () {
   const ctx = ctxFor();
   const dir = path.join(ctx.home, '.kiro', 'sessions', 'cli');

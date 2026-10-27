@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Codex resumed/forked threads no longer collapse into one index entry.** A continued rollout
+  logs the parent as `session_id` and its own thread as `id`; the parser kept the parent, so dozens
+  of distinct rollouts overwrote each other's chunk files and the index reported more chunks than
+  it held (coverage stalled at 99.2%). Each rollout now keeps its own id (titles still resolve
+  through the parent), so every segment is searchable.
+
 ### Added
 
 - **Embedding passes survive a flaky local endpoint.** Each batch is retried up to three times

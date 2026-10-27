@@ -330,15 +330,20 @@ function parseCodexRollout(text, src, opts) {
     messages.push({ role: role, text: body, ts: j.timestamp || null, tools: [] });
     if (j.timestamp) lastTs = j.timestamp;
   }
+  // Resumed/forked threads log `session_id` = the PARENT thread while `id` is this rollout's
+  // own thread. Preferring session_id collapsed dozens of distinct rollouts into one index
+  // entry (their chunk files overwrote each other). Titles still come from the parent thread.
+  const threadId = (meta && safeStr(meta.session_id, 120)) || null;
   const sessionId =
-    (meta && safeStr(meta.session_id || meta.id, 120)) ||
+    (meta && safeStr(meta.id, 120)) ||
+    threadId ||
     /^rollout-[^-]+-([0-9a-f-]{8,})/i.exec(path.basename(src.path))?.[1] ||
     src.idHint;
   const conv = makeConv({
     id: 'codex:' + sessionId,
     app: 'codex',
     surface: /desktop/i.test((meta && meta.originator) || '') ? 'desktop' : 'cli',
-    title: titles[sessionId] || src.title || null,
+    title: titles[threadId || sessionId] || src.title || null,
     cwd: (meta && meta.cwd) || (opts && opts.cwd) || null,
     createdAt: (meta && meta.timestamp) || (messages.length ? messages[0].ts : null),
     updatedAt: lastTs || new Date(src.mtimeMs).toISOString(),
