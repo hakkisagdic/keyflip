@@ -93,6 +93,25 @@ test('two transcripts that claim one id are kept apart, and the counts still mat
   assert.match(texts, /Second copy\./);
 });
 
+test('a deleted conversation disappears from an unfiltered build (an empty app list is no filter)', async function () {
+  const ctx = ctxFor();
+  const file = writeClaude(ctx, 'db-1', [
+    { type: 'user', message: { role: 'user', content: 'How do we run the database migration safely?' } },
+  ]);
+  await convindex.build(ctx, {});
+  const id = 'claude:local:db-1';
+  assert.ok(fs.existsSync(convindex.chunkPath(ctx, id)));
+
+  fs.rmSync(file);
+  // The CLI passes apps: [] when no --app is given — that is no filter, so the build is full.
+  const r = await convindex.build(ctx, { apps: [] });
+  assert.strictEqual(r.removed, 1);
+  const manifest = readManifest(ctx);
+  assert.strictEqual(manifest.sources[id], undefined, 'the row is gone');
+  assert.strictEqual(fs.existsSync(convindex.chunkPath(ctx, id)), false, 'the chunk file is gone');
+  assert.strictEqual(r.stats.sources, 0);
+});
+
 test('build parses every app, writes chunk files, and reports real counts', async function () {
   const ctx = ctxFor();
   seed(ctx);

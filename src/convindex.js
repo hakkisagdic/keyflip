@@ -578,7 +578,9 @@ async function build(ctx, opts) {
   }
 
   // Full discovery means anything absent is gone. Filtered builds must not delete the rest.
-  const full = !opts.apps && !opts.limitSources;
+  // An empty app list is NO filter (the CLI passes []), so it must still count as a full build:
+  // otherwise a deleted conversation keeps its row, chunk file and vector forever.
+  const full = !(opts.apps && opts.apps.length) && !opts.limitSources;
   if (full) {
     Object.keys(meta.sources).forEach((id) => {
       if (!next[id]) {

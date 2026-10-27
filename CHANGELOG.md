@@ -33,6 +33,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   file that was replaced by a colliding source is re-chunked from its transcript rather than
   reused with a count that the disk does not back.
 
+- **A deleted conversation now actually leaves the index.** The build treated an empty app list
+  as a filter, so `keyflip conv index` (which passes `apps: []` when no `--app` is given) never
+  took the "full discovery" path and kept the row, the chunk file and the vector of a
+  transcript that was gone from disk. An empty app list is now no filter, so an unfiltered
+  build drops what is no longer there; a filtered build (`--app`, `--limit-sources`) still
+  leaves the rest alone.
+
 ### Changed
 
 - **Search over a 120k-chunk index is roughly 4× faster.** Lexical BM25 now reads a per-source
