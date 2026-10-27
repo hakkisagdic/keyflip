@@ -236,7 +236,21 @@ async function embedSource(ctx, id, chunks, prev, space, opts) {
   const fresh = [];
   for (let i = 0; i < need.length; i += EMBED_BATCH) {
     const batch = need.slice(i, i + EMBED_BATCH).map((c) => safeForEmbedding(c.text, space).slice(0, EMBED_MAX_CHARS));
-    const got = await _embed.embed(batch, opts);
+    // A flaky local endpoint (busy model, restarted Ollama) must cost a retry, not the whole
+    // run: embedSource throws only after 3 tries, and the caller skips just this source.
+    let got = null;
+    let lastErr = null;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        got = await _embed.embed(batch, opts);
+        lastErr = null;
+        break;
+      } catch (e) {
+        lastErr = e;
+        if (attempt < 3) await new Promise((r) => setTimeout(r, 1500 * attempt));
+      }
+    }
+    if (lastErr) throw lastErr;
     if (!Array.isArray(got) || got.length !== batch.length)
       throw new Error(
         'embedding endpoint returned ' + (got ? got.length : 0) + ' vectors for ' + batch.length + ' inputs',
@@ -430,6 +444,7 @@ async function build(ctx, opts) {
       return needVec || !hasVec;
     });
     let embedDone = 0;
+    let consecutiveFails = 0;
     for (const id of toEmbed) {
       const entry = next[id];
       embedDone++;
@@ -448,10 +463,16 @@ async function build(ctx, opts) {
           report.embedding.chunks += chunks.length;
         }
       } catch (e) {
+        // One unreadable source must not abandon the sources behind it. Only a streak of
+        // consecutive failures means the endpoint is down: then stop hammering it.
+        consecutiveFails++;
+        report.embedding.errors = (report.embedding.errors || 0) + 1;
         report.embedding.error = (e && e.message) || String(e);
-        report.ok = false;
-        break;
+        report.ok = false; // embedding is incomplete even if the chunks are fine
+        if (consecutiveFails >= 3) break; // the endpoint is down: stop hammering it
+        continue;
       }
+      consecutiveFails = 0;
     }
   }
   Object.keys(next).forEach((id) => {
@@ -778,6 +799,7 @@ async function semantic(ctx, query, opts) {
   hits.sort((a, b) => b.score - a.score);
   return {
     ok: true,
+    mode: 'semantic',
     hits: diversify(hits, opts.perConv).slice(0, opts.limit || 10),
     coverage: { sources: covered, total: keys.length },
     model: space.model,

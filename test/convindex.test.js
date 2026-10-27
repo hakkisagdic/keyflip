@@ -202,3 +202,77 @@ test('chunkConversation keeps each chunk within one turn group and marks oversiz
   long.forEach((c) => assert.strictEqual(c.role, 'user'));
   assert.strictEqual(new Set(chunks.map((c) => c.n)).size, chunks.length);
 });
+
+// ---- embedding: retries, skips, and honest mode labels --------------------------------------
+
+function stubPost(counters) {
+  // counters: { failTimes, calls, dims } — fails the first `failTimes` calls, then succeeds.
+  return async function (url, body) {
+    counters.calls = (counters.calls || 0) + 1;
+    if ((counters.failTimes || 0) > 0) {
+      counters.failTimes--;
+      throw new Error('simulated: embed endpoint timed out');
+    }
+    const dim = counters.dim || 8;
+    return { model: body.model, embeddings: body.input.map(() => Array(dim).fill(0.5)) };
+  };
+}
+
+test('embed batches retry a flaky endpoint instead of failing the run', async function () {
+  const ctx = ctxFor();
+  writeClaude(ctx, 'db-1', [
+    { type: 'user', message: { role: 'user', content: 'How do we run the database migration safely?' } },
+    { type: 'assistant', message: { role: 'assistant', content: 'Dry run first.' } },
+  ]);
+  const counters = { failTimes: 2 }; // first two batches fail, then recover
+  const r = await convindex.build(ctx, { embed: true, post: stubPost(counters) });
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(r.embedded, 1);
+  assert.strictEqual(r.stats.chunks, r.embedding.chunks);
+  assert.ok(counters.calls >= 2, 'the endpoint was retried, calls=' + counters.calls);
+  const st = convindex.status(ctx);
+  assert.ok(st.vectorChunks > 0, 'vectors were written');
+});
+
+test('a source that keeps failing is skipped, the rest still embed', async function () {
+  const ctx = ctxFor();
+  writeClaude(ctx, 'db-1', [
+    { type: 'user', message: { role: 'user', content: 'First conversation text alpha.' } },
+    { type: 'assistant', message: { role: 'assistant', content: 'Answer alpha.' } },
+  ]);
+  writeClaude(ctx, 'haiku-1', [
+    { type: 'user', message: { role: 'user', content: 'Second conversation text beta.' } },
+    { type: 'assistant', message: { role: 'assistant', content: 'Answer beta.' } },
+  ]);
+  // Every embed call fails: both sources hit 3 retries, the loop stops on the streak,
+  // but the build itself still produced chunks and reports the failure honestly.
+  const counters = { failTimes: 999 };
+  const r = await convindex.build(ctx, { embed: true, post: stubPost(counters) });
+  assert.strictEqual(r.ok, false);
+  assert.match(r.embedding.error, /timed out/);
+  assert.ok(r.embedding.errors >= 1, 'per-source errors are counted');
+  // Lexical search still works on what was built — the corpus is not lost.
+  const hits = convindex.lexical(ctx, 'alpha', { limit: 3 });
+  assert.strictEqual(hits.hits.length, 1);
+});
+
+test('semantic search reports mode=semantic and no-vectors before touching an endpoint', async function () {
+  const ctx = ctxFor();
+  writeClaude(ctx, 'db-1', [{ type: 'user', message: { role: 'user', content: 'alpha beta gamma' } }]);
+  // No index at all yet: must fail fast without embedding.
+  let sem = await convindex.semantic(ctx, 'alpha', { post: stubPost({ calls: 0 }) });
+  assert.strictEqual(sem.ok, false);
+  assert.strictEqual(sem.reason, 'no-index');
+
+  // Index exists but nothing is vectorized yet: also fail fast, still no endpoint call.
+  await convindex.build(ctx, {});
+  sem = await convindex.semantic(ctx, 'alpha', { post: stubPost({ calls: 0 }) });
+  assert.strictEqual(sem.ok, false);
+  assert.strictEqual(sem.reason, 'no-vectors');
+
+  await convindex.build(ctx, { embed: true, post: stubPost({}) });
+  sem = await convindex.semantic(ctx, 'alpha', { post: stubPost({}) });
+  assert.strictEqual(sem.ok, true);
+  assert.strictEqual(sem.mode, 'semantic', 'a semantic hit is labelled semantic');
+  assert.strictEqual(sem.hits.length, 1);
+});

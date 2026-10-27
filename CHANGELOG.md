@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Embedding passes survive a flaky local endpoint.** Each batch is retried up to three times
+  with backoff before its source is given up, and a failing source is skipped instead of aborting
+  the run — only three consecutive source failures (the endpoint is actually down) stop it. The
+  report counts `embedding.errors` and stays `ok:false`, so an incomplete pass is never reported
+  as complete, while the chunks remain searchable lexically.
+
 - **`keyflip doctor` now reports expired ChatGPT/Codex captures, and so does the refresh daemon.**
   A stored login whose access token has expired AND has nothing left to rotate (no refresh token,
   or apikey mode) will not work at switch time — `doctor`'s **chatgpt/codex captures** check fails
