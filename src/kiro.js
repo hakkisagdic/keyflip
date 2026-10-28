@@ -16,6 +16,7 @@ import path from 'path';
 import { run as defaultRun } from './exec.js';
 import { atomicWrite, writeJsonStable } from './fsutil.js';
 import * as profiles from './profiles.js';
+import * as _log from './log.js';
 
 const CLI_TOKEN_SVC = 'kirocli:odic:token';
 const CLI_REG_SVC = 'kirocli:odic:device-registration';
@@ -939,6 +940,12 @@ function switchAccount(ctx, target, opts) {
         /* keep the successful switch */
       }
     }
+
+    // The one record that "this Kiro account is now live". The conversation layer reads it to
+    // say which account a Kiro session was worked on (the Claude timeline cannot answer for
+    // Kiro: the accounts live in their own namespace). Written after the switch lands and
+    // never for a rolled-back one. Name only — never a token.
+    _log.log('kiro -> ' + slug);
 
     return {
       dryRun: false,

@@ -24,6 +24,7 @@ import os from 'os';
 import { run as defaultRun } from './exec.js';
 import { atomicWrite, writeJsonStable } from './fsutil.js';
 import * as profiles from './profiles.js';
+import * as _log from './log.js';
 
 const SURFACE = 'codex';
 const TOKEN_URL = 'https://auth.openai.com/oauth/token';
@@ -749,6 +750,12 @@ function switchTo(ctx, target, opts) {
     }
     verified = true;
   }
+
+  // The one record that "this ChatGPT/Codex account is now live". The conversation layer reads
+  // it to say which account a Codex thread was worked on (the Claude timeline cannot answer for
+  // Codex: the accounts live in their own namespace). Written after the switch lands and never
+  // for a failed one. Name only — never a token.
+  _log.log('codex -> ' + slug);
 
   return {
     slug: slug,

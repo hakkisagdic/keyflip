@@ -1298,3 +1298,66 @@ test('MCP keyflip_consolidate: plan is read-only; apply is gated', async functio
   assert.strictEqual(got[2].result.isError, true);
   assert.match(got[2].result.content[0].text, /confirm/i);
 });
+
+// ---- which account worked on a conversation (MCP surface) ----------------------------------
+// An agent filtering by account must get the same answer the CLI prints, including the
+// stated/inferred label: a guess an agent cannot tell from the user's word is a hazard.
+
+test('MCP conversation tools: the account is reported, labelled, and filterable', async function () {
+  const home = mkhome();
+  seedConversation(home);
+  const cfg = path.join(home, '.config', 'keyflip');
+  fs.mkdirSync(cfg, { recursive: true });
+  fs.writeFileSync(path.join(cfg, 'gmail.json'), JSON.stringify({ name: 'gmail', email: 'g@example.com' }));
+  const logs = path.join(cfg, 'logs');
+  fs.mkdirSync(logs, { recursive: true });
+  // The conversation lives at 2026-01-01T10:00, so the gmail window must open before it.
+  fs.writeFileSync(path.join(logs, 'keyflip.log'), '2026-01-01T09:00:00.000Z active -> gmail\n', { mode: 0o600 });
+
+  const built = await mcpSession(home, [call(1, 'keyflip_conv_index', { confirm: true, limit_sources: 5 })], [1]);
+  assert.strictEqual(built[1].result.structuredContent.ok, true);
+
+  const list = await mcpSession(home, [call(1, 'keyflip_conv_list', { limit: 10 })], [1]);
+  const rows = list[1].result.structuredContent.conversations;
+  const row = rows.filter(function (r) {
+    return r.id.indexOf('sess-mcp') !== -1;
+  })[0];
+  assert.ok(row, 'the conversation is listed');
+  assert.strictEqual(row.account, 'gmail');
+  assert.strictEqual(row.accountSource, 'inferred', 'a guess is labelled as a guess');
+
+  const filtered = await mcpSession(
+    home,
+    [call(1, 'keyflip_conv_list', { account: 'gmail' }), call(2, 'keyflip_conv_list', { account: 'yahoo' })],
+    [1, 2],
+  );
+  assert.strictEqual(filtered[1].result.structuredContent.conversations.length, 1);
+  assert.strictEqual(
+    filtered[2].result.structuredContent.conversations.length,
+    0,
+    'an unknown account matches nothing',
+  );
+
+  const show = await mcpSession(home, [call(1, 'keyflip_conv_show', { id: 'sess-mcp' })], [1]);
+  const one = show[1].result.structuredContent;
+  assert.strictEqual(one.account, 'gmail');
+  assert.strictEqual(one.accountSource, 'inferred');
+  assert.strictEqual(one.accountConfidence, 'high');
+  assert.match(one.accountWhy, /gmail window/, 'and the agent can read WHY: ' + one.accountWhy);
+
+  const search = await mcpSession(
+    home,
+    [call(1, 'keyflip_conv_search', { query: 'database migration', account: 'gmail' })],
+    [1],
+  );
+  const hits = search[1].result.structuredContent.hits;
+  assert.ok(hits.length >= 1);
+  assert.strictEqual(hits[0].account, 'gmail');
+
+  const away = await mcpSession(
+    home,
+    [call(1, 'keyflip_conv_search', { query: 'database migration', account: 'yahoo' })],
+    [1],
+  );
+  assert.strictEqual(away[1].result.structuredContent.hits.length, 0, 'the filter runs on the ranked list');
+});

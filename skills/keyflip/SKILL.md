@@ -153,16 +153,24 @@ Claude Code, Codex/ChatGPT, Kiro (CLI + IDE), Gemini/Antigravity, Qoder, Cursor,
 Copilot, Aider — normalized into one shape, harness noise stripped. Use them when the user asks
 "what did we decide about X?", "find the chat where Y", or wants a new agent to continue old work.
 
-- **`keyflip_conv_list`** — browse (title/`search` filter only, `app`, `cwd`, `since`, `limit`).
-  Instant when the index exists; otherwise it parses live and says `indexed:false`.
+- **`keyflip_conv_list`** — browse (title/`search` filter only, `app`, `cwd`, `since`, `account`, `limit`).
+  Instant when the index exists; otherwise it parses live and says `indexed:false`. Each row carries
+  `account` + `accountSource` + `accountConfidence`: `stated` means the user assigned it
+  (`keyflip sessions assign`), `inferred` means keyflip placed the chat on its own switch timeline.
+  **Treat an inferred account as a labelled guess, never as the user's word** — and remember a tool
+  keyflip holds no accounts for (Qoder, Gemini) legitimately has `account: null`.
 - **`keyflip_conv_search`** — content search, `mode` lexical|semantic|hybrid. It refuses with a
   clear error when there is no index (read-only tools never build one — ask the user, then
   `keyflip_conv_index` with `confirm=true`), and the result honestly says `lexical` + a
-  `warning` when no embeddings exist. Snippets are credential-masked by default.
+  `warning` when no embeddings exist. Snippets are credential-masked by default. `account` narrows
+  the ranked list to one account's chats (the filter runs after ranking, so `hits` can come back
+  shorter than `limit` — that is expected, not a broken index).
 - **`keyflip_conv_context`** — the RAG block to paste into a prompt: char-budgeted
   (`budget`, default 12000), sources cited with id/app/cwd/date, `expand` pulls neighbouring
   chunks so a decision is not cut mid-thread. Prefer this over dumping a whole transcript.
-- **`keyflip_conv_show`** — one conversation rendered md/html/json (`max_chars` caps it).
+- **`keyflip_conv_show`** — one conversation rendered md/html/json (`max_chars` caps it). Also the
+  way to explain an account: it returns `account`, `accountSource`, `accountConfidence` and
+  `accountWhy`, the last one naming the window the chat landed in.
 - **`keyflip_conv_status`** — what is indexed, per-app counts, embedding coverage.
 - **`keyflip_conv_index` / `keyflip_conv_export`** — confirm-gated writes. A first full
   embedding pass can take many minutes and may outlive an MCP request: for that, tell the user

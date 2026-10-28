@@ -44,7 +44,7 @@ keyflip mcp --setup`} />
         </div>
         <div class="p-4 bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-800 rounded-lg">
           <h3 class="font-semibold text-surface-900 dark:text-surface-100">Sohbetler</h3>
-          <p class="text-sm text-surface-700 dark:text-surface-300 mt-1"><code>keyflip_conv_list</code> / <code>keyflip_conv_search</code> / <code>keyflip_conv_context</code> / <code>keyflip_conv_show</code> / <code>keyflip_conv_status</code> (salt okunur, hiçbiri indeksi kendisi kurmaz), <code>keyflip_conv_index</code> / <code>keyflip_conv_export</code> / <code>keyflip_conv_index_schedule</code> (onay gerektirir)</p>
+          <p class="text-sm text-surface-700 dark:text-surface-300 mt-1"><code>keyflip_conv_list</code> / <code>keyflip_conv_search</code> / <code>keyflip_conv_context</code> / <code>keyflip_conv_show</code> / <code>keyflip_conv_status</code> (salt okunur, hiçbiri indeksi kendisi kurmaz), <code>keyflip_conv_index</code> / <code>keyflip_conv_export</code> / <code>keyflip_conv_index_schedule</code> (onay gerektirir). List, search ve show, her sohbette hangi hesabın çalıştığını etiketiyle döndürür (<code>accountSource</code>: <code>stated</code> = siz atadınız, <code>inferred</code> = keyflip'in geçiş zaman çizelgesi) ve <code>accountConfidence</code> ile birlikte <code>account</code> filtresi de vardır</p>
         </div>
         <div class="p-4 bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-800 rounded-lg">
           <h3 class="font-semibold text-surface-900 dark:text-surface-100">Bağlam Katmanı</h3>

@@ -6,6 +6,7 @@ import fs from 'fs';
 import path from 'path';
 import { makeCtx } from './helpers.js';
 import * as convindex from '../src/convindex.js';
+import * as profiles from '../src/profiles.js';
 
 function ctxFor() {
   const ctx = makeCtx();
@@ -594,4 +595,79 @@ test('status only counts vector files that really hold dim*count floats', async 
   assert.strictEqual(r.rechunk, 0);
   assert.strictEqual(r.embedded, 1);
   assert.strictEqual(convindex.status(ctx).coverage, 100);
+});
+
+// ---- which account worked on it ------------------------------------------------------------
+// The manifest row carries the account, so `conv list` can show it and `conv search --account`
+// can filter on it without re-reading a single transcript.
+
+test('the manifest stores the account that worked on a conversation, and keeps the label', async function () {
+  const ctx = ctxFor();
+  profiles.write(ctx.configDir, { name: 'gmail', email: 'g@example.com' });
+  const logDir = path.join(ctx.configDir, 'logs');
+  fs.mkdirSync(logDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(logDir, 'keyflip.log'),
+    '2026-10-14T09:00:00.000Z active -> gmail\n2026-10-14T20:00:00.000Z active -> yahoo\n',
+    { mode: 0o600 },
+  );
+  writeClaude(ctx, 'db-1', [
+    {
+      type: 'user',
+      timestamp: '2026-10-14T10:00:00.000Z',
+      message: { role: 'user', content: 'How do we run the database migration safely?' },
+    },
+    {
+      type: 'assistant',
+      timestamp: '2026-10-14T10:30:00.000Z',
+      message: { role: 'assistant', content: 'Run migrate in dry-run first, then apply it.' },
+    },
+  ]);
+
+  const r = await convindex.build(ctx, {});
+  assert.strictEqual(r.ok, true);
+  const row = Object.values(readManifest(ctx).sources).find((s) => s.id === 'claude:local:db-1');
+  assert.ok(row, 'the transcript is indexed');
+  assert.strictEqual(row.account, 'gmail');
+  assert.strictEqual(row.accountSource, 'inferred');
+  assert.strictEqual(row.accountConfidence, 'high');
+
+  // The second build (this is what `conv index --schedule` runs) must NOT relabel the
+  // inference as the user's word.
+  await convindex.build(ctx, {});
+  const row2 = Object.values(readManifest(ctx).sources).find((s) => s.id === 'claude:local:db-1');
+  assert.strictEqual(row2.account, 'gmail');
+  assert.strictEqual(row2.accountSource, 'inferred', 'an inference stays an inference');
+});
+
+test('the account filter uses the stored account', async function () {
+  const ctx = ctxFor();
+  profiles.write(ctx.configDir, { name: 'gmail', email: 'g@example.com' });
+  const logDir = path.join(ctx.configDir, 'logs');
+  fs.mkdirSync(logDir, { recursive: true });
+  fs.writeFileSync(path.join(logDir, 'keyflip.log'), '2026-10-14T09:00:00.000Z active -> gmail\n', {
+    mode: 0o600,
+  });
+  writeClaude(ctx, 'db-1', [
+    {
+      type: 'user',
+      timestamp: '2026-10-14T10:00:00.000Z',
+      message: { role: 'user', content: 'database migration plan' },
+    },
+  ]);
+  writeClaude(ctx, 'haiku-1', [
+    {
+      type: 'user',
+      timestamp: '2026-10-14T10:10:00.000Z',
+      message: { role: 'user', content: 'a haiku about autumn' },
+    },
+  ]);
+  await convindex.build(ctx, {});
+
+  const all = convindex.catalog(ctx, {});
+  assert.strictEqual(all.conversations.length, 2);
+  const only = convindex.catalog(ctx, { account: 'gmail' });
+  assert.strictEqual(only.conversations.length, 2, 'both sit in the gmail window');
+  const none = convindex.catalog(ctx, { account: 'yahoo' });
+  assert.strictEqual(none.conversations.length, 0, 'a row that is not there never matches');
 });

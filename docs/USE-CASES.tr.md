@@ -452,6 +452,14 @@ keyflip mcpreg list | enable | disable | remove | import
   indeks bir gün geride kalırdı; geçiş kademelidir (değişmeyen bir transcript tek `stat()` demektir) ve
   yalnızca yeni ya da değişen parçaları **yerel** modelle gömer — bulut modeli yok, kota yok. MCP'de aynı
   iş `keyflip_conv_index_schedule` (`action:"status"|"install"|"remove"`, `interval` dakika cinsinden).
+- **İki hesabın sohbetini ayırmak.** `keyflip conv list --account yahoo` ve
+  `keyflip conv search "release plan" --account gmail` şu soruyu yanıtlar: "bunu hangisi yazdı?" Hesap
+  önce sizin sözünüzden gelir (`keyflip sessions assign`); hiçbir şey söylemediğiniz yerde keyflip'in kendi
+  geçiş zaman çizelgesinden okunur (`active -> <profil>`, `kiro -> <slug>`, `codex -> <slug>`) — her yüzey
+  kendi çizelgesini tutar, dolayısıyla bir Kiro geçişi asla bir Claude oturumunu yeniden etiketlemez.
+  `conv list` tahmin edilen adın sonuna `*` koyar; gerekçeyi ve güveni `keyflip conv show <id>` yazar.
+  Kayıtlı her geçişten eski bir sohbet, silinmiş bir hesap ya da keyflip'in hesabını tutmadığı bir araç
+  (Qoder, Gemini) hesap göstermez — dürüst cevap "bilinmiyor"dur, tahmin değil.
 
 ---
 

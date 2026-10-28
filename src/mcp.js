@@ -100,6 +100,7 @@ import * as _fsutil from './fsutil.js';
 import * as _secretmask from './secretscan.js';
 import * as _conversations from './conversations.js';
 import * as _convindex from './convindex.js';
+import * as _convaccounts from './convaccounts.js';
 import * as _convexport from './convexport.js';
 
 // Mutating tools all gate on confirm:true — the agent must ask the user first.
@@ -239,7 +240,13 @@ function convFilters(args) {
     sinceMs = _convindex.parseSince(a.since);
     if (!sinceMs) throw new Error("invalid since '" + a.since + "' (use 7d, 12h or 2026-10-01)");
   }
-  return { apps: apps, cwd: a.cwd ? String(a.cwd) : null, sinceMs: sinceMs, q: a.search ? String(a.search) : null };
+  return {
+    apps: apps,
+    cwd: a.cwd ? String(a.cwd) : null,
+    sinceMs: sinceMs,
+    q: a.search ? String(a.search) : null,
+    account: a.account ? String(a.account) : null,
+  };
 }
 // Resolve an id/prefix/title from the index manifest (cheap) and load the real conversation.
 function convByRef(ctx, ref) {
@@ -271,6 +278,10 @@ function convSlim(r) {
     title: r.title,
     cwd: r.cwd || null,
     account: r.account || null,
+    // The label travels WITH the account: an agent that sees `account: "gmail"` and no source
+    // cannot tell the user's word from keyflip's guess, and will act on a guess as a fact.
+    accountSource: r.account ? r.accountSource || null : null,
+    accountConfidence: r.account ? r.accountConfidence || null : null,
     createdAt: r.createdAt || null,
     updatedAt: r.updatedAt || null,
     messages: (r.counts && r.counts.messages) || 0,
@@ -1245,7 +1256,7 @@ const TOOLS = [
     name: 'keyflip_conv_list',
     title: 'List conversations from every local AI tool',
     description:
-      'Browse the chats keyflip can read on this machine — Claude Code, Codex/ChatGPT, Kiro, Gemini/Antigravity and foreign agents (Qoder, Cursor, opencode, Copilot, Aider) — in ONE normalized shape: id, app, surface, title, cwd, message count, dates. `search` filters TITLES only; use keyflip_conv_search for content. When the index exists this reads its manifest and is instant; otherwise it parses transcripts live (slow, reported as indexed:false). Read-only, local.',
+      'Browse the chats keyflip can read on this machine — Claude Code, Codex/ChatGPT, Kiro, Gemini/Antigravity and foreign agents (Qoder, Cursor, opencode, Copilot, Aider) — in ONE normalized shape: id, app, surface, title, cwd, account, message count, dates. Each row also carries `accountSource` ("stated" = you assigned it with `keyflip sessions assign`; "inferred" = keyflip placed it on its own switch timeline) and `accountConfidence`; treat an inferred account as a labelled guess, never as your word, and call keyflip_conv_show for the reason. `search` filters TITLES only; use keyflip_conv_search for content. When the index exists this reads its manifest and is instant; otherwise it parses transcripts live (slow, reported as indexed:false). Read-only, local.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1253,6 +1264,11 @@ const TOOLS = [
         app: { type: 'string', description: 'Comma-separated app ids, e.g. "claude,codex".' },
         cwd: { type: 'string', description: 'Only conversations whose working dir contains this path.' },
         since: { type: 'string', description: 'Only conversations updated within e.g. 7d, 24h, or since 2026-10-01.' },
+        account: {
+          type: 'string',
+          description:
+            'Only conversations worked on by this keyflip account (a Claude profile, a Kiro slug, a ChatGPT/Codex slug). The account is stated when you assigned it, otherwise inferred from the switch timeline.',
+        },
         limit: { type: 'integer', description: 'Default 20, max 500.' },
       },
       additionalProperties: false,
@@ -1299,6 +1315,9 @@ const TOOLS = [
       const r = _convexport.render(conv, { format: format, redact: args.redact !== false });
       const cap = Math.max(1000, Math.min(400000, Number(args.max_chars) || 60000));
       const truncated = r.content.length > cap;
+      // Which account worked on it — the user's word, or the switch timeline. The agent must be
+      // able to tell the two apart, so the source travels with the answer.
+      const acct = _convaccounts.explain(ctx, conv);
       return {
         id: conv.id,
         app: conv.app,
@@ -1306,6 +1325,10 @@ const TOOLS = [
         title: conv.title,
         cwd: conv.cwd || null,
         updatedAt: conv.updatedAt || null,
+        account: acct.account || null,
+        accountSource: acct.account ? acct.source : null,
+        accountConfidence: acct.account ? acct.confidence : null,
+        accountWhy: acct.why || null,
         counts: conv.counts,
         format: format,
         redacted: r.redacted || 0,
@@ -1329,6 +1352,10 @@ const TOOLS = [
         app: { type: 'string' },
         cwd: { type: 'string' },
         since: { type: 'string' },
+        account: {
+          type: 'string',
+          description: 'Only hits from conversations worked on by this keyflip account.',
+        },
         redact: { type: 'boolean', description: 'Default true; false returns raw snippets.' },
       },
       required: ['query'],
@@ -1358,6 +1385,7 @@ const TOOLS = [
         apps: f.apps,
         sinceMs: f.sinceMs,
         cwd: f.cwd,
+        account: f.account,
         limit: limit,
         perConv: Math.max(1, Math.min(20, Number(args.per_conv) || 1)),
       });
@@ -1384,6 +1412,8 @@ const TOOLS = [
             title: h.title,
             cwd: h.cwd || null,
             updatedAt: h.updatedAt || null,
+            account: h.account || null,
+            accountConfidence: h.accountConfidence || null,
             chunk: h.chunk,
             role: h.role || null,
             ts: h.ts || null,

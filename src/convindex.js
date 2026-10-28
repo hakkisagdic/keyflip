@@ -20,6 +20,7 @@ import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 import * as conversations from './conversations.js';
+import * as _convaccounts from './convaccounts.js';
 import * as _bm25 from './bm25.js';
 import * as _embed from './embed.js';
 import * as _secretscan from './secretscan.js';
@@ -481,6 +482,12 @@ async function build(ctx, opts) {
     return id;
   }
   const space = opts.embed ? spaceOf(opts) : null;
+  // WHICH ACCOUNT worked on each conversation. The switch timelines and the account lists are
+  // read ONCE for the whole pass: placing a row on a timeline is cheap, but re-reading the
+  // action log ~1900 times would not be. A reused row is re-attributed too — the transcript
+  // did not change, but the account that was live when it was written may have been learned
+  // since the last pass.
+  const accounts = _convaccounts.attributor(ctx);
   let done = 0;
   for (const src of sources) {
     done++;
@@ -502,7 +509,7 @@ async function build(ctx, opts) {
       ) {
         const id = claimId(prev.id, src.path);
         if (id === prev.id) {
-          next[prev.id] = prev;
+          next[prev.id] = Object.assign({}, prev, accounts.fields(prev));
           report.reused++;
           ensureTokens(ctx, prev.id);
           continue;
@@ -530,21 +537,28 @@ async function build(ctx, opts) {
       const sameEntry =
         !!had && had.id === id && had.hash && fs.existsSync(chunkPath(ctx, id)) && chunkBytesOk(ctx, had);
       if (!opts.force && sameEntry && had.mtimeMs === src.mtimeMs && had.size === src.size) {
-        next[id] = had;
+        // Re-attributed even though the row is reused: the account that was live when it was
+        // written may have been learned (or deleted) since the last pass.
+        next[id] = Object.assign({}, had, accounts.fields(conv));
         report.reused++;
         ensureTokens(ctx, id);
         continue;
       }
       if (!opts.force && sameEntry && had.hash === conv.hash) {
-        next[id] = Object.assign({}, had, {
-          scheme: ID_SCHEME,
-          mtimeMs: src.mtimeMs,
-          size: src.size,
-          path: src.path,
-          updatedAt: conv.updatedAt,
-          title: conv.title,
-          cwd: conv.cwd,
-        });
+        next[id] = Object.assign(
+          {},
+          had,
+          {
+            scheme: ID_SCHEME,
+            mtimeMs: src.mtimeMs,
+            size: src.size,
+            path: src.path,
+            updatedAt: conv.updatedAt,
+            title: conv.title,
+            cwd: conv.cwd,
+          },
+          accounts.fields(conv),
+        );
         report.reused++;
         ensureTokens(ctx, id);
         continue;
@@ -565,7 +579,6 @@ async function build(ctx, opts) {
         surface: conv.surface,
         title: conv.title,
         cwd: conv.cwd,
-        account: conv.account,
         createdAt: conv.createdAt,
         updatedAt: conv.updatedAt,
         counts: conv.counts,
@@ -573,6 +586,9 @@ async function build(ctx, opts) {
         mtimeMs: src.mtimeMs,
         size: src.size,
         hash: conv.hash,
+        // The account the SOURCE names, kept apart from the resolved `account` below: the
+        // resolved value is this pass's answer and changes, the source's own fact does not.
+        parserAccount: conv.account || null,
         chunks: chunks.length,
         bytes: bytes,
         chunkHashes: chunks.map((c) => c.h),
@@ -582,6 +598,9 @@ async function build(ctx, opts) {
         _oldVec: sameOwner && space && had.vec && had.vec.space === space.hash ? had.vec : null,
         _oldHashes: sameOwner && space && had.vec && had.vec.space === space.hash ? oldHashes : null,
       };
+      // Which account worked on it — stated if the user said so, inferred from the switch
+      // timeline otherwise (and labelled as an inference).
+      Object.assign(entry, accounts.fields(conv));
       const chunkBytes = writeChunks(ctx, id, chunks);
       writeTokens(ctx, id, chunks);
       entry.chunkBytes = chunkBytes;
@@ -724,6 +743,17 @@ async function build(ctx, opts) {
 
 // ---- catalog / status ----------------------------------------------------------------------
 
+// Does this row belong to the asked-for account? The account is the keyflip account name
+// (a Claude profile, a Kiro slug, a ChatGPT/Codex slug) — case-insensitive, because these
+// names are typed by hand. A row with no account (a tool keyflip does not manage accounts
+// for) never matches: it is not "the account you asked for", it is "unknown".
+function matchesAccount(row, wanted) {
+  const have = String((row && row.account) || '').toLowerCase();
+  const want = String(wanted || '').toLowerCase();
+  if (!want) return true;
+  return !!have && have === want;
+}
+
 // Metadata rows for every conversation. When the index exists this is a manifest read (no
 // transcript parsing); otherwise it falls back to a full discovery pass. Both branches return
 // the same row shape so callers (CLI, MCP) never branch on which source produced it.
@@ -749,10 +779,14 @@ function catalog(ctx, opts) {
             .toLowerCase()
             .indexOf(String(opts.q).toLowerCase()) !== -1,
       )
+      .filter((s) => !opts.account || matchesAccount(s, opts.account))
       .sort((a, b) => String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')));
     return { indexed: true, builtAt: meta.builtAt, conversations: rows, stats: meta.stats, errors: [] };
   }
   const r = conversations.list(ctx, opts);
+  // The fallback branch has no manifest, so the account is resolved here — the same
+  // attributor the build uses, so both paths answer identically.
+  const accounts = _convaccounts.attributor(ctx);
   const rows = r.conversations
     .map((c) =>
       Object.assign({}, c, {
@@ -761,6 +795,7 @@ function catalog(ctx, opts) {
         size: c.source && c.source.size,
       }),
     )
+    .map((s) => Object.assign({}, s, accounts.fields(s)))
     .filter((s) => !opts.sinceMs || Date.parse(s.updatedAt || '') >= opts.sinceMs)
     .filter(
       (s) =>
@@ -775,7 +810,8 @@ function catalog(ctx, opts) {
         String(s.title || '')
           .toLowerCase()
           .indexOf(String(opts.q).toLowerCase()) !== -1,
-    );
+    )
+    .filter((s) => !opts.account || matchesAccount(s, opts.account));
   return { indexed: false, builtAt: null, conversations: rows, stats: null, errors: r.errors };
 }
 
@@ -1014,6 +1050,8 @@ function lexical(ctx, query, opts) {
       title: src.title,
       cwd: src.cwd,
       updatedAt: src.updatedAt,
+      account: src.account || null,
+      accountConfidence: src.accountConfidence || null,
       chunk: c.n,
       role: c.role,
       ts: c.ts,
@@ -1185,6 +1223,8 @@ async function semantic(ctx, query, opts) {
       title: src.title,
       cwd: src.cwd,
       updatedAt: src.updatedAt,
+      account: src.account || null,
+      accountConfidence: src.accountConfidence || null,
       chunk: c.n,
       role: c.role,
       ts: c.ts,
@@ -1234,6 +1274,16 @@ function rrf(lists, limit, perConv, weights) {
 async function search(ctx, query, opts) {
   opts = opts || {};
   const mode = opts.mode || (opts.semantic ? 'semantic' : 'lexical');
+  const r = await searchMode(ctx, query, opts, mode);
+  if (!opts.account || !r || !r.hits) return r;
+  // The account filter runs AFTER the ranking, not before it: the ranking is over the whole
+  // corpus, and filtering first would change what "the best match" even means.
+  r.hits = r.hits.filter((h) => matchesAccount(h, opts.account));
+  r.accountFiltered = opts.account;
+  return r;
+}
+
+async function searchMode(ctx, query, opts, mode) {
   if (mode === 'lexical') return lexical(ctx, query, opts);
   if (mode === 'semantic') return semantic(ctx, query, opts);
   if (mode === 'hybrid') {

@@ -934,10 +934,12 @@ dışa aktarıma asla ulaşmaz. Kaynaklar salt-okunur; keyflip hiçbir aracın d
 
 ```bash
 keyflip conv list --app claude,codex --since 7d   # gez: id öneki, uygulama, yaş, mesaj sayısı, başlık
+keyflip conv list --account yahoo                 # yalnızca o hesabın çalıştığı sohbetler
 keyflip conv index                                # bir kez çözümle, parçaları keyflip tutsun (artımlı)
 keyflip conv index --embed                        # + yerel embedding (varsayılan Ollama nomic-embed-text)
 keyflip conv index --schedule --interval 30        # kendini güncel tut (macOS'ta launchd, Linux'ta cron)
 keyflip conv search "database migration"          # şimdi BM25; vektörler varsa hibrit
+keyflip conv search "database migration" --account gmail   # …ve yalnızca o hesabın sohbetleri
 keyflip conv context "database migration"         # yapıştırmaya hazır RAG bloğu, kaynak atıflı
 keyflip conv show a7dc93d0                        # tek sohbeti oku, gürültüsüz
 keyflip conv export --all --obsidian --out ~/Documents/Vault
@@ -950,6 +952,18 @@ keyflip conv transfer a7dc93d0 --to codex         # başka bir yapay zekâ arac�
   reciprocal rank fusion ile kaynaştırır; leksiksel liste ağır basar, yani sadece vektörden gelen
   bir eşleşme BM25 sonucunu sayfadan düşüremez — vektör yoksa sonuç `lexical` etiketiyle ve notla döner,
   asla sessizce "hibrit" olmaz. İlk sorguda `search` indeksi bir kez kurar; ilk arama da çalışır.
+- **Hangi hesap bu sohbetle çalıştı — ve keyflip bunu nereden biliyor.** Her sohbet satırı bir `account`
+  taşır; iki kaynak, kesin sırayla: **SİZİN SÖZÜNÜZ** (`keyflip sessions assign <oturum> <hesap>`) her
+  zaman keyflip'in tahminine öncelik alır. Tahmin, keyflip'in kendi geçiş zaman çizelgesinden gelir —
+  Claude Code için `active -> <profil>`, diğer yüzeyler için `kiro -> <slug>` ve `codex -> <slug>` —
+  ve sohbetin yaşam aralığı, vaktin çoğunu elinde tutan hesabın penceresine yerleştirilir. Her yüzey
+  **kendi** çizelgesini okur; yani bir Kiro geçişi asla bir Claude oturumunu yeniden etiketleyemez.
+  Etiket daima cevapla birlikte taşınır: `accountSource` `stated` ya da `inferred`dir, `accountConfidence`
+  `high` (görünür yaşamın tamamı tek pencerede), `medium` (başlangıcı kayıtlı tarihten önce) ya da `low`
+  (bir geçişin ortasına denk düşer); gerekçesini `keyflip conv show <id>` yazar. Kayıtlı hiçbir geçişten
+  eski sohbete **hesap verilmez**, tahmin de verilmez; keyflip'in hesabını yönetmediği araçlar (Qoder,
+  Gemini) de hesap almaz; sildiğiniz hesap asla adlandırılmaz. `conv list`te tahmin edilen adın sonunda
+  `*` vardır ve açıklama satırı bunu söyler.
 - **İndeks kendini güncel tutar.** `keyflip conv index --schedule [--interval N]` indeksi bir zamanlayıcıya
   koyar (macOS'ta launchd ajanı, Linux'ta crontab satırı) böylece `conv search` az önce yaptığınız sohbeti
   bulur, bayat olanı değil — **gece saatinde değil, aralıkla** çalışır, çünkü günlük indeks bir gün geride

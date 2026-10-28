@@ -847,10 +847,12 @@ index or an export. Sources are read-only; keyflip never writes into any tool's 
 
 ```bash
 keyflip conv list --app claude,codex --since 7d   # browse: id prefix, app, age, message count, title
+keyflip conv list --account yahoo                 # only the chats that account worked on
 keyflip conv index                                # parse once into chunks keyflip owns (incremental)
 keyflip conv index --embed                        # + local embeddings (Ollama nomic-embed-text by default)
 keyflip conv index --schedule --interval 30        # keep it current unattended (launchd on macOS, cron on Linux)
 keyflip conv search "database migration"          # BM25 now; hybrid once vectors exist
+keyflip conv search "database migration" --account gmail   # …and only that account's chats
 keyflip conv context "database migration"         # a ready-to-paste RAG block with cited sources
 keyflip conv show a7dc93d0                        # read one chat, noise stripped
 keyflip conv export --all --obsidian --out ~/Documents/Vault
@@ -863,6 +865,17 @@ keyflip conv transfer a7dc93d0 --to codex         # a handoff bundle for another
   fusion, weighted so the lexical list leads and a vector-only hit can never push a BM25 hit off the
   page — and when no vectors exist, the result is labelled `lexical` with a note, never silently
   "hybrid". `search` builds the index once on first use so the very first query just works.
+- **Which account worked on a chat — and how keyflip knows.** Every conversation row carries an
+  `account`, from two sources in strict order: what YOU said (`keyflip sessions assign <session> <account>`)
+  wins over what keyflip inferred. The inference is keyflip's own switch timeline — `active -> <profile>`
+  for Claude Code, `kiro -> <slug>` and `codex -> <slug>` for those surfaces, read from the action log —
+  and a chat's life is placed inside the window of the account that held most of it. Each surface keeps its
+  OWN timeline, so a Kiro switch can never relabel a Claude session. The label always travels with the
+  answer: `accountSource` is `stated` or `inferred`, `accountConfidence` is `high` (the whole visible life
+  sits in one window), `medium` (its opening predates the logged history) or `low` (it spans a switch), and
+  `keyflip conv show <id>` prints the reason. A chat older than every logged switch gets **no account**,
+  never a guess; a tool keyflip manages no accounts for (Qoder, Gemini) gets none either; and an account
+  you deleted is never named. In `conv list` an inferred name carries a `*` and the legend explains it.
 - **`conv context` is the RAG entry point.** It returns one portable, char-budgeted block (default
   12,000 chars) with stable headings, source ids, cwds and dates, and `--expand N` pulls in neighbouring
   chunks so a decision is not cut mid-thread. Nothing is uploaded; retrieval runs on your disk.

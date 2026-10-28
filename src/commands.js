@@ -260,7 +260,7 @@ const CATALOG = [
     group: 'sessions',
     safe: true,
     usage:
-      'keyflip conv [list|search|show|context|status] | index [--embed] [--watch|--schedule] | export --all [--obsidian] --out <dir> | transfer <id> --to <tool>',
+      'keyflip conv [list|search|show|context|status] [--account <name>] | index [--embed] [--watch|--schedule] | export --all [--obsidian] --out <dir> | transfer <id> --to <tool>',
     desc: "Every local AI tool's chats in one shape: browse, search, RAG context, Obsidian/MD/HTML export, handoff.",
   },
   {

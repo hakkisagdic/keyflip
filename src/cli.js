@@ -137,6 +137,7 @@ import * as _checkpoint from './checkpoint.js';
 import * as _handoffmod from './handoff.js';
 import * as _conversations from './conversations.js';
 import * as _convindex from './convindex.js';
+import * as _convaccounts from './convaccounts.js';
 import * as _convexport from './convexport.js';
 import * as _pii from './pii.js';
 import * as _onboard from './onboard.js';
@@ -6756,8 +6757,8 @@ async function cmdRecall(ctx, rest) {
 // (src/convexport.js). Every subcommand is tool-agnostic: it reads Claude Code, Codex/ChatGPT,
 // Kiro, Gemini and the foreign adapters through the same shape, and no live store is modified.
 const CONV_USAGE = [
-  'usage: keyflip conv [list] [--app claude,codex,kiro] [--since 7d] [--cwd <dir>] [--search T] [--limit N] [--json]',
-  '       keyflip conv search "<query>" [--hybrid|--semantic|--lexical] [--per-conv N] [--limit N] [--since 7d]',
+  'usage: keyflip conv [list] [--app claude,codex,kiro] [--since 7d] [--cwd <dir>] [--search T] [--account <name>] [--limit N] [--json]',
+  '       keyflip conv search "<query>" [--hybrid|--semantic|--lexical] [--per-conv N] [--limit N] [--since 7d] [--account <name>]',
   '       keyflip conv context "<query>" [--hybrid] [--budget 12000] [--expand 1]   RAG block for an LLM prompt',
   '       keyflip conv show <id|prefix|title> [--format md|html|json] [--out <file|dir>] [--no-redact]',
   '       keyflip conv index [--embed] [--force] [--watch] [--interval N]  build/refresh the local retrieval index',
@@ -6783,6 +6784,7 @@ const CONV_VALUE_FLAGS = [
   '--limit-sources',
   '--search',
   '--interval',
+  '--account',
 ];
 
 function convClip(s, n) {
@@ -6790,6 +6792,16 @@ function convClip(s, n) {
     .replace(/\s+/g, ' ')
     .trim();
   return t.length > n ? t.slice(0, n - 1) + '…' : t;
+}
+
+// The account cell of a conversation row. A STATED account (the user said so) is printed as
+// it is; an INFERRED one (read off the switch timeline) carries a `*`, because a guess that
+// looks like a fact is exactly the thing this layer must not do.
+function convAccountCell(row) {
+  const account = String((row && row.account) || '').trim();
+  if (!account) return '';
+  const inferred = String((row && row.accountSource) || '') === 'inferred';
+  return '[' + account + (inferred ? '*' : '') + '] ';
 }
 function convWhen(ts) {
   const t = Date.parse(ts || '');
@@ -6831,6 +6843,7 @@ function convFilter(rest) {
     sinceMs: sinceMs,
     cwd: flagVal(rest, '--cwd') || null,
     q: flagVal(rest, '--search') || null,
+    account: flagVal(rest, '--account') || null,
   };
 }
 function convMode(rest) {
@@ -6894,7 +6907,7 @@ function convPrintHits(query, r, limit) {
         '  ' +
         convClip(h.title, 70) +
         '   ' +
-        style.dim(convWhen(h.updatedAt) + '  #' + (h.chunk + 1)),
+        style.dim(convWhen(h.updatedAt) + '  #' + (h.chunk + 1) + (h.account ? '  ' + h.account : '')),
     );
     if (h.snippet) print('      ' + style.dim('↳ ' + convClip(h.snippet, 220)));
   });
@@ -7025,12 +7038,15 @@ async function cmdConv(ctx, rest) {
       );
     }
     print('Conversations (' + cat.conversations.length + (cat.indexed ? ', from the index' : '') + '):');
+    let anyInferred = false;
     rows.forEach(function (r) {
       const id = String(r.id || '')
         .split(':')
         .pop()
         .slice(0, 8);
       const msgs = (r.counts && r.counts.messages) || 0;
+      const acct = convAccountCell(r);
+      if (acct.indexOf('*') !== -1) anyInferred = true;
       print(
         '  ' +
           id.padEnd(9) +
@@ -7041,9 +7057,11 @@ async function cmdConv(ctx, rest) {
           '  ' +
           String(msgs).padStart(6) +
           ' msg  ' +
+          acct +
           convClip(r.title, 78),
       );
     });
+    if (anyInferred) print(style.dim('  * inferred from the switch timeline — `keyflip conv show <id>` says why.'));
     print('\n' + style.dim('Read one: keyflip conv show <id>   ·   search: keyflip conv search "<query>"'));
     return;
   }
@@ -7270,6 +7288,7 @@ async function cmdConv(ctx, rest) {
       cwd: f.cwd,
       limit: sub === 'context' ? Math.max(limit.value, 8) : limit.value,
       perConv: perConv.value,
+      account: f.account,
     };
     let r;
     try {
@@ -7364,6 +7383,18 @@ async function cmdConv(ctx, rest) {
       .join(' · ');
     print(style.bold(conv.title));
     print(style.dim(head));
+    // Which account worked on it, and how that is known: the user's word, or the switch
+    // timeline. A guess is printed as a guess.
+    const acct = _convaccounts.explain(ctx, conv);
+    if (acct.account) {
+      const how =
+        acct.source === 'stated'
+          ? 'stated by you'
+          : 'inferred from the switch timeline (' + acct.confidence + ' confidence)';
+      print(style.dim('account: ' + acct.account + ' · ' + how + ' · ' + acct.why));
+    } else {
+      print(style.dim('account: unknown · ' + acct.why));
+    }
     conv.messages.forEach(function (m) {
       print('');
       print(

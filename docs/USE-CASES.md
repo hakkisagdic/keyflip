@@ -450,6 +450,14 @@ keyflip mcpreg list | enable | disable | remove | import
   would be a day behind; the pass is incremental (an unchanged transcript costs one `stat()`) and embeds
   only new or changed chunks with the **local** model — no cloud model, no quota. Over MCP the same job
   is `keyflip_conv_index_schedule` (`action:"status"|"install"|"remove"`, `interval` in minutes).
+- **Sorting two accounts' chats apart.** `keyflip conv list --account yahoo` and
+  `keyflip conv search "the release plan" --account gmail` answer "which of my accounts actually wrote
+  this?" The account comes from what you stated (`keyflip sessions assign`) first and, only where you
+  said nothing, from keyflip's own switch timeline (`active -> <profile>`, `kiro -> <slug>`,
+  `codex -> <slug>`) — each surface keeps its own timeline, so a Kiro switch never relabels a Claude
+  session. `conv list` marks an inferred name with `*` and `keyflip conv show <id>` prints the reason and
+  the confidence. A chat older than every logged switch, a deleted account, or a tool keyflip holds no
+  accounts for (Qoder, Gemini) simply shows no account — the honest answer is "unknown", never a guess.
 
 ---
 

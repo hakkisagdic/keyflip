@@ -84,6 +84,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Every conversation now says which account worked on it — and how that is known.** The
+  conversation layer knew the app, the surface and the timestamps, but on a machine with two
+  accounts per surface the first question was unanswered: "which of my accounts wrote this?"
+  `keyflip conv list` prints the account (`[yahoo]`), `--account <name>` narrows `conv list` and
+  `conv search` to one account's chats, and `keyflip conv show <id>` states it with its reason.
+  The answer comes from two sources in strict order: what the USER said
+  (`keyflip sessions assign <session> <account>`) always wins, and only where nothing was stated
+  does keyflip infer it from its own action log — `active -> <profile>` for Claude Code, and the
+  newly logged `kiro -> <slug>` / `codex -> <slug>` boundaries for those surfaces. Each surface
+  keeps its OWN timeline, so a Kiro switch can never relabel a Claude session. The label always
+  travels with the answer (`accountSource` stated|inferred, `accountConfidence`
+  high|medium|low|none) — in the CLI, in the index manifest, and in the MCP payloads, where a
+  bare `account` with no source would let an agent act on a guess as if it were the user's word.
+  A conversation older than every logged switch, an account you deleted, or a tool keyflip holds
+  no accounts for (Qoder, Gemini) gets NO account rather than a plausible one, and a rebuild never
+  relabels an inference as a stated fact. Live: 88 of 120 Claude Code conversations attributed
+  (57 stated by hand + 31 inferred — 30 high, 1 low; `hakkisagdic` 65, `yahoo` 23); Kiro/Codex
+  fill in from the next real switch, since no such boundary is in the log yet. A one-message
+  chat — whose life is a single instant — now resolves to the account live at that instant instead
+  of reporting no evidence.
+
 - **`keyflip conv index --schedule` — the conversation index keeps itself current.** Until now the
   index only moved when someone ran `conv index`, kept a `--watch` loop alive in a terminal, or an
   agent called `keyflip_conv_index` — so "search my chats" quietly answered from yesterday. It is
