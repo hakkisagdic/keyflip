@@ -265,7 +265,7 @@ keyflip provider off          # back to the subscription (OAuth)
 keyflip provider list         # which providers exist / which is active
 keyflip speedtest <name>      # pick the fastest of a provider's endpoints
 keyflip test <name>           # one real request → auth ok? (auth/network/4xx/5xx)
-keyflip doctor                # health check: secrets-in-git, orphaned sessions, versioning, config, login, endpoints, desktop app session, live auto-update state of the app + clones (MCP: keyflip_doctor)
+keyflip doctor                # health check: secrets-in-git, orphaned sessions, versioning, config, login, endpoints, desktop app session, live auto-update state of the app + clones, and the BACKGROUND-SERVICE INVENTORY — per job: installed / actually held by launchd or cron / when it last wrote output (MCP: keyflip_doctor, `services[]`)
 keyflip doctor --history      # + scan every blob the state repo ever committed: a secret in an OLD commit (MCP: keyflip_history_audit)
 keyflip scrub-history [--apply]  # remove them from history (dry run by default; git-filter-repo + bundle backup)
 keyflip secrets [list [--alarms]] | tolerate <path> [--kind K] [--note "..."] | untolerate <path>   # which findings the user has declared EXPECTED: mutes the alarm + rotation nag, never the scrub (MCP: keyflip_secrets_policy / _tolerate)
@@ -673,6 +673,12 @@ reading it:
 - `keyflip refresh --schedule-status` reports what is *scheduled*, `keyflip verify` reports what is
   *alive today*. They can disagree — a job installed yesterday cannot revive a token that died last
   week, and only a human login can do that (`chains` names those roots).
+- **Never tell the user a background job is keeping something current from the receipt alone.** Call
+  `keyflip_doctor` and read its `services` rows: `installed` (the file keyflip wrote exists), `loaded`
+  (launchd/cron actually holds it) and `lastRun` (when it last produced output) are three different
+  facts, and a plist that launchd dropped, or a job silent past twice its own cadence, looks exactly
+  like a working one. `loaded:false` means re-install it; a missing `lastRun` right after install only
+  means its first tick is not due yet.
 - The receipts (`dream-schedule.json`, `refresh-schedule.json`) are machine-local and git-ignored; do
   not treat a receipt on a second machine as proof of a job there, and do not commit them.
 

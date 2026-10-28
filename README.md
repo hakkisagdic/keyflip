@@ -159,7 +159,7 @@ keyflip next                  # rotate to the next saved account
 keyflip next --strategy best  # ...or pick by remaining quota (also: next-available)
 keyflip provider add <name> --base-url <url> --key-file -   # save a 3rd-party endpoint
 keyflip use <name>            # route Claude Code to a provider (keyflip provider off = back)
-keyflip doctor                # health check: secrets-in-git, orphaned sessions, versioning, config, login, endpoints, desktop app session, auto-update state
+keyflip doctor                # health check: secrets-in-git, orphaned sessions, versioning, config, login, endpoints, desktop app session, auto-update state, background services (installed? loaded? when did each last run?)
                               #   add --history to also scan every blob keyflip ever committed for a reachable secret
 keyflip backup now|list|restore <n>   # snapshot keyflip metadata (no secrets)
 keyflip usage --history       # per-account usage trend + failover events
@@ -344,7 +344,7 @@ keyflip provider off            # back to your subscription (OAuth)
 keyflip provider list           # what's saved / active
 keyflip speedtest openrouter    # time the endpoints, use the fastest
 keyflip test openrouter         # one real request: is auth working?
-keyflip doctor                  # health check: secrets-in-git + orphans + versioning + config + login + endpoints + desktop app session + is the desktop app really signed in + auto-update state
+keyflip doctor                  # health check: secrets-in-git + orphans + versioning + config + login + endpoints + desktop app session + is the desktop app really signed in + auto-update state + every background service (installed / loaded / last output)
 ```
 
 - The **API key is a secret** → stored in the OS credential store, never in the
@@ -640,6 +640,31 @@ keyflip refresh --unschedule
   switch time; `keyflip doctor`'s **chatgpt/codex captures** row names the slugs, the expiry times
   and the one fix — sign in once, then `keyflip chatgpt capture <slug>`. The daemon also logs that
   dead set once (per set, not per tick) so it surfaces in `~/Library/Logs/`-adjacent daemon output.
+
+### Is anything actually running unattended? (`keyflip doctor`)
+
+A scheduled job is a promise, and promises rot: launchd can be holding a plist one day and not the
+next (a logout, a moved repo, an edited file), a laptop that sleeps at 04:30 never runs the nightly
+one, and every symptom arrives weeks later as a stale search answer or a dead token. So `doctor`
+inventories every unattended job it can install — `dream`, `refresh`, the expiry `daemon`, the
+conversation index — and asks three separate questions of each:
+
+```bash
+keyflip doctor                    # → "2 of 4 scheduled — dream: off · refresh: nightly at 04:30 · spoke 9 h ago …"
+keyflip doctor --json | jq '.checks[] | select(.name=="background services") | .services'
+```
+
+- **Installed** (the file keyflip wrote is there), **loaded** (launchd/cron is actually holding it) and
+  **spoke** (when its log last changed) are three different facts, and only the last two mean the job
+  is working. `installed + NOT LOADED` is a warning with the exact command that re-installs it.
+- Silence is judged against the cadence the job was *installed* with: an index scheduled every 30
+  minutes that has said nothing for a day is failing, while one that was installed ten minutes ago is
+  simply not due yet. A `KeepAlive` daemon has no cadence, so it is never blamed for being quiet.
+- A conversation index older than a day with no job to refresh it is its own warning — that index
+  answers questions about yesterday's chats.
+- Each job's own view remains available: `keyflip conv index --schedule-status`,
+  `keyflip refresh --schedule-status`, `keyflip dream status`, `keyflip refresh --daemon-status`.
+  Over MCP, `keyflip_doctor` returns the whole inventory as structured `services` rows.
 
 ### How old is each sign-in? (`keyflip freshness`)
 

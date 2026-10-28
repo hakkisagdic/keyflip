@@ -84,6 +84,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`keyflip doctor` now inventories the background services, and tells installed apart from
+  running.** keyflip can put four jobs on a timer — the nightly `dream`, the nightly token `refresh`,
+  the expiry `daemon`, and the conversation index — and until now each one answered "is it
+  scheduled?" from its own receipt. That question is not the useful one. A plist launchd stopped
+  holding (a logout, a moved repo, an edited file) still reads as scheduled; a laptop asleep at
+  04:30 never runs the nightly job and nothing notices; and every symptom arrives weeks later as a
+  stale search answer or a dead token. `doctor` now asks three separate questions per job —
+  **installed** (the file keyflip wrote is there), **loaded** (launchd or cron actually holds it) and
+  **lastRun** (when its log last changed) — prints the whole inventory as one line
+  (`2 of 4 scheduled — dream: off · refresh: nightly at 04:30 · spoke 9 h ago · daemon: off ·
+  conv: every 30 min · spoke 13 min ago`), and warns when a job is installed but not held, or
+  silent past twice the cadence it was
+  installed with. A job younger than two cadences is not blamed for silence: its first tick is not
+  due. A `KeepAlive` daemon has no cadence, so it is never aged against one — and it is labelled
+  `always-on`, not `nightly`; the inventory's `mode` and `atLabel` are normalized views, so no
+  report can print a receipt's `{h, m}` object where a time should be. A warning still names every
+  job after the complaint, because "which ones do I have at all?" is the question being asked.
+  An index older than a day
+  with nothing refreshing it is called out on its own. `keyflip_doctor` returns the same inventory as
+  structured `services` rows so an agent can check a service instead of trusting a receipt, and each
+  job's own status view (`conv index --schedule-status`, `refresh --schedule-status`, `dream status`,
+  `refresh --daemon-status`) now shows the same facts.
+  Live on this machine: the conversation index job was installed
+  (`keyflip conv index --schedule`, every 30 min) and verified end to end — launchd holds it, its
+  first real pass parsed 19 conversations, reused 1837, re-embedded 19, dropped 11 that left disk and
+  wrote its log in 103 s. `src/schedule.js` gained `launchdLoaded`, `lastRunAt`, `cadenceMsOf`,
+  `modeOf`, `hhmm` and `inventory()`; `status()` gained `loaded` (with `askSystem: false` leaving it
+  null = "not asked", so
+  a hermetic test never claims an answer it did not get) and `lastRun`. Asking the system is opt-in per
+  caller — `keyflip doctor` and the MCP server pass a runner, the test suite does not, and no suite
+  spawns `crontab`/`launchctl`.
+  Tests: 5 new in `test/schedule.test.js` (installed ≠ loaded ≠ not-asked, a log is the only evidence a
+  job spoke, the inventory covers every job with what it does and how to install it, the two cadence
+  normalizations, an interval job is
+  aged against the interval it was installed with) and 9 in `test/doctor.test.js` — including one that
+  pins the ISO-string clock, because subtracting a parsed date from `ctx.now()` is NaN and "spoke NaN d
+  ago" still prints green.
+
 - **Every conversation now says which account worked on it — and how that is known.** The
   conversation layer knew the app, the surface and the timestamps, but on a machine with two
   accounts per surface the first question was unanswered: "which of my accounts wrote this?"

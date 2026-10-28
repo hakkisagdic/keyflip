@@ -158,7 +158,7 @@ keyflip next                  # sıradaki kayıtlı hesaba dön
 keyflip next --strategy best  # ...veya kalan kotaya göre seç (ayrıca: next-available)
 keyflip provider add <ad> --base-url <url> --key-file -   # 3. taraf endpoint kaydet
 keyflip use <ad>              # Claude Code'u bir provider'a yönlendir (geri: keyflip provider off)
-keyflip doctor                # sağlık kontrolü: git-e-sır, orphan oturumlar, versiyonlama, config, giriş, endpointler, masaüstü oturumu, otomatik güncelleme durumu
+keyflip doctor                # sağlık kontrolü: git-e-sır, orphan oturumlar, versiyonlama, config, giriş, endpointler, masaüstü oturumu, otomatik güncelleme durumu, arka plan servisleri (kurulu mu? tutuluyor mu? her biri en son ne zaman çalıştı?)
                               #   --history ekle: keyflip'in commit ettiği her blob'da hâlâ okunabilir bir sır var mı?
 keyflip backup now|list|restore <n>   # keyflip metadata anlık görüntüsü (sırsız)
 keyflip usage --history       # hesap-başına kullanım eğilimi + failover olayları
@@ -344,7 +344,7 @@ keyflip use openrouter          # Claude Code'u ona yönlendir
 keyflip provider off            # aboneliğine geri dön (OAuth)
 keyflip speedtest openrouter    # endpoint'leri ölç, en hızlısını kullan
 keyflip test openrouter         # tek gerçek istek: auth çalışıyor mu?
-keyflip doctor                  # sağlık kontrolü: git-e-sır + orphan + versiyonlama + config + giriş + endpointler + masaüstü oturumu + otomatik güncelleme durumu
+keyflip doctor                  # sağlık kontrolü: git-e-sır + orphan + versiyonlama + config + giriş + endpointler + masaüstü oturumu + otomatik güncelleme durumu + her arka plan servisi (kurulu / tutuluyor / son çıktı)
 ```
 
 - **API anahtarı sırdır** → OS kimlik deposunda saklanır, asla metadata dosyasında
@@ -720,6 +720,31 @@ keyflip refresh --unschedule
   yakalaması geçiş anında çalışmaz; `keyflip doctor`'ın **chatgpt/codex captures** satırı slug'ları,
   geçerlilik bitişlerini ve tek çareyi söyler — bir kez giriş yap, sonra `keyflip chatgpt capture
   <slug>`. Daemon da bu ölü kümeyi (tick başına değil, küme başına bir kez) log'lar.
+
+### Arkada gerçekten çalışan bir şey var mı? (`keyflip doctor`)
+
+Zamanlanmış bir iş bir sözdür ve sözler çürür: launchd bir gün tuttuğu plist'i ertesi gün tutmayabilir
+(çıkış yapmış olman, dizini taşımış olman, dosyayı elle düzenlemiş olman), 04:30'da uykudaki bir
+dizüstü gecelik işi hiç çalıştırmaz, ve bütün belirti haftalar sonra gelir — bayat bir arama cevabı ya
+da ölmüş bir token. Bu yüzden `doctor`, kurabildiği her arka plan işini sayar — `dream`, `refresh`,
+süre-dolumu `daemon`'ı ve sohbet indeksi — ve her birine üç ayrı soru sorar:
+
+```bash
+keyflip doctor                    # → "2 of 4 scheduled — dream: off · refresh: nightly at 04:30 · spoke 9 h ago …"
+keyflip doctor --json | jq '.checks[] | select(.name=="background services") | .services'
+```
+
+- **Kurulu** (keyflip'in yazdığı dosya yerinde), **tutulan** (launchd/cron gerçekten sahibi) ve
+  **konuşmuş** (log'u en son ne zaman değişmiş) üç ayrı bilgidir; işin çalıştığını gösteren son
+  ikisidir. `kurulu + NOT LOADED` bir uyarıdır ve tamir komutuyla birlikte gelir.
+- Sessizlik, işin **kurulurken** söz verdiği arılığa göre yargılanır: 30 dakikada bir denen bir indeks
+  bir gün boyunca hiçbir şey yazmadıysa bozulmuştur; on dakika önce kurulmuş olan ise henüz sırası
+  gelmemiştir. `KeepAlive` daemon'ının arılığı yoktur, sessizliği suç sayılmaz.
+- Bir günden eski sohbet indeksi ve onu tazeleyen bir iş yoksa bu ayrı bir uyarıdır — o indeks
+  dünkü sohbetler hakkında cevap verir.
+- Her işin kendi görüntüsü de duruyor: `keyflip conv index --schedule-status`,
+  `keyflip refresh --schedule-status`, `keyflip dream status`, `keyflip refresh --daemon-status`.
+  MCP tarafında `keyflip_doctor` tüm envanteri yapısal `services` satırları olarak döndürür.
 
 ### Her giriş ne kadar eski? (`keyflip freshness`)
 

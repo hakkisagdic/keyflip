@@ -5584,6 +5584,39 @@ function fmtBytes(n) {
   if (n < 1048576) return (n / 1024).toFixed(1) + ' KB';
   return (n / 1048576).toFixed(1) + ' MB';
 }
+// How long ago, in the one unit a person scans for: "9 h" rather than "32400000 ms".
+function fmtAge(ms) {
+  const m = Math.floor(Math.max(0, ms) / 60000);
+  if (m < 60) return m + ' min';
+  const h = Math.floor(m / 60);
+  if (h < 48) return h + ' h';
+  return Math.floor(h / 24) + ' d';
+}
+// One scheduled job's health, printed the same way by every status view. "scheduled" alone is not
+// enough: the plist can sit on disk while launchd refuses it (a logout, a moved repo, an edited
+// file), and a job that fires into a sleeping laptop says nothing at all. Both are visible in the
+// two facts below — whether the system holds the job, and when it last produced any output.
+function scheduleHealthLines(st) {
+  if (!st || !st.installed) return [];
+  const lines = [];
+  if (st.kind === 'launchd')
+    lines.push(
+      st.loaded
+        ? style.dim('launchd is holding it: it fires on its cadence without a terminal')
+        : style.warn('⚠ the file is on disk but launchd is NOT holding it — re-install it'),
+    );
+  const then = st.lastRun ? Date.parse(st.lastRun) : NaN;
+  if (Number.isFinite(then))
+    lines.push(style.dim('last output ' + fmtAge(Date.now() - then) + ' ago' + (st.log ? ' → ' + st.log : '')));
+  else
+    lines.push(
+      style.dim(
+        'no output logged yet' +
+          (st.log ? ' — a run would appear in ' + st.log : ' — this job type records no log, so silence is invisible'),
+      ),
+    );
+  return lines;
+}
 // Parse "30d" / "4w" / "6m" / "90" (bare = days) -> number of days, or null.
 function parseDays(s) {
   const m = /^(\d+)\s*(d|w|m|day|days|week|weeks|month|months)?$/i.exec(String(s || '').trim());
@@ -5985,6 +6018,9 @@ async function cmdDreamSchedule(ctx, rest) {
             prov.provider +
             '.',
         );
+      scheduleHealthLines(st).forEach(function (l) {
+        print('  ' + l);
+      });
     }
     return;
   }
@@ -7146,7 +7182,9 @@ async function cmdConv(ctx, rest) {
                 ' — search sees new chats without a rebuild.',
             ),
         );
-        if (st.log) print('  ' + style.dim('output lands in ' + st.log));
+        scheduleHealthLines(st).forEach(function (l) {
+          print('  ' + l);
+        });
       } else {
         print('  ' + style.dim('install it with: keyflip conv index --schedule [--interval N]'));
       }
@@ -11213,7 +11251,7 @@ async function cmdChains(ctx, rest) {
 }
 
 async function cmdDoctor(ctx, rest) {
-  const r = await doctor.diagnose(ctx);
+  const r = await doctor.diagnose(ctx, { run: run });
   // `--history` is opt-in because it walks every blob keyflip ever committed (a few seconds, read-only).
   const wantHistory = rest.indexOf('--history') !== -1;
   if (wantHistory && !JSON_MODE) print('  … scanning git history (' + ctx.configDir + ')');
@@ -13888,7 +13926,9 @@ async function cmdRefresh(ctx, rest) {
               (at ? String(at.h).padStart(2, '0') + ':' + String(at.m).padStart(2, '0') : 'its default hour'),
           ),
       );
-      if (st.log) print('  ' + style.dim('output lands in ' + st.log));
+      scheduleHealthLines(st).forEach(function (l) {
+        print('  ' + l);
+      });
       print(
         style.dim(
           '  While a Claude session is live the run refuses to rotate anything: it changes nothing and waits for the next idle night.',
@@ -13962,7 +14002,11 @@ async function cmdRefresh(ctx, rest) {
     print(
       'Background refresh daemon: ' +
         (st.installed
-          ? style.ok('running') + ' (' + st.kind + (st.path ? ', ' + st.path : '') + ')'
+          ? st.loaded === false
+            ? // A KeepAlive job that launchd does not hold is not "running" — the plist is only an
+              // instruction, and printing running from its existence would be a lie on a logout.
+              style.warn('installed but NOT running (launchd is not holding it)')
+            : style.ok('running') + ' (' + st.kind + (st.path ? ', ' + st.path : '') + ')'
           : style.warn('not running')),
     );
     if (st.installed) {

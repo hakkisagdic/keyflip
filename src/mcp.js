@@ -1765,11 +1765,11 @@ const TOOLS = [
     name: 'keyflip_doctor',
     title: 'Diagnose config + connectivity',
     description:
-      'Health report: Claude config dir, login present, desktop app data, live auto-update state of the base app and every isolated instance, and each provider endpoint reachability. Read-only.',
+      'Health report: Claude config dir, login present, desktop app data, live auto-update state of the base app and every isolated instance, each provider endpoint reachability, and the BACKGROUND SERVICE INVENTORY — every unattended keyflip job (dream / refresh / daemon / conv) with installed, loaded (does launchd or cron actually hold it), lastRun (when it last produced output) and what to run to install it. A job whose plist exists but is not loaded, or that has been silent past twice its cadence, is a warning: an unattended job that quietly stopped running looks exactly like one that is working. Read-only.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
     annotations: RO_NET,
     run: async function (ctx) {
-      return await doctor.diagnose(ctx);
+      return await doctor.diagnose(ctx, { run: exec.run });
     },
   },
   {

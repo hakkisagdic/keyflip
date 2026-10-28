@@ -97,6 +97,7 @@ keyflip list                 # tüm yakalı hesaplar, her yüzeyde hangisi aktif
 keyflip list --usage         # + her hesabın 5s / 7g kota kullanımı
 keyflip list --usage --json  # makine-okunur kullanım + headroomPct + usageStatus
 keyflip doctor               # yapılandırma + giriş + uç nokta erişilebilirliği + gerçek masaüstü giriş kontrolü
+                             # + her arka plan servisi: kurulu / tutuluyor / son çıktı
 ```
 - `list` bir **web** sütunu ve tarayıcı/uzantı alt bilgisi gösterir, uyumsuzlukta uyarır.
 - `doctor`'daki **desktop app session** kontrolü uygulamanın kendi çerez veritabanını okur;
@@ -105,6 +106,28 @@ keyflip doctor               # yapılandırma + giriş + uç nokta erişilebilir
   `appSessionLive` / `appSessionExpires` alanlarını taşır.
 - `usageStatus` sabitleri: `ok`, `expired` (hesabı yeniden `add`'le), `throttled`
   (**bilinmiyor**, rate-limit kanıtı değil), `error`, `no-creds`/`no-token`.
+
+### Arkada gerçekten çalışan bir şey var mı?
+
+keyflip zamanlayıcıya dört iş koyabiliyor; `keyflip doctor` her birini üç ayrı bilgi olarak
+raporlar — dosya kurulu mu, sistem onu tutuyor mu, son çıktısını ne zaman verdi:
+
+```bash
+keyflip doctor
+#   ✓ background services — 2 of 4 scheduled — dream: off · refresh: nightly at 04:30 ·
+#     spoke 9 h ago · daemon: off · conv: every 30 min · spoke 13 min ago
+
+keyflip doctor --json        # her iş bir satır: installed, loaded, lastRun, cadenceMs, does, install
+keyflip refresh --schedule-status    # iş bazında: launchd/cron, tutuluyor mu, son çıktı, log yolu
+keyflip conv index --schedule-status
+keyflip dream status
+```
+
+Fiş (receipt) yalnızca söz verildiğini kanıtlar; uyarılar söz ile kanıt arasındaki boşluğa
+yanar: launchd'in hiç almadığı bir plist, kurulumundaki aralığın iki katından uzun süredir
+sessiz bir iş, ve günlerce tazeleyen bir şey olmayan sohbet indeksi. `--json` içindeki
+`loaded: null`, doctor'ın sisteme sormadığı anlamına gelir (koşucu yok) — "çalışmıyor" demek
+asla değildir.
 
 ---
 

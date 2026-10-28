@@ -96,6 +96,7 @@ keyflip list                 # all captured accounts, which is active on each su
 keyflip list --usage         # + each account's 5h / 7d quota utilization
 keyflip list --usage --json  # machine-readable usage + headroomPct + usageStatus
 keyflip doctor               # config + login + endpoint reachability + a real desktop-app login check
+                             # + every background service: installed / held / last output
 ```
 - `list` shows a **web** column and a browser/extension footer, warning on a mismatch.
 - `doctor`'s **desktop app session** check reads the app's own cookie jar, so a capture
@@ -103,6 +104,28 @@ keyflip doctor               # config + login + endpoint reachability + a real d
   app `(signed out on disk…)`, and `list --json` carries `appSessionLive` / `appSessionExpires`.
 - `usageStatus` sentinels: `ok`, `expired` (re-`add` the account), `throttled`
   (**unknown**, not proof of a rate-limit), `error`, `no-creds`/`no-token`.
+
+### Is anything running unattended?
+
+keyflip can put four jobs on a timer, and `keyflip doctor` reports each one as three separate
+facts — the file is installed, the system is holding it, and when it last produced output:
+
+```bash
+keyflip doctor
+#   ✓ background services — 2 of 4 scheduled — dream: off · refresh: nightly at 04:30 ·
+#     spoke 9 h ago · daemon: off · conv: every 30 min · spoke 13 min ago
+
+keyflip doctor --json        # every job as a row: installed, loaded, lastRun, cadenceMs, does, install
+keyflip refresh --schedule-status     # per job: launchd/cron, held?, last output, the log path
+keyflip conv index --schedule-status
+keyflip dream status
+```
+
+A receipt only proves the promise was made, so the warnings fire on the gap between the promise
+and the evidence: a plist launchd never picked up, a job that has been silent past twice the
+cadence it was installed with, and a conversation index older than a day that nothing refreshes.
+`loaded: null` in `--json` means doctor did not ask the system (no runner available) — it never
+means "not running".
 
 ---
 
