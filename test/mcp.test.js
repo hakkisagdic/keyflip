@@ -1263,6 +1263,11 @@ test('MCP conversation tools: list, search, context, show, and a handoff bundle'
   assert.strictEqual(search.mode, 'lexical'); // no vectors: never claim hybrid
   assert.strictEqual(search.count, 1);
   assert.strictEqual(search.hits[0].id, 'claude:local:sess-mcp');
+  // The page is honest about duplicates even when there are none: a hit carries the identity of
+  // its text and an (empty) list of conversations that hold the same text.
+  assert.strictEqual(search.collapsed, 0);
+  assert.match(search.hits[0].chunkHash, /^[0-9a-f]{16}$/);
+  assert.deepStrictEqual(search.hits[0].alsoIn, []);
 
   const ctxRes = got[4].result.structuredContent;
   assert.match(ctxRes.context, /^# Conversation context/);
