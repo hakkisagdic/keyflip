@@ -30,10 +30,13 @@ These do not:
       shorter expiry) is the real enforcement path.
 - [ ] **Issuer activation** (owner/business step, not code).
       **Code side is DONE:** the real Ed25519 keypair exists (private key at
-      `issuer/private/issuer.key`, `0600`, gitignored — **back it up, encrypted, off this
-      machine; if it is lost no license can ever be signed again**) and its **public** half is
+      `issuer/private/issuer.key`, `0600`, gitignored) and its **public** half is
       embedded in `src/license.js` `PUBKEY_B64`, so a license the issuer signs verifies green
-      in a shipped client with no code change and no release. `issuer/issuer.config.json` now
+      in a shipped client with no code change and no release. **The private key is now backed up**
+      in the private repository [`hakkisagdic/keyflip-secrets`](https://github.com/hakkisagdic/keyflip-secrets)
+      (restore = copy `issuer.key` back, `chmod 600`; fingerprint in that repo's README). This
+      public repository never holds it — a public copy would let anyone mint licenses. Still worth
+      a second copy in a password manager. `issuer/issuer.config.json` now
       ships its product slots as explicit `REPLACE_…` placeholders: an unfilled slot is REFUSED
       (never guessed), the issuer prints `{"evt":"config","ready":false}` at startup, and an
       unmapped webhook records the product id in the event log so the owner knows exactly what

@@ -113,12 +113,14 @@ you pass `--force` (a second run must never silently destroy the signing key).
   client's `createPublicKey(..., { format: 'der', type: 'spki' })` expects, so a
   token this issuer signs verifies green in `license.js` `verify()`.
 
-> **Back the private key up NOW, encrypted, off this machine.** It is the only
-> thing that can sign a license. If it is lost, every license you have already
-> sold becomes unverifiable for every new customer, and the only fix is to
-> generate a new keypair and ship a new `PUBKEY_B64`. Keep it in a password
-> manager or an encrypted backup — never in git, never in a chat, never in a
-> shell history.
+> **The private key is backed up in the private repository
+> [`hakkisagdic/keyflip-secrets`](https://github.com/hakkisagdic/keyflip-secrets).**
+> It is the only thing that can sign a license; if it is lost, every license you have already
+> sold becomes unverifiable for every new customer, and the only fix is to generate a new keypair
+> and ship a new `PUBKEY_B64`. Restore by copying `issuer.key` from that repo to
+> `issuer/private/issuer.key` and running `chmod 600` (the fingerprint is in that repo's README).
+> It must **never** enter this (public) repository, a chat, a log or a shell history — a public
+> copy hands license-minting to anyone who clones it.
 
 Confirm the round-trip in a throwaway script before release: sign a payload with
 `issuer/private/issuer.key`, set `license.setPublicKey(pubB64)`, and assert
@@ -149,7 +151,7 @@ Do them in this order, and do not skip step 4.
 | # | step | where | what "done" looks like |
 |---|---|---|---|
 | 1 | the keypair exists | `issuer/private/issuer.key` (0600) + `PUBKEY_B64` in `src/license.js` | `node issuer/keygen.js` printed the public key; it is pasted into `src/license.js` |
-| 2 | the private key is backed up | your password manager / encrypted backup | you can restore it on a clean machine **and sign a token** |
+| 2 | the private key is backed up | the private repo `hakkisagdic/keyflip-secrets` (and a password manager) | a fresh clone of that repo restores `issuer.key` and signs a token |
 | 3 | the PSP accounts exist | iyzico, PayTR, Lemon Squeezy, Stripe dashboards | you have the product/price ids and the webhook signing secrets |
 | 4 | the product ids are filled in | `issuer/issuer.config.json` | no key starts with `REPLACE_` anymore |
 | 5 | the checkout URLs are filled in | `website/src/checkout.config.json` | the Buy buttons point at real checkout pages, and `salesOpen` is `true` |
@@ -318,9 +320,11 @@ minted edilir.
 1. `node issuer/keygen.js` → özel anahtar `issuer/private/issuer.key` (`0600`),
    **açık** anahtar ekrana yazılır; `src/license.js` içindeki `PUBKEY_B64`
    satırına yapıştırılır.
-2. **Özel anahtarı şimdi yedekleyin** (şifreli, bu makineden dışarıda). Kaybolursa
-   bundan sonra hiçbir lisans imzalanamaz; tek çare yeni anahtar çifti üretip
-   `PUBKEY_B64`'yi güncellemektir.
+2. **Özel anahtarın yedeği alınır.** Bu depo **herkese açık** olduğu için anahtar buraya
+   girmez; yedek özel [`hakkisagdic/keyflip-secrets`](https://github.com/hakkisagdic/keyflip-secrets)
+   deposunda durur (parmak izi onun README'sinde). Geri yükleme: `issuer.key` dosyasını
+   `issuer/private/issuer.key` konumuna kopyala, `chmod 600`. Anahtar kaybolursa bundan sonra
+   hiçbir lisans imzalanamaz; tek çare yeni anahtar çifti üretip `PUBKEY_B64`'yi güncellemektir.
 3. PSP hesapları açılır (iyzico / PayTR / Lemon Squeezy / Stripe); ürün/fiyat id'leri
    ve webhook imza gizli anahtarları alınır.
 4. `issuer/issuer.config.json` içindeki her `REPLACE_…` **anahtarı** gerçek ürün
