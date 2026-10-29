@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`conv search --limit` is honored when the semantic side is missing.** Hybrid runs the lexical
+  retriever wide (50 candidates) so rank fusion has room to work; with no vectors to fuse, that
+  wide list was handed back as the page, so `--limit 3` printed 50 results. The fallback now cuts
+  back to the page that was asked for (live: 3 results for `--limit 3`), and its `collapsed` count
+  only names duplicates that were folded into the hits actually shown.
+
 - **The conversation index can no longer claim chunks or vectors that are not on disk.**
   An index row copied from a colliding id, or whose chunk file was deleted, is now re-chunked
   instead of reused; a source with zero chunks on disk is never recorded as embedded (that used to

@@ -205,6 +205,12 @@ test('no vectors: semantic reports no-vectors and hybrid says it ranked lexicall
   assert.strictEqual(hy.mode, 'lexical');
   assert.strictEqual(hy.semanticError, 'no-vectors');
   assert.strictEqual(hy.hits[0].id, 'claude:local:db-1');
+
+  // The lexical list is hydrated wide (50) so fusion has candidates to work with; with no
+  // semantic list the fallback must still cut back to the page that was asked for.
+  const tight = await convindex.search(ctx, 'database', { mode: 'hybrid', limit: 1 });
+  assert.strictEqual(tight.hits.length, 1);
+  assert.strictEqual(tight.collapsed, 0);
 });
 
 test('RRF ranks a document found by both retrievers above a single-list hit', function () {

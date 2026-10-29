@@ -1396,10 +1396,21 @@ async function searchMode(ctx, query, opts, mode) {
     const lex = both[0];
     const sem = both[1];
     if (!sem.ok) {
+      // `lex` ran wide (max(limit,50)) so that fusion would have enough candidates to survive
+      // diversify. With no semantic list there is nothing to fuse, so cut back to the page the
+      // caller asked for — otherwise `--limit 3` silently printed 50 results.
+      const page = opts.limit || 10;
+      const hits = lex.hits.slice(0, page);
+      // Each kept hit already carries the twins folded into it, so counting them here stays
+      // honest about this page (twins folded into hits beyond the cut are not claimed).
+      let collapsed = 0;
+      for (const h of hits) collapsed += h.alsoIn ? h.alsoIn.length : 0;
       // Say what actually ranked: an agent/user reading `mode` must not believe vectors were used
       // when the endpoint was never asked (no-vectors) or failed.
       return Object.assign({}, lex, {
         mode: 'lexical',
+        hits: hits,
+        collapsed: collapsed,
         semanticError: sem.reason,
         semanticDetail: sem.detail || null,
       });
