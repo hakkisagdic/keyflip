@@ -73,8 +73,10 @@ Farkli yapay zeka servisleri ve yonlendirme mantigi icin coklu saglayici destegi
 |-------|------------|
 | `provider.js` | Saglayici soyutlamasi ve kaydi |
 | `provusage.js` | Saglayici bazinda kullanim takibi ve analitik |
-| `proxy.js` | Proxy yapilandirmasi ve tunelleme |
-| `router.js` | Birden fazla saglayici arasinda istek yonlendirme |
+| `proxy.js` | Komutla baslatilan failover proxy (yönlendirme, cooldown, plan uygunluğu, istek bazında maliyet muhasebesi) |
+| `proxyroutes.js` | `proxy-routes.json` ile istek bazinda bildirimsel yönlendirme (kurallar, sticky, fallback modlari, transform'lar, özel kanca) |
+| `tiers.js` | Yakalanan girişten okunan abonelik planı (`subscriptionType`/`rateLimitTier`), hesap başına override ve model uygunluğu |
+| `router.js` | Model→saglayici yönlendirme (pin + arbitraj) ve yanit önbellegi |
 | `breaker.js` | Saglayici yedeklemesi icin devre kesici deseni |
 
 ### Oturumlar
@@ -191,7 +193,7 @@ Otomasyon, izleme ve sistem entegrasyonunu kapsayan ozellestirilmis ozellikler.
 | `backup.js` | Profil yedekleme ve geri yukleme |
 | `brain.js` | Akilli karar motoru |
 | `budget.js` | Kullanim butcesi yonetimi |
-| `cost.js` | Maliyet takibi ve tahmini |
+| `cost.js` | Maliyet takibi ve tahmini: `rateCard`/`costBreakdown` (cache okuma 0.1×, 5dk yazım 1.25×, 1sa yazım 2×, 200K uzun bağlam 2×/1.5×, fast 6×), birleşik kullanım, tahmin, transkript satırı bazında repo atfı |
 | `doctor.js` | Sistem sagligi teshisleri |
 | `groups.js` | Profil grubu yonetimi |
 | `history.js` | Komut ve degistirme gecmisi |
@@ -204,6 +206,7 @@ Otomasyon, izleme ve sistem entegrasyonunu kapsayan ozellestirilmis ozellikler.
 | `onboard.js` | Ilk calistirma karsilama akisi |
 | `orchestrator.js` | Cok adimli islem orkestrasyonu |
 | `policy.js` | Erisim politikasi uygulama |
+| `prices.js` | Canli model fiyat tablosu: acik bir yenilemede fiyat listesini ceker, dogrular, onbellege alir (`prices-cache.json`) ve `cost.js`'e paketlenmis anlik goruntunun uzerine gelen bir katman verir |
 | `schedule.js` | Zamanlanmis islemler (rotasyon, temizlik) |
 | `share.js` | Kullanicilar arasi profil paylasimi |
 | `shellhook.js` | Kabuk kanca entegrasyonu (cd, prompt) |

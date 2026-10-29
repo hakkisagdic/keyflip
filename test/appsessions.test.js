@@ -230,3 +230,51 @@ test('consolidate skips a clone whose instance.pid is alive', function () {
 function cliIdOfTest(file) {
   return JSON.parse(fs.readFileSync(file, 'utf8')).cliSessionId;
 }
+
+// ---- dry run: the plan without the writes ---------------------------------------------------
+
+test('consolidate dry run reports the exact plan and writes nothing', function () {
+  const s = setup();
+  const r = consolidate(s.ctx, { dryRun: true });
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(r.dryRun, true);
+  assert.strictEqual(r.wouldMerge, 2); // cs2 -> A, cs1 -> B
+  assert.strictEqual(r.wouldCode, 2);
+  assert.strictEqual(r.wouldCowork, 0);
+  assert.strictEqual(r.merged, 0);
+  // The plan names where each pointer would land, relative to its store.
+  assert.strictEqual(r.plan.length, 2);
+  const dests = r.plan
+    .map(function (p) {
+      return p.to.split(/[\\/]/).join('/'); // the plan is store-relative; compare it in one separator
+    })
+    .sort();
+  // `to` is store-relative; aaaa… sorts first, so B's session (local_2) landing in A is dests[0].
+  assert.ok(dests[0].indexOf(s.A + '/' + s.OA + '/local_2.json') !== -1, 'B session lands in A: ' + dests[0]);
+  assert.ok(dests[1].indexOf(s.B + '/' + s.OB + '/local_1.json') !== -1, 'A session lands in B: ' + dests[1]);
+  r.plan.forEach(function (p) {
+    assert.strictEqual(p.instance, null); // base store, not a clone
+    assert.ok(fs.existsSync(p.from), 'the plan source exists: ' + p.from);
+  });
+  // Nothing moved: no backup, no copied pointer.
+  assert.deepStrictEqual(r.backups, []);
+  assert.ok(!fs.existsSync(path.join(s.store, s.A, s.OA, 'local_2.json')), 'A unchanged');
+  assert.ok(!fs.existsSync(path.join(s.store, s.B, s.OB, 'local_1.json')), 'B unchanged');
+  assert.ok(!fs.existsSync(path.join(s.ctx.configDir, 'backups')), 'no backup dir created');
+
+  // A dry run is also idempotent and does not change what a real run would do.
+  const again = consolidate(s.ctx, { dryRun: true });
+  assert.strictEqual(again.wouldMerge, 2);
+  const real = consolidate(s.ctx);
+  assert.strictEqual(real.merged, 2);
+  assert.ok(fs.existsSync(path.join(s.store, s.A, s.OA, 'local_2.json')));
+});
+
+test('consolidate dry run plans nothing when the stores already agree', function () {
+  const s = setup();
+  consolidate(s.ctx);
+  const r = consolidate(s.ctx, { dryRun: true });
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(r.wouldMerge, 0);
+  assert.strictEqual(r.plan, undefined);
+});

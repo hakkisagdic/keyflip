@@ -21,6 +21,7 @@ import * as session from './session.js';
 import * as links from './links.js';
 import * as autosw from './autoswitch.js';
 import * as provider from './provider.js';
+import * as _catalog from './catalog.js';
 import * as doctor from './doctor.js';
 import * as history from './history.js';
 import * as backup from './backup.js';
@@ -31,11 +32,14 @@ import * as desktopgw from './desktopgw.js';
 import * as importcreds from './importcreds.js';
 import * as auditview from './auditview.js';
 import * as cost from './cost.js';
+import * as prices from './prices.js';
 import * as router from './router.js';
 import * as sync from './sync.js';
 import * as sessions from './sessions.js';
 import * as mcp from './mcp.js';
 import * as proxy from './proxy.js';
+import * as proxyroutes from './proxyroutes.js';
+import * as tiers from './tiers.js';
 import * as uninstallmod from './uninstall.js';
 import * as exec from './exec.js';
 import { run } from './exec.js';
@@ -81,6 +85,7 @@ import * as _browser from './browser.js';
 import * as _browserswitch from './browserswitch.js';
 import * as _kiro from './kiro.js';
 import * as _antigravity from './antigravity.js';
+import * as _commandcode from './commandcode.js';
 import * as _codex from './codex.js';
 import * as _cfg from './config.js';
 import * as _svc from './autoswitchservice.js';
@@ -113,7 +118,7 @@ import * as _menubar from './menubar.js';
 import * as _cowork from './cowork.js';
 import * as _chat from './chat.js';
 import * as _chatsession from './chatsession.js';
-import * as _skillstore from './skillstore.js';
+import * as _skillsync from './skillsync.js';
 import * as _archive from './archive.js';
 import * as _sessionmap from './sessionmap.js';
 import * as attrib from './attrib.js';
@@ -135,6 +140,10 @@ import * as _projctx from './projctx.js';
 import * as _rules from './rulesmodel.js';
 import * as _checkpoint from './checkpoint.js';
 import * as _handoffmod from './handoff.js';
+import * as _conversations from './conversations.js';
+import * as _convindex from './convindex.js';
+import * as _convaccounts from './convaccounts.js';
+import * as _convexport from './convexport.js';
 import * as _pii from './pii.js';
 import * as _onboard from './onboard.js';
 import * as _vcs from './vcs.js';
@@ -239,8 +248,11 @@ function usage() {
   print('                                 skips that, and --rollback-on-fail puts the previous account back)');
   print('  keyflip next [--strategy best|next-available]');
   print('                                 rotate to the next account — or pick by remaining quota');
-  print('  keyflip provider add <name> --base-url <url> [--key-file <f|->]');
-  print('                                 save a 3rd-party endpoint (relay/gateway/Bedrock/OpenRouter)');
+  print('  keyflip provider add <id|name> [--base-url <url>] [--key-file <f|->]');
+  print('                                 save a 3rd-party endpoint; a catalog id (zai, kimi, deepseek,');
+  print('                                 openrouter, ollama…) needs only the key — bare add = picker');
+  print('  keyflip provider catalog       the preset endpoints (id, URL, models, docs)');
+  print('  keyflip provider models <id>   ask the endpoint what models it serves (GET /v1/models)');
   print('  keyflip use <name>             route Claude Code to that provider (no restart);');
   print('                                 keyflip provider off = back to your subscription');
   print("  keyflip speedtest [name]       time a provider's endpoints, pick the fastest");
@@ -269,7 +281,9 @@ function usage() {
     '  keyflip secrets [list|tolerate <path> [--kind K]|untolerate <path>]   which of those findings are EXPECTED (silences the alarm, never the clean-up)',
   );
   print('  keyflip share <name> [--no-secrets]   make a keyflip:// link; import with `keyflip import`');
-  print('  keyflip mcpreg [add|list|enable|disable|import]   manage MCP servers across Claude Code + Desktop');
+  print(
+    '  keyflip mcpreg [add|list|surfaces|enable|disable|import]   one MCP registry, projected into every agent keyflip can write',
+  );
   print('  keyflip gateway use <provider> | off   route the Claude DESKTOP app through a provider gateway');
   print('  keyflip sync [push|pull|test] --url <webdav> --passphrase-file <f>   encrypted cross-device sync');
   print('  keyflip migrate export/import <file> [--passphrase-file <f>]   move ALL accounts+providers+');
@@ -291,9 +305,11 @@ function usage() {
   );
   print('                                 add --qr to `serve` to show a scannable QR of the pairing code');
   print(
-    "  keyflip consolidate [--watch] [--no-instances]  sync every account's chat index so each shows ALL conversations",
+    "  keyflip consolidate [--dry-run] [--watch] [--no-instances]  sync every account's chat index so each shows ALL conversations",
   );
-  print('                                 (base app + keyflip clone User Data stores; --no-instances skips clones)');
+  print(
+    '                                 (base app + keyflip clone User Data stores; --dry-run prints the plan, --no-instances skips clones)',
+  );
   print('  keyflip sessions [--search T] [--here]   browse Claude Code conversations (all accounts)');
   print("  keyflip sessions rebind <old-path> <new-path>   re-link a project's chat history after you");
   print('                                 renamed/moved its folder (transcripts + desktop-app records)');
@@ -335,6 +351,9 @@ function usage() {
   print(
     '  keyflip recall "<query>" [--semantic] [--answer]   search your chats (BM25; --semantic = embeddings; --answer = `claude -p` synthesis)',
   );
+  print("  keyflip conv [list|search|show|index|context|export|transfer|status]   EVERY local tool's chats in one");
+  print('                                 shape: browse, search (BM25 + optional embeddings), build a RAG context');
+  print('                                 block, export to Obsidian/MD/HTML/JSON, hand off to another AI tool');
   print(
     '  keyflip settings [show | get <k> | set <k> <v>]   view/edit ~/.claude/settings.json (rides `migrate` to other machines)',
   );
@@ -367,11 +386,19 @@ function usage() {
   print('                                 usage; `kiro import <slug>` migrates keyflip:surface:kiro:* captures');
   print('  keyflip antigravity [status|list|capture|switch]  ANTIGRAVITY CLI (Keychain gemini/antigravity):');
   print('                                 capture/save current login, switch accounts, list saved ones');
-  print('  keyflip chatgpt [status|list|capture|switch|refresh]  CHATGPT.app + CODEX CLI share ONE');
+  print('  keyflip chatgpt [status|list|capture|switch|refresh|backups]  CHATGPT.app + CODEX CLI share ONE');
   print('                                 login (~/.codex/auth.json): capture/switch/remove it, refresh in place');
-  print('  keyflip skill add <owner/repo|./dir|file.tgz>   install a skill; also: skill list|remove');
+  print('  keyflip commandcode [status|list|capture|switch|backups|restore|remove]  COMMAND CODE (`cmd`) — CLI +');
+  print('                                 VS Code extension share ~/.commandcode/auth.json: capture, switch,');
+  print('                                 undo a switch from its backups; the web dashboard is a separate login');
+  print('  keyflip skill add <owner/repo|./dir|file.tgz>   install a skill into every agent here');
+  print('                                 (`skill agents` lists targets, `skill sync|list|remove` follow up)');
   print('  keyflip proxy start [--wire] | stop | status | stats');
-  print('                                 command-started failover proxy (429/5xx → next account)');
+  print('                                 command-started failover proxy (429/5xx → next account; honors');
+  print('                                 Retry-After, parks failing accounts, x-keyflip-* debug headers)');
+  print('  keyflip cooldown [clear <acct>|--all]   per-account cooldown readout / reset');
+  print('  keyflip tier [<acct> <tier|auto>]       subscription tier per account (Free≠Opus): what the');
+  print('                                 proxy may route to, and a manual override when detection is wrong');
   print('  keyflip status                which account each surface is on (CLI + desktop app)');
   print('  keyflip verify [acct] [--usage|--live]  would switching there WORK right now? reads each');
   print('                                 surface back the way its own app does (token/cookie expiry, capture age)');
@@ -421,7 +448,9 @@ function usage() {
   print(
     '  keyflip jobs [list|run|clear] · keyflip fanout "<prompt>" --accounts a,b,c   job queue + same prompt across N accounts',
   );
-  print('  keyflip cost [status|predict <acct>|by-project]   spend/utilization, time-to-limit, per-repo attribution');
+  print(
+    '  keyflip cost [status|predict <acct>|by-project|rates]  spend/utilization, time-to-limit, per-repo attribution, rate cards',
+  );
   print(
     '  keyflip team <publish|pull|members|add-member|remove-member> --dir <shared> --pool <n> --passphrase-file <f>   encrypted team pool (roles)',
   );
@@ -475,7 +504,7 @@ function usage() {
   print('  keyflip import <file|->       restore accounts from an export (--force overwrites)');
   print('  keyflip mcp [--setup|--register]  MCP server over stdio for agents (--register wires it');
   print('                                 into Claude Code + Desktop with absolute paths)');
-  print('  keyflip install-skill         install the Claude Code skill that teaches agents keyflip');
+  print('  keyflip install-skill         install the keyflip skill into every agent on this machine');
   print('  keyflip upgrade               update keyflip itself (auto-detects install method)');
   print('  keyflip reset [--soft] [--logout [--no-desktop]]   FACTORY reset: DELETE all keyflip data');
   print('                                 (--soft keeps accounts, clears only runtime state;');
@@ -2117,9 +2146,13 @@ async function cmdFanout(ctx, rest) {
 }
 
 // COST intelligence: unified spend, prediction, per-project attribution.
-function cmdCost(ctx, rest) {
+async function cmdCost(ctx, rest) {
   const sub = rest[0] || 'status';
   const args = rest.slice(1);
+  // The live price overlay (prices.js) wins per model id over the bundled
+  // snapshot; null when no cache is present. Hot-reloaded, so a refresh made in
+  // another terminal applies to the next command without a restart.
+  const table = prices.overlay(ctx);
   if (sub === 'status') {
     const u = cost.unified(ctx);
     if (JSON_MODE) {
@@ -2176,7 +2209,10 @@ function cmdCost(ctx, rest) {
   }
   if (sub === 'by-project') {
     const li = args.indexOf('--limit');
-    const r = cost.attribute(ctx, { maxSessions: li !== -1 ? parseInt(args[li + 1], 10) : undefined });
+    const r = cost.attribute(ctx, {
+      maxSessions: li !== -1 ? parseInt(args[li + 1], 10) : undefined,
+      prices: table,
+    });
     if (JSON_MODE) {
       jsonOut(r);
       return;
@@ -2199,7 +2235,161 @@ function cmdCost(ctx, rest) {
     if (r.note) print(style.dim(r.note));
     return;
   }
-  return fail('unknown: keyflip cost ' + sub + ' (use: status | predict <acct> | by-project)');
+  if (sub === 'rates') {
+    const model = args.filter(function (a) {
+      return a.indexOf('-') !== 0;
+    })[0];
+    const money = function (n) {
+      return '$' + (Math.round(n * 100) / 100).toFixed(2);
+    };
+    const describe = function (id) {
+      const c = cost.rateCard(id, table);
+      const lc = c.longContext;
+      print(
+        style.bold(id) +
+          (c.fallback ? style.dim(' (unknown model -> fallback card)') : '') +
+          '  in ' +
+          money(c.inputPerMTok) +
+          '/MTok · out ' +
+          money(c.outputPerMTok) +
+          '/MTok',
+      );
+      print(
+        '  cache  read 0.1x ' +
+          money(c.inputPerMTok * c.cache.read) +
+          ' · 5m write 1.25x ' +
+          money(c.inputPerMTok * c.cache.write5m) +
+          ' · 1h write 2x ' +
+          money(c.inputPerMTok * c.cache.write1h),
+      );
+      print(
+        '  long context  ' +
+          (lc
+            ? '200K+ prompt -> in 2x ' +
+              money(c.inputPerMTok * lc.inputMult) +
+              ' · out 1.5x ' +
+              money(c.outputPerMTok * lc.outputMult)
+            : 'not offered'),
+      );
+      print('  fast mode     ' + (c.fast ? c.fast + 'x on every rate' : 'not offered'));
+    };
+    if (model) {
+      if (JSON_MODE) {
+        jsonOut(cost.rateCard(model, table));
+        return;
+      }
+      describe(model);
+      return;
+    }
+    const ids = Object.keys(cost.PRICING);
+    if (table) {
+      Object.keys(table).forEach(function (id) {
+        if (ids.indexOf(id) === -1) ids.push(id);
+      });
+    }
+    if (JSON_MODE) {
+      jsonOut({
+        asOf: cost.PRICING_AS_OF,
+        live: !!table,
+        models: ids.map(function (id) {
+          return cost.rateCard(id, table);
+        }),
+      });
+      return;
+    }
+    print('Rate card (USD per MTok), as of ' + cost.PRICING_AS_OF + ':');
+    if (table) print(style.dim('live price cache in effect — keyflip cost prices shows its age and digest'));
+    ids.forEach(describe);
+    print(style.dim('Estimates: list prices drift, and unknown models get a conservative fallback card.'));
+    return;
+  }
+  if (sub === 'prices') {
+    const wantRefresh = args.indexOf('--refresh') !== -1;
+    const wantClear = args.indexOf('--clear') !== -1;
+    const pi = args.indexOf('--pin');
+    let pin = null;
+    if (pi !== -1) {
+      const raw = args[pi + 1];
+      if (!raw || raw.indexOf('--') === 0) {
+        return fail('--pin needs a 64-character sha-256 hex digest');
+      }
+      pin = raw;
+    }
+    const cfgPin = _cfg.get(ctx, 'cost.pricesSha256') || '';
+    const cfgUrl = _cfg.get(ctx, 'cost.pricesUrl') || '';
+    const url = process.env.KEYFLIP_PRICES_URL || cfgUrl || prices.DEFAULT_URL;
+    if (wantClear) {
+      const gone = prices.clear(ctx);
+      if (JSON_MODE) {
+        jsonOut({ cleared: gone });
+        return;
+      }
+      print(gone ? 'Price cache cleared; the bundled snapshot is in use again.' : 'No price cache to clear.');
+      return;
+    }
+    if (wantRefresh) {
+      const res = await prices.refresh(ctx, { url: url, pin: pin || cfgPin || null });
+      if (!res.ok) {
+        if (JSON_MODE) {
+          jsonOut(res);
+          process.exitCode = 1;
+          return;
+        }
+        return fail('price refresh failed: ' + res.error);
+      }
+      if (JSON_MODE) {
+        jsonOut(res);
+        return;
+      }
+      print(
+        'Price table refreshed: ' +
+          res.models +
+          ' models (' +
+          res.newModels +
+          ' new, ' +
+          res.repriced +
+          ' repriced, ' +
+          res.dropped +
+          ' dropped)',
+      );
+      print('  sha256 ' + res.digest);
+      print('  cached ' + res.fetchedAt + ' · ' + res.url);
+      if (res.pinMatches) print('  pin matches the configured cost.pricesSha256');
+      return;
+    }
+    const st = prices.describe(ctx, { pin: pin || cfgPin || null, url: url });
+    if (JSON_MODE) {
+      jsonOut(st);
+      return;
+    }
+    if (st.source === 'cache') {
+      print(
+        'Price table: live cache (' + st.models + ' models, fetched ' + st.fetchedAt + ', ' + st.ageHours + 'h ago)',
+      );
+      print('  bundled as-of ' + st.bundledAsOf + ' · ' + st.shadowed + ' ids repriced · ' + st.added + ' new');
+      print('  sha256 ' + st.digest);
+      print('  source ' + st.url);
+      if (st.pin) {
+        print(
+          st.pinMatches
+            ? '  pin (cost.pricesSha256) matches'
+            : '  pin (cost.pricesSha256) does NOT match — refresh refused earlier',
+        );
+      } else {
+        print(style.dim('  unpinned — pin it with: keyflip config set cost.pricesSha256 ' + st.digest));
+      }
+      return;
+    }
+    print('Price table: bundled snapshot (' + st.bundledAsOf + ', ' + st.bundledModels + ' models)');
+    print('  no live cache — keyflip cost prices --refresh fetches the LiteLLM price list');
+    print('  source ' + st.url);
+    return;
+  }
+  return fail(
+    'unknown: keyflip cost ' +
+      sub +
+      ' (use: status | predict <acct> | by-project | rates [model] | prices [--refresh|--clear|--pin <sha256>])',
+  );
 }
 
 // TEAM POOL: a shared, encrypted credential pool with role-scoped visibility.
@@ -2804,6 +2994,7 @@ function cmdLicense(ctx, rest) {
     case 'status': {
       const s = lic.status(ctx);
       const feats = lic.unlockedFeatures(ctx);
+      const enforced = lic.enforcementEnabled();
       if (JSON_MODE) {
         jsonOut({
           plan: lic.tier(ctx),
@@ -2813,6 +3004,7 @@ function cmdLicense(ctx, rest) {
           valid: s.valid,
           reason: s.reason,
           features: feats,
+          enforcement: enforced,
         });
         return;
       }
@@ -2820,6 +3012,14 @@ function cmdLicense(ctx, rest) {
       if (s.email) print('email:  ' + s.email);
       if (s.expiry) print('expiry: ' + s.expiry);
       print('features: ' + (feats.length ? feats.join(', ') : '(none — free)'));
+      // Say whether the paywall is actually gating anything. A valid pro
+      // license with enforcement off means "nothing is locked yet" — without
+      // this line that reads like a broken license.
+      print(
+        enforced
+          ? 'paywall: on (paid features are gated)'
+          : 'paywall: off (KEYFLIP_LICENSING is not set — paid features are not gated yet)',
+      );
       return;
     }
     case 'activate': {
@@ -3136,9 +3336,28 @@ function cmdSurfaces(ctx, rest) {
       ? style.bold(s.activeAccount)
       : style.dim(s.present ? 'account in opaque/secret store' : 'not detected');
     print('  ' + mark + ' ' + s.label.padEnd(16) + ' ' + who + '  ' + style.dim('[' + s.kind + ']'));
+    // A row that CAN be switched must say how — the old footer claimed no tool was switchable,
+    // which stopped being true the moment Command Code got its own group.
+    if (s.present && s.switchable && s.switchHint) print('      ' + style.dim('↳ ' + s.switchHint));
+  });
+  const switchable = all.filter(function (s) {
+    return s.present && s.switchable;
   });
   print('');
-  print(style.dim('Claude is managed by the other keyflip commands. Switching other tools is not supported yet.'));
+  print(
+    style.dim(
+      'Claude is managed by keyflip itself; ChatGPT/Codex and Kiro have their own groups. ' +
+        (switchable.length
+          ? 'Switchable from this list: ' +
+            switchable
+              .map(function (s) {
+                return s.label;
+              })
+              .join(', ') +
+            '.'
+          : 'The tools above are detection-only.'),
+    ),
+  );
 }
 
 // MCP server (stdio) so agents can inspect/switch accounts themselves.
@@ -3183,10 +3402,12 @@ async function cmdMcp(ctx, rest) {
   return mcp.serve(ctx);
 }
 
-// Install the bundled agent skill into ~/.claude/skills so Claude Code learns
-// when and how to drive keyflip.
+// Install the bundled agent skill into every agent on this machine that reads one. Claude keeps
+// skill.js's install (it backs up the previous copy and answers --check for drift); the same skill
+// dir is fanned out to the other detected agents through skillsync.
 function cmdInstallSkill(ctx, rest) {
   rest = rest || [];
+  const agents = skillAgentIds(rest);
   if (rest.indexOf('--check') !== -1) {
     const st = skill.status(ctx);
     print(
@@ -3196,7 +3417,20 @@ function cmdInstallSkill(ctx, rest) {
           ? style.warn('⚠ installed skill is out of date — run: keyflip install-skill --update')
           : 'not installed — run: keyflip install-skill',
     );
-    jsonOut({ skillStatus: st });
+    const rec = _skillsync.list(ctx).filter(function (s) {
+      return s.name === 'keyflip';
+    })[0];
+    if (rec)
+      rec.targets
+        .filter(function (t) {
+          return t.dir !== '.claude/skills'; // reported above, with its drift check
+        })
+        .forEach(function (t) {
+          const mark =
+            t.state === 'ok' ? style.ok('✓') : t.state === 'edited' ? style.warn('✎ edited') : style.warn('✗ missing');
+          print('  ' + mark + '  ' + t.dir);
+        });
+    jsonOut({ skillStatus: st, targets: rec ? rec.targets : [] });
     return;
   }
   let r;
@@ -3207,7 +3441,32 @@ function cmdInstallSkill(ctx, rest) {
   }
   print(style.ok('✅') + ' installed the keyflip skill to ' + r.dest + '  (' + r.mode + ')');
   if (r.mode === 'symlink') print('Symlinked — future keyflip upgrades update it automatically.');
-  print('Claude Code picks it up next session (account switching, provider routing,');
+  // One manifest for every agent, so `skill list`/`sync`/`remove` see the Claude copy too.
+  try {
+    _skillsync.recordTarget(
+      ctx,
+      'keyflip',
+      'claude',
+      '.claude/skills',
+      _skillsync.fingerprint(r.dest),
+      r.mode,
+      'dir:' + skill.sourceDir(),
+    );
+  } catch (e) {
+    /* a manifest problem must not undo a good install */
+  }
+  let fan = { installed: [], skipped: [] };
+  try {
+    fan = _skillsync.installBundled(ctx, { agents: agents });
+  } catch (e) {
+    print(style.warn('·') + ' other agents: ' + e.message);
+  }
+  fan.installed.forEach(function (s) {
+    s.targets.forEach(function (t) {
+      print('  ' + style.ok('✓') + ' ' + t.dir + '  (' + t.mode + ')');
+    });
+  });
+  print('Every agent reads it on its next session (account switching, provider routing,');
   print('usage-aware rotation, parallel sessions and the MCP tools).');
 }
 
@@ -3230,18 +3489,48 @@ function collectFlagValues(rest, flag) {
 }
 
 async function cmdProviderAdd(ctx, rest) {
-  const name = rest.filter(function (a) {
+  const positional = rest.filter(function (a) {
     return a.indexOf('-') !== 0;
-  })[0];
+  });
+  const fi = rest.indexOf('--from');
+  const fromId = fi !== -1 ? rest[fi + 1] : null;
+  let name = positional[0] || null;
   const bi = rest.indexOf('--base-url');
-  const baseUrl = bi !== -1 ? rest[bi + 1] : null;
+  let baseUrl = bi !== -1 ? rest[bi + 1] : null;
+
+  // Catalog preset: `provider add zai` or `provider add my-glm --from zai`.
+  let preset = null;
+  if (fromId) {
+    preset = _catalog.get(fromId);
+    if (!preset) return fail("no catalog entry: '" + fromId + "' (see: keyflip provider catalog)");
+    if (!name) name = fromId;
+  } else if (name) {
+    preset = _catalog.get(name);
+  }
+  // Bare `provider add`: numbered picker on a TTY, else tell the user the ids.
+  if (!name && !baseUrl) {
+    if (!process.stdin.isTTY || JSON_MODE) {
+      return fail(
+        'usage: keyflip provider add <id|name> [--base-url <url>] [--from <catalog-id>] …\n' +
+          '       ids: keyflip provider catalog\n' +
+          '       any endpoint: keyflip provider add <name> --base-url <url>',
+      );
+    }
+    preset = await pickCatalogEntry();
+    if (!preset) {
+      print('Cancelled.');
+      return;
+    }
+    name = preset.id;
+  }
+  if (!baseUrl && preset) baseUrl = preset.baseUrl;
   if (!name || !baseUrl)
     return fail(
       'usage: keyflip provider add <name> --base-url <url> [--auth-scheme bearer|api-key] [--model default=… --model haiku=…] [--endpoint <url>]… [--key-file <file|->]',
     );
   if (!/^https?:\/\//.test(baseUrl)) return fail('--base-url must be an http(s) URL');
   const asi = rest.indexOf('--auth-scheme');
-  const authScheme = asi !== -1 ? rest[asi + 1] : 'bearer';
+  const authScheme = asi !== -1 ? rest[asi + 1] : preset ? preset.authScheme : 'bearer';
   // The API key is a secret: read it from a file/stdin (never argv, never `ps`).
   let key = null;
   const kfi = rest.indexOf('--key-file');
@@ -3254,16 +3543,133 @@ async function cmdProviderAdd(ctx, rest) {
   } else if (process.stdin.isTTY) {
     key = (await promptHidden('API key for ' + name + ' (leave blank for none): ')).trim() || null;
   }
+  const models = Object.assign({}, preset ? preset.models : {}, parseModels(rest));
   const meta = provider.add(ctx, name, {
     baseUrl: baseUrl,
     authScheme: authScheme,
+    compat: preset ? preset.compat : 'anthropic',
     key: key,
-    models: parseModels(rest),
+    models: models,
     endpointCandidates: collectFlagValues(rest, '--endpoint'),
   });
   logmod.log('provider add ' + name);
   print(style.ok('✅') + " saved provider '" + name + "' -> " + meta.baseUrl + (key ? '' : '  (no key stored)'));
+  if (meta.compat === 'openai')
+    print(
+      style.warn('⚠') +
+        ' this endpoint speaks the OpenAI chat API — Claude Code cannot use it directly.' +
+        ' Point ANTHROPIC_BASE_URL at an Anthropic-compatible gateway, or use it via the proxy/router.',
+    );
+  if (preset && preset.docs) print('Docs: ' + preset.docs);
   print('Activate it with:  keyflip use ' + name + '    (back to your subscription:  keyflip provider off)');
+}
+
+// Numbered, category-grouped picker for a bare `keyflip provider add`.
+function pickCatalogEntry() {
+  const rows = _catalog.list();
+  print('Pick a provider:');
+  let n = 0;
+  _catalog.categories().forEach(function (cat) {
+    print('  ' + style.bold(_catalog.categoryLabel(cat)));
+    rows
+      .filter(function (e) {
+        return e.category === cat;
+      })
+      .forEach(function (e) {
+        n++;
+        e._n = n;
+        print(
+          '    ' +
+            String(n).padStart(2) +
+            ') ' +
+            e.name +
+            '  ' +
+            style.dim(e.baseUrl + (e.compat === 'openai' ? '  (OpenAI-compatible)' : '')),
+        );
+      });
+  });
+  return new Promise(function (resolve) {
+    const rl = _readline.createInterface({ input: process.stdin, output: process.stderr, terminal: true });
+    process.stderr.write('Number (blank to cancel): ');
+    rl.question('', function (a) {
+      rl.close();
+      const pick = parseInt(String(a).trim(), 10);
+      resolve(
+        rows.filter(function (e) {
+          return e._n === pick;
+        })[0] || null,
+      );
+    });
+  });
+}
+
+function cmdProviderCatalog(ctx) {
+  const rows = _catalog.list();
+  if (JSON_MODE) {
+    jsonOut({
+      catalog: rows.map(function (e) {
+        return {
+          id: e.id,
+          name: e.name,
+          category: e.category,
+          baseUrl: e.baseUrl,
+          compat: e.compat,
+          authScheme: e.authScheme,
+          models: e.models,
+          docs: e.docs,
+        };
+      }),
+    });
+    return;
+  }
+  _catalog.categories().forEach(function (cat) {
+    print(style.bold(_catalog.categoryLabel(cat)));
+    rows
+      .filter(function (e) {
+        return e.category === cat;
+      })
+      .forEach(function (e) {
+        const model = e.models.default ? '  · ' + e.models.default : '';
+        print(
+          '  ' +
+            (e.id + '            ').slice(0, 12) +
+            e.name +
+            (e.compat === 'openai' ? style.dim('  (OpenAI API — needs a shim)') : '') +
+            style.dim(model),
+        );
+      });
+  });
+  print('');
+  print('Add one with only a key:  keyflip provider add <id> --key-file -');
+}
+
+async function cmdProviderModels(ctx, rest) {
+  const name = rest.filter(function (a) {
+    return a.indexOf('-') !== 0;
+  })[0];
+  if (!name) return fail('usage: keyflip provider models <id|saved-provider>   (queries GET /v1/models)');
+  let meta = provider.read(ctx, name);
+  if (!meta) {
+    const preset = _catalog.get(name);
+    if (!preset) return fail("no such provider or catalog entry: '" + name + "'");
+    meta = { name: null, baseUrl: preset.baseUrl, authScheme: preset.authScheme, compat: preset.compat };
+  }
+  const r = await _catalog.fetchModels(ctx, meta);
+  if (JSON_MODE) {
+    jsonOut({ provider: name, url: _catalog.modelsUrl(meta.baseUrl), result: r });
+    return;
+  }
+  if (!r.ok) {
+    print(style.err('✗') + ' ' + name + ': ' + (r.error || 'failed') + (r.status ? ' (http ' + r.status + ')' : ''));
+    return;
+  }
+  print(style.ok('✓') + ' ' + name + ' lists ' + r.models.length + ' model(s) (' + r.ms + 'ms):');
+  r.models.slice(0, 40).forEach(function (m) {
+    print('  ' + m);
+  });
+  if (r.models.length > 40) print('  … ' + (r.models.length - 40) + ' more');
+  if (!meta.models || !meta.models.default)
+    print(style.dim('Pin a default with:  keyflip config  (or provider add --model default=' + r.models[0] + ')'));
 }
 
 function cmdProviderList(ctx) {
@@ -3273,7 +3679,12 @@ function cmdProviderList(ctx) {
     jsonOut({
       providers: names.map(function (n) {
         const m = provider.read(ctx, n);
-        return { name: n, baseUrl: m && m.baseUrl, active: !!(active && active.name === n) };
+        return {
+          name: n,
+          baseUrl: m && m.baseUrl,
+          compat: (m && m.compat) || 'anthropic',
+          active: !!(active && active.name === n),
+        };
       }),
       active: active ? active.name : null,
     });
@@ -3292,6 +3703,7 @@ function cmdProviderList(ctx) {
         n +
         '   ' +
         (m ? m.baseUrl : '?') +
+        (m && m.compat === 'openai' ? style.dim('  (OpenAI API — Claude Code needs a shim)') : '') +
         (active && active.name === n ? '   ← active' : ''),
     );
   });
@@ -3309,6 +3721,15 @@ async function cmdProviderUse(ctx, name) {
     return;
   }
   if (!provider.exists(ctx, name)) return fail("no such provider: '" + name + "' (see: keyflip provider list)");
+  const meta = provider.read(ctx, name);
+  if (meta && meta.compat === 'openai')
+    print(
+      style.warn('⚠') +
+        ' ' +
+        name +
+        ' speaks the OpenAI chat API — Claude Code expects the Anthropic Messages API.' +
+        ' Only use it with an Anthropic-compatible gateway on that URL.',
+    );
   const r = provider.use(ctx, name);
   logmod.log('provider -> ' + name);
   print(style.ok('✅') + ' Claude Code now uses provider: ' + name + '  (' + r.baseUrl + '). No restart needed.');
@@ -3330,6 +3751,11 @@ async function cmdProvider(ctx, rest) {
     case 'list':
     case undefined:
       return cmdProviderList(ctx);
+    case 'catalog':
+    case 'presets':
+      return cmdProviderCatalog(ctx);
+    case 'models':
+      return cmdProviderModels(ctx, args);
     case 'use':
       return withLock(
         ctx,
@@ -3770,6 +4196,33 @@ function positionals(args, valueFlags) {
   }
   return out;
 }
+// One line per MCP surface: what it is, where its config is, and which registered servers it
+// carries. A surface keyflip cannot write is named WITH the reason — never dropped silently.
+function shortHome(ctx, p) {
+  if (!p) return '';
+  const h = ctx.home || '';
+  return h && p.indexOf(h + path.sep) === 0 ? '~' + p.slice(h.length) : p;
+}
+function skipReason(r) {
+  const map = {
+    'skipped-no-config': 'no config file yet',
+    'skipped-not-installed': 'agent not installed',
+    'skipped-jsonc': 'opencode.jsonc has comments keyflip will not drop',
+  };
+  return map[r] || String(r).replace(/^skipped-/, '');
+}
+function surfaceLine(ctx, r) {
+  const name = String(r.id).padEnd(16);
+  if (r.supported === false) return style.dim('○ ' + name + 'not projected — ' + r.reason);
+  if (r.state === 'unreadable') return style.warn('! ') + name + shortHome(ctx, r.path) + '  ' + style.dim(r.error);
+  if (r.state === 'ready') {
+    const used = r.servers && r.servers.length ? '  ' + style.dim('[' + r.servers.join(', ') + ']') : '';
+    return style.ok('●') + ' ' + name + shortHome(ctx, r.path) + used;
+  }
+  if (r.state === 'will-create') return style.dim('+ ' + name + 'will create ' + shortHome(ctx, r.path));
+  return style.dim('○ ' + name + skipReason('skipped-' + r.state) + '  ' + shortHome(ctx, r.path));
+}
+
 function cmdMcpreg(ctx, rest) {
   const sub = rest[0];
   const args = rest.slice(1);
@@ -3788,16 +4241,33 @@ function cmdMcpreg(ctx, rest) {
   }
   if (sub === 'list' || sub === undefined) {
     const items = mcpreg.list(ctx);
+    const rows = mcpreg.surfaces(ctx);
     if (JSON_MODE) {
-      jsonOut({ servers: items });
+      jsonOut({ servers: items, surfaces: rows });
       return;
     }
     if (!items.length) {
       print('No MCP servers registered (add one: keyflip mcpreg add …).');
+    } else {
+      items.forEach(function (s) {
+        print('  ' + s.name + '   ' + s.command + ' ' + (s.args || []).join(' '));
+      });
+    }
+    print('');
+    print('Surfaces:');
+    rows.forEach(function (r) {
+      print('  ' + surfaceLine(ctx, r));
+    });
+    return;
+  }
+  if (sub === 'surfaces') {
+    const rows = mcpreg.surfaces(ctx);
+    if (JSON_MODE) {
+      jsonOut({ surfaces: rows });
       return;
     }
-    items.forEach(function (s) {
-      print('  ' + s.name + '   ' + s.command + ' ' + (s.args || []).join(' '));
+    rows.forEach(function (r) {
+      print(surfaceLine(ctx, r));
     });
     return;
   }
@@ -3805,23 +4275,44 @@ function cmdMcpreg(ctx, rest) {
     const name = args.filter(function (a) {
       return a.indexOf('-') !== 0;
     })[0];
-    if (!name) return fail('usage: keyflip mcpreg ' + sub + ' <name> [--code|--desktop|--all]');
+    if (!name) return fail('usage: keyflip mcpreg ' + sub + ' <name> [--surface <id>|--code|--desktop|--all]');
     const surfaces = [];
-    if (args.indexOf('--all') !== -1 || (args.indexOf('--code') === -1 && args.indexOf('--desktop') === -1)) {
-      surfaces.push('claude-code', 'claude-desktop');
-    } else {
-      if (args.indexOf('--code') !== -1) surfaces.push('claude-code');
-      if (args.indexOf('--desktop') !== -1) surfaces.push('claude-desktop');
+    for (let i = 0; i < args.length; i++) {
+      if (args[i] === '--surface' && args[i + 1]) surfaces.push(args[i + 1]);
+      if (args[i] === '--code') surfaces.push('claude-code');
+      if (args[i] === '--desktop') surfaces.push('claude-desktop');
     }
-    surfaces.forEach(function (s) {
+    // No surface named = every surface this machine has. Writing only Claude's two left the
+    // same server unconfigured in the other agents on the same machine — the whole point of a
+    // registry is that you say it once.
+    const ids = surfaces.length ? surfaces : mcpreg.TARGET_IDS;
+    ids.forEach(function (s) {
       const r = mcpreg.setEnabled(ctx, name, s, sub === 'enable');
       print(
         '  ' +
           s +
           ': ' +
-          (r === 'skipped-no-config' ? 'skipped (app config not present)' : sub === 'enable' ? 'enabled' : 'disabled'),
+          (r === 'applied' ? (sub === 'enable' ? 'enabled' : 'disabled') : 'skipped (' + skipReason(r) + ')'),
       );
     });
+    if (surfaces.length === 0) {
+      const gaps = mcpreg.surfaces(ctx).filter(function (r) {
+        return r.supported === false;
+      });
+      if (gaps.length) {
+        print(
+          style.dim(
+            '  not projected: ' +
+              gaps
+                .map(function (g) {
+                  return g.app;
+                })
+                .join(', ') +
+              ' — run `keyflip mcpreg surfaces` for why',
+          ),
+        );
+      }
+    }
     return;
   }
   if (sub === 'remove' || sub === 'rm') {
@@ -3834,7 +4325,7 @@ function cmdMcpreg(ctx, rest) {
     print('imported ' + imp.length + ' server(s): ' + imp.join(', '));
     return;
   }
-  return fail('usage: keyflip mcpreg [add|list|enable|disable|remove|import]');
+  return fail('usage: keyflip mcpreg [add|list|surfaces|enable|disable|remove|import]');
 }
 
 // #17 Claude Desktop third-party gateway
@@ -4049,6 +4540,7 @@ function cmdAgents(ctx, rest) {
   const agents = _agents;
   const present = agents.presentAgents(ctx);
   const cfgPresent = agents.presentAgentConfig(ctx);
+  const installed = agents.installedAgents(ctx);
   const rows = agents.REGISTRY.map(function (a) {
     const files = present.indexOf(a.id) !== -1 ? agents.collectAgentMemory(ctx, { only: [a.id] }) : [];
     const cfg = cfgPresent.indexOf(a.id) !== -1 ? agents.collectAgentConfig(ctx, { only: [a.id] }) : [];
@@ -4060,6 +4552,7 @@ function cmdAgents(ctx, rest) {
       label: a.label,
       roots: a.roots,
       present: present.indexOf(a.id) !== -1,
+      installed: installed.indexOf(a.id) !== -1,
       files: files.length,
       config: cfg.length,
       redactions: redactions,
@@ -4075,7 +4568,7 @@ function cmdAgents(ctx, rest) {
       style.dim('(memory = home-level markdown; config = MCP/settings, redacted):'),
   );
   rows.forEach(function (r) {
-    const mark = r.present || r.config ? style.ok('●') : style.dim('○');
+    const mark = r.installed ? style.ok('●') : style.dim('○');
     const parts = [];
     if (r.present) parts.push(r.files + ' memory file(s)');
     if (r.config)
@@ -4084,7 +4577,8 @@ function cmdAgents(ctx, rest) {
           ' config file(s)' +
           (r.redactions ? ' (' + r.redactions + ' secret' + (r.redactions === 1 ? '' : 's') + ' redacted)' : ''),
       );
-    const detail = parts.length ? parts.join(', ') : 'not found';
+    if (!parts.length) parts.push(r.installed ? 'installed — nothing to carry here' : 'not found');
+    const detail = parts.join(', ');
     print('  ' + mark + ' ' + r.label.padEnd(12) + ' ' + style.dim(detail));
   });
   const anyMem = rows.some(function (r) {
@@ -4106,7 +4600,14 @@ function cmdAgents(ctx, rest) {
         style.bold('keyflip migrate export bundle.json --agent-config') +
         style.dim('  (secrets are ALWAYS redacted — re-enter keys on the new machine)'),
     );
-  if (!anyMem && !anyCfg) print(style.dim('None detected on this machine. Auth/credential files are never carried.'));
+  if (!anyMem && !anyCfg)
+    print(
+      style.dim(
+        installed.length
+          ? 'Installed, but there is no home-level memory/config to carry (auth files are never carried).'
+          : 'None detected on this machine. Auth/credential files are never carried.',
+      ),
+    );
 }
 
 // Move a whole machine's Claude world to another one: ALL accounts (secrets) +
@@ -5159,19 +5660,21 @@ async function cmdProxy(ctx, rest) {
     return;
   }
   if (sub === 'status' || sub === undefined) {
+    const route = proxy.routeState(ctx);
     if (JSON_MODE) {
-      jsonOut({ running: !!running, meta: meta });
+      jsonOut({ running: !!running, meta: meta, route: route });
       return;
     }
     if (!running) {
       print('proxy: not running (start it with: keyflip proxy start [--wire])');
-      return;
+    } else {
+      print('proxy: running on ' + meta.url + ' (pid ' + meta.pid + ')' + (meta.wired ? ', wired' : ''));
+      const st = proxy.stats(ctx);
+      print(
+        '  routed ' + st.total + ' request(s); accounts used: ' + (Object.keys(st.byAccount).join(', ') || 'none yet'),
+      );
     }
-    print('proxy: running on ' + meta.url + ' (pid ' + meta.pid + ')' + (meta.wired ? ', wired' : ''));
-    const st = proxy.stats(ctx);
-    print(
-      '  routed ' + st.total + ' request(s); accounts used: ' + (Object.keys(st.byAccount).join(', ') || 'none yet'),
-    );
+    printRouteLines(route);
     return;
   }
   if (sub === 'stats') {
@@ -5180,15 +5683,341 @@ async function cmdProxy(ctx, rest) {
       jsonOut(st);
       return;
     }
-    print('Proxy usage (' + st.total + ' requests):');
+    print(
+      'Proxy usage (' +
+        st.total +
+        ' requests' +
+        (st.costUSD ? ', ~' + cost.fmtUsd(st.costUSD) + ' list price' : '') +
+        '):',
+    );
     Object.keys(st.byAccount).forEach(function (a) {
       const x = st.byAccount[a];
-      print('  ' + a + ': ' + x.requests + ' req, ' + x.inputTokens + ' in / ' + x.outputTokens + ' out tokens');
+      const cache =
+        x.cacheReadTokens || x.cacheCreationTokens
+          ? ', ' + (x.cacheReadTokens || 0) + ' cache read / ' + (x.cacheCreationTokens || 0) + ' cache write'
+          : '';
+      print(
+        '  ' +
+          a +
+          ': ' +
+          x.requests +
+          ' req, ' +
+          x.inputTokens +
+          ' in / ' +
+          x.outputTokens +
+          ' out tokens' +
+          cache +
+          (x.costUSD ? '  ~' + cost.fmtUsd(x.costUSD) + (x.estimated ? ' (est)' : '') : ''),
+      );
     });
     if (!st.total) print('  (nothing yet)');
     return;
   }
-  return fail('usage: keyflip proxy [start [--port N] [--wire] | stop | status | stats]');
+  if (sub === 'routes') return cmdProxyRoutes(ctx, rest.slice(1));
+  if (sub === 'explain') return cmdProxyExplain(ctx, rest.slice(1));
+  return fail(
+    'usage: keyflip proxy [start [--port N] [--wire] | stop | status | stats | routes [init] | explain [--model M]]',
+  );
+}
+
+// `keyflip proxy routes [init] [--json]` — the declarative routing file
+// (<configDir>/proxy-routes.json): what it says, what it got wrong, and a
+// starter file to edit. `init` never overwrites an existing file.
+function cmdProxyRoutes(ctx, rest) {
+  const file = proxyroutes.routesPath(ctx);
+  if (rest.indexOf('init') !== -1) {
+    if (fs.existsSync(file) && rest.indexOf('--force') === -1)
+      return fail('proxy-routes.json already exists: ' + file + ' (edit it, or add --force to replace)');
+    const tpl = {
+      version: 1,
+      note: 'Rules are first-match. when: model/path/header/tokensGt/account/user (glob * ?). use: account and/or model. Fallback: off|retry|model-chain.',
+      fallback: 'retry',
+      sticky: { enabled: true, ttlSeconds: 1800 },
+      modelChain: [],
+      rules: [{ name: 'big-context', when: { tokensGt: 120000 }, use: { account: 'REPLACE_ME' } }],
+      transforms: { setHeaders: {}, removeHeaders: [], bodyModel: null, maxTokens: null },
+    };
+    // A template must not be a broken config: it is written with no rules, and
+    // the example lives in `note`.
+    tpl.rules = [];
+    try {
+      fs.mkdirSync(ctx.configDir, { recursive: true });
+      fs.writeFileSync(file, JSON.stringify(tpl, null, 2) + '\n', { mode: 0o600 });
+    } catch (e) {
+      return fail('could not write ' + file + ': ' + (e && e.message));
+    }
+    proxyroutes.resetCache();
+    if (JSON_MODE) {
+      jsonOut({ created: file });
+      return;
+    }
+    print(style.ok('✅') + ' wrote ' + style.bold(file));
+    print('   Edit it — the running proxy picks changes up on the NEXT request (no restart).');
+    print('   Check what it means with: keyflip proxy routes');
+    return;
+  }
+  const d = proxyroutes.describe(ctx);
+  if (JSON_MODE) {
+    jsonOut(d);
+    return;
+  }
+  printRoutes(d);
+}
+
+// `keyflip proxy explain [--model M] [--tokens N] [--path P] [--user U]
+// [--header k:v …] [--run-hook] [--json]` — the decision for a hypothetical
+// request, without sending it.
+async function cmdProxyExplain(ctx, rest) {
+  const headers = {};
+  rest.forEach(function (x, i) {
+    if (x !== '--header') return;
+    const h = rest[i + 1] || '';
+    const k = h.indexOf(':');
+    if (k > 0) headers[h.slice(0, k).trim()] = h.slice(k + 1).trim();
+  });
+  const sel = {
+    model: flagVal(rest, '--model'),
+    tokens: parseInt(flagVal(rest, '--tokens'), 10),
+    path: flagVal(rest, '--path'),
+    user: flagVal(rest, '--user'),
+    headers: headers,
+  };
+  const out = await proxy.explain(ctx, sel, { runHook: rest.indexOf('--run-hook') !== -1 });
+  if (JSON_MODE) {
+    jsonOut(out);
+    return;
+  }
+  print(
+    'Request: ' +
+      (out.input.model || '(no model)') +
+      ' · ' +
+      out.input.path +
+      (out.input.tokens ? ' · ~' + out.input.tokens + ' tokens' : '') +
+      (out.input.user ? ' · user ' + out.input.user : ''),
+  );
+  const d = out.decision;
+  print(
+    '  decision: ' +
+      d.reason +
+      (d.account ? ' → ' + style.bold(d.account) : '') +
+      (d.model ? ' · model ' + d.model : '') +
+      (d.hookError ? '  ' + style.warn('(hook: ' + d.hookError + ')') : ''),
+  );
+  print('  order: ' + (out.order.length ? out.order.join(' → ') : '(no usable account)'));
+  if (out.skipped && out.skipped.length)
+    print(
+      '  skipped by tier: ' +
+        out.skipped
+          .map(function (s) {
+            return s.name + ' (' + s.label + ')';
+          })
+          .join(', '),
+    );
+  if (out.waitSeconds) print('  all parked — first frees in ' + fmtSeconds(out.waitSeconds));
+  const r = out.routes;
+  print(
+    '  policy: fallback ' +
+      r.fallback +
+      '; sticky ' +
+      (r.sticky.enabled ? 'on ' + fmtSeconds(r.sticky.ttlSeconds) : 'off') +
+      '; model chain ' +
+      (r.modelChain.length ? r.modelChain.join(' → ') : 'none'),
+  );
+}
+
+// The `proxy routes` readout, shared with `proxy status` so the two agree.
+function printRoutes(d) {
+  print('Routing file: ' + d.path + (d.exists ? '  (' + fmtAge(Date.now() - Date.parse(d.mtime)) + ' old)' : ''));
+  if (!d.exists) {
+    print('  (not created — defaults: active first, then least-recently-used; fallback retry)');
+    print('  Create a starter file with: keyflip proxy routes init');
+  }
+  d.errors.forEach(function (e) {
+    print('  ' + style.warn('⚠️ ' + e));
+  });
+  if (d.errors.length) print('  (an invalid file is ignored — the defaults above apply)');
+  print(
+    '  fallback: ' +
+      d.fallback +
+      ' · sticky: ' +
+      (d.sticky.enabled ? 'on, ' + fmtSeconds(d.sticky.ttlSeconds) : 'off') +
+      ' · model chain: ' +
+      (d.modelChain.length ? d.modelChain.join(' → ') : 'none'),
+  );
+  d.rules.forEach(function (r) {
+    const bits = Object.keys(r.when).map(function (k) {
+      return k + '=' + JSON.stringify(r.when[k]);
+    });
+    const use = [];
+    if (r.use.account) use.push('account ' + r.use.account);
+    if (r.use.model) use.push('model ' + r.use.model);
+    print(
+      '  rule #' + r.index + (r.name ? ' (' + r.name + ')' : '') + ': ' + bits.join(' & ') + ' → ' + use.join(', '),
+    );
+  });
+  const t = d.transforms;
+  const tb = [];
+  if (Object.keys(t.setHeaders).length) tb.push('set ' + Object.keys(t.setHeaders).join(','));
+  if (t.removeHeaders.length) tb.push('remove ' + t.removeHeaders.join(','));
+  if (t.bodyModel) tb.push('model ' + t.bodyModel);
+  if (t.maxTokens) tb.push('max_tokens ≤ ' + t.maxTokens);
+  print('  transforms: ' + (tb.length ? tb.join(' · ') : 'none'));
+  print('  custom router: ' + (d.customRouter ? d.customRouter.command + ' (' + d.customRouter.source + ')' : 'none'));
+}
+
+// The routing decision and every account's readiness, printed identically by
+// `proxy status` and `cooldown` so the two never tell different stories.
+function printRouteLines(route) {
+  print(
+    '  route order: ' +
+      (route.order.length ? route.order.join(' → ') : '(no usable account)') +
+      (route.waitSeconds ? '  (all parked — first frees in ' + fmtSeconds(route.waitSeconds) + ')' : ''),
+  );
+  route.accounts.forEach(function (a) {
+    const bits = [];
+    if (a.active) bits.push('active');
+    if (a.tierLabel) bits.push(a.tierLabel.toLowerCase() + (a.tierSource === 'override' ? ' (override)' : ''));
+    if (a.coolingSeconds) bits.push('cooling ' + fmtSeconds(a.coolingSeconds) + ' · ' + a.cooldownKind);
+    if (a.breaker !== 'closed') bits.push('breaker ' + a.breaker);
+    if (a.priority !== -1) bits.push('priority #' + (a.priority + 1));
+    print('    ' + (a.name + '                ').slice(0, 16) + (bits.length ? bits.join(' · ') : 'ready'));
+  });
+  const c = route.policy.cooldownSeconds;
+  print(
+    '  policy: wait≤' +
+      route.policy.maxWaitSeconds +
+      's on Retry-After; cooldowns quota ' +
+      c.quota +
+      's / throttled ' +
+      c.throttled +
+      's / overloaded ' +
+      c.overloaded +
+      's / auth ' +
+      c.auth +
+      's / server ' +
+      c.server +
+      's',
+  );
+  const rr = route.routes;
+  if (rr) {
+    const bits = ['fallback ' + rr.fallback];
+    if (rr.sticky.enabled) bits.push('sticky ' + fmtSeconds(rr.sticky.ttlSeconds));
+    if (rr.modelChain.length) bits.push('chain ' + rr.modelChain.join('→'));
+    if (rr.rules.length) bits.push(rr.rules.length + ' rule(s)');
+    print('  rules: ' + (rr.exists ? bits.join(' · ') : 'none (no proxy-routes.json)'));
+    rr.errors.forEach(function (e) {
+      print('  ' + style.warn('⚠️ ' + e));
+    });
+  }
+}
+
+// `keyflip cooldown [clear <account>|--all]` — the readout/reset for per-account
+// cooldowns parked by the failover proxy (#11).
+function cmdCooldown(ctx, rest) {
+  const sub = rest[0];
+  if (sub === 'clear' || sub === 'reset') {
+    const all = rest.indexOf('--all') !== -1;
+    const name = rest.slice(1).filter(function (a) {
+      return a.indexOf('-') !== 0;
+    })[0];
+    if (!name && !all) return fail('usage: keyflip cooldown clear <account> | --all');
+    const cleared = proxy.clearCooldowns(ctx, all ? null : name);
+    if (JSON_MODE) {
+      jsonOut({ cleared: cleared });
+      return;
+    }
+    print(
+      cleared.length
+        ? style.ok('✅') + ' cleared cooldown: ' + cleared.join(', ')
+        : 'no active cooldown' + (name ? ' for ' + name : ''),
+    );
+    return;
+  }
+  const route = proxy.routeState(ctx);
+  if (JSON_MODE) {
+    jsonOut(route);
+    return;
+  }
+  print('Account rotation readiness:');
+  if (!route.accounts.length) print('  (no accounts with CLI credentials yet)');
+  printRouteLines(route);
+}
+
+// `keyflip tier` — what plan keyflip believes each account is on, and which model
+// families that plan may use (#12). `keyflip tier <account> <tier|auto>` pins an
+// override on the account's metadata when the vendor's own string is wrong.
+function fmtTierFamilies(list) {
+  return (
+    (list || [])
+      .map(function (f) {
+        return f.charAt(0).toUpperCase() + f.slice(1);
+      })
+      .join(' · ') || '-'
+  );
+}
+function cmdTier(ctx, rest) {
+  const args = rest.filter(function (a) {
+    return a.indexOf('-') !== 0;
+  });
+  if (args.length >= 2) {
+    const name = core.resolveProfile(ctx, args[0]);
+    if (!name) return fail("no such account: '" + args[0] + "'");
+    const meta = profiles.read(ctx.configDir, name) || { name: name };
+    let next;
+    try {
+      next = tiers.applyOverride(meta, args[1]);
+    } catch (e) {
+      return fail(e.message);
+    }
+    if (next.tier === meta.tier) {
+      if (JSON_MODE) return jsonOut({ account: name, tier: next.tier || null, changed: false });
+      return print('tier for ' + name + ' is already ' + (next.tier || 'auto'));
+    }
+    profiles.write(ctx.configDir, next);
+    if (JSON_MODE) {
+      jsonOut({ account: name, tier: next.tier || null, changed: true });
+      return;
+    }
+    print(
+      style.ok('✅') +
+        ' tier for ' +
+        name +
+        ': ' +
+        (next.tier ? tiers.labelOf(next.tier) : 'auto-detected') +
+        (next.tier ? ' (override)' : ''),
+    );
+    return;
+  }
+  if (args.length === 1) return fail('usage: keyflip tier [<account> <tier|auto>]');
+  const st = proxy.tierState(ctx);
+  if (JSON_MODE) {
+    jsonOut(st);
+    return;
+  }
+  if (!st.accounts.length) return print('No saved accounts with CLI credentials yet.');
+  print('Subscription tiers (filter ' + (st.filter ? 'on' : 'off') + '):');
+  st.accounts.forEach(function (a) {
+    const bits = [];
+    if (a.active) bits.push('active');
+    if (a.source === 'override') bits.push('override');
+    if (!a.known) bits.push('unknown → never blocks');
+    if (a.coolingSeconds) bits.push('cooling ' + fmtSeconds(a.coolingSeconds));
+    print(
+      '  ' +
+        (a.name + '                ').slice(0, 16) +
+        ' ' +
+        tiers.labelOf(a.tier).padEnd(10) +
+        ' ' +
+        style.dim(fmtTierFamilies(a.families) + (bits.length ? ' · ' + bits.join(' · ') : '')),
+    );
+  });
+  print(
+    style.dim(
+      '  Pin one: keyflip tier <account> <' +
+        tiers.TIER_IDS.join('|') +
+        '|auto>   Disable filtering: keyflip config set proxy.tierFilter false',
+    ),
+  );
 }
 
 // The detached background server. Runs until killed.
@@ -5500,43 +6329,157 @@ async function cmdChat(ctx, rest) {
   }
 }
 
-// Skills marketplace: install arbitrary skills from GitHub/dir/archive.
+// Skills marketplace: install arbitrary skills from GitHub/dir/archive — into every agent on this
+// machine that can read one (default), or into the agents you name. Cross-agent fan-out lives in
+// skillsync.js; `keyflip skill agents` explains each target and whether this machine has it.
+function skillAgentIds(rest) {
+  const out = [];
+  for (let i = 0; i < rest.length; i++) {
+    if (rest[i] === '--agents' && rest[i + 1] != null) {
+      String(rest[i + 1])
+        .split(',')
+        .forEach(function (a) {
+          a = a.trim().toLowerCase();
+          if (a && out.indexOf(a) === -1) out.push(a);
+        });
+    }
+  }
+  return out;
+}
+function skillTargetsLine(t) {
+  return t.dir + (t.ids.length > 1 ? '  (' + t.ids.slice(0, 4).join(', ') + (t.ids.length > 4 ? ', …' : '') + ')' : '');
+}
+// A skill is CODE the agent will run, and `keyflip skill` writes into the user's own agent
+// config dirs. The MCP tools already demand confirm=true; the CLI asks the same question —
+// on a terminal, or with --yes when there is no terminal to ask.
+async function confirmSkillWrite(args, question) {
+  if (args.indexOf('--yes') !== -1 || args.indexOf('-y') !== -1) return true;
+  if (!process.stdin.isTTY) {
+    fail('this writes into your agents’ skill directories — re-run with --yes to confirm.');
+    return false;
+  }
+  const ok = await confirm(question);
+  if (!ok) print('Cancelled.');
+  return ok;
+}
+
 async function cmdSkill(ctx, rest) {
-  const skillstore = _skillstore;
   const sub = rest[0];
   const args = rest.slice(1);
+  const agents = skillAgentIds(args);
+  const dryRun = args.indexOf('--dry-run') !== -1;
+  const asJson = JSON_MODE;
+
+  if (sub === 'agents' || sub === 'targets') {
+    const detected = _skillsync.detectedTargets(ctx);
+    const seen = detected.map(function (t) {
+      return t.dir;
+    });
+    const rows = _skillsync.allTargets().map(function (t) {
+      return Object.assign({ detected: seen.indexOf(t.dir) !== -1 }, t);
+    });
+    if (asJson) return jsonOut({ targets: rows });
+    print('Skill targets (' + rows.length + ' dirs, ' + rows.filter((r) => r.detected).length + ' on this machine):');
+    rows.forEach(function (t) {
+      print(
+        '  ' + (t.detected ? style.ok('●') : style.dim('○')) + ' ' + skillTargetsLine(t) + '   ' + style.dim(t.level),
+      );
+    });
+    print(style.dim('  ● = the tool’s home exists, so `keyflip skill add` writes there by default.'));
+    print(style.dim('  ○ = absent; name it with --agents only if you know the tool lives elsewhere.'));
+    return;
+  }
+
   if (sub === 'add') {
     const src = args.filter(function (a) {
       return a.indexOf('-') !== 0;
     })[0];
     if (!src)
-      return fail('usage: keyflip skill add <owner/repo[@ref][/subdir] | ./dir | file.tar.gz> [--link] [--force]');
+      return fail(
+        'usage: keyflip skill add <owner/repo[@ref][/subdir] | ./dir | file.tar.gz> [--agents a,b] [--link] [--force] [--dry-run] [--yes]',
+      );
     let r;
     try {
-      r = await skillstore.add(ctx, src, {
+      r = await _skillsync.add(ctx, src, {
+        agents: agents,
         link: args.indexOf('--link') !== -1,
         force: args.indexOf('--force') !== -1,
+        dryRun: dryRun,
+        approve: async function (plan) {
+          if (dryRun) return true;
+          let dirs = 0;
+          plan.forEach(function (p) {
+            dirs += p.targets.length;
+            print(
+              '  ' +
+                style.bold(p.name) +
+                ' → ' +
+                p.targets
+                  .map(function (t) {
+                    return t.dir;
+                  })
+                  .join(', '),
+            );
+          });
+          if (!dirs) return false;
+          return await confirmSkillWrite(args, 'Install into ' + dirs + ' agent directory(ies)? [y/N] ');
+        },
       });
     } catch (e) {
       return fail(e.message);
     }
-    print(
-      style.ok('✅') +
-        ' installed ' +
-        r.length +
-        ' skill(s): ' +
-        r
-          .map(function (s) {
-            return s.name + ' (' + s.mode + ')';
-          })
-          .join(', '),
-    );
-    print('Claude Code picks them up next session.');
+    if (asJson) return jsonOut(r);
+    r.installed.forEach(function (s) {
+      print(
+        style.ok('✅') +
+          ' ' +
+          s.name +
+          ' → ' +
+          s.targets
+            .map(function (t) {
+              return t.dir + (dryRun ? ' (would write)' : ' (' + t.mode + ')');
+            })
+            .join(', '),
+      );
+    });
+    if (r.skipped.length)
+      print(style.warn('·') + ' skipped: ' + r.skipped.map((s) => s.name + ' — ' + s.reason).join(', '));
+    if (!dryRun) print('Each agent reads them on its next session. `keyflip skill sync` re-applies a source change.');
     return;
   }
+
+  if (sub === 'sync') {
+    if (!dryRun) {
+      const ok = await confirmSkillWrite(
+        args,
+        'Re-apply the installed skills into the agents’ skill directories? [y/N] ',
+      );
+      if (!ok) return;
+    }
+    let rows;
+    try {
+      rows = await _skillsync.sync(ctx, { agents: agents, dryRun: dryRun });
+    } catch (e) {
+      return fail(e.message);
+    }
+    if (asJson) return jsonOut({ synced: rows });
+    if (!rows.length) return print('Nothing installed by keyflip — add one: keyflip skill add owner/repo.');
+    rows.forEach(function (r) {
+      const tail = (r.targets || [])
+        .map(function (t) {
+          return t.id + ':' + t.action;
+        })
+        .join(' ');
+      const note = r.status === 'source-unavailable' || r.status === 'source-changed' ? ' — ' + (r.detail || '') : '';
+      print('  ' + r.name.padEnd(24) + r.status + (tail ? '  ' + style.dim(tail) : '') + (note ? style.dim(note) : ''));
+    });
+    if (dryRun) print(style.dim('· dry run — nothing written.'));
+    return;
+  }
+
   if (sub === 'list' || sub === undefined) {
-    const items = skillstore.list(ctx);
-    if (JSON_MODE) {
+    const items = _skillsync.list(ctx);
+    if (asJson) {
       jsonOut({ skills: items });
       return;
     }
@@ -5545,20 +6488,31 @@ async function cmdSkill(ctx, rest) {
       return;
     }
     items.forEach(function (s) {
-      print('  ' + s.name + '   ' + (s.source || '') + '   [' + s.mode + ']');
+      print('  ' + s.name + '   ' + style.dim(s.source || ''));
+      s.targets.forEach(function (t) {
+        const mark =
+          t.state === 'ok' ? style.ok('✓') : t.state === 'edited' ? style.warn('✎ edited') : style.warn('✗ missing');
+        print('      ' + mark + '  ' + t.dir + '  [' + t.mode + ']');
+      });
     });
     return;
   }
+
   if (sub === 'remove' || sub === 'rm') {
+    const ok = await confirmSkillWrite(args, 'Remove the skill from the agents’ skill directories? [y/N] ');
+    if (!ok) return;
+    let r;
     try {
-      skillstore.remove(ctx, args[0]);
+      r = _skillsync.remove(ctx, args[0], { agents: agents });
     } catch (e) {
       return fail(e.message);
     }
-    print('🗑  removed skill: ' + args[0]);
+    if (asJson) return jsonOut(r);
+    print('🗑  removed ' + r.name + ' from ' + (r.removed.length ? r.removed.join(', ') : 'nowhere (no matching copy)'));
+    if (r.skipped && r.skipped.length) print(style.warn('·') + ' skipped: ' + r.skipped.join(', '));
     return;
   }
-  return fail('usage: keyflip skill [add <src>|list|remove <name>]');
+  return fail('usage: keyflip skill [add <src>|sync|list|remove <name>|agents] [--agents a,b] [--dry-run] [--yes]');
 }
 
 // Session manager: browse/search/resume Claude Code conversations (all accounts).
@@ -5574,6 +6528,48 @@ function fmtBytes(n) {
   if (n < 1024) return n + ' B';
   if (n < 1048576) return (n / 1024).toFixed(1) + ' KB';
   return (n / 1048576).toFixed(1) + ' MB';
+}
+// How long ago, in the one unit a person scans for: "9 h" rather than "32400000 ms".
+function fmtAge(ms) {
+  const m = Math.floor(Math.max(0, ms) / 60000);
+  if (m < 60) return m + ' min';
+  const h = Math.floor(m / 60);
+  if (h < 48) return h + ' h';
+  return Math.floor(h / 24) + ' d';
+}
+// Seconds with one unit of detail ("45s", "2m 10s", "1h 5m") — cooldowns are
+// short enough that "0 min" (fmtAge) would hide them.
+function fmtSeconds(s) {
+  s = Math.max(0, Math.round(s || 0));
+  if (s < 60) return s + 's';
+  const m = Math.floor(s / 60);
+  if (m < 60) return m + 'm' + (s % 60 ? ' ' + (s % 60) + 's' : '');
+  return Math.floor(m / 60) + 'h' + (m % 60 ? ' ' + (m % 60) + 'm' : '');
+}
+// One scheduled job's health, printed the same way by every status view. "scheduled" alone is not
+// enough: the plist can sit on disk while launchd refuses it (a logout, a moved repo, an edited
+// file), and a job that fires into a sleeping laptop says nothing at all. Both are visible in the
+// two facts below — whether the system holds the job, and when it last produced any output.
+function scheduleHealthLines(st) {
+  if (!st || !st.installed) return [];
+  const lines = [];
+  if (st.kind === 'launchd')
+    lines.push(
+      st.loaded
+        ? style.dim('launchd is holding it: it fires on its cadence without a terminal')
+        : style.warn('⚠ the file is on disk but launchd is NOT holding it — re-install it'),
+    );
+  const then = st.lastRun ? Date.parse(st.lastRun) : NaN;
+  if (Number.isFinite(then))
+    lines.push(style.dim('last output ' + fmtAge(Date.now() - then) + ' ago' + (st.log ? ' → ' + st.log : '')));
+  else
+    lines.push(
+      style.dim(
+        'no output logged yet' +
+          (st.log ? ' — a run would appear in ' + st.log : ' — this job type records no log, so silence is invisible'),
+      ),
+    );
+  return lines;
 }
 // Parse "30d" / "4w" / "6m" / "90" (bare = days) -> number of days, or null.
 function parseDays(s) {
@@ -5976,6 +6972,9 @@ async function cmdDreamSchedule(ctx, rest) {
             prov.provider +
             '.',
         );
+      scheduleHealthLines(st).forEach(function (l) {
+        print('  ' + l);
+      });
     }
     return;
   }
@@ -6741,6 +7740,851 @@ async function cmdRecall(ctx, rest) {
       '   ·   resume its chat: ' +
       style.bold('keyflip resume <session> --run'),
   );
+}
+
+// ---- cross-app conversations: browse, search, RAG context, export, handoff --------------------
+// One canonical layer (src/conversations.js), one local index (src/convindex.js), one exporter
+// (src/convexport.js). Every subcommand is tool-agnostic: it reads Claude Code, Codex/ChatGPT,
+// Kiro, Gemini, Command Code and the foreign adapters through the same shape, and no live store is modified.
+const CONV_USAGE = [
+  'usage: keyflip conv [list] [--app claude,codex,kiro,…] [--since 7d] [--cwd <dir>] [--search T] [--account <name>] [--limit N] [--json]',
+  '       keyflip conv search "<query>" [--hybrid|--semantic|--lexical] [--per-conv N] [--limit N] [--since 7d] [--account <name>]',
+  '       keyflip conv context "<query>" [--hybrid] [--budget 12000] [--expand 1]   RAG block for an LLM prompt',
+  '       keyflip conv show <id|prefix|title> [--format md|html|json] [--out <file|dir>] [--no-redact]',
+  '       keyflip conv index [--embed] [--force] [--watch] [--interval N]  build/refresh the local retrieval index',
+  '                                     --watch re-indexes every N minutes (default 30) so search stays current',
+  '       keyflip conv index --schedule [--interval N]   keep it current unattended (launchd/cron); --unschedule removes it',
+  '       keyflip conv export (--all | <id>) [--obsidian] --out <dir> [--format md|html|json] [--no-redact]',
+  '       keyflip conv transfer <id> --to <claude|codex|cursor|kiro|opencode|windsurf|gemini|copilot|aider>',
+  '       keyflip conv capabilities | status',
+].join('\n');
+const CONV_SUBS = ['list', 'search', 'show', 'get', 'index', 'context', 'export', 'transfer', 'capabilities', 'status'];
+const CONV_VALUE_FLAGS = [
+  '--app',
+  '--since',
+  '--cwd',
+  '--limit',
+  '--per-conv',
+  '--mode',
+  '--format',
+  '--out',
+  '--to',
+  '--budget',
+  '--expand',
+  '--limit-sources',
+  '--search',
+  '--interval',
+  '--account',
+];
+
+function convClip(s, n) {
+  const t = String(s == null ? '' : s)
+    .replace(/\s+/g, ' ')
+    .trim();
+  return t.length > n ? t.slice(0, n - 1) + '…' : t;
+}
+
+// The account cell of a conversation row. A STATED account (the user said so) is printed as
+// it is; an INFERRED one (read off the switch timeline) carries a `*`, because a guess that
+// looks like a fact is exactly the thing this layer must not do.
+function convAccountCell(row) {
+  const account = String((row && row.account) || '').trim();
+  if (!account) return '';
+  const inferred = String((row && row.accountSource) || '') === 'inferred';
+  return '[' + account + (inferred ? '*' : '') + '] ';
+}
+function convWhen(ts) {
+  const t = Date.parse(ts || '');
+  if (Number.isNaN(t)) return '';
+  const s = Math.max(0, Math.round((Date.now() - t) / 1000));
+  if (s < 90) return s + 's';
+  if (s < 5400) return Math.round(s / 60) + 'm';
+  if (s < 129600) return Math.round(s / 3600) + 'h';
+  if (s < 31536000) return Math.round(s / 86400) + 'd';
+  return String(ts).slice(0, 10);
+}
+function convInt(rest, flag, dflt, min, max) {
+  const raw = flagVal(rest, flag);
+  if (raw == null) return { ok: true, value: dflt };
+  const n = parseInt(raw, 10);
+  if (!Number.isFinite(n) || n < min) return { ok: false, error: flag + ' needs a number >= ' + min };
+  return { ok: true, value: Math.min(n, max) };
+}
+// --app may be repeated and comma-separated; --since accepts 7d/12h/ISO.
+function convFilter(rest) {
+  const apps = [];
+  for (let i = 0; i < rest.length; i++) {
+    if (rest[i] !== '--app' || rest[i + 1] == null) continue;
+    String(rest[i + 1])
+      .split(',')
+      .forEach(function (a) {
+        a = a.trim().toLowerCase();
+        if (a && apps.indexOf(a) === -1) apps.push(a);
+      });
+  }
+  const sinceRaw = flagVal(rest, '--since');
+  let sinceMs = null;
+  if (sinceRaw) {
+    sinceMs = _convindex.parseSince(sinceRaw);
+    if (sinceMs == null) return { error: "unknown --since '" + sinceRaw + "' (use 7d, 12h or an ISO date)" };
+  }
+  return {
+    apps: apps,
+    sinceMs: sinceMs,
+    cwd: flagVal(rest, '--cwd') || null,
+    q: flagVal(rest, '--search') || null,
+    account: flagVal(rest, '--account') || null,
+  };
+}
+function convMode(rest) {
+  if (rest.indexOf('--hybrid') !== -1) return 'hybrid';
+  if (rest.indexOf('--semantic') !== -1) return 'semantic';
+  if (rest.indexOf('--lexical') !== -1) return 'lexical';
+  const m = flagVal(rest, '--mode');
+  return m === 'hybrid' || m === 'semantic' || m === 'lexical' ? m : null;
+}
+function convRedact(rest) {
+  return rest.indexOf('--no-redact') === -1;
+}
+// Resolve an id/prefix/title to a loaded conversation. The catalog is a manifest read when the
+// index exists, so the common path parses exactly one transcript.
+function convLoad(ctx, ref) {
+  const cat = _convindex.catalog(ctx, {});
+  const m = _conversations.matchRef(cat.conversations, ref);
+  if (!m.match) {
+    const e = new Error(
+      m.reason === 'ambiguous'
+        ? "'" + ref + "' matches several conversations — use more of the id"
+        : "no conversation matching '" + ref + "'",
+    );
+    e.code = m.reason === 'ambiguous' ? 'CONV_AMBIGUOUS' : 'CONV_NOT_FOUND';
+    e.candidates = m.candidates || [];
+    throw e;
+  }
+  if (m.match.path) return _conversations.loadPath(ctx, m.match.path);
+  return _conversations.get(ctx, ref);
+}
+function convFailLoad(e) {
+  if (e && e.candidates && e.candidates.length) {
+    return fail(
+      e.message +
+        '\n  candidates: ' +
+        e.candidates
+          .map(function (c) {
+            return c.id + '  (' + convClip(c.title, 60) + ')';
+          })
+          .join('\n              '),
+    );
+  }
+  return fail((e && e.message) || String(e));
+}
+function convPrintHits(query, r, limit) {
+  const label = r.mode || (r.semanticCoverage ? 'hybrid' : 'lexical');
+  print(
+    'Conversations matching "' +
+      style.bold(query) +
+      '" — ' +
+      r.hits.length +
+      ' result(s) ' +
+      style.dim('[' + label + ']'),
+  );
+  r.hits.forEach(function (h, i) {
+    print(
+      '  [' +
+        (i + 1) +
+        '] ' +
+        style.bold(h.app || '?') +
+        '  ' +
+        convClip(h.title, 70) +
+        '   ' +
+        style.dim(convWhen(h.updatedAt) + '  #' + (h.chunk + 1) + (h.account ? '  ' + h.account : '')),
+    );
+    if (h.snippet) print('      ' + style.dim('↳ ' + convClip(h.snippet, 220)));
+    if (h.alsoIn && h.alsoIn.length) {
+      const more = h.alsoIn.slice(0, 2).join(', ') + (h.alsoIn.length > 2 ? ' +' + (h.alsoIn.length - 2) : '');
+      print('      ' + style.dim('↳ same text also in ' + more));
+    }
+  });
+  if (r.collapsed)
+    print(style.dim('· ' + r.collapsed + ' duplicate chunk(s) folded into the hits above (forked/resumed sessions).'));
+  // `no-vectors` was already announced before the search (hybrid fallback); don't repeat it.
+  if (r.semanticError && r.semanticError !== 'no-vectors')
+    print(style.warn('·') + ' vectors unavailable (' + r.semanticError + ') — lexical ranking only.');
+  if (limit && r.hits.length >= limit)
+    print(style.dim('· more may match: raise --limit, or narrow with --app/--since/--cwd.'));
+  print(
+    '\nRead one: ' +
+      style.bold('keyflip conv show <id>') +
+      '   ·   prompt context: ' +
+      style.bold('keyflip conv context "<query>"'),
+  );
+}
+async function convBuild(ctx, rest, embedDefault) {
+  const f = convFilter(rest);
+  if (f.error) throw new Error(f.error);
+  const ls = convInt(rest, '--limit-sources', null, 1, 100000);
+  if (!ls.ok) throw new Error(ls.error);
+  const embed = embedDefault != null ? embedDefault : rest.indexOf('--embed') !== -1;
+  const t0 = Date.now();
+  let lastPct = -1;
+  const report = await _convindex.build(ctx, {
+    apps: f.apps,
+    limitSources: ls.value,
+    embed: embed,
+    force: rest.indexOf('--force') !== -1,
+    onProgress: function (p) {
+      if (JSON_MODE) return;
+      const pct = Math.floor((p.done / Math.max(1, p.total)) * 100);
+      if (pct === lastPct || pct % 5 !== 0) return;
+      lastPct = pct;
+      print(style.dim('  ' + p.phase + ' ' + pct + '% (' + p.done + '/' + p.total + ')'));
+    },
+  });
+  report.ms = Date.now() - t0;
+  return report;
+}
+function convReportText(ctx, r) {
+  const s = r.stats || {};
+  const parts = [
+    r.indexed + ' parsed',
+    r.reused + ' reused',
+    r.changed + ' changed',
+    r.removed + ' removed',
+    r.empty + ' empty',
+    r.skipped + ' skipped',
+  ];
+  if (r.rechunk) parts.push(r.rechunk + ' re-chunked (disk disagreed with the index)');
+  if (r.duplicates) parts.push(r.duplicates + ' id collision(s) kept apart');
+  let line =
+    'Indexed ' +
+    (s.sources || 0) +
+    ' conversations · ' +
+    (s.messages || 0) +
+    ' messages · ' +
+    (s.chunks || 0) +
+    ' chunks';
+  line += '\n' + style.dim(parts.join(' · ') + ' · ' + fmtBytes(s.bytes || 0) + ' · ' + (r.ms / 1000).toFixed(1) + 's');
+  if (r.embedding) {
+    line +=
+      '\n' +
+      (r.embedding.error
+        ? style.warn('Vectors failed: ' + r.embedding.error)
+        : 'Vectors: ' + r.embedded + ' conversation(s) embedded · ' + r.embedding.model + ' @ ' + r.embedding.host);
+  } else {
+    // Embed-less passes must not claim there are no vectors at all: the previous embedding
+    // survives, only chunks born in THIS pass are missing theirs.
+    const st = _convindex.status(ctx);
+    line +=
+      '\n' +
+      style.dim(
+        st.vectorChunks
+          ? 'Vectors kept from the last --embed pass: ' +
+              st.vectorChunks +
+              '/' +
+              (s.chunks || 0) +
+              ' chunks (' +
+              st.coverage +
+              '%) — rerun with --embed to cover new chunks.'
+          : 'No vectors yet — `keyflip conv index --embed` enables semantic + hybrid search.',
+      );
+  }
+  if (r.errors && r.errors.length) {
+    line +=
+      '\n' +
+      style.warn('· ' + r.errors.length + ' source(s) skipped') +
+      '\n' +
+      r.errors
+        .slice(0, 5)
+        .map(function (e) {
+          return '    ' + e.path + ': ' + e.error;
+        })
+        .join('\n');
+  }
+  // Degraded reads: the chats were indexed, but part of the store could not be trusted. Distinct
+  // from the skips above, which cost conversations.
+  if (r.warnings && r.warnings.length) {
+    line +=
+      '\n' +
+      style.warn('· ' + r.warnings.length + ' store(s) read with a warning') +
+      '\n' +
+      r.warnings
+        .slice(0, 5)
+        .map(function (w) {
+          return '    ' + (w.path ? w.path + ': ' : '') + w.error;
+        })
+        .join('\n');
+  }
+  return line;
+}
+async function cmdConv(ctx, rest) {
+  const first = rest[0];
+  const sub = CONV_SUBS.indexOf(first) !== -1 ? first : 'list';
+  const args = CONV_SUBS.indexOf(first) !== -1 ? rest.slice(1) : rest;
+  const f = convFilter(args);
+  if (f.error) return fail(f.error);
+  const limit = convInt(args, '--limit', sub === 'search' ? 10 : 20, 1, 500);
+  if (!limit.ok) return fail(limit.error);
+  const perConv = convInt(args, '--per-conv', 1, 1, 20);
+  if (!perConv.ok) return fail(perConv.error);
+
+  if (sub === 'list') {
+    const cat = _convindex.catalog(ctx, f);
+    if (!cat.indexed)
+      print(style.dim('· no index yet — this pass parsed every transcript; `keyflip conv index` makes it fast.'));
+    const rows = cat.conversations.slice(0, limit.value);
+    if (JSON_MODE)
+      return jsonOut({
+        indexed: cat.indexed,
+        builtAt: cat.builtAt,
+        conversations: rows,
+        total: cat.conversations.length,
+        errors: cat.errors,
+      });
+    if (!rows.length) {
+      return print(
+        cat.conversations.length === 0
+          ? 'No conversations found in any tool on this machine yet.'
+          : 'No conversation matches those filters.',
+      );
+    }
+    print('Conversations (' + cat.conversations.length + (cat.indexed ? ', from the index' : '') + '):');
+    let anyInferred = false;
+    rows.forEach(function (r) {
+      const id = String(r.id || '')
+        .split(':')
+        .pop()
+        .slice(0, 8);
+      const msgs = (r.counts && r.counts.messages) || 0;
+      const acct = convAccountCell(r);
+      if (acct.indexOf('*') !== -1) anyInferred = true;
+      print(
+        '  ' +
+          id.padEnd(9) +
+          ' ' +
+          String(r.app || '?').padEnd(8) +
+          ' ' +
+          convWhen(r.updatedAt).padStart(4) +
+          '  ' +
+          String(msgs).padStart(6) +
+          ' msg  ' +
+          acct +
+          convClip(r.title, 78),
+      );
+    });
+    if (anyInferred) print(style.dim('  * inferred from the switch timeline — `keyflip conv show <id>` says why.'));
+    print('\n' + style.dim('Read one: keyflip conv show <id>   ·   search: keyflip conv search "<query>"'));
+    return;
+  }
+
+  if (sub === 'status') {
+    const st = _convindex.status(ctx);
+    if (JSON_MODE) return jsonOut(st);
+    if (!st.exists) {
+      print('No conversation index yet.');
+      print('  build it: ' + style.bold('keyflip conv index') + '   (add --embed for semantic search)');
+      return;
+    }
+    const s = st.stats || {};
+    print('Conversation index · ' + st.dir);
+    print(
+      '  built ' +
+        convWhen(st.builtAt) +
+        ' ago · ' +
+        (s.sources || 0) +
+        ' conversations · ' +
+        (s.messages || 0) +
+        ' messages',
+    );
+    print('  ' + (s.chunks || 0) + ' chunks · ' + fmtBytes(s.bytes || 0));
+    if (st.embedding)
+      print(
+        '  embeddings: ' +
+          st.vectorChunks +
+          '/' +
+          (s.chunks || 0) +
+          ' chunks (' +
+          st.coverage +
+          '%) · ' +
+          st.embedding.model +
+          ' @ ' +
+          st.embedding.host,
+      );
+    else print('  embeddings: none — `keyflip conv index --embed` turns on semantic/hybrid search');
+    if (s.byApp) {
+      print('  by app:');
+      Object.keys(s.byApp)
+        .sort()
+        .forEach(function (app) {
+          const a = s.byApp[app];
+          print(
+            '    ' +
+              app.padEnd(10) +
+              String(a.sources).padStart(5) +
+              ' conv · ' +
+              String(a.messages).padStart(7) +
+              ' msg · ' +
+              fmtBytes(a.bytes),
+          );
+        });
+    }
+    return;
+  }
+
+  if (sub === 'index') {
+    // `--schedule` / `--unschedule` / `--schedule-status` put the index on a timer, so it stays
+    // current without a `--watch` loop the user has to remember to keep alive. Same shape as
+    // `keyflip refresh --schedule`: a flag, not a subcommand.
+    if (args.indexOf('--schedule-status') !== -1) {
+      const st = _schedule.status(ctx, { job: 'conv' });
+      if (JSON_MODE) {
+        jsonOut({ convIndexSchedule: st });
+        return;
+      }
+      print(
+        'Conversation index: ' +
+          (st.installed
+            ? style.ok('scheduled') + ' (' + st.kind + (st.path ? ', ' + st.path : '') + ')'
+            : style.warn('not scheduled')),
+      );
+      if (st.installed) {
+        const iv = st.recorded && st.recorded.interval;
+        print(
+          '  ' +
+            style.dim(
+              'runs `keyflip conv index --embed` every ' +
+                (iv ? iv + ' min' : '30 min') +
+                ' — search sees new chats without a rebuild.',
+            ),
+        );
+        scheduleHealthLines(st).forEach(function (l) {
+          print('  ' + l);
+        });
+      } else {
+        print('  ' + style.dim('install it with: keyflip conv index --schedule [--interval N]'));
+      }
+      return;
+    }
+    if (args.indexOf('--unschedule') !== -1) {
+      const r = _schedule.uninstall(ctx, { job: 'conv' });
+      if (!r.ok && r.kind === 'unsupported') return fail('scheduling is macOS/Linux-only for now.');
+      print(style.ok('✅') + ' conversation index ' + (r.existed === false ? 'was not scheduled.' : 'unscheduled.'));
+      jsonOut({ convIndexSchedule: { installed: false } });
+      return;
+    }
+    if (args.indexOf('--schedule') !== -1) {
+      const ii = args.indexOf('--interval');
+      const wanted = ii !== -1 ? parseInt(args[ii + 1], 10) : 30;
+      const minutes = _schedule.intervalOf({ job: 'conv', interval: wanted });
+      print(
+        'This installs a ' +
+          (ctx.platform === 'darwin' ? 'launchd agent' : 'crontab entry') +
+          ' that runs ' +
+          style.bold('keyflip conv index --embed') +
+          ' every ' +
+          minutes +
+          ' min.',
+      );
+      print(
+        style.dim(
+          '  The pass is incremental: an unchanged conversation costs one stat(), and only new or changed chunks are embedded.',
+        ),
+      );
+      print(style.dim('  It runs the local embedding model; it calls no cloud model and spends no quota.'));
+      print(style.dim('  Remove with: keyflip conv index --unschedule.'));
+      if (args.indexOf('-y') === -1 && args.indexOf('--force') === -1) {
+        if (!process.stdin.isTTY) return fail('re-run with -y to confirm.');
+        if (!(await confirm('Install the conversation-index schedule? [y/N] '))) {
+          print('Cancelled.');
+          return;
+        }
+      }
+      const r = _schedule.install(ctx, { job: 'conv', interval: minutes });
+      if (!r.ok) return fail('could not schedule: ' + (r.reason || r.detail || 'unknown'));
+      print(
+        style.ok('✅') +
+          ' scheduled the conversation index every ' +
+          minutes +
+          ' min (' +
+          r.kind +
+          '). ' +
+          style.dim('Status: keyflip conv index --schedule-status'),
+      );
+      if (r.log)
+        print(
+          style.dim('  It logs to ' + r.log + ' — an unattended job you cannot read after it ran cannot be debugged.'),
+        );
+      return;
+    }
+    if (args.indexOf('--watch') !== -1) {
+      // Continuous freshness: an incremental pass every N minutes. Embed-less watches keep the
+      // lexical index current; --embed also covers new chunks (only when something changed, so an
+      // idle night costs one manifest read, not an embedding pass).
+      const ii = args.indexOf('--interval');
+      const minutes = ii !== -1 ? Math.max(1, parseInt(args[ii + 1], 10) || 30) : 30;
+      const embed = args.indexOf('--embed') !== -1;
+      print(
+        'Watching — re-indexing conversations every ' +
+          minutes +
+          ' min' +
+          (embed ? ' (new chunks embedded via local Ollama)' : '') +
+          '. Ctrl-C to stop.',
+      );
+      logmod.log('conv index --watch started (' + minutes + 'min, embed=' + embed + ')');
+      for (;;) {
+        let r;
+        try {
+          r = await convBuild(ctx, args, embed);
+        } catch (e) {
+          logmod.log('conv watch tick failed: ' + ((e && e.message) || String(e)));
+          r = null;
+        }
+        if (r && (r.changed || r.removed)) {
+          const when = new Date().toISOString();
+          if (JSON_MODE) {
+            jsonOut({ watched: true, at: when, report: r });
+          } else {
+            print('  ' + style.ok('↳') + ' ' + r.changed + ' changed · ' + r.removed + ' removed (' + when + ')');
+            if (r.embedded) print('    ' + style.dim(r.embedded + ' conversation(s) re-embedded'));
+          }
+        }
+        await sleep(minutes * 60 * 1000);
+      }
+    }
+    let r;
+    try {
+      r = await convBuild(ctx, args);
+    } catch (e) {
+      return fail((e && e.message) || String(e));
+    }
+    if (JSON_MODE) return jsonOut(r);
+    print(convReportText(ctx, r));
+    return;
+  }
+
+  if (sub === 'capabilities') {
+    const caps = _convexport.capabilities();
+    if (JSON_MODE) return jsonOut({ targets: caps });
+    print('Conversation handoff targets (all read-only: no target store is modified):');
+    caps.forEach(function (c) {
+      print('  ' + c.id.padEnd(10) + c.label + (c.nativeImport ? '  (native import)' : '  (file context only)'));
+      print('    ' + style.dim(c.note));
+    });
+    return;
+  }
+
+  if (sub === 'search' || sub === 'context') {
+    const query = positionals(args, CONV_VALUE_FLAGS).join(' ').trim();
+    if (!query) return fail(CONV_USAGE);
+    const mode = convMode(args) || 'hybrid';
+    const st = _convindex.status(ctx);
+    if (!st.exists) {
+      print(style.dim('· no index yet — building it once before searching.'));
+      try {
+        await convBuild(ctx, args, false);
+      } catch (e) {
+        return fail((e && e.message) || String(e));
+      }
+    } else if ((mode === 'semantic' || mode === 'hybrid') && !st.vectorChunks) {
+      if (mode === 'semantic')
+        return fail(
+          'no embeddings yet — run `keyflip conv index --embed` (local Ollama by default), or use --lexical.',
+        );
+      print(
+        style.warn('·') + ' no embeddings yet — hybrid falls back to lexical (`keyflip conv index --embed` fixes it).',
+      );
+    }
+    const qopts = {
+      mode: mode,
+      apps: f.apps,
+      sinceMs: f.sinceMs,
+      cwd: f.cwd,
+      limit: sub === 'context' ? Math.max(limit.value, 8) : limit.value,
+      perConv: perConv.value,
+      account: f.account,
+    };
+    let r;
+    try {
+      r = await _convindex.search(ctx, query, qopts);
+    } catch (e) {
+      return fail('search failed: ' + ((e && e.message) || String(e)));
+    }
+    if (!r.ok) {
+      if (r.reason === 'no-index') return fail('no index yet — run `keyflip conv index` first.');
+      if (r.reason === 'embed-failed')
+        return fail(
+          'embedding endpoint failed: ' +
+            (r.detail || 'unknown') +
+            ' — use --lexical, or start Ollama (`ollama serve`) / set KEYFLIP_EMBED_URL.',
+        );
+      return fail('search failed: ' + (r.reason || 'unknown'));
+    }
+    if (sub === 'context') {
+      const budget = convInt(args, '--budget', 12000, 500, 200000);
+      if (!budget.ok) return fail(budget.error);
+      const expand = convInt(args, '--expand', 1, 0, 5);
+      if (!expand.ok) return fail(expand.error);
+      const pack = _convindex.contextPack(ctx, query, r.hits || [], {
+        budget: budget.value,
+        expand: expand.value,
+      });
+      if (JSON_MODE) return jsonOut({ query: query, mode: r.mode || mode, hits: r.hits || [], context: pack });
+      process.stdout.write(pack.slice(-1) === '\n' ? pack : pack + '\n');
+      return;
+    }
+    if (JSON_MODE)
+      return jsonOut({
+        query: query,
+        mode: r.mode || mode,
+        hits: r.hits,
+        collapsed: r.collapsed || 0,
+        coverage: r.semanticCoverage || r.coverage || null,
+        semanticError: r.semanticError || null,
+      });
+    if (!r.hits.length) return print('No conversation matched "' + query + '".');
+    return convPrintHits(query, r, limit.value);
+  }
+
+  if (sub === 'show' || sub === 'get') {
+    const ref = positionals(args, CONV_VALUE_FLAGS).join(' ').trim();
+    if (!ref) return fail(CONV_USAGE);
+    let conv;
+    try {
+      conv = convLoad(ctx, ref);
+    } catch (e) {
+      return convFailLoad(e);
+    }
+    const format = flagVal(args, '--format');
+    const out = flagVal(args, '--out');
+    if (format || out) {
+      const chosen = format || 'md';
+      if (['md', 'html', 'json'].indexOf(chosen) === -1)
+        return fail("unknown --format '" + chosen + "' (md|html|json)");
+      if (out) {
+        let res;
+        try {
+          res = _convexport.exportOne(conv, {
+            out: out,
+            format: chosen,
+            force: args.indexOf('--force') !== -1,
+            redact: convRedact(args),
+          });
+        } catch (e) {
+          return fail((e && e.message) || String(e));
+        }
+        if (JSON_MODE) return jsonOut(res);
+        print(
+          style.ok('✅') +
+            ' wrote ' +
+            res.file +
+            '  ' +
+            style.dim(fmtBytes(res.bytes) + (res.redacted ? ' · redacted ' + res.redacted : '')),
+        );
+        return;
+      }
+      let rendered;
+      try {
+        rendered = _convexport.render(conv, { format: chosen, redact: convRedact(args) });
+      } catch (e) {
+        return fail((e && e.message) || String(e));
+      }
+      process.stdout.write(rendered.content.slice(-1) === '\n' ? rendered.content : rendered.content + '\n');
+      return;
+    }
+    if (JSON_MODE) return jsonOut({ conversation: conv });
+    const head = [conv.app, conv.surface, conv.id, conv.counts.messages + ' messages', conv.updatedAt, conv.cwd]
+      .filter(Boolean)
+      .join(' · ');
+    print(style.bold(conv.title));
+    print(style.dim(head));
+    // Which account worked on it, and how that is known: the user's word, or the switch
+    // timeline. A guess is printed as a guess.
+    const acct = _convaccounts.explain(ctx, conv);
+    if (acct.account) {
+      const how =
+        acct.source === 'stated'
+          ? 'stated by you'
+          : 'inferred from the switch timeline (' + acct.confidence + ' confidence)';
+      print(style.dim('account: ' + acct.account + ' · ' + how + ' · ' + acct.why));
+    } else {
+      print(style.dim('account: unknown · ' + acct.why));
+    }
+    conv.messages.forEach(function (m) {
+      print('');
+      print(
+        style.bold(m.role === 'assistant' ? conv.app || 'assistant' : 'You') +
+          (m.ts ? style.dim('  ' + String(m.ts).slice(0, 16).replace('T', ' ')) : ''),
+      );
+      if (m.text) print(m.text);
+      if (m.tools && m.tools.length) print(style.dim('→ used ' + m.tools.join(', ')));
+    });
+    return;
+  }
+
+  if (sub === 'transfer') {
+    const ref = positionals(args, CONV_VALUE_FLAGS).join(' ').trim();
+    if (!ref) return fail(CONV_USAGE);
+    const to = flagVal(args, '--to') || 'generic';
+    let conv;
+    try {
+      conv = convLoad(ctx, ref);
+    } catch (e) {
+      return convFailLoad(e);
+    }
+    let res;
+    try {
+      res = _convexport.writeBundle(conv, to, {
+        out: flagVal(args, '--out') || undefined,
+        force: args.indexOf('--force') !== -1,
+        redact: convRedact(args),
+        now: ctx.now ? ctx.now() : undefined,
+      });
+    } catch (e) {
+      return fail((e && e.message) || String(e));
+    }
+    if (JSON_MODE) return jsonOut(res);
+    print(style.ok('✅') + ' handoff for ' + style.bold(res.label) + ' → ' + res.dir);
+    res.files.forEach(function (file) {
+      print('  ' + file);
+    });
+    if (!res.nativeImport)
+      print(style.dim('  · no native import exists for this target — paste or attach CONTINUE.md.'));
+    if (res.redacted)
+      print(style.dim('  · redacted ' + res.redacted + ' known secret shape(s); --no-redact keeps fidelity.'));
+    print(style.dim('  · 0600 files; no tool store was modified. Delete the folder when the handoff is done.'));
+    return;
+  }
+
+  if (sub === 'export') {
+    const ref = positionals(args, CONV_VALUE_FLAGS).join(' ').trim();
+    const all = args.indexOf('--all') !== -1;
+    const obsidian = args.indexOf('--obsidian') !== -1;
+    const out = flagVal(args, '--out');
+    const format = flagVal(args, '--format') || 'md';
+    if (['md', 'html', 'json'].indexOf(format) === -1) return fail("unknown --format '" + format + "' (md|html|json)");
+    if (obsidian) {
+      if (!out)
+        return fail('Obsidian export needs a vault: keyflip conv export --all --obsidian --out ~/Documents/Vault');
+      const rows = _convindex.catalog(ctx, f).conversations;
+      if (!rows.length) return fail('no conversations match those filters.');
+      let n = 0;
+      function* loadRows() {
+        const srcs = _conversations.discover(ctx, {});
+        const byPath = Object.create(null);
+        srcs.forEach(function (s) {
+          byPath[path.resolve(s.path)] = s;
+        });
+        for (const row of rows) {
+          const src = row.path ? byPath[path.resolve(row.path)] : null;
+          if (!src) continue;
+          try {
+            n++;
+            if (!JSON_MODE && n % 100 === 0) print(style.dim('  reading ' + n + '/' + rows.length));
+            yield _conversations.load(ctx, src, {});
+          } catch {
+            /* a single unreadable source must not abort the vault export */
+          }
+        }
+      }
+      let report;
+      try {
+        report = _convexport.obsidianExport(ctx, loadRows(), {
+          out: out,
+          force: args.indexOf('--force') !== -1,
+          redact: convRedact(args),
+          now: ctx.now ? ctx.now() : undefined,
+        });
+      } catch (e) {
+        return fail((e && e.message) || String(e));
+      }
+      if (JSON_MODE) return jsonOut(report);
+      print(style.ok('✅') + ' Obsidian vault updated at ' + report.root);
+      print(
+        '  ' +
+          report.written +
+          ' written · ' +
+          report.updated +
+          ' updated · ' +
+          report.skipped +
+          ' unchanged · ' +
+          report.conflicts +
+          ' conflict copy(ies)' +
+          (report.renamed ? ' · ' + report.renamed + ' old note(s) renamed' : ''),
+      );
+      if (report.redacted) print(style.dim('  · redacted ' + report.redacted + ' known secret shape(s)'));
+      report.stale.forEach(function (s) {
+        print(style.warn('· kept ' + s.file + ' — ' + s.reason));
+      });
+      print('  index note: ' + report.index);
+      return;
+    }
+    if (all) {
+      const dest = out || path.join(process.cwd(), 'keyflip-conversations');
+      const rows = _convindex.catalog(ctx, f).conversations;
+      if (!rows.length) return fail('no conversations match those filters.');
+      const srcs = _conversations.discover(ctx, {});
+      const byPath = Object.create(null);
+      srcs.forEach(function (s) {
+        byPath[path.resolve(s.path)] = s;
+      });
+      const results = [];
+      const errors = [];
+      let done = 0;
+      for (const row of rows) {
+        const src = row.path ? byPath[path.resolve(row.path)] : null;
+        if (!src) {
+          errors.push({ id: row.id, error: 'source is gone' });
+          continue;
+        }
+        try {
+          const conv = _conversations.load(ctx, src, {});
+          const res = _convexport.exportOne(conv, {
+            out: dest + path.sep,
+            format: format,
+            force: args.indexOf('--force') !== -1,
+            redact: convRedact(args),
+          });
+          results.push(res);
+        } catch (e) {
+          errors.push({ id: row.id, error: (e && e.message) || String(e) });
+        }
+        done++;
+        if (!JSON_MODE && done % 100 === 0) print(style.dim('  exported ' + done + '/' + rows.length));
+      }
+      if (JSON_MODE) return jsonOut({ dir: dest, files: results, errors: errors });
+      print(style.ok('✅') + ' exported ' + results.length + ' conversation(s) to ' + dest);
+      if (errors.length) print(style.warn('· ' + errors.length + ' failed (first: ' + (errors[0].error || '') + ')'));
+      return;
+    }
+    if (!ref) return fail(CONV_USAGE);
+    let conv;
+    try {
+      conv = convLoad(ctx, ref);
+    } catch (e) {
+      return convFailLoad(e);
+    }
+    let res;
+    try {
+      res = _convexport.exportOne(conv, {
+        out: out || undefined,
+        format: format,
+        force: args.indexOf('--force') !== -1,
+        redact: convRedact(args),
+      });
+    } catch (e) {
+      return fail((e && e.message) || String(e));
+    }
+    if (JSON_MODE) return jsonOut(res);
+    print(
+      style.ok('✅') +
+        ' wrote ' +
+        res.file +
+        '  ' +
+        style.dim(fmtBytes(res.bytes) + (res.redacted ? ' · redacted ' + res.redacted : '')),
+    );
+    return;
+  }
+
+  return fail(CONV_USAGE);
 }
 
 // `keyflip memory [list | show <key> | remove <key>]` — browse keyflip's distilled keepsakes.
@@ -7726,7 +9570,7 @@ function cmdForeign(ctx, rest) {
     if (!found.length) {
       print(
         style.dim(
-          "No other agents' sessions found in the known locations (Cursor / opencode / Gemini / Qoder). These paths are best-effort — point at a file directly: ",
+          "No other agents' sessions found in the known locations (Cursor / opencode / Gemini / Qoder / Command Code). These paths are best-effort — point at a file directly: ",
         ) + style.bold('keyflip foreign <file>'),
       );
       return;
@@ -7737,7 +9581,7 @@ function cmdForeign(ctx, rest) {
         '  ' +
           style.ok('●') +
           ' ' +
-          f.tool.padEnd(9) +
+          f.tool.padEnd(12) +
           ' ' +
           style.dim(f.mtime.slice(0, 16).replace('T', ' ')) +
           '  ' +
@@ -7751,7 +9595,7 @@ function cmdForeign(ctx, rest) {
   const file = positionals(rest, ['--format', '--out'])[0];
   if (!file)
     return fail(
-      "usage: keyflip foreign <session-file> [--format md|html|json] [--out <file|->]\n  reads another agent's session log (message-event JSONL, generic JSON, Cursor SQLite, or an Aider .md).",
+      "usage: keyflip foreign <session-file> [--format md|html|json] [--out <file|->]\n  reads another agent's session log (message-event JSONL, Command Code JSONL, generic JSON, Cursor SQLite, or an Aider .md).",
     );
   let raw;
   try {
@@ -10382,7 +12226,7 @@ async function cmdChains(ctx, rest) {
 }
 
 async function cmdDoctor(ctx, rest) {
-  const r = await doctor.diagnose(ctx);
+  const r = await doctor.diagnose(ctx, { run: run });
   // `--history` is opt-in because it walks every blob keyflip ever committed (a few seconds, read-only).
   const wantHistory = rest.indexOf('--history') !== -1;
   if (wantHistory && !JSON_MODE) print('  … scanning git history (' + ctx.configDir + ')');
@@ -12616,6 +14460,207 @@ async function cmdKiro(ctx, rest) {
   );
 }
 
+// `keyflip commandcode [status|list|capture|switch|backups|restore|remove]` — manage Command Code
+// (`cmd`, npm `command-code`) accounts. ONE file owns every local surface: ~/.commandcode/auth.json
+// is read by the CLI AND the shipped VS Code extension, so a switch flips both. The web dashboard
+// is a separate browser login keyflip does not carry. `cmd login` is always the human step.
+function ccIdentity(id) {
+  if (!id) return style.dim('signed out');
+  const bits = [style.bold(id.userName || id.userId || 'unknown')];
+  if (id.keyName) bits.push(style.dim(id.keyName));
+  if (id.authenticatedAt) bits.push(style.dim('signed in ' + id.authenticatedAt));
+  return bits.join('  ');
+}
+
+function cmdCommandCode(ctx, rest) {
+  logmod.log('commandcode invoked');
+  const hasSub = rest[0] && rest[0].indexOf('-') !== 0;
+  const sub = hasSub ? rest[0] : 'status';
+  const args = hasSub ? rest.slice(1) : rest.slice();
+  const positional = args.filter(function (a) {
+    return a && a[0] !== '-';
+  });
+  const has = function (f) {
+    return args.indexOf(f) !== -1;
+  };
+  const force = has('--force') || has('-y');
+  const dryRun = has('--dry-run');
+  const noVerify = has('--no-verify');
+
+  if (sub === 'status' || sub === 'show') {
+    const st = _commandcode.status(ctx, {});
+    print(style.bold('Command Code live session') + ' ' + style.dim('(' + _commandcode.authPath(ctx) + ')'));
+    print('  login  ' + ccIdentity(st.present ? st.identity : null));
+    if (st.error) print('  ' + style.warn('⚠') + ' ' + st.error);
+    if (st.identity && st.providers.length)
+      print('  BYOK   ' + st.providers.join(', ') + ' ' + style.dim('(stored beside the login)'));
+    if (st.provider || st.model)
+      print('  model  ' + (st.model || 'unknown') + (st.provider ? '  ' + style.dim('via ' + st.provider) : ''));
+    if (st.bin.onPath) print('  cmd    ' + st.bin.path);
+    else if (st.bin.path) {
+      print(
+        '  cmd    ' +
+          style.warn('not on PATH') +
+          ' — installed under a version-managed Node: ' +
+          st.bin.path +
+          '\n         ' +
+          style.dim(
+            'switch Node (`fnm use <version>` / `nvm use <version>`) or link it, or `cmd` stays command-not-found.',
+          ),
+      );
+    } else print('  cmd    ' + style.dim('not found on PATH or under fnm/nvm'));
+    if (st.envOverride) {
+      print(
+        '  ' +
+          style.warn('⚠') +
+          ' ' +
+          _commandcode.ENV_KEY +
+          ' is exported — `cmd` uses THAT key, so a switch would look like it did nothing.',
+      );
+    }
+    if (!st.accounts.length) {
+      print('\nNo Command Code accounts saved yet. Run: ' + style.bold('keyflip commandcode capture'));
+    } else {
+      print('\nSaved Command Code accounts (' + st.accounts.length + '):');
+      st.accounts.forEach(function (a, i) {
+        const active =
+          st.identity &&
+          ((a.userId && st.identity.userId && a.userId === st.identity.userId) ||
+            (a.userName && st.identity.userName && a.userName === st.identity.userName));
+        print(
+          '  ' +
+            (active ? style.ok('*') : ' ') +
+            ' ' +
+            (i + 1) +
+            '. ' +
+            style.bold(a.name) +
+            (a.userName ? '  ' + a.userName : '') +
+            (a.providers && a.providers.length ? '  ' + style.dim('[' + a.providers.join(', ') + ']') : ''),
+        );
+      });
+    }
+    print('');
+    print(style.dim('CLI + the VS Code extension share auth.json; the web dashboard is a separate login (by hand).'));
+    jsonOut(st);
+    return;
+  }
+
+  if (sub === 'list') {
+    const accounts = _commandcode.listAccounts(ctx);
+    if (!accounts.length) print('No Command Code accounts saved. Run: keyflip commandcode capture');
+    else {
+      print('Saved Command Code accounts (' + accounts.length + '):');
+      accounts.forEach(function (a, i) {
+        print(
+          '  ' +
+            (i + 1) +
+            '. ' +
+            style.bold(a.name) +
+            '  ' +
+            (a.userName || style.dim('(username unknown)')) +
+            (a.providers && a.providers.length ? '  ' + style.dim('[' + a.providers.join(', ') + ']') : ''),
+        );
+        print('       ' + style.dim('captured ' + (a.capturedAt || '?') + ' · ' + (a.bytes || 0) + ' B'));
+      });
+    }
+    jsonOut({ accounts: accounts });
+    return;
+  }
+
+  if (sub === 'capture' || sub === 'save') {
+    const r = _commandcode.capture(ctx, { name: positional[0] });
+    print(
+      style.ok('✓') +
+        ' captured Command Code account ' +
+        style.bold(r.slug) +
+        (r.meta.userName ? ' (' + r.meta.userName + ')' : ''),
+    );
+    print(style.dim('  auth.json lives in ' + r.dir + ' (0600); meta.json holds no secret.'));
+    jsonOut({ account: r.meta });
+    return;
+  }
+
+  if (sub === 'switch' || sub === 'use') {
+    if (!positional[0]) return fail('usage: keyflip commandcode switch <name|number|user> [--dry-run] [--no-verify]');
+    const r = _commandcode.switchTo(ctx, positional[0], { dryRun: dryRun, noVerify: noVerify });
+    if (r.dryRun) {
+      print(style.bold('Command Code switch plan (dry run — nothing was written)'));
+      print(
+        '  target: ' +
+          style.bold(r.plan.userName || r.plan.userId || '?') +
+          '  live now: ' +
+          (r.plan.live ? r.plan.live.userName : 'signed out'),
+      );
+      print('  would write ' + r.plan.file + ' (' + r.plan.write.bytes + ' B)');
+      jsonOut({ dryRun: true, plan: r.plan });
+      return;
+    }
+    print(
+      style.ok('✓') +
+        ' switched Command Code to ' +
+        style.bold(r.slug) +
+        (r.identity && r.identity.userName ? ' (' + r.identity.userName + ')' : ''),
+    );
+    if (r.capturedOutgoing) print('  ' + style.dim('saved the outgoing login as ') + style.bold(r.capturedOutgoing));
+    if (r.backup) print('  ' + style.dim('previous auth.json backed up (' + path.basename(r.backup) + ')'));
+    if (!r.verified) print(style.warn('⚠') + ' identity check skipped (--no-verify).');
+    print('  ' + style.dim('already-running `cmd` sessions keep their old login until restarted.'));
+    jsonOut(r);
+    return;
+  }
+
+  if (sub === 'backups') {
+    const list = _commandcode.listBackups(ctx);
+    if (!list.length) print('No Command Code auth.json backups yet (one is written before every switch/restore).');
+    else {
+      print('Command Code auth.json backups (' + list.length + ', newest first):');
+      list.forEach(function (b, i) {
+        print(
+          '  ' +
+            (i + 1) +
+            '. ' +
+            style.bold(b.file) +
+            '  ' +
+            (b.userName || style.dim('unknown')) +
+            '  ' +
+            style.dim(b.bytes + ' B'),
+        );
+      });
+    }
+    jsonOut({ backups: list });
+    return;
+  }
+
+  if (sub === 'restore') {
+    if (!positional[0]) return fail('usage: keyflip commandcode restore <file|number> [--dry-run]');
+    const r = _commandcode.restoreBackup(ctx, positional[0], { dryRun: dryRun, noVerify: noVerify });
+    if (r.dryRun) {
+      print(style.bold('Command Code restore plan (dry run — nothing was written)'));
+      print('  would write ' + r.plan.file + ' (' + r.plan.write.bytes + ' B)');
+      jsonOut({ dryRun: true, plan: r.plan });
+      return;
+    }
+    print(style.ok('✓') + ' restored ' + style.bold(r.restored));
+    if (r.backup) print('  ' + style.dim('the login it replaced was backed up too.'));
+    jsonOut(r);
+    return;
+  }
+
+  if (sub === 'remove' || sub === 'rm') {
+    if (!positional[0]) return fail('usage: keyflip commandcode remove <name|number> --force');
+    const r = _commandcode.removeAccount(ctx, positional[0], { force: force });
+    print(style.ok('✓') + ' removed Command Code account ' + style.bold(r.removed));
+    jsonOut(r);
+    return;
+  }
+
+  return fail(
+    "unknown commandcode command: '" +
+      sub +
+      "' (status|list|capture|switch|backups|restore|remove). Try `keyflip commandcode status`.",
+  );
+}
+
 // `keyflip antigravity [status|list|capture|switch|remove]` — manage Antigravity (formerly Gemini CLI) accounts.
 // Antigravity stores its OAuth token in the macOS Keychain under service "gemini", account "antigravity".
 async function cmdAntigravity(ctx, rest) {
@@ -12728,7 +14773,7 @@ async function cmdAntigravity(ctx, rest) {
   );
 }
 
-// `keyflip chatgpt [status|list|capture|switch|refresh|remove]` — ChatGPT.app and
+// `keyflip chatgpt [status|list|capture|switch|refresh|backups|remove]` — ChatGPT.app and
 // the Codex CLI share ONE credential file (~/.codex/auth.json), so one command
 // manages both. Alias: `keyflip codex`.
 function codexLeft(iso) {
@@ -12928,6 +14973,70 @@ async function cmdChatGPT(ctx, rest) {
     return;
   }
 
+  if (sub === 'backups' || sub === 'backup') {
+    const ref = positional[0];
+    if (!ref) {
+      const rows = _codex.listBackups(ctx);
+      if (JSON_MODE) {
+        jsonOut({ backups: rows });
+        return;
+      }
+      if (!rows.length) {
+        print(style.dim('No auth.json backups yet — one is written before every switch or token refresh.'));
+        return;
+      }
+      print(style.bold('Codex auth.json backups') + style.dim('  (' + rows.length + ', newest first)'));
+      rows.forEach(function (b, i) {
+        print(
+          '  ' +
+            String(i + 1).padStart(2) +
+            '. ' +
+            (b.email || style.warn('unreadable')) +
+            (b.plan ? '  ' + b.plan : '') +
+            '  ' +
+            style.dim(codexLeft(b.expiresAt) + ' · ' + b.file),
+        );
+      });
+      print(style.dim('Restore one with `keyflip chatgpt backups restore <number|file>`.'));
+      return;
+    }
+    const restoreRef = positional[1] || ref;
+    const r = _codex.restoreBackup(ctx, restoreRef, { dryRun: dryRun, force: force });
+    if (!r.ok) {
+      if (r.reason === 'not-found') return fail("no such backup: '" + restoreRef + "' (see `keyflip chatgpt backups`)");
+      if (r.reason === 'corrupt') return fail('backup ' + r.file + ' is not a readable auth.json; not restoring.');
+      if (r.reason === 'running')
+        return fail(
+          'quit ' +
+            r.running.join(' and ') +
+            ' first — a running app owns auth.json; use --force only if you know why.',
+        );
+      return fail('restore failed: ' + (r.reason || 'unknown'));
+    }
+    if (r.dryRun) {
+      print(style.bold('Codex auth restore plan (dry run — nothing was written)'));
+      print('  backup:  ' + r.plan.file);
+      print('  account: ' + (r.plan.email || 'unreadable') + (r.plan.plan ? '  ' + r.plan.plan : ''));
+      print('  would write ' + r.plan.path + '  (expires ' + codexLeft(r.plan.expiresAt) + ')');
+      if (r.plan.running.length)
+        print(
+          style.warn('⚠') + ' running: ' + r.plan.running.join(', ') + ' (the real restore refuses without --force)',
+        );
+      jsonOut({ dryRun: true, plan: r.plan });
+      return;
+    }
+    print(style.ok('✓') + ' restored ' + style.bold(r.email || r.restored) + ' to ' + r.path);
+    if (r.previous) print('  ' + style.dim('the login it replaced was backed up to ' + r.previous));
+    print(
+      '  ' +
+        (r.verified
+          ? style.dim('read back byte-identical; restart ChatGPT/Codex to pick it up.')
+          : style.warn('⚠') + ' read-back did not match the backup.'),
+    );
+    jsonOut(r);
+    return;
+  }
+
   if (sub === 'remove' || sub === 'rm') {
     if (!positional[0]) return fail('usage: keyflip chatgpt remove <name|number> --force');
     const slug = _codex.resolveCapture(ctx, positional[0]);
@@ -12940,7 +15049,9 @@ async function cmdChatGPT(ctx, rest) {
   }
 
   return fail(
-    "unknown chatgpt command: '" + sub + "' (status|list|capture|switch|refresh|remove). Try `keyflip chatgpt status`.",
+    "unknown chatgpt command: '" +
+      sub +
+      "' (status|list|capture|switch|refresh|backups|remove). Try `keyflip chatgpt status`.",
   );
 }
 
@@ -12991,7 +15102,9 @@ async function cmdRefresh(ctx, rest) {
               (at ? String(at.h).padStart(2, '0') + ':' + String(at.m).padStart(2, '0') : 'its default hour'),
           ),
       );
-      if (st.log) print('  ' + style.dim('output lands in ' + st.log));
+      scheduleHealthLines(st).forEach(function (l) {
+        print('  ' + l);
+      });
       print(
         style.dim(
           '  While a Claude session is live the run refuses to rotate anything: it changes nothing and waits for the next idle night.',
@@ -13065,7 +15178,11 @@ async function cmdRefresh(ctx, rest) {
     print(
       'Background refresh daemon: ' +
         (st.installed
-          ? style.ok('running') + ' (' + st.kind + (st.path ? ', ' + st.path : '') + ')'
+          ? st.loaded === false
+            ? // A KeepAlive job that launchd does not hold is not "running" — the plist is only an
+              // instruction, and printing running from its existence would be a lie on a logout.
+              style.warn('installed but NOT running (launchd is not holding it)')
+            : style.ok('running') + ' (' + st.kind + (st.path ? ', ' + st.path : '') + ')'
           : style.warn('not running')),
     );
     if (st.installed) {
@@ -13405,6 +15522,54 @@ async function cmdConsolidate(ctx, rest) {
     } finally {
       l.release();
     }
+  }
+
+  // A dry run only READS the stores, so it works even while the app is open: its whole job
+  // is to show the plan before anyone closes anything.
+  if (rest.indexOf('--dry-run') !== -1) {
+    const c = appsessions.consolidate(ctx, { includeInstances: includeInstances, dryRun: true });
+    if (!c.ok) return fail('nothing to plan' + (c.reason ? ' (' + c.reason + ')' : '') + '.');
+    print(
+      'Dry run — would sync ' +
+        style.bold(String(c.wouldMerge || 0)) +
+        ' session pointer(s) across accounts (Recents: ' +
+        (c.wouldCode || 0) +
+        ', Cowork: ' +
+        (c.wouldCowork || 0) +
+        (c.instances ? ', instance clones: ' + c.instances : '') +
+        ').',
+    );
+    (c.plan || []).slice(0, 10).forEach(function (p) {
+      print('  ' + style.dim((p.instance || 'base') + ' ← ') + p.to);
+    });
+    if (c.planTotal > (c.plan || []).length)
+      print(style.dim('  … ' + (c.planTotal - (c.plan || []).length) + ' more (see --json for 50)'));
+    if (c.skippedRunning)
+      print(
+        style.warn('⚠') +
+          ' would skip ' +
+          c.skippedRunning +
+          ' running clone(s): ' +
+          (c.runningLabels || []).join(', ') +
+          '.',
+      );
+    print('Nothing was written. Apply with ' + style.bold('keyflip consolidate') + '.');
+    return jsonOut({
+      consolidated: {
+        dryRun: true,
+        wouldMerge: c.wouldMerge || 0,
+        wouldCode: c.wouldCode || 0,
+        wouldCowork: c.wouldCowork || 0,
+        instances: c.instances || 0,
+        skippedRunning: c.skippedRunning || 0,
+        runningLabels: c.runningLabels || [],
+        plan: (c.plan || []).map(function (p) {
+          return { to: p.to, from: path.basename(p.from), instance: p.instance };
+        }),
+        planTotal: c.planTotal || 0,
+        planTruncated: !!c.planTruncated,
+      },
+    });
   }
 
   if (watch) {
@@ -14622,6 +16787,9 @@ async function dispatch(ctx, cmd, rest) {
         return cmdDream(ctx, rest);
       case 'recall':
         return cmdRecall(ctx, rest);
+      case 'conv':
+      case 'conversations':
+        return cmdConv(ctx, rest);
       case 'settings':
         return rest[0] === 'set' || rest[0] === 'unset'
           ? withLock(
@@ -14702,6 +16870,13 @@ async function dispatch(ctx, cmd, rest) {
               return cmdKiro(ctx, rest);
             })
           : cmdKiro(ctx, rest);
+      case 'commandcode':
+      case 'command-code':
+        return ['capture', 'save', 'switch', 'use', 'restore', 'remove', 'rm'].indexOf(rest[0]) !== -1
+          ? withLock(ctx, function () {
+              return cmdCommandCode(ctx, rest);
+            })
+          : cmdCommandCode(ctx, rest);
       case 'antigravity':
       case 'agy':
         return ['capture', 'save', 'switch', 'use', 'remove', 'rm'].indexOf(rest[0]) !== -1
@@ -14727,6 +16902,11 @@ async function dispatch(ctx, cmd, rest) {
         return cmdSkill(ctx, rest);
       case 'proxy':
         return cmdProxy(ctx, rest);
+      case 'cooldown':
+        return cmdCooldown(ctx, rest);
+      case 'tier':
+      case 'tiers':
+        return cmdTier(ctx, rest);
       case '__proxy-serve': // hidden: the detached background server process
         return proxyServe(ctx, rest);
       case 'mcp':

@@ -20,6 +20,9 @@ import {
   removeCapture,
   status,
   switchTo,
+  listBackups,
+  resolveBackup,
+  restoreBackup,
   CLIENT_ID,
   TOKEN_URL,
 } from '../src/codex.js';
@@ -193,6 +196,49 @@ test('switchTo writes the stored login, backs up the outgoing one and captures i
   );
 });
 
+test('auth backups list by identity and restore reversibly, never under a running app', function () {
+  const ctx = setup();
+  const dir = path.join(ctx.configDir, 'backups');
+  fs.mkdirSync(dir, { recursive: true });
+  const old = authFor('old@example.com', { plan: 'prolite' });
+  const newer = authFor('newer@example.com');
+  fs.writeFileSync(path.join(dir, 'codex-auth-20260101T000000.json'), JSON.stringify(old), { mode: 0o600 });
+  fs.writeFileSync(path.join(dir, 'codex-auth-20260202T000000.json'), JSON.stringify(newer), { mode: 0o600 });
+
+  const rows = listBackups(ctx);
+  assert.deepStrictEqual(
+    rows.map((r) => r.email),
+    ['newer@example.com', 'old@example.com'],
+  );
+  assert.strictEqual(rows[0].plan, 'plus');
+  assert.strictEqual(rows[1].plan, 'prolite');
+  assert.ok(rows.every((r) => r.valid));
+  assert.strictEqual(resolveBackup(ctx, '1').email, 'newer@example.com');
+  assert.strictEqual(resolveBackup(ctx, 'codex-auth-20260101').email, 'old@example.com');
+  assert.strictEqual(resolveBackup(ctx, 'nope'), null);
+
+  const current = authFor('current@example.com');
+  writeLive(ctx, current);
+  const planned = restoreBackup(ctx, '1', { dryRun: true, running: [] });
+  assert.strictEqual(planned.ok, true);
+  assert.strictEqual(planned.plan.email, 'newer@example.com');
+  assert.deepStrictEqual(JSON.parse(fs.readFileSync(authPath(ctx), 'utf8')), current, 'dry run wrote nothing');
+
+  const refused = restoreBackup(ctx, '1', { running: ['ChatGPT'] });
+  assert.strictEqual(refused.ok, false);
+  assert.strictEqual(refused.reason, 'running');
+  assert.deepStrictEqual(JSON.parse(fs.readFileSync(authPath(ctx), 'utf8')), current, 'refusal wrote nothing');
+
+  const r = restoreBackup(ctx, '1', { running: [] });
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(r.email, 'newer@example.com');
+  assert.strictEqual(r.verified, true);
+  assert.deepStrictEqual(JSON.parse(fs.readFileSync(authPath(ctx), 'utf8')), newer);
+  assertPrivateMode(authPath(ctx), 'restored live auth is 0600');
+  assert.ok(r.previous && fs.existsSync(r.previous), 'the replaced login was backed up first');
+  assert.deepStrictEqual(JSON.parse(fs.readFileSync(r.previous, 'utf8')), current);
+});
+
 test('needsRefresh compares the access-token expiry against a threshold', function () {
   const now = '2026-01-01T00:00:00.000Z';
   const fresh = authFor('a@example.com', { exp: Math.floor(new Date('2026-01-10T00:00:00Z').getTime() / 1000) });
@@ -357,6 +403,16 @@ test('MCP: keyflip_chatgpt* tools are mounted, read-only status works, writes ga
   }, /confirmation required/);
   await assert.rejects(function () {
     return rf.run(ctx, {});
+  }, /confirmation required/);
+
+  const bk = mcpTool('keyflip_chatgpt_backups');
+  const rs = mcpTool('keyflip_chatgpt_restore');
+  assert.ok(bk && rs, 'backups/restore are mounted');
+  assert.strictEqual(bk.annotations.readOnlyHint, true);
+  assert.strictEqual(rs.annotations.readOnlyHint, false);
+  assert.deepStrictEqual((await bk.run(ctx, {})).backups, []);
+  await assert.rejects(function () {
+    return rs.run(ctx, { backup: '1' });
   }, /confirmation required/);
 });
 

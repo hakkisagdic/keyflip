@@ -1,22 +1,28 @@
 {
+  "$comment": [
+    "THE PRODUCT IDS BELOW ARE PLACEHOLDERS — replace each key that starts with REPLACE_ with the real product/price id your payment provider sends in its webhook, then delete this $comment block.",
+    "Id shapes: stripe -> price_1QZ... | lemonsqueezy -> ls_variant_... | iyzico -> your product code | paytr -> your product code.",
+    "Until a slot is filled, a purchase carrying that id is REFUSED (the issuer mints nothing) and the issuer prints a 'not ready' warning at startup — it never grants a tier for a placeholder.",
+    "This file holds NO secrets: only ids, tiers and routing. Webhook secrets live in environment variables (see issuer/README.md)."
+  ],
   "activeProviders": ["iyzico", "paytr", "lemonsqueezy", "stripe"],
   "regionRouting": {
     "TR": "iyzico",
     "default": "lemonsqueezy"
   },
   "products": {
-    "price_1QZexampleStripeProMon00": { "tier": "pro", "months": 1 },
-    "price_1QZexampleStripeProYr000": { "tier": "pro", "months": 12 },
-    "price_1QZexampleStripeTeamYr00": { "tier": "team", "months": 12 },
-    "ls_variant_100001": { "tier": "pro", "months": 1 },
-    "ls_variant_100012": { "tier": "pro", "months": 12 },
-    "ls_variant_200012": { "tier": "team", "months": 12 },
-    "iyz_prod_pro_monthly": { "tier": "pro", "months": 1 },
-    "iyz_prod_pro_yearly": { "tier": "pro", "months": 12 },
-    "iyz_prod_team_yearly": { "tier": "team", "months": 12 },
-    "paytr_pro_1m": { "tier": "pro", "months": 1 },
-    "paytr_pro_12m": { "tier": "pro", "months": 12 },
-    "paytr_team_12m": { "tier": "team", "months": 12 }
+    "REPLACE_lemonsqueezy_pro_monthly": { "tier": "pro", "months": 1 },
+    "REPLACE_lemonsqueezy_pro_yearly": { "tier": "pro", "months": 12 },
+    "REPLACE_lemonsqueezy_team_yearly": { "tier": "team", "months": 12 },
+    "REPLACE_stripe_pro_monthly": { "tier": "pro", "months": 1 },
+    "REPLACE_stripe_pro_yearly": { "tier": "pro", "months": 12 },
+    "REPLACE_stripe_team_yearly": { "tier": "team", "months": 12 },
+    "REPLACE_iyzico_pro_monthly": { "tier": "pro", "months": 1 },
+    "REPLACE_iyzico_pro_yearly": { "tier": "pro", "months": 12 },
+    "REPLACE_iyzico_team_yearly": { "tier": "team", "months": 12 },
+    "REPLACE_paytr_pro_monthly": { "tier": "pro", "months": 1 },
+    "REPLACE_paytr_pro_yearly": { "tier": "pro", "months": 12 },
+    "REPLACE_paytr_team_yearly": { "tier": "team", "months": 12 }
   },
   "licenseTtlDaysDefault": 400
 }

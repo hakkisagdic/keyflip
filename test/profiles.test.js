@@ -5,6 +5,7 @@ import path from 'path';
 import * as profiles from '../src/profiles.js';
 import * as schedule from '../src/schedule.js';
 import * as secretpolicy from '../src/secretpolicy.js';
+import * as proxyroutes from '../src/proxyroutes.js';
 import { tmpdir } from './helpers.js';
 
 test('write/read/exists/email round-trip', function () {
@@ -70,7 +71,14 @@ test('isValidName rejects reserved, traversal, and flag-like names', function ()
 test('a top-level state file is never listed as an account', function () {
   const dir = tmpdir();
   profiles.write(dir, { name: 'alice', email: 'a@x.com' });
-  const stateFiles = [schedule.RECORD_NAME, schedule.REFRESH_RECORD_NAME, secretpolicy.FILE_NAME];
+  const stateFiles = [
+    schedule.RECORD_NAME,
+    schedule.REFRESH_RECORD_NAME,
+    secretpolicy.FILE_NAME,
+    // proxy-routes.json is user-authored routing config; it lives at the top
+    // level so it must be reserved or it shows up as an account (#4).
+    proxyroutes.FILE_NAME.replace(/\.json$/, ''),
+  ];
   stateFiles.forEach(function (n) {
     fs.writeFileSync(path.join(dir, n), JSON.stringify({ installedAt: 'now', job: 'nightly' }), { mode: 0o600 });
   });

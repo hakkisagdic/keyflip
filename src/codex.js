@@ -24,6 +24,7 @@ import os from 'os';
 import { run as defaultRun } from './exec.js';
 import { atomicWrite, writeJsonStable } from './fsutil.js';
 import * as profiles from './profiles.js';
+import * as _log from './log.js';
 
 const SURFACE = 'codex';
 const TOKEN_URL = 'https://auth.openai.com/oauth/token';
@@ -568,6 +569,106 @@ function pruneAuthBackups(ctx, keep) {
   return Math.max(0, all.length - keep);
 }
 
+// Every auth.json snapshot written before a switch/refresh, newest first. Identity only —
+// the file contents never leave this module. The list is what a human needs to undo a bad
+// switch: which account it held, when, and whether it still carries a refresh token.
+function listBackups(ctx) {
+  const dir = path.join(ctx.configDir, 'backups');
+  let names;
+  try {
+    names = fs.readdirSync(dir);
+  } catch (e) {
+    return [];
+  }
+  return names
+    .filter(function (n) {
+      return /^codex-auth-.*\.json$/.test(n);
+    })
+    .sort()
+    .reverse()
+    .map(function (n) {
+      const file = path.join(dir, n);
+      const r = readAuthFile(file);
+      let size = 0;
+      try {
+        size = fs.statSync(file).size;
+      } catch (e) {
+        /* raced */
+      }
+      return {
+        file: n,
+        path: file,
+        bytes: size,
+        email: r.identity ? r.identity.email : null,
+        plan: r.identity ? r.identity.plan : null,
+        expiresAt: r.identity ? r.identity.expiresAt : null,
+        hasRefreshToken: !!(r.identity && r.identity.hasRefreshToken),
+        valid: !!(r.present && r.auth),
+      };
+    });
+}
+
+// Resolve a backup by exact name, unique prefix, or 1-based index from `listBackups`.
+function resolveBackup(ctx, ref) {
+  const all = listBackups(ctx);
+  const needle = String(ref == null ? '' : ref).trim();
+  if (!needle) return null;
+  if (/^\d+$/.test(needle)) {
+    const i = parseInt(needle, 10) - 1;
+    return all[i] || null;
+  }
+  const exact = all.find(function (b) {
+    return b.file === needle;
+  });
+  if (exact) return exact;
+  const hits = all.filter(function (b) {
+    return b.file.indexOf(needle) === 0 || b.file.indexOf('codex-auth-' + needle) === 0;
+  });
+  return hits.length === 1 ? hits[0] : null;
+}
+
+// Write a backup back to the live auth.json. The CURRENT live file is backed up first, so a
+// restore is itself reversible. Refuses while ChatGPT/Codex runs unless forced: the app owns
+// auth.json and rewrites it on exit.
+function restoreBackup(ctx, ref, opts) {
+  opts = opts || {};
+  const deps = depsOf(opts);
+  const b = resolveBackup(ctx, ref);
+  if (!b) return { ok: false, reason: 'not-found', backups: listBackups(ctx) };
+  const stored = readAuthFile(b.path);
+  if (!stored.present || !stored.auth) return { ok: false, reason: 'corrupt', file: b.file };
+  const running = runningProcesses(ctx, deps);
+  if (opts.dryRun) {
+    return {
+      ok: true,
+      dryRun: true,
+      plan: {
+        file: b.file,
+        email: b.email,
+        plan: b.plan,
+        expiresAt: b.expiresAt,
+        path: authPath(ctx),
+        running: running,
+      },
+    };
+  }
+  if (running.length && !opts.force) return { ok: false, reason: 'running', running: running, file: b.file };
+  const live = readAuthFile(authPath(ctx));
+  const saved = live.present && live.raw ? backupLiveAuth(ctx, live, deps) : null;
+  atomicWrite(authPath(ctx), stored.raw, 0o600);
+  const readback = readAuthFile(authPath(ctx));
+  return {
+    ok: true,
+    restored: b.file,
+    email: readback.identity ? readback.identity.email : null,
+    plan: readback.identity ? readback.identity.plan : null,
+    expiresAt: readback.identity ? readback.identity.expiresAt : null,
+    verified: !!(readback.present && readback.auth && readback.raw === stored.raw),
+    previous: saved,
+    path: authPath(ctx),
+  };
+}
+
 function switchTo(ctx, target, opts) {
   opts = opts || {};
   const deps = depsOf(opts);
@@ -650,6 +751,12 @@ function switchTo(ctx, target, opts) {
     verified = true;
   }
 
+  // The one record that "this ChatGPT/Codex account is now live". The conversation layer reads
+  // it to say which account a Codex thread was worked on (the Claude timeline cannot answer for
+  // Codex: the accounts live in their own namespace). Written after the switch lands and never
+  // for a failed one. Name only — never a token.
+  _log.log('codex -> ' + slug);
+
   return {
     slug: slug,
     email: expectedEmail || '',
@@ -682,4 +789,7 @@ export {
   switchTo,
   runningProcesses,
   pruneAuthBackups,
+  listBackups,
+  resolveBackup,
+  restoreBackup,
 };

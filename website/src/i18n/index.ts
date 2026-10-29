@@ -47,6 +47,7 @@ export function getNavigation(locale: Locale): NavItem[] {
       { label: 'Mimari', href: `${prefix}/architecture` },
       { label: 'Kullanım Senaryoları', href: `${prefix}/use-cases` },
       { label: 'Fiyatlandırma', href: `${prefix}/pricing` },
+      { label: 'Lisans', href: `${prefix}/license` },
       { label: 'SSS', href: `${prefix}/faq` },
     ];
   }
@@ -67,6 +68,7 @@ export function getNavigation(locale: Locale): NavItem[] {
     { label: 'Architecture', href: '/architecture' },
     { label: 'Use Cases', href: '/use-cases' },
     { label: 'Pricing', href: '/pricing' },
+    { label: 'License', href: '/license' },
     { label: 'FAQ', href: '/faq' },
   ];
 }
@@ -94,11 +96,6 @@ export interface Translations {
   pricing: {
     title: string;
     subtitle: string;
-    comingSoon: string;
-    month: string;
-    seat: string;
-    custom: string;
-    free: string;
   };
   faq: {
     title: string;

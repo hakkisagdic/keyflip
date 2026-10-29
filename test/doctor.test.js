@@ -514,3 +514,222 @@ test('instance harden: refuses while the Claude instance runs, because it would 
   assert.throws(() => instances.hardenInstance('claude', 'yahoo', ctx.instancesBase), /is running/);
   assert.ok(!fs.existsSync(path.join(inst.userDataDir, 'config.json')), 'nothing written while running');
 });
+
+// ---- #106: expired ChatGPT/Codex captures must be visible in doctor ------------------------
+
+function fakeJwt(claims) {
+  const b64 = function (o) {
+    return Buffer.from(JSON.stringify(o)).toString('base64url');
+  };
+  return b64({ alg: 'none' }) + '.' + b64(claims) + '.';
+}
+
+function fakeCodexCapture(ctx, slug, opts) {
+  opts = opts || {};
+  const dir = path.join(ctx.configDir, 'surfaces', 'codex', slug);
+  fs.mkdirSync(dir, { recursive: true });
+  const tokens = {
+    id_token: fakeJwt({ email: (opts.email || slug) + '@example.com', exp: Math.floor(Date.now() / 1000) - 86400 }),
+    access_token: fakeJwt({ exp: Math.floor(Date.now() / 1000) + (opts.expiresInSec || -3600) }),
+  };
+  if (opts.refreshable) tokens.refresh_token = 'rt-' + slug;
+  const auth = { tokens: tokens, auth_mode: opts.authMode || 'chatgpt' };
+  if (opts.apiKey) auth.OPENAI_API_KEY = 'sk-test';
+  fs.writeFileSync(path.join(dir, 'auth.json'), JSON.stringify(auth));
+  fs.writeFileSync(
+    path.join(dir, 'meta.json'),
+    JSON.stringify({ email: (opts.email || slug) + '@example.com', capturedAt: '2026-01-01T00:00:00.000Z' }),
+  );
+  return dir;
+}
+
+test('doctor: a ChatGPT/Codex capture that expired with no refresh token is a failed check', async function () {
+  const ctx = makeCtx();
+  fakeCodexCapture(ctx, 'dead', { refreshable: false }); // past expiry, nothing to rotate
+  const r = await doctor.diagnose(ctx, {});
+  const c = find(r.checks, 'chatgpt/codex captures');
+  assert.ok(c, 'the check exists');
+  assert.strictEqual(c.ok, false);
+  assert.match(c.detail, /dead.*expired/);
+  assert.match(c.fix, /keyflip chatgpt capture dead/);
+});
+
+test('doctor: a refreshable-due capture is only a warning (the daemon rotates it)', async function () {
+  const ctx = makeCtx();
+  fakeCodexCapture(ctx, 'soon', { refreshable: true, expiresInSec: 60 * 60 * 12 }); // inside the 24h window
+  const r = await doctor.diagnose(ctx, {});
+  const c = find(r.checks, 'chatgpt/codex captures');
+  assert.ok(c);
+  assert.strictEqual(c.ok, 'warn');
+  assert.match(c.detail, /due for refresh/);
+  assert.match(c.fix, /keyflip chatgpt refresh soon/);
+});
+
+test('doctor: a fresh capture passes and no codex surface adds no check', async function () {
+  const ctx = makeCtx();
+  fakeCodexCapture(ctx, 'fresh', { refreshable: true, expiresInSec: 60 * 60 * 24 * 8 });
+  let r = await doctor.diagnose(ctx, {});
+  let c = find(r.checks, 'chatgpt/codex captures');
+  assert.ok(c);
+  assert.strictEqual(c.ok, true);
+  assert.match(c.detail, /1 capture\(s\) usable/);
+
+  const bare = makeCtx(); // nothing captured: the check is simply absent, not an error
+  r = await doctor.diagnose(bare, {});
+  c = find(r.checks, 'chatgpt/codex captures');
+  assert.strictEqual(c, undefined);
+});
+
+// ---- the background-service inventory ---------------------------------------------------------
+// An unattended job that quietly stopped being unattended looks exactly like one that is working: the
+// plist is still there, the command still exists, and the only symptom is a stale answer weeks later.
+// So `doctor` asks three separate questions per job — is it installed, is the system actually holding
+// it, when did it last produce output — and the tests pin that a "yes" to the first is not treated as
+// a "yes" to the others.
+function serviceRunner(labels) {
+  return function (cmd, args) {
+    if (cmd === 'launchctl' && args[0] === 'list') {
+      const label = args[1];
+      if (labels.indexOf(label) !== -1) return { code: 0, stdout: '{\n\t"Label" = "' + label + '";\n}\n' };
+      return { code: 113, stdout: '', stderr: 'Could not find service\n' };
+    }
+    if (cmd === 'which') return { code: 0, stdout: '/usr/local/bin/keyflip\n' };
+    return { code: 0, stdout: '' };
+  };
+}
+function serviceCtx() {
+  return makeCtx({ platform: 'darwin' });
+}
+function writeIndexMeta(ctx, builtAt) {
+  const dir = path.join(ctx.configDir, 'conv-index');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'meta.json'), JSON.stringify({ schemaVersion: 1, builtAt: builtAt, sources: {} }));
+}
+
+test('background services: the whole inventory is shown, even when nothing is scheduled', async function () {
+  const ctx = serviceCtx();
+  const c = find(
+    (await doctor.diagnose(ctx, { run: serviceRunner([]), now: () => Date.now() })).checks,
+    'background services',
+  );
+  assert.ok(c, 'the check exists');
+  assert.strictEqual(c.ok, true, 'nothing scheduled is a fact to display, not automatically an alarm');
+  assert.match(c.detail, /^0 of 4 scheduled/, 'and the count is honest');
+  ['dream', 'refresh', 'daemon', 'conv'].forEach(function (j) {
+    assert.match(c.detail, new RegExp(j + ': off'), 'each job is named');
+  });
+  assert.strictEqual(c.services.length, 4, 'the structured inventory travels with the line');
+  assert.ok(
+    c.services.every(function (r) {
+      return r.installed === false;
+    }),
+  );
+});
+
+test('background services: a plist launchd does not hold is a warning, with the command to fix it', async function () {
+  const ctx = serviceCtx();
+  schedule.install(ctx, { job: 'conv', interval: 30, home: ctx.home, run: serviceRunner([]) });
+  const c = find(
+    (await doctor.diagnose(ctx, { run: serviceRunner([]), now: () => Date.now() })).checks,
+    'background services',
+  );
+  assert.strictEqual(c.ok, 'warn', 'installed-but-not-loaded is precisely the silent failure');
+  assert.match(c.detail, /conv: the plist is on disk but launchd is not holding it/);
+  assert.match(c.detail, /keyflip conv index --schedule/, 'and it names the command that re-installs it');
+  assert.strictEqual(
+    c.services.filter(function (r) {
+      return r.job === 'conv';
+    })[0].loaded,
+    false,
+    'the JSON says it too',
+  );
+});
+
+test('background services: a job that has said nothing past twice its cadence is called out', async function () {
+  const ctx = serviceCtx();
+  const runner = serviceRunner([schedule.CONV_LABEL]);
+  schedule.install(ctx, { job: 'conv', interval: 30, home: ctx.home, run: runner });
+  const log = schedule.logPath(ctx.home, { job: 'conv' });
+  fs.mkdirSync(path.dirname(log), { recursive: true });
+  fs.writeFileSync(log, 'old run\n');
+  const stale = new Date(Date.now() - 3 * 24 * 3600 * 1000);
+  fs.utimesSync(log, stale, stale);
+  const c = find((await doctor.diagnose(ctx, { run: runner, now: () => Date.now() })).checks, 'background services');
+  assert.strictEqual(c.ok, 'warn');
+  assert.match(c.detail, /conv: silent for 3 d while it is scheduled every 30 min/);
+});
+
+test('background services: a job younger than two cadences is not blamed for silence', async function () {
+  const ctx = serviceCtx();
+  const runner = serviceRunner([schedule.CONV_LABEL]);
+  schedule.install(ctx, { job: 'conv', interval: 30, home: ctx.home, run: runner });
+  const c = find((await doctor.diagnose(ctx, { run: runner, now: () => Date.now() })).checks, 'background services');
+  assert.strictEqual(c.ok, true, 'its first tick is not due yet — warning here is noise');
+  assert.match(c.detail, /conv: every 30 min · no output yet/);
+});
+
+test('background services: a search index nobody refreshes is on the schedule that refreshes it', async function () {
+  const ctx = serviceCtx();
+  writeIndexMeta(ctx, new Date(Date.now() - 30 * 3600 * 1000).toISOString());
+  const c = find(
+    (await doctor.diagnose(ctx, { run: serviceRunner([]), now: () => Date.now() })).checks,
+    'background services',
+  );
+  assert.strictEqual(c.ok, 'warn', 'a day-old index answers yesterday, and only a job keeps it honest');
+  assert.match(c.detail, /conversation index is 30 h old and nothing refreshes it/);
+  assert.match(c.detail, /keyflip conv index --schedule/);
+});
+
+test('background services: a fresh index with no schedule is not a warning', async function () {
+  const ctx = serviceCtx();
+  writeIndexMeta(ctx, new Date().toISOString());
+  const c = find(
+    (await doctor.diagnose(ctx, { run: serviceRunner([]), now: () => Date.now() })).checks,
+    'background services',
+  );
+  assert.strictEqual(c.ok, true);
+});
+
+test('background services: asking no questions at all (no runner) never invents an answer', async function () {
+  const ctx = serviceCtx();
+  schedule.install(ctx, { job: 'conv', interval: 30, home: ctx.home, run: serviceRunner([schedule.CONV_LABEL]) });
+  const c = find((await doctor.diagnose(ctx, { now: () => Date.now() })).checks, 'background services');
+  assert.strictEqual(c.ok, true, 'without a runner the loaded state is unknown, so it cannot be a failure');
+  assert.strictEqual(
+    c.services.filter(function (r) {
+      return r.job === 'conv';
+    })[0].loaded,
+    null,
+  );
+});
+
+test('background services: a warning still names every job, so "which ones do I have" stays answerable', async function () {
+  const ctx = serviceCtx();
+  const runner = serviceRunner([schedule.CONV_LABEL]);
+  schedule.install(ctx, { job: 'dream', at: '03:00', home: ctx.home, run: serviceRunner([]) });
+  schedule.install(ctx, { job: 'daemon', home: ctx.home, run: serviceRunner([]) });
+  schedule.install(ctx, { job: 'conv', interval: 30, home: ctx.home, run: runner });
+  const c = find((await doctor.diagnose(ctx, { run: runner, now: () => Date.now() })).checks, 'background services');
+  assert.strictEqual(c.ok, 'warn', 'the two installed-but-not-held jobs are the complaint');
+  assert.match(c.detail, /dream: nightly at 03:00/, 'but the line still shows every job, with its hour');
+  assert.match(c.detail, /daemon: always-on/, 'and a KeepAlive daemon is never called nightly');
+  assert.match(c.detail, /conv: every 30 min/, 'an interval job shows the cadence it was installed with');
+  assert.match(c.detail, /refresh: off/, 'the uninstalled one is still listed');
+});
+
+test('background services: ages are computed against the project clock, which is an ISO string', async function () {
+  // ctx.now() returns an ISO string by contract. Subtracting a parsed date from a string is NaN, and
+  // "spoke NaN d ago" is the kind of line that makes a report unreadable while still looking green.
+  const ctx = makeCtx({ platform: 'darwin' }); // fixed clock: 2026-01-01T00:00:00.000Z
+  const runner = serviceRunner([schedule.CONV_LABEL]);
+  schedule.install(ctx, { job: 'conv', interval: 30, home: ctx.home, run: runner });
+  const log = schedule.logPath(ctx.home, { job: 'conv' });
+  fs.mkdirSync(path.dirname(log), { recursive: true });
+  fs.writeFileSync(log, 'ran once\n');
+  const when = new Date(Date.parse('2025-12-31T00:00:00.000Z')); // 24 h before the fixed clock
+  fs.utimesSync(log, when, when);
+  const c = find((await doctor.diagnose(ctx, { run: runner })).checks, 'background services');
+  assert.strictEqual(c.ok, 'warn');
+  assert.match(c.detail, /silent for 24 h while it is scheduled every 30 min/);
+  assert.ok(c.detail.indexOf('NaN') === -1, c.detail);
+});

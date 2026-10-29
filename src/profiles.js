@@ -20,6 +20,7 @@ const RESERVED_NAMES = ['__proto__', 'prototype', 'constructor'];
 const RESERVED_FILES = [
   'breakers',
   'proxy',
+  'proxy-routes',
   'mcp-registry',
   'links',
   'installed-skills',
@@ -47,6 +48,7 @@ const RESERVED_FILES = [
   'refresh-schedule',
   'secrets-policy',
   'session-accounts-source',
+  'prices-cache',
 ];
 
 function metaPath(dir, name) {
