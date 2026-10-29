@@ -33,6 +33,63 @@ function entry(all, name) {
   return all[name];
 }
 
+// --- per-account cooldown (#11) -------------------------------------------------
+// The breaker is a LONG-horizon signal (4 failures open it for a full minute). A
+// single authoritative "come back at T" from upstream (429 + Retry-After, a
+// billing block, an expired token) should take an account out of rotation at
+// once without waiting to trip that breaker. Cooldown lives in the SAME
+// breakers.json entry (cooldownUntil/cooldownKind) so no new state file — and no
+// new RESERVED_FILES entry — is introduced. lastUsedAt is the LRU key (#9).
+
+function markCooldown(ctx, name, ms, kind, opts) {
+  opts = opts || {};
+  const now = opts.nowMs !== undefined ? opts.nowMs : Date.now();
+  const until = now + Math.max(0, Number(ms) || 0);
+  const all = readAll(ctx);
+  const e = entry(all, name);
+  if (!ms) {
+    delete e.cooldownUntil;
+    delete e.cooldownKind;
+  } else if (!e.cooldownUntil || until > e.cooldownUntil) {
+    // never SHORTEN an existing cooldown (a later short Retry-After must not
+    // release an account another response has already parked for longer)
+    e.cooldownUntil = until;
+    e.cooldownKind = String(kind || 'throttled');
+  }
+  writeAll(ctx, all);
+  return e.cooldownUntil || 0;
+}
+
+// Effective cooldown: {active, remainingMs, until, kind}. Expired entries read as
+// inactive without writing (a read must never mutate on a status check).
+function cooldownOf(ctx, name, opts) {
+  opts = opts || {};
+  const now = opts.nowMs !== undefined ? opts.nowMs : Date.now();
+  const e = readAll(ctx)[name];
+  if (!e || !e.cooldownUntil) return { active: false, remainingMs: 0, until: 0, kind: null };
+  const remainingMs = Math.max(0, e.cooldownUntil - now);
+  return {
+    active: remainingMs > 0,
+    remainingMs: remainingMs,
+    until: e.cooldownUntil,
+    kind: remainingMs > 0 ? e.cooldownKind || 'throttled' : null,
+  };
+}
+
+function clearCooldown(ctx, name) {
+  const all = readAll(ctx);
+  if (!all[name]) return false;
+  const had = !!all[name].cooldownUntil;
+  delete all[name].cooldownUntil;
+  delete all[name].cooldownKind;
+  if (!all[name].state || all[name].state === 'closed') {
+    // a closed entry with nothing else recorded is noise — drop it entirely
+    if (!all[name].failures && !all[name].successes && !all[name].lastUsedAt) delete all[name];
+  }
+  writeAll(ctx, all);
+  return had;
+}
+
 // Effective state, accounting for the recovery window (Open -> Half-open once
 // recoveryMs has elapsed). Does not mutate.
 function state(ctx, name, opts) {
@@ -54,6 +111,7 @@ function recordFailure(ctx, name, opts) {
   const now = opts.nowMs !== undefined ? opts.nowMs : Date.now();
   const all = readAll(ctx);
   const e = entry(all, name);
+  e.lastUsedAt = now; // LRU key for the router (#9): every real attempt counts
   e.failures = (e.failures || 0) + 1;
   e.successes = 0;
   // Trip open (or RE-ARM the recovery window) on any failure at/over threshold —
@@ -71,6 +129,7 @@ function recordSuccess(ctx, name, opts) {
   const now = opts.nowMs !== undefined ? opts.nowMs : Date.now();
   const all = readAll(ctx);
   const e = entry(all, name);
+  e.lastUsedAt = now;
   if (!e || e.state === 'closed') {
     e.failures = 0;
     writeAll(ctx, all);
@@ -101,4 +160,15 @@ function reset(ctx, name) {
   writeAll(ctx, all);
 }
 
-export { state, isAvailable, recordFailure, recordSuccess, reset, readAll, DEFAULTS };
+export {
+  state,
+  isAvailable,
+  recordFailure,
+  recordSuccess,
+  reset,
+  readAll,
+  markCooldown,
+  cooldownOf,
+  clearCooldown,
+  DEFAULTS,
+};

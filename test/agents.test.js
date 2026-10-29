@@ -38,6 +38,26 @@ test('collect: nothing present → empty (existence-gated)', function () {
   const ctx = makeCtx();
   assert.deepStrictEqual(agents.collectAgentMemory(ctx), []);
   assert.deepStrictEqual(agents.presentAgents(ctx), []);
+  assert.deepStrictEqual(agents.installedAgents(ctx), []);
+});
+
+test('installedAgents: an installed tool with no memory and no config is not "not found"', function () {
+  const ctx = makeCtx();
+  // Command Code keeps only a login here: no home-level memory, and mcp.json appears only after
+  // the first `mcpreg enable`. It must still read as installed.
+  fs.mkdirSync(path.join(ctx.home, '.commandcode'), { recursive: true });
+  fs.writeFileSync(path.join(ctx.home, '.commandcode', 'auth.json'), '{"userName":"someone"}', { mode: 0o600 });
+  fs.mkdirSync(path.join(ctx.home, '.kiro'), { recursive: true });
+  assert.deepStrictEqual(agents.presentAgents(ctx), [], 'no memory to carry');
+  assert.deepStrictEqual(agents.presentAgentConfig(ctx), [], 'no config file yet');
+  assert.deepStrictEqual(agents.installedAgents(ctx).sort(), ['command-code', 'kiro']);
+});
+
+test('installedAgents: memory and config presence count too', function () {
+  const ctx = makeCtx();
+  seedCursor(ctx);
+  seedCursorMcp(ctx, '{}');
+  assert.deepStrictEqual(agents.installedAgents(ctx), ['cursor']);
 });
 
 test('collect: finds cursor rules, gemini file, codex dir+file', function () {

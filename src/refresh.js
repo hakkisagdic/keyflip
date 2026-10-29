@@ -461,6 +461,42 @@ function checkClaudeSession(ctx, cred) {
 async function tick(ctx) {
   const surfacesDir = path.join(ctx.configDir, 'surfaces');
 
+  // Expired, non-refreshable captures: the daemon cannot fix them (only a human sign-in can),
+  // so it says so — once per SET of dead captures, not once per tick. The marker file is state,
+  // not a credential; it lives in the config dir and is pruned when the set changes.
+  try {
+    const dead = codex
+      .listCaptures(ctx)
+      .filter(function (c) {
+        if (!c.usable) return false;
+        const r = c.refreshReason || '';
+        return r === 'expired' || r === 'not-refreshable';
+      })
+      .map(function (c) {
+        return c.slug;
+      })
+      .sort();
+    const marker = path.join(ctx.configDir, 'expired-captures.json');
+    const fingerprint = JSON.stringify(dead);
+    let prev = null;
+    try {
+      prev = fs.readFileSync(marker, 'utf8');
+    } catch {
+      prev = null;
+    }
+    if (prev !== fingerprint) {
+      fs.mkdirSync(ctx.configDir, { recursive: true });
+      fs.writeFileSync(marker, fingerprint);
+      if (dead.length)
+        console.log(
+          `[refresh] ⚠️  ChatGPT/Codex capture(s) expired and not refreshable: ${dead.join(', ')} — sign in once in ChatGPT/Codex, then \`keyflip chatgpt capture <slug>\` (see \`keyflip doctor\`)`,
+        );
+      else if (prev != null) console.log('[refresh] expired-capture set cleared');
+    }
+  } catch {
+    /* a broken surfaces dir must not kill the tick */
+  }
+
   // Tool-level strategies own their own credential file (Codex: one live
   // auth.json shared by ChatGPT.app + the CLI), so they run once and do not
   // require a per-account surface directory to exist.

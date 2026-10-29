@@ -74,16 +74,20 @@ describe(
     });
 
     it('creates a Claude instance successfully', function () {
-      const r = run(['instance', 'create', 'claude', 'test-yahoo']);
+      // A real APFS clone of Claude.app: 1.4 s alone, but this spawn runs while the rest of the suite
+      // hammers the disk, and the 10 s default killed it mid-clone (status null, output truncated to
+      // "[instances] Cloning Claude.app…") — which then looked like "the app is missing". The clone
+      // gets its own generous budget; nothing else here needs one.
+      const r = run(['instance', 'create', 'claude', 'test-yahoo'], { timeout: 120000 });
       // Note: This will fail if Claude.app is not installed, which is expected in CI
       // The test verifies the command structure and error handling
       if (r.code !== 0) {
         assert.ok(
           r.output.includes('not found') || r.output.includes('Please install'),
-          'Should fail gracefully when app not installed',
+          'Should fail gracefully when app not installed — got code ' + r.code + ': ' + r.output,
         );
       } else {
-        assert.ok(r.output.includes('Instance created'));
+        assert.ok(r.output.includes('Instance created'), r.output);
         assert.ok(r.output.includes('test-yahoo'));
       }
     });

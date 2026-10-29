@@ -24,7 +24,8 @@ const os = require('node:os');
 const path = require('node:path');
 const fs = require('node:fs');
 
-const { createIssuer } = require('./server');
+const { createIssuer, configReadiness } = require('./server');
+const { EventLog } = require('./store');
 const license = require('../src/license');
 
 // ---- crypto contract helpers (mirror src/license.js EXACTLY) -----------------
@@ -239,7 +240,7 @@ test('CRYPTO ROUND-TRIP: a minted token verifies green in src/license.js', async
   const port = await listen(h.issuer.server);
   t.after(function () {
     h.issuer.server.close();
-    license.setPublicKey(license.PUBKEY_B64); // restore the placeholder for other tests
+    license.setPublicKey(license.PUBKEY_B64); // restore the shipped release key for other tests
   });
 
   const body = JSON.stringify({ type: 'purchase', email: 'roundtrip@x.io', product: 'plan-pro', orderId: 'ord_rt_1' });
@@ -310,6 +311,46 @@ test('non-purchase event is acknowledged without minting', async function (t) {
   assert.strictEqual(res.status, 200);
   assert.strictEqual(res.json.issued, false);
   assert.strictEqual(h.state.mintCount, 0);
+});
+
+test('an unmapped product is refused, and the event log NAMES the product id', async function (t) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'keyflip-unmapped-'));
+  const events = new EventLog({ file: path.join(dir, 'events.jsonl') });
+  const h = buildHarness({ deps: { events: events } });
+  const port = await listen(h.issuer.server);
+  t.after(function () {
+    h.issuer.server.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  const body = JSON.stringify({
+    type: 'purchase',
+    email: 'p@x.io',
+    product: 'plan-mystery',
+    orderId: 'ord_unmapped_1',
+  });
+  const sig = hmacHex(h.secret, body);
+  const res = await request(port, 'POST', '/webhook/stub', body, { 'x-stub-signature': sig });
+  assert.strictEqual(res.status, 422);
+  assert.strictEqual(h.state.mintCount, 0, 'an unmapped product must never mint');
+
+  // The note must NAME the product: that is what lets the operator paste the
+  // right id into issuer.config.json instead of guessing.
+  const ev = events.recent(10).filter(function (e) {
+    return e.event === 'webhook.unmapped';
+  })[0];
+  assert.ok(ev, 'an unmapped event must be recorded');
+  assert.ok(ev.note.indexOf('plan-mystery') !== -1, 'the note must name the product id: ' + ev.note);
+});
+
+test('configReadiness: the shipped config reports the unfilled product slots', function () {
+  const r = configReadiness();
+  assert.strictEqual(r.ready, false, 'the shipped config still has REPLACE_ slots');
+  assert.ok(Array.isArray(r.pendingProducts));
+  assert.ok(r.pendingProducts.length > 0);
+  r.pendingProducts.forEach(function (id) {
+    assert.ok(id.indexOf('REPLACE_') === 0, id + ' should be a placeholder');
+  });
 });
 
 test('ledger.json persists metadata (not the token) and dedups across restart', async function (t) {

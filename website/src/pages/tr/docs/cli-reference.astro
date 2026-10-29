@@ -40,7 +40,7 @@ import CommandReference from '../../../components/CommandReference.astro';
           { cmd: 'keyflip add <isim> --token <dosya|->', desc: 'Ham kimlik bilgisini başlıksız içeri aktar (CI/sağlamacılık)' },
           { cmd: 'keyflip status', desc: 'Her yüzeyde hangi hesap aktif (CLI + masaüstü uygulaması)' },
           { cmd: 'keyflip list [--usage]', desc: 'Hesapları listele; --usage 5s/7g kullanımını gösterir' },
-          { cmd: 'keyflip doctor', desc: 'Sağlık kontrolü: git\'te sırlar, yetim oturumlar, yapılandırma, uç noktalar' },
+          { cmd: 'keyflip doctor', desc: 'Sağlık kontrolü: git\'te sırlar, yetim oturumlar, yapılandırma, uç noktalar ve her arka plan servisi — kurulu mu, launchd/cron gerçekten tutuyor mu, en son ne zaman çıktı üretti' },
           { cmd: 'keyflip doctor --history', desc: 'Ayrıca keyflip\'in geçmişte commit ettiği her blob\'u erişilebilir bir sır açısından tarar' },
           { cmd: 'keyflip verify [hesap] [--usage|--live]', desc: 'Oraya geçiş gerçekten işe yarar mı? Her yüzeyi kendi uygulamasının okuduğu gibi yeniden okur — varlık, expiry, yaş; asla değer' },
           { cmd: 'keyflip config <list|get|set|unset>', desc: 'Doğrulanmış ayarlar evi' },
@@ -69,7 +69,10 @@ import CommandReference from '../../../components/CommandReference.astro';
 
       <div id="providers">
         <CommandReference title="Sağlayıcılar" commands={[
-          { cmd: 'keyflip provider add <isim> --base-url <url> --key-file -', desc: 'Üçüncü taraf uç nokta kaydet (anahtar stdin\'den)' },
+          { cmd: 'keyflip provider catalog', desc: 'Hazır presetler (Z.AI, Kimi, DeepSeek, OpenRouter, Ollama…)' },
+          { cmd: 'keyflip provider add <id> --key-file -', desc: 'Preset kaydet — yalnızca anahtar gerekir' },
+          { cmd: 'keyflip provider add <isim> --base-url <url> --key-file -', desc: 'Herhangi bir üçüncü taraf uç nokta kaydet (anahtar stdin\'den)' },
+          { cmd: 'keyflip provider models <id|isim>', desc: 'GET /v1/models: uç nokta gerçekte ne sunuyor?' },
           { cmd: 'keyflip use <isim>', desc: 'Claude Code\'u bir sağlayıcıya yönlendir' },
           { cmd: 'keyflip provider off', desc: 'Aboneliğe geri dön (OAuth)' },
           { cmd: 'keyflip provider list', desc: 'Kayıtlı/aktif sağlayıcıları listele' },
@@ -79,8 +82,15 @@ import CommandReference from '../../../components/CommandReference.astro';
           { cmd: 'keyflip route list|set|clear|arbitrage', desc: 'Model yönlendirme ve arbitraj modu' },
           { cmd: 'keyflip cache status|purge', desc: 'Yanıt önbellek yönetimi' },
           { cmd: 'keyflip proxy start --wire', desc: 'Localhost yedekleme proxy\'si başlat + Claude\'a bağla' },
-          { cmd: 'keyflip proxy status', desc: 'Proxy sağlığı ve istatistikleri' },
+          { cmd: 'keyflip proxy status', desc: 'Proxy sağlığı, istatistikler, canlı rota sırası + cooldown\'lar' },
+          { cmd: 'keyflip proxy routes [init]', desc: 'Bildirimsel yönlendirme dosyası: kurallar, sticky, fallback, transform' },
+          { cmd: 'keyflip proxy explain --model M', desc: 'Bir isteğin nereye gideceği ve neden (hiçbir şey gönderilmez); plan nedeniyle atlananları listeler' },
+          { cmd: 'keyflip proxy stats', desc: 'Hesap başına istek, token, cache okuma/yazma ve tahmini liste fiyatı harcaması' },
           { cmd: 'keyflip proxy stop', desc: 'Proxy\'yi durdur ve bağlantıyı kes' },
+          { cmd: 'keyflip cooldown [clear <hesap>|--all]', desc: 'Hangi hesaplar park edilmiş, ve onları serbest bırak' },
+          { cmd: 'keyflip tier [<hesap> <plan|auto>]', desc: 'Her hesabın planı ve bir modelin ona yönlendirilip yönlendirilemeyeceği' },
+          { cmd: 'keyflip cost rates [model]', desc: 'Ücret kartı: cache kademeleri, 200K uzun bağlam primi, hızlı mod' },
+          { cmd: 'keyflip cost prices [--refresh|--clear|--pin <sha256>]', desc: 'Tahminlerde hangi fiyat tablosunun kullanıldığı; herkese açık listeden tazeleme (sha-256 pin isteğe bağlı, asla otomatik değil)' },
           { cmd: 'keyflip gateway use|off <sağlayıcı>', desc: 'Masaüstü uygulamasını bir sağlayıcıya yönlendir' },
         ]} />
       </div>
@@ -103,7 +113,7 @@ import CommandReference from '../../../components/CommandReference.astro';
           { cmd: 'keyflip sessions delete <id> [--hard]', desc: 'Bir konuşmayı sil (varsayılan olarak önce arşivler)' },
           { cmd: 'keyflip sessions edit <id> <eylem> <n>', desc: 'Cerrahi JSONL düzenlemeleri (sil/sansürle/kes)' },
           { cmd: 'keyflip sessions export <id> [--format md|html|json]', desc: 'Sohbeti paylaşılabilir belge olarak dışa aktar' },
-          { cmd: 'keyflip foreign <dosya> [--format ...]', desc: 'Başka bir ajan oturumunu normalize et (Cursor/Copilot/vb)' },
+          { cmd: 'keyflip foreign <dosya> [--format ...]', desc: 'Başka bir ajan oturumunu normalize et (Cursor/Copilot/Qoder/Command Code/vb)' },
           { cmd: 'keyflip recall "<sorgu>" [--answer]', desc: 'Tüm sohbetlerde BM25/anlamsal arama + kaynaklı sentez' },
           { cmd: 'keyflip dream [--older-than 30d] [--apply]', desc: 'Eski sohbetleri tek geçişte özetle + arşivle' },
           { cmd: 'keyflip dream schedule|unschedule|status', desc: 'Rüya modunu geceleri gözetimsiz çalıştır' },
@@ -119,6 +129,14 @@ import CommandReference from '../../../components/CommandReference.astro';
           { cmd: 'keyflip threads where <id>', desc: 'Bu oturumu hangi thread\'ler içeriyor' },
           { cmd: 'keyflip threads drop <slug> -y', desc: 'Yalnız ADI unut; transkriptler ve atamalar kalır' },
           { cmd: 'keyflip threads mirror <slug> | unmirror <slug>', desc: 'Opsiyonel birleşik metin (threads.mirror=true ister)' },
+          { cmd: 'keyflip conv list [--app claude,codex] [--since 7d] [--cwd <dizin>] [--account <ad>]', desc: 'Yerel tüm yapay zekâ araçlarının sohbetleri tek biçimde (Claude Code, Codex, Kiro, Gemini, Qoder, Command Code, Cursor, opencode, Copilot, Aider); --account yalnızca o hesabın sohbetlerini gösterir' },
+          { cmd: 'keyflip conv index [--embed] [--force] [--watch]', desc: 'Sohbet indeksini kur (artımlı; --embed yerel vektör ekler; --watch her N dakikada güncel tutar). Cursor editör DB\'sinden, CLI deposundan ve transkript aynasından composer başına okunur; okunamayan depo atlandı, bozuk okunan depo uyarı olarak raporlanır' },
+          { cmd: 'keyflip conv index --schedule [--interval N]', desc: 'Sohbet indeksini gözetimsiz güncel tut (macOS\'ta launchd, Linux\'ta cron); --schedule-status / --unschedule' },
+          { cmd: 'keyflip conv search "<sorgu>" [--lexical|--semantic] [--account <ad>]', desc: 'Tüm sohbetlerde BM25 / embedding / hibrit içerik araması. Sonuç bir turun tamamıdır (soru + cevap); dallanmış oturumdaki aynı metin bir kez gösterilir ve diğer sohbetleri alsoIn içinde adlandırır' },
+          { cmd: 'keyflip conv context "<sorgu>" [--budget 12000]', desc: 'Yapıştırılmaya hazır RAG bloğu: kaynak atıflı + komşu parçalar, karakter bütçeli' },
+          { cmd: 'keyflip conv show <id|önek|başlık> [--format md|html|json]', desc: 'Tek sohbeti oku; araç gürültüsü ayıklanmış — hangi hesabın yazdığı da dahil (sizin söylediğiniz, ya da geçiş zaman çizelgesinden güven ve gerekçeyle tahmin edilen)' },
+          { cmd: 'keyflip conv export --all [--obsidian] --out <dizin>', desc: 'Tüm sohbetleri MD/HTML/JSON olarak veya Obsidian vault\'a aktar (sahiplikli notlar, çakışma kopyaları, düzenlemelerin asla üzerine yazmaz)' },
+          { cmd: 'keyflip conv transfer <id> --to claude|codex|kiro|cursor|opencode|windsurf|gemini|copilot|aider|generic', desc: 'Başka bir araca devir paketi (CONTINUE.md + conversation.json) — hiçbir aracın deposuna dokunmaz' },
         ]} />
       </div>
 
@@ -210,8 +228,10 @@ import CommandReference from '../../../components/CommandReference.astro';
       <div id="desktop">
         <CommandReference title="Masaüstü ve Tarayıcı" commands={[
           { cmd: 'keyflip browser status|logout|sync', desc: 'Tarayıcı claude.ai hesabını kontrol et/sıfırla/geri yükle' },
-          { cmd: 'keyflip consolidate [--watch] [--no-instances]', desc: 'Her hesabın ve instance kopyasının sohbet dizinini birleştir' },
-          { cmd: 'keyflip chatgpt status|list|capture|switch|refresh|remove', desc: 'Ortak ChatGPT.app + Codex girişini kaydet/değiştir/yenile (takma ad: codex)' },
+          { cmd: 'keyflip consolidate [--dry-run] [--watch] [--no-instances]', desc: 'Her hesabın ve instance kopyasının sohbet dizinini birleştir; --dry-run planı gösterir (uygulama açık kalabilir)' },
+          { cmd: 'MCP keyflip_consolidate_plan', desc: 'Aynı birleştirmenin salt-okunur planı — her hesap klasörü ne kazanırdı' },
+          { cmd: 'keyflip chatgpt status|list|capture|switch|refresh|backups|remove', desc: 'Ortak ChatGPT.app + Codex girişini kaydet/değiştir/yenile ve auth.json yedeğini geri yükle (takma ad: codex)' },
+          { cmd: 'keyflip commandcode status|list|capture|switch|backups|restore|remove', desc: 'cmd CLI ve VS Code eklentisinin paylaştığı tek ~/.commandcode/auth.json dosyasını kaydet/değiştir; status, dosyanın önüne geçen dışa aktarılmış COMMAND_CODE_API_KEY\'i ve sürüm yönetimli Node altına kurulmuş cmd\'yi bildirir' },
           { cmd: 'keyflip agents', desc: 'Diğer ajanların bellek + yapılandırmasını listele' },
           { cmd: 'keyflip settings show|get|set', desc: '~/.claude/settings.json dosyasını görüntüle/düzenle' },
           { cmd: 'keyflip surfaces', desc: 'Bu makinedeki diğer AI araçlarını algıla' },
@@ -222,9 +242,13 @@ import CommandReference from '../../../components/CommandReference.astro';
       <div id="mcp">
         <CommandReference title="MCP ve Beceriler" commands={[
           { cmd: 'keyflip mcp [--setup|--register]', desc: 'Ajanlar için stdio üzerinden MCP sunucusu (--register: mutlak yollu kendi kaydı)' },
-          { cmd: 'keyflip install-skill', desc: 'Claude Code becerisini kur (~/.claude/skills/keyflip)' },
-          { cmd: 'keyflip skill add <repo|dir|tgz>', desc: 'GitHub/dizin/dosyadan beceri kur' },
-          { cmd: 'keyflip skill list|remove <isim>', desc: 'Kurulu becerileri yönet' },
+          { cmd: 'keyflip mcpreg add <ad> -- <komut> | enable <ad> [--surface id|--code|--desktop]', desc: 'Tek kayıt, keyflip’in yazabildiği her ajana yansır (Claude Code/Desktop, Cursor, Kiro, Gemini CLI, Devin/Windsurf, opencode); bayrak yoksa mevcut her yüzey' },
+          { cmd: 'keyflip mcpreg list | surfaces | disable | remove | import', desc: 'Sunucunun nereye düştüğü ve bir hedefin neden atlandığı; Codex (TOML), Continue (dizi) ve Copilot (depo kapsamlı) “not projected” olarak adlandırılır' },
+          { cmd: 'keyflip install-skill', desc: 'Paketli keyflip becerisi → ~/.claude/skills/keyflip + tespit edilen diğer ajanlar' },
+          { cmd: 'keyflip skill agents', desc: 'Keyflip’in yazabildiği tüm ajan beceri dizinleri ve hangi araçların kurulu olduğu' },
+          { cmd: 'keyflip skill add <repo|dir|tgz> [--agents a,b] [--yes]', desc: 'Beceri kur: tespit edilen her ajana (veya yalnız adını verdiklerine); sır taşıyan (gizli dosyalar dahil) veya symlink içeren beceriyi reddeder' },
+          { cmd: 'keyflip skill sync [--yes]', desc: 'Her becerinin kaynağını yeniden uygula; senin düzenlediğin kopyaya dokunmaz, sonradan sır eklenen kaynağı atlar' },
+          { cmd: 'keyflip skill list|remove <isim> [--yes]', desc: 'Ajan başına durum (ok/edited/missing); yalnız keyflip’in bildiği dizinlerde siler' },
           { cmd: 'keyflip brain "<niyet>"', desc: 'Düz dilden önerilen keyflip adımlarına (isteğe bağlı)' },
         ]} />
       </div>

@@ -9,6 +9,553 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Command Code (`cmd`, npm `command-code`) is a managed surface.** Both the CLI and its shipped
+  VS Code extension read one `~/.commandcode/auth.json` (0600), so a single switch flips both — and
+  the file also carries that account's BYOK provider overrides, which a capture preserves. The new
+  `keyflip commandcode status|list|capture|switch|backups|restore|remove` group names accounts from
+  `userName`, stores `auth.json` + a **secret-free** `meta.json` under
+  `~/.config/keyflip/surfaces/command-code/<slug>/`, and on switch backs up the live file, captures
+  the outgoing login, writes the stored bytes and verifies by raw read-back plus user id/name
+  (a mismatch names the backup to roll back to). `status` reports the two traps a switch cannot
+  fix: an exported `COMMAND_CODE_API_KEY` overrides the file (the switch would look inert), and a
+  `cmd` installed under fnm/nvm is only on PATH for that Node version (it prints the shim path and
+  the `fnm use`/`nvm use` remedy). The web dashboard stays a separate human login, stated in the
+  docs. Four MCP tools (`keyflip_commandcode` read-only; `_capture`/`_switch`/`_remove`
+  confirm-gated) and the `surfaces` registry row (`switchable`, with a pointer to the CLI group)
+  ship with it. Its sessions (`~/.commandcode/projects/<slug>/*.jsonl`) now appear in
+  `keyflip conv --app command-code` and `keyflip foreign`: both live on-disk layouts are parsed —
+  the flat `{role,content}` event log and the v3 `{type:'session'|'message'}` log (whose session
+  header supplies the cwd) — with thinking/reasoning, tool-result payloads, images,
+  `.checkpoints.jsonl` sidecars and `compaction` rows dropped, the tool name kept on the assistant
+  turn, the title read from the `<sessionId>.meta.json` sidecar, and `cmd --resume <id>` as the
+  resume command.
+- **One MCP registry, projected into every agent keyflip can write.** `mcpreg` knew only Claude Code
+  and Claude Desktop, so the same server had to be re-typed into every other agent's config. Now
+  `keyflip mcpreg enable <name>` also lands the entry in Cursor (`~/.cursor/mcp.json`), Kiro
+  (`~/.kiro/settings/mcp.json`), Gemini CLI (`~/.gemini/settings.json`), Devin Desktop/Windsurf (an
+  existing `mcp_config.json`, wherever the rename left it) and opencode (`opencode.json`, under
+  `mcp`, as `{type:'local',command:[argv],environment}`) — each path and shape taken from the
+  agent's own docs or config schema, not from a guess (Kiro MCP docs, Gemini CLI docs, opencode's
+  `config.json` `McpLocalConfig`, the Devin Desktop MCP docs). `keyflip mcpreg surfaces` prints every
+  target, its path, the servers it carries and why a target is skipped; Codex (TOML
+  `[mcp_servers]`), Continue (an array under `experimental.mcpServers`) and Copilot (a repo-scoped
+  file) are named as **not projected**, with the reason, instead of being written blind. The Claude
+  path's safety rules carry over: a config that exists but does not parse aborts (never replaced by
+  `{}`), only the named entry is touched, a config is CREATED only when the agent is installed and
+  its path is unambiguous, an `opencode.jsonc` with comments is reported (`skipped-jsonc`) rather
+  than rewritten without them, and a write keeps the file's mode (0600 when new). `--code` /
+  `--desktop` / `--surface <id>` narrows the write; no flag means every surface on this machine.
+  Over MCP, `keyflip_mcpreg_list` now returns `surfaces` alongside `servers` and
+  `keyflip_mcpreg_enable` accepts any surface id or `all`.
+- **The release verifying key is embedded, so a real license works the moment it is bought.**
+  `src/license.js` carried the placeholder `REPLACE_AT_RELEASE_WITH_ED25519_SPKI_DER_BASE64`, so
+  every shipped client verified *nothing* until a release patched the key in. The issuer keypair now
+  exists (private key at `issuer/private/issuer.key`, mode `0600`, gitignored, never printed, logged
+  or passed on `argv`) and its **public** half is embedded in `PUBKEY_B64` — a token the issuer signs
+  verifies green in an installed keyflip with no code change and no release. The placeholder's
+  fail-closed property did not disappear with it: an *unparseable* key still makes `verify()` answer
+  `no-pubkey` and collapses every tier to `free`, and a test now asserts the shipped key really is a
+  parseable Ed25519 public key (so a placeholder can never slip back in unnoticed). The keypair's
+  private half still needs an **encrypted off-machine backup** — lose it and no license can ever be
+  signed again; the rotation rule (a new key invalidates every old license, so reissue) is in
+  `issuer/README.md`.
+- **The issuer says what it is not ready for, instead of silently minting nothing.** The product-id
+  slots in `issuer/issuer.config.json` shipped as fake-but-plausible ids (`price_1QZexample…` looks
+  exactly like a real Stripe price id); they are now explicit `REPLACE_…` **placeholders**. An
+  unfilled slot is **refused, never guessed**: `tierForProduct()` returns `null` for it, the issuer
+  prints `{"evt":"config","ready":false,"pendingProducts":[…]}` at startup, and an unmapped webhook
+  records the **product id in the event log** so the operator knows precisely what to paste in. A
+  test asserts the shipped config can never contain a real-looking id.
+- **The activation runbook** — `issuer/README.md` now carries the whole owner path in order (keygen →
+  back up the key → PSP signup → fill the product ids → fill the checkout URLs → `KEYFLIP_LICENSING=1`),
+  in English and Turkish, with the rotation rule and the reason a revoked offline license cannot be
+  un-activated.
+
+- **The website can take money and explain how to use what you bought.** Two new pages
+  (`/license` and `/tr/license`) walk a buyer from "I paid" to "the paid features are unlocked":
+  save the emailed token to a file, `keyflip license activate <file>`, check it with
+  `keyflip license status`. The pricing page now grows its checkout buttons from **one** source —
+  `website/src/checkout.config.json` — instead of hardcoded markup, so the price a visitor reads
+  and the button they click come from the same field and cannot drift apart. An empty checkout URL
+  means "not configured" and the button is hidden rather than pointing at a 404, and a single
+  `salesOpen` switch hides the "coming soon" badges until checkout really works. Region routing
+  matches the issuer (`TR` -> iyzico/PayTR, everyone else -> Lemon Squeezy/Stripe), and the
+  customer-portal links on the license page are the way back in when the purchase email is lost.
+  The page is also honest about the limits of the model: because verification is local, an
+  already-activated license **cannot be revoked from a server** — the enforcement path is a
+  shorter reissued license, not a kill switch.
+- **The issuer gets an admin panel: issue, reissue, revoke, look up — and the webhook event log.**
+  `issuer/admin.js` serves both a JSON API under `/admin/api/*` and a tiny single-page panel at
+  `/admin` (no build step, no framework, no CDN; the UI is a thin client over the same API, so
+  there is no privileged path the API cannot do). `issuer/store.js` holds the issuer's own
+  bookkeeping — the license records and the append-only event log — and it **cannot hold a token**:
+  `create()` takes no token argument at all, so a leaked state file can never unlock a paid feature.
+  The minted token is returned in the response **exactly once** (that response is the delivery
+  channel to the customer) and is never written to disk, logged or event-logged. Every request needs
+  `Authorization: Bearer <token>` compared in constant time; with **no token configured the panel
+  answers 503 and does nothing** — it fails closed rather than falling open because someone forgot
+  to set it — and a token in the query string is refused (query strings end up in logs). `revoke`
+  records the revocation and marks the record; it cannot un-activate a license that is already
+  activated on a customer machine, because a keyflip license is verified locally with no phone-home
+  (there is nobody to ask at verify time) — so the honest enforcement path is **reissue** with a
+  shorter expiry. The webhook router now appends what each call did (rejected, duplicate, unmapped,
+  issued) to the same event log.
+- **The price table updates itself: `keyflip cost prices --refresh`.** The cost estimates were pinned
+  to a hand-maintained snapshot, so list-price drift (a new model, an intro price lapsing) silently
+  skewed every number. New `src/prices.js` fetches the public LiteLLM price list, keeps the Claude
+  rows, normalizes them to keyflip's per-MTok shape and caches them in
+  `~/.config/keyflip/prices-cache.json`; `cost rates`, `cost by-project` and `proxy stats` then price
+  against the fresh table, with the bundled snapshot kept as the floor so nothing becomes unpriced.
+  The network is touched **only** by an explicit `--refresh` — every other command reads the cache —
+  and the cache is treated as untrusted input: fixed schema, bounded size and row count, printable
+  model ids, finite rates in range; a corrupt cache is ignored whole instead of half-applied.
+  **Pinning is opt-in and never automatic**: `cost.pricesSha256` (or `--pin <sha256>`) refuses a
+  refresh whose sha-256 does not match, and keyflip never pins what it just fetched. `keyflip cost
+  prices` reports the source, age, digest and pin state; `--clear` drops the cache. A live row may
+  raise a rate or add a model the bundle never had, but it never lowers a rate below the bundled
+  snapshot (an upstream drop is usually intro pricing or a stale row, and an estimate that
+  understates spend is worse than one that overstates it). The new state file is a reserved name
+  (never listed as a phantom account) and is removed by `uninstall`. MCP: `keyflip_cost_prices`
+  (read-only) and `keyflip_cost_prices_refresh` (confirm-gated).
+- **Cost accounting down to the request: cache tiers, the 200K long-context premium and fast mode.**
+  Estimates were input/output only; every real invoice also bills prompt-cache reads (0.1x the input
+  rate), 5-minute cache writes (1.25x) and 1-hour writes (2x), a **whole request** at 2x input /
+  1.5x output once its prompt passes 200K tokens, and fast mode at a flat 6x. `src/cost.js` now
+  exposes a `rateCard(model)` (cache multipliers + `longContext` tier + `fast` multiplier, with
+  unknown models on a conservative fallback card) and `costBreakdown(tokens)` that itemizes
+  input/output/cache-read/cache-5m/cache-1h dollars and says whether the premium and fast mode
+  applied; `estimateCost` keeps its old signature on top of it and gains `cacheCreation1hTokens`,
+  `fast` and `longContext`. The proxy prices **each request** as it records it — it now reads
+  `cache_read_input_tokens`, the `cache_creation` 5m/1h split and `speed` from plain or SSE
+  responses — so `keyflip proxy stats` reports cache tokens and list-price spend per account, and
+  old `proxy-usage.jsonl` lines without a stored cost are priced on read. `keyflip cost by-project`
+  costs each transcript line on its own (one line = one request), and `cost status` still never
+  turns a percentage into dollars. New `keyflip cost rates [model]` prints the whole card (cache
+  multipliers, threshold, fast) or one model's; MCP: `keyflip_cost_rates` (read-only).
+- **The failover proxy now respects what each account's plan can actually serve.** The subscription
+  tier is read from the captured OAuth blob (`subscriptionType` + `rateLimitTier`, e.g. `max` +
+  `default_claude_max_5x`), normalized to free / pro / max / max5x / max20x / team / enterprise.
+  Only an explicitly known lower plan ever blocks: Free is skipped for Opus-class models while
+  Sonnet/Haiku still route; an unknown tier, a non-Claude model and provider-active mode are all
+  permissive, so the filter can never invent a refusal. `keyflip tier` shows each account's plan
+  and where it came from, and `keyflip tier <account> <tier|auto>` pins an override in that
+  account's existing meta JSON (no new state file) for a vendor string that is missing or wrong.
+  When a request's plan is refused by **every** account the proxy answers 503 with the reason and
+  tier detail *before sending anything* upstream; `proxy explain` lists the skipped accounts, and
+  `proxy.tierFilter=false` (new config key) turns the filter off. MCP: `keyflip_tiers` (read-only)
+  and `keyflip_tier_set` (confirm-gated).
+- **Declarative proxy routing: `proxy-routes.json`, rules, sticky sessions and a model chain.**
+  The failover proxy can now decide *per request* instead of only reordering accounts.
+  `~/.config/keyflip/proxy-routes.json` (optional; `keyflip proxy routes init` writes a valid
+  starter) holds first-match `rules` whose `when` tests `model`, `path`, `header` (name → glob),
+  `tokensGt` (a no-dependency ~chars/4 estimate, so "only huge requests" is expressible), `account`
+  and `user` (globs `*`/`?`), and whose `use` picks an account and/or a model. A rule may only name
+  an account that is usable right now — a cooldown or open breaker always wins and the reason says
+  so. `sticky` keeps a conversation (`metadata.user_id`, or the opt-in `x-keyflip-session` header)
+  on the account that last succeeded for `ttlSeconds` (in-process, bounded at 1000 conversations).
+  `fallback` is `off` (commit the first response, never retry), `retry` (the existing failover) or
+  `model-chain` (on 429/529/5xx degrade to the next model **on the same account** before spending
+  another account's quota; a model problem is not an account failure, so no breaker is tripped).
+  `transforms` set/remove request headers, override the body model and cap `max_tokens` (only ever
+  lowered; a non-JSON body is forwarded untouched). `CUSTOM_ROUTER_PATH` (or `customRouter` in the
+  file) is an async helper script fed `{model,path,user,tokens,accounts}` on stdin that answers
+  `{account,model,reason}` — 1.5 s timeout, 64 KB cap, any failure falls back to the rules.
+  The file hot-reloads on the next request (mtime+size), an invalid file is ignored with every
+  problem named instead of breaking the proxy, and new debug headers `x-keyflip-model` /
+  `x-keyflip-route` say what was sent and why. New: `keyflip proxy routes [init]` and
+  `keyflip proxy explain [--model] [--tokens] [--path] [--user] [--run-hook]` (the decision for a
+  hypothetical request, nothing sent); `proxy status`/`cooldown` show the routing policy. MCP:
+  `keyflip_proxy_routes` and `keyflip_proxy_explain` (read-only; the explain tool never runs a
+  custom hook).
+- **The failover proxy now routes like a scheduler, not a first-failure switch.** Each account's
+  failure is classified before anything moves: a 429 whose body says billing / credit / org-disabled
+  is surfaced to the client instead of being masked by another account's quota; a rate-limit 429
+  honors `Retry-After` (delta-seconds or HTTP-date) — if the wait fits `proxy.maxWaitSeconds`
+  (default 10 s) the **same** account is retried once instead of spending another account's quota,
+  otherwise traffic fails over immediately and the account is parked. Parking is per error kind
+  (`proxy.cooldownQuotaSeconds` 300, `…ThrottledSeconds` 60, `…OverloadedSeconds` 30, `…AuthSeconds`
+  900, `…ServerSeconds` 60, each `0` to disable) and lives in the existing `breakers.json` entry —
+  no new state file. Ordering is deterministic: `proxy.priority` list first, then the active
+  account, then least-recently-used (every real attempt records `lastUsedAt`); a cooling account is
+  skipped, and when every account is parked the one that frees up first is offered with an explicit
+  wait. Responses carry `x-keyflip-account`, `x-keyflip-attempts`, `x-keyflip-failover`,
+  `x-keyflip-error-class` and `x-keyflip-cooldown` (`proxy.debugHeaders=false` turns them off).
+  New: `keyflip cooldown` shows the live route order and each account's breaker/cooldown state,
+  `keyflip cooldown clear <acct>|--all` releases them; `keyflip proxy status` prints the same
+  readout. MCP: `keyflip_cooldowns` (read-only), `keyflip_cooldown_clear` (confirm-gated), and
+  `keyflip_proxy_status` now includes the route. Seven new routing settings under `keyflip config`.
+- **A provider preset catalog, so a third-party endpoint needs only a key.** `keyflip provider catalog`
+  lists 19 built-in endpoints — Z.AI/GLM, Zhipu, Kimi, DeepSeek, MiniMax, Qwen/DashScope,
+  Volcengine Ark, OpenRouter, OpenAI, Gemini, xAI, Mistral, Groq, Together, Fireworks, Anthropic
+  and local Ollama / LM Studio / llama.cpp — each with the base URL from the vendor's own docs,
+  model hints and a docs link. `keyflip provider add zai --key-file -` fills URL, auth scheme,
+  models and compatibility from the preset (a bare `provider add` on a terminal opens a numbered,
+  category-grouped picker; `--from <id>` saves a preset under your own name; `--base-url` still
+  overrides). Each preset records `compat`: `anthropic` endpoints can be pointed at Claude Code
+  directly, `openai` ones need an Anthropic-compatible gateway/shim — `provider use`/`provider list`
+  now say so instead of silently breaking the CLI. `keyflip provider models <id|name>` asks the
+  endpoint's `GET /v1/models` what it actually serves (8 s timeout, key never printed), because
+  preset model names drift. Provider metadata is now `schemaVersion: 2` with a persisted `compat`.
+  MCP: `keyflip_provider_catalog` (read-only), `keyflip_provider_models` (read-only network), and
+  `keyflip_provider_add` accepts `catalog_id` (still confirm-gated; the key never crosses MCP).
+- **One skill, every agent on the machine.** `keyflip skill add <src>` now installs into **every
+  detected agent**, not just `~/.claude/skills`: `keyflip skill agents` lists the 72 HOME-level
+  skill directories keyflip knows (with `●` for the tools actually present here), and
+  `--agents claude,cursor` narrows it. Detection is by the tool's own home, so a tool you don't
+  have is never given a directory, and a shared dir (`~/.agents/skills` serves Codex, Warp, Goose,
+  Zed and more) is written once. New: `keyflip skill sync` re-applies each skill's recorded source
+  (an archive with no re-fetchable origin says so), `keyflip skill list` shows `✓ ok / ✎ edited /
+  ✗ missing` per target, and `keyflip install-skill` fans the bundled keyflip skill out to the
+  other detected agents while Claude keeps its backup + drift check. A manifest
+  (`~/.config/keyflip/installed-skills.json`) records a SHA-256 per target, so `sync` never
+  overwrites a copy you edited and `remove` deletes nothing keyflip did not write; an existing
+  skill keyflip did not install needs `--force`. Before any write the skill's text is scanned —
+  **a skill carrying a credential is refused, not redacted**. `--link` symlinks, `--dry-run`
+  reports the plan. The target table (and the shared-directory knowledge behind it) is adapted
+  from RoleCraft's MIT agent registry — see CREDITS.md. MCP: `keyflip_skill_agents` (read-only),
+  `keyflip_skill_sync` (confirm-gated), and `keyflip_skills` / `keyflip_skill_add` /
+  `keyflip_skill_remove` now speak per-target state, target selection and `dry_run`.
+
+### Fixed
+
+- **`keyflip agents` no longer calls an installed tool "not found".** Presence was decided by
+  home-level *memory* roots plus a config file, so a tool that keeps only a login (Kiro, opencode,
+  Command Code) — or whose MCP file appears only after the first `mcpreg enable` — read as absent
+  while `keyflip surfaces` and `mcpreg` saw it. Each registry row now carries an installation
+  footprint (`detect`), a new `installedAgents()` drives the ●/○ mark, and a row with nothing to
+  carry says `installed — nothing to carry here` instead of `not found`; the JSON listing gained
+  `installed`. `presentAgents()` keeps its old meaning ("has memory to carry"), so the migrate
+  paths are unchanged. Live: Kiro, opencode and Command Code now show as installed here.
+
+- **`keyflip surfaces` says how to switch a switchable tool, and stopped denying it can.** The
+  human listing printed only the detection line, so the footer still claimed "Switching other
+  tools is not supported yet" after Command Code got its own group. A switchable row now prints its
+  hint (`↳ keyflip commandcode status | switch <name>`), the footer names the tools that are
+  switchable from the list, and the detect result — including `keyflip_surfaces` over MCP — carries
+  `switchHint` instead of leaving the information inside `note`.
+
+- **`conv search --limit` is honored when the semantic side is missing.** Hybrid runs the lexical
+  retriever wide (50 candidates) so rank fusion has room to work; with no vectors to fuse, that
+  wide list was handed back as the page, so `--limit 3` printed 50 results. The fallback now cuts
+  back to the page that was asked for (live: 3 results for `--limit 3`), and its `collapsed` count
+  only names duplicates that were folded into the hits actually shown.
+
+- **The conversation index can no longer claim chunks or vectors that are not on disk.**
+  An index row copied from a colliding id, or whose chunk file was deleted, is now re-chunked
+  instead of reused; a source with zero chunks on disk is never recorded as embedded (that used to
+  leave a 0-byte vector file and a healthy-looking count); a torn chunk file is reconciled to what
+  the disk actually holds before embedding, and `status` counts a vector only when its file is
+  exactly `dim × count × 4` bytes. The build report gained a `rechunk` count, and `stats.chunks`
+  now always equals the chunk lines on disk.
+
+- **Codex Desktop rollouts no longer collapse into one index entry.** A continued rollout logs
+  the parent thread as `session_id`, and Codex Desktop writes a *second* `session_meta` line that
+  repeats the parent — the parser kept the last one, so a fork was filed under its parent's id.
+  Two transcripts then shared one id: the second overwrote the first's chunk file while the
+  manifest kept a single row, so the counts described a conversation that was not on disk. A
+  rollout now keeps its own id (from its own `session_meta`, or from the file name for a fork
+  whose name is `parent_own`); titles still resolve through the parent thread. Live: 4 colliding
+  pairs became 4 extra conversations, and every index row now matches its own chunk file.
+
+- **One id can no longer hold two conversations, and a row is only reused when its file is
+  really there.** If two transcripts still resolve to the same id, the newcomer gets a stable,
+  path-derived id and the build reports it (`duplicates` in the CLI and the MCP tool) instead of
+  overwriting the first one. Every index row also stores the byte size of its chunk file, so a
+  file that was replaced by a colliding source is re-chunked from its transcript rather than
+  reused with a count that the disk does not back.
+
+- **Hybrid search no longer ranks worse than plain BM25.** The rank fusion used RRF's classic
+  k=60 — a constant meant for an ensemble of *many* result lists. With only two, it flattened the
+  rank so hard that a document found deep in both lists outranked the top hit of either: a
+  document at rank 20 in both beat a document at rank 1 in one. Measured over 1856 live
+  conversations, hybrid search scored a hit@1 of 0.330 against BM25's 0.596, so the default mode
+  of `conv search` was destroying the stronger retriever. The fusion now uses a small constant and
+  weights the lexical list above the vector one, so a vector-only hit can never push a BM25 hit
+  off the page. Hybrid now ties BM25 on hit@1/hit@5 (0.596/0.798 verbatim, 0.447/0.763
+  paraphrased) instead of trailing it (0.330/0.587 and 0.395/0.684).
+
+- **A deleted conversation now actually leaves the index.** The build treated an empty app list
+  as a filter, so `keyflip conv index` (which passes `apps: []` when no `--app` is given) never
+  took the "full discovery" path and kept the row, the chunk file and the vector of a
+  transcript that was gone from disk. An empty app list is now no filter, so an unfiltered
+  build drops what is no longer there; a filtered build (`--app`, `--limit-sources`) still
+  leaves the rest alone.
+
+### Security
+
+- **Cursor's tool output entered the conversation index verbatim; it is now capped and labelled.**
+  Cursor is the one adapter with nowhere else to keep a tool's payload — it lives in the message —
+  so a `cat` of a large file was embedded as if the assistant had written it, and could fill several
+  chunks. The message is now flagged `machine` and contributes at most 800 characters to the index,
+  prefixed `Tool output:`; the full text is still exported and still searchable by its head, and a
+  conversation that carries the flag re-chunks on its own (its hash changes), so no other source is
+  re-parsed. Every other reader already dropped tool results: they index tool calls by name only,
+  and a turn that held nothing but a tool result is skipped. Measured on this machine: 6 of 801
+  sampled chunks (0.7%) carry any tool marker.
+- **A skill could hide a credential in a dotfile and the install went ahead.** The pre-install scan
+  walked the skill tree with a `name[0] === '.'` skip, so `.env`, `.env.local` and any other hidden
+  file were never read — while `cpSync` copied them into the agent's directory, where the agent
+  reads them. The scan now covers **every** file, binary ones skipped by content, and a hit names
+  the file and the kind of secret (`refusing to install '<name>': it carries a credential
+  (.env: AWS_SECRET_ACCESS_KEY)`) without ever printing the value: both token shapes and
+  `KEY=value` lines whose key looks credential-shaped and whose value has entropy are caught.
+  Placeholder lines (`.env.example`, `${FOO}`, `<your-key>`) are still allowed through.
+- **A skill could put a symlink in an agent's directory that pointed at `~/.ssh`.** Installing used
+  `cpSync(..., {dereference:true})`, which — proved by probe — still copies a leaf symlink **as a
+  link**, with an absolute target back into the source tree; deleting the temp source then left a
+  dangling link, and an absolute link to `/etc` or `~/.ssh` survived verbatim. A skill is now
+  required to be self-contained: any symlink refuses the install, whether it points outside the
+  skill or back inside it. Copying also never carries `.git`, so the tree that lands in the agent's
+  directory is exactly the tree that was scanned.
+- **The manifest could redirect `sync` and `remove` anywhere on disk.** `installed-skills.json` is a
+  file on disk — editable, restorable from a backup, copyable from another machine — and its `dir`
+  was used verbatim, so a poisoned entry turned `keyflip skill sync` into "delete `~/.ssh` and put
+  the skill there". A target is now resolved through keyflip's own table of agent directories, and
+  the manifest's `dir` is only a *label*: an unknown one is reported as `skipped-unknown-target`
+  and nothing is written or deleted. The skill name from the same file is validated too — `remove`
+  accepts only a plain name (`^[A-Za-z0-9][A-Za-z0-9._-]*$`) and refuses the rest, `list` reports
+  such an entry as `unsafe-name` instead of trusting it.
+- **Editing a hidden file in an installed skill looked like an untouched copy.** The per-target
+  SHA-256 covered visible regular files only, so a `.env` or a `.mcp.json` added, changed or
+  removed under an installed skill kept the "ok" state — and `sync` overwrote it as if the user
+  had never touched it. The fingerprint (v2) now covers every file, hidden ones included, and
+  hashes a link by its target string. Manifest rows record `fp`; a row written by an older keyflip
+  (no `fp`, or `fp: 1`) is still read with the old algorithm, so existing installs do not all turn
+  into "edited" on upgrade.
+- **Installing or removing a skill wrote into the user's agents without asking.** `keyflip skill
+  add` fetched a repo and copied it into every detected agent's directory, and `skill remove`
+  deleted across all of them, from a script or an agent with no prompt at all. Both now confirm:
+  on a terminal a `[y/N]` question (printed per target before anything is written), and in a
+  non-interactive run they refuse with "re-run with --yes to confirm." An MCP caller that declines
+  gets `skipped: [{reason: 'not approved'}]` and zero writes. `--dry-run` still needs no approval.
+
+### Changed
+
+- **What the conversation search is worth, measured and published.** The chunking work below shipped on
+  the strength of an intuition ("a chunk that keeps its question should retrieve better"); this entry
+  puts a number on it, and the number says the intuition was **wrong about ranking and right about
+  everything else**. Measured on this machine's live 1,869-conversation / 117,503-chunk index with a
+  frozen set of 84 developer-style queries — written by a local model from a random *message*, never
+  from a chunk, so no chunk boundary is favoured — BM25 scores hit@1 **0.49** / hit@5 **0.83** /
+  MRR **0.63** and the vector list alone **0.24 / 0.43 / 0.32**. On developer transcripts the rare
+  term beats the meaning: hybrid at the shipped 1:0.25 weight lands *exactly* on the BM25 numbers,
+  and every heavier semantic weight is worse (1:0.5 → hit@1 0.46, 1:1 → 0.45, 1:2 → 0.25). So the
+  turn-grouped chunking is ranking-neutral by design — a turn index and a window index differ by one
+  or two queries in 84 — and what it actually buys is the text you get back (the question always
+  travels with the answer) and the duplicate folding: without it **9.3 % of page slots repeat a
+  paragraph the page already showed** (78 of 840 slots over those 84 queries), and folding turns each
+  of those into a named `alsoIn` twin instead of a wasted slot. Vectors cost real CPU — a full
+  scan-and-embed of 117,033 chunks took **2 h 35 min** on this machine (nomic-embed-text) — which is
+  why the index embeds incrementally and the semantic list stays deliberately light. The numbers are
+  published in the README (EN/TR), `docs/USE-CASES` (EN/TR) and the skill, so the claim is checkable
+  instead of folkloric.
+
+- **A chunk is now a question and the answer it got, and a duplicate paragraph fills one result
+  slot.** The indexer packed messages into ~1,400-character windows and flushed as soon as the
+  window filled, so a chunk could open with an `Assistant:` answer whose question sat in the
+  previous chunk: 15,392 of 122,611 chunks (12.6%) on a live index were orphans like that, and a
+  BM25 or vector match on one had no question terms to lean on. Chunking now works in turns — a
+  user message plus everything said before the next question — and only breaks between turns; a
+  turn too long to keep whole is split with overlap and every continuation keeps a short copy of
+  its question. On the same index the orphaned-answer chunks fell to 15 of 117,033 (transcripts
+  that genuinely start with an assistant turn). Forked and resumed sessions repeat earlier turns
+  verbatim (19,389 duplicate chunk hashes on the live index), so `conv search` now shows that
+  text once: the surviving hit lists the other conversations in `alsoIn`, `collapsed` counts the
+  folded copies, and a page of 10 no longer spends 2.2 slots on the same paragraph. Measured on
+  40 frozen paraphrase queries through the shipped search path, lexical quality held (hit@5
+  0.625 → 0.60 and MRR 0.447 → 0.472 — one query either way at n=40; hit@1 0.30 → 0.35 when a
+  hit naming the conversation in `alsoIn` counts, because 16 of the 40 targets are twins of
+  another conversation). The manifest records a chunk scheme, so an existing index re-chunks
+  itself on the next build instead of reusing windows cut the old way — and those new chunks need
+  `keyflip conv index --embed` before semantic/hybrid search has vectors again.
+
+- **Search over a 120k-chunk index is roughly 4× faster.** Lexical BM25 now reads a per-source
+  token sidecar (`tokens/<key>.t32`: per-chunk `len` + `[token hash, tf]`, written with the chunks
+  and derivable from them) instead of re-tokenizing ~150 MB of transcript text per query; snippets
+  are built only for candidates that can reach the page, semantic search hydrates text only for its
+  top hits, and hybrid runs lexical + semantic concurrently. Measured live (1850 conversations,
+  121k chunks): lexical 4.2 s → 1.0 s, semantic minutes → 1.0 s, hybrid 4.2 s → 1.9 s. A missing or
+  torn sidecar falls back to the text path, so an older index stays searchable and re-heals itself.
+
+- **Incremental `keyflip conv index` passes no longer re-parse unchanged transcripts.** A source
+  whose path, mtime and size match its manifest row reuses the row directly, so a no-op build is
+  one `stat()` per source instead of re-reading every conversation (the previous code parsed all
+  1850 of them, ~1 h, only to reuse the result). The post-parse mtime/hash checks remain for
+  anything that did change. The manifest records which id scheme produced each row, so a change
+  to how ids are derived re-parses the sources once instead of keeping ids that no longer belong
+  to their transcript.
+
+- **Semantic search is 2× faster and no longer allocates one object per chunk.** The vector scan
+  read every float with `Buffer.readFloatLE` (~94 million calls on a 120k-chunk index), recomputed
+  the query norm for every chunk, and then sorted all ~120k scored chunks to keep the best 200.
+  It now reads the vector file through a `Float32Array` view, normalizes the query once per
+  dimension, and keeps the best candidates in a bounded min-heap, so one query allocates a few
+  hundred objects instead of 120k. The heap breaks ties by insertion order, which is the order a
+  stable sort produced — two conversations with identical text still come back in index order,
+  not in a random one. Both the lexical and the semantic path also stop hydrating once the page
+  is full: reading a chunk file is a file read plus a JSON parse per line, and most of the top
+  candidates belong to a conversation that is already on the page. Measured live (1856
+  conversations, 122k chunks): semantic 610 ms → 304 ms per query. The ranking is unchanged —
+  the hit lists of 147 live queries (109 verbatim, 38 paraphrased) are identical to before, and
+  BM25 still scores hit@1 0.596 / hit@5 0.798.
+
+### Added
+
+- **Cursor is a first-class conversation source — one chat per composer, from three stores.**
+  `keyflip conv` used to reach Cursor only through `keyflip foreign <file>`, where one
+  `state.vscdb` became ONE giant conversation. `src/cursor.js` now reads the editor store chat by
+  chat (`composerHeaders` on ≥3.12, `composerData:` KV rows before), treats
+  `fullConversationHeadersOnly` as the render manifest (a bubble marked `isRenderable:false` is not
+  in the transcript; a listed bubble whose text is gone is counted, not invented), keeps tool and
+  thinking bubbles as tools (`toolFormerData` on new builds, `capabilities` on old) and derives the
+  cwd from the project/workspace chain. It also reads the `cursor-agent` CLI store
+  (`~/.cursor/chats/<md5>/<uuid>/store.db`, content-addressed `blobs` + a hex-JSON `meta` row) and
+  its `agent-transcripts` mirror, recognising a session already read by its id so it is never
+  indexed twice. Every store is opened through the zero-dependency `sqliteread.js` with the `-wal`
+  overlay; a store past the read budget is a skipped source with a reason, and a store that yielded
+  chats but whose `-wal` could not be replayed is a warning — separate fields in `conv index` and
+  `keyflip_conv_index`, so an unreadable history never looks like an empty one. Cursor is not
+  installed on the machine this was written on: 36 fixture tests pin the contract against the
+  shipped format, not a captured live store.
+
+- **`keyflip doctor` now inventories the background services, and tells installed apart from
+  running.** keyflip can put four jobs on a timer — the nightly `dream`, the nightly token `refresh`,
+  the expiry `daemon`, and the conversation index — and until now each one answered "is it
+  scheduled?" from its own receipt. That question is not the useful one. A plist launchd stopped
+  holding (a logout, a moved repo, an edited file) still reads as scheduled; a laptop asleep at
+  04:30 never runs the nightly job and nothing notices; and every symptom arrives weeks later as a
+  stale search answer or a dead token. `doctor` now asks three separate questions per job —
+  **installed** (the file keyflip wrote is there), **loaded** (launchd or cron actually holds it) and
+  **lastRun** (when its log last changed) — prints the whole inventory as one line
+  (`2 of 4 scheduled — dream: off · refresh: nightly at 04:30 · spoke 9 h ago · daemon: off ·
+  conv: every 30 min · spoke 13 min ago`), and warns when a job is installed but not held, or
+  silent past twice the cadence it was
+  installed with. A job younger than two cadences is not blamed for silence: its first tick is not
+  due. A `KeepAlive` daemon has no cadence, so it is never aged against one — and it is labelled
+  `always-on`, not `nightly`; the inventory's `mode` and `atLabel` are normalized views, so no
+  report can print a receipt's `{h, m}` object where a time should be. A warning still names every
+  job after the complaint, because "which ones do I have at all?" is the question being asked.
+  An index older than a day
+  with nothing refreshing it is called out on its own. `keyflip_doctor` returns the same inventory as
+  structured `services` rows so an agent can check a service instead of trusting a receipt, and each
+  job's own status view (`conv index --schedule-status`, `refresh --schedule-status`, `dream status`,
+  `refresh --daemon-status`) now shows the same facts.
+  Live on this machine: the conversation index job was installed
+  (`keyflip conv index --schedule`, every 30 min) and verified end to end — launchd holds it, its
+  first real pass parsed 19 conversations, reused 1837, re-embedded 19, dropped 11 that left disk and
+  wrote its log in 103 s. `src/schedule.js` gained `launchdLoaded`, `lastRunAt`, `cadenceMsOf`,
+  `modeOf`, `hhmm` and `inventory()`; `status()` gained `loaded` (with `askSystem: false` leaving it
+  null = "not asked", so
+  a hermetic test never claims an answer it did not get) and `lastRun`. Asking the system is opt-in per
+  caller — `keyflip doctor` and the MCP server pass a runner, the test suite does not, and no suite
+  spawns `crontab`/`launchctl`.
+  Tests: 5 new in `test/schedule.test.js` (installed ≠ loaded ≠ not-asked, a log is the only evidence a
+  job spoke, the inventory covers every job with what it does and how to install it, the two cadence
+  normalizations, an interval job is
+  aged against the interval it was installed with) and 9 in `test/doctor.test.js` — including one that
+  pins the ISO-string clock, because subtracting a parsed date from `ctx.now()` is NaN and "spoke NaN d
+  ago" still prints green.
+
+- **Every conversation now says which account worked on it — and how that is known.** The
+  conversation layer knew the app, the surface and the timestamps, but on a machine with two
+  accounts per surface the first question was unanswered: "which of my accounts wrote this?"
+  `keyflip conv list` prints the account (`[yahoo]`), `--account <name>` narrows `conv list` and
+  `conv search` to one account's chats, and `keyflip conv show <id>` states it with its reason.
+  The answer comes from two sources in strict order: what the USER said
+  (`keyflip sessions assign <session> <account>`) always wins, and only where nothing was stated
+  does keyflip infer it from its own action log — `active -> <profile>` for Claude Code, and the
+  newly logged `kiro -> <slug>` / `codex -> <slug>` boundaries for those surfaces. Each surface
+  keeps its OWN timeline, so a Kiro switch can never relabel a Claude session. The label always
+  travels with the answer (`accountSource` stated|inferred, `accountConfidence`
+  high|medium|low|none) — in the CLI, in the index manifest, and in the MCP payloads, where a
+  bare `account` with no source would let an agent act on a guess as if it were the user's word.
+  A conversation older than every logged switch, an account you deleted, or a tool keyflip holds
+  no accounts for (Qoder, Gemini) gets NO account rather than a plausible one, and a rebuild never
+  relabels an inference as a stated fact. Live: 88 of 120 Claude Code conversations attributed
+  (57 stated by hand + 31 inferred — 30 high, 1 low; `hakkisagdic` 65, `yahoo` 23); Kiro/Codex
+  fill in from the next real switch, since no such boundary is in the log yet. A one-message
+  chat — whose life is a single instant — now resolves to the account live at that instant instead
+  of reporting no evidence.
+
+- **`keyflip conv index --schedule` — the conversation index keeps itself current.** Until now the
+  index only moved when someone ran `conv index`, kept a `--watch` loop alive in a terminal, or an
+  agent called `keyflip_conv_index` — so "search my chats" quietly answered from yesterday. It is
+  now a scheduled job like the nightly token refresh: a launchd agent on macOS, a crontab line on
+  Linux. It runs on an **interval** (default every 30 minutes), not at a wall-clock hour, because a
+  daily index would be a day behind. The pass is incremental — an unchanged transcript costs one
+  `stat()`, and only new or changed chunks are embedded — so a tick costs seconds. It runs the
+  **local** embedding model: no cloud model, no quota. `--schedule-status` shows the state,
+  `--unschedule` removes it, and `--watch` stays as the foreground equivalent. MCP adds the
+  confirm-gated `keyflip_conv_index_schedule` (`action:"status"|"install"|"remove"`, `interval` in
+  minutes); the cadence is restricted to values that mean the same thing in launchd and cron.
+
+- **`keyflip chatgpt backups` — undo a bad ChatGPT/Codex switch.** Every switch and token refresh
+  already copied the live `~/.codex/auth.json` to `<configDir>/backups/`; now they are listable by
+  account e-mail/plan/expiry (never a token) and restorable by number, file name or unique prefix.
+  A restore backs up the login it replaces first, so it is itself reversible, refuses while
+  ChatGPT/Codex runs unless `--force`, and reads the file back byte-for-byte. `--dry-run` plans;
+  MCP adds read-only `keyflip_chatgpt_backups` and confirm-gated `keyflip_chatgpt_restore`.
+
+- **Embedding passes survive a flaky local endpoint.** Each batch is retried up to three times
+  with backoff before its source is given up, and a failing source is skipped instead of aborting
+  the run — only three consecutive source failures (the endpoint is actually down) stop it. The
+  report counts `embedding.errors` and stays `ok:false`, so an incomplete pass is never reported
+  as complete, while the chunks remain searchable lexically.
+
+- **`keyflip doctor` now reports expired ChatGPT/Codex captures, and so does the refresh daemon.**
+  A stored login whose access token has expired AND has nothing left to rotate (no refresh token,
+  or apikey mode) will not work at switch time — `doctor`'s **chatgpt/codex captures** check fails
+  with the exact slugs, expiry times and the one human fix (`keyflip chatgpt capture <slug>` after
+  signing in once). Captures that are merely due for refresh stay a warning: the daemon rotates
+  those on its own while ChatGPT/Codex is not running. The daemon's tick logs the dead-capture set
+  once per SET (a small marker file in the state dir), not once per tick, and clears the note when
+  the set empties.
+
+- **`keyflip consolidate --dry-run` + read-only `keyflip_consolidate_plan` (MCP).** The chat-index
+  merge now computes its plan without writing: how many session pointers each account folder (base
+  app + non-running instance clones) would gain, the first 50 destinations as store-relative paths,
+  and which running clones would be skipped. A dry run only READS the stores, so it works while the
+  desktop app is open — plan first, then close Claude for the actual merge. `--json` carries
+  `wouldMerge`/`wouldCode`/`wouldCowork` + the plan; the MCP side keeps the repo's invariant that
+  every mutating tool requires `confirm` by exposing planning as a separate read-only tool.
+
+- **`keyflip conv index --watch` keeps the index current.** An incremental pass every N minutes
+  (default 30, `--interval N`): new transcripts indexed, gone ones dropped, and with `--embed` only
+  conversations that actually changed get their new chunks embedded — idle ticks cost one manifest
+  read, not an embedding pass. The embed-less report also stopped claiming "no vectors" when an
+  earlier `--embed` pass left them: it now states the real coverage left by the last pass.
+
+- **`keyflip conv` — every local AI tool's chats in one searchable shape.** A canonical conversation
+  layer reads Claude Code, Codex/ChatGPT rollouts (`.jsonl` and `.zst`), Kiro (CLI + IDE) and the
+  foreign adapters (Qoder, Cursor, opencode, Gemini/Antigravity, Copilot, Aider) into one form
+  (`id/app/surface/title/cwd` + `{role,text,ts,tools}` messages), stripping host harness noise
+  (`<system-reminder>`, `<task-notification>`, command plumbing, malformed `<pasted_content>` tags).
+  Sources are strictly read-only. `list` browses (id prefix/app/age/count/title, filters `--app`,
+  `--since`, `--cwd`); `index` builds an incremental chunk index keyflip owns in the secret-dir
+  `~/.config/keyflip/conv-index` (0600, never versioned/backed up; mtime+size+hash reuse, prefix
+  vector reuse for appended chats, filtered builds keep the rest, full builds drop gone sources);
+  `search` ranks with BM25, or embeddings (local Ollama `nomic-embed-text` by default, or
+  `KEYFLIP_EMBED_URL` with remote text secret-redacted first) or reciprocal-rank-fusion hybrid — and
+  labels the result honestly (`lexical` + note when no vectors exist, instead of a silent "hybrid";
+  no query-vector round-trip is spent when nothing is embedded); `context` returns a char-budgeted
+  RAG block with cited sources and neighbouring chunks (`--expand`, `--budget`); `show` reads one
+  conversation; `export` writes MD/self-contained HTML/canonical JSON, or an **Obsidian vault**
+  (`keyflip/Conversations` + index note + hidden hash manifest: keyflip's own notes update in place,
+  a user edit becomes a `… (conflict <ts>).md` copy, a renamed note is removed only while still
+  byte-identical, ownership never points at a conflict copy); `transfer` writes a 0600 handoff bundle
+  (`conversation.json` + per-target `CONTINUE.md` + README) for claude/codex/kiro/cursor/opencode/windsurf/gemini/copilot/aider/generic and states plainly that no target has a documented import. Exports mask credential-shaped
+  lines by default (`--no-redact` for fidelity), refuse overwrite without `--force`, and writes are
+  0600. `search`/`context` auto-build the index once on first use.
+
+- **MCP: conversation tools.** Read-only `keyflip_conv_list`, `keyflip_conv_show`, `keyflip_conv_search`,
+  `keyflip_conv_context` and `keyflip_conv_status` never build the index and mask snippets/context for
+  credential shapes before anything reaches an agent transcript; `keyflip_conv_index` and
+  `keyflip_conv_export` (single file, bulk with `limit`/`offset`, Obsidian, or a `target` bundle) are
+  confirm-gated. The index path is reported relative to the state dir, never as a home path.
+
+- **`recall`'s BM25 now lives in one shared module** (`src/bm25.js`) used by both the keepsake search
+  and the conversation index, so stemming and scoring behave identically everywhere.
+
 - **`keyflip chatgpt` (alias `codex`) — save, switch and refresh the ChatGPT.app + Codex CLI login.**
   Both surfaces authenticate with the same `~/.codex/auth.json` (or `$CODEX_HOME/auth.json`, 0600), so
   one adapter covers them. `status` reports the live e-mail/plan/expiry without printing a token;
@@ -41,6 +588,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the real shared `auth.json`, and refresh metrics live under the active config dir instead of a
   hard-coded home path.
 
+- `keyflip license status` (and the `keyflip_license_status` MCP tool) now also report whether the
+  paywall is actually enforcing. A valid `pro` license with `KEYFLIP_LICENSING` unset used to read
+  like a broken license; it now says `paywall: off (… not gated yet)`. Nothing is gated by default
+  and nothing changed about that.
+
 ### Fixed
 
 - **Consolidation no longer drops a session when two accounts use the same `local_*.json` filename.**
@@ -53,6 +605,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   keyflip re-signs the outer bundle ad-hoc after patching `Info.plist` and restores the original plist
   if signing fails; the README (EN/TR) now says to re-run `keyflip instance harden` or recreate the
   clone, and warns that `--deep` rewrites Apple's nested helpers.
+
+- **The admin panel page was dead on arrival.** Its inline script referenced a `TIERS` list that only
+  existed on the server, so the browser threw a `ReferenceError` on the first line of the panel and
+  the page rendered but did nothing — no tier list, no Connect button, no issue button. The tier list
+  is now injected from the server's own table, and a test **boots the panel script** in a `node:vm`
+  sandbox with a small DOM stub, so an undefined global fails a test instead of shipping.
 
 ## [1.5.7] - 2026-10-23
 

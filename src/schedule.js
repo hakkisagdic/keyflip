@@ -17,6 +17,14 @@ const REFRESH_LABEL = 'com.keyflip.refresh';
 const REFRESH_CRON_MARK = '# keyflip-refresh (managed by keyflip)';
 const DAEMON_LABEL = 'com.keyflip.refresh-daemon';
 const DAEMON_CRON_MARK = '# keyflip-refresh-daemon (managed by keyflip)';
+const CONV_LABEL = 'com.keyflip.conv-index';
+const CONV_CRON_MARK = '# keyflip-conv-index (managed by keyflip)';
+
+// The conversation index runs on an INTERVAL, not at a wall-clock time: search must find the chat
+// you just had, not the chat you had before lunch. These are the intervals the flag accepts, in
+// minutes. Only values that are valid in BOTH launchd (seconds) and cron (`*/N` minutes) are
+// allowed, so one flag means the same thing on macOS and Linux.
+const CONV_INTERVALS = [5, 10, 15, 30, 60, 120, 180, 360, 720, 1440];
 
 // Where the keyflip binary is: the installed `keyflip`, else this checkout. Injectable runner so
 // tests never shell out. Returns the resolved path UNCHANGED — how to run it is argvFor's call alone.
@@ -66,6 +74,17 @@ function daemonCommand(opts) {
   return { exec: process.execPath, args: [bin] };
 }
 
+// The conversation index, refreshed on an interval so `keyflip conv search` never returns a
+// stale answer. The pass is incremental: an unchanged transcript is one `stat()`, and `--embed`
+// only covers chunks that are new or changed, so a tick costs seconds, not an hour.
+function convCommand(opts) {
+  const args = ['conv', 'index', '--embed'];
+  // `--no-embed` keeps the lexical index current without asking the embedding endpoint for
+  // anything — useful when the local model is not running.
+  if (opts && opts.embed === false) args.pop();
+  return argvFor(keyflipBin(opts), args);
+}
+
 function parseAt(at) {
   const m = /^(\d{1,2}):(\d{2})$/.exec(String(at || '03:00'));
   return m ? { h: Math.min(23, parseInt(m[1], 10)), m: Math.min(59, parseInt(m[2], 10)) } : { h: 3, m: 0 };
@@ -74,8 +93,10 @@ function xmlEsc(s) {
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
-// The two jobs, in one table, so a new scheduled command cannot forget a label / marker / receipt.
+// The jobs, in one table, so a new scheduled command cannot forget a label / marker / receipt.
 // `dream` is the default everywhere: every call site and test written before #36 stays valid.
+// `install` and `does` are here too because `doctor` lists the whole inventory: a job that can be
+// scheduled must also be explainable, and a second table is how a job gets forgotten.
 const JOBS = {
   dream: {
     name: 'dream',
@@ -85,6 +106,8 @@ const JOBS = {
     at: '03:00',
     command: dreamCommand,
     llm: true,
+    install: 'keyflip dream schedule --at 03:00',
+    does: 'distills old chats into keepsakes overnight (runs a model, so check `keyflip llm status`)',
   },
   refresh: {
     name: 'refresh',
@@ -94,6 +117,8 @@ const JOBS = {
     at: '04:30',
     command: refreshCommand,
     llm: false,
+    install: 'keyflip refresh --schedule',
+    does: 'renews every stored token before it dies on the calendar',
   },
   daemon: {
     name: 'daemon',
@@ -103,6 +128,20 @@ const JOBS = {
     at: null, // daemon runs continuously, no schedule time
     command: daemonCommand,
     llm: false,
+    install: 'keyflip refresh --daemon-start',
+    does: 'watches credential expiry every 5 min and refreshes what is about to die',
+  },
+  conv: {
+    name: 'conv',
+    label: CONV_LABEL,
+    cronMark: CONV_CRON_MARK,
+    record: 'conv-index-schedule.json',
+    at: null, // interval-based, no wall-clock time
+    interval: 30, // minutes between passes
+    command: convCommand,
+    llm: false,
+    install: 'keyflip conv index --schedule',
+    does: 'keeps every local chat from every tool searchable',
   },
 };
 function jobOf(opts) {
@@ -111,11 +150,23 @@ function jobOf(opts) {
 }
 // The time a job runs: its own `--at`, else its own default (a dream at 03:00, a refresh at 04:30 —
 // deliberately NOT the same hour, so a token rotation cannot race the distill that reads those chats).
-// Daemon jobs have no schedule time (they run continuously), so return null for them.
+// Daemon and interval jobs have no schedule time (they run continuously / on a cadence), so return
+// null for them.
 function whenOf(opts) {
   const job = jobOf(opts);
-  if (job.name === 'daemon') return null;
+  if (!job.at) return null;
   return parseAt((opts && opts.at) || job.at);
+}
+
+// How often an interval-based job runs, in MINUTES. Only the allowed values are honoured, so the
+// same flag cannot mean "every 7 minutes" on launchd and "every 7 hours" on cron. An unknown value
+// falls back to the job's default.
+function intervalOf(opts) {
+  const job = jobOf(opts);
+  if (!job.interval) return null;
+  const raw = opts && opts.interval != null ? parseInt(opts.interval, 10) : job.interval;
+  for (const m of CONV_INTERVALS) if (m === raw) return m;
+  return job.interval;
 }
 
 // ---- macOS launchd ----
@@ -141,9 +192,12 @@ function buildPlist(opts) {
     .join('\n');
   const log = xmlEsc(logPath(opts.home, opts));
 
-  // Daemon jobs use KeepAlive instead of StartCalendarInterval
+  // An interval job runs every N minutes (StartInterval), a daemon runs continuously (KeepAlive),
+  // and a nightly job runs at a wall-clock time (StartCalendarInterval).
   let startSection;
-  if (job.name === 'daemon') {
+  if (job.interval) {
+    startSection = '    <key>StartInterval</key>\n    <integer>' + intervalOf(opts) * 60 + '</integer>\n';
+  } else if (job.name === 'daemon') {
     startSection = '    <key>KeepAlive</key><true/>\n';
   } else {
     startSection =
@@ -217,6 +271,12 @@ function cronLine(opts) {
     return '@reboot ' + [c.exec].concat(c.args).join(' ') + '  ' + job.cronMark;
   }
 
+  // An interval job runs every N minutes. The minutes are restricted to divisors of 60 that
+  // cron accepts in a `*/N` field, so this line means the same thing as the launchd one.
+  if (job.interval) {
+    return '*/' + intervalOf(opts) + ' * * * * ' + [c.exec].concat(c.args).join(' ') + '  ' + job.cronMark;
+  }
+
   const t = whenOf(opts);
   return t.m + ' ' + t.h + ' * * * ' + [c.exec].concat(c.args).join(' ') + '  ' + job.cronMark;
 }
@@ -250,6 +310,30 @@ function uninstallCron(opts) {
   });
   const r = runner('crontab', ['-'], kept.length ? kept.join('\n') + '\n' : '');
   return { ok: !!(r && r.code === 0), existed: existed };
+}
+
+// Is launchd actually HOLDING this job? `installed` only proves a plist is on disk: a job can be
+// written and never loaded, unloaded by a logout, or left behind by a moved repo, and printing
+// "scheduled" from the file alone would then be a lie. `launchctl list <label>` answers it locally —
+// exit 0 plus the job's own description when loaded, exit 113 "Could not find service" when not.
+// NOTE the honest meaning: loaded = enrolled and will fire on its cadence, NOT "running right now".
+function launchdLoaded(label, runner) {
+  const r = runner('launchctl', ['list', label]);
+  if (!r || r.code !== 0) return false;
+  // Require the label back in the output: a runner that answers 0 with nothing (a stub, a stripped
+  // launchctl) must not be read as proof that the job exists.
+  return String((r && r.stdout) || '').indexOf(label) !== -1;
+}
+
+// When the job last produced anything. launchd appends the job's stdout/stderr to its log file, so a
+// log older than twice the cadence means the job is not running even though the plist says it should.
+function lastRunAt(logPathStr) {
+  try {
+    const st = fs.statSync(logPathStr);
+    return st.mtime.toISOString();
+  } catch (e) {
+    return null; // no log at all: the job has never written anything
+  }
 }
 
 // ---- platform dispatch ----
@@ -295,6 +379,80 @@ function dropRecord(ctx, opts) {
   }
 }
 
+// How often a job is supposed to produce something, in ms, or null when it has no cadence to age
+// against (a KeepAlive daemon writes only when something happens). An interval job is measured
+// against the cadence it was INSTALLED with, because the receipt is the contract: a job set to 5
+// minutes that has been silent for two hours is failing, while one set to 12 hours is not.
+function cadenceMsOf(job, rec) {
+  if (job.interval) {
+    const minutes = rec && rec.interval ? rec.interval : job.interval;
+    return minutes * 60000;
+  }
+  if (job.name === 'daemon') return null;
+  return 24 * 3600 * 1000; // nightly
+}
+
+// How a job is scheduled, in one word — so a report never calls the always-on daemon "nightly".
+function modeOf(job) {
+  if (job.interval) return 'interval';
+  if (job.name === 'daemon') return 'continuous';
+  return 'nightly';
+}
+// The wall-clock hour a nightly job runs at, normalized to "HH:MM". The receipt stores a parsed
+// `{h, m}` while the JOBS default is the string it was parsed from, and a consumer should not have
+// to know which of the two it is holding.
+function hhmm(rec, job) {
+  const a = rec && rec.at ? rec.at : job.at;
+  if (!a) return null;
+  if (typeof a === 'string') return a;
+  if (typeof a.h === 'number') return String(a.h).padStart(2, '0') + ':' + String(a.m || 0).padStart(2, '0');
+  return null;
+}
+
+// Every job, with what the system actually says about it. Shared by `doctor`'s background-services
+// check and any future inventory view, so "is it installed / is launchd holding it / when did it
+// last speak" is answered in one place.
+function inventory(ctx, opts) {
+  opts = opts || {};
+  return Object.keys(JOBS).map(function (name) {
+    const job = JOBS[name];
+    const st = status(ctx, Object.assign({ job: name }, opts));
+    const rec = st.recorded;
+    // The promise date: the receipt when there is one, else the plist's own mtime — an install older
+    // than receipts still has a file that says when it was made.
+    let agreedAt = rec && rec.installedAt ? rec.installedAt : null;
+    if (!agreedAt && st.path) {
+      try {
+        agreedAt = fs.statSync(st.path).mtime.toISOString();
+      } catch (e) {
+        agreedAt = null;
+      }
+    }
+    return {
+      job: name,
+      label: job.label,
+      does: job.does,
+      install: job.install,
+      kind: st.kind,
+      installed: st.installed,
+      loaded: st.loaded,
+      lastRun: st.lastRun,
+      // The interval the job was agreed to, in minutes — null for anything with no cadence.
+      everyMinutes: job.interval ? (rec && rec.interval ? rec.interval : job.interval) : null,
+      cadenceMs: cadenceMsOf(job, rec),
+      // When the user agreed to this job. A schedule younger than two cadences has not had its turn
+      // yet, so silence is not a fault — this is what separates "never ran" from "not due yet".
+      installedAt: agreedAt,
+      path: st.path || null,
+      log: st.log || null,
+      at: rec && rec.at ? rec.at : job.at,
+      // The two normalized views a report should use instead of guessing from the raw fields.
+      mode: modeOf(job),
+      atLabel: hhmm(rec, job),
+    };
+  });
+}
+
 function install(ctx, opts) {
   opts = Object.assign({}, opts);
   const job = jobOf(opts);
@@ -311,6 +469,9 @@ function install(ctx, opts) {
       kind: r.kind,
       at: whenOf(opts),
     };
+    // An interval job records its cadence, so `status` can say how fresh the index is without
+    // re-reading the plist.
+    if (job.interval) rec.interval = intervalOf(opts);
     // Only an LLM-running job has a provider to receipts. Recording "claude" against a refresh job
     // would be a lie about a bill it cannot incur.
     if (job.llm) {
@@ -335,28 +496,43 @@ function uninstall(ctx, opts) {
 function status(ctx, opts) {
   opts = opts || {};
   const runner = opts.run || run;
+  // `askSystem: false` answers from keyflip's own files and spawns NOTHING — for callers that must
+  // stay hermetic (a test suite, anything without a shell). `loaded` is then null, meaning "not
+  // asked", which is a different fact from false ("asked, and launchd does not hold it").
+  const ask = opts.askSystem !== false;
   const job = jobOf(opts);
   const rec = readRecord(ctx, opts);
   if (ctx.platform === 'darwin') {
     const p = plistPath(opts.home, opts);
+    const installed = fs.existsSync(p);
+    const log = logPath(opts.home, opts);
     return {
       kind: 'launchd',
       job: job.name,
-      installed: fs.existsSync(p),
+      installed: installed,
+      // A plist on disk and a job launchd will fire are two different facts, and only the second
+      // one means the thing is actually being kept current.
+      loaded: !ask ? null : installed ? launchdLoaded(job.label, runner) : false,
+      lastRun: lastRunAt(log),
       path: p,
-      log: logPath(opts.home, opts),
+      log: log,
       recorded: rec,
     };
   }
   if (ctx.platform === 'linux') {
+    const installed = ask && readCron(runner).indexOf(job.cronMark) !== -1;
     return {
       kind: 'cron',
       job: job.name,
-      installed: readCron(runner).indexOf(job.cronMark) !== -1,
+      installed: installed,
+      // cron has no separate registry: a line in the table IS the loaded state. There is no log path
+      // to age, so lastRun stays null rather than claiming a job never ran.
+      loaded: installed,
+      lastRun: null,
       recorded: rec,
     };
   }
-  return { kind: 'unsupported', job: job.name, installed: false, recorded: rec };
+  return { kind: 'unsupported', job: job.name, installed: false, loaded: null, lastRun: null, recorded: rec };
 }
 
 export {
@@ -364,13 +540,24 @@ export {
   CRON_MARK,
   REFRESH_LABEL,
   REFRESH_CRON_MARK,
+  CONV_LABEL,
+  CONV_CRON_MARK,
+  CONV_INTERVALS,
   RECORD_NAME,
   REFRESH_RECORD_NAME,
   JOBS,
   jobOf,
   whenOf,
+  intervalOf,
+  cadenceMsOf,
+  modeOf,
+  hhmm,
+  inventory,
+  launchdLoaded,
+  lastRunAt,
   dreamCommand,
   refreshCommand,
+  convCommand,
   parseAt,
   buildPlist,
   logPath,

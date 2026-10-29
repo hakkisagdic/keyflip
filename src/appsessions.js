@@ -297,6 +297,33 @@ function mergeStore(ctx, storeName, backupPrefix, opts) {
     };
   }
 
+  // A dry run reports the plan and stops: no backup, no copy, nothing on disk moves.
+  if (opts.dryRun) {
+    return {
+      ok: true,
+      merged: 0,
+      wouldMerge: plan.length,
+      plan: plan.slice(0, 50).map(function (p) {
+        return {
+          // Absolute source, destination relative to its store root: enough to review without
+          // dumping a path per account-uuid pair into an agent transcript.
+          from: p.from,
+          to: path.relative(p.store, p.to),
+          store: p.store,
+          instance: (p.root && p.root.label) || null,
+        };
+      }),
+      planTruncated: plan.length > 50,
+      backup: null,
+      backups: [],
+      accounts: orgDirs.length,
+      roots: stores.length,
+      skippedRunning: skippedRunning,
+      skippedExists: skippedExists,
+      skippedTomb: skippedTomb,
+    };
+  }
+
   // Back up each store ONCE (only when we will change it), keep only the last few. The base app
   // keeps the historical name; a clone's backup names its tool/slug so two roots in the same
   // second never collide.
@@ -377,13 +404,23 @@ function consolidate(ctx, opts) {
   if (!roots.length) {
     return { ok: false, merged: 0, reason: 'only the macOS desktop app has this store' };
   }
-  const mergeOpts = { roots: roots };
+  const mergeOpts = { roots: roots, dryRun: !!opts.dryRun };
   const code = mergeStore(ctx, 'claude-code-sessions', 'claude-code-sessions-', mergeOpts);
   const cowork = mergeStore(ctx, 'local-agent-mode-sessions', 'cowork-sessions-', mergeOpts);
   const merged = (code.merged || 0) + (cowork.merged || 0);
+  const would = (code.wouldMerge || 0) + (cowork.wouldMerge || 0);
+  const plan = (code.plan || []).concat(cowork.plan || []);
   return {
     ok: code.ok || cowork.ok,
     merged: merged,
+    wouldMerge: opts.dryRun ? would : undefined,
+    wouldCode: opts.dryRun ? code.wouldMerge || 0 : undefined,
+    wouldCowork: opts.dryRun ? cowork.wouldMerge || 0 : undefined,
+    dryRun: !!opts.dryRun,
+    backups: (code.backups || []).concat(cowork.backups || []),
+    plan: plan.length ? plan : undefined,
+    planTruncated: !!(code.planTruncated || cowork.planTruncated),
+    planTotal: would || undefined,
     code: code.merged || 0,
     cowork: cowork.merged || 0,
     instances: withStore.filter(function (r) {

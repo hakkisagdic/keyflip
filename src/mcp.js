@@ -21,11 +21,14 @@ import * as usage from './usage.js';
 import * as lock from './lock.js';
 import * as logmod from './log.js';
 import * as provider from './provider.js';
+import * as _catalog from './catalog.js';
 import * as sessions from './sessions.js';
 import * as doctor from './doctor.js';
 import * as backup from './backup.js';
 import * as history from './history.js';
 import * as proxy from './proxy.js';
+import * as proxyroutes from './proxyroutes.js';
+import * as tiers from './tiers.js';
 import * as browser from './browser.js';
 import * as loginmod from './login.js';
 import * as exec from './exec.js';
@@ -61,7 +64,7 @@ import * as _projctx from './projctx.js';
 import * as _rules from './rulesmodel.js';
 import * as _policy from './policy.js';
 import * as _cowork from './cowork.js';
-import * as _skillstore from './skillstore.js';
+import * as _skillsync from './skillsync.js';
 import * as _desktopgw from './desktopgw.js';
 import * as _mcpreg from './mcpreg.js';
 import * as _share from './share.js';
@@ -72,6 +75,7 @@ import * as _autoswitch from './autoswitch.js';
 import * as _budget from './budget.js';
 import * as _notify from './notify.js';
 import * as _cost from './cost.js';
+import * as _prices from './prices.js';
 import * as _router from './router.js';
 import * as _provusage from './provusage.js';
 import * as _brain from './brain.js';
@@ -96,7 +100,13 @@ import * as _swarm from './swarm.js';
 import * as _config from './config.js';
 import * as _codexbar from './codexbar.js';
 import * as _codex from './codex.js';
+import * as _commandcode from './commandcode.js';
 import * as _fsutil from './fsutil.js';
+import * as _secretmask from './secretscan.js';
+import * as _conversations from './conversations.js';
+import * as _convindex from './convindex.js';
+import * as _convaccounts from './convaccounts.js';
+import * as _convexport from './convexport.js';
 
 // Mutating tools all gate on confirm:true — the agent must ask the user first.
 function needConfirm(args) {
@@ -106,6 +116,9 @@ function needConfirm(args) {
 const RO = { readOnlyHint: true, destructiveHint: false, openWorldHint: false };
 const RO_NET = { readOnlyHint: true, destructiveHint: false, openWorldHint: true };
 const MUT = { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false };
+// A write that only replaces keyflip's own cache file: not destructive, and a
+// second identical refresh writes the same bytes.
+const MUT_NET = { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true };
 const confirmProp = {
   confirm: { type: 'boolean', description: 'Must be true — set it only after the user has agreed.' },
 };
@@ -215,6 +228,80 @@ function transcriptForAgent(ctx, p) {
   if (!p) return p;
   const rel = _path.relative(sessions.projectsDir(ctx), String(p));
   return rel && rel.indexOf('..') !== 0 ? rel : _path.basename(String(p));
+}
+
+// ---- unified conversation layer (every tool's chats) --------------------------------------
+// Filters are shared by list/search/context/export so an agent can narrow once and reuse the
+// same vocabulary. Durations use convindex.parseSince (`7d`, `12h`, `2026-10-01`).
+function convFilters(args) {
+  const a = args || {};
+  let apps = null;
+  if (a.app) {
+    apps = (Array.isArray(a.app) ? a.app : String(a.app).split(','))
+      .map(function (s) {
+        return String(s).trim().toLowerCase();
+      })
+      .filter(Boolean);
+  }
+  let sinceMs = null;
+  if (a.since) {
+    sinceMs = _convindex.parseSince(a.since);
+    if (!sinceMs) throw new Error("invalid since '" + a.since + "' (use 7d, 12h or 2026-10-01)");
+  }
+  return {
+    apps: apps,
+    cwd: a.cwd ? String(a.cwd) : null,
+    sinceMs: sinceMs,
+    q: a.search ? String(a.search) : null,
+    account: a.account ? String(a.account) : null,
+  };
+}
+// Resolve an id/prefix/title from the index manifest (cheap) and load the real conversation.
+function convByRef(ctx, ref) {
+  const cat = _convindex.catalog(ctx, {});
+  const m = _conversations.matchRef(cat.conversations, ref);
+  if (!m.match) {
+    const e = new Error(
+      m.reason === 'ambiguous'
+        ? "'" + ref + "' matches several conversations — use more of the id"
+        : "no conversation matching '" + ref + "'",
+    );
+    e.candidates = m.candidates || [];
+    throw e;
+  }
+  return m.match.path ? _conversations.loadPath(ctx, m.match.path, {}) : _conversations.get(ctx, m.match.id, {});
+}
+// Conversation text goes into an agent transcript, so credential-shaped lines are masked unless
+// the caller explicitly opts out (`redact:false`). Same rule as every export path in the CLI.
+function convRedactText(text, opts) {
+  if (opts && opts.redact === false) return { text: text, count: 0 };
+  const r = _secretmask.redactLines(text);
+  return { text: r.text, count: r.count };
+}
+function convSlim(r) {
+  return {
+    id: r.id,
+    app: r.app || null,
+    surface: r.surface || null,
+    title: r.title,
+    cwd: r.cwd || null,
+    account: r.account || null,
+    // The label travels WITH the account: an agent that sees `account: "gmail"` and no source
+    // cannot tell the user's word from keyflip's guess, and will act on a guess as a fact.
+    accountSource: r.account ? r.accountSource || null : null,
+    accountConfidence: r.account ? r.accountConfidence || null : null,
+    createdAt: r.createdAt || null,
+    updatedAt: r.updatedAt || null,
+    messages: (r.counts && r.counts.messages) || 0,
+  };
+}
+function convHint() {
+  return {
+    browse: 'keyflip_conv_list',
+    read: 'keyflip_conv_show',
+    ask: 'keyflip_conv_context (a ready RAG block)',
+    build: 'keyflip_conv_index with confirm=true',
+  };
 }
 
 const TOOLS = [
@@ -851,6 +938,143 @@ const TOOLS = [
     },
   },
   {
+    name: 'keyflip_chatgpt_backups',
+    title: 'List ChatGPT/Codex auth.json backups',
+    description:
+      'List the ~/.codex/auth.json snapshots keyflip wrote before each switch or token refresh (newest first, capped by the backup policy). Each row carries the account e-mail, plan, expiry, whether a refresh token is present, and the exact file name to restore. Never returns a token. Read-only.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    annotations: RO,
+    run: async function (ctx) {
+      return { backups: _codex.listBackups(ctx) };
+    },
+  },
+  {
+    name: 'keyflip_chatgpt_restore',
+    title: 'Restore a ChatGPT/Codex auth.json backup',
+    description:
+      'Write a previous ~/.codex/auth.json snapshot back to the live file — the undo for a bad switch. The current live login is backed up first, so the restore is itself reversible; it refuses while ChatGPT/Codex is running unless force=true, and reads the file back to verify. This changes which account is billed. Ask the user first, then confirm=true. dry_run=true plans without writing.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        backup: {
+          type: 'string',
+          description: 'File name from keyflip_chatgpt_backups, a unique prefix, or 1-based index.',
+        },
+        dry_run: { type: 'boolean', description: 'Plan only; write nothing.' },
+        force: {
+          type: 'boolean',
+          description: 'Restore even while ChatGPT/Codex is running (it may overwrite on exit).',
+        },
+        confirm: { type: 'boolean', description: 'Must be true — set it only after the user has agreed.' },
+      },
+      required: ['backup', 'confirm'],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+    run: async function (ctx, args) {
+      needConfirm(args);
+      if (args.dry_run === true) {
+        return { restore: _codex.restoreBackup(ctx, String(args.backup), { dryRun: true }) };
+      }
+      const l = await lock.acquire(ctx.configDir);
+      try {
+        return { restore: _codex.restoreBackup(ctx, String(args.backup), { force: args.force === true }) };
+      } finally {
+        l.release();
+      }
+    },
+  },
+  {
+    name: 'keyflip_commandcode',
+    title: 'Command Code account status',
+    description:
+      'Report the live Command Code (`cmd`, npm command-code) login and every saved one. ONE file owns every local surface (~/.commandcode/auth.json): the CLI and the shipped VS Code extension read the same file, so they flip together; the web dashboard is a separate browser login keyflip does not carry. Identity is userName/userId/keyName, never a key. Read-only.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    annotations: RO,
+    run: async function (ctx) {
+      return _commandcode.status(ctx);
+    },
+  },
+  {
+    name: 'keyflip_commandcode_capture',
+    title: 'Save the live Command Code login',
+    description:
+      'Copy the live ~/.commandcode/auth.json into a saved, secret-free-metadata capture under the keyflip config dir (0600; never git-versioned). The slug defaults to the Command Code username; pass name to override. Ask the user before writing, then confirm=true.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Optional slug (default: the Command Code username).' },
+        confirm: { type: 'boolean', description: 'Must be true — set it only after the user has agreed.' },
+      },
+      required: ['confirm'],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    run: async function (ctx, args) {
+      needConfirm(args);
+      const l = await lock.acquire(ctx.configDir);
+      try {
+        return { account: _commandcode.capture(ctx, { name: args && args.name ? String(args.name) : undefined }) };
+      } finally {
+        l.release();
+      }
+    },
+  },
+  {
+    name: 'keyflip_commandcode_switch',
+    title: 'Switch Command Code account',
+    description:
+      'Write a saved login back to ~/.commandcode/auth.json, which the Command Code CLI AND its VS Code extension read. The outgoing login is captured and backed up first; the file is read back and its username checked. Sessions of `cmd` that are ALREADY running keep the old login until restarted. This changes which account is billed. Ask the user first, then confirm=true. dry_run=true plans without writing.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        account: { type: 'string', description: 'Saved slug, 1-based number, or userName (from keyflip_commandcode).' },
+        dry_run: { type: 'boolean', description: 'Plan only; write nothing.' },
+        confirm: { type: 'boolean', description: 'Must be true — set it only after the user has agreed.' },
+      },
+      required: ['account', 'confirm'],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
+    run: async function (ctx, args) {
+      needConfirm(args);
+      if (args.dry_run === true) {
+        return { switch: _commandcode.switchTo(ctx, String(args.account), { dryRun: true }) };
+      }
+      const l = await lock.acquire(ctx.configDir);
+      try {
+        return { switch: _commandcode.switchTo(ctx, String(args.account), {}) };
+      } finally {
+        l.release();
+      }
+    },
+  },
+  {
+    name: 'keyflip_commandcode_remove',
+    title: 'Delete a saved Command Code account',
+    description:
+      'Remove a saved Command Code capture from the keyflip config dir. The live ~/.commandcode/auth.json is untouched. This is irreversible for the capture. Ask the user first, then confirm=true.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        account: { type: 'string', description: 'Saved slug or 1-based number (from keyflip_commandcode).' },
+        confirm: { type: 'boolean', description: 'Must be true — set it only after the user has agreed.' },
+      },
+      required: ['account', 'confirm'],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
+    run: async function (ctx, args) {
+      needConfirm(args);
+      const l = await lock.acquire(ctx.configDir);
+      try {
+        return { removed: _commandcode.removeAccount(ctx, String(args.account), { force: true }) };
+      } finally {
+        l.release();
+      }
+    },
+  },
+  {
     name: 'keyflip_next',
     title: 'Rotate to another Claude account',
     description:
@@ -917,9 +1141,51 @@ const TOOLS = [
       return {
         providers: provider.list(ctx).map(function (n) {
           const m = provider.read(ctx, n);
-          return { name: n, baseUrl: m && m.baseUrl, active: !!(active && active.name === n) };
+          return {
+            name: n,
+            baseUrl: m && m.baseUrl,
+            compat: (m && m.compat) || 'anthropic',
+            active: !!(active && active.name === n),
+          };
         }),
         active: active ? active.name : 'official',
+      };
+    },
+  },
+  {
+    name: 'keyflip_provider_catalog',
+    title: 'Provider preset catalog',
+    description:
+      'Bundled preset endpoints (Z.AI/GLM, Kimi, DeepSeek, MiniMax, Qwen, OpenRouter, OpenAI, Gemini, Ollama/LM Studio/llama.cpp…) with base URL, Anthropic vs OpenAI API compatibility, model hints and docs links. Read-only; add one with keyflip_provider_add + catalog_id.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    annotations: RO,
+    run: async function () {
+      return { catalog: _catalog.list() };
+    },
+  },
+  {
+    name: 'keyflip_provider_models',
+    title: "List a provider's models",
+    description:
+      "Query a provider's GET /v1/models (saved provider name or catalog id) to see what it actually serves. Read-only network call; never returns or logs the key.",
+    inputSchema: {
+      type: 'object',
+      properties: { name: { type: 'string', description: 'Saved provider name or catalog id.' } },
+      required: ['name'],
+      additionalProperties: false,
+    },
+    annotations: RO_NET,
+    run: async function (ctx, args) {
+      let meta = provider.read(ctx, args.name);
+      if (!meta) {
+        const preset = _catalog.get(args.name);
+        if (!preset) throw new Error("no such provider or catalog entry: '" + args.name + "'");
+        meta = { name: null, baseUrl: preset.baseUrl, authScheme: preset.authScheme, compat: preset.compat };
+      }
+      return {
+        provider: args.name,
+        url: _catalog.modelsUrl(meta.baseUrl),
+        result: await _catalog.fetchModels(ctx, meta),
       };
     },
   },
@@ -953,31 +1219,44 @@ const TOOLS = [
     name: 'keyflip_provider_add',
     title: 'Save a provider endpoint',
     description:
-      'Save a third-party endpoint. NOTE: the API key is a secret and must NOT be passed through MCP — omit it here and tell the user to run `keyflip provider add <name> --base-url <url> --key-file -` (key on stdin). This tool stores only the non-secret metadata. Ask the user first, then confirm=true.',
+      'Save a third-party endpoint. Use `catalog_id` (see keyflip_provider_catalog) to fill base_url/auth_scheme/models/compat from a known preset, or pass base_url for anything else. NOTE: the API key is a secret and must NOT be passed through MCP — omit it here and tell the user to run `keyflip provider add <name> --key-file -` (key on stdin). This tool stores only the non-secret metadata. Ask the user first, then confirm=true.',
     inputSchema: {
       type: 'object',
       properties: {
         name: { type: 'string' },
-        base_url: { type: 'string' },
+        catalog_id: { type: 'string', description: 'Preset id from keyflip_provider_catalog, e.g. "zai".' },
+        base_url: { type: 'string', description: 'Overrides the preset base URL.' },
         auth_scheme: { type: 'string', enum: ['bearer', 'api-key'] },
         confirm: confirmProp.confirm,
       },
-      required: ['name', 'base_url', 'confirm'],
+      required: ['name', 'confirm'],
       additionalProperties: false,
     },
     annotations: MUT,
     run: async function (ctx, args) {
       needConfirm(args);
-      provider.add(ctx, args.name, { baseUrl: args.base_url, authScheme: args.auth_scheme || 'bearer' });
-      return {
-        saved: args.name,
-        note:
-          'No key stored. Run `keyflip provider add ' +
-          args.name +
-          ' --base-url ' +
-          args.base_url +
-          ' --key-file -` to add the key securely.',
+      const preset = args.catalog_id ? _catalog.get(args.catalog_id) : null;
+      if (args.catalog_id && !preset) throw new Error("unknown catalog id: '" + args.catalog_id + "'");
+      const baseUrl = args.base_url || (preset && preset.baseUrl);
+      if (!baseUrl) throw new Error('base_url or catalog_id is required');
+      const meta = {
+        baseUrl,
+        authScheme: args.auth_scheme || (preset && preset.authScheme) || 'bearer',
+        compat: preset ? preset.compat : 'anthropic',
       };
+      if (preset && preset.models && Object.keys(preset.models).length) meta.models = preset.models;
+      provider.add(ctx, args.name, meta);
+      const out = {
+        saved: args.name,
+        baseUrl,
+        compat: meta.compat,
+        note: 'No key stored. Run `keyflip provider add ' + args.name + ' --key-file -` to add the key securely.',
+      };
+      if (preset) out.docs = preset.docs;
+      if (meta.compat === 'openai') {
+        out.warning = 'This is an OpenAI-API endpoint: Claude Code cannot call it directly and needs a protocol shim.';
+      }
+      return out;
     },
   },
   {
@@ -1125,6 +1404,455 @@ const TOOLS = [
     },
   },
 
+  // ---- unified conversation layer: every local AI tool's chats ----
+  {
+    name: 'keyflip_conv_list',
+    title: 'List conversations from every local AI tool',
+    description:
+      'Browse the chats keyflip can read on this machine — Claude Code, Codex/ChatGPT, Kiro, Gemini/Antigravity, Cursor (the editor DB per composer, the cursor-agent CLI store and its transcript mirror) and other agents (Qoder, opencode, Copilot, Aider) — in ONE normalized shape: id, app, surface, title, cwd, account, message count, dates. Each row also carries `accountSource` ("stated" = you assigned it with `keyflip sessions assign`; "inferred" = keyflip placed it on its own switch timeline) and `accountConfidence`; treat an inferred account as a labelled guess, never as your word, and call keyflip_conv_show for the reason. `search` filters TITLES only; use keyflip_conv_search for content. When the index exists this reads its manifest and is instant; otherwise it parses transcripts live (slow, reported as indexed:false). Read-only, local.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        search: { type: 'string', description: 'Title substring filter (not content).' },
+        app: { type: 'string', description: 'Comma-separated app ids, e.g. "claude,codex".' },
+        cwd: { type: 'string', description: 'Only conversations whose working dir contains this path.' },
+        since: { type: 'string', description: 'Only conversations updated within e.g. 7d, 24h, or since 2026-10-01.' },
+        account: {
+          type: 'string',
+          description:
+            'Only conversations worked on by this keyflip account (a Claude profile, a Kiro slug, a ChatGPT/Codex slug). The account is stated when you assigned it, otherwise inferred from the switch timeline.',
+        },
+        limit: { type: 'integer', description: 'Default 20, max 500.' },
+      },
+      additionalProperties: false,
+    },
+    annotations: RO,
+    run: async function (ctx, args) {
+      const f = convFilters(args);
+      const cat = _convindex.catalog(ctx, f);
+      const limit = Math.max(1, Math.min(500, Number(args && args.limit) || 20));
+      return {
+        indexed: cat.indexed,
+        builtAt: cat.builtAt || null,
+        total: cat.conversations.length,
+        conversations: cat.conversations.slice(0, limit).map(convSlim),
+        stats: cat.stats || null,
+        errors: (cat.errors || []).slice(0, 5).map(function (e) {
+          return { app: e.app || null, error: e.error };
+        }),
+        note: cat.indexed ? null : 'no index yet — this pass parsed every transcript; keyflip_conv_index makes it fast',
+        hints: convHint(),
+      };
+    },
+  },
+  {
+    name: 'keyflip_conv_show',
+    title: 'Read one conversation in full',
+    description:
+      'Load one conversation by id, unique id prefix, or unique title, and return it rendered as markdown (default), self-contained HTML, or normalized JSON. Tool calls are summarized, not dumped. `max_chars` caps the returned content (default 60000) — read a narrower slice or export the file for a huge chat. Credential-shaped lines are masked by default; pass redact:false only when the user asked for exact fidelity. Read-only, local.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: 'Conversation id, unique prefix, or unique title.' },
+        format: { type: 'string', enum: ['md', 'html', 'json'] },
+        max_chars: { type: 'integer', description: 'Default 60000, max 400000.' },
+        redact: { type: 'boolean', description: 'Default true; false keeps secret shapes verbatim.' },
+      },
+      required: ['id'],
+      additionalProperties: false,
+    },
+    annotations: RO,
+    run: async function (ctx, args) {
+      const conv = convByRef(ctx, String(args.id));
+      const format = args.format === 'html' ? 'html' : args.format === 'json' ? 'json' : 'md';
+      const r = _convexport.render(conv, { format: format, redact: args.redact !== false });
+      const cap = Math.max(1000, Math.min(400000, Number(args.max_chars) || 60000));
+      const truncated = r.content.length > cap;
+      // Which account worked on it — the user's word, or the switch timeline. The agent must be
+      // able to tell the two apart, so the source travels with the answer.
+      const acct = _convaccounts.explain(ctx, conv);
+      return {
+        id: conv.id,
+        app: conv.app,
+        surface: conv.surface,
+        title: conv.title,
+        cwd: conv.cwd || null,
+        updatedAt: conv.updatedAt || null,
+        account: acct.account || null,
+        accountSource: acct.account ? acct.source : null,
+        accountConfidence: acct.account ? acct.confidence : null,
+        accountWhy: acct.why || null,
+        counts: conv.counts,
+        format: format,
+        redacted: r.redacted || 0,
+        truncated: truncated,
+        content: truncated ? r.content.slice(0, cap) + '\n…[truncated by keyflip]' : r.content,
+      };
+    },
+  },
+  {
+    name: 'keyflip_conv_search',
+    title: 'Search every conversation (BM25, embeddings, hybrid)',
+    description:
+      'Search the CONTENT of every local conversation keyflip has indexed. Modes: lexical (BM25, always available), semantic (needs embeddings), hybrid (reciprocal-rank fusion; falls back to lexical with a warning when no vectors exist). Filters narrow by app/cwd/since. Snippets are masked for credential shapes by default. Results are chunk-level, one per conversation by default, so raise limit to page. Chunks hold the conversation: tool calls are indexed by name only and tool results not at all, except Cursor (its store keeps the payload in the message) where the text is capped at 800 chars and prefixed `Tool output:` — quote it as machine output, never as something a person said. Identical chunk text (a forked or resumed session repeating earlier turns) is shown ONCE: the surviving hit names the other conversation ids in `alsoIn` and `collapsed` counts the copies that were folded. Never uploads anything; embeddings run locally (Ollama) or at the URL the user configured. Read-only: it does NOT build an index — if none exists, ask the user and call keyflip_conv_index with confirm=true. Hints return the id to read with keyflip_conv_show and the query to feed keyflip_conv_context.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        query: { type: 'string' },
+        mode: { type: 'string', enum: ['lexical', 'semantic', 'hybrid'] },
+        limit: { type: 'integer', description: 'Default 10, max 100.' },
+        per_conv: { type: 'integer', description: 'Chunks per conversation, default 1, max 20.' },
+        app: { type: 'string' },
+        cwd: { type: 'string' },
+        since: { type: 'string' },
+        account: {
+          type: 'string',
+          description: 'Only hits from conversations worked on by this keyflip account.',
+        },
+        redact: { type: 'boolean', description: 'Default true; false returns raw snippets.' },
+      },
+      required: ['query'],
+      additionalProperties: false,
+    },
+    annotations: RO,
+    run: async function (ctx, args) {
+      const q = String(args.query || '').trim();
+      if (!q) throw new Error('query is required');
+      const mode = ['lexical', 'semantic', 'hybrid'].indexOf(args.mode) !== -1 ? args.mode : 'hybrid';
+      const st = _convindex.status(ctx);
+      if (!st.exists) {
+        throw new Error(
+          'no conversation index yet: ask the user, then call keyflip_conv_index with confirm=true (or run `keyflip conv index`) — this tool never builds one on its own',
+        );
+      }
+      if (mode !== 'lexical' && !st.vectorChunks) {
+        if (mode === 'semantic')
+          throw new Error(
+            'no embeddings yet: mode=semantic needs keyflip_conv_index with embed=true, or use mode=lexical',
+          );
+      }
+      const f = convFilters(args);
+      const limit = Math.max(1, Math.min(100, Number(args.limit) || 10));
+      const r = await _convindex.search(ctx, q, {
+        mode: mode,
+        apps: f.apps,
+        sinceMs: f.sinceMs,
+        cwd: f.cwd,
+        account: f.account,
+        limit: limit,
+        perConv: Math.max(1, Math.min(20, Number(args.per_conv) || 1)),
+      });
+      if (!r.ok) {
+        const why =
+          r.reason === 'no-index'
+            ? 'no index yet — call keyflip_conv_index with confirm=true'
+            : r.reason === 'embed-failed'
+              ? 'embedding endpoint failed: ' +
+                (r.detail || 'unknown') +
+                ' — use mode=lexical, or start Ollama / set KEYFLIP_EMBED_URL'
+              : 'search failed: ' + (r.reason || 'unknown');
+        throw new Error(why);
+      }
+      return {
+        query: q,
+        mode: r.mode || (r.semanticCoverage ? 'hybrid' : 'lexical'),
+        count: r.hits.length,
+        collapsed: r.collapsed || 0,
+        hits: r.hits.map(function (h) {
+          const snip = convRedactText(h.snippet || '', args);
+          return {
+            id: h.id,
+            app: h.app || null,
+            title: h.title,
+            cwd: h.cwd || null,
+            updatedAt: h.updatedAt || null,
+            account: h.account || null,
+            accountConfidence: h.accountConfidence || null,
+            chunk: h.chunk,
+            role: h.role || null,
+            ts: h.ts || null,
+            score: Math.round((h.score || 0) * 1000) / 1000,
+            chunkHash: h.chunkHash || null,
+            alsoIn: (h.alsoIn || []).slice(0, 5),
+            snippet: snip.text,
+            redacted: snip.count || 0,
+          };
+        }),
+        warning: r.semanticError
+          ? r.semanticError === 'no-vectors'
+            ? 'no embeddings yet — ranked lexically; keyflip_conv_index with embed=true enables semantic/hybrid'
+            : 'vectors unavailable (' + r.semanticError + ') — lexical ranking only'
+          : null,
+        hints: {
+          read: 'keyflip_conv_show { id }',
+          context: 'keyflip_conv_context { query } for a ready-to-paste RAG block',
+        },
+      };
+    },
+  },
+  {
+    name: 'keyflip_conv_context',
+    title: 'Build a RAG context block from past chats',
+    description:
+      "Retrieve the most relevant chunks across every local conversation and return ONE portable, char-budgeted context block with stable headings, source ids, cwd and dates. This is the tool to call when the user asks 'what did we decide about X?' or wants a new agent to continue prior work: pass the block to the model as context. `expand` includes neighbouring chunks so a decision is not cut mid-thread. `redact` (default true) masks credential-shaped lines. Local only — never uploaded. Read-only: does NOT build an index; ask the user and call keyflip_conv_index with confirm=true.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        query: { type: 'string' },
+        budget: { type: 'integer', description: 'Character budget, default 12000, max 200000.' },
+        expand: { type: 'integer', description: 'Neighbouring chunks per hit, default 1, max 5.' },
+        mode: { type: 'string', enum: ['lexical', 'semantic', 'hybrid'] },
+        app: { type: 'string' },
+        cwd: { type: 'string' },
+        since: { type: 'string' },
+        redact: { type: 'boolean', description: 'Default true.' },
+      },
+      required: ['query'],
+      additionalProperties: false,
+    },
+    annotations: RO,
+    run: async function (ctx, args) {
+      const q = String(args.query || '').trim();
+      if (!q) throw new Error('query is required');
+      const mode = ['lexical', 'semantic', 'hybrid'].indexOf(args.mode) !== -1 ? args.mode : 'hybrid';
+      const st = _convindex.status(ctx);
+      if (!st.exists) {
+        throw new Error(
+          'no conversation index yet: ask the user, then call keyflip_conv_index with confirm=true (or run `keyflip conv index`)',
+        );
+      }
+      if (mode === 'semantic' && !st.vectorChunks)
+        throw new Error('no embeddings yet: pass embed=true to keyflip_conv_index, or use mode=lexical');
+      const f = convFilters(args);
+      const r = await _convindex.search(ctx, q, {
+        mode: mode,
+        apps: f.apps,
+        sinceMs: f.sinceMs,
+        cwd: f.cwd,
+        limit: 12,
+        perConv: 1,
+      });
+      if (!r.ok) {
+        throw new Error(
+          r.reason === 'embed-failed'
+            ? 'embedding endpoint failed: ' + (r.detail || 'unknown') + ' — use mode=lexical'
+            : 'search failed: ' + (r.reason || 'unknown'),
+        );
+      }
+      const pack = _convindex.contextPack(ctx, q, r.hits || [], {
+        budget: Math.max(500, Math.min(200000, Number(args.budget) || 12000)),
+        expand: Math.max(0, Math.min(5, args.expand == null ? 1 : Number(args.expand))),
+      });
+      const red = convRedactText(pack, args);
+      return {
+        query: q,
+        mode: r.mode || (r.semanticCoverage ? 'hybrid' : 'lexical'),
+        sources: (r.hits || []).map(function (h) {
+          return { id: h.id, app: h.app || null, title: h.title, updatedAt: h.updatedAt || null, score: h.score };
+        }),
+        redacted: red.count || 0,
+        chars: red.text.length,
+        context: red.text,
+        warning: r.semanticError
+          ? r.semanticError === 'no-vectors'
+            ? 'no embeddings yet — ranked lexically; keyflip_conv_index with embed=true enables semantic/hybrid'
+            : 'vectors unavailable (' + r.semanticError + ') — lexical ranking only'
+          : null,
+      };
+    },
+  },
+  {
+    name: 'keyflip_conv_status',
+    title: 'Conversation index status',
+    description:
+      'What keyflip can search on this machine: index location, build time, conversation/message/chunk counts per app, embedding model+host and vector coverage. `exists:false` means keyflip_conv_search/context will refuse until keyflip_conv_index runs. Read-only.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    annotations: RO,
+    run: async function (ctx) {
+      const st = _convindex.status(ctx);
+      return Object.assign({}, st, {
+        dir: statePathForAgent(ctx, st.dir),
+        hints: st.exists ? convHint() : { build: 'keyflip_conv_index with confirm=true' },
+      });
+    },
+  },
+  {
+    name: 'keyflip_conv_index',
+    title: 'Build/refresh the conversation index',
+    description:
+      "Parse every local conversation once into chunk files keyflip owns (configDir/conv-index, never versioned or backed up) so search and RAG context are instant. Incremental: unchanged files are reused by mtime+hash, appended chats reuse their vector prefix. `embed:true` also computes local embeddings (Ollama nomic-embed-text by default, or KEYFLIP_EMBED_URL) — a FIRST full embedding pass over a large corpus takes many minutes and can outlive an MCP request; for that, tell the user to run `keyflip conv index --embed` in a terminal. The report names every store it could not read as a skipped source with a reason and every store that yielded chats but whose -wal could not be replayed under `warnings` — an unreadable history never looks like an empty one. Filter with app/limit_sources for a quick slice. Writes only keyflip's own index; no conversation is modified. Ask the user first, then set confirm=true.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        embed: { type: 'boolean', description: 'Also compute embeddings (needed for semantic/hybrid).' },
+        force: { type: 'boolean', description: 'Re-parse even when mtime+size are unchanged.' },
+        app: { type: 'string', description: 'Comma-separated app ids for a partial build.' },
+        limit_sources: { type: 'integer', description: 'Parse at most N sources (quick slice).' },
+        confirm: confirmProp.confirm,
+      },
+      required: ['confirm'],
+      additionalProperties: false,
+    },
+    annotations: MUT,
+    run: async function (ctx, args) {
+      needConfirm(args);
+      const f = convFilters(args);
+      const ls = Number(args.limit_sources) || null;
+      const report = await _convindex.build(ctx, {
+        apps: f.apps,
+        limitSources: ls,
+        embed: !!args.embed,
+        force: !!args.force,
+      });
+      const st = _convindex.status(ctx);
+      return {
+        ok: report.ok,
+        indexed: report.indexed,
+        reused: report.reused,
+        changed: report.changed,
+        removed: report.removed,
+        empty: report.empty,
+        skipped: report.skipped,
+        rechunk: report.rechunk || 0,
+        duplicates: report.duplicates || 0,
+        duplicateIds: (report.duplicateIds || []).slice(0, 5),
+        embedded: report.embedded,
+        embedding: report.embedding || null,
+        stats: st.stats || report.stats || null,
+        vectorChunks: st.vectorChunks || 0,
+        coverage: st.coverage || 0,
+        errors: (report.errors || []).slice(0, 5),
+        // Degraded reads: a store that yielded chats but whose newest writes could not be replayed.
+        // Kept apart from `errors` (sources that cost conversations) so an agent can tell the two.
+        warnings: (report.warnings || []).slice(0, 5),
+        note: report.embedding
+          ? report.embedding.error
+            ? 'embeddings failed: ' + report.embedding.error + ' — lexical search still works'
+            : 'semantic + hybrid search are available'
+          : 'no vectors yet — rerun with embed=true for semantic/hybrid',
+      };
+    },
+  },
+  {
+    name: 'keyflip_conv_export',
+    title: 'Export conversations or hand one to another AI tool',
+    description:
+      "Write conversation documents OUTSIDE keyflip's stores: (1) one conversation with `id` to a file, (2) `all:true` to a folder as md/html/json, (3) `obsidian:true` into an Obsidian vault (`out`) — notes get YAML frontmatter, tags and an index, and keyflip only overwrites a note whose content still matches what it wrote last time (a user edit becomes a conflict copy, never a silent overwrite), (4) `target` with `id` writes a handoff bundle (conversation.json + CONTINUE.md + README.md) for claude/codex/kiro/opencode/windsurf/generic. No target tool's live store is modified; no native import exists. Credential-shaped lines are masked unless redact:false. Large vaults: use limit/offset. Ask the user before writing, then set confirm=true.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: 'One conversation; required for target bundles.' },
+        all: { type: 'boolean', description: 'Export every conversation matching the filters.' },
+        obsidian: { type: 'boolean', description: 'Write an ownership-tracked Obsidian vault.' },
+        target: { type: 'string', description: 'Handoff target: claude, codex, kiro, opencode, windsurf, generic.' },
+        out: { type: 'string', description: 'Destination file or folder (required for all/obsidian/target).' },
+        format: { type: 'string', enum: ['md', 'html', 'json'] },
+        redact: { type: 'boolean', description: 'Default true.' },
+        force: { type: 'boolean', description: 'Overwrite existing files (Obsidian: also user edits).' },
+        limit: { type: 'integer', description: 'Max conversations per call, default 200.' },
+        offset: { type: 'integer', description: 'Skip this many conversations (stable updatedAt order).' },
+        confirm: confirmProp.confirm,
+      },
+      required: ['confirm'],
+      additionalProperties: false,
+    },
+    annotations: MUT,
+    run: async function (ctx, args) {
+      needConfirm(args);
+      const opts = { redact: args.redact !== false, force: !!args.force, now: ctx.now ? ctx.now() : undefined };
+      const format = args.format === 'html' ? 'html' : args.format === 'json' ? 'json' : 'md';
+      const out = args.out ? String(args.out) : null;
+
+      if (args.target) {
+        if (!args.id) throw new Error('target bundles need one conversation: pass id');
+        if (!out) throw new Error('target bundles need a destination folder: pass out');
+        const conv = convByRef(ctx, String(args.id));
+        return _convexport.writeBundle(conv, String(args.target), Object.assign({}, opts, { out: out }));
+      }
+
+      const f = convFilters(args);
+      const cap = Math.max(1, Math.min(5000, Number(args.limit) || 200));
+      const offset = Math.max(0, Number(args.offset) || 0);
+
+      if (args.obsidian) {
+        if (!out) throw new Error('Obsidian export needs a vault folder: pass out');
+        const rows = _convindex.catalog(ctx, f).conversations;
+        const slice = rows.slice(offset, offset + cap);
+        if (!slice.length) throw new Error('no conversations match those filters');
+        const srcs = _conversations.discover(ctx, {});
+        const byPath = Object.create(null);
+        srcs.forEach(function (s) {
+          byPath[_path.resolve(s.path)] = s;
+        });
+        function* loadRows() {
+          for (const row of slice) {
+            const src = row.path ? byPath[_path.resolve(row.path)] : null;
+            if (!src) continue;
+            try {
+              yield _conversations.load(ctx, src, {});
+            } catch {
+              /* one unreadable source must not abort the vault */
+            }
+          }
+        }
+        const report = _convexport.obsidianExport(ctx, loadRows(), Object.assign({}, opts, { out: out }));
+        return Object.assign({}, report, {
+          total: rows.length,
+          exported: slice.length,
+          remaining: Math.max(0, rows.length - offset - slice.length),
+          next_offset: offset + slice.length < rows.length ? offset + slice.length : null,
+        });
+      }
+
+      if (args.id) {
+        const conv = convByRef(ctx, String(args.id));
+        return _convexport.exportOne(conv, Object.assign({}, opts, { out: out, format: format }));
+      }
+
+      if (!args.all) throw new Error('choose one: id (one conversation), all:true (bulk), obsidian:true, or target');
+      const dest = out || _path.join(process.cwd(), 'keyflip-conversations');
+      const rows = _convindex.catalog(ctx, f).conversations;
+      const slice = rows.slice(offset, offset + cap);
+      if (!slice.length) throw new Error('no conversations match those filters');
+      const srcs = _conversations.discover(ctx, {});
+      const byPath = Object.create(null);
+      srcs.forEach(function (s) {
+        byPath[_path.resolve(s.path)] = s;
+      });
+      const files = [];
+      const errors = [];
+      for (const row of slice) {
+        const src = row.path ? byPath[_path.resolve(row.path)] : null;
+        if (!src) {
+          errors.push({ id: row.id, error: 'source is gone' });
+          continue;
+        }
+        try {
+          files.push(
+            _convexport.exportOne(
+              _conversations.load(ctx, src, {}),
+              Object.assign({}, opts, {
+                out: dest + _path.sep,
+                format: format,
+              }),
+            ),
+          );
+        } catch (e) {
+          errors.push({ id: row.id, error: (e && e.message) || String(e) });
+        }
+      }
+      return {
+        dir: dest,
+        exported: files.length,
+        total: rows.length,
+        remaining: Math.max(0, rows.length - offset - slice.length),
+        next_offset: offset + slice.length < rows.length ? offset + slice.length : null,
+        files: files,
+        errors: errors.slice(0, 10),
+      };
+    },
+  },
+
   {
     name: 'keyflip_cowork',
     title: 'Browse Cowork sessions',
@@ -1196,11 +1924,11 @@ const TOOLS = [
     name: 'keyflip_doctor',
     title: 'Diagnose config + connectivity',
     description:
-      'Health report: Claude config dir, login present, desktop app data, live auto-update state of the base app and every isolated instance, and each provider endpoint reachability. Read-only.',
+      'Health report: Claude config dir, login present, desktop app data, live auto-update state of the base app and every isolated instance, each provider endpoint reachability, and the BACKGROUND SERVICE INVENTORY — every unattended keyflip job (dream / refresh / daemon / conv) with installed, loaded (does launchd or cron actually hold it), lastRun (when it last produced output) and what to run to install it. A job whose plist exists but is not loaded, or that has been silent past twice its cadence, is a warning: an unattended job that quietly stopped running looks exactly like one that is working. Read-only.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
     annotations: RO_NET,
     run: async function (ctx) {
-      return await doctor.diagnose(ctx);
+      return await doctor.diagnose(ctx, { run: exec.run });
     },
   },
   {
@@ -1260,49 +1988,98 @@ const TOOLS = [
     },
   },
 
-  // ---- skills marketplace ----
+  // ---- skills, across every agent ----
   {
     name: 'keyflip_skills',
     title: 'List installed skills',
-    description: 'Skills keyflip installed into ~/.claude/skills. Read-only.',
+    description:
+      'Skills keyflip installed, with each agent directory holding a copy and whether that copy is intact (ok), user-edited, or missing. Read-only.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
     annotations: RO,
     run: async function (ctx) {
-      return { skills: _skillstore.list(ctx) };
+      return { skills: _skillsync.list(ctx) };
+    },
+  },
+  {
+    name: 'keyflip_skill_agents',
+    title: 'List skill targets',
+    description:
+      'Every agent skill directory keyflip can write to, which tools read it, and whether this machine has that agent (detected). Read-only — call it before keyflip_skill_add to choose agents.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    annotations: RO,
+    run: async function (ctx) {
+      const here = _skillsync.detectedTargets(ctx).map(function (t) {
+        return t.dir;
+      });
+      return {
+        targets: _skillsync.allTargets().map(function (t) {
+          return Object.assign({ detected: here.indexOf(t.dir) !== -1 }, t);
+        }),
+      };
     },
   },
   {
     name: 'keyflip_skill_add',
     title: 'Install a skill',
     description:
-      'Install a skill from a GitHub repo (owner/repo[@ref][/subdir]), a local directory, or a .tar.gz/.zip. Installs code the agent will run — ask the user first, then confirm=true.',
+      'Install a skill from a GitHub repo (owner/repo[@ref][/subdir]), a local directory, or a .tar.gz/.zip into every agent on this machine (or only the agents named in `agents`, e.g. ["claude","cursor"]). Installs code the agent will run — ask the user first, then confirm=true. dry_run=true reports the plan and writes nothing. The source is inspected first, hidden files included: a skill that ships a credential-looking value or token, or any symlink, is refused rather than copied.',
     inputSchema: {
       type: 'object',
-      properties: { source: { type: 'string' }, confirm: confirmProp.confirm },
+      properties: {
+        source: { type: 'string' },
+        agents: { type: 'array', items: { type: 'string' } },
+        dry_run: { type: 'boolean' },
+        confirm: confirmProp.confirm,
+      },
       required: ['source', 'confirm'],
       additionalProperties: false,
     },
     annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: true },
     run: async function (ctx, args) {
       needConfirm(args);
-      return { installed: await _skillstore.add(ctx, String(args.source), {}) };
+      return await _skillsync.add(ctx, String(args.source), { agents: args.agents, dryRun: !!args.dry_run });
+    },
+  },
+  {
+    name: 'keyflip_skill_sync',
+    title: 'Re-apply skills from their sources',
+    description:
+      'Re-fetch every keyflip-installed skill from the source it was installed from. A copy the user edited is reported, never overwritten. Each source is re-checked before it is copied (it may have gained a secret or a link); a manifest entry naming a directory keyflip does not own is skipped, not followed. Ask the user first, then confirm=true.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        agents: { type: 'array', items: { type: 'string' } },
+        dry_run: { type: 'boolean' },
+        confirm: confirmProp.confirm,
+      },
+      required: ['confirm'],
+      additionalProperties: false,
+    },
+    annotations: MUT,
+    run: async function (ctx, args) {
+      needConfirm(args);
+      return { synced: await _skillsync.sync(ctx, { agents: args.agents, dryRun: !!args.dry_run }) };
     },
   },
   {
     name: 'keyflip_skill_remove',
     title: 'Remove an installed skill',
-    description: "Remove a keyflip-installed skill (never the user's own). Ask the user first, then confirm=true.",
+    description:
+      'Remove a keyflip-installed skill from every agent (or only from the agents named in `agents`). Never touches a skill the user installed, and deletes only in directories keyflip knows it writes to — a manifest entry pointing anywhere else is reported as skipped. Ask the user first, then confirm=true.',
     inputSchema: {
       type: 'object',
-      properties: { name: { type: 'string' }, confirm: confirmProp.confirm },
+      properties: {
+        name: { type: 'string' },
+        agents: { type: 'array', items: { type: 'string' } },
+        confirm: confirmProp.confirm,
+      },
       required: ['name', 'confirm'],
       additionalProperties: false,
     },
     annotations: MUT,
     run: async function (ctx, args) {
       needConfirm(args);
-      _skillstore.remove(ctx, args.name);
-      return { removed: args.name };
+      return _skillsync.remove(ctx, args.name, { agents: args.agents });
     },
   },
 
@@ -1311,7 +2088,7 @@ const TOOLS = [
     name: 'keyflip_proxy_status',
     title: 'Failover proxy status',
     description:
-      'Is the local failover proxy running? On what port, wired? Per-account request/token totals. Read-only.',
+      "Is the local failover proxy running? On what port, wired? Per-account request/token totals, plus the live route order, each account's breaker/cooldown state and subscription tier. Read-only.",
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
     annotations: RO,
     run: async function (ctx) {
@@ -1328,7 +2105,121 @@ const TOOLS = [
           }
         })()
       );
-      return { running: running, port: meta && meta.port, wired: !!(meta && meta.wired), stats: proxy.stats(ctx) };
+      return {
+        running: running,
+        port: meta && meta.port,
+        wired: !!(meta && meta.wired),
+        stats: proxy.stats(ctx),
+        route: proxy.routeState(ctx),
+      };
+    },
+  },
+  {
+    name: 'keyflip_cooldowns',
+    title: 'Show account cooldowns',
+    description:
+      'Per-account readiness for switching/proxying: the order accounts would be tried, which are parked by a cooldown (kind + remaining seconds) or a circuit breaker, and the active policy. Read-only.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    annotations: RO,
+    run: async function (ctx) {
+      return proxy.routeState(ctx);
+    },
+  },
+  {
+    name: 'keyflip_cooldown_clear',
+    title: 'Clear account cooldowns',
+    description:
+      'Release parked accounts so they are tried again immediately: one account by name, or all of them. Does not change which account is active. Ask the user first, then confirm=true.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Account name; omit to clear every account.' },
+        confirm: confirmProp.confirm,
+      },
+      required: ['confirm'],
+      additionalProperties: false,
+    },
+    annotations: MUT,
+    run: async function (ctx, args) {
+      needConfirm(args);
+      return { cleared: proxy.clearCooldowns(ctx, args.name || null) };
+    },
+  },
+  {
+    name: 'keyflip_proxy_routes',
+    title: 'Show the proxy routing file',
+    description:
+      'The declarative routing layer behind the failover proxy (<configDir>/proxy-routes.json): fallback mode (off/retry/model-chain), sticky conversation TTL, the model chain, each rule (when → account/model), request transforms, the custom router command, and any validation errors. A missing file means the defaults (active first, then least-recently-used). Read-only.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    annotations: RO,
+    run: async function (ctx) {
+      return proxyroutes.describe(ctx);
+    },
+  },
+  {
+    name: 'keyflip_proxy_explain',
+    title: 'Explain where a request would route',
+    description:
+      'For a hypothetical request (model / path / token estimate / conversation user / headers), report which account the failover proxy would try FIRST and why — a rule, a sticky conversation, or the default order — plus the resulting order and effective policy. Nothing is sent upstream and a custom router hook is NOT executed (run `keyflip proxy explain --run-hook` for that). Read-only.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        model: { type: 'string', description: 'Model id, e.g. claude-sonnet-4-5.' },
+        path: { type: 'string', description: 'Request path (default /v1/messages).' },
+        tokens: { type: 'integer', description: 'Estimated input tokens for tokensGt rules.' },
+        user: { type: 'string', description: 'Conversation user id, as sent in metadata.user_id.' },
+        headers: { type: 'object', additionalProperties: { type: 'string' }, description: 'Headers for header rules.' },
+      },
+      additionalProperties: false,
+    },
+    annotations: RO,
+    run: async function (ctx, args) {
+      return proxy.explain(
+        ctx,
+        { model: args.model, path: args.path, tokens: args.tokens, user: args.user, headers: args.headers || {} },
+        { runHook: false },
+      );
+    },
+  },
+  {
+    name: 'keyflip_tiers',
+    title: 'Show subscription tiers per account',
+    description:
+      'Which plan each account is on (free/pro/max/max5x/max20x/team/enterprise), where that came from (captured credentials or an override), and which Claude model families it may serve. The failover proxy uses this to skip an account that cannot answer the requested model (a Free plan cannot use Opus). Unknown tiers never block. Read-only.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    annotations: RO,
+    run: async function (ctx) {
+      return proxy.tierState(ctx);
+    },
+  },
+  {
+    name: 'keyflip_tier_set',
+    title: 'Pin an account subscription tier',
+    description:
+      "Override the tier keyflip reads from an account's credentials, or clear the override with tier='auto'. Use when detection is wrong (a plan name the vendor changed, a token-only capture). Ask the user first, then confirm=true.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Account name.' },
+        tier: {
+          type: 'string',
+          enum: tiers.TIER_IDS.concat(['auto']),
+          description: 'Tier to pin, or auto to clear the override.',
+        },
+        confirm: confirmProp.confirm,
+      },
+      required: ['name', 'tier', 'confirm'],
+      additionalProperties: false,
+    },
+    annotations: MUT,
+    run: async function (ctx, args) {
+      needConfirm(args);
+      const name = core.resolveProfile(ctx, args.name);
+      if (!name) throw new Error("no such account: '" + args.name + "'");
+      const meta = profiles.read(ctx.configDir, name) || { name: name };
+      const next = tiers.applyOverride(meta, args.tier);
+      profiles.write(ctx.configDir, next);
+      return { account: name, tier: next.tier || null, cleared: !next.tier };
     },
   },
   {
@@ -1420,13 +2311,63 @@ const TOOLS = [
 
   // ---- browser session (Claude Chrome extension) ----
   {
+    name: 'keyflip_consolidate_plan',
+    title: 'Plan a chat sync (dry run)',
+    description:
+      'Read-only dry run of keyflip_consolidate: compute the exact merge plan — how many session pointers each account folder (base app + non-running instance clones) would gain, up to 50 destinations as store-relative paths — WITHOUT writing anything, so it also works while the desktop app is open. Use this to show the user what would happen; the actual merge is keyflip_consolidate with confirm=true. Read-only.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        include_instances: {
+          type: 'boolean',
+          description: 'Also scan instance clones (default true; running clones are always skipped).',
+        },
+      },
+      additionalProperties: false,
+    },
+    annotations: RO,
+    run: async function (ctx, args) {
+      if (appctl.isClaudeRunning(ctx.platform)) {
+        // Read-only planning stays available; note that the apply will need the app closed.
+      }
+      const r = appsessions.consolidate(ctx, {
+        dryRun: true,
+        includeInstances: !args || args.include_instances !== false,
+      });
+      return {
+        ok: !!r.ok,
+        reason: r.reason || null,
+        instances: r.instances || 0,
+        skippedRunning: r.skippedRunning || 0,
+        runningLabels: r.runningLabels || [],
+        dryRun: true,
+        wouldMerge: r.wouldMerge || 0,
+        wouldCode: r.wouldCode || 0,
+        wouldCowork: r.wouldCowork || 0,
+        plan: (r.plan || []).map(function (p) {
+          return { to: p.to, from: _path.basename(p.from), instance: p.instance };
+        }),
+        planTotal: r.planTotal || 0,
+        planTruncated: !!r.planTruncated,
+        appRunning: appctl.isClaudeRunning(ctx.platform),
+        note: 'nothing was written — the apply is keyflip_consolidate with confirm=true (app must be closed)',
+      };
+    },
+  },
+  {
     name: 'keyflip_consolidate',
     title: 'Sync chats across accounts',
     description:
-      "Merge the Claude desktop app's session stores — the base app AND every non-running keyflip instance clone — so EVERY account sees all conversations (Cowork + Claude Code sessions). Filename collisions between accounts are resolved with a transcript-derived name instead of dropping a pointer. Requires the base Claude desktop app to be CLOSED; a clone counted by a live instance.pid is skipped and reported. Mutating — ask the user, then confirm=true.",
+      "Merge the Claude desktop app's session stores — the base app AND every non-running keyflip instance clone — so EVERY account sees all conversations (Cowork + Claude Code sessions). Filename collisions between accounts are resolved with a transcript-derived name instead of dropping a pointer. Requires the base Claude desktop app to be CLOSED; a clone counted by a live instance.pid is skipped and reported. Plan first with keyflip_consolidate_plan (read-only, works while the app is open). Mutating — ask the user, then confirm=true.",
     inputSchema: {
       type: 'object',
-      properties: { confirm: confirmProp.confirm },
+      properties: {
+        include_instances: {
+          type: 'boolean',
+          description: 'Also merge instance clones (default true; running clones are always skipped).',
+        },
+        confirm: confirmProp.confirm,
+      },
       required: ['confirm'],
       additionalProperties: false,
     },
@@ -1435,16 +2376,23 @@ const TOOLS = [
       needConfirm(args);
       if (appctl.isClaudeRunning(ctx.platform))
         return { ok: false, reason: 'Claude still running — close the desktop app first' };
-      const c = appsessions.consolidate(ctx);
+      const includeInstances = !args || args.include_instances !== false;
+      let r;
+      const l = await lock.acquire(ctx.configDir);
+      try {
+        r = appsessions.consolidate(ctx, { includeInstances: includeInstances });
+      } finally {
+        l.release();
+      }
       return {
-        ok: !!c.ok,
-        merged: c.merged || 0,
-        code: c.code || 0,
-        cowork: c.cowork || 0,
-        instances: c.instances || 0,
-        skippedRunning: c.skippedRunning || 0,
-        runningLabels: c.runningLabels || [],
-        reason: c.reason || null,
+        ok: !!r.ok,
+        merged: r.merged || 0,
+        code: r.code || 0,
+        cowork: r.cowork || 0,
+        instances: r.instances || 0,
+        skippedRunning: r.skippedRunning || 0,
+        runningLabels: r.runningLabels || [],
+        reason: r.reason || null,
       };
     },
   },
@@ -2105,13 +3053,17 @@ const TOOLS = [
   },
   {
     name: 'keyflip_mcpreg_list',
-    title: 'List registered third-party MCP servers',
+    title: 'List registered MCP servers and the surfaces keyflip can write',
     description:
-      'List the MCP servers keyflip has registered (that it can enable/disable in Claude Code / Desktop configs). Read-only.',
+      'List the MCP servers keyflip has registered, plus every surface it knows how to project them into: ' +
+      'claude-code, claude-desktop, cursor, kiro, gemini, devin (Devin Desktop / Windsurf) and opencode — each with ' +
+      'its config path, state (ready / no-config / not-installed / jsonc / unreadable) and the servers it currently ' +
+      'carries. Agents keyflip cannot write safely (codex TOML, the Continue array shape, copilot repo scope) are ' +
+      'returned as supported:false WITH the reason — never silently omitted. Read-only.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
     annotations: RO,
     run: async function (ctx) {
-      return { servers: _mcpreg.list(ctx) };
+      return { servers: _mcpreg.list(ctx), surfaces: _mcpreg.surfaces(ctx) };
     },
   },
   {
@@ -2150,14 +3102,21 @@ const TOOLS = [
   },
   {
     name: 'keyflip_mcpreg_enable',
-    title: 'Enable/disable a registered MCP server on a surface',
+    title: 'Enable/disable a registered MCP server on one surface or all',
     description:
-      'Enable or disable a registered MCP server on a surface — "claude-code" or "claude-desktop". Mutating (writes the target app config) — ask the user, then confirm=true.',
+      'Enable or disable a registered MCP server on a surface. Surfaces: claude-code, claude-desktop, cursor, kiro, ' +
+      'gemini, devin, opencode — or "all" for every surface this machine has (a surface whose agent is absent reports ' +
+      'skipped, it is not an error). Each surface keeps its own shape: opencode gets {type:local, command:[argv], ' +
+      'environment}, the rest get {command, args, env}; only the named entry is touched and a corrupt config aborts ' +
+      'instead of being overwritten. Mutating (writes the target app config) — ask the user, then confirm=true.',
     inputSchema: {
       type: 'object',
       properties: {
         name: { type: 'string' },
-        surface: { type: 'string', enum: ['claude-code', 'claude-desktop'] },
+        surface: {
+          type: 'string',
+          description: 'claude-code | claude-desktop | cursor | kiro | gemini | devin | opencode | all',
+        },
         enabled: { type: 'boolean' },
         confirm: confirmProp.confirm,
       },
@@ -2167,21 +3126,25 @@ const TOOLS = [
     annotations: MUT,
     run: async function (ctx, args) {
       needConfirm(args);
+      const surface = String(args.surface);
+      const ids = surface === 'all' ? _mcpreg.TARGET_IDS : [surface];
       const l = await lock.acquire(ctx.configDir);
-      let r;
+      const results = {};
       try {
-        r = _mcpreg.setEnabled(ctx, String(args.name), String(args.surface), !!args.enabled);
+        ids.forEach(function (id) {
+          results[id] = _mcpreg.setEnabled(ctx, String(args.name), id, !!args.enabled);
+        });
       } finally {
         l.release();
       }
-      return { name: String(args.name), surface: String(args.surface), enabled: !!args.enabled, result: r };
+      return { name: String(args.name), enabled: !!args.enabled, results: results };
     },
   },
   {
     name: 'keyflip_mcpreg_remove',
     title: 'Remove a registered MCP server',
     description:
-      "Remove a registered MCP server from keyflip's registry and unhook it from both surfaces. Mutating — ask the user, then confirm=true.",
+      "Remove a registered MCP server from keyflip's registry and unhook it from every surface it was projected into. Mutating — ask the user, then confirm=true.",
     inputSchema: {
       type: 'object',
       properties: { name: { type: 'string' }, confirm: confirmProp.confirm },
@@ -2847,7 +3810,78 @@ const TOOLS = [
     inputSchema: { type: 'object', properties: { limit: { type: 'number' } }, additionalProperties: false },
     annotations: RO,
     run: async function (ctx, args) {
-      return _cost.attribute(ctx, { maxSessions: args && args.limit });
+      return _cost.attribute(ctx, { maxSessions: args && args.limit, prices: _prices.overlay(ctx) });
+    },
+  },
+  {
+    name: 'keyflip_cost_rates',
+    title: 'Billable rate card for a model',
+    description:
+      'The billable rate card behind keyflip cost estimates: per-MTok input/output, the cache multipliers (read 0.1x, 5-minute write 1.25x, 1-hour write 2x), the long-context tier (a prompt over 200K bills 2x input / 1.5x output on the whole request) and the fast-mode multiplier (6x). Pass a model id for its card (unknown ids return the conservative fallback, flagged); omit it for the whole table. Estimates from a dated snapshot — Read-only.',
+    inputSchema: { type: 'object', properties: { model: { type: 'string' } }, additionalProperties: false },
+    annotations: RO,
+    run: async function (ctx, args) {
+      const table = _prices.overlay(ctx);
+      if (args && args.model) return _cost.rateCard(String(args.model), table);
+      const ids = Object.keys(_cost.PRICING);
+      if (table) {
+        Object.keys(table).forEach(function (id) {
+          if (ids.indexOf(id) === -1) ids.push(id);
+        });
+      }
+      return {
+        asOf: _cost.PRICING_AS_OF,
+        live: !!table,
+        multipliers: {
+          cacheRead: _cost.CACHE_READ_MULT,
+          cacheWrite5m: _cost.CACHE_WRITE_MULT,
+          cacheWrite1h: _cost.CACHE_WRITE_1H_MULT,
+          longContextThreshold: _cost.LONG_CONTEXT_THRESHOLD,
+          longContextInput: _cost.LONG_CONTEXT_INPUT_MULT,
+          longContextOutput: _cost.LONG_CONTEXT_OUTPUT_MULT,
+          fast: _cost.FAST_MULT,
+        },
+        models: ids.map(function (id) {
+          return _cost.rateCard(id, table);
+        }),
+      };
+    },
+  },
+  {
+    name: 'keyflip_cost_prices',
+    title: 'Which price table the cost estimates use',
+    description:
+      'The price table behind keyflip cost estimates: the bundled snapshot, plus the live cache when one was refreshed (keyflip cost prices --refresh). Reports the source, when it was fetched, its sha-256, how many model ids it reprices and whether the configured pin (cost.pricesSha256) matches. Read-only — it never fetches.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    annotations: RO,
+    run: async function (ctx, args) {
+      return _prices.describe(ctx, { pin: _config.get(ctx, 'cost.pricesSha256') || null });
+    },
+  },
+  {
+    name: 'keyflip_cost_prices_refresh',
+    title: 'Refresh the model price table from the price list',
+    description:
+      'Fetch the public model price list, validate it, and cache it for keyflip cost estimates. Only Claude rows are kept; the bundled snapshot stays as the floor. When a pin is given (or cost.pricesSha256 is configured) the sha-256 must match or nothing is written. Mutating (writes the price cache) — ask the user, then confirm=true.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        pin: { type: 'string', description: 'Expected sha-256 hex digest of the fetched list.' },
+        url: { type: 'string', description: 'Price list URL (defaults to the built-in LiteLLM list).' },
+        confirm: { type: 'boolean' },
+      },
+      required: ['confirm'],
+      additionalProperties: false,
+    },
+    annotations: MUT_NET,
+    run: async function (ctx, args) {
+      needConfirm(args);
+      const cfgPin = _config.get(ctx, 'cost.pricesSha256') || '';
+      const cfgUrl = _config.get(ctx, 'cost.pricesUrl') || '';
+      return _prices.refresh(ctx, {
+        url: (args && args.url) || cfgUrl || _prices.DEFAULT_URL,
+        pin: (args && args.pin) || cfgPin || null,
+      });
     },
   },
   {
@@ -4418,6 +5452,35 @@ const TOOLS = [
       needConfirm(args);
       if (args.action === 'remove') return { removed: schedule.uninstall(ctx, { job: 'refresh' }) };
       const r = schedule.install(ctx, { job: 'refresh', at: args.at || '04:30' });
+      if (!r.ok) throw new Error('could not schedule: ' + (r.reason || r.detail || 'unknown'));
+      return { scheduled: r, spendsQuota: false };
+    },
+  },
+  {
+    name: 'keyflip_conv_index_schedule',
+    title: 'Keep the conversation index current on a timer',
+    description:
+      'Install/remove/inspect a schedule (launchd on macOS, cron on Linux) that runs `keyflip conv index --embed` unattended every N minutes, so `keyflip conv search` finds chats you just had instead of a stale index. action="status" (read) | "install" | "remove". The pass is incremental (an unchanged conversation costs one stat) and embeds only new or changed chunks with the local model; it calls NO cloud model and spends no quota. For install/remove, ask the user, then confirm=true.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', enum: ['status', 'install', 'remove'] },
+        interval: {
+          type: 'number',
+          description: 'minutes between passes (5|10|15|30|60|120|180|360|720|1440, default 30)',
+        },
+        confirm: confirmProp.confirm,
+      },
+      required: ['action', 'confirm'],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    run: async function (ctx, args) {
+      const schedule = _schedule;
+      if (args.action === 'status') return { schedule: schedule.status(ctx, { job: 'conv' }) };
+      needConfirm(args);
+      if (args.action === 'remove') return { removed: schedule.uninstall(ctx, { job: 'conv' }) };
+      const r = schedule.install(ctx, { job: 'conv', interval: args.interval });
       if (!r.ok) throw new Error('could not schedule: ' + (r.reason || r.detail || 'unknown'));
       return { scheduled: r, spendsQuota: false };
     },

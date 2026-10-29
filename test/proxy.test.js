@@ -3,8 +3,11 @@ import assert from 'node:assert';
 import fs from 'fs';
 import path from 'path';
 import * as proxy from '../src/proxy.js';
+import * as proxyroutes from '../src/proxyroutes.js';
 import * as breaker from '../src/breaker.js';
+import * as config from '../src/config.js';
 import * as core from '../src/core.js';
+import * as profiles from '../src/profiles.js';
 import { makeCtx, writeClaude } from './helpers.js';
 import _http from 'http';
 
@@ -99,6 +102,38 @@ test('usage tokens are recorded for stats', async function () {
   const acct = Object.keys(st.byAccount)[0];
   assert.strictEqual(st.byAccount[acct].inputTokens, 10);
   assert.strictEqual(st.byAccount[acct].outputTokens, 20);
+  // unknown model "m" prices at the fallback 5/25 list rate
+  assert.ok(Math.abs(st.byAccount[acct].costUSD - (10 * 5 + 20 * 25) / 1e6) < 1e-12);
+  assert.strictEqual(st.byAccount[acct].estimated, true);
+});
+
+test('proxy stats sums recorded cost, cache tokens, and prices legacy lines without costUSD', function () {
+  const ctx = makeCtx();
+  fs.appendFileSync(
+    proxy.costFile(ctx),
+    JSON.stringify({
+      at: 't',
+      account: 'a',
+      model: 'claude-opus-4-8',
+      inputTokens: 10,
+      outputTokens: 20,
+      cacheReadTokens: 100,
+      costUSD: 0.01,
+    }) + '\n',
+  );
+  // written before per-request costing existed -> priced on read
+  fs.appendFileSync(
+    proxy.costFile(ctx),
+    JSON.stringify({ at: 't', account: 'a', model: 'claude-opus-4-8', inputTokens: 1000, outputTokens: 1000 }) + '\n',
+  );
+  const st = proxy.stats(ctx);
+  assert.strictEqual(st.total, 2);
+  const a = st.byAccount.a;
+  assert.strictEqual(a.requests, 2);
+  assert.strictEqual(a.cacheReadTokens, 100);
+  assert.ok(Math.abs(a.costUSD - (0.01 + 0.005 + 0.025)) < 1e-12, 'got ' + a.costUSD);
+  assert.ok(Math.abs(st.costUSD - a.costUSD) < 1e-12);
+  assert.strictEqual(a.estimated, false);
 });
 
 test('a 4xx that is not auth is committed (not retried)', async function () {
@@ -180,6 +215,30 @@ test('extractUsage parses both plain JSON and SSE output_tokens', function () {
   assert.strictEqual(sse.outputTokens, 50); // last output_tokens wins
 });
 
+test('extractUsage reads cache reads/writes, splits 1h writes, and detects fast', function () {
+  const u = proxy.extractUsage(
+    Buffer.from(
+      JSON.stringify({
+        model: 'claude-opus-4-8',
+        usage: {
+          input_tokens: 10,
+          output_tokens: 20,
+          cache_read_input_tokens: 5000,
+          cache_creation_input_tokens: 300,
+          cache_creation: { ephemeral_5m_input_tokens: 100, ephemeral_1h_input_tokens: 200 },
+          speed: 'fast',
+        },
+      }),
+    ),
+  );
+  assert.strictEqual(u.cacheReadTokens, 5000);
+  assert.strictEqual(u.cacheCreationTokens, 100); // 5-minute share only
+  assert.strictEqual(u.cacheCreation1hTokens, 200);
+  assert.strictEqual(u.fast, true);
+  // a -fast model id implies fast mode even without a speed field
+  assert.strictEqual(proxy.extractUsage(Buffer.from('{"model":"claude-opus-4-8-fast"}')).fast, true);
+});
+
 test('a real server starts on localhost and forwards via injected forward', async function () {
   const ctx = twoAccounts();
   const forward = async function () {
@@ -219,4 +278,467 @@ test('serve rejects (not crashes) when the port is already taken', async functio
   } finally {
     first.server.close();
   }
+});
+
+// ---- routing substrate: Retry-After, triage, priority/LRU, cooldowns, headers ----
+
+function threeAccounts() {
+  const ctx = makeCtx();
+  function login(email, uid, tok) {
+    writeClaude(ctx, { oauthAccount: { emailAddress: email }, userID: uid });
+    ctx.store.setLive(JSON.stringify({ claudeAiOauth: { accessToken: tok } }));
+  }
+  login('a@x.com', 'u1', 'TA');
+  core.addCurrent(ctx);
+  login('b@x.com', 'u2', 'TB');
+  core.addCurrent(ctx);
+  login('c@x.com', 'u3', 'TC');
+  core.addCurrent(ctx); // c active
+  return ctx;
+}
+
+function names(list) {
+  return list.map(function (e) {
+    return e.name;
+  });
+}
+
+function ok(body) {
+  return { status: 200, headers: { 'content-type': 'application/json' }, body: Buffer.from(body || '{}') };
+}
+
+function send(ctx, forward, extra) {
+  const res = fakeRes();
+  const sleeps = [];
+  return proxy
+    .handleRequest(ctx, { method: 'POST', path: '/v1/messages', headers: {}, body: Buffer.from('{}') }, res, {
+      forward: forward,
+      sleep: function (ms) {
+        sleeps.push(ms);
+        return Promise.resolve();
+      },
+      ...(extra || {}),
+    })
+    .then(function (r) {
+      return { r: r, res: res, sleeps: sleeps };
+    });
+}
+
+test('retryAfterMs parses delta-seconds, HTTP-date, junk and caps at 24h', function () {
+  assert.strictEqual(proxy.retryAfterMs({ 'Retry-After': '3' }, 0), 3000);
+  assert.strictEqual(proxy.retryAfterMs({ 'retry-after': '1.5' }, 0), 1500);
+  const now = Date.parse('2026-01-01T00:00:00Z');
+  assert.strictEqual(proxy.retryAfterMs({ 'retry-after': 'Thu, 01 Jan 2026 00:00:05 GMT' }, now), 5000);
+  assert.strictEqual(proxy.retryAfterMs({ 'retry-after': 'soon' }, now), null);
+  assert.strictEqual(proxy.retryAfterMs({}, now), null);
+  assert.strictEqual(proxy.retryAfterMs({ 'retry-after': '999999999' }, now), 24 * 60 * 60 * 1000);
+});
+
+test('classify separates billing from throttling, and auth/overload/server', function () {
+  const billing = Buffer.from('{"error":{"type":"invalid_request_error","message":"Your credit balance is too low"}}');
+  assert.strictEqual(proxy.classify(429, {}, billing), 'billing');
+  assert.strictEqual(proxy.classify(429, {}, Buffer.from('{"error":{"message":"organization disabled"}}')), 'billing');
+  assert.strictEqual(proxy.classify(429, {}, Buffer.from('{"error":{"message":"rate limit exceeded"}}')), 'throttled');
+  assert.strictEqual(proxy.classify(429, {}, null), 'throttled');
+  assert.strictEqual(proxy.classify(401, {}, null), 'auth');
+  assert.strictEqual(proxy.classify(403, {}, null), 'auth');
+  assert.strictEqual(proxy.classify(529, {}, null), 'overloaded');
+  assert.strictEqual(proxy.classify(500, {}, null), 'server');
+  assert.strictEqual(proxy.classify(400, {}, null), 'none');
+});
+
+test('a short Retry-After is waited out and the SAME account retried', async function () {
+  const ctx = twoAccounts(); // active b
+  const seen = [];
+  let n = 0;
+  const out = await send(ctx, async function (up) {
+    seen.push(up.authVal);
+    n++;
+    if (n === 1)
+      return { status: 429, headers: { 'retry-after': '2' }, body: Buffer.from('{"error":{"message":"rate limit"}}') };
+    return ok('{"ok":true}');
+  });
+  assert.deepStrictEqual(seen, ['Bearer TB', 'Bearer TB']); // no failover
+  assert.deepStrictEqual(out.sleeps, [2000]);
+  assert.strictEqual(out.res.statusCode, 200);
+  assert.strictEqual(out.r.account, 'b');
+  assert.strictEqual(out.res.headers['x-keyflip-attempts'], '2');
+  assert.strictEqual(out.res.headers['x-keyflip-account'], 'b');
+  assert.ok(!out.res.headers['x-keyflip-failover']);
+});
+
+test('a Retry-After longer than the wait budget fails over immediately and parks the account', async function () {
+  const ctx = twoAccounts();
+  const seen = [];
+  const out = await send(ctx, async function (up) {
+    seen.push(up.authVal);
+    if (up.authVal === 'Bearer TB')
+      return { status: 429, headers: { 'retry-after': '120' }, body: Buffer.from('busy') };
+    return ok('{"ok":true}');
+  });
+  assert.deepStrictEqual(seen, ['Bearer TB', 'Bearer TA']);
+  assert.deepStrictEqual(out.sleeps, []); // never waited
+  assert.strictEqual(out.res.headers['x-keyflip-failover'], 'b');
+  const cd = breaker.cooldownOf(ctx, 'b');
+  assert.strictEqual(cd.active, true);
+  assert.strictEqual(cd.kind, 'throttled');
+  assert.ok(cd.remainingMs >= 119000, 'cooldown honors the authoritative Retry-After');
+});
+
+test('a billing 429 is surfaced, never masked by failing over (#3)', async function () {
+  const ctx = twoAccounts();
+  let calls = 0;
+  const out = await send(ctx, async function () {
+    calls++;
+    return {
+      status: 429,
+      headers: {},
+      body: Buffer.from('{"error":{"type":"billing_error","message":"Your credit balance is too low"}}'),
+    };
+  });
+  assert.strictEqual(calls, 1); // did NOT try the other account
+  assert.strictEqual(out.res.statusCode, 429);
+  assert.strictEqual(out.res.headers['x-keyflip-error-class'], 'billing');
+  assert.ok(breaker.cooldownOf(ctx, 'b').active); // parked under the quota TTL
+  assert.strictEqual(breaker.cooldownOf(ctx, 'b').kind, 'billing');
+});
+
+test('priority list defines the order; otherwise active first then least-recently-used', function () {
+  const ctx = threeAccounts(); // c active
+  assert.deepStrictEqual(names(proxy.candidates(ctx)), ['c', 'a', 'b']); // unordered tie -> name
+  config.set(ctx, 'proxy.priority', 'a');
+  assert.deepStrictEqual(names(proxy.candidates(ctx)), ['a', 'c', 'b']);
+  config.unset(ctx, 'proxy.priority');
+  breaker.recordSuccess(ctx, 'a', { nowMs: 1000 });
+  breaker.recordSuccess(ctx, 'b', { nowMs: 2000 });
+  assert.deepStrictEqual(names(proxy.candidates(ctx)), ['c', 'a', 'b']); // a used less recently
+  breaker.recordSuccess(ctx, 'a', { nowMs: 3000 });
+  assert.deepStrictEqual(names(proxy.candidates(ctx)), ['c', 'b', 'a']); // LRU flips
+});
+
+test('a cooling account is skipped; if all are cooling the soonest comes back with a wait hint', function () {
+  const ctx = twoAccounts();
+  breaker.markCooldown(ctx, 'b', 60000, 'throttled');
+  assert.deepStrictEqual(names(proxy.candidates(ctx)), ['a']);
+  breaker.markCooldown(ctx, 'a', 30000, 'server');
+  const all = proxy.candidates(ctx);
+  assert.strictEqual(all.length, 1);
+  assert.strictEqual(all[0].name, 'a'); // frees up first
+  assert.ok(all[0].waitMs > 20000 && all[0].waitMs <= 30000);
+});
+
+test('routeState reports the order, cooldowns and policy; clearCooldowns resets them', function () {
+  const ctx = twoAccounts();
+  breaker.markCooldown(ctx, 'a', 30000, 'throttled');
+  const st = proxy.routeState(ctx);
+  assert.deepStrictEqual(st.order, ['b']);
+  const a = st.accounts.filter(function (x) {
+    return x.name === 'a';
+  })[0];
+  assert.strictEqual(a.coolingSeconds, 30);
+  assert.strictEqual(a.cooldownKind, 'throttled');
+  assert.deepStrictEqual(st.policy.priority, []);
+  assert.strictEqual(st.policy.cooldownSeconds.throttled, 60);
+  assert.deepStrictEqual(proxy.clearCooldowns(ctx), ['a']);
+  assert.strictEqual(breaker.cooldownOf(ctx, 'a').active, false);
+});
+
+test('debug headers can be turned off in config', async function () {
+  const ctx = twoAccounts();
+  config.set(ctx, 'proxy.debugHeaders', false);
+  const out = await send(ctx, async function () {
+    return ok('{}');
+  });
+  assert.strictEqual(out.res.headers['x-keyflip-account'], undefined);
+});
+
+// ---- declarative routing (proxy-routes.json): rules, sticky, fallback, transforms ----
+
+function routesFile(ctx, obj) {
+  fs.writeFileSync(path.join(ctx.configDir, 'proxy-routes.json'), JSON.stringify(obj));
+  proxyroutes.resetCache();
+}
+
+// Like send(), but the request body is JSON so a model/token rule can match.
+function sendBody(ctx, forward, reqBody, extra) {
+  extra = extra || {};
+  const opts = Object.assign({}, extra);
+  delete opts.reqHeaders;
+  const res = fakeRes();
+  const sleeps = [];
+  return proxy
+    .handleRequest(
+      ctx,
+      {
+        method: 'POST',
+        path: '/v1/messages',
+        headers: extra.reqHeaders || {},
+        body: Buffer.from(JSON.stringify(reqBody)),
+      },
+      res,
+      Object.assign(
+        {
+          forward: forward,
+          sleep: function (ms) {
+            sleeps.push(ms);
+            return Promise.resolve();
+          },
+        },
+        opts,
+      ),
+    )
+    .then(function (r) {
+      return { r: r, res: res, sleeps: sleeps };
+    });
+}
+
+test('fallback:off commits the first retryable response instead of failing over', async function () {
+  const ctx = twoAccounts();
+  routesFile(ctx, { fallback: 'off' });
+  const seen = [];
+  const out = await sendBody(
+    ctx,
+    async function (up) {
+      seen.push(up.authVal);
+      return { status: 429, headers: {}, body: Buffer.from('busy') };
+    },
+    { model: 'm' },
+  );
+  assert.deepStrictEqual(seen, ['Bearer TB']);
+  assert.strictEqual(out.res.statusCode, 429);
+  assert.strictEqual(out.res.headers['x-keyflip-attempts'], '1');
+  assert.strictEqual(out.res.headers['x-keyflip-failover'], undefined);
+});
+
+test('fallback:model-chain degrades the model on the same account before failing over', async function () {
+  const ctx = twoAccounts();
+  routesFile(ctx, { fallback: 'model-chain', modelChain: ['claude-haiku-4-5'] });
+  const models = [];
+  const out = await sendBody(
+    ctx,
+    async function (up, req) {
+      const j = JSON.parse(req.body.toString());
+      models.push(j.model);
+      if (j.model === 'claude-sonnet-4-5') return { status: 429, headers: {}, body: Buffer.from('busy') };
+      return ok('{"ok":true}');
+    },
+    { model: 'claude-sonnet-4-5', max_tokens: 100 },
+  );
+  assert.deepStrictEqual(models, ['claude-sonnet-4-5', 'claude-haiku-4-5']);
+  assert.strictEqual(out.res.statusCode, 200);
+  assert.strictEqual(out.res.headers['x-keyflip-model'], 'claude-haiku-4-5');
+  assert.strictEqual(out.res.headers['x-keyflip-account'], 'b', 'same account, not another one');
+  assert.strictEqual(out.r.account, 'b');
+  assert.strictEqual(breaker.cooldownOf(ctx, 'b').active, false, 'a model problem is not an account failure');
+});
+
+test('a rule sends a matching request to its account before the active one', async function () {
+  const ctx = threeAccounts(); // c active
+  routesFile(ctx, { rules: [{ name: 'sonnet-to-a', when: { model: '*sonnet*' }, use: { account: 'a' } }] });
+  const seen = [];
+  const out = await sendBody(
+    ctx,
+    async function (up) {
+      seen.push(up.authVal);
+      return ok('{}');
+    },
+    { model: 'claude-sonnet-4-5' },
+  );
+  assert.deepStrictEqual(seen, ['Bearer TA']);
+  assert.strictEqual(out.r.account, 'a');
+  assert.strictEqual(out.res.headers['x-keyflip-route'], 'rule #1 (sonnet-to-a)');
+});
+
+test('transforms rewrite outgoing headers and only lower max_tokens', async function () {
+  const ctx = twoAccounts();
+  routesFile(ctx, {
+    transforms: {
+      setHeaders: { 'x-team': 'pay' },
+      removeHeaders: ['x-drop'],
+      bodyModel: 'claude-haiku-4-5',
+      maxTokens: 50,
+    },
+  });
+  let got = null;
+  const out = await sendBody(
+    ctx,
+    async function (up, req) {
+      got = req;
+      return ok('{}');
+    },
+    { model: 'claude-sonnet-4-5', max_tokens: 500 },
+    { reqHeaders: { 'x-drop': '1' } },
+  );
+  assert.strictEqual(got.headers['x-team'], 'pay');
+  assert.strictEqual(got.headers['x-drop'], undefined);
+  const j = JSON.parse(got.body.toString());
+  assert.strictEqual(j.model, 'claude-haiku-4-5');
+  assert.strictEqual(j.max_tokens, 50);
+  assert.strictEqual(out.r.model, 'claude-haiku-4-5');
+});
+
+test('a successful request pins its conversation (sticky) for the TTL', async function () {
+  const ctx = twoAccounts();
+  proxyroutes.resetCache();
+  const out = await sendBody(
+    ctx,
+    async function () {
+      return ok('{}');
+    },
+    { model: 'm', metadata: { user_id: 'conv-1' } },
+  );
+  assert.strictEqual(out.r.account, 'b');
+  const ex = await proxy.explain(ctx, { model: 'm', user: 'conv-1' });
+  assert.strictEqual(ex.decision.reason, 'sticky conversation -> b');
+  assert.deepStrictEqual(ex.order, ['b', 'a']);
+  proxyroutes.stickyReset();
+});
+
+test('explain reports the rule decision, the resulting order, and never sends anything', async function () {
+  const ctx = threeAccounts();
+  routesFile(ctx, { rules: [{ when: { tokensGt: 1000 }, use: { account: 'a' } }] });
+  const ex = await proxy.explain(ctx, { model: 'claude-x', tokens: 2000 });
+  assert.strictEqual(ex.decision.account, 'a');
+  assert.strictEqual(ex.decision.reason, 'rule #1');
+  assert.deepStrictEqual(ex.order, ['a', 'c', 'b']);
+  assert.deepStrictEqual(ex.defaultOrder, ['c', 'a', 'b']);
+  assert.strictEqual(ex.routes.exists, true);
+  assert.strictEqual(ex.routes.rules.length, 1);
+});
+
+test('routeState carries the routing file, its errors included', async function () {
+  const ctx = twoAccounts();
+  routesFile(ctx, { rules: [{ when: { model: '*' }, use: { account: 'a' } }] });
+  let st = proxy.routeState(ctx);
+  assert.strictEqual(st.routes.exists, true);
+  assert.strictEqual(st.routes.rules.length, 1);
+  assert.deepStrictEqual(st.routes.errors, []);
+  fs.writeFileSync(path.join(ctx.configDir, 'proxy-routes.json'), '{ oops');
+  proxyroutes.resetCache();
+  st = proxy.routeState(ctx);
+  assert.match(st.routes.errors[0], /cannot read proxy-routes\.json/);
+  assert.strictEqual(st.routes.fallback, 'retry', 'an invalid file falls back to the defaults');
+});
+
+// ---- subscription tiers (#12) ---------------------------------------------
+
+function setTier(ctx, name, subscriptionType, rateLimitTier) {
+  const oauth = { accessToken: name === 'a' ? 'TA' : 'TB' };
+  if (subscriptionType) oauth.subscriptionType = subscriptionType;
+  if (rateLimitTier) oauth.rateLimitTier = rateLimitTier;
+  ctx.store.setProfile(name, JSON.stringify({ claudeAiOauth: oauth }));
+}
+
+test('a Free plan is skipped for an Opus request, and explain says why', async function () {
+  const ctx = twoAccounts();
+  setTier(ctx, 'b', 'free');
+  setTier(ctx, 'a', 'max', 'default_claude_max_5x');
+
+  assert.deepStrictEqual(
+    proxy.candidates(ctx).map(function (r) {
+      return r.name;
+    }),
+    ['b', 'a'],
+    'no model named -> the tier does not filter anything',
+  );
+  const names = proxy.candidates(ctx, { model: 'claude-opus-4-8' }).map(function (r) {
+    return r.name;
+  });
+  assert.deepStrictEqual(names, ['a']);
+
+  const ex = await proxy.explain(ctx, { model: 'claude-opus-4-8' });
+  assert.deepStrictEqual(ex.order, ['a']);
+  assert.deepStrictEqual(
+    ex.skipped.map(function (s) {
+      return s.name + ':' + s.tier;
+    }),
+    ['b:free'],
+  );
+});
+
+test('when every plan refuses the model the proxy answers 503 before sending a byte', async function () {
+  const ctx = twoAccounts();
+  setTier(ctx, 'a', 'free');
+  setTier(ctx, 'b', 'free');
+  let calls = 0;
+  const forward = async function () {
+    calls++;
+    return { status: 200, headers: {}, body: Buffer.from('{}') };
+  };
+  const res = fakeRes();
+  const r = await proxy.handleRequest(
+    ctx,
+    {
+      method: 'POST',
+      path: '/v1/messages',
+      headers: {},
+      body: Buffer.from(JSON.stringify({ model: 'claude-opus-4-8' })),
+    },
+    res,
+    { forward: forward },
+  );
+  assert.strictEqual(calls, 0);
+  assert.strictEqual(res.statusCode, 503);
+  assert.match(res.body(), /tier:/);
+  assert.match(r.route, /claude-opus-4-8/);
+});
+
+test('a pinned tier override allows a Free-captured account through', function () {
+  const ctx = twoAccounts();
+  setTier(ctx, 'a', 'free');
+  setTier(ctx, 'b', 'free');
+  const meta = profiles.read(ctx.configDir, 'a');
+  meta.tier = 'max';
+  profiles.write(ctx.configDir, meta);
+
+  const names = proxy.candidates(ctx, { model: 'claude-opus-4-8' }).map(function (r) {
+    return r.name;
+  });
+  assert.deepStrictEqual(names, ['a']);
+  const row = proxy.candidateRows(ctx, {}).filter(function (r) {
+    return r.name === 'a';
+  })[0];
+  assert.strictEqual(row.tier.source, 'override');
+});
+
+test('proxy.tierFilter=false disables tier filtering; a non-Claude model is never filtered', function () {
+  const ctx = twoAccounts();
+  setTier(ctx, 'a', 'free');
+  setTier(ctx, 'b', 'free');
+
+  const names = function (model) {
+    return proxy.candidates(ctx, { model: model }).map(function (r) {
+      return r.name;
+    });
+  };
+  assert.deepStrictEqual(names('gpt-5'), ['b', 'a']);
+  config.set(ctx, 'proxy.tierFilter', false);
+  assert.deepStrictEqual(names('claude-opus-4-8'), ['b', 'a']);
+});
+
+test('routeState and tierState report each account tier and where it came from', function () {
+  const ctx = twoAccounts();
+  setTier(ctx, 'a', 'max', 'default_claude_max_5x');
+  setTier(ctx, 'b', 'free');
+  const st = proxy.routeState(ctx);
+  const a = st.accounts.filter(function (x) {
+    return x.name === 'a';
+  })[0];
+  const b = st.accounts.filter(function (x) {
+    return x.name === 'b';
+  })[0];
+  assert.strictEqual(a.tier, 'max5x');
+  assert.strictEqual(a.tierLabel, 'Max 5x');
+  assert.strictEqual(a.tierSource, 'credentials');
+  assert.strictEqual(b.tier, 'free');
+  assert.strictEqual(st.policy.tierFilter, true);
+
+  const ts = proxy.tierState(ctx);
+  assert.strictEqual(ts.filter, true);
+  assert.deepStrictEqual(
+    ts.accounts.map(function (x) {
+      return x.tier;
+    }),
+    ['max5x', 'free'],
+  );
 });
