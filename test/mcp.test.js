@@ -128,6 +128,8 @@ test('MCP lifecycle: initialize negotiates a supported protocol version and decl
     'keyflip_refresh',
     'keyflip_next',
     'keyflip_providers',
+    'keyflip_provider_catalog',
+    'keyflip_provider_models',
     'keyflip_provider_use',
     'keyflip_sessions',
     'keyflip_resume_command',
@@ -141,6 +143,8 @@ test('MCP lifecycle: initialize negotiates a supported protocol version and decl
     'keyflip_skill_sync',
     'keyflip_proxy_status',
     'keyflip_proxy_control',
+    'keyflip_cooldowns',
+    'keyflip_cooldown_clear',
     'keyflip_instances',
     'keyflip_instance_create',
     'keyflip_instance_launch',
@@ -595,8 +599,15 @@ test('MCP new tools work: providers (read) + provider_use requires confirm', asy
         params: { name: 'keyflip_provider_use', arguments: { name: 'relay', confirm: true } },
       },
       { jsonrpc: '2.0', id: 5, method: 'tools/call', params: { name: 'keyflip_sessions', arguments: { limit: 1 } } },
+      { jsonrpc: '2.0', id: 6, method: 'tools/call', params: { name: 'keyflip_provider_catalog', arguments: {} } },
+      {
+        jsonrpc: '2.0',
+        id: 7,
+        method: 'tools/call',
+        params: { name: 'keyflip_provider_add', arguments: { name: 'z', catalog_id: 'zai', confirm: true } },
+      },
     ],
-    [1, 2, 3, 4, 5],
+    [1, 2, 3, 4, 5, 6, 7],
   );
   assert.ok(
     got[2].result.structuredContent.providers.some(function (p) {
@@ -606,6 +617,17 @@ test('MCP new tools work: providers (read) + provider_use requires confirm', asy
   assert.strictEqual(got[3].result.isError, true); // confirm=false refused
   assert.strictEqual(got[4].result.structuredContent.provider, 'relay'); // switched
   assert.ok(Array.isArray(got[5].result.structuredContent.sessions)); // read-only tool works
+  const cat = got[6].result.structuredContent.catalog;
+  assert.ok(
+    cat.some(function (e) {
+      return e.id === 'zai' && e.compat === 'anthropic';
+    }),
+    'the catalog lists presets with their compat',
+  );
+  // catalog_id fills the URL and models; the key is still absent and the note points at stdin.
+  assert.strictEqual(got[7].result.structuredContent.baseUrl, 'https://api.z.ai/api/anthropic');
+  assert.match(got[7].result.structuredContent.note, /--key-file -/);
+  assert.strictEqual(JSON.stringify(got[7]).indexOf('apiKey'), -1);
 });
 
 test('MCP: unknown method -> -32601, unknown tool -> -32602, parse error -> -32700', async function () {

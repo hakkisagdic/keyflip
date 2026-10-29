@@ -16,11 +16,22 @@ import CodeBlock from '../../../components/CodeBlock.astro';
       </p>
 
       <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-4 mt-10">Hızlı Başlangıç</h2>
-      <CodeBlock code={`# Sağlayıcı ekle (anahtar stdin'den okunur - asla komut satırında değil)
+      <CodeBlock code={`# Hazır presetler: Z.AI, Zhipu, Kimi, DeepSeek, MiniMax, Qwen, Ark, OpenRouter,
+# OpenAI, Gemini, xAI, Mistral, Groq, Together, Fireworks, Anthropic ve yerel
+# Ollama / LM Studio / llama.cpp
+keyflip provider catalog
+
+# Bir preset yalnızca anahtar ister - URL, modeller ve uyumluluk ondan gelir
+keyflip provider add zai --key-file -
+
+# ...veya herhangi bir üçüncü taraf uç nokta kaydet (anahtar stdin'den okunur)
 keyflip provider add openrouter --base-url https://openrouter.ai/api/v1 --key-file -
 
+# Uç nokta gerçekte ne sunuyor? (GET /v1/models)
+keyflip provider models zai
+
 # Claude Code'u ona yönlendir
-keyflip use openrouter
+keyflip use zai
 
 # Aboneliğe geri dön (OAuth)
 keyflip provider off
@@ -37,6 +48,9 @@ keyflip test openrouter`} />
       <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-4 mt-10">Nasıl Çalışır</h2>
       <ul class="list-disc pl-6 text-surface-700 dark:text-surface-300 space-y-3 mb-8">
         <li>API anahtarı işletim sistemi kimlik deposunda saklanır, asla meta veri dosyasında ve asla komut satırında değil</li>
+        <li>Her preset, <strong>Anthropic API</strong> mi konuştuğunu (Claude Code doğrudan yönlendirilebilir) yoksa <strong>OpenAI chat API</strong>'si mi (Anthropic-uyumlu bir geçit/shim gerekir) kaydeder; ikinci durumda <code>provider use</code> sessizce CLI'ı bozmak yerine uyarır</li>
+        <li>Model adları değişir; <code>provider models</code> canlı listeyi sorar, <code>--model default=…</code> preset ipucunu ezer</li>
+        <li>Terminalde çıplak <code>keyflip provider add</code> kategori gruplu, numaralı bir seçici açar</li>
         <li>Geçiş sadece keyflip'in yönettiği anahtarlara dokunur; kendi settings.json'unuz korunur</li>
         <li><code>provider off</code> tam olarak ne enjekte edildiyse onu kaldırır</li>
         <li><code>keyflip gateway use &lt;sağlayıcı&gt;</code> aynı şeyi Claude masaüstü uygulaması için yapar</li>
@@ -47,7 +61,9 @@ keyflip test openrouter`} />
         Proxy komutla başlatılır (asla sürekli çalışan bir daemon değil). Çalışmakta iken her API isteğini aktif hesabınıza yönlendirir ve 429/5xx durumunda istemciye hata ulaşmadan önce bir sonraki sağlıklı hesapta otomatik yeniden dener.
       </p>
       <CodeBlock code={`keyflip proxy start --wire    # başlat + Claude'a bağla
-keyflip proxy status          # sağlık kontrol
+keyflip proxy status          # sağlık + canlı rota sırası
+keyflip cooldown              # hangi hesap parkta, neden
+keyflip cooldown clear --all  # parktaki hesapları bırak
 keyflip proxy stop            # durdur + bağlantısını kes`} />
     </div>
   </section>

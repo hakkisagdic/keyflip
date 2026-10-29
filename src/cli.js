@@ -21,6 +21,7 @@ import * as session from './session.js';
 import * as links from './links.js';
 import * as autosw from './autoswitch.js';
 import * as provider from './provider.js';
+import * as _catalog from './catalog.js';
 import * as doctor from './doctor.js';
 import * as history from './history.js';
 import * as backup from './backup.js';
@@ -243,8 +244,11 @@ function usage() {
   print('                                 skips that, and --rollback-on-fail puts the previous account back)');
   print('  keyflip next [--strategy best|next-available]');
   print('                                 rotate to the next account — or pick by remaining quota');
-  print('  keyflip provider add <name> --base-url <url> [--key-file <f|->]');
-  print('                                 save a 3rd-party endpoint (relay/gateway/Bedrock/OpenRouter)');
+  print('  keyflip provider add <id|name> [--base-url <url>] [--key-file <f|->]');
+  print('                                 save a 3rd-party endpoint; a catalog id (zai, kimi, deepseek,');
+  print('                                 openrouter, ollama…) needs only the key — bare add = picker');
+  print('  keyflip provider catalog       the preset endpoints (id, URL, models, docs)');
+  print('  keyflip provider models <id>   ask the endpoint what models it serves (GET /v1/models)');
   print('  keyflip use <name>             route Claude Code to that provider (no restart);');
   print('                                 keyflip provider off = back to your subscription');
   print("  keyflip speedtest [name]       time a provider's endpoints, pick the fastest");
@@ -381,7 +385,9 @@ function usage() {
   print('  keyflip skill add <owner/repo|./dir|file.tgz>   install a skill into every agent here');
   print('                                 (`skill agents` lists targets, `skill sync|list|remove` follow up)');
   print('  keyflip proxy start [--wire] | stop | status | stats');
-  print('                                 command-started failover proxy (429/5xx → next account)');
+  print('                                 command-started failover proxy (429/5xx → next account; honors');
+  print('                                 Retry-After, parks failing accounts, x-keyflip-* debug headers)');
+  print('  keyflip cooldown [clear <acct>|--all]   per-account cooldown readout / reset');
   print('  keyflip status                which account each surface is on (CLI + desktop app)');
   print('  keyflip verify [acct] [--usage|--live]  would switching there WORK right now? reads each');
   print('                                 surface back the way its own app does (token/cookie expiry, capture age)');
@@ -3280,18 +3286,48 @@ function collectFlagValues(rest, flag) {
 }
 
 async function cmdProviderAdd(ctx, rest) {
-  const name = rest.filter(function (a) {
+  const positional = rest.filter(function (a) {
     return a.indexOf('-') !== 0;
-  })[0];
+  });
+  const fi = rest.indexOf('--from');
+  const fromId = fi !== -1 ? rest[fi + 1] : null;
+  let name = positional[0] || null;
   const bi = rest.indexOf('--base-url');
-  const baseUrl = bi !== -1 ? rest[bi + 1] : null;
+  let baseUrl = bi !== -1 ? rest[bi + 1] : null;
+
+  // Catalog preset: `provider add zai` or `provider add my-glm --from zai`.
+  let preset = null;
+  if (fromId) {
+    preset = _catalog.get(fromId);
+    if (!preset) return fail("no catalog entry: '" + fromId + "' (see: keyflip provider catalog)");
+    if (!name) name = fromId;
+  } else if (name) {
+    preset = _catalog.get(name);
+  }
+  // Bare `provider add`: numbered picker on a TTY, else tell the user the ids.
+  if (!name && !baseUrl) {
+    if (!process.stdin.isTTY || JSON_MODE) {
+      return fail(
+        'usage: keyflip provider add <id|name> [--base-url <url>] [--from <catalog-id>] …\n' +
+          '       ids: keyflip provider catalog\n' +
+          '       any endpoint: keyflip provider add <name> --base-url <url>',
+      );
+    }
+    preset = await pickCatalogEntry();
+    if (!preset) {
+      print('Cancelled.');
+      return;
+    }
+    name = preset.id;
+  }
+  if (!baseUrl && preset) baseUrl = preset.baseUrl;
   if (!name || !baseUrl)
     return fail(
       'usage: keyflip provider add <name> --base-url <url> [--auth-scheme bearer|api-key] [--model default=… --model haiku=…] [--endpoint <url>]… [--key-file <file|->]',
     );
   if (!/^https?:\/\//.test(baseUrl)) return fail('--base-url must be an http(s) URL');
   const asi = rest.indexOf('--auth-scheme');
-  const authScheme = asi !== -1 ? rest[asi + 1] : 'bearer';
+  const authScheme = asi !== -1 ? rest[asi + 1] : preset ? preset.authScheme : 'bearer';
   // The API key is a secret: read it from a file/stdin (never argv, never `ps`).
   let key = null;
   const kfi = rest.indexOf('--key-file');
@@ -3304,16 +3340,133 @@ async function cmdProviderAdd(ctx, rest) {
   } else if (process.stdin.isTTY) {
     key = (await promptHidden('API key for ' + name + ' (leave blank for none): ')).trim() || null;
   }
+  const models = Object.assign({}, preset ? preset.models : {}, parseModels(rest));
   const meta = provider.add(ctx, name, {
     baseUrl: baseUrl,
     authScheme: authScheme,
+    compat: preset ? preset.compat : 'anthropic',
     key: key,
-    models: parseModels(rest),
+    models: models,
     endpointCandidates: collectFlagValues(rest, '--endpoint'),
   });
   logmod.log('provider add ' + name);
   print(style.ok('✅') + " saved provider '" + name + "' -> " + meta.baseUrl + (key ? '' : '  (no key stored)'));
+  if (meta.compat === 'openai')
+    print(
+      style.warn('⚠') +
+        ' this endpoint speaks the OpenAI chat API — Claude Code cannot use it directly.' +
+        ' Point ANTHROPIC_BASE_URL at an Anthropic-compatible gateway, or use it via the proxy/router.',
+    );
+  if (preset && preset.docs) print('Docs: ' + preset.docs);
   print('Activate it with:  keyflip use ' + name + '    (back to your subscription:  keyflip provider off)');
+}
+
+// Numbered, category-grouped picker for a bare `keyflip provider add`.
+function pickCatalogEntry() {
+  const rows = _catalog.list();
+  print('Pick a provider:');
+  let n = 0;
+  _catalog.categories().forEach(function (cat) {
+    print('  ' + style.bold(_catalog.categoryLabel(cat)));
+    rows
+      .filter(function (e) {
+        return e.category === cat;
+      })
+      .forEach(function (e) {
+        n++;
+        e._n = n;
+        print(
+          '    ' +
+            String(n).padStart(2) +
+            ') ' +
+            e.name +
+            '  ' +
+            style.dim(e.baseUrl + (e.compat === 'openai' ? '  (OpenAI-compatible)' : '')),
+        );
+      });
+  });
+  return new Promise(function (resolve) {
+    const rl = _readline.createInterface({ input: process.stdin, output: process.stderr, terminal: true });
+    process.stderr.write('Number (blank to cancel): ');
+    rl.question('', function (a) {
+      rl.close();
+      const pick = parseInt(String(a).trim(), 10);
+      resolve(
+        rows.filter(function (e) {
+          return e._n === pick;
+        })[0] || null,
+      );
+    });
+  });
+}
+
+function cmdProviderCatalog(ctx) {
+  const rows = _catalog.list();
+  if (JSON_MODE) {
+    jsonOut({
+      catalog: rows.map(function (e) {
+        return {
+          id: e.id,
+          name: e.name,
+          category: e.category,
+          baseUrl: e.baseUrl,
+          compat: e.compat,
+          authScheme: e.authScheme,
+          models: e.models,
+          docs: e.docs,
+        };
+      }),
+    });
+    return;
+  }
+  _catalog.categories().forEach(function (cat) {
+    print(style.bold(_catalog.categoryLabel(cat)));
+    rows
+      .filter(function (e) {
+        return e.category === cat;
+      })
+      .forEach(function (e) {
+        const model = e.models.default ? '  · ' + e.models.default : '';
+        print(
+          '  ' +
+            (e.id + '            ').slice(0, 12) +
+            e.name +
+            (e.compat === 'openai' ? style.dim('  (OpenAI API — needs a shim)') : '') +
+            style.dim(model),
+        );
+      });
+  });
+  print('');
+  print('Add one with only a key:  keyflip provider add <id> --key-file -');
+}
+
+async function cmdProviderModels(ctx, rest) {
+  const name = rest.filter(function (a) {
+    return a.indexOf('-') !== 0;
+  })[0];
+  if (!name) return fail('usage: keyflip provider models <id|saved-provider>   (queries GET /v1/models)');
+  let meta = provider.read(ctx, name);
+  if (!meta) {
+    const preset = _catalog.get(name);
+    if (!preset) return fail("no such provider or catalog entry: '" + name + "'");
+    meta = { name: null, baseUrl: preset.baseUrl, authScheme: preset.authScheme, compat: preset.compat };
+  }
+  const r = await _catalog.fetchModels(ctx, meta);
+  if (JSON_MODE) {
+    jsonOut({ provider: name, url: _catalog.modelsUrl(meta.baseUrl), result: r });
+    return;
+  }
+  if (!r.ok) {
+    print(style.err('✗') + ' ' + name + ': ' + (r.error || 'failed') + (r.status ? ' (http ' + r.status + ')' : ''));
+    return;
+  }
+  print(style.ok('✓') + ' ' + name + ' lists ' + r.models.length + ' model(s) (' + r.ms + 'ms):');
+  r.models.slice(0, 40).forEach(function (m) {
+    print('  ' + m);
+  });
+  if (r.models.length > 40) print('  … ' + (r.models.length - 40) + ' more');
+  if (!meta.models || !meta.models.default)
+    print(style.dim('Pin a default with:  keyflip config  (or provider add --model default=' + r.models[0] + ')'));
 }
 
 function cmdProviderList(ctx) {
@@ -3323,7 +3476,12 @@ function cmdProviderList(ctx) {
     jsonOut({
       providers: names.map(function (n) {
         const m = provider.read(ctx, n);
-        return { name: n, baseUrl: m && m.baseUrl, active: !!(active && active.name === n) };
+        return {
+          name: n,
+          baseUrl: m && m.baseUrl,
+          compat: (m && m.compat) || 'anthropic',
+          active: !!(active && active.name === n),
+        };
       }),
       active: active ? active.name : null,
     });
@@ -3342,6 +3500,7 @@ function cmdProviderList(ctx) {
         n +
         '   ' +
         (m ? m.baseUrl : '?') +
+        (m && m.compat === 'openai' ? style.dim('  (OpenAI API — Claude Code needs a shim)') : '') +
         (active && active.name === n ? '   ← active' : ''),
     );
   });
@@ -3359,6 +3518,15 @@ async function cmdProviderUse(ctx, name) {
     return;
   }
   if (!provider.exists(ctx, name)) return fail("no such provider: '" + name + "' (see: keyflip provider list)");
+  const meta = provider.read(ctx, name);
+  if (meta && meta.compat === 'openai')
+    print(
+      style.warn('⚠') +
+        ' ' +
+        name +
+        ' speaks the OpenAI chat API — Claude Code expects the Anthropic Messages API.' +
+        ' Only use it with an Anthropic-compatible gateway on that URL.',
+    );
   const r = provider.use(ctx, name);
   logmod.log('provider -> ' + name);
   print(style.ok('✅') + ' Claude Code now uses provider: ' + name + '  (' + r.baseUrl + '). No restart needed.');
@@ -3380,6 +3548,11 @@ async function cmdProvider(ctx, rest) {
     case 'list':
     case undefined:
       return cmdProviderList(ctx);
+    case 'catalog':
+    case 'presets':
+      return cmdProviderCatalog(ctx);
+    case 'models':
+      return cmdProviderModels(ctx, args);
     case 'use':
       return withLock(
         ctx,
@@ -5209,19 +5382,21 @@ async function cmdProxy(ctx, rest) {
     return;
   }
   if (sub === 'status' || sub === undefined) {
+    const route = proxy.routeState(ctx);
     if (JSON_MODE) {
-      jsonOut({ running: !!running, meta: meta });
+      jsonOut({ running: !!running, meta: meta, route: route });
       return;
     }
     if (!running) {
       print('proxy: not running (start it with: keyflip proxy start [--wire])');
-      return;
+    } else {
+      print('proxy: running on ' + meta.url + ' (pid ' + meta.pid + ')' + (meta.wired ? ', wired' : ''));
+      const st = proxy.stats(ctx);
+      print(
+        '  routed ' + st.total + ' request(s); accounts used: ' + (Object.keys(st.byAccount).join(', ') || 'none yet'),
+      );
     }
-    print('proxy: running on ' + meta.url + ' (pid ' + meta.pid + ')' + (meta.wired ? ', wired' : ''));
-    const st = proxy.stats(ctx);
-    print(
-      '  routed ' + st.total + ' request(s); accounts used: ' + (Object.keys(st.byAccount).join(', ') || 'none yet'),
-    );
+    printRouteLines(route);
     return;
   }
   if (sub === 'stats') {
@@ -5239,6 +5414,72 @@ async function cmdProxy(ctx, rest) {
     return;
   }
   return fail('usage: keyflip proxy [start [--port N] [--wire] | stop | status | stats]');
+}
+
+// The routing decision and every account's readiness, printed identically by
+// `proxy status` and `cooldown` so the two never tell different stories.
+function printRouteLines(route) {
+  print(
+    '  route order: ' +
+      (route.order.length ? route.order.join(' → ') : '(no usable account)') +
+      (route.waitSeconds ? '  (all parked — first frees in ' + fmtSeconds(route.waitSeconds) + ')' : ''),
+  );
+  route.accounts.forEach(function (a) {
+    const bits = [];
+    if (a.active) bits.push('active');
+    if (a.coolingSeconds) bits.push('cooling ' + fmtSeconds(a.coolingSeconds) + ' · ' + a.cooldownKind);
+    if (a.breaker !== 'closed') bits.push('breaker ' + a.breaker);
+    if (a.priority !== -1) bits.push('priority #' + (a.priority + 1));
+    print('    ' + (a.name + '                ').slice(0, 16) + (bits.length ? bits.join(' · ') : 'ready'));
+  });
+  const c = route.policy.cooldownSeconds;
+  print(
+    '  policy: wait≤' +
+      route.policy.maxWaitSeconds +
+      's on Retry-After; cooldowns quota ' +
+      c.quota +
+      's / throttled ' +
+      c.throttled +
+      's / overloaded ' +
+      c.overloaded +
+      's / auth ' +
+      c.auth +
+      's / server ' +
+      c.server +
+      's',
+  );
+}
+
+// `keyflip cooldown [clear <account>|--all]` — the readout/reset for per-account
+// cooldowns parked by the failover proxy (#11).
+function cmdCooldown(ctx, rest) {
+  const sub = rest[0];
+  if (sub === 'clear' || sub === 'reset') {
+    const all = rest.indexOf('--all') !== -1;
+    const name = rest.slice(1).filter(function (a) {
+      return a.indexOf('-') !== 0;
+    })[0];
+    if (!name && !all) return fail('usage: keyflip cooldown clear <account> | --all');
+    const cleared = proxy.clearCooldowns(ctx, all ? null : name);
+    if (JSON_MODE) {
+      jsonOut({ cleared: cleared });
+      return;
+    }
+    print(
+      cleared.length
+        ? style.ok('✅') + ' cleared cooldown: ' + cleared.join(', ')
+        : 'no active cooldown' + (name ? ' for ' + name : ''),
+    );
+    return;
+  }
+  const route = proxy.routeState(ctx);
+  if (JSON_MODE) {
+    jsonOut(route);
+    return;
+  }
+  print('Account rotation readiness:');
+  if (!route.accounts.length) print('  (no accounts with CLI credentials yet)');
+  printRouteLines(route);
 }
 
 // The detached background server. Runs until killed.
@@ -5714,6 +5955,15 @@ function fmtAge(ms) {
   const h = Math.floor(m / 60);
   if (h < 48) return h + ' h';
   return Math.floor(h / 24) + ' d';
+}
+// Seconds with one unit of detail ("45s", "2m 10s", "1h 5m") — cooldowns are
+// short enough that "0 min" (fmtAge) would hide them.
+function fmtSeconds(s) {
+  s = Math.max(0, Math.round(s || 0));
+  if (s < 60) return s + 's';
+  const m = Math.floor(s / 60);
+  if (m < 60) return m + 'm' + (s % 60 ? ' ' + (s % 60) + 's' : '');
+  return Math.floor(m / 60) + 'h' + (m % 60 ? ' ' + (m % 60) + 'm' : '');
 }
 // One scheduled job's health, printed the same way by every status view. "scheduled" alone is not
 // enough: the plist can sit on disk while launchd refuses it (a logout, a moved repo, an edited
@@ -15863,6 +16113,8 @@ async function dispatch(ctx, cmd, rest) {
         return cmdSkill(ctx, rest);
       case 'proxy':
         return cmdProxy(ctx, rest);
+      case 'cooldown':
+        return cmdCooldown(ctx, rest);
       case '__proxy-serve': // hidden: the detached background server process
         return proxyServe(ctx, rest);
       case 'mcp':

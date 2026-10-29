@@ -69,7 +69,10 @@ import CommandReference from '../../../components/CommandReference.astro';
 
       <div id="providers">
         <CommandReference title="Sağlayıcılar" commands={[
-          { cmd: 'keyflip provider add <isim> --base-url <url> --key-file -', desc: 'Üçüncü taraf uç nokta kaydet (anahtar stdin\'den)' },
+          { cmd: 'keyflip provider catalog', desc: 'Hazır presetler (Z.AI, Kimi, DeepSeek, OpenRouter, Ollama…)' },
+          { cmd: 'keyflip provider add <id> --key-file -', desc: 'Preset kaydet — yalnızca anahtar gerekir' },
+          { cmd: 'keyflip provider add <isim> --base-url <url> --key-file -', desc: 'Herhangi bir üçüncü taraf uç nokta kaydet (anahtar stdin\'den)' },
+          { cmd: 'keyflip provider models <id|isim>', desc: 'GET /v1/models: uç nokta gerçekte ne sunuyor?' },
           { cmd: 'keyflip use <isim>', desc: 'Claude Code\'u bir sağlayıcıya yönlendir' },
           { cmd: 'keyflip provider off', desc: 'Aboneliğe geri dön (OAuth)' },
           { cmd: 'keyflip provider list', desc: 'Kayıtlı/aktif sağlayıcıları listele' },
@@ -79,8 +82,9 @@ import CommandReference from '../../../components/CommandReference.astro';
           { cmd: 'keyflip route list|set|clear|arbitrage', desc: 'Model yönlendirme ve arbitraj modu' },
           { cmd: 'keyflip cache status|purge', desc: 'Yanıt önbellek yönetimi' },
           { cmd: 'keyflip proxy start --wire', desc: 'Localhost yedekleme proxy\'si başlat + Claude\'a bağla' },
-          { cmd: 'keyflip proxy status', desc: 'Proxy sağlığı ve istatistikleri' },
+          { cmd: 'keyflip proxy status', desc: 'Proxy sağlığı, istatistikler, canlı rota sırası + cooldown\'lar' },
           { cmd: 'keyflip proxy stop', desc: 'Proxy\'yi durdur ve bağlantıyı kes' },
+          { cmd: 'keyflip cooldown [clear <hesap>|--all]', desc: 'Hangi hesaplar park edilmiş, ve onları serbest bırak' },
           { cmd: 'keyflip gateway use|off <sağlayıcı>', desc: 'Masaüstü uygulamasını bir sağlayıcıya yönlendir' },
         ]} />
       </div>

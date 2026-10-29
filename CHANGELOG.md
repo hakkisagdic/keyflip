@@ -9,6 +9,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The failover proxy now routes like a scheduler, not a first-failure switch.** Each account's
+  failure is classified before anything moves: a 429 whose body says billing / credit / org-disabled
+  is surfaced to the client instead of being masked by another account's quota; a rate-limit 429
+  honors `Retry-After` (delta-seconds or HTTP-date) — if the wait fits `proxy.maxWaitSeconds`
+  (default 10 s) the **same** account is retried once instead of spending another account's quota,
+  otherwise traffic fails over immediately and the account is parked. Parking is per error kind
+  (`proxy.cooldownQuotaSeconds` 300, `…ThrottledSeconds` 60, `…OverloadedSeconds` 30, `…AuthSeconds`
+  900, `…ServerSeconds` 60, each `0` to disable) and lives in the existing `breakers.json` entry —
+  no new state file. Ordering is deterministic: `proxy.priority` list first, then the active
+  account, then least-recently-used (every real attempt records `lastUsedAt`); a cooling account is
+  skipped, and when every account is parked the one that frees up first is offered with an explicit
+  wait. Responses carry `x-keyflip-account`, `x-keyflip-attempts`, `x-keyflip-failover`,
+  `x-keyflip-error-class` and `x-keyflip-cooldown` (`proxy.debugHeaders=false` turns them off).
+  New: `keyflip cooldown` shows the live route order and each account's breaker/cooldown state,
+  `keyflip cooldown clear <acct>|--all` releases them; `keyflip proxy status` prints the same
+  readout. MCP: `keyflip_cooldowns` (read-only), `keyflip_cooldown_clear` (confirm-gated), and
+  `keyflip_proxy_status` now includes the route. Seven new routing settings under `keyflip config`.
+- **A provider preset catalog, so a third-party endpoint needs only a key.** `keyflip provider catalog`
+  lists 19 built-in endpoints — Z.AI/GLM, Zhipu, Kimi, DeepSeek, MiniMax, Qwen/DashScope,
+  Volcengine Ark, OpenRouter, OpenAI, Gemini, xAI, Mistral, Groq, Together, Fireworks, Anthropic
+  and local Ollama / LM Studio / llama.cpp — each with the base URL from the vendor's own docs,
+  model hints and a docs link. `keyflip provider add zai --key-file -` fills URL, auth scheme,
+  models and compatibility from the preset (a bare `provider add` on a terminal opens a numbered,
+  category-grouped picker; `--from <id>` saves a preset under your own name; `--base-url` still
+  overrides). Each preset records `compat`: `anthropic` endpoints can be pointed at Claude Code
+  directly, `openai` ones need an Anthropic-compatible gateway/shim — `provider use`/`provider list`
+  now say so instead of silently breaking the CLI. `keyflip provider models <id|name>` asks the
+  endpoint's `GET /v1/models` what it actually serves (8 s timeout, key never printed), because
+  preset model names drift. Provider metadata is now `schemaVersion: 2` with a persisted `compat`.
+  MCP: `keyflip_provider_catalog` (read-only), `keyflip_provider_models` (read-only network), and
+  `keyflip_provider_add` accepts `catalog_id` (still confirm-gated; the key never crosses MCP).
 - **One skill, every agent on the machine.** `keyflip skill add <src>` now installs into **every
   detected agent**, not just `~/.claude/skills`: `keyflip skill agents` lists the 72 HOME-level
   skill directories keyflip knows (with `●` for the tools actually present here), and

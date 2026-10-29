@@ -92,11 +92,14 @@ function add(ctx, name, opts) {
     name: name,
     baseUrl: opts.baseUrl,
     authScheme: opts.authScheme === 'api-key' ? 'api-key' : 'bearer',
+    // 'anthropic' = Claude Code can be pointed at this URL directly. 'openai' is
+    // recorded so `use` can warn instead of silently breaking the CLI.
+    compat: opts.compat === 'openai' ? 'openai' : 'anthropic',
     models: opts.models || {},
     endpointCandidates:
       opts.endpointCandidates && opts.endpointCandidates.length ? opts.endpointCandidates : [opts.baseUrl],
     savedAt: ctx.now(),
-    schemaVersion: 1,
+    schemaVersion: 2,
   };
   writeJsonStable(metaPath(ctx, name), meta, 0o600);
   if (opts.key) ctx.store.setProfile(keyStoreName(name), opts.key);

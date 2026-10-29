@@ -65,19 +65,19 @@ near‑term backlog; several are prerequisites for the big epics (E3 especially)
 ### Phase 0a — quick wins (low effort)
 | # | Item | Feeds |
 |---|---|---|
-| 2 | Honor `Retry-After` + exponential backoff before failing over on 429 | E3 |
-| 3 | Authoritative‑reset‑only 429 triage (don't fail over on billing/org‑disabled 429s) | E3 |
-| 9 | Priority + LRU deterministic account ordering (`priority` field) | E3 |
-| 10 | Route‑decision debug headers / `--verbose` (`x-keyflip-account`, `-route-reason`) | E3 |
+| 2 | ✅ Honor `Retry-After` + exponential backoff before failing over on 429 | E3 |
+| 3 | ✅ Authoritative‑reset‑only 429 triage (don't fail over on billing/org‑disabled 429s) | E3 |
+| 9 | ✅ Priority + LRU deterministic account ordering (`priority` field) | E3 |
+| 10 | ✅ Route‑decision debug headers / `--verbose` (`x-keyflip-account`, `-route-reason`) | E3 |
 | 14 | `keyflip test --all` parallel provider health check | — |
 | 15 | `keyflip provider fork <src> <new>` duplicate a provider config | — |
 
 ### Phase 0b — provider ecosystem (the biggest gap vs competitors)
 | # | Item | Feeds |
 |---|---|---|
-| 1 | **Built‑in preset catalog** (`src/catalog.json`): Z.AI/GLM, Kimi, MiniMax, DeepSeek, Qwen, OpenRouter, Ollama/LM Studio… base_url + tier models, so `keyflip provider add <id>` needs only the key | E1, E3 |
-| 17 | Interactive provider picker (numbered, category‑grouped) — argument‑less `provider add` | E5 |
-| 16 | `keyflip test`/`provider models` → query `/v1/models`, suggest a default model | — |
+| 1 | ✅ **Built‑in preset catalog** (`src/catalog.json`): Z.AI/GLM, Kimi, MiniMax, DeepSeek, Qwen, OpenRouter, Ollama/LM Studio… base_url + tier models, so `keyflip provider add <id>` needs only the key | E1, E3 |
+| 17 | ✅ Interactive provider picker (numbered, category‑grouped) — argument‑less `provider add` | E5 |
+| 16 | ✅ `provider models` → query `/v1/models`, suggest a default model | — |
 
 ### Phase 0c — smart‑router substrate (→ folds into E3)
 | # | Item |
@@ -92,7 +92,7 @@ near‑term backlog; several are prerequisites for the big epics (E3 especially)
 ### Phase 0d — reliability, cost & tier awareness
 | # | Item |
 |---|---|
-| 11 | Per‑error‑type cooldown TTLs + `keyflip cooldown` / `reset` readout |
+| 11 | ✅ Per‑error‑type cooldown TTLs + `keyflip cooldown` / `reset` readout |
 | 12 | Model‑eligibility filtering by subscription tier (Free≠Opus) before selecting an account |
 | 13 | Fine‑grained cost accounting (cache tiers + 200k + fast‑mode multiplier) |
 | 18 | Self‑updating model‑pricing table (LiteLLM prices, SHA‑256 verified, bundled fallback) |

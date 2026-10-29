@@ -21,6 +21,7 @@ import * as usage from './usage.js';
 import * as lock from './lock.js';
 import * as logmod from './log.js';
 import * as provider from './provider.js';
+import * as _catalog from './catalog.js';
 import * as sessions from './sessions.js';
 import * as doctor from './doctor.js';
 import * as backup from './backup.js';
@@ -1043,9 +1044,51 @@ const TOOLS = [
       return {
         providers: provider.list(ctx).map(function (n) {
           const m = provider.read(ctx, n);
-          return { name: n, baseUrl: m && m.baseUrl, active: !!(active && active.name === n) };
+          return {
+            name: n,
+            baseUrl: m && m.baseUrl,
+            compat: (m && m.compat) || 'anthropic',
+            active: !!(active && active.name === n),
+          };
         }),
         active: active ? active.name : 'official',
+      };
+    },
+  },
+  {
+    name: 'keyflip_provider_catalog',
+    title: 'Provider preset catalog',
+    description:
+      'Bundled preset endpoints (Z.AI/GLM, Kimi, DeepSeek, MiniMax, Qwen, OpenRouter, OpenAI, Gemini, Ollama/LM Studio/llama.cpp…) with base URL, Anthropic vs OpenAI API compatibility, model hints and docs links. Read-only; add one with keyflip_provider_add + catalog_id.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    annotations: RO,
+    run: async function () {
+      return { catalog: _catalog.list() };
+    },
+  },
+  {
+    name: 'keyflip_provider_models',
+    title: "List a provider's models",
+    description:
+      "Query a provider's GET /v1/models (saved provider name or catalog id) to see what it actually serves. Read-only network call; never returns or logs the key.",
+    inputSchema: {
+      type: 'object',
+      properties: { name: { type: 'string', description: 'Saved provider name or catalog id.' } },
+      required: ['name'],
+      additionalProperties: false,
+    },
+    annotations: RO_NET,
+    run: async function (ctx, args) {
+      let meta = provider.read(ctx, args.name);
+      if (!meta) {
+        const preset = _catalog.get(args.name);
+        if (!preset) throw new Error("no such provider or catalog entry: '" + args.name + "'");
+        meta = { name: null, baseUrl: preset.baseUrl, authScheme: preset.authScheme, compat: preset.compat };
+      }
+      return {
+        provider: args.name,
+        url: _catalog.modelsUrl(meta.baseUrl),
+        result: await _catalog.fetchModels(ctx, meta),
       };
     },
   },
@@ -1079,31 +1122,44 @@ const TOOLS = [
     name: 'keyflip_provider_add',
     title: 'Save a provider endpoint',
     description:
-      'Save a third-party endpoint. NOTE: the API key is a secret and must NOT be passed through MCP — omit it here and tell the user to run `keyflip provider add <name> --base-url <url> --key-file -` (key on stdin). This tool stores only the non-secret metadata. Ask the user first, then confirm=true.',
+      'Save a third-party endpoint. Use `catalog_id` (see keyflip_provider_catalog) to fill base_url/auth_scheme/models/compat from a known preset, or pass base_url for anything else. NOTE: the API key is a secret and must NOT be passed through MCP — omit it here and tell the user to run `keyflip provider add <name> --key-file -` (key on stdin). This tool stores only the non-secret metadata. Ask the user first, then confirm=true.',
     inputSchema: {
       type: 'object',
       properties: {
         name: { type: 'string' },
-        base_url: { type: 'string' },
+        catalog_id: { type: 'string', description: 'Preset id from keyflip_provider_catalog, e.g. "zai".' },
+        base_url: { type: 'string', description: 'Overrides the preset base URL.' },
         auth_scheme: { type: 'string', enum: ['bearer', 'api-key'] },
         confirm: confirmProp.confirm,
       },
-      required: ['name', 'base_url', 'confirm'],
+      required: ['name', 'confirm'],
       additionalProperties: false,
     },
     annotations: MUT,
     run: async function (ctx, args) {
       needConfirm(args);
-      provider.add(ctx, args.name, { baseUrl: args.base_url, authScheme: args.auth_scheme || 'bearer' });
-      return {
-        saved: args.name,
-        note:
-          'No key stored. Run `keyflip provider add ' +
-          args.name +
-          ' --base-url ' +
-          args.base_url +
-          ' --key-file -` to add the key securely.',
+      const preset = args.catalog_id ? _catalog.get(args.catalog_id) : null;
+      if (args.catalog_id && !preset) throw new Error("unknown catalog id: '" + args.catalog_id + "'");
+      const baseUrl = args.base_url || (preset && preset.baseUrl);
+      if (!baseUrl) throw new Error('base_url or catalog_id is required');
+      const meta = {
+        baseUrl,
+        authScheme: args.auth_scheme || (preset && preset.authScheme) || 'bearer',
+        compat: preset ? preset.compat : 'anthropic',
       };
+      if (preset && preset.models && Object.keys(preset.models).length) meta.models = preset.models;
+      provider.add(ctx, args.name, meta);
+      const out = {
+        saved: args.name,
+        baseUrl,
+        compat: meta.compat,
+        note: 'No key stored. Run `keyflip provider add ' + args.name + ' --key-file -` to add the key securely.',
+      };
+      if (preset) out.docs = preset.docs;
+      if (meta.compat === 'openai') {
+        out.warning = 'This is an OpenAI-API endpoint: Claude Code cannot call it directly and needs a protocol shim.';
+      }
+      return out;
     },
   },
   {
@@ -1935,7 +1991,7 @@ const TOOLS = [
     name: 'keyflip_proxy_status',
     title: 'Failover proxy status',
     description:
-      'Is the local failover proxy running? On what port, wired? Per-account request/token totals. Read-only.',
+      "Is the local failover proxy running? On what port, wired? Per-account request/token totals, plus the live route order and each account's breaker/cooldown state. Read-only.",
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
     annotations: RO,
     run: async function (ctx) {
@@ -1952,7 +2008,44 @@ const TOOLS = [
           }
         })()
       );
-      return { running: running, port: meta && meta.port, wired: !!(meta && meta.wired), stats: proxy.stats(ctx) };
+      return {
+        running: running,
+        port: meta && meta.port,
+        wired: !!(meta && meta.wired),
+        stats: proxy.stats(ctx),
+        route: proxy.routeState(ctx),
+      };
+    },
+  },
+  {
+    name: 'keyflip_cooldowns',
+    title: 'Show account cooldowns',
+    description:
+      'Per-account readiness for switching/proxying: the order accounts would be tried, which are parked by a cooldown (kind + remaining seconds) or a circuit breaker, and the active policy. Read-only.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    annotations: RO,
+    run: async function (ctx) {
+      return proxy.routeState(ctx);
+    },
+  },
+  {
+    name: 'keyflip_cooldown_clear',
+    title: 'Clear account cooldowns',
+    description:
+      'Release parked accounts so they are tried again immediately: one account by name, or all of them. Does not change which account is active. Ask the user first, then confirm=true.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Account name; omit to clear every account.' },
+        confirm: confirmProp.confirm,
+      },
+      required: ['confirm'],
+      additionalProperties: false,
+    },
+    annotations: MUT,
+    run: async function (ctx, args) {
+      needConfirm(args);
+      return { cleared: proxy.clearCooldowns(ctx, args.name || null) };
     },
   },
   {

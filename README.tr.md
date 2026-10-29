@@ -156,7 +156,10 @@ keyflip <ad> --rollback-on-fail  # ...geri-okuma geçişin tutmadığını söyl
                               # (bilerek açılır: kimlik bilgilerini yeniden yazar)
 keyflip next                  # sıradaki kayıtlı hesaba dön
 keyflip next --strategy best  # ...veya kalan kotaya göre seç (ayrıca: next-available)
-keyflip provider add <ad> --base-url <url> --key-file -   # 3. taraf endpoint kaydet
+keyflip provider catalog      # hazır presetler (Z.AI, Kimi, DeepSeek, MiniMax, OpenRouter, Ollama…)
+keyflip provider add <id> --key-file -                    # ...bir preset için yalnızca anahtar gerekir
+keyflip provider add <ad> --base-url <url> --key-file -   # ...veya herhangi bir 3. taraf endpoint kaydet
+keyflip provider models <id|ad>   # endpoint gerçekte ne sunuyor? (GET /v1/models)
 keyflip use <ad>              # Claude Code'u bir provider'a yönlendir (geri: keyflip provider off)
 keyflip doctor                # sağlık kontrolü: git-e-sır, orphan oturumlar, versiyonlama, config, giriş, endpointler, masaüstü oturumu, otomatik güncelleme durumu, arka plan servisleri (kurulu mu? tutuluyor mu? her biri en son ne zaman çalıştı?)
                               #   --history ekle: keyflip'in commit ettiği her blob'da hâlâ okunabilir bir sır var mı?
@@ -339,14 +342,27 @@ bloğunu yamalar; Claude Code bunu **anında yeniden yükler, yeniden başlatma
 gerekmez.**
 
 ```bash
-keyflip provider add openrouter --base-url https://openrouter.ai/api/v1 --key-file -   # anahtar stdin'den
-keyflip use openrouter          # Claude Code'u ona yönlendir
+keyflip provider catalog        # 19 preset: Z.AI/GLM, Zhipu, Kimi, DeepSeek, MiniMax, Qwen, Ark,
+                                # OpenRouter, OpenAI, Gemini, xAI, Mistral, Groq, Together,
+                                # Fireworks, Anthropic ve yerel Ollama / LM Studio / llama.cpp
+keyflip provider add zai --key-file -          # bir preset yalnızca anahtar ister (URL katalogdan gelir)
+keyflip provider add benim-gw --from deepseek --key-file -   # preseti kendi adınla kaydet
+keyflip provider add openrouter --base-url https://openrouter.ai/api/v1 --key-file -   # herhangi bir endpoint
+keyflip use zai                 # Claude Code'u ona yönlendir
 keyflip provider off            # aboneliğine geri dön (OAuth)
+keyflip provider list           # kayıtlı / aktif olan
+keyflip provider models zai     # endpoint gerçekte ne sunuyor? (GET /v1/models)
 keyflip speedtest openrouter    # endpoint'leri ölç, en hızlısını kullan
 keyflip test openrouter         # tek gerçek istek: auth çalışıyor mu?
 keyflip doctor                  # sağlık kontrolü: git-e-sır + orphan + versiyonlama + config + giriş + endpointler + masaüstü oturumu + otomatik güncelleme durumu + her arka plan servisi (kurulu / tutuluyor / son çıktı)
 ```
 
+- Her preset, **Anthropic API** mi konuştuğunu (Claude Code doğrudan
+  yönlendirilebilir) yoksa **OpenAI chat API**'si mi (Anthropic-uyumlu bir
+  gateway/shim gerekir ya da yalnızca router/maliyet için uygundur) kaydeder —
+  ikinci durumda `provider use` sessizce CLI'ı bozmak yerine uyarır. Model adları
+  değişir; `provider models <id>` canlı listeyi sorar, `--model default=…` ezer.
+- Terminalde çıplak `keyflip provider add` kategori gruplu, numaralı bir seçici açar.
 - **API anahtarı sırdır** → OS kimlik deposunda saklanır, asla metadata dosyasında
   veya komut satırında değil (stdin/dosyadan okunur).
 - Geçiş yalnızca keyflip'in yönettiği anahtarlara dokunur; kendi `settings.json`'un
@@ -1176,6 +1192,31 @@ keyflip proxy stop                    # durdur (ve bağlantıyı kaldır)
 API isteğini aktif hesaba yönlendirir ve istemciye bir bayt gitmeden önce
 `429`/`5xx` olursa **sıradaki sağlıklı hesaba geçip yeniden dener** — kota-eşikli
 `autoswitch`'in veremeyeceği istek-seviyesi failover. Yalnız `127.0.0.1` dinler.
+
+Failover bilinçli çalışır, ilk hatada körlemesine atlamaz:
+
+- **`Retry-After` uygulanır.** Üst servis beklenebilir bir süre verdiyse ve bu süre
+  `proxy.maxWaitSeconds` (varsayılan 10 sn) içindeyse keyflip bekler ve **aynı**
+  hesabı bir kez daha dener — başka hesabın kotasını harcamaktan ucuzdur. Daha uzun
+  bir bekleme verilmişse hemen failover yapılır ve hesap en az o süre park edilir.
+- **Faturalama 429'u hız limiti değildir.** Yanıt gövdesi kredi/faturalama/
+  kuruluş-devredışı diyorsa hata sana döner (başka hesabın kotasıyla maskelenmez);
+  gerçek hız-limitli 429'lar failover olur.
+- **Türe göre cooldown.** 429, 401/403, 529 veya 5xx alan hesap `breakers.json`
+  içinde türe özel TTL ile park edilir (`keyflip config`:
+  `proxy.cooldownQuotaSeconds`, `…ThrottledSeconds`, `…OverloadedSeconds`,
+  `…AuthSeconds`, `…ServerSeconds`; `0` o türü kapatır). Park edilen hesap
+  atlanır; hepsi parktaysa en erken açılacak olan bekleme bilgisiyle kullanılır.
+- **Belirlenimci sıra.** Önce `proxy.priority` (virgüllü hesap adları), sonra
+  aktif hesap, sonra en-az-kullanılan (LRU).
+- **Hata ayıklama başlıkları** her yanıtta: `x-keyflip-account`,
+  `x-keyflip-attempts`, `x-keyflip-failover`, `x-keyflip-error-class`,
+  `x-keyflip-cooldown` (`proxy.debugHeaders=false` kapatır).
+
+```bash
+keyflip cooldown                      # rota sırası + her hesabın breaker/cooldown durumu (kalan sn)
+keyflip cooldown clear <hesap>|--all
+```
 
 ### Kullanıma göre otomatik geçiş (`autoswitch`)
 

@@ -90,6 +90,62 @@ SCHEMA['llm.key_env'] = {
   default: '',
   help: 'NAME of the environment variable holding the endpoint API key. keyflip stores the name only — never the key.',
 };
+// Failover proxy routing (#9/#10/#11). Cooldowns are per error KIND, so a brief
+// overload parks an account for seconds while a billing block parks it for
+// minutes; 0 disables that kind's cooldown. priority is a comma-separated list
+// of account names tried before the LRU order.
+SCHEMA['proxy.priority'] = {
+  type: 'string',
+  default: '',
+  help: 'Comma-separated account names to try first in the failover proxy (empty = active, then least-recently-used).',
+};
+SCHEMA['proxy.maxWaitSeconds'] = {
+  type: 'int',
+  default: 10,
+  min: 0,
+  max: 120,
+  help: 'Longest Retry-After the proxy will WAIT out and retry the same account before failing over (0 = always fail over).',
+};
+SCHEMA['proxy.debugHeaders'] = {
+  type: 'bool',
+  default: true,
+  help: 'Add x-keyflip-account / x-keyflip-attempts / x-keyflip-failover headers to proxied responses.',
+};
+SCHEMA['proxy.cooldownQuotaSeconds'] = {
+  type: 'int',
+  default: 300,
+  min: 0,
+  max: 86400,
+  help: 'Park a billing/quota-blocked account this long (seconds; 0 = no cooldown).',
+};
+SCHEMA['proxy.cooldownThrottledSeconds'] = {
+  type: 'int',
+  default: 60,
+  min: 0,
+  max: 3600,
+  help: 'Park a rate-limited (429) account this long when upstream sends no Retry-After.',
+};
+SCHEMA['proxy.cooldownOverloadedSeconds'] = {
+  type: 'int',
+  default: 30,
+  min: 0,
+  max: 3600,
+  help: 'Park an account after a 529 overloaded response this long.',
+};
+SCHEMA['proxy.cooldownAuthSeconds'] = {
+  type: 'int',
+  default: 900,
+  min: 0,
+  max: 86400,
+  help: 'Park an account after a 401/403 auth failure this long (it needs a re-login).',
+};
+SCHEMA['proxy.cooldownServerSeconds'] = {
+  type: 'int',
+  default: 60,
+  min: 0,
+  max: 3600,
+  help: 'Park an account after a 5xx server error this long.',
+};
 
 function configPath(ctx) {
   return path.join(ctx.configDir, NAME + '.json');

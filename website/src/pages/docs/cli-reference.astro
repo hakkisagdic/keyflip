@@ -70,7 +70,10 @@ import CommandReference from '../../components/CommandReference.astro';
 
       <div id="providers">
         <CommandReference title="Providers" commands={[
-          { cmd: 'keyflip provider add <name> --base-url <url> --key-file -', desc: 'Save a third-party endpoint (key on stdin)' },
+          { cmd: 'keyflip provider catalog', desc: 'Built-in presets (Z.AI, Kimi, DeepSeek, OpenRouter, Ollama…)' },
+          { cmd: 'keyflip provider add <id> --key-file -', desc: 'Save a preset — only the key is needed' },
+          { cmd: 'keyflip provider add <name> --base-url <url> --key-file -', desc: 'Save any third-party endpoint (key on stdin)' },
+          { cmd: 'keyflip provider models <id|name>', desc: 'Ask GET /v1/models what the endpoint serves' },
           { cmd: 'keyflip use <name>', desc: 'Route Claude Code to a provider' },
           { cmd: 'keyflip provider off', desc: 'Back to subscription (OAuth)' },
           { cmd: 'keyflip provider list', desc: 'List saved/active providers' },
@@ -80,8 +83,9 @@ import CommandReference from '../../components/CommandReference.astro';
           { cmd: 'keyflip route list|set|clear|arbitrage', desc: 'Model routing and arbitrage mode' },
           { cmd: 'keyflip cache status|purge', desc: 'Response cache management' },
           { cmd: 'keyflip proxy start --wire', desc: 'Start localhost failover proxy + wire Claude to it' },
-          { cmd: 'keyflip proxy status', desc: 'Proxy health and stats' },
+          { cmd: 'keyflip proxy status', desc: 'Proxy health, stats, live route order + cooldowns' },
           { cmd: 'keyflip proxy stop', desc: 'Stop proxy and unwire' },
+          { cmd: 'keyflip cooldown [clear <acct>|--all]', desc: 'Which accounts are parked, and release them' },
           { cmd: 'keyflip gateway use|off <provider>', desc: 'Route the desktop app to a provider' },
         ]} />
       </div>

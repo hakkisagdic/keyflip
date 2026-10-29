@@ -800,3 +800,41 @@ test('secrets + doctor + scrub-history: a tolerated finding stops being an alarm
   run(home, ['secrets', 'untolerate', 'providers-gmail.json']);
   assert.match(run(home, ['doctor', '--history']).stdout, /✗ history scan {2}— 1 alarm/);
 });
+
+test('cooldown lists parked accounts and clears them', function () {
+  const home = setupHome();
+  assert.strictEqual(run(home, ['add']).status, 0);
+  const cfg = path.join(home, '.config', 'keyflip');
+  fs.mkdirSync(cfg, { recursive: true });
+  fs.writeFileSync(
+    path.join(cfg, 'breakers.json'), // what a 429 in the proxy leaves behind
+    JSON.stringify({
+      alice: {
+        state: 'closed',
+        failures: 0,
+        successes: 0,
+        openedAt: 0,
+        cooldownUntil: Date.now() + 60000,
+        cooldownKind: 'throttled',
+        lastUsedAt: Date.now(),
+      },
+    }),
+  );
+  const listed = run(home, ['cooldown', '--json']);
+  assert.strictEqual(listed.status, 0, listed.stderr);
+  const o = JSON.parse(listed.stdout);
+  const alice = o.accounts.filter(function (a) {
+    return a.name === 'alice';
+  })[0];
+  assert.ok(alice.coolingSeconds > 0, 'the cooldown is visible');
+  assert.strictEqual(alice.cooldownKind, 'throttled');
+  assert.deepStrictEqual(o.order, ['alice'], 'the sole account is offered after its cooldown');
+  assert.ok(o.waitSeconds > 0, 'with the wait made explicit');
+
+  const cleared = run(home, ['cooldown', 'clear', '--all', '--json']);
+  assert.deepStrictEqual(JSON.parse(cleared.stdout).cleared, ['alice']);
+  const after = JSON.parse(run(home, ['cooldown', '--json']).stdout);
+  assert.strictEqual(after.accounts[0].coolingSeconds, 0);
+  assert.strictEqual(after.waitSeconds, 0, 'no wait once cleared');
+  assert.deepStrictEqual(after.order, ['alice'], 'cleared account is tried again');
+});

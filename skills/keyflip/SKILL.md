@@ -276,7 +276,13 @@ no restart). Use when the user wants a relay/gateway/custom base URL, or is out 
 subscription quota but has an API key.
 
 ```bash
+keyflip provider catalog      # 19 presets (Z.AI, Zhipu, Kimi, DeepSeek, MiniMax, Qwen, Ark,
+                              # OpenRouter, OpenAI, Gemini, xAI, Mistral, Groq, Together,
+                              # Fireworks, Anthropic, local Ollama / LM Studio / llama.cpp)
+keyflip provider add <id> --key-file -        # a preset needs only the key — URL/models come from it
+keyflip provider add <name> --from <id> --key-file -   # preset under the user's own name
 keyflip provider add <name> --base-url <url> --key-file <file|->  # key via stdin, never argv
+keyflip provider models <id|name>   # GET /v1/models: what does it actually serve? (key never printed)
 keyflip use <name>            # route Claude Code to it (no restart)
 keyflip provider off          # back to the subscription (OAuth)
 keyflip provider list         # which providers exist / which is active
@@ -294,7 +300,13 @@ keyflip freshness [--json]    # (alias: age) how old each saved login is: cli to
 
 `status` shows the active provider. Switching a provider does NOT change the OAuth
 account; `keyflip provider off` restores it. Never put an API key in argv — use
-`--key-file -` (stdin) or a file.
+`--key-file -` (stdin) or a file. A provider's `compat` matters: `anthropic`
+endpoints can back Claude Code directly; `openai` ones (OpenAI/Gemini/Groq/local
+servers) need an Anthropic-compatible shim — `provider use` warns for those, so
+relay the warning to the user instead of promising it will work. MCP:
+`keyflip_provider_catalog` (read-only), `keyflip_provider_models` (read-only
+network), `keyflip_provider_add` with `catalog_id` (confirm-gated, key never
+crosses MCP).
 
 ## ChatGPT + Codex (one shared login)
 
@@ -819,8 +831,10 @@ keyflip skill sync                    # re-apply each skill's recorded source; a
 keyflip skill list | remove <name>    # per-target state (✓ ok / ✎ edited / ✗ missing); removes only keyflip's copies
 
 keyflip proxy start --wire            # command-started localhost proxy; wires Claude Code to it
-keyflip proxy status | stats          # is it up? per-account request/token totals
+keyflip proxy status | stats          # is it up? per-account request/token totals + live route order
 keyflip proxy stop                    # stops it and unwires
+keyflip cooldown                      # route order + which accounts are parked (cooldown kind/seconds)
+keyflip cooldown clear <acct>|--all   # release parked accounts now
 ```
 
 Skills are **written into every agent on the machine that reads one** — the target
@@ -845,6 +859,23 @@ it routes every request to the active account and **fails over to the next healt
 account on 429/5xx** before the client sees a byte — request-level failover that
 `autoswitch` (usage-poll based) can't give. Suggest it for long unattended runs
 where mid-request rate-limits are likely.
+
+Failover rules worth telling the user, because they explain behaviour that
+otherwise looks odd:
+
+- A **billing/credit/org-disabled 429 is returned, not failed over** — another
+  account would only hide a payment problem. Rate-limit 429s do fail over.
+- A **short `Retry-After` is waited out and the same account retried** (up to
+  `proxy.maxWaitSeconds`, default 10 s); a longer one fails over at once and parks
+  the account. When the user asks "why didn't it switch instantly?", this is why.
+- An account that 429/401/403/529/5xxes is **parked** for a kind-specific TTL; a
+  parked account is skipped, so `keyflip cooldown` is the place to look when a
+  healthy account seems unused. Clear with `keyflip cooldown clear`.
+- Order is `proxy.priority` → active → least-recently-used; responses carry
+  `x-keyflip-account/-attempts/-failover/-error-class/-cooldown` unless
+  `proxy.debugHeaders=false`.
+- MCP: `keyflip_cooldowns` (read-only), `keyflip_cooldown_clear` (confirm-gated),
+  `keyflip_proxy_status` (includes the route).
 
 ## Parallel accounts in one terminal
 

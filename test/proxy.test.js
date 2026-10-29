@@ -4,6 +4,7 @@ import fs from 'fs';
 import path from 'path';
 import * as proxy from '../src/proxy.js';
 import * as breaker from '../src/breaker.js';
+import * as config from '../src/config.js';
 import * as core from '../src/core.js';
 import { makeCtx, writeClaude } from './helpers.js';
 import _http from 'http';
@@ -219,4 +220,176 @@ test('serve rejects (not crashes) when the port is already taken', async functio
   } finally {
     first.server.close();
   }
+});
+
+// ---- routing substrate: Retry-After, triage, priority/LRU, cooldowns, headers ----
+
+function threeAccounts() {
+  const ctx = makeCtx();
+  function login(email, uid, tok) {
+    writeClaude(ctx, { oauthAccount: { emailAddress: email }, userID: uid });
+    ctx.store.setLive(JSON.stringify({ claudeAiOauth: { accessToken: tok } }));
+  }
+  login('a@x.com', 'u1', 'TA');
+  core.addCurrent(ctx);
+  login('b@x.com', 'u2', 'TB');
+  core.addCurrent(ctx);
+  login('c@x.com', 'u3', 'TC');
+  core.addCurrent(ctx); // c active
+  return ctx;
+}
+
+function names(list) {
+  return list.map(function (e) {
+    return e.name;
+  });
+}
+
+function ok(body) {
+  return { status: 200, headers: { 'content-type': 'application/json' }, body: Buffer.from(body || '{}') };
+}
+
+function send(ctx, forward, extra) {
+  const res = fakeRes();
+  const sleeps = [];
+  return proxy
+    .handleRequest(ctx, { method: 'POST', path: '/v1/messages', headers: {}, body: Buffer.from('{}') }, res, {
+      forward: forward,
+      sleep: function (ms) {
+        sleeps.push(ms);
+        return Promise.resolve();
+      },
+      ...(extra || {}),
+    })
+    .then(function (r) {
+      return { r: r, res: res, sleeps: sleeps };
+    });
+}
+
+test('retryAfterMs parses delta-seconds, HTTP-date, junk and caps at 24h', function () {
+  assert.strictEqual(proxy.retryAfterMs({ 'Retry-After': '3' }, 0), 3000);
+  assert.strictEqual(proxy.retryAfterMs({ 'retry-after': '1.5' }, 0), 1500);
+  const now = Date.parse('2026-01-01T00:00:00Z');
+  assert.strictEqual(proxy.retryAfterMs({ 'retry-after': 'Thu, 01 Jan 2026 00:00:05 GMT' }, now), 5000);
+  assert.strictEqual(proxy.retryAfterMs({ 'retry-after': 'soon' }, now), null);
+  assert.strictEqual(proxy.retryAfterMs({}, now), null);
+  assert.strictEqual(proxy.retryAfterMs({ 'retry-after': '999999999' }, now), 24 * 60 * 60 * 1000);
+});
+
+test('classify separates billing from throttling, and auth/overload/server', function () {
+  const billing = Buffer.from('{"error":{"type":"invalid_request_error","message":"Your credit balance is too low"}}');
+  assert.strictEqual(proxy.classify(429, {}, billing), 'billing');
+  assert.strictEqual(proxy.classify(429, {}, Buffer.from('{"error":{"message":"organization disabled"}}')), 'billing');
+  assert.strictEqual(proxy.classify(429, {}, Buffer.from('{"error":{"message":"rate limit exceeded"}}')), 'throttled');
+  assert.strictEqual(proxy.classify(429, {}, null), 'throttled');
+  assert.strictEqual(proxy.classify(401, {}, null), 'auth');
+  assert.strictEqual(proxy.classify(403, {}, null), 'auth');
+  assert.strictEqual(proxy.classify(529, {}, null), 'overloaded');
+  assert.strictEqual(proxy.classify(500, {}, null), 'server');
+  assert.strictEqual(proxy.classify(400, {}, null), 'none');
+});
+
+test('a short Retry-After is waited out and the SAME account retried', async function () {
+  const ctx = twoAccounts(); // active b
+  const seen = [];
+  let n = 0;
+  const out = await send(ctx, async function (up) {
+    seen.push(up.authVal);
+    n++;
+    if (n === 1)
+      return { status: 429, headers: { 'retry-after': '2' }, body: Buffer.from('{"error":{"message":"rate limit"}}') };
+    return ok('{"ok":true}');
+  });
+  assert.deepStrictEqual(seen, ['Bearer TB', 'Bearer TB']); // no failover
+  assert.deepStrictEqual(out.sleeps, [2000]);
+  assert.strictEqual(out.res.statusCode, 200);
+  assert.strictEqual(out.r.account, 'b');
+  assert.strictEqual(out.res.headers['x-keyflip-attempts'], '2');
+  assert.strictEqual(out.res.headers['x-keyflip-account'], 'b');
+  assert.ok(!out.res.headers['x-keyflip-failover']);
+});
+
+test('a Retry-After longer than the wait budget fails over immediately and parks the account', async function () {
+  const ctx = twoAccounts();
+  const seen = [];
+  const out = await send(ctx, async function (up) {
+    seen.push(up.authVal);
+    if (up.authVal === 'Bearer TB')
+      return { status: 429, headers: { 'retry-after': '120' }, body: Buffer.from('busy') };
+    return ok('{"ok":true}');
+  });
+  assert.deepStrictEqual(seen, ['Bearer TB', 'Bearer TA']);
+  assert.deepStrictEqual(out.sleeps, []); // never waited
+  assert.strictEqual(out.res.headers['x-keyflip-failover'], 'b');
+  const cd = breaker.cooldownOf(ctx, 'b');
+  assert.strictEqual(cd.active, true);
+  assert.strictEqual(cd.kind, 'throttled');
+  assert.ok(cd.remainingMs >= 119000, 'cooldown honors the authoritative Retry-After');
+});
+
+test('a billing 429 is surfaced, never masked by failing over (#3)', async function () {
+  const ctx = twoAccounts();
+  let calls = 0;
+  const out = await send(ctx, async function () {
+    calls++;
+    return {
+      status: 429,
+      headers: {},
+      body: Buffer.from('{"error":{"type":"billing_error","message":"Your credit balance is too low"}}'),
+    };
+  });
+  assert.strictEqual(calls, 1); // did NOT try the other account
+  assert.strictEqual(out.res.statusCode, 429);
+  assert.strictEqual(out.res.headers['x-keyflip-error-class'], 'billing');
+  assert.ok(breaker.cooldownOf(ctx, 'b').active); // parked under the quota TTL
+  assert.strictEqual(breaker.cooldownOf(ctx, 'b').kind, 'billing');
+});
+
+test('priority list defines the order; otherwise active first then least-recently-used', function () {
+  const ctx = threeAccounts(); // c active
+  assert.deepStrictEqual(names(proxy.candidates(ctx)), ['c', 'a', 'b']); // unordered tie -> name
+  config.set(ctx, 'proxy.priority', 'a');
+  assert.deepStrictEqual(names(proxy.candidates(ctx)), ['a', 'c', 'b']);
+  config.unset(ctx, 'proxy.priority');
+  breaker.recordSuccess(ctx, 'a', { nowMs: 1000 });
+  breaker.recordSuccess(ctx, 'b', { nowMs: 2000 });
+  assert.deepStrictEqual(names(proxy.candidates(ctx)), ['c', 'a', 'b']); // a used less recently
+  breaker.recordSuccess(ctx, 'a', { nowMs: 3000 });
+  assert.deepStrictEqual(names(proxy.candidates(ctx)), ['c', 'b', 'a']); // LRU flips
+});
+
+test('a cooling account is skipped; if all are cooling the soonest comes back with a wait hint', function () {
+  const ctx = twoAccounts();
+  breaker.markCooldown(ctx, 'b', 60000, 'throttled');
+  assert.deepStrictEqual(names(proxy.candidates(ctx)), ['a']);
+  breaker.markCooldown(ctx, 'a', 30000, 'server');
+  const all = proxy.candidates(ctx);
+  assert.strictEqual(all.length, 1);
+  assert.strictEqual(all[0].name, 'a'); // frees up first
+  assert.ok(all[0].waitMs > 20000 && all[0].waitMs <= 30000);
+});
+
+test('routeState reports the order, cooldowns and policy; clearCooldowns resets them', function () {
+  const ctx = twoAccounts();
+  breaker.markCooldown(ctx, 'a', 30000, 'throttled');
+  const st = proxy.routeState(ctx);
+  assert.deepStrictEqual(st.order, ['b']);
+  const a = st.accounts.filter(function (x) {
+    return x.name === 'a';
+  })[0];
+  assert.strictEqual(a.coolingSeconds, 30);
+  assert.strictEqual(a.cooldownKind, 'throttled');
+  assert.deepStrictEqual(st.policy.priority, []);
+  assert.strictEqual(st.policy.cooldownSeconds.throttled, 60);
+  assert.deepStrictEqual(proxy.clearCooldowns(ctx), ['a']);
+  assert.strictEqual(breaker.cooldownOf(ctx, 'a').active, false);
+});
+
+test('debug headers can be turned off in config', async function () {
+  const ctx = twoAccounts();
+  config.set(ctx, 'proxy.debugHeaders', false);
+  const out = await send(ctx, async function () {
+    return ok('{}');
+  });
+  assert.strictEqual(out.res.headers['x-keyflip-account'], undefined);
 });

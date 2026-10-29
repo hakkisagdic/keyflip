@@ -157,7 +157,10 @@ keyflip <name> --rollback-on-fail  # ...and if that read-back says the switch di
                               # account, put the previous one back (opt-in: it re-writes credentials)
 keyflip next                  # rotate to the next saved account
 keyflip next --strategy best  # ...or pick by remaining quota (also: next-available)
-keyflip provider add <name> --base-url <url> --key-file -   # save a 3rd-party endpoint
+keyflip provider catalog      # built-in presets (Z.AI, Kimi, DeepSeek, MiniMax, OpenRouter, Ollama…)
+keyflip provider add <id> --key-file -                    # ...a preset needs only a key
+keyflip provider add <name> --base-url <url> --key-file - # ...or save any 3rd-party endpoint
+keyflip provider models <id|name>   # ask the endpoint what it really serves (GET /v1/models)
 keyflip use <name>            # route Claude Code to a provider (keyflip provider off = back)
 keyflip doctor                # health check: secrets-in-git, orphaned sessions, versioning, config, login, endpoints, desktop app session, auto-update state, background services (installed? loaded? when did each last run?)
                               #   add --history to also scan every blob keyflip ever committed for a reachable secret
@@ -338,15 +341,27 @@ OpenRouter, anything Anthropic-compatible — by patching the `env` block of
 needed**.
 
 ```bash
-keyflip provider add openrouter --base-url https://openrouter.ai/api/v1 --key-file -   # key on stdin
-keyflip use openrouter          # route Claude Code to it
+keyflip provider catalog        # 19 presets: Z.AI/GLM, Zhipu, Kimi, DeepSeek, MiniMax, Qwen, Ark,
+                                # OpenRouter, OpenAI, Gemini, xAI, Mistral, Groq, Together,
+                                # Fireworks, Anthropic and local Ollama / LM Studio / llama.cpp
+keyflip provider add zai --key-file -          # a preset needs nothing but the key (catalog picks the URL)
+keyflip provider add my-gw --from deepseek --key-file -   # preset under your own name
+keyflip provider add openrouter --base-url https://openrouter.ai/api/v1 --key-file -   # any endpoint
+keyflip use zai                 # route Claude Code to it
 keyflip provider off            # back to your subscription (OAuth)
 keyflip provider list           # what's saved / active
+keyflip provider models zai     # what does the endpoint actually serve? (GET /v1/models)
 keyflip speedtest openrouter    # time the endpoints, use the fastest
 keyflip test openrouter         # one real request: is auth working?
 keyflip doctor                  # health check: secrets-in-git + orphans + versioning + config + login + endpoints + desktop app session + is the desktop app really signed in + auto-update state + every background service (installed / loaded / last output)
 ```
 
+- Each preset records whether it speaks the **Anthropic API** (Claude Code can be
+  pointed at it directly) or the **OpenAI chat API** (needs an Anthropic-compatible
+  gateway/shim, or is for router/cost use only) — `provider use` warns in the
+  latter case instead of silently breaking the CLI. Model names drift, so
+  `provider models <id>` queries the live list; `--model default=…` overrides.
+- Bare `keyflip provider add` on a terminal opens a numbered, category-grouped picker.
 - The **API key is a secret** → stored in the OS credential store, never in the
   metadata file and never on the command line (read it from stdin/a file).
 - Switching only touches the keys keyflip manages; your own `settings.json`
@@ -1087,6 +1102,31 @@ routes each API request to your active account and, on a `429`/`5xx` before any
 byte reaches the client, **fails over to the next healthy account and retries** —
 request-level failover beyond what usage-threshold `autoswitch` can do. It binds
 `127.0.0.1` only.
+
+Failover is deliberate, not first-error-wins:
+
+- **`Retry-After` is honored.** If upstream names a wait that fits
+  `proxy.maxWaitSeconds` (default 10 s), keyflip waits and retries the **same**
+  account once — cheaper than spending another account's quota. A longer wait
+  fails over immediately and parks the account for at least that long.
+- **A billing 429 is not a rate limit.** When the body says credit/billing/
+  org-disabled, the error is returned to you instead of being masked by another
+  account; rate-limit 429s still fail over.
+- **Per-kind cooldowns.** An account that 429s, 401/403s, 529s or 5xxs is parked
+  in `breakers.json` for a kind-specific TTL (`keyflip config`:
+  `proxy.cooldownQuotaSeconds`, `…ThrottledSeconds`, `…OverloadedSeconds`,
+  `…AuthSeconds`, `…ServerSeconds`; `0` disables one). A parked account is skipped;
+  if everything is parked, the one that frees up first is used with a wait.
+- **Deterministic order.** `proxy.priority` (comma-separated account names) first,
+  then the active account, then least-recently-used.
+- **Debug headers** on every proxied response: `x-keyflip-account`,
+  `x-keyflip-attempts`, `x-keyflip-failover`, `x-keyflip-error-class`,
+  `x-keyflip-cooldown` (`proxy.debugHeaders=false` turns them off).
+
+```bash
+keyflip cooldown                      # route order + each account's breaker/cooldown (seconds left)
+keyflip cooldown clear <account>|--all
+```
 
 ### Auto-switch on usage (`autoswitch`)
 

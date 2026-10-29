@@ -136,8 +136,9 @@ const CATALOG = [
     name: 'provider',
     group: 'providers',
     safe: false,
-    usage: 'keyflip provider add <name> --base-url <url> [--key-file <f|->] | list | off',
-    desc: 'Manage 3rd-party endpoints (relay/gateway/Bedrock/OpenRouter).',
+    usage:
+      'keyflip provider catalog | add <id|name> [--base-url <url>] [--from <id>] [--key-file <f|->] | list | models <id|name> | off',
+    desc: 'Manage 3rd-party endpoints (relay/gateway/Bedrock/OpenRouter); a catalog preset needs only a key.',
   },
   {
     name: 'use',
@@ -420,7 +421,14 @@ const CATALOG = [
     group: 'orchestration',
     safe: false,
     usage: 'keyflip proxy start [--wire] | stop | status | stats',
-    desc: 'Command-started failover proxy (429/5xx routes to the next account).',
+    desc: 'Command-started failover proxy (429/5xx routes to the next account, Retry-After aware).',
+  },
+  {
+    name: 'cooldown',
+    group: 'orchestration',
+    safe: true,
+    usage: 'keyflip cooldown [clear <account>|--all]',
+    desc: 'Which accounts are parked (cooldown/breaker) and the order the proxy would try.',
   },
   {
     name: 'autoswitch',
