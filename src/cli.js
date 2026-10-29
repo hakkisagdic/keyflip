@@ -3336,9 +3336,28 @@ function cmdSurfaces(ctx, rest) {
       ? style.bold(s.activeAccount)
       : style.dim(s.present ? 'account in opaque/secret store' : 'not detected');
     print('  ' + mark + ' ' + s.label.padEnd(16) + ' ' + who + '  ' + style.dim('[' + s.kind + ']'));
+    // A row that CAN be switched must say how — the old footer claimed no tool was switchable,
+    // which stopped being true the moment Command Code got its own group.
+    if (s.present && s.switchable && s.switchHint) print('      ' + style.dim('↳ ' + s.switchHint));
+  });
+  const switchable = all.filter(function (s) {
+    return s.present && s.switchable;
   });
   print('');
-  print(style.dim('Claude is managed by the other keyflip commands. Switching other tools is not supported yet.'));
+  print(
+    style.dim(
+      'Claude is managed by keyflip itself; ChatGPT/Codex and Kiro have their own groups. ' +
+        (switchable.length
+          ? 'Switchable from this list: ' +
+            switchable
+              .map(function (s) {
+                return s.label;
+              })
+              .join(', ') +
+            '.'
+          : 'The tools above are detection-only.'),
+    ),
+  );
 }
 
 // MCP server (stdio) so agents can inspect/switch accounts themselves.
@@ -4521,6 +4540,7 @@ function cmdAgents(ctx, rest) {
   const agents = _agents;
   const present = agents.presentAgents(ctx);
   const cfgPresent = agents.presentAgentConfig(ctx);
+  const installed = agents.installedAgents(ctx);
   const rows = agents.REGISTRY.map(function (a) {
     const files = present.indexOf(a.id) !== -1 ? agents.collectAgentMemory(ctx, { only: [a.id] }) : [];
     const cfg = cfgPresent.indexOf(a.id) !== -1 ? agents.collectAgentConfig(ctx, { only: [a.id] }) : [];
@@ -4532,6 +4552,7 @@ function cmdAgents(ctx, rest) {
       label: a.label,
       roots: a.roots,
       present: present.indexOf(a.id) !== -1,
+      installed: installed.indexOf(a.id) !== -1,
       files: files.length,
       config: cfg.length,
       redactions: redactions,
@@ -4547,7 +4568,7 @@ function cmdAgents(ctx, rest) {
       style.dim('(memory = home-level markdown; config = MCP/settings, redacted):'),
   );
   rows.forEach(function (r) {
-    const mark = r.present || r.config ? style.ok('●') : style.dim('○');
+    const mark = r.installed ? style.ok('●') : style.dim('○');
     const parts = [];
     if (r.present) parts.push(r.files + ' memory file(s)');
     if (r.config)
@@ -4556,7 +4577,8 @@ function cmdAgents(ctx, rest) {
           ' config file(s)' +
           (r.redactions ? ' (' + r.redactions + ' secret' + (r.redactions === 1 ? '' : 's') + ' redacted)' : ''),
       );
-    const detail = parts.length ? parts.join(', ') : 'not found';
+    if (!parts.length) parts.push(r.installed ? 'installed — nothing to carry here' : 'not found');
+    const detail = parts.join(', ');
     print('  ' + mark + ' ' + r.label.padEnd(12) + ' ' + style.dim(detail));
   });
   const anyMem = rows.some(function (r) {
@@ -4578,7 +4600,14 @@ function cmdAgents(ctx, rest) {
         style.bold('keyflip migrate export bundle.json --agent-config') +
         style.dim('  (secrets are ALWAYS redacted — re-enter keys on the new machine)'),
     );
-  if (!anyMem && !anyCfg) print(style.dim('None detected on this machine. Auth/credential files are never carried.'));
+  if (!anyMem && !anyCfg)
+    print(
+      style.dim(
+        installed.length
+          ? 'Installed, but there is no home-level memory/config to carry (auth files are never carried).'
+          : 'None detected on this machine. Auth/credential files are never carried.',
+      ),
+    );
 }
 
 // Move a whole machine's Claude world to another one: ALL accounts (secrets) +

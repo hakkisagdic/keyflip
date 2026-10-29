@@ -1087,3 +1087,29 @@ test('cost prices reports a failed refresh instead of pretending it worked', fun
   // Nothing was cached by the failed refresh.
   assert.strictEqual(JSON.parse(run(home, ['cost', 'prices', '--json']).stdout).source, 'bundled');
 });
+
+test('agents: an installed tool with only a login reads as installed, not "not found"', function () {
+  const home = setupHome();
+  fs.mkdirSync(path.join(home, '.commandcode'), { recursive: true });
+  fs.writeFileSync(path.join(home, '.commandcode', 'auth.json'), '{"userName":"someone"}', { mode: 0o600 });
+  const res = run(home, ['agents']);
+  assert.strictEqual(res.status, 0, res.stderr);
+  const line = res.stdout.split('\n').find(function (l) {
+    return l.indexOf('Command Code') !== -1;
+  });
+  assert.ok(line, 'Command Code is listed');
+  assert.ok(line.indexOf('●') !== -1, 'marked present: ' + line);
+  assert.ok(line.indexOf('nothing to carry') !== -1, line);
+  assert.ok(res.stdout.indexOf('None detected on this machine') === -1);
+});
+
+test('surfaces: a switchable tool says how, and the footer no longer denies switching', function () {
+  const home = setupHome();
+  fs.mkdirSync(path.join(home, '.commandcode'), { recursive: true });
+  fs.writeFileSync(path.join(home, '.commandcode', 'auth.json'), '{"userName":"someone"}', { mode: 0o600 });
+  const res = run(home, ['surfaces']);
+  assert.strictEqual(res.status, 0, res.stderr);
+  assert.ok(res.stdout.indexOf('keyflip commandcode') !== -1, res.stdout);
+  assert.ok(res.stdout.indexOf('Switchable from this list: Command Code') !== -1, res.stdout);
+  assert.ok(res.stdout.indexOf('Switching other tools is not supported yet') === -1);
+});

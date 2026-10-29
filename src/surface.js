@@ -186,6 +186,7 @@ function detectSpec(ctx, spec, opts) {
     activeAccount: activeAccount,
     accounts: accounts,
     switchable: switchable,
+    switchHint: switchable ? spec.switchHint || null : null,
     store: resolveStore(ctx, spec),
     note: note,
   };

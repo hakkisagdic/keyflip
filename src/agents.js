@@ -9,24 +9,29 @@ import * as fsutil from './fsutil.js';
 import * as _secretscan from './secretscan.js';
 
 // Each root is relative to $HOME. A root can be a single file or a directory of memory files.
+// `detect` is the INSTALLATION footprint, kept separate from `roots`: a tool can be installed
+// with no home-level memory at all (Kiro, opencode, Command Code) and with no config file yet
+// (Command Code's MCP file is created on first enable). Without it the listing called an
+// installed tool "not found" — Kiro and Command Code were both invisible here while
+// `keyflip surfaces`/`mcpreg` saw them.
 const REGISTRY = [
-  { id: 'cursor', label: 'Cursor', roots: ['.cursor/rules'] },
-  { id: 'gemini', label: 'Gemini CLI', roots: ['.gemini/GEMINI.md'] },
-  { id: 'codex', label: 'Codex CLI', roots: ['.codex/AGENTS.md', '.codex/memories'] },
+  { id: 'cursor', label: 'Cursor', roots: ['.cursor/rules'], detect: ['.cursor'] },
+  { id: 'gemini', label: 'Gemini CLI', roots: ['.gemini/GEMINI.md'], detect: ['.gemini'] },
+  { id: 'codex', label: 'Codex CLI', roots: ['.codex/AGENTS.md', '.codex/memories'], detect: ['.codex'] },
   // Copilot's memory is project-level (.github/copilot-instructions.md, AGENTS.md) and travels
   // with its git repo, so no home-level memory roots — but it DOES have home-level config below.
-  { id: 'copilot', label: 'GitHub Copilot', roots: [] },
-  { id: 'opencode', label: 'opencode', roots: [] }, // home-level memory NEEDS-VERIFICATION; config below
-  { id: 'aider', label: 'Aider', roots: [] }, // memory is project CONVENTIONS.md (travels w/ git)
+  { id: 'copilot', label: 'GitHub Copilot', roots: [], detect: ['.copilot', '.config/github-copilot'] },
+  { id: 'opencode', label: 'opencode', roots: [], detect: ['.config/opencode', '.local/share/opencode'] }, // home-level memory NEEDS-VERIFICATION; config below
+  { id: 'aider', label: 'Aider', roots: [], detect: ['.aider.conf.yml', '.aider.conf.yaml', '.aider'] }, // memory is project CONVENTIONS.md (travels w/ git)
   // Windsurf (Codeium): global rules + memories live under ~/.codeium/windsurf/memories/
   // (global_rules.md + per-workspace memory .md files). Project rules (.windsurf/rules) travel w/ git.
-  { id: 'windsurf', label: 'Windsurf', roots: ['.codeium/windsurf/memories'] },
+  { id: 'windsurf', label: 'Windsurf', roots: ['.codeium/windsurf/memories'], detect: ['.codeium/windsurf'] },
   // Kiro (AWS): steering docs are project-level (.kiro/steering/*.md, travels w/ git); no standard
   // home-level memory. Home MCP config below.
-  { id: 'kiro', label: 'Kiro', roots: [] },
+  { id: 'kiro', label: 'Kiro', roots: [], detect: ['.kiro'] },
   // Command Code: memory is project-level AGENTS.md (travels with the repo); ~/.commandcode holds
   // only login/config. Its MCP servers are carried below.
-  { id: 'command-code', label: 'Command Code', roots: [] },
+  { id: 'command-code', label: 'Command Code', roots: [], detect: ['.commandcode'] },
 ];
 // J1 config-tier: per-agent CONFIG files (MCP servers, settings). These CAN hold secrets, so
 // they are ALWAYS run through the secret scanner + redacted before carrying — the structure
@@ -155,6 +160,26 @@ function presentAgents(ctx) {
   });
 }
 
+// Which agents are INSTALLED here — memory roots, the installation footprint, or a config file.
+// This is what the listing marks ●/○ with; `presentAgents` stays the narrower "has memory to
+// carry" question used by the migrate paths.
+function installedAgents(ctx) {
+  const withConfig = presentAgentConfig(ctx);
+  return REGISTRY.filter(function (a) {
+    if (withConfig.indexOf(a.id) !== -1) return true;
+    const paths = a.roots.concat(a.detect || []);
+    return paths.some(function (r) {
+      try {
+        return fs.existsSync(path.join(ctx.home, r));
+      } catch (e) {
+        return false;
+      }
+    });
+  }).map(function (a) {
+    return a.id;
+  });
+}
+
 // J1 config-tier: collect present agents' config files. By DEFAULT every secret is redacted
 // (structure travels, keys don't). The user can opt to carry the real keys with opts.redact
 // === false — the caller MUST then ensure the bundle is encrypted (CLI enforces this).
@@ -252,6 +277,7 @@ export {
   collectAgentConfig,
   mergeAgentConfig,
   presentAgents,
+  installedAgents,
   presentAgentConfig,
   isMemoryFile,
 };

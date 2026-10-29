@@ -218,6 +218,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`keyflip agents` no longer calls an installed tool "not found".** Presence was decided by
+  home-level *memory* roots plus a config file, so a tool that keeps only a login (Kiro, opencode,
+  Command Code) — or whose MCP file appears only after the first `mcpreg enable` — read as absent
+  while `keyflip surfaces` and `mcpreg` saw it. Each registry row now carries an installation
+  footprint (`detect`), a new `installedAgents()` drives the ●/○ mark, and a row with nothing to
+  carry says `installed — nothing to carry here` instead of `not found`; the JSON listing gained
+  `installed`. `presentAgents()` keeps its old meaning ("has memory to carry"), so the migrate
+  paths are unchanged. Live: Kiro, opencode and Command Code now show as installed here.
+
+- **`keyflip surfaces` says how to switch a switchable tool, and stopped denying it can.** The
+  human listing printed only the detection line, so the footer still claimed "Switching other
+  tools is not supported yet" after Command Code got its own group. A switchable row now prints its
+  hint (`↳ keyflip commandcode status | switch <name>`), the footer names the tools that are
+  switchable from the list, and the detect result — including `keyflip_surfaces` over MCP — carries
+  `switchHint` instead of leaving the information inside `note`.
+
 - **`conv search --limit` is honored when the semantic side is missing.** Hybrid runs the lexical
   retriever wide (50 candidates) so rank fusion has room to work; with no vectors to fuse, that
   wide list was handed back as the page, so `--limit 3` printed 50 results. The fallback now cuts
