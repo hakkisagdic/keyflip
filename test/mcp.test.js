@@ -849,6 +849,49 @@ test('parity MCP: mcpreg set/list/remove round-trips (and gates on confirm)', as
   assert.ok(JSON.stringify((await toolByName('keyflip_mcpreg_list').run(ctx)).servers).indexOf('ctx7') !== -1);
   await toolByName('keyflip_mcpreg_remove').run(ctx, { name: 'ctx7', confirm: true });
   assert.strictEqual(JSON.stringify((await toolByName('keyflip_mcpreg_list').run(ctx)).servers).indexOf('ctx7'), -1);
+  // The list reports the surfaces too, and "all" is a valid surface for the enable tool.
+  const rows = (await toolByName('keyflip_mcpreg_list').run(ctx)).surfaces;
+  assert.ok(
+    rows.some(function (r) {
+      return r.id === 'cursor';
+    }),
+  );
+  assert.ok(
+    rows.some(function (r) {
+      return r.id === 'codex' && r.supported === false;
+    }),
+  );
+  await toolByName('keyflip_mcpreg_set').run(ctx, { name: 'files', command: 'node', confirm: true });
+  const all = await toolByName('keyflip_mcpreg_enable').run(ctx, {
+    name: 'files',
+    surface: 'all',
+    enabled: true,
+    confirm: true,
+  });
+  assert.strictEqual(all.results['claude-code'], 'applied');
+  await toolByName('keyflip_mcpreg_remove').run(ctx, { name: 'files', confirm: true });
+});
+
+test('CLI: mcpreg enable reaches every agent on the machine; --code narrows it to Claude', function () {
+  const home = mkhome();
+  fs.mkdirSync(path.join(home, '.cursor'), { recursive: true });
+  fs.mkdirSync(path.join(home, '.gemini'), { recursive: true });
+  assert.strictEqual(cliRun(home, ['mcpreg', 'add', 'ctx7', '--', 'npx', '-y', 'ctx7']).status, 0);
+  const r = cliRun(home, ['mcpreg', 'enable', 'ctx7']);
+  assert.strictEqual(r.status, 0, r.stderr);
+  const readCfg = function (rel) {
+    return JSON.parse(fs.readFileSync(path.join(home, rel), 'utf8'));
+  };
+  assert.strictEqual(readCfg('.cursor/mcp.json').mcpServers.ctx7.command, 'npx');
+  assert.strictEqual(readCfg('.gemini/settings.json').mcpServers.ctx7.command, 'npx');
+  assert.strictEqual(readCfg('.claude.json').mcpServers.ctx7.command, 'npx');
+  // Kiro is not installed in this home: reported as skipped, and no config invented for it.
+  assert.match(r.stdout, /kiro:\s+skipped \(agent not installed\)/);
+  assert.ok(!fs.existsSync(path.join(home, '.kiro')));
+  const r2 = cliRun(home, ['mcpreg', 'disable', 'ctx7', '--code']);
+  assert.strictEqual(r2.status, 0, r2.stderr);
+  assert.strictEqual(readCfg('.claude.json').mcpServers.ctx7, undefined);
+  assert.ok(readCfg('.cursor/mcp.json').mcpServers.ctx7, 'narrowing to Claude must not touch Cursor');
 });
 
 test('parity MCP: link/links pin and list a directory→account', async function () {

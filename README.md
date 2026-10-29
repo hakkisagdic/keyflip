@@ -1296,6 +1296,27 @@ status` shows whether it's active; `keyflip autoswitch uninstall` stops it.
 Defaults (threshold/strategy/group/interval) come from `keyflip config` if flags
 aren't given. MCP: `keyflip_autoswitch_service` (`action=status|install|remove`).
 
+### One MCP-server registry, every agent
+
+`keyflip mcpreg add ctx -- npx -y ctx7` stores a server once; `keyflip mcpreg enable ctx`
+upserts it into **every agent config keyflip can write on this machine** — Claude Code
+(`~/.claude.json`), Claude Desktop (`claude_desktop_config.json`), Cursor
+(`~/.cursor/mcp.json`), Kiro (`~/.kiro/settings/mcp.json`), Gemini CLI
+(`~/.gemini/settings.json`), Devin Desktop/Windsurf (`mcp_config.json`) and opencode
+(`opencode.json`, under `mcp`, in its own `{type:'local', command:[argv], environment}`
+shape). Disable deletes only the named entry; `--code` / `--desktop` / `--surface <id>`
+narrows the write, and no flags means all of them.
+
+Two rules keep this from damaging other tools. A config that **exists but does not parse
+aborts** the write instead of being replaced by `{}`. And a config is **only created** when
+the agent is installed and its path is unambiguous: Windsurf's file moved across the Devin
+rename (three plausible locations) and opencode ships `opencode.jsonc` with comments, so
+those two are edited only when the exact JSON file is already there. `keyflip mcpreg
+surfaces` prints every target, its path, the servers it carries, and why a target is
+skipped — agents keyflip cannot write safely are listed **with the reason**: Codex keeps
+servers in TOML (`[mcp_servers]`), Continue uses an array under `experimental.mcpServers`,
+and Copilot's file is repo-scoped.
+
 ### For agents: MCP server & skill
 
 Agents shouldn't have to guess the CLI — keyflip speaks **MCP**:

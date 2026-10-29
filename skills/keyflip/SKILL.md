@@ -498,7 +498,10 @@ Antigravity and Qoder keep a global login — switch it first (`keyflip chatgpt`
   is a git repo; every mutation auto-commits (**secrets are git-ignored** — creds/*.cred,
   browser sessions, tokens stay in the OS store), so any change is inspectable and
   reversible. `keyflip versioning [on|off]` toggles it (ON by default; needs `git`).
-- `keyflip mcpreg` — manage MCP servers once, project into Claude Code + Desktop.
+- `keyflip mcpreg` — register an MCP server once, project it into every agent keyflip can write
+  (Claude Code/Desktop, Cursor, Kiro, Gemini CLI, Devin/Windsurf, opencode); `mcpreg surfaces` names
+  each target, its path and why one is skipped. Codex (TOML), Continue (array shape) and Copilot
+  (repo-scoped) are NOT projected — say so instead of writing their files by hand.
 - `keyflip gateway use <provider>` — route the Claude **desktop app** through a
   provider gateway (restart the app to apply).
 

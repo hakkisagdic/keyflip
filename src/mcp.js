@@ -2962,13 +2962,17 @@ const TOOLS = [
   },
   {
     name: 'keyflip_mcpreg_list',
-    title: 'List registered third-party MCP servers',
+    title: 'List registered MCP servers and the surfaces keyflip can write',
     description:
-      'List the MCP servers keyflip has registered (that it can enable/disable in Claude Code / Desktop configs). Read-only.',
+      'List the MCP servers keyflip has registered, plus every surface it knows how to project them into: ' +
+      'claude-code, claude-desktop, cursor, kiro, gemini, devin (Devin Desktop / Windsurf) and opencode — each with ' +
+      'its config path, state (ready / no-config / not-installed / jsonc / unreadable) and the servers it currently ' +
+      'carries. Agents keyflip cannot write safely (codex TOML, the Continue array shape, copilot repo scope) are ' +
+      'returned as supported:false WITH the reason — never silently omitted. Read-only.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
     annotations: RO,
     run: async function (ctx) {
-      return { servers: _mcpreg.list(ctx) };
+      return { servers: _mcpreg.list(ctx), surfaces: _mcpreg.surfaces(ctx) };
     },
   },
   {
@@ -3007,14 +3011,21 @@ const TOOLS = [
   },
   {
     name: 'keyflip_mcpreg_enable',
-    title: 'Enable/disable a registered MCP server on a surface',
+    title: 'Enable/disable a registered MCP server on one surface or all',
     description:
-      'Enable or disable a registered MCP server on a surface — "claude-code" or "claude-desktop". Mutating (writes the target app config) — ask the user, then confirm=true.',
+      'Enable or disable a registered MCP server on a surface. Surfaces: claude-code, claude-desktop, cursor, kiro, ' +
+      'gemini, devin, opencode — or "all" for every surface this machine has (a surface whose agent is absent reports ' +
+      'skipped, it is not an error). Each surface keeps its own shape: opencode gets {type:local, command:[argv], ' +
+      'environment}, the rest get {command, args, env}; only the named entry is touched and a corrupt config aborts ' +
+      'instead of being overwritten. Mutating (writes the target app config) — ask the user, then confirm=true.',
     inputSchema: {
       type: 'object',
       properties: {
         name: { type: 'string' },
-        surface: { type: 'string', enum: ['claude-code', 'claude-desktop'] },
+        surface: {
+          type: 'string',
+          description: 'claude-code | claude-desktop | cursor | kiro | gemini | devin | opencode | all',
+        },
         enabled: { type: 'boolean' },
         confirm: confirmProp.confirm,
       },
@@ -3024,21 +3035,25 @@ const TOOLS = [
     annotations: MUT,
     run: async function (ctx, args) {
       needConfirm(args);
+      const surface = String(args.surface);
+      const ids = surface === 'all' ? _mcpreg.TARGET_IDS : [surface];
       const l = await lock.acquire(ctx.configDir);
-      let r;
+      const results = {};
       try {
-        r = _mcpreg.setEnabled(ctx, String(args.name), String(args.surface), !!args.enabled);
+        ids.forEach(function (id) {
+          results[id] = _mcpreg.setEnabled(ctx, String(args.name), id, !!args.enabled);
+        });
       } finally {
         l.release();
       }
-      return { name: String(args.name), surface: String(args.surface), enabled: !!args.enabled, result: r };
+      return { name: String(args.name), enabled: !!args.enabled, results: results };
     },
   },
   {
     name: 'keyflip_mcpreg_remove',
     title: 'Remove a registered MCP server',
     description:
-      "Remove a registered MCP server from keyflip's registry and unhook it from both surfaces. Mutating — ask the user, then confirm=true.",
+      "Remove a registered MCP server from keyflip's registry and unhook it from every surface it was projected into. Mutating — ask the user, then confirm=true.",
     inputSchema: {
       type: 'object',
       properties: { name: { type: 'string' }, confirm: confirmProp.confirm },

@@ -548,8 +548,8 @@ const CATALOG = [
     name: 'mcpreg',
     group: 'config',
     safe: true,
-    usage: 'keyflip mcpreg [add|list|enable|disable|import]',
-    desc: 'Manage MCP servers across Claude Code + Desktop.',
+    usage: 'keyflip mcpreg [add|list|surfaces|enable|disable|import]',
+    desc: 'Manage MCP servers once, project into every agent keyflip can write.',
   },
   {
     name: 'shell-init',

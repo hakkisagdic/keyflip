@@ -9,6 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **One MCP registry, projected into every agent keyflip can write.** `mcpreg` knew only Claude Code
+  and Claude Desktop, so the same server had to be re-typed into every other agent's config. Now
+  `keyflip mcpreg enable <name>` also lands the entry in Cursor (`~/.cursor/mcp.json`), Kiro
+  (`~/.kiro/settings/mcp.json`), Gemini CLI (`~/.gemini/settings.json`), Devin Desktop/Windsurf (an
+  existing `mcp_config.json`, wherever the rename left it) and opencode (`opencode.json`, under
+  `mcp`, as `{type:'local',command:[argv],environment}`) — each path and shape taken from the
+  agent's own docs or config schema, not from a guess (Kiro MCP docs, Gemini CLI docs, opencode's
+  `config.json` `McpLocalConfig`, the Devin Desktop MCP docs). `keyflip mcpreg surfaces` prints every
+  target, its path, the servers it carries and why a target is skipped; Codex (TOML
+  `[mcp_servers]`), Continue (an array under `experimental.mcpServers`) and Copilot (a repo-scoped
+  file) are named as **not projected**, with the reason, instead of being written blind. The Claude
+  path's safety rules carry over: a config that exists but does not parse aborts (never replaced by
+  `{}`), only the named entry is touched, a config is CREATED only when the agent is installed and
+  its path is unambiguous, an `opencode.jsonc` with comments is reported (`skipped-jsonc`) rather
+  than rewritten without them, and a write keeps the file's mode (0600 when new). `--code` /
+  `--desktop` / `--surface <id>` narrows the write; no flag means every surface on this machine.
+  Over MCP, `keyflip_mcpreg_list` now returns `surfaces` alongside `servers` and
+  `keyflip_mcpreg_enable` accepts any surface id or `all`.
 - **The release verifying key is embedded, so a real license works the moment it is bought.**
   `src/license.js` carried the placeholder `REPLACE_AT_RELEASE_WITH_ED25519_SPKI_DER_BASE64`, so
   every shipped client verified *nothing* until a release patched the key in. The issuer keypair now

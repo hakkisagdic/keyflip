@@ -73,8 +73,20 @@ same way `provusage.js` ported CodexBar. Goal (owner's words): "convert all asse
       every file including hidden ones so an edit cannot pass as "ok" (v1 rows from older manifests are
       still read), and `add`/`remove` now prompt on a TTY and require `--yes` otherwise. `.git` is
       neither scanned, copied nor hashed. `test/skillsync.test.js` carries the regressions.
-- [ ] MCP-server distribution to other agents (today `mcpreg` projects into Claude Code + Desktop
-      only); needs RoleCraft's per-agent `mcp` configPath/format table.
+- [x] MCP-server distribution to other agents. `mcpreg` now projects one registry into Claude
+      Code/Desktop, Cursor (`~/.cursor/mcp.json`), Kiro (`~/.kiro/settings/mcp.json`), Gemini CLI
+      (`~/.gemini/settings.json`), Devin/Windsurf (an EXISTING `mcp_config.json` among the three
+      locations the rename left behind) and opencode (`opencode.json`, `mcp` key,
+      `{type:'local',command:[argv],environment}`). Paths/formats were taken from the agents' own
+      docs and schema (Kiro MCP docs, Gemini CLI docs, opencode `config.json` `McpLocalConfig`,
+      Devin Desktop MCP docs) rather than guessed. Safety rules inherited from the Claude path: a
+      config that exists but does not parse aborts (never `{}`), only the named entry is touched, a
+      file is CREATED only when the agent dir exists and the path is unambiguous, `opencode.jsonc`
+      with comments is reported (`skipped-jsonc`) instead of rewritten, writes keep the original
+      mode (0600 for new files). Codex (TOML `[mcp_servers]`), Continue (array under
+      `experimental.mcpServers`) and Copilot (repo-scoped) are listed as **not projected with the
+      reason** in `keyflip mcpreg surfaces` and the MCP tool. Tests: `test/mcpreg.test.js` +
+      CLI/MCP parity in `test/mcp.test.js`.
 
 ## C. Hardware / account validation — build-done, needs a real device/account
 

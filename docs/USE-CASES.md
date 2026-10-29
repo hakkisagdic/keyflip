@@ -483,8 +483,9 @@ keyflip skill sync                     # re-apply sources; a copy you edited is 
 keyflip skill list | remove <name>     # per-agent state; only removes keyflip-installed copies
 keyflip skill remove <name> --yes      # non-interactive scripts must confirm the write
 keyflip mcp --setup                    # show how to register keyflip's MCP server
-keyflip mcpreg add ctx -- some-server  # manage MCP servers once, project into Code + Desktop
-keyflip mcpreg list | enable | disable | remove | import
+keyflip mcpreg add ctx -- some-server  # register once, project into every agent keyflip can write
+keyflip mcpreg list | surfaces | enable | disable | remove | import
+keyflip mcpreg enable ctx --surface cursor   # or --code / --desktop; no flag = every surface present
 ```
 - **Via MCP tools** (prefer over shelling out): `keyflip_status`, `keyflip_list`,
   `keyflip_switch`, `keyflip_switch_plan`, `keyflip_verify`, `keyflip_refresh`,

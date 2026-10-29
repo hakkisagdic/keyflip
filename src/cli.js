@@ -280,7 +280,9 @@ function usage() {
     '  keyflip secrets [list|tolerate <path> [--kind K]|untolerate <path>]   which of those findings are EXPECTED (silences the alarm, never the clean-up)',
   );
   print('  keyflip share <name> [--no-secrets]   make a keyflip:// link; import with `keyflip import`');
-  print('  keyflip mcpreg [add|list|enable|disable|import]   manage MCP servers across Claude Code + Desktop');
+  print(
+    '  keyflip mcpreg [add|list|surfaces|enable|disable|import]   one MCP registry, projected into every agent keyflip can write',
+  );
   print('  keyflip gateway use <provider> | off   route the Claude DESKTOP app through a provider gateway');
   print('  keyflip sync [push|pull|test] --url <webdav> --passphrase-file <f>   encrypted cross-device sync');
   print('  keyflip migrate export/import <file> [--passphrase-file <f>]   move ALL accounts+providers+');
@@ -4171,6 +4173,33 @@ function positionals(args, valueFlags) {
   }
   return out;
 }
+// One line per MCP surface: what it is, where its config is, and which registered servers it
+// carries. A surface keyflip cannot write is named WITH the reason — never dropped silently.
+function shortHome(ctx, p) {
+  if (!p) return '';
+  const h = ctx.home || '';
+  return h && p.indexOf(h + path.sep) === 0 ? '~' + p.slice(h.length) : p;
+}
+function skipReason(r) {
+  const map = {
+    'skipped-no-config': 'no config file yet',
+    'skipped-not-installed': 'agent not installed',
+    'skipped-jsonc': 'opencode.jsonc has comments keyflip will not drop',
+  };
+  return map[r] || String(r).replace(/^skipped-/, '');
+}
+function surfaceLine(ctx, r) {
+  const name = String(r.id).padEnd(16);
+  if (r.supported === false) return style.dim('○ ' + name + 'not projected — ' + r.reason);
+  if (r.state === 'unreadable') return style.warn('! ') + name + shortHome(ctx, r.path) + '  ' + style.dim(r.error);
+  if (r.state === 'ready') {
+    const used = r.servers && r.servers.length ? '  ' + style.dim('[' + r.servers.join(', ') + ']') : '';
+    return style.ok('●') + ' ' + name + shortHome(ctx, r.path) + used;
+  }
+  if (r.state === 'will-create') return style.dim('+ ' + name + 'will create ' + shortHome(ctx, r.path));
+  return style.dim('○ ' + name + skipReason('skipped-' + r.state) + '  ' + shortHome(ctx, r.path));
+}
+
 function cmdMcpreg(ctx, rest) {
   const sub = rest[0];
   const args = rest.slice(1);
@@ -4189,16 +4218,33 @@ function cmdMcpreg(ctx, rest) {
   }
   if (sub === 'list' || sub === undefined) {
     const items = mcpreg.list(ctx);
+    const rows = mcpreg.surfaces(ctx);
     if (JSON_MODE) {
-      jsonOut({ servers: items });
+      jsonOut({ servers: items, surfaces: rows });
       return;
     }
     if (!items.length) {
       print('No MCP servers registered (add one: keyflip mcpreg add …).');
+    } else {
+      items.forEach(function (s) {
+        print('  ' + s.name + '   ' + s.command + ' ' + (s.args || []).join(' '));
+      });
+    }
+    print('');
+    print('Surfaces:');
+    rows.forEach(function (r) {
+      print('  ' + surfaceLine(ctx, r));
+    });
+    return;
+  }
+  if (sub === 'surfaces') {
+    const rows = mcpreg.surfaces(ctx);
+    if (JSON_MODE) {
+      jsonOut({ surfaces: rows });
       return;
     }
-    items.forEach(function (s) {
-      print('  ' + s.name + '   ' + s.command + ' ' + (s.args || []).join(' '));
+    rows.forEach(function (r) {
+      print(surfaceLine(ctx, r));
     });
     return;
   }
@@ -4206,23 +4252,44 @@ function cmdMcpreg(ctx, rest) {
     const name = args.filter(function (a) {
       return a.indexOf('-') !== 0;
     })[0];
-    if (!name) return fail('usage: keyflip mcpreg ' + sub + ' <name> [--code|--desktop|--all]');
+    if (!name) return fail('usage: keyflip mcpreg ' + sub + ' <name> [--surface <id>|--code|--desktop|--all]');
     const surfaces = [];
-    if (args.indexOf('--all') !== -1 || (args.indexOf('--code') === -1 && args.indexOf('--desktop') === -1)) {
-      surfaces.push('claude-code', 'claude-desktop');
-    } else {
-      if (args.indexOf('--code') !== -1) surfaces.push('claude-code');
-      if (args.indexOf('--desktop') !== -1) surfaces.push('claude-desktop');
+    for (let i = 0; i < args.length; i++) {
+      if (args[i] === '--surface' && args[i + 1]) surfaces.push(args[i + 1]);
+      if (args[i] === '--code') surfaces.push('claude-code');
+      if (args[i] === '--desktop') surfaces.push('claude-desktop');
     }
-    surfaces.forEach(function (s) {
+    // No surface named = every surface this machine has. Writing only Claude's two left the
+    // same server unconfigured in the other agents on the same machine — the whole point of a
+    // registry is that you say it once.
+    const ids = surfaces.length ? surfaces : mcpreg.TARGET_IDS;
+    ids.forEach(function (s) {
       const r = mcpreg.setEnabled(ctx, name, s, sub === 'enable');
       print(
         '  ' +
           s +
           ': ' +
-          (r === 'skipped-no-config' ? 'skipped (app config not present)' : sub === 'enable' ? 'enabled' : 'disabled'),
+          (r === 'applied' ? (sub === 'enable' ? 'enabled' : 'disabled') : 'skipped (' + skipReason(r) + ')'),
       );
     });
+    if (surfaces.length === 0) {
+      const gaps = mcpreg.surfaces(ctx).filter(function (r) {
+        return r.supported === false;
+      });
+      if (gaps.length) {
+        print(
+          style.dim(
+            '  not projected: ' +
+              gaps
+                .map(function (g) {
+                  return g.app;
+                })
+                .join(', ') +
+              ' — run `keyflip mcpreg surfaces` for why',
+          ),
+        );
+      }
+    }
     return;
   }
   if (sub === 'remove' || sub === 'rm') {
@@ -4235,7 +4302,7 @@ function cmdMcpreg(ctx, rest) {
     print('imported ' + imp.length + ' server(s): ' + imp.join(', '));
     return;
   }
-  return fail('usage: keyflip mcpreg [add|list|enable|disable|remove|import]');
+  return fail('usage: keyflip mcpreg [add|list|surfaces|enable|disable|remove|import]');
 }
 
 // #17 Claude Desktop third-party gateway

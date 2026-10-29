@@ -241,6 +241,8 @@ import CommandReference from '../../../components/CommandReference.astro';
       <div id="mcp">
         <CommandReference title="MCP ve Beceriler" commands={[
           { cmd: 'keyflip mcp [--setup|--register]', desc: 'Ajanlar için stdio üzerinden MCP sunucusu (--register: mutlak yollu kendi kaydı)' },
+          { cmd: 'keyflip mcpreg add <ad> -- <komut> | enable <ad> [--surface id|--code|--desktop]', desc: 'Tek kayıt, keyflip’in yazabildiği her ajana yansır (Claude Code/Desktop, Cursor, Kiro, Gemini CLI, Devin/Windsurf, opencode); bayrak yoksa mevcut her yüzey' },
+          { cmd: 'keyflip mcpreg list | surfaces | disable | remove | import', desc: 'Sunucunun nereye düştüğü ve bir hedefin neden atlandığı; Codex (TOML), Continue (dizi) ve Copilot (depo kapsamlı) “not projected” olarak adlandırılır' },
           { cmd: 'keyflip install-skill', desc: 'Paketli keyflip becerisi → ~/.claude/skills/keyflip + tespit edilen diğer ajanlar' },
           { cmd: 'keyflip skill agents', desc: 'Keyflip’in yazabildiği tüm ajan beceri dizinleri ve hangi araçların kurulu olduğu' },
           { cmd: 'keyflip skill add <repo|dir|tgz> [--agents a,b] [--yes]', desc: 'Beceri kur: tespit edilen her ajana (veya yalnız adını verdiklerine); sır taşıyan (gizli dosyalar dahil) veya symlink içeren beceriyi reddeder' },

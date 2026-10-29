@@ -483,8 +483,9 @@ keyflip skill sync                     # kaynakları yeniden uygula; senin düze
 keyflip skill list | remove <ad>       # ajan başına durum; yalnız keyflip'in kurduklarını kaldırır
 keyflip skill remove <ad> --yes        # etkileşimsiz betikler yazmayı onaylamalı
 keyflip mcp --setup                    # keyflip'in MCP sunucusunu nasıl kaydedeceğini göster
-keyflip mcpreg add ctx -- some-server  # MCP sunucularını bir kez yönet, Code + Desktop'a yansıt
-keyflip mcpreg list | enable | disable | remove | import
+keyflip mcpreg add ctx -- some-server  # bir kez kaydet, keyflip'in yazabildiği her ajana yansıt
+keyflip mcpreg list | surfaces | enable | disable | remove | import
+keyflip mcpreg enable ctx --surface cursor   # veya --code / --desktop; bayrak yoksa mevcut her yüzey
 ```
 - **MCP araçları ile** (shell'e göre tercih et): `keyflip_status`, `keyflip_list`,
   `keyflip_switch`, `keyflip_switch_plan`, `keyflip_verify`, `keyflip_refresh`,

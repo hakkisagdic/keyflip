@@ -1388,6 +1388,26 @@ autoswitch status` aktif mi gösterir; `keyflip autoswitch uninstall` durdurur.
 Varsayılanlar (threshold/strategy/group/interval), flag verilmezse `keyflip
 config`'ten gelir. MCP: `keyflip_autoswitch_service` (`action=status|install|remove`).
 
+### Tek MCP sunucu kaydı, her ajan
+
+`keyflip mcpreg add ctx -- npx -y ctx7` sunucuyu bir kez saklar; `keyflip mcpreg enable ctx`
+onu **bu makinede keyflip'in yazabildiği her ajan yapılandırmasına** ekler — Claude Code
+(`~/.claude.json`), Claude Desktop (`claude_desktop_config.json`), Cursor
+(`~/.cursor/mcp.json`), Kiro (`~/.kiro/settings/mcp.json`), Gemini CLI
+(`~/.gemini/settings.json`), Devin Desktop/Windsurf (`mcp_config.json`) ve opencode
+(`opencode.json`, `mcp` altında, kendi `{type:'local', command:[argv], environment}`
+şekliyle). Disable yalnızca adı verilen kaydı siler; `--code` / `--desktop` /
+`--surface <id>` yazımı daraltır, hiç bayrak vermemek hepsini birden yazar.
+
+İki kural diğer araçların yapılandırmasını korur. **Var olup çözülemeyen** bir yapılandırma
+yazımı baştan durdurur, `{}` ile değiştirilmez. Yapılandırma **yalnızca** ajan kuruluysa ve
+yol tek anlamlıysa oluşturulur: Windsurf'ün dosyası Devin adı değişiminde taşındı (üç olası
+konum) ve opencode `opencode.jsonc` dosyasını yorumlarla birlikte dağıtır — bu ikisi sadece
+tam JSON dosyası zaten varsa düzenlenir. `keyflip mcpreg surfaces` her hedefi, yolunu, o an
+taşıdığı sunucuları ve atlanma gerekçesini yazar; keyflip'in güvenle yazamadığı ajanlar
+**gerekçesiyle** listelenir: Codex sunucuları TOML'de (`[mcp_servers]`) tutar, Continue
+`experimental.mcpServers` altında dizi kullanır, Copilot'ın dosyası depo kapsamlıdır.
+
 ### Agent'lar için: MCP sunucusu ve skill
 
 Agent'lar CLI'ı tahmin etmek zorunda kalmasın — keyflip **MCP** konuşur:
