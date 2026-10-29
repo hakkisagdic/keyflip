@@ -5,14 +5,20 @@
 > `src/license.js` (offline Ed25519 verification, no phone-home); everything else here is the
 > business/infra layer around it.
 
-> **Built (2026-10-29).** `src/license.js` (offline verify + tier gate), `issuer/` (Ed25519
-> keygen + signer, the four provider adapters — iyzico / PayTR / Lemon Squeezy / Stripe — a
-> `node:http` webhook router with an idempotency ledger, the license store + event log, and the
+> **Built (2026-10-29).** `src/license.js` (offline verify + tier gate, with the release
+> **public key now embedded** — the client verifies a real license out of the box), `issuer/`
+> (Ed25519 keygen + signer, the four provider adapters — iyzico / PayTR / Lemon Squeezy / Stripe —
+> a `node:http` webhook router with an idempotency ledger, the license store + event log, and the
 > **admin panel** at `/admin`), and the website's checkout + activation pages (the paid side of
-> the site reads from one file: `website/src/checkout.config.json`). **Left for the owner**
-> (business steps, not code): the real keypair → `PUBKEY_B64`, the PSP accounts and their
-> product/price ids in `issuer/issuer.config.json` **and** the checkout/portal URLs in
+> the site reads from one file: `website/src/checkout.config.json`). The issuer's product-id slots
+> ship as explicit `REPLACE_…` **placeholders**: an unfilled slot is refused (never guessed) and
+> the issuer says `{"evt":"config","ready":false}` at startup, so it cannot look ready before it
+> is. **Left for the owner** (business steps, not code): back up the private key, the PSP accounts
+> and their product/price ids in `issuer/issuer.config.json` **and** the checkout/portal URLs in
 > `website/src/checkout.config.json` (then `salesOpen: true`), and finally `KEYFLIP_LICENSING=1`.
+>
+> The exact step-by-step runbook (with the rotation and backup rules) is in
+> [`../issuer/README.md`](../issuer/README.md#turning-the-switch-on--the-activation-runbook).
 
 ## 1. Model: open-core + offline signed licenses
 
@@ -132,6 +138,9 @@ paid commands. *Deliverable: the product can distinguish free vs paid locally.* 
   store / KMS, never in git), (c) delivers it. Also a `/renew` + `/revoke` path.
 - Private key management: generate offline; keep in the issuer's secret manager; publish only the
   public key (embedded in `license.js` at release, and on the website for verification transparency).
+  ✅ done locally — the keypair exists at `issuer/private/issuer.key` (`0600`, gitignored) and its
+  **public** half is embedded in `src/license.js`. It still needs an **encrypted off-machine
+  backup**: lose it and no license can ever be signed again.
 
 **Phase 3 — public website:**
 - Static marketing site (Astro / Next static export) — hero, feature tour, pricing, docs, changelog.

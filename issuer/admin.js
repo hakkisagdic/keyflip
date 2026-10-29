@@ -112,7 +112,7 @@ function readBody(req, limit) {
 // Deliberately plain: one file, no CDN, no build. It stores the admin token in
 // memory only (a page reload asks again) and talks to /admin/api/* with the
 // Authorization header.
-const PANEL_HTML = `<!doctype html>
+const PANEL_HTML_TEMPLATE = `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8" />
@@ -186,6 +186,10 @@ const PANEL_HTML = `<!doctype html>
 </main>
 <script>
 (function () {
+  // The tier list is INJECTED from the server's own TIERS table (issuer/store.js),
+  // so the dropdown and the API can never drift apart — and so the page has no
+  // undefined globals (an undefined one kills the whole script at boot).
+  var TIERS = __TIERS_JSON__;
   var token = '';
   var $ = function (id) { return document.getElementById(id); };
   function msg(text, kind) {
@@ -306,6 +310,13 @@ const PANEL_HTML = `<!doctype html>
 </body>
 </html>
 `;
+
+// Resolve the placeholder with the server's own tier table. The replacement is
+// done with a FUNCTION so a '$' inside the value could never be read as a
+// replacement pattern.
+const PANEL_HTML = PANEL_HTML_TEMPLATE.replace('__TIERS_JSON__', function () {
+  return JSON.stringify(TIERS);
+});
 
 // ---- factory --------------------------------------------------------------------
 // createAdmin(deps) -> { handler, store, events, TOKEN_ENV }

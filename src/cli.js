@@ -2988,6 +2988,7 @@ function cmdLicense(ctx, rest) {
     case 'status': {
       const s = lic.status(ctx);
       const feats = lic.unlockedFeatures(ctx);
+      const enforced = lic.enforcementEnabled();
       if (JSON_MODE) {
         jsonOut({
           plan: lic.tier(ctx),
@@ -2997,6 +2998,7 @@ function cmdLicense(ctx, rest) {
           valid: s.valid,
           reason: s.reason,
           features: feats,
+          enforcement: enforced,
         });
         return;
       }
@@ -3004,6 +3006,14 @@ function cmdLicense(ctx, rest) {
       if (s.email) print('email:  ' + s.email);
       if (s.expiry) print('expiry: ' + s.expiry);
       print('features: ' + (feats.length ? feats.join(', ') : '(none — free)'));
+      // Say whether the paywall is actually gating anything. A valid pro
+      // license with enforcement off means "nothing is locked yet" — without
+      // this line that reads like a broken license.
+      print(
+        enforced
+          ? 'paywall: on (paid features are gated)'
+          : 'paywall: off (KEYFLIP_LICENSING is not set — paid features are not gated yet)',
+      );
       return;
     }
     case 'activate': {

@@ -9,6 +9,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The release verifying key is embedded, so a real license works the moment it is bought.**
+  `src/license.js` carried the placeholder `REPLACE_AT_RELEASE_WITH_ED25519_SPKI_DER_BASE64`, so
+  every shipped client verified *nothing* until a release patched the key in. The issuer keypair now
+  exists (private key at `issuer/private/issuer.key`, mode `0600`, gitignored, never printed, logged
+  or passed on `argv`) and its **public** half is embedded in `PUBKEY_B64` — a token the issuer signs
+  verifies green in an installed keyflip with no code change and no release. The placeholder's
+  fail-closed property did not disappear with it: an *unparseable* key still makes `verify()` answer
+  `no-pubkey` and collapses every tier to `free`, and a test now asserts the shipped key really is a
+  parseable Ed25519 public key (so a placeholder can never slip back in unnoticed). The keypair's
+  private half still needs an **encrypted off-machine backup** — lose it and no license can ever be
+  signed again; the rotation rule (a new key invalidates every old license, so reissue) is in
+  `issuer/README.md`.
+- **The issuer says what it is not ready for, instead of silently minting nothing.** The product-id
+  slots in `issuer/issuer.config.json` shipped as fake-but-plausible ids (`price_1QZexample…` looks
+  exactly like a real Stripe price id); they are now explicit `REPLACE_…` **placeholders**. An
+  unfilled slot is **refused, never guessed**: `tierForProduct()` returns `null` for it, the issuer
+  prints `{"evt":"config","ready":false,"pendingProducts":[…]}` at startup, and an unmapped webhook
+  records the **product id in the event log** so the operator knows precisely what to paste in. A
+  test asserts the shipped config can never contain a real-looking id.
+- **The activation runbook** — `issuer/README.md` now carries the whole owner path in order (keygen →
+  back up the key → PSP signup → fill the product ids → fill the checkout URLs → `KEYFLIP_LICENSING=1`),
+  in English and Turkish, with the rotation rule and the reason a revoked offline license cannot be
+  un-activated.
+
 - **The website can take money and explain how to use what you bought.** Two new pages
   (`/license` and `/tr/license`) walk a buyer from "I paid" to "the paid features are unlocked":
   save the emailed token to a file, `keyflip license activate <file>`, check it with
@@ -462,6 +486,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the real shared `auth.json`, and refresh metrics live under the active config dir instead of a
   hard-coded home path.
 
+- `keyflip license status` (and the `keyflip_license_status` MCP tool) now also report whether the
+  paywall is actually enforcing. A valid `pro` license with `KEYFLIP_LICENSING` unset used to read
+  like a broken license; it now says `paywall: off (… not gated yet)`. Nothing is gated by default
+  and nothing changed about that.
+
 ### Fixed
 
 - **Consolidation no longer drops a session when two accounts use the same `local_*.json` filename.**
@@ -474,6 +503,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   keyflip re-signs the outer bundle ad-hoc after patching `Info.plist` and restores the original plist
   if signing fails; the README (EN/TR) now says to re-run `keyflip instance harden` or recreate the
   clone, and warns that `--deep` rewrites Apple's nested helpers.
+
+- **The admin panel page was dead on arrival.** Its inline script referenced a `TIERS` list that only
+  existed on the server, so the browser threw a `ReferenceError` on the first line of the panel and
+  the page rendered but did nothing — no tier list, no Connect button, no issue button. The tier list
+  is now injected from the server's own table, and a test **boots the panel script** in a `node:vm`
+  sandbox with a small DOM stub, so an undefined global fails a test instead of shipping.
 
 ## [1.5.7] - 2026-10-23
 

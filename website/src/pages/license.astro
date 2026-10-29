@@ -52,6 +52,12 @@ nano keyflip.license`} />
         A plan prints the effective plan, the licensed email, the expiry and which paid features are
         unlocked. Add <code>--json</code> if you are scripting it.
       </p>
+      <p class="text-surface-700 dark:text-surface-300 mb-4">
+        It also prints whether the paid features are actually <em>gated</em> right now
+        (<code>paywall: on</code> / <code>paywall: off</code>). While the paywall is off every feature
+        is unlocked, so a valid plan plus <code>paywall: off</code> is normal — it is not a broken
+        license.
+      </p>
 
       <div class="p-4 bg-surface-100 dark:bg-surface-800 rounded-lg text-sm text-surface-700 dark:text-surface-300 mb-8">
         <strong>Keep the token file out of git.</strong> The token <em>is</em> the license — anyone who

@@ -598,7 +598,9 @@ pins); `keyflip_transfer_pull` (pull+merge a bundle from a LAN peer running `tra
   Aider) and their active account where readable — DETECTION ONLY, never reads/moves a secret. (MCP:
   `keyflip_surfaces` (read).)
 - **License** — `keyflip license status|activate <file>` is offline plan management (Ed25519-signed,
-  verified locally, no phone-home). Paywall enforcement is NOT wired yet (ships at productization).
+  verified locally, no phone-home). The paywall is wired but **env-gated**: it enforces nothing
+  unless `KEYFLIP_LICENSING=1` is set, so `keyflip license status` also reports whether it is
+  enforcing (`paywall: on|off`) — a valid pro plan with the paywall off is normal, not broken.
   (MCP: `keyflip_license_status` (read), `keyflip_license_activate` needs `confirm`.)
 
 ## Finding & resuming past conversations

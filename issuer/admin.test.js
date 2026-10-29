@@ -25,6 +25,7 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const vm = require('node:vm');
 
 const { createAdmin } = require('./admin');
 const { LicenseStore, EventLog } = require('./store');
@@ -97,6 +98,60 @@ function makeAdmin(opts) {
 }
 
 // ---- tests --------------------------------------------------------------------
+
+test('the panel PAGE boots: its script has no undefined globals', () => {
+  // The panel is one inline <script>. If it references a name that does not
+  // exist in the browser, the whole IIFE dies at that line and the page renders
+  // but does NOTHING (no tier list, no Connect button, no issue button). That
+  // is invisible to an HTTP-level test, so we actually BOOT the script in a
+  // node:vm sandbox with a tiny DOM stub and assert it runs clean.
+  const html = require('./admin').PANEL_HTML;
+  const m = /<script>([\s\S]*?)<\/script>/.exec(html);
+  assert.ok(m, 'the panel must contain exactly one inline script');
+  assert.ok(!/__TIERS_JSON__/.test(html), 'the tier placeholder must be resolved');
+
+  function makeEl(tag) {
+    return {
+      tagName: tag,
+      value: '',
+      textContent: '',
+      className: '',
+      style: {},
+      colSpan: 1,
+      children: [],
+      appendChild(c) {
+        this.children.push(c);
+        return c;
+      },
+    };
+  }
+  const byId = {};
+  const getEl = (id) => {
+    if (!byId[id]) byId[id] = makeEl('input');
+    return byId[id];
+  };
+  const sandbox = {
+    document: {
+      getElementById: getEl,
+      createElement: (tag) => makeEl(tag),
+    },
+    fetch: () => Promise.reject(new Error('no network in this test')),
+    encodeURIComponent,
+    console,
+  };
+  vm.createContext(sandbox);
+  // A ReferenceError here means the page would be dead in a real browser.
+  vm.runInContext(m[1], sandbox, { filename: 'panel.js' });
+
+  // The tier dropdown is filled from the server's own tier table.
+  const options = getEl('tier').children.map((o) => o.value);
+  assert.deepStrictEqual(options, ['pro', 'team', 'enterprise']);
+  // The buttons are wired (the page would be inert otherwise).
+  assert.strictEqual(typeof getEl('connect').onclick, 'function');
+  assert.strictEqual(typeof getEl('issue').onclick, 'function');
+  assert.strictEqual(typeof getEl('refresh').onclick, 'function');
+});
+
 test('with no configured token the panel is disabled (503)', async () => {
   const { admin } = makeAdmin({ token: '' });
   const r = await request(admin.handler, 'GET', '/admin/api/licenses', { headers: bearer('anything') });
@@ -156,7 +211,7 @@ test('the minted token verifies green in src/license.js', async () => {
     assert.strictEqual(v.tier, 'team');
     assert.strictEqual(v.email, 'a@b.co');
   } finally {
-    license.setPublicKey(license.PUBKEY_B64); // restore the placeholder
+    license.setPublicKey(license.PUBKEY_B64); // restore the shipped release key
   }
 });
 

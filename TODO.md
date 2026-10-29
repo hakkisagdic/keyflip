@@ -28,9 +28,22 @@ These do not:
       store cannot hold a token; the minted one is returned once and never persisted. Revoke records
       the revocation — it cannot un-activate an already-activated offline license, so reissue (with a
       shorter expiry) is the real enforcement path.
-- [ ] **Issuer activation** (owner/business step, not code): generate the real Ed25519 keypair →
-      paste the public key into `src/license.js` `PUBKEY_B64`; sign up with the actual PSPs; set real
-      product/price IDs in `issuer/issuer.config.json`. Then flip `KEYFLIP_LICENSING=1`.
+- [ ] **Issuer activation** (owner/business step, not code).
+      **Code side is DONE:** the real Ed25519 keypair exists (private key at
+      `issuer/private/issuer.key`, `0600`, gitignored — **back it up, encrypted, off this
+      machine; if it is lost no license can ever be signed again**) and its **public** half is
+      embedded in `src/license.js` `PUBKEY_B64`, so a license the issuer signs verifies green
+      in a shipped client with no code change and no release. `issuer/issuer.config.json` now
+      ships its product slots as explicit `REPLACE_…` placeholders: an unfilled slot is REFUSED
+      (never guessed), the issuer prints `{"evt":"config","ready":false}` at startup, and an
+      unmapped webhook records the product id in the event log so the owner knows exactly what
+      to paste.
+      **Still the owner's business steps:** sign up with the PSPs (iyzico / PayTR / Lemon
+      Squeezy / Stripe), replace every `REPLACE_…` key in `issuer/issuer.config.json` with the
+      real product/price id, fill the checkout URLs in `website/src/checkout.config.json` and
+      set `salesOpen: true` — then flip `KEYFLIP_LICENSING=1`.
+      The step-by-step runbook (with the rotation rule) is in
+      [`issuer/README.md`](issuer/README.md#turning-the-switch-on--the-activation-runbook).
 
 ## B. RoleCraft integration — cross-agent skill/role + MCP distribution (NEW)
 
