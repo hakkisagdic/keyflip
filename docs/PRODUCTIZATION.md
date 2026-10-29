@@ -8,9 +8,11 @@
 > **Built (2026-10-29).** `src/license.js` (offline verify + tier gate), `issuer/` (Ed25519
 > keygen + signer, the four provider adapters — iyzico / PayTR / Lemon Squeezy / Stripe — a
 > `node:http` webhook router with an idempotency ledger, the license store + event log, and the
-> **admin panel** at `/admin`). **Left for the owner** (business steps, not code): the real
-> keypair → `PUBKEY_B64`, the PSP accounts and their product/price ids in
-> `issuer/issuer.config.json`, and finally `KEYFLIP_LICENSING=1`.
+> **admin panel** at `/admin`), and the website's checkout + activation pages (the paid side of
+> the site reads from one file: `website/src/checkout.config.json`). **Left for the owner**
+> (business steps, not code): the real keypair → `PUBKEY_B64`, the PSP accounts and their
+> product/price ids in `issuer/issuer.config.json` **and** the checkout/portal URLs in
+> `website/src/checkout.config.json` (then `salesOpen: true`), and finally `KEYFLIP_LICENSING=1`.
 
 ## 1. Model: open-core + offline signed licenses
 

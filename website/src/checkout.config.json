@@ -1,0 +1,50 @@
+{
+  "$comment": [
+    "THE single source of truth for the paid plans on this site.",
+    "Commercial facts live here; translated copy lives in the page files.",
+    "To open sales: fill the checkout/portal URLs below, then set salesOpen to true.",
+    "An empty URL means 'not configured' — the page hides that button entirely.",
+    "The product ids behind these links are the same ones the issuer maps in",
+    "issuer/issuer.config.json (products -> tier + months); keep them in sync.",
+    "Region routing follows the issuer: TR -> iyzico/paytr, everyone else -> lemonsqueezy/stripe."
+  ],
+  "salesOpen": false,
+  "currency": "USD",
+  "tiers": {
+    "pro": {
+      "price": "$8-12",
+      "providers": {
+        "iyzico": { "region": "TR", "monthly": "", "yearly": "" },
+        "paytr": { "region": "TR", "monthly": "", "yearly": "" },
+        "lemonsqueezy": { "region": "GLOBAL", "monthly": "", "yearly": "" },
+        "stripe": { "region": "GLOBAL", "monthly": "", "yearly": "" }
+      },
+      "portals": {
+        "iyzico": "",
+        "paytr": "",
+        "lemonsqueezy": "",
+        "stripe": ""
+      }
+    },
+    "team": {
+      "price": "$6-10",
+      "providers": {
+        "iyzico": { "region": "TR", "monthly": "", "yearly": "" },
+        "paytr": { "region": "TR", "monthly": "", "yearly": "" },
+        "lemonsqueezy": { "region": "GLOBAL", "monthly": "", "yearly": "" },
+        "stripe": { "region": "GLOBAL", "monthly": "", "yearly": "" }
+      },
+      "portals": {
+        "iyzico": "",
+        "paytr": "",
+        "lemonsqueezy": "",
+        "stripe": ""
+      }
+    },
+    "enterprise": {
+      "price": "Custom",
+      "providers": {},
+      "portals": {}
+    }
+  }
+}

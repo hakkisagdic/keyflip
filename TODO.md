@@ -11,8 +11,17 @@ The paywall (`license.js`, env-gated OFF via `KEYFLIP_LICENSING`) and the paymen
 (`issuer/`: Ed25519 signer + Stripe/LemonSqueezy/iyzico/PayTR webhook adapters + node:http relay) exist.
 These do not:
 
-- [ ] **Website** — marketing/landing + docs + checkout flow (per the 4-provider decision in
+- [x] **Website** — marketing/landing + docs + checkout flow (per the 4-provider decision in
       `docs/PRODUCTIZATION.md`: iyzico + PayTR local, Lemon Squeezy + Stripe global).
+      The site, its docs (EN/TR) and both locale trees are live; the paid side now reads from
+      ONE file, `website/src/checkout.config.json` (price, checkout link per provider/cycle,
+      customer portal), and the pricing page grows its buttons from it — an empty URL hides the
+      button instead of linking to a 404, and `salesOpen` flips the "coming soon" state off.
+      `/license` (EN/TR) explains activation: save the emailed token, `keyflip license activate
+      <file>`, `keyflip license status`, plus the customer-portal links and the honest limit of
+      an offline license (an activated one cannot be revoked from a server).
+      **Left for the owner:** fill the real checkout/portal URLs in that config and flip
+      `salesOpen` once the payment accounts exist.
 - [x] **Admin panel** — license/customer management (issue, revoke, look up; webhook event log).
       `issuer/admin.js` + `issuer/store.js`: a JSON API under `/admin/api/*` and a single-page panel
       at `/admin`, both behind a constant-time bearer token that fails closed (503) when unset. The

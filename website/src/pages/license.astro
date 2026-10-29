@@ -1,0 +1,128 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import PageHeader from '../components/PageHeader.astro';
+import CodeBlock from '../components/CodeBlock.astro';
+import { allPortalLinks, providerLabel, salesOpen } from '../checkout';
+
+const locale = 'en';
+const portals = allPortalLinks();
+const open = salesOpen();
+---
+
+<BaseLayout title="License" locale={locale} currentPath="/license">
+  <PageHeader
+    title="License &amp; activation"
+    subtitle="Activate a keyflip plan. It is a signed token checked offline — no account, no phone-home, no server to call."
+  />
+
+  <section class="py-16">
+    <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
+
+      <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-4">How a keyflip license works</h2>
+      <ul class="list-disc pl-6 text-surface-700 dark:text-surface-300 space-y-2 mb-8">
+        <li><strong>It is a signed token, not an account.</strong> The token carries your plan, the email it was issued to, when it was issued and when it expires — and nothing else.</li>
+        <li><strong>It is verified offline.</strong> keyflip ships with the public half of the signing key and checks the signature with <code>node:crypto</code>. Verifying never touches the network, so it works on an air-gapped machine.</li>
+        <li><strong>It lives in one file.</strong> An activated license is stored at <code>~/.config/keyflip/license.json</code> with <code>0600</code> permissions. Nothing else changes on disk.</li>
+        <li><strong>It is portable.</strong> The same license file activates on another machine — that is what "no phone-home" buys you: the license is the proof, not the machine it was bought on.</li>
+      </ul>
+
+      <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-4 mt-10">Activate a license</h2>
+      <p class="text-surface-700 dark:text-surface-300 mb-4">
+        Your license token arrives by email after checkout. It is one long string, e.g.
+        <code>eyJlbWFpbCI6…</code>. Save it to a file and hand that file to keyflip:
+      </p>
+
+      <h3 class="text-lg font-semibold text-surface-900 dark:text-surface-100 mt-6 mb-2">1 · Save the token</h3>
+      <CodeBlock code={`# macOS — copy the token from your mail, then paste it into a file
+pbpaste > keyflip.license
+
+# anywhere — or open it in an editor and paste the token, then save
+nano keyflip.license`} />
+
+      <h3 class="text-lg font-semibold text-surface-900 dark:text-surface-100 mt-6 mb-2">2 · Activate it</h3>
+      <CodeBlock code={`keyflip license activate keyflip.license`} />
+      <p class="text-surface-700 dark:text-surface-300 mb-4">
+        The signature and expiry are checked <em>before</em> anything is written. An invalid or expired
+        token is rejected and nothing is stored — you never end up with a license that unlocks nothing.
+      </p>
+
+      <h3 class="text-lg font-semibold text-surface-900 dark:text-surface-100 mt-6 mb-2">3 · Check it</h3>
+      <CodeBlock code={`keyflip license status`} />
+      <p class="text-surface-700 dark:text-surface-300 mb-4">
+        A plan prints the effective plan, the licensed email, the expiry and which paid features are
+        unlocked. Add <code>--json</code> if you are scripting it.
+      </p>
+
+      <div class="p-4 bg-surface-100 dark:bg-surface-800 rounded-lg text-sm text-surface-700 dark:text-surface-300 mb-8">
+        <strong>Keep the token file out of git.</strong> The token <em>is</em> the license — anyone who
+        has it can use your plan. <code>keyflip.license</code> is not in keyflip's ignore list because
+        it is your file; add it to your own <code>.gitignore</code>, or delete it after activating
+        (the activated license is already stored at <code>0600</code>).
+      </div>
+
+      <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-4 mt-10">Let your agent do it</h2>
+      <p class="text-surface-700 dark:text-surface-300 mb-4">
+        keyflip's MCP server exposes the same two commands, so an agent can check or activate a license
+        without shelling out:
+      </p>
+      <ul class="list-disc pl-6 text-surface-700 dark:text-surface-300 space-y-2 mb-8">
+        <li><code>keyflip_license_status</code> — read-only. The effective plan, the licensed email, the expiry and the unlocked features.</li>
+        <li><code>keyflip_license_activate</code> — asks the user to confirm first, then activates the given token.</li>
+      </ul>
+
+      <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-4 mt-10">Lost the email?</h2>
+      <p class="text-surface-700 dark:text-surface-300 mb-4">
+        Your subscription is managed by the provider you paid. Their customer portal can re-send the
+        license, update the card or cancel the plan.
+      </p>
+      {portals.length > 0 ? (
+        <ul class="space-y-2 mb-8">
+          {portals.map((p) => (
+            <li>
+              <a
+                href={p.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                class="text-sm font-semibold text-primary-600 dark:text-primary-400 hover:underline"
+              >
+                {providerLabel(p.provider)} customer portal →
+              </a>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p class="text-surface-700 dark:text-surface-300 mb-8">
+          The portal links appear here as soon as the payment accounts are live. Until then, write to
+          the address on your receipt and the license is re-sent.
+        </p>
+      )}
+
+      <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-4 mt-10">What activation does and does not do</h2>
+      <ul class="list-disc pl-6 text-surface-700 dark:text-surface-300 space-y-2 mb-8">
+        <li><strong>It contacts nobody.</strong> Activating does not send your token, your email or your machine's identity anywhere. There is no server in the loop — that is the whole point of an offline license.</li>
+        <li><strong>It cannot be revoked from the server.</strong> For the same reason, a license that is already activated on a machine stays valid until it expires. The honest way to cut access short is a new, shorter license: activate that one and let the old one lapse.</li>
+        <li><strong>It is not a seat lock.</strong> One license can be activated on as many machines as you like. Seats are counted per person on the Team plan, not per device.</li>
+      </ul>
+
+      <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-4 mt-10">Remove a license</h2>
+      <CodeBlock code={`keyflip license deactivate`} />
+      <p class="text-surface-700 dark:text-surface-300 mb-8">
+        The stored license is deleted and the machine goes back to the free plan.
+      </p>
+
+      {!open && (
+        <div class="p-4 border border-surface-200 dark:border-surface-700 rounded-lg text-sm text-surface-600 dark:text-surface-400">
+          <strong>Early adopters:</strong> the paid launch has not opened yet, so nothing is blocked
+          today. A license still activates and verifies exactly as described above — the paid features
+          simply unlock once the launch goes out.
+        </div>
+      )}
+
+      <div class="mt-12 flex flex-wrap gap-4">
+        <a href="/pricing" class="text-sm font-semibold text-primary-600 dark:text-primary-400 hover:underline">← Back to pricing</a>
+        <a href="/docs/cli-reference" class="text-sm font-semibold text-primary-600 dark:text-primary-400 hover:underline">CLI reference →</a>
+      </div>
+
+    </div>
+  </section>
+</BaseLayout>

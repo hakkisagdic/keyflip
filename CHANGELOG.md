@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The website can take money and explain how to use what you bought.** Two new pages
+  (`/license` and `/tr/license`) walk a buyer from "I paid" to "the paid features are unlocked":
+  save the emailed token to a file, `keyflip license activate <file>`, check it with
+  `keyflip license status`. The pricing page now grows its checkout buttons from **one** source —
+  `website/src/checkout.config.json` — instead of hardcoded markup, so the price a visitor reads
+  and the button they click come from the same field and cannot drift apart. An empty checkout URL
+  means "not configured" and the button is hidden rather than pointing at a 404, and a single
+  `salesOpen` switch hides the "coming soon" badges until checkout really works. Region routing
+  matches the issuer (`TR` -> iyzico/PayTR, everyone else -> Lemon Squeezy/Stripe), and the
+  customer-portal links on the license page are the way back in when the purchase email is lost.
+  The page is also honest about the limits of the model: because verification is local, an
+  already-activated license **cannot be revoked from a server** — the enforcement path is a
+  shorter reissued license, not a kill switch.
 - **The issuer gets an admin panel: issue, reissue, revoke, look up — and the webhook event log.**
   `issuer/admin.js` serves both a JSON API under `/admin/api/*` and a tiny single-page panel at
   `/admin` (no build step, no framework, no CDN; the UI is a thin client over the same API, so
