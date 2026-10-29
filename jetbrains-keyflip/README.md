@@ -64,10 +64,22 @@ To run a sandbox IDE with the plugin loaded during development:
 ./gradlew runIde
 ```
 
-> **Gradle wrapper JAR:** this repo ships the wrapper config and scripts but not the binary
-> `gradle/wrapper/gradle-wrapper.jar`. If `./gradlew` reports it is missing, generate it once with
-> a system Gradle 8.x (`gradle wrapper --gradle-version 8.9`), or simply run the build with a system
-> Gradle (`gradle buildPlugin`).
+> **Gradle wrapper JAR:** the binary `gradle/wrapper/gradle-wrapper.jar` is committed, so
+> `./gradlew` works from a fresh clone with a JDK 17 on `JAVA_HOME` (the IntelliJ plugin builds
+> against Java 17; a newer JDK is not enough for Kotlin 1.9). If the wrapper is ever missing,
+> regenerate it with a system Gradle 8.x (`gradle wrapper --gradle-version 8.9`).
+>
+> **Turkish (or any non-English) system locale:** `gradle-intellij-plugin` 1.x uppercases
+> `application` with the JVM's default locale, so on a tr_TR host the IDE's own plugin descriptor
+> fails to parse as `APPLİCATİON` and the build stops with "Cannot find builtin plugin
+> 'org.jetbrains.plugins.terminal'". `gradle.properties` pins `-Duser.language=en -Duser.country=US`
+> for the Gradle JVM; if a daemon was already running under the old locale, stop it
+> (`./gradlew --stop`) or run with `--no-daemon`.
+>
+> The plugin indexes the IDE's bundled plugins once and caches the result inside the **extracted
+> IDE** (`~/.gradle/caches/modules-2/files-2.1/com.jetbrains.intellij.idea/ideaIC/<v>/<hash>/ideaIC-<v>/plugins/builtinRegistry-1.xml`).
+> A cache written by a mis-locale run stays incomplete — `terminal` reads as missing even after the
+> fix — so delete that one file and let the next build re-scan the directory.
 
 Marketplace publishing requires a vendor account and is not set up yet.
 

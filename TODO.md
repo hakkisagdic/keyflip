@@ -126,10 +126,14 @@ Everything below is BUILT + unit-tested; it just cannot be validated in this env
 - [ ] **SSO org-login** live round-trip (`claude auth login --sso` against a real enterprise org).
 - [ ] **Gemini brain** live round-trip — real `GEMINI_API_KEY`, verify a real plan comes back.
       (No Gemini/OpenRouter/OpenAI key is exported or stored on this machine today.)
-- [ ] **JetBrains plugin** — `./gradlew test` + `runIde` (generate `gradle-wrapper.jar` once); verify
-      the Terminal API + status-bar/widget signatures on the target IntelliJ version.
-      (Wrapper jar is absent, and the build wants Gradle 8.9 + JDK 17; this machine has JDK 27 and
-      no `gradle` on PATH — installing a JDK 17 is a machine-level step for the owner.)
+- [x] **JetBrains plugin builds and its tests pass** on IDEA Community 2023.2 (build 232), JDK 17,
+      Gradle 8.9: `./gradlew test` = 16/16 and `./gradlew buildPlugin` →
+      `build/distributions/jetbrains-keyflip-0.3.0.zip`, whose descriptor carries the Terminal
+      `<depends>`. Two real build bugs were fixed on the way: the Turkish-locale descriptor parse
+      (`APPLİCATİON`, plus the stale `builtinRegistry-1.xml` it left behind) and
+      `Configurable.disposeUIComponent` → `disposeUIResources` (renamed in 232). `verifyPlugin` is
+      still a no-op until `pluginVerification.ides` is configured; a live `runIde` click-through
+      (status bar, tool window, four actions) still needs a human at the GUI.
 - [ ] **provusage** live-API provider shapes. Live check here: **codex = ok** (real
       `{used_percent, resets_in_seconds, credits}` shape, 1% weekly, "resets in 5d 10h") and
       **claude = ok**; gemini / opencode / copilot come back `present: true, status: unknown`

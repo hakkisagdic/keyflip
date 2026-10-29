@@ -42,7 +42,8 @@ class KeyflipConfigurable : Configurable {
         pathField?.text = KeyflipSettings.getInstance().path
     }
 
-    override fun disposeUIComponent() {
+    // IntelliJ 232 renamed Configurable.disposeUIComponent() to disposeUIResources().
+    override fun disposeUIResources() {
         pathField = null
         panel = null
     }

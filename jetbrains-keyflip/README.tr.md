@@ -66,11 +66,22 @@ Geliştirme sırasında eklenti yüklü bir sandbox IDE çalıştırmak için:
 ./gradlew runIde
 ```
 
-> **Gradle wrapper JAR:** bu depo wrapper yapılandırmasını ve betiklerini içerir ama ikili
-> `gradle/wrapper/gradle-wrapper.jar` dosyasını içermez. `./gradlew` onun eksik olduğunu
-> bildirirse, sistemdeki bir Gradle 8.x ile bir kez oluşturun
-> (`gradle wrapper --gradle-version 8.9`) veya derlemeyi doğrudan sistem Gradle'ı ile çalıştırın
-> (`gradle buildPlugin`).
+> **Gradle wrapper JAR:** ikili `gradle/wrapper/gradle-wrapper.jar` artık depoda; temiz bir
+> klonda `JAVA_HOME` üzerinde JDK 17 varsa `./gradlew` doğrudan çalışır (IntelliJ eklentisi Java 17
+> ile derlenir; daha yeni bir JDK Kotlin 1.9 için yetmez). Wrapper kaybolursa sistemdeki bir
+> Gradle 8.x ile yeniden üretin (`gradle wrapper --gradle-version 8.9`).
+>
+> **Türkçe (veya İngilizce olmayan) sistem dili:** `gradle-intellij-plugin` 1.x, `application`
+> sözcüğünü JVM'in varsayılan diliyle büyütür; tr_TR bir makinede IDE'nin kendi plugin tanımı
+> `APPLİCATİON` olarak okunamaz ve derleme "Cannot find builtin plugin
+> 'org.jetbrains.plugins.terminal'" ile durur. `gradle.properties` Gradle JVM'i için
+> `-Duser.language=en -Duser.country=US` sabitler; eski dille açılmış bir daemon varsa
+> `./gradlew --stop` deyin veya `--no-daemon` ile çalıştırın.
+>
+> Eklenti IDE'nin gömülü eklentilerini bir kez dizip sonucu **açılmış IDE'nin içine** önbelleğe
+> alır (`~/.gradle/caches/modules-2/files-2.1/com.jetbrains.intellij.idea/ideaIC/<v>/<hash>/ideaIC-<v>/plugins/builtinRegistry-1.xml`).
+> Yanlış dille yazılmış bir önbellek eksik kalır — düzeltmeden sonra bile `terminal` bulunamaz —
+> o tek dosyayı silin, sonraki derleme dizini yeniden tarar.
 
 Marketplace'te yayınlamak bir vendor hesabı gerektirir ve henüz kurulmadı.
 
