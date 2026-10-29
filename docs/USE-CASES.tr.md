@@ -260,7 +260,12 @@ keyflip foreign <dosya> [--format md|html|json]   # birini aynı görünüme nor
   oynatılır ki içindeki yeni sohbetler kaçmasın; WAL vardır ama içeri alınamıyorsa bunu söyler).
   `foreign` ayrıca opencode / Gemini / **Qoder CLI** JSONL ve Copilot YAML okur;
   doğrudan gösterdiğiniz bir dosya düz JSON ya da Aider'ın `.aider.chat.history.md` dosyası da
-  olabilir. Keşif yeniden-eskiye sıralıdır ve araç başına bir dosya kotası taşır, böylece
+  olabilir. **Command Code** oturumları
+  (`~/.commandcode/projects/<slug>/*.jsonl`) iki disk biçiminde de okunur — düz
+  `{role, content}` olay günlüğü ve v3 `{type:'session'|'message'}` biçimi —;
+  `.checkpoints.jsonl` yan dosyaları ile thinking/tool-result içerikleri atlanır; başlık
+  `<sessionId>.meta.json` yan dosyasından gelir ve `--app command-code` ile görünürler.
+  Keşif yeniden-eskiye sıralıdır ve araç başına bir dosya kotası taşır, böylece
   çok dosyası olan bir araç diğerlerini ezmez; aracın oturum olmayan klasörleri (`log/`,
   `snapshot/`, `tool-output/`, Qoder'ın `subagents/`) atlanır — tıpkı kimlik/sır görünümlü
   dosyalar (`auth.json`, `credentials.json`, `oauth*.json`) gibi: keyflip canlı bir token'ı

@@ -590,6 +590,45 @@ yazar (vadesi gelmedi / çalışıyor / refresh token yok). Gece `refresh --sche
 işi Claude OAuth token'larını kapsar; bu giriş için tek seferlik komut
 `keyflip chatgpt refresh`'tir.
 
+### Command Code — CLI ve VS Code eklentisi tek girişi paylaşır (`commandcode`)
+
+Command Code (`cmd`, npm paketi `command-code`) **tek** kimlik dosyası tutar,
+`~/.commandcode/auth.json` (kip 0600), ve hem CLI hem de birlikte gelen VS Code
+eklentisi aynı dosyayı okur — tek geçiş ikisini birden değiştirir. keyflip dosyanın
+tamamını hesap başına saklar; bu, girişin yanında o hesabın BYOK sağlayıcı
+anahtarlarını da (`{ <sağlayıcı>: { type: 'api', key } }`) taşır. `userName` bir
+kullanıcı adıdır (e-posta değil) ve etiket odur; anahtar asla yazdırılmaz.
+
+```bash
+keyflip commandcode status            # canlı giriş, BYOK sağlayıcılar, model, cmd PATH'te mi?, kayıtlı hesaplar
+keyflip commandcode capture [ad]      # canlı auth.json'ı kaydet (userName'den otomatik ad)
+keyflip commandcode switch <ad|n|user> [--dry-run] [--no-verify]
+keyflip commandcode list
+keyflip commandcode backups           # geçmiş geçiş/geri yüklemelerden auth.json kopyaları (en yeni 10)
+keyflip commandcode restore <n|dosya> [--dry-run]
+keyflip commandcode remove <ad> --force
+```
+
+Kayıtlar `~/.config/keyflip/surfaces/command-code/<slug>/` altında: 0600 kipinde
+`auth.json` ve sır içermeyen `meta.json` (kullanıcı adı, kullanıcı kimliği, anahtar
+adı, sağlayıcı kimlikleri, zaman damgaları — asla anahtar). Geçiş canlı dosyayı
+yedekler, giden girişi yakalar, saklı baytları yazar ve geri okur (ham baytlar +
+kullanıcı kimliği/adı); uyuşmazlıkta dönülecek yedeği bildirir. **Hâlihazırda çalışan
+`cmd` oturumları eski girişle devam eder** — dosya açılışta okunur.
+
+keyflip'in sizin yerinize çeviremeyeceği iki şey:
+
+- **Web panosu** (`commandcode.ai/billing`, `/usage`) ayrı bir tarayıcı çerezi
+  girişidir. Her hesap için oraya bir kez elle girin.
+- Shell'deki **`COMMAND_CODE_API_KEY`**, `auth.json`'un önüne geçer; o zaman geçiş
+  hiçbir şey yapmamış gibi görünür. Dışa aktarılmışsa `status` uyarır.
+
+Sürüm yönetimli bir Node (fnm/nvm) altına kurulmuş `cmd` yalnızca o Node sürümünün
+PATH'inde olur; `status` nerede durduğunu ve hangi `fnm use`/`nvm use` ile
+düzeleceğini söyler. Command Code'un
+`~/.commandcode/projects/<slug>/*.jsonl` oturumları da aranabilir — bkz.
+`keyflip conv --app command-code` ve `keyflip foreign --list`.
+
 ### Aynı anda birden çok hesap — izole uygulama kopyaları (`instance`, macOS)
 
 > **Yalnızca macOS.** Bu komutlar bir macOS `.app` paketini `~/Library/Application Support`

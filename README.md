@@ -588,6 +588,44 @@ also says when it deferred (not due / running / no refresh token). The nightly
 `refresh --schedule` covers the Claude OAuth tokens; `keyflip chatgpt refresh` is the
 one-shot for this login.
 
+### Command Code — one login for the CLI and the VS Code extension (`commandcode`)
+
+Command Code (`cmd`, npm package `command-code`) keeps **one** credential file,
+`~/.commandcode/auth.json` (mode 0600), and both the CLI and its shipped VS Code
+extension read that same file — so one switch flips both. keyflip stores the whole
+file per account, which also carries that account's BYOK provider keys
+(`{ <providerId>: { type: 'api', key } }`) beside the login. `userName` is a
+username, not an e-mail, and it is the label; the key is never printed.
+
+```bash
+keyflip commandcode status            # live login, BYOK providers, model, cmd on PATH?, saved accounts
+keyflip commandcode capture [name]    # save the live auth.json (auto-named from userName)
+keyflip commandcode switch <name|n|user> [--dry-run] [--no-verify]
+keyflip commandcode list
+keyflip commandcode backups           # auth.json snapshots from past switches/restores (newest 10)
+keyflip commandcode restore <n|file> [--dry-run]
+keyflip commandcode remove <name> --force
+```
+
+Captures live in `~/.config/keyflip/surfaces/command-code/<slug>/`: `auth.json` at
+0600 plus a secret-free `meta.json` (username, user id, key name, provider ids,
+timestamps — never a key). A switch backs up the live file, captures the outgoing
+login, writes the stored bytes and reads them back (raw bytes + user id/name); a
+mismatch reports the backup to roll back to. **Already-running `cmd` sessions keep the
+old login until restarted** — the file is read at startup.
+
+Two things keyflip cannot flip for you:
+
+- **The web dashboard** (`commandcode.ai/billing`, `/usage`) is a separate browser-cookie
+  login. Sign in there once per account, by hand.
+- **`COMMAND_CODE_API_KEY` in your shell** takes precedence over `auth.json`, so a
+  switch would look like it did nothing. `status` warns when it is exported.
+
+`cmd` installed under a version-managed Node (fnm/nvm) is only on PATH for that Node
+version; `status` reports where it lives and which `fnm use`/`nvm use` fixes it.
+Command Code's `~/.commandcode/projects/<slug>/*.jsonl` sessions are also searchable —
+see `keyflip conv --app command-code` and `keyflip foreign --list`.
+
 ### Which model runs the chores (`llm`)
 
 `dream`, `sessions distill` and `recall --answer` are housekeeping, not the work you are paying a

@@ -40,6 +40,14 @@ const SESSION_SOURCES = [
   // (verified against a real install, 2026-10). The per-session sidecar holds subagent logs and
   // memory notes — not conversations of their own.
   { tool: 'qoder', dirs: [{ base: '.qoder/projects', match: /\.jsonl$/, skipDir: /^(subagents|memory)$/ }] },
+  // Command Code (`cmd`, npm `command-code`) keeps one directory per project slug under
+  // ~/.commandcode/projects/. `<sessionId>.jsonl` is the chat, `<sessionId>.meta.json` its title
+  // (not matched) and `<sessionId>.checkpoints.jsonl` internal snapshots (skipped). Verified
+  // against command-code@1.81.0, 2026-10.
+  {
+    tool: 'command-code',
+    dirs: [{ base: '.commandcode/projects', match: /\.jsonl$/, skipFile: /\.checkpoints\.jsonl$/ }],
+  },
   // Windsurf (Codeium) + Kiro (AWS) are VS Code forks; their Cascade/chat transcripts live in an
   // app-specific globalStorage SQLite (NOT the `cursorDiskKV` schema parseCursor reads) whose table
   // layout is undocumented. Listing them here without a verified parser would surface files
@@ -56,7 +64,7 @@ const NOT_A_SESSION = /^(auth|accounts?|credentials?|tokens?|secrets?|oauth[\w-]
 // Per-source cap, so one tool with thousands of files cannot starve the ones listed after it.
 const PER_SOURCE_BUDGET = 3000;
 
-function walkFind(dir, matchRe, budget, out, skipDirRe) {
+function walkFind(dir, matchRe, budget, out, skipDirRe, skipFileRe) {
   if (budget.left <= 0) return;
   let ents;
   try {
@@ -68,8 +76,13 @@ function walkFind(dir, matchRe, budget, out, skipDirRe) {
     const name = ents[i].name;
     const p = path.join(dir, name);
     if (ents[i].isDirectory()) {
-      if (!skipDirRe || !skipDirRe.test(name)) walkFind(p, matchRe, budget, out, skipDirRe);
-    } else if (ents[i].isFile() && matchRe.test(name) && !NOT_A_SESSION.test(name)) {
+      if (!skipDirRe || !skipDirRe.test(name)) walkFind(p, matchRe, budget, out, skipDirRe, skipFileRe);
+    } else if (
+      ents[i].isFile() &&
+      matchRe.test(name) &&
+      !(skipFileRe && skipFileRe.test(name)) &&
+      !NOT_A_SESSION.test(name)
+    ) {
       out.push(p);
       budget.left--;
     }
@@ -99,7 +112,7 @@ function discover(ctx) {
     const budget = { left: PER_SOURCE_BUDGET };
     (src.dirs || []).forEach(function (d) {
       const found = [];
-      walkFind(path.join(home, d.base), d.match, budget, found, d.skipDir);
+      walkFind(path.join(home, d.base), d.match, budget, found, d.skipDir, d.skipFile);
       found.forEach(function (p) {
         add(src.tool, p);
       });
@@ -143,6 +156,26 @@ function detect(filePath, input) {
   const p = String(filePath || '').toLowerCase();
   const head = buf.toString('utf8', 0, 2000);
   if (/\.aider\.chat\.history\.md$/.test(p) || /^#\s*aider chat started/m.test(head)) return 'aider';
+  // Command Code: must be checked before the `.jsonl` shorthand, which would otherwise hand it to
+  // the Claude-Code message-event parser. Two live shapes:
+  //   v1  {sessionId, role, content:[…]}          (v1 sessions start with a user turn)
+  //   v3  {type:'session', version, id, cwd}      (so a v3 file's first line has no role)
+  if (head.trim()[0] === '{') {
+    const first = (
+      head.split('\n').find(function (l) {
+        return l.trim();
+      }) || ''
+    ).trim();
+    try {
+      const o = JSON.parse(first);
+      if (o && typeof o === 'object') {
+        if (o.sessionId && o.role && Array.isArray(o.content)) return 'commandcode';
+        if (o.type === 'session' && o.id && typeof o.version === 'number') return 'commandcode';
+      }
+    } catch (e) {
+      /* not a Command Code line */
+    }
+  }
   if (/\.jsonl$/.test(p)) return 'jsonl';
   const firstLine = (
     head.split('\n').find(function (l) {
@@ -211,6 +244,81 @@ function parseAider(text) {
     return m.text || m.tools.length;
   });
   return { messages: msgs, cwd: null, counts: countsOf(msgs) };
+}
+
+// Command Code (`~/.commandcode/projects/<slug>/<sessionId>.jsonl`) writes one JSON event per
+// line in TWO shapes, and both are live on 2026-10 installs:
+//   v1  { id, timestamp, sessionId, parentId, role: 'user'|'assistant'|'tool',
+//         content: [ {type:'text',text} | {type:'reasoning',text}
+//                  | {type:'tool-call',toolName,input} | {type:'tool-result',output} ] }
+//   v3  { type:'session', id, timestamp, cwd } then
+//       { type:'message', timestamp, message: { role, content: [
+//           {type:'text',text} | {type:'thinking',thinking} | {type:'image',source}
+//         | {type:'tool_use',id,name,input} | {type:'tool_result',tool_use_id,content} ] } }
+//       (plus a `compaction` bookkeeping record).
+// Only real turns are kept: thinking/reasoning is internal, tool results are payloads, and a tool
+// CALL becomes a name in `tools` on the assistant message it belongs to. v3 carries cwd.
+function parseCommandCode(text) {
+  const messages = [];
+  let sessionId = null;
+  let cwd = null;
+  String(text == null ? '' : text)
+    .split('\n')
+    .forEach(function (line) {
+      if (!line.trim()) return;
+      let rec;
+      try {
+        rec = JSON.parse(line);
+      } catch (e) {
+        return;
+      }
+      if (!rec || typeof rec !== 'object') return;
+      if (rec.type === 'session') {
+        if (rec.id) sessionId = String(rec.id);
+        if (!cwd && typeof rec.cwd === 'string' && rec.cwd.trim()) cwd = rec.cwd.trim();
+        return;
+      }
+      const msg = rec.type === 'message' && rec.message && typeof rec.message === 'object' ? rec.message : rec;
+      if (rec.sessionId) sessionId = String(rec.sessionId);
+      const role = msg.role;
+      const blocks = Array.isArray(msg.content) ? msg.content : [];
+      const ts = rec.timestamp || null;
+      const textOfBlocks = function (type) {
+        return blocks
+          .filter(function (b) {
+            return b && b.type === type && typeof b.text === 'string' && b.text.trim();
+          })
+          .map(function (b) {
+            return b.text.trim();
+          })
+          .join('\n')
+          .trim();
+      };
+      if (role === 'user') {
+        const t = textOfBlocks('text');
+        if (t) messages.push({ role: 'user', text: t, tools: [], ts: ts });
+        return;
+      }
+      if (role === 'assistant') {
+        const t = textOfBlocks('text');
+        const tools = dedupe(
+          blocks
+            .filter(function (b) {
+              return b && (b.type === 'tool-call' || b.type === 'tool_use');
+            })
+            .map(function (b) {
+              return b.toolName || b.name || '';
+            })
+            .filter(Boolean),
+        );
+        if (t || tools.length) messages.push({ role: 'assistant', text: t, tools: tools, ts: ts });
+      }
+      // role 'tool' / tool_result rows, thinking, images and compaction are payloads, not turns.
+    });
+  const msgs = messages.filter(function (m) {
+    return m.text || m.tools.length;
+  });
+  return { messages: msgs, cwd: cwd, counts: countsOf(msgs), sessionId: sessionId };
 }
 
 // Cursor SQLite (`cursorDiskKV`): bubbles are `bubbleId:<composer>:<id>` JSON rows; the composer
@@ -399,6 +507,7 @@ function normalize(filePath, input) {
     return out;
   }
   if (tool === 'jsonl') return Object.assign({ tool: 'jsonl' }, _transcript.parse(buf.toString('utf8')));
+  if (tool === 'commandcode') return Object.assign({ tool: 'command-code' }, parseCommandCode(buf.toString('utf8')));
   if (tool === 'json') return Object.assign({ tool: 'json' }, parseJson(buf.toString('utf8')));
   if (tool === 'yaml') return Object.assign({ tool: 'copilot' }, parseYaml(buf.toString('utf8')));
   if (tool === 'aider') return Object.assign({ tool: 'aider' }, parseAider(buf.toString('utf8')));
@@ -417,6 +526,9 @@ const RESUME = {
   opencode: function (id) {
     return 'opencode --session ' + id;
   },
+  'command-code': function (id) {
+    return 'cmd --resume ' + id;
+  },
   jsonl: function (id) {
     return 'claude --resume ' + id;
   }, // Claude Code / Gemini-style
@@ -429,6 +541,7 @@ function resumeCommand(tool, id) {
 export {
   detect,
   parseAider,
+  parseCommandCode,
   parseCursor,
   parseJson,
   parseYaml,

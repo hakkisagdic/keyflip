@@ -9,6 +9,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Command Code (`cmd`, npm `command-code`) is a managed surface.** Both the CLI and its shipped
+  VS Code extension read one `~/.commandcode/auth.json` (0600), so a single switch flips both — and
+  the file also carries that account's BYOK provider overrides, which a capture preserves. The new
+  `keyflip commandcode status|list|capture|switch|backups|restore|remove` group names accounts from
+  `userName`, stores `auth.json` + a **secret-free** `meta.json` under
+  `~/.config/keyflip/surfaces/command-code/<slug>/`, and on switch backs up the live file, captures
+  the outgoing login, writes the stored bytes and verifies by raw read-back plus user id/name
+  (a mismatch names the backup to roll back to). `status` reports the two traps a switch cannot
+  fix: an exported `COMMAND_CODE_API_KEY` overrides the file (the switch would look inert), and a
+  `cmd` installed under fnm/nvm is only on PATH for that Node version (it prints the shim path and
+  the `fnm use`/`nvm use` remedy). The web dashboard stays a separate human login, stated in the
+  docs. Four MCP tools (`keyflip_commandcode` read-only; `_capture`/`_switch`/`_remove`
+  confirm-gated) and the `surfaces` registry row (`switchable`, with a pointer to the CLI group)
+  ship with it. Its sessions (`~/.commandcode/projects/<slug>/*.jsonl`) now appear in
+  `keyflip conv --app command-code` and `keyflip foreign`: both live on-disk layouts are parsed —
+  the flat `{role,content}` event log and the v3 `{type:'session'|'message'}` log (whose session
+  header supplies the cwd) — with thinking/reasoning, tool-result payloads, images,
+  `.checkpoints.jsonl` sidecars and `compaction` rows dropped, the tool name kept on the assistant
+  turn, the title read from the `<sessionId>.meta.json` sidecar, and `cmd --resume <id>` as the
+  resume command.
 - **One MCP registry, projected into every agent keyflip can write.** `mcpreg` knew only Claude Code
   and Claude Desktop, so the same server had to be re-typed into every other agent's config. Now
   `keyflip mcpreg enable <name>` also lands the entry in Cursor (`~/.cursor/mcp.json`), Kiro

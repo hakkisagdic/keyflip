@@ -1,12 +1,12 @@
 // #15 Central MCP-server registry, projected into every agent that reads a plain JSON MCP
 // config: Claude Code (~/.claude.json), Claude Desktop (claude_desktop_config.json), Cursor,
-// Kiro, Gemini CLI, Devin Desktop/Windsurf (an EXISTING file only — its location moved across
-// renames) and opencode (which keeps servers under `mcp`, not `mcpServers`). Define a server
-// once, then enable/disable it per surface. Enable = upsert the entry (preserving every other
-// key); disable = delete it. A target is only CREATED when its agent is installed and its path
-// is unambiguous; an agent whose format keyflip cannot write safely is listed by `surfaces()`
-// as not projected, with the reason, instead of being written blind. On Windows, stdio
-// npx/node commands are wrapped as `cmd /c …` (except under WSL UNC paths).
+// Kiro, Gemini CLI, Command Code (~/.commandcode/mcp.json), Devin Desktop/Windsurf (an EXISTING
+// file only — its location moved across renames) and opencode (which keeps servers under `mcp`,
+// not `mcpServers`). Define a server once, then enable/disable it per surface. Enable = upsert
+// the entry (preserving every other key); disable = delete it. A target is only CREATED when its
+// agent is installed and its path is unambiguous; an agent whose format keyflip cannot write
+// safely is listed by `surfaces()` as not projected, with the reason, instead of being written
+// blind. On Windows, stdio npx/node commands are wrapped as `cmd /c …` (except under WSL UNC paths).
 import fs from 'fs';
 import path from 'path';
 import { atomicWrite, writeJsonStable } from './fsutil.js';
@@ -57,6 +57,16 @@ const TARGETS = [
     shape: 'mcpServers',
     home: '.gemini/settings.json',
     agentDir: '.gemini',
+  },
+  {
+    // Command Code keeps its MCP servers at ~/.commandcode/mcp.json with the standard
+    // `mcpServers` shape (verified against command-code@1.81.0, which also imports from
+    // Claude/Cursor/Gemini). `cmd mcp add` writes the same file, so both stay in sync.
+    id: 'command-code',
+    app: 'Command Code',
+    shape: 'mcpServers',
+    home: '.commandcode/mcp.json',
+    agentDir: '.commandcode',
   },
   {
     // Windsurf became Devin Desktop; the file moved and the old locations are still read by

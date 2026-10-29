@@ -258,7 +258,12 @@ keyflip threads suggest                # one TASK split over 2+ accounts? see §
   recent chats it holds aren't missed, and keyflip says so when the WAL is there but cannot be
   folded in). `foreign` also reads opencode / Gemini /
   **Qoder CLI** JSONL and Copilot YAML; a file you point at directly may also be a plain-JSON
-  log or Aider's `.aider.chat.history.md`. Discovery is newest-first with a per-tool
+  log or Aider's `.aider.chat.history.md`. **Command Code** sessions
+  (`~/.commandcode/projects/<slug>/*.jsonl`) are read in both on-disk layouts — the flat
+  `{role, content}` event log and the v3 `{type:'session'|'message'}` one — with
+  `.checkpoints.jsonl` sidecars and thinking/tool-result payloads skipped; their title comes
+  from the `<sessionId>.meta.json` sidecar and they appear as `--app command-code`.
+  Discovery is newest-first with a per-tool
   file budget, so one chatty tool cannot bury the rest; a tool's non-session folders
   (`log/`, `snapshot/`, `tool-output/`, Qoder's `subagents/`) are skipped, and so is anything
   credential-shaped (`auth.json`, `credentials.json`, `oauth*.json`) — keyflip will never hand a

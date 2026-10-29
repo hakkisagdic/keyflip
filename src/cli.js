@@ -85,6 +85,7 @@ import * as _browser from './browser.js';
 import * as _browserswitch from './browserswitch.js';
 import * as _kiro from './kiro.js';
 import * as _antigravity from './antigravity.js';
+import * as _commandcode from './commandcode.js';
 import * as _codex from './codex.js';
 import * as _cfg from './config.js';
 import * as _svc from './autoswitchservice.js';
@@ -387,6 +388,9 @@ function usage() {
   print('                                 capture/save current login, switch accounts, list saved ones');
   print('  keyflip chatgpt [status|list|capture|switch|refresh|backups]  CHATGPT.app + CODEX CLI share ONE');
   print('                                 login (~/.codex/auth.json): capture/switch/remove it, refresh in place');
+  print('  keyflip commandcode [status|list|capture|switch|backups|restore]  COMMAND CODE (`cmd`) — CLI +');
+  print('                                 VS Code extension share ~/.commandcode/auth.json: capture, switch,');
+  print('                                 undo a switch from its backups; the web dashboard is a separate login');
   print('  keyflip skill add <owner/repo|./dir|file.tgz>   install a skill into every agent here');
   print('                                 (`skill agents` lists targets, `skill sync|list|remove` follow up)');
   print('  keyflip proxy start [--wire] | stop | status | stats');
@@ -7712,9 +7716,9 @@ async function cmdRecall(ctx, rest) {
 // ---- cross-app conversations: browse, search, RAG context, export, handoff --------------------
 // One canonical layer (src/conversations.js), one local index (src/convindex.js), one exporter
 // (src/convexport.js). Every subcommand is tool-agnostic: it reads Claude Code, Codex/ChatGPT,
-// Kiro, Gemini and the foreign adapters through the same shape, and no live store is modified.
+// Kiro, Gemini, Command Code and the foreign adapters through the same shape, and no live store is modified.
 const CONV_USAGE = [
-  'usage: keyflip conv [list] [--app claude,codex,kiro] [--since 7d] [--cwd <dir>] [--search T] [--account <name>] [--limit N] [--json]',
+  'usage: keyflip conv [list] [--app claude,codex,kiro,…] [--since 7d] [--cwd <dir>] [--search T] [--account <name>] [--limit N] [--json]',
   '       keyflip conv search "<query>" [--hybrid|--semantic|--lexical] [--per-conv N] [--limit N] [--since 7d] [--account <name>]',
   '       keyflip conv context "<query>" [--hybrid] [--budget 12000] [--expand 1]   RAG block for an LLM prompt',
   '       keyflip conv show <id|prefix|title> [--format md|html|json] [--out <file|dir>] [--no-redact]',
@@ -9537,7 +9541,7 @@ function cmdForeign(ctx, rest) {
     if (!found.length) {
       print(
         style.dim(
-          "No other agents' sessions found in the known locations (Cursor / opencode / Gemini / Qoder). These paths are best-effort — point at a file directly: ",
+          "No other agents' sessions found in the known locations (Cursor / opencode / Gemini / Qoder / Command Code). These paths are best-effort — point at a file directly: ",
         ) + style.bold('keyflip foreign <file>'),
       );
       return;
@@ -9548,7 +9552,7 @@ function cmdForeign(ctx, rest) {
         '  ' +
           style.ok('●') +
           ' ' +
-          f.tool.padEnd(9) +
+          f.tool.padEnd(12) +
           ' ' +
           style.dim(f.mtime.slice(0, 16).replace('T', ' ')) +
           '  ' +
@@ -9562,7 +9566,7 @@ function cmdForeign(ctx, rest) {
   const file = positionals(rest, ['--format', '--out'])[0];
   if (!file)
     return fail(
-      "usage: keyflip foreign <session-file> [--format md|html|json] [--out <file|->]\n  reads another agent's session log (message-event JSONL, generic JSON, Cursor SQLite, or an Aider .md).",
+      "usage: keyflip foreign <session-file> [--format md|html|json] [--out <file|->]\n  reads another agent's session log (message-event JSONL, Command Code JSONL, generic JSON, Cursor SQLite, or an Aider .md).",
     );
   let raw;
   try {
@@ -14427,6 +14431,207 @@ async function cmdKiro(ctx, rest) {
   );
 }
 
+// `keyflip commandcode [status|list|capture|switch|backups|restore|remove]` — manage Command Code
+// (`cmd`, npm `command-code`) accounts. ONE file owns every local surface: ~/.commandcode/auth.json
+// is read by the CLI AND the shipped VS Code extension, so a switch flips both. The web dashboard
+// is a separate browser login keyflip does not carry. `cmd login` is always the human step.
+function ccIdentity(id) {
+  if (!id) return style.dim('signed out');
+  const bits = [style.bold(id.userName || id.userId || 'unknown')];
+  if (id.keyName) bits.push(style.dim(id.keyName));
+  if (id.authenticatedAt) bits.push(style.dim('signed in ' + id.authenticatedAt));
+  return bits.join('  ');
+}
+
+function cmdCommandCode(ctx, rest) {
+  logmod.log('commandcode invoked');
+  const hasSub = rest[0] && rest[0].indexOf('-') !== 0;
+  const sub = hasSub ? rest[0] : 'status';
+  const args = hasSub ? rest.slice(1) : rest.slice();
+  const positional = args.filter(function (a) {
+    return a && a[0] !== '-';
+  });
+  const has = function (f) {
+    return args.indexOf(f) !== -1;
+  };
+  const force = has('--force') || has('-y');
+  const dryRun = has('--dry-run');
+  const noVerify = has('--no-verify');
+
+  if (sub === 'status' || sub === 'show') {
+    const st = _commandcode.status(ctx, {});
+    print(style.bold('Command Code live session') + ' ' + style.dim('(' + _commandcode.authPath(ctx) + ')'));
+    print('  login  ' + ccIdentity(st.present ? st.identity : null));
+    if (st.error) print('  ' + style.warn('⚠') + ' ' + st.error);
+    if (st.identity && st.providers.length)
+      print('  BYOK   ' + st.providers.join(', ') + ' ' + style.dim('(stored beside the login)'));
+    if (st.provider || st.model)
+      print('  model  ' + (st.model || 'unknown') + (st.provider ? '  ' + style.dim('via ' + st.provider) : ''));
+    if (st.bin.onPath) print('  cmd    ' + st.bin.path);
+    else if (st.bin.path) {
+      print(
+        '  cmd    ' +
+          style.warn('not on PATH') +
+          ' — installed under a version-managed Node: ' +
+          st.bin.path +
+          '\n         ' +
+          style.dim(
+            'switch Node (`fnm use <version>` / `nvm use <version>`) or link it, or `cmd` stays command-not-found.',
+          ),
+      );
+    } else print('  cmd    ' + style.dim('not found on PATH or under fnm/nvm'));
+    if (st.envOverride) {
+      print(
+        '  ' +
+          style.warn('⚠') +
+          ' ' +
+          _commandcode.ENV_KEY +
+          ' is exported — `cmd` uses THAT key, so a switch would look like it did nothing.',
+      );
+    }
+    if (!st.accounts.length) {
+      print('\nNo Command Code accounts saved yet. Run: ' + style.bold('keyflip commandcode capture'));
+    } else {
+      print('\nSaved Command Code accounts (' + st.accounts.length + '):');
+      st.accounts.forEach(function (a, i) {
+        const active =
+          st.identity &&
+          ((a.userId && st.identity.userId && a.userId === st.identity.userId) ||
+            (a.userName && st.identity.userName && a.userName === st.identity.userName));
+        print(
+          '  ' +
+            (active ? style.ok('*') : ' ') +
+            ' ' +
+            (i + 1) +
+            '. ' +
+            style.bold(a.name) +
+            (a.userName ? '  ' + a.userName : '') +
+            (a.providers && a.providers.length ? '  ' + style.dim('[' + a.providers.join(', ') + ']') : ''),
+        );
+      });
+    }
+    print('');
+    print(style.dim('CLI + the VS Code extension share auth.json; the web dashboard is a separate login (by hand).'));
+    jsonOut(st);
+    return;
+  }
+
+  if (sub === 'list') {
+    const accounts = _commandcode.listAccounts(ctx);
+    if (!accounts.length) print('No Command Code accounts saved. Run: keyflip commandcode capture');
+    else {
+      print('Saved Command Code accounts (' + accounts.length + '):');
+      accounts.forEach(function (a, i) {
+        print(
+          '  ' +
+            (i + 1) +
+            '. ' +
+            style.bold(a.name) +
+            '  ' +
+            (a.userName || style.dim('(username unknown)')) +
+            (a.providers && a.providers.length ? '  ' + style.dim('[' + a.providers.join(', ') + ']') : ''),
+        );
+        print('       ' + style.dim('captured ' + (a.capturedAt || '?') + ' · ' + (a.bytes || 0) + ' B'));
+      });
+    }
+    jsonOut({ accounts: accounts });
+    return;
+  }
+
+  if (sub === 'capture' || sub === 'save') {
+    const r = _commandcode.capture(ctx, { name: positional[0] });
+    print(
+      style.ok('✓') +
+        ' captured Command Code account ' +
+        style.bold(r.slug) +
+        (r.meta.userName ? ' (' + r.meta.userName + ')' : ''),
+    );
+    print(style.dim('  auth.json lives in ' + r.dir + ' (0600); meta.json holds no secret.'));
+    jsonOut({ account: r.meta });
+    return;
+  }
+
+  if (sub === 'switch' || sub === 'use') {
+    if (!positional[0]) return fail('usage: keyflip commandcode switch <name|number|user> [--dry-run] [--no-verify]');
+    const r = _commandcode.switchTo(ctx, positional[0], { dryRun: dryRun, noVerify: noVerify });
+    if (r.dryRun) {
+      print(style.bold('Command Code switch plan (dry run — nothing was written)'));
+      print(
+        '  target: ' +
+          style.bold(r.plan.userName || r.plan.userId || '?') +
+          '  live now: ' +
+          (r.plan.live ? r.plan.live.userName : 'signed out'),
+      );
+      print('  would write ' + r.plan.file + ' (' + r.plan.write.bytes + ' B)');
+      jsonOut({ dryRun: true, plan: r.plan });
+      return;
+    }
+    print(
+      style.ok('✓') +
+        ' switched Command Code to ' +
+        style.bold(r.slug) +
+        (r.identity && r.identity.userName ? ' (' + r.identity.userName + ')' : ''),
+    );
+    if (r.capturedOutgoing) print('  ' + style.dim('saved the outgoing login as ') + style.bold(r.capturedOutgoing));
+    if (r.backup) print('  ' + style.dim('previous auth.json backed up (' + path.basename(r.backup) + ')'));
+    if (!r.verified) print(style.warn('⚠') + ' identity check skipped (--no-verify).');
+    print('  ' + style.dim('already-running `cmd` sessions keep their old login until restarted.'));
+    jsonOut(r);
+    return;
+  }
+
+  if (sub === 'backups') {
+    const list = _commandcode.listBackups(ctx);
+    if (!list.length) print('No Command Code auth.json backups yet (one is written before every switch/restore).');
+    else {
+      print('Command Code auth.json backups (' + list.length + ', newest first):');
+      list.forEach(function (b, i) {
+        print(
+          '  ' +
+            (i + 1) +
+            '. ' +
+            style.bold(b.file) +
+            '  ' +
+            (b.userName || style.dim('unknown')) +
+            '  ' +
+            style.dim(b.bytes + ' B'),
+        );
+      });
+    }
+    jsonOut({ backups: list });
+    return;
+  }
+
+  if (sub === 'restore') {
+    if (!positional[0]) return fail('usage: keyflip commandcode restore <file|number> [--dry-run]');
+    const r = _commandcode.restoreBackup(ctx, positional[0], { dryRun: dryRun, noVerify: noVerify });
+    if (r.dryRun) {
+      print(style.bold('Command Code restore plan (dry run — nothing was written)'));
+      print('  would write ' + r.plan.file + ' (' + r.plan.write.bytes + ' B)');
+      jsonOut({ dryRun: true, plan: r.plan });
+      return;
+    }
+    print(style.ok('✓') + ' restored ' + style.bold(r.restored));
+    if (r.backup) print('  ' + style.dim('the login it replaced was backed up too.'));
+    jsonOut(r);
+    return;
+  }
+
+  if (sub === 'remove' || sub === 'rm') {
+    if (!positional[0]) return fail('usage: keyflip commandcode remove <name|number> --force');
+    const r = _commandcode.removeAccount(ctx, positional[0], { force: force });
+    print(style.ok('✓') + ' removed Command Code account ' + style.bold(r.removed));
+    jsonOut(r);
+    return;
+  }
+
+  return fail(
+    "unknown commandcode command: '" +
+      sub +
+      "' (status|list|capture|switch|backups|restore|remove). Try `keyflip commandcode status`.",
+  );
+}
+
 // `keyflip antigravity [status|list|capture|switch|remove]` — manage Antigravity (formerly Gemini CLI) accounts.
 // Antigravity stores its OAuth token in the macOS Keychain under service "gemini", account "antigravity".
 async function cmdAntigravity(ctx, rest) {
@@ -16636,6 +16841,13 @@ async function dispatch(ctx, cmd, rest) {
               return cmdKiro(ctx, rest);
             })
           : cmdKiro(ctx, rest);
+      case 'commandcode':
+      case 'command-code':
+        return ['capture', 'save', 'switch', 'use', 'restore', 'remove', 'rm'].indexOf(rest[0]) !== -1
+          ? withLock(ctx, function () {
+              return cmdCommandCode(ctx, rest);
+            })
+          : cmdCommandCode(ctx, rest);
       case 'antigravity':
       case 'agy':
         return ['capture', 'save', 'switch', 'use', 'remove', 'rm'].indexOf(rest[0]) !== -1

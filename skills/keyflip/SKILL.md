@@ -344,6 +344,36 @@ refresh leaves the file untouched. MCP: `keyflip_chatgpt` (read) plus confirm-ga
 `keyflip_chatgpt_capture` / `_switch` / `_refresh`, plus read-only `keyflip_chatgpt_backups`
 and confirm-gated `keyflip_chatgpt_restore`; none returns a token.
 
+## Command Code (one login for CLI + VS Code extension)
+
+`cmd` (npm `command-code`) and its shipped VS Code extension read the SAME
+`~/.commandcode/auth.json` (0600), so one switch flips both. The file also holds
+that account's BYOK provider overrides (`{<providerId>:{type:'api',key}}`), which a
+capture carries along. `userName` is a username, not an e-mail.
+
+```bash
+keyflip commandcode status          # live login, BYOK providers, model, cmd-on-PATH state, saved accounts
+keyflip commandcode list
+keyflip commandcode capture [name]  # auto-named from userName
+keyflip commandcode switch <name|n|user> [--dry-run] [--no-verify]
+keyflip commandcode backups
+keyflip commandcode restore <n|file> [--dry-run]
+keyflip commandcode remove <name> --force
+```
+
+Captures live under `~/.config/keyflip/surfaces/command-code/<slug>/` (`auth.json`
+0600 + secret-free `meta.json`). A switch backs up the live file, captures the
+outgoing login, writes the stored bytes and verifies by raw read-back + user id/name.
+Already-running `cmd` sessions keep the old login until restarted. The web dashboard
+(commandcode.ai/billing, /usage) is a separate browser login keyflip does not carry.
+If `COMMAND_CODE_API_KEY` is exported it overrides auth.json — status warns, because
+a switch would look inert. `cmd` installed under fnm/nvm is only on PATH for that
+Node version; status reports the shim path. MCP: `keyflip_commandcode` (read) plus
+confirm-gated `keyflip_commandcode_capture` / `_switch` / `_remove`; none returns a key.
+Sessions: `~/.commandcode/projects/<slug>/*.jsonl` show up in
+`keyflip conv --app command-code` and `keyflip foreign` (v1 and v3 layouts;
+`.checkpoints.jsonl` skipped).
+
 ## Isolated app instances (one desktop app per account, macOS)
 
 `keyflip instance list|create|launch|focus|kill|enable-all|harden` manages APFS

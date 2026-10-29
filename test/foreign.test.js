@@ -254,9 +254,161 @@ test('resumeCommand: documented per-tool resume commands (best-effort)', functio
   assert.strictEqual(foreign.resumeCommand('cursor', 'C1'), 'cursor agent --resume C1');
   assert.strictEqual(foreign.resumeCommand('copilot', 'abc'), 'copilot --resume=abc');
   assert.strictEqual(foreign.resumeCommand('opencode', 'ses_1'), 'opencode --session ses_1');
+  assert.strictEqual(foreign.resumeCommand('command-code', 'sess-cc-1'), 'cmd --resume sess-cc-1');
   assert.strictEqual(foreign.resumeCommand('jsonl', 'x'), 'claude --resume x');
   assert.strictEqual(foreign.resumeCommand('aider', 'x'), null, 'aider has no resume id');
   assert.strictEqual(foreign.resumeCommand('cursor', null), null, 'no id -> null');
+});
+
+// --- Command Code (`cmd`) message-event JSONL ---------------------------------------------
+
+const COMMANDCODE = [
+  {
+    id: 'e0',
+    timestamp: '2026-10-19T12:00:00.000Z',
+    sessionId: 'sess-cc-1',
+    parentId: null,
+    role: 'user',
+    content: [{ type: 'text', text: 'Fix the parser.' }],
+  },
+  {
+    id: 'e1',
+    timestamp: '2026-10-19T12:00:01.000Z',
+    sessionId: 'sess-cc-1',
+    parentId: 'e0',
+    role: 'assistant',
+    content: [
+      { type: 'reasoning', text: 'internal chain of thought' },
+      { type: 'text', text: 'Reading the file.' },
+      { type: 'tool-call', toolCallId: 't1', toolName: 'Read', input: { path: 'x' } },
+    ],
+  },
+  {
+    id: 'e2',
+    timestamp: '2026-10-19T12:00:02.000Z',
+    sessionId: 'sess-cc-1',
+    parentId: 'e1',
+    role: 'tool',
+    content: [{ type: 'tool-result', toolCallId: 't1', toolName: 'Read', output: 'file body' }],
+  },
+  {
+    id: 'e3',
+    timestamp: '2026-10-19T12:00:03.000Z',
+    sessionId: 'sess-cc-1',
+    parentId: 'e2',
+    role: 'user',
+    content: [{ type: 'text', text: 'Now run the tests.' }],
+  },
+]
+  .map((l) => JSON.stringify(l))
+  .join('\n');
+
+test('detect: Command Code is sniffed by its event shape, before the .jsonl shorthand', function () {
+  // A .jsonl name alone would route it to the Claude/Gemini message-event parser.
+  assert.strictEqual(foreign.detect('session.jsonl', COMMANDCODE), 'commandcode');
+  assert.strictEqual(
+    foreign.detect('notes.txt', '  \n' + COMMANDCODE),
+    'commandcode',
+    'leading blank lines do not hide the shape',
+  );
+  // Gemini/Claude JSONL keeps its own route.
+  assert.strictEqual(
+    foreign.detect('gemini.jsonl', '{"type":"user","message":{"role":"user","content":"hi"}}'),
+    'jsonl',
+  );
+});
+
+test('parseCommandCode: real turns only — reasoning and tool-result payloads are dropped', function () {
+  const p = foreign.parseCommandCode(COMMANDCODE);
+  assert.strictEqual(p.sessionId, 'sess-cc-1');
+  assert.strictEqual(p.cwd, null, 'the log carries no cwd');
+  assert.strictEqual(p.counts.messages, 3);
+  assert.strictEqual(p.counts.user, 2);
+  assert.strictEqual(p.counts.assistant, 1);
+  assert.deepStrictEqual(
+    p.messages.map((m) => m.role),
+    ['user', 'assistant', 'user'],
+  );
+  assert.strictEqual(p.messages[0].text, 'Fix the parser.');
+  assert.strictEqual(p.messages[1].text, 'Reading the file.');
+  assert.deepStrictEqual(p.messages[1].tools, ['Read']);
+  assert.strictEqual(p.messages[1].text.indexOf('internal chain of thought'), -1);
+  assert.strictEqual(p.messages[1].text.indexOf('file body'), -1, 'tool output is not a chat turn');
+  assert.strictEqual(p.messages[1].ts, '2026-10-19T12:00:01.000Z');
+});
+
+test('normalize: Command Code tags the unified shape command-code', function () {
+  const n = foreign.normalize('session.jsonl', COMMANDCODE);
+  assert.strictEqual(n.tool, 'command-code');
+  assert.strictEqual(n.counts.messages, 3);
+  assert.strictEqual(n.messages[1].tools[0], 'Read');
+});
+
+// The v3 event log (live on 2026-10 installs): a `session` header record, then `message` records
+// whose roles/blocks live under `message`, with thinking/tool_result payloads and a compaction row.
+const COMMANDCODE_V3 = [
+  { type: 'session', version: 3, id: 'sess-v3', timestamp: '2026-10-19T12:00:00.000Z', cwd: '/work/cc' },
+  {
+    type: 'message',
+    timestamp: '2026-10-19T12:00:01.000Z',
+    message: { role: 'user', content: [{ type: 'text', text: 'Fix the parser.' }] },
+  },
+  {
+    type: 'message',
+    timestamp: '2026-10-19T12:00:02.000Z',
+    message: {
+      role: 'assistant',
+      content: [
+        { type: 'thinking', thinking: 'internal chain of thought', signature: 'sig' },
+        { type: 'text', text: 'Reading the file.' },
+        { type: 'tool_use', id: 't1', name: 'shell_command', input: { cmd: 'cat x' } },
+      ],
+    },
+  },
+  {
+    type: 'message',
+    timestamp: '2026-10-19T12:00:03.000Z',
+    message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't1', content: 'file body' }] },
+  },
+  { type: 'compaction', timestamp: '2026-10-19T12:00:04.000Z' },
+]
+  .map((l) => JSON.stringify(l))
+  .join('\n');
+
+test('Command Code v3: session header gives id/cwd; message records keep only real turns', function () {
+  assert.strictEqual(foreign.detect('session.jsonl', COMMANDCODE_V3), 'commandcode');
+  const p = foreign.parseCommandCode(COMMANDCODE_V3);
+  assert.strictEqual(p.sessionId, 'sess-v3');
+  assert.strictEqual(p.cwd, '/work/cc');
+  assert.strictEqual(p.counts.messages, 2);
+  assert.strictEqual(p.messages[0].text, 'Fix the parser.');
+  assert.strictEqual(p.messages[1].text, 'Reading the file.');
+  assert.deepStrictEqual(p.messages[1].tools, ['shell_command']);
+  assert.strictEqual(p.messages[1].text.indexOf('internal chain'), -1);
+  assert.strictEqual(p.messages[1].text.indexOf('file body'), -1);
+  assert.strictEqual(p.messages[1].ts, '2026-10-19T12:00:02.000Z');
+
+  const n = foreign.normalize('session.jsonl', COMMANDCODE_V3);
+  assert.strictEqual(n.tool, 'command-code');
+  assert.strictEqual(n.cwd, '/work/cc');
+});
+
+test('discover: Command Code sessions, with checkpoints sidecars skipped', function () {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'kf-cc-disc-'));
+  const proj = path.join(home, '.commandcode', 'projects', '-work-proj');
+  fs.mkdirSync(proj, { recursive: true });
+  fs.writeFileSync(path.join(proj, 'sess-cc-1.jsonl'), COMMANDCODE);
+  fs.writeFileSync(path.join(proj, 'sess-cc-1.meta.json'), '{"title":"Command Code task"}');
+  fs.writeFileSync(path.join(proj, 'sess-cc-1.checkpoints.jsonl'), COMMANDCODE);
+  fs.writeFileSync(path.join(proj, 'auth.json'), '{"apiKey":"secret"}');
+  const found = foreign.discover({ home: home });
+  assert.deepStrictEqual(
+    found.map(function (f) {
+      return f.tool + ':' + path.basename(f.path);
+    }),
+    ['command-code:sess-cc-1.jsonl'],
+    'one session: no checkpoints, no meta file, no credential',
+  );
 });
 
 // Post-audit reliability: a WAL-mode Cursor DB keeps recent writes in a sibling -wal file this

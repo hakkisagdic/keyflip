@@ -6,7 +6,7 @@
 //   kiro    ~/.kiro/sessions/cli/<id>.jsonl                      (Kiro CLI)
 //           ~/.kiro/sessions/<hash>/sess_*/messages.jsonl        (Kiro IDE)
 //   cursor  <Cursor>/User/**/state.vscdb  cursorDiskKV rows       (editor + cursor-agent, via cursor.js)
-//   foreign opencode / Qoder / Gemini / Copilot / Aider via foreign.js
+//   foreign opencode / Qoder / Gemini / Copilot / Aider / Command Code via foreign.js
 //
 // The shape is deliberately small so transfer, export and retrieval never have to
 // learn a vendor schema twice:
@@ -625,7 +625,9 @@ function parseForeignSource(text, src, opts) {
   const conv = makeConv({
     id: 'foreign:' + tool + ':' + digest,
     app: tool,
-    surface: 'local',
+    // Discoverers may know a tool is a CLI product (Command Code keeps a VS Code extension beside
+    // its CLI but one session store); keep their answer instead of flattening everything to local.
+    surface: src.surface || 'local',
     title: src.title || null,
     cwd: normalized.cwd || (opts && opts.cwd) || null,
     createdAt: messages.length ? messages[0].ts : null,
@@ -815,6 +817,7 @@ function foreignSources(ctx) {
   }
   found.forEach((f) => {
     const gemini = f.tool === 'gemini' && /transcript\.jsonl$/i.test(f.path);
+    const commandCode = f.tool === 'command-code';
     let file = f.path;
     if (gemini) {
       // transcript_full.jsonl carries the same records plus steps an older transcript omitted.
@@ -825,11 +828,22 @@ function foreignSources(ctx) {
         /* keep transcript.jsonl */
       }
     }
+    let title = null;
+    if (commandCode) {
+      // Command Code keeps its title beside the log: <sessionId>.meta.json → { title }.
+      try {
+        const meta = JSON.parse(fs.readFileSync(file.replace(/\.jsonl$/i, '.meta.json'), 'utf8'));
+        title = meta && typeof meta.title === 'string' ? meta.title : null;
+      } catch {
+        /* title is optional */
+      }
+    }
     const src = statSource(file, gemini ? 'gemini-transcript' : 'foreign', {
       app: f.tool,
-      surface: gemini ? 'cli' : 'local',
+      surface: gemini || commandCode ? 'cli' : 'local',
       idHint: gemini ? geminiSessionId(file) : crypto.createHash('sha1').update(f.path).digest('hex').slice(0, 12),
       tool: f.tool,
+      title: title,
     });
     if (src) out.push(src);
   });

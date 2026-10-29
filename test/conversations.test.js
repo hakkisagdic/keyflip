@@ -239,6 +239,68 @@ test('Kiro CLI: Prompt/AssistantMessage blocks become user/assistant turns', fun
   assert.deepStrictEqual(c.messages[1].tools, ['fs_write']);
 });
 
+test('Command Code: title comes from the .meta.json sidecar and the surface is cli', function () {
+  const ctx = ctxFor();
+  const dir = path.join(ctx.home, '.commandcode', 'projects', '-work-proj');
+  fs.mkdirSync(dir, { recursive: true });
+  const id = 'sess-cc-1';
+  const lines = [
+    { sessionId: id, role: 'user', content: [{ type: 'text', text: 'Refactor the parser.' }] },
+    {
+      sessionId: id,
+      role: 'assistant',
+      content: [
+        { type: 'text', text: 'Reading the file.' },
+        { type: 'tool-call', toolCallId: 't1', toolName: 'Read', input: { path: 'x' } },
+      ],
+    },
+    { sessionId: id, role: 'tool', content: [{ type: 'tool-result', toolCallId: 't1', output: 'body' }] },
+  ];
+  fs.writeFileSync(path.join(dir, id + '.jsonl'), lines.map((l) => JSON.stringify(l)).join('\n') + '\n');
+  fs.writeFileSync(path.join(dir, id + '.meta.json'), JSON.stringify({ title: 'Command Code task' }));
+  // Must never be listed as a session of its own.
+  fs.writeFileSync(path.join(dir, id + '.checkpoints.jsonl'), JSON.stringify(lines[0]) + '\n');
+
+  const convs = conversations.discover(ctx, { foreign: true }).map((s) => conversations.load(ctx, s, {}));
+  assert.strictEqual(convs.length, 1);
+  const c = convs[0];
+  assert.ok(c.id.indexOf('foreign:command-code:') === 0, c.id);
+  assert.strictEqual(c.app, 'command-code');
+  assert.strictEqual(c.surface, 'cli');
+  assert.strictEqual(c.title, 'Command Code task');
+  assert.deepStrictEqual(
+    c.messages.map((m) => m.role),
+    ['user', 'assistant'],
+  );
+  assert.deepStrictEqual(c.messages[1].tools, ['Read']);
+});
+
+test('Command Code v3: the session header supplies cwd for the conversation', function () {
+  const ctx = ctxFor();
+  const dir = path.join(ctx.home, '.commandcode', 'projects', '-work-cc');
+  fs.mkdirSync(dir, { recursive: true });
+  const lines = [
+    { type: 'session', version: 3, id: 'v3-1', timestamp: '2026-10-19T12:00:00.000Z', cwd: '/work/cc' },
+    {
+      type: 'message',
+      timestamp: '2026-10-19T12:00:01.000Z',
+      message: { role: 'user', content: [{ type: 'text', text: 'Ship it.' }] },
+    },
+    {
+      type: 'message',
+      timestamp: '2026-10-19T12:00:02.000Z',
+      message: { role: 'assistant', content: [{ type: 'text', text: 'Done.' }] },
+    },
+  ];
+  fs.writeFileSync(path.join(dir, 'v3-1.jsonl'), lines.map((l) => JSON.stringify(l)).join('\n') + '\n');
+  const c = conversations.discover(ctx, { foreign: true }).map((s) => conversations.load(ctx, s, {}))[0];
+  assert.strictEqual(c.app, 'command-code');
+  assert.strictEqual(c.surface, 'cli');
+  assert.strictEqual(c.cwd, '/work/cc');
+  assert.strictEqual(c.title, 'Ship it.');
+  assert.strictEqual(c.counts.messages, 2);
+});
+
 test('matchRef accepts a full id, a unique prefix, and a unique title; ambiguity is refused', function () {
   const rows = [
     { id: 'claude:local:aaaa1111', title: 'Fix CI' },

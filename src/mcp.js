@@ -100,6 +100,7 @@ import * as _swarm from './swarm.js';
 import * as _config from './config.js';
 import * as _codexbar from './codexbar.js';
 import * as _codex from './codex.js';
+import * as _commandcode from './commandcode.js';
 import * as _fsutil from './fsutil.js';
 import * as _secretmask from './secretscan.js';
 import * as _conversations from './conversations.js';
@@ -978,6 +979,96 @@ const TOOLS = [
       const l = await lock.acquire(ctx.configDir);
       try {
         return { restore: _codex.restoreBackup(ctx, String(args.backup), { force: args.force === true }) };
+      } finally {
+        l.release();
+      }
+    },
+  },
+  {
+    name: 'keyflip_commandcode',
+    title: 'Command Code account status',
+    description:
+      'Report the live Command Code (`cmd`, npm command-code) login and every saved one. ONE file owns every local surface (~/.commandcode/auth.json): the CLI and the shipped VS Code extension read the same file, so they flip together; the web dashboard is a separate browser login keyflip does not carry. Identity is userName/userId/keyName, never a key. Read-only.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    annotations: RO,
+    run: async function (ctx) {
+      return _commandcode.status(ctx);
+    },
+  },
+  {
+    name: 'keyflip_commandcode_capture',
+    title: 'Save the live Command Code login',
+    description:
+      'Copy the live ~/.commandcode/auth.json into a saved, secret-free-metadata capture under the keyflip config dir (0600; never git-versioned). The slug defaults to the Command Code username; pass name to override. Ask the user before writing, then confirm=true.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Optional slug (default: the Command Code username).' },
+        confirm: { type: 'boolean', description: 'Must be true — set it only after the user has agreed.' },
+      },
+      required: ['confirm'],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    run: async function (ctx, args) {
+      needConfirm(args);
+      const l = await lock.acquire(ctx.configDir);
+      try {
+        return { account: _commandcode.capture(ctx, { name: args && args.name ? String(args.name) : undefined }) };
+      } finally {
+        l.release();
+      }
+    },
+  },
+  {
+    name: 'keyflip_commandcode_switch',
+    title: 'Switch Command Code account',
+    description:
+      'Write a saved login back to ~/.commandcode/auth.json, which the Command Code CLI AND its VS Code extension read. The outgoing login is captured and backed up first; the file is read back and its username checked. Sessions of `cmd` that are ALREADY running keep the old login until restarted. This changes which account is billed. Ask the user first, then confirm=true. dry_run=true plans without writing.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        account: { type: 'string', description: 'Saved slug, 1-based number, or userName (from keyflip_commandcode).' },
+        dry_run: { type: 'boolean', description: 'Plan only; write nothing.' },
+        confirm: { type: 'boolean', description: 'Must be true — set it only after the user has agreed.' },
+      },
+      required: ['account', 'confirm'],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
+    run: async function (ctx, args) {
+      needConfirm(args);
+      if (args.dry_run === true) {
+        return { switch: _commandcode.switchTo(ctx, String(args.account), { dryRun: true }) };
+      }
+      const l = await lock.acquire(ctx.configDir);
+      try {
+        return { switch: _commandcode.switchTo(ctx, String(args.account), {}) };
+      } finally {
+        l.release();
+      }
+    },
+  },
+  {
+    name: 'keyflip_commandcode_remove',
+    title: 'Delete a saved Command Code account',
+    description:
+      'Remove a saved Command Code capture from the keyflip config dir. The live ~/.commandcode/auth.json is untouched. This is irreversible for the capture. Ask the user first, then confirm=true.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        account: { type: 'string', description: 'Saved slug or 1-based number (from keyflip_commandcode).' },
+        confirm: { type: 'boolean', description: 'Must be true — set it only after the user has agreed.' },
+      },
+      required: ['account', 'confirm'],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
+    run: async function (ctx, args) {
+      needConfirm(args);
+      const l = await lock.acquire(ctx.configDir);
+      try {
+        return { removed: _commandcode.removeAccount(ctx, String(args.account), { force: true }) };
       } finally {
         l.release();
       }

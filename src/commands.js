@@ -130,6 +130,15 @@ const CATALOG = [
       'keyflip chatgpt [status|list|capture [name]|switch <name|n|email>|refresh|backups [restore <n|file>]|remove <name>]',
     desc: 'ChatGPT.app + Codex CLI share one login (~/.codex/auth.json): capture, switch and refresh it.',
   },
+  {
+    name: 'commandcode',
+    group: 'accounts',
+    safe: false,
+    aliases: ['command-code'],
+    usage:
+      'keyflip commandcode [status|list|capture [name]|switch <name|n|user>|backups|restore <n|file>|remove <name>]',
+    desc: 'Command Code (`cmd`) CLI + VS Code extension share ~/.commandcode/auth.json: capture, switch, and undo a switch from its backups.',
+  },
 
   // ---- providers ----
   {
@@ -269,7 +278,7 @@ const CATALOG = [
     group: 'sessions',
     safe: false,
     usage: 'keyflip foreign --list | <session-file> [--format md|html|json]',
-    desc: "Find/normalize another agent's session (Cursor/opencode/Gemini/Qoder/Aider).",
+    desc: "Find/normalize another agent's session (Cursor/opencode/Gemini/Qoder/Command Code/Aider).",
   },
 
   // ---- context (portable project memory in .keyflip/) ----

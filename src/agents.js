@@ -24,6 +24,9 @@ const REGISTRY = [
   // Kiro (AWS): steering docs are project-level (.kiro/steering/*.md, travels w/ git); no standard
   // home-level memory. Home MCP config below.
   { id: 'kiro', label: 'Kiro', roots: [] },
+  // Command Code: memory is project-level AGENTS.md (travels with the repo); ~/.commandcode holds
+  // only login/config. Its MCP servers are carried below.
+  { id: 'command-code', label: 'Command Code', roots: [] },
 ];
 // J1 config-tier: per-agent CONFIG files (MCP servers, settings). These CAN hold secrets, so
 // they are ALWAYS run through the secret scanner + redacted before carrying — the structure
@@ -37,6 +40,7 @@ const CONFIG_REGISTRY = [
   { id: 'aider', files: ['.aider.conf.yml'] }, // YAML/env → secretscan uses line-based redaction
   { id: 'windsurf', files: ['.codeium/windsurf/mcp_config.json'] },
   { id: 'kiro', files: ['.kiro/settings/mcp.json'] }, // user-level MCP servers
+  { id: 'command-code', files: ['.commandcode/mcp.json'] }, // user-level MCP servers
 ];
 const MEM_EXT = ['.md', '.mdc', '.txt'];
 

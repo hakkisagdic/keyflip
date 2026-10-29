@@ -4,7 +4,9 @@
 // agents.js CONFIG_REGISTRY (cursor, gemini, codex, copilot, opencode, aider): detect presence and,
 // where the identity lives in a plain NON-SECRET file, read the active account — never decrypting,
 // reading, or moving a secret. Opaque/keychain/secret stores report present + 'switch not supported
-// yet'. Claude itself stays handled by keyflip core; switch() is a clean seam that throws until built.
+// yet'. Command Code is the exception that has a real adapter: its `keyflip commandcode` group
+// captures/switches ~/.commandcode/auth.json, so the row points there instead of claiming "not
+// supported". Claude itself stays handled by keyflip core; switch() here is a detection-only seam.
 import fs from 'fs';
 import path from 'path';
 
@@ -125,6 +127,19 @@ const SPECS = [
     store: { kind: 'env', secret: true, location: 'environment (OPENAI_API_KEY / ANTHROPIC_API_KEY / …) or .env' },
     readIdentity: null,
   },
+  {
+    // One 0600 auth.json is every local Command Code surface (the CLI and the shipped VS Code
+    // extension read the same file). It holds keys, so this registry never reads it; the real
+    // identity/capture/switch lives in src/commandcode.js.
+    id: 'command-code',
+    label: 'Command Code',
+    kind: 'file',
+    presence: ['.commandcode', '.commandcode/auth.json'],
+    store: { kind: 'file', secret: true, path: '.commandcode/auth.json' },
+    readIdentity: null,
+    switchable: true,
+    switchHint: 'keyflip commandcode status | switch <name>',
+  },
 ];
 
 function resolveStore(ctx, spec) {
@@ -157,8 +172,10 @@ function detectSpec(ctx, spec, opts) {
       accounts = Array.isArray(ident.accounts) ? ident.accounts : [];
     }
   }
+  const switchable = !!spec.switchable;
   let note;
   if (!present) note = 'not detected';
+  else if (switchable) note = 'switchable' + (spec.switchHint ? ': ' + spec.switchHint : '');
   else if (activeAccount) note = 'active account detected (switch not supported yet)';
   else note = 'present; account is in an opaque/secret store — switch not supported yet';
   return {
@@ -168,7 +185,7 @@ function detectSpec(ctx, spec, opts) {
     present: present,
     activeAccount: activeAccount,
     accounts: accounts,
-    switchable: false,
+    switchable: switchable,
     store: resolveStore(ctx, spec),
     note: note,
   };
@@ -180,7 +197,8 @@ function makeSurface(spec) {
     label: spec.label,
     kind: spec.kind,
     store: spec.store,
-    switchable: false,
+    switchable: !!spec.switchable,
+    switchHint: spec.switchHint || null,
     detect: function (ctx, opts) {
       return detectSpec(ctx, spec, opts);
     },
@@ -211,11 +229,14 @@ function detectOne(ctx, id, opts) {
   return s ? s.detect(ctx, opts) : null;
 }
 
-// The SWITCH SEAM. v1 is detection-only: no non-Claude surface can be switched safely yet (doing so
-// would move secrets keyflip does not handle in v1). Claude itself is switched by keyflip core, not
-// here. Throws a stable, per-surface message so callers can present it verbatim.
+// The SWITCH SEAM. Detection only: the one non-Claude surface with a real adapter is Command
+// Code (`keyflip commandcode`), which owns its own write path. Claude itself is switched by
+// keyflip core, not here. Throws a stable, per-surface message so callers can present it verbatim.
 function switchSurface(ctx, surfaceId, account, opts) {
   if (!get(surfaceId)) throw new Error("unknown surface: '" + surfaceId + "' (see: keyflip surfaces)");
+  if (surfaceId === 'command-code') {
+    throw new Error('switch Command Code with: keyflip commandcode switch <name> (this registry is read-only)');
+  }
   throw new Error('switch not supported for ' + surfaceId + ' (v1 is detection-only)');
 }
 
@@ -227,7 +248,7 @@ const mcpTools = [
     name: 'keyflip_surfaces',
     title: "Detect other AI tools' accounts",
     description:
-      'Detect which other AI coding tools (Cursor, Gemini CLI, Codex CLI, GitHub Copilot, opencode, Aider) are present on this machine and, where the identity is in a readable NON-SECRET file, which account is active. Read-only: never reads, decrypts, or moves any secret/token. Switching non-Claude tools is not supported yet (Claude itself is managed by the other keyflip tools).',
+      'Detect which other AI coding tools (Cursor, Gemini CLI, Codex CLI, GitHub Copilot, opencode, Aider, Command Code) are present on this machine and, where the identity is in a readable NON-SECRET file, which account is active. Read-only: never reads, decrypts, or moves any secret/token. Command Code accounts are switched with the keyflip_commandcode tools; other non-Claude tools are detection-only (Claude itself is managed by the other keyflip tools).',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
     annotations: RO,
     run: async function (ctx) {

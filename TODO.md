@@ -88,7 +88,31 @@ same way `provusage.js` ported CodexBar. Goal (owner's words): "convert all asse
       reason** in `keyflip mcpreg surfaces` and the MCP tool. Tests: `test/mcpreg.test.js` +
       CLI/MCP parity in `test/mcp.test.js`.
 
-## C. Hardware / account validation — build-done, needs a real device/account
+## C. Command Code — one login for the CLI and the VS Code extension (shipped)
+
+`cmd` (npm `command-code`) has accounts on every surface; it keeps **one** `~/.commandcode/auth.json`
+that both the CLI and the shipped VS Code extension read, so a switch flips both.
+
+- [x] Credential adapter `src/commandcode.js` + `keyflip commandcode status|list|capture|switch|
+      backups|restore|remove` (alias `command-code`): capture to `~/.config/keyflip/surfaces/
+      command-code/<slug>/` (auth.json 0600 + secret-free meta.json), outgoing-account capture and a
+      timestamped backup before every switch, atomic 0600 write verified by byte-identical read-back
+      *and* userId/userName identity, 10-backup retention, `remove` requires `--force`. The live env
+      var `COMMAND_CODE_API_KEY` and a `cmd` binary on another fnm/nvm Node version are both reported
+      because they defeat a switch. Live `status` verified on this machine.
+- [x] Conversations: `foreign`/`conv` read `~/.commandcode/projects/<slug>/*.jsonl` in **both** live
+      formats — v1 flat (`sessionId`/`role`/`content`) and v3 (`{type:'session'}` header + `{type:
+      'message',message:{…}}`, blocks `text`/`thinking`/`tool_use`/`tool_result`), title from
+      `<id>.meta.json`, `.checkpoints.jsonl` sidecars skipped, resume `cmd --resume <id>`. Verified on
+      the real install: 19/19 session files parse, 16 carry a cwd.
+- [x] `surface.js` / `agents.js` detection row (switchable, secret store `~/.commandcode/auth.json`),
+      `mcpreg` projection to `~/.commandcode/mcp.json` (`mcpServers`), 4 MCP tools
+      (`keyflip_commandcode` RO + `_capture`/`_switch`/`_remove` confirm-gated), EN/TR docs,
+      CHANGELOG, SKILL, website CLI reference, tests.
+- [ ] Live write path (capture/switch on a second real account) — only read-only `status` has been
+      run here; the first real capture is the owner's.
+
+## D. Hardware / account validation — build-done, needs a real device/account
 
 Everything below is BUILT + unit-tested; it just cannot be validated in this environment.
 
@@ -104,6 +128,7 @@ Everything below is BUILT + unit-tested; it just cannot be validated in this env
 - [ ] **Windsurf / Kiro** session-import format (`foreign.js` NEEDS-VERIFICATION) — confirm their
       on-disk chat/session store, then wire the import.
 
-## D. Release
+## E. Release
 
-- [ ] **Push** the local commits to `origin` (owner's explicit go — nothing has been pushed).
+- [x] **Push** — `main` tracks `origin/main` and is in sync; every landed commit is on the remote.
+      New work is committed and pushed per feature, not batched.
