@@ -13,7 +13,12 @@ These do not:
 
 - [ ] **Website** — marketing/landing + docs + checkout flow (per the 4-provider decision in
       `docs/PRODUCTIZATION.md`: iyzico + PayTR local, Lemon Squeezy + Stripe global).
-- [ ] **Admin panel** — license/customer management (issue, revoke, look up; webhook event log).
+- [x] **Admin panel** — license/customer management (issue, revoke, look up; webhook event log).
+      `issuer/admin.js` + `issuer/store.js`: a JSON API under `/admin/api/*` and a single-page panel
+      at `/admin`, both behind a constant-time bearer token that fails closed (503) when unset. The
+      store cannot hold a token; the minted one is returned once and never persisted. Revoke records
+      the revocation — it cannot un-activate an already-activated offline license, so reissue (with a
+      shorter expiry) is the real enforcement path.
 - [ ] **Issuer activation** (owner/business step, not code): generate the real Ed25519 keypair →
       paste the public key into `src/license.js` `PUBKEY_B64`; sign up with the actual PSPs; set real
       product/price IDs in `issuer/issuer.config.json`. Then flip `KEYFLIP_LICENSING=1`.

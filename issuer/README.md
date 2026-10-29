@@ -149,6 +149,63 @@ vault, etc.) — do **not** put these in a committed `.env`. (`.env`, `.env.*`,
 
 ---
 
+## The admin panel — issue, reissue, revoke, look up
+
+`admin.js` is the operator's view of the same issuer. It serves **both** a JSON
+API under `/admin/api/*` and a tiny single-page UI at `/admin` (no build step,
+no framework, no CDN — the UI is a thin client over the very same API, so
+there is no privileged path the API cannot do).
+
+Start the issuer with the admin token in the environment and open the panel:
+
+```bash
+export KEYFLIP_ISSUER_ADMIN_TOKEN='<a long random string>'
+node server.js
+# -> http://127.0.0.1:8787/admin
+```
+
+| method | path | what it does |
+| --- | --- | --- |
+| `GET` | `/admin/api/licenses?email=&tier=&status=&q=&limit=` | list issued licenses, newest first |
+| `GET` | `/admin/api/licenses/:id` | look one up |
+| `POST` | `/admin/api/licenses` | issue one — body `{ email, tier, months }` |
+| `POST` | `/admin/api/licenses/:id/revoke` | revoke — body `{ reason }` |
+| `POST` | `/admin/api/licenses/:id/reissue` | mint a replacement — body `{ months }` |
+| `GET` | `/admin/api/events?limit=` | the webhook event log |
+
+Every request needs `Authorization: Bearer <KEYFLIP_ISSUER_ADMIN_TOKEN>`. The
+token is compared in constant time, and **with no token configured the panel
+answers 503 and does nothing** — it fails closed, it never falls open because
+someone forgot to set it. A token in the query string is *not* accepted (query
+strings end up in logs).
+
+```bash
+curl -s -X POST http://127.0.0.1:8787/admin/api/licenses \
+  -H "authorization: Bearer $KEYFLIP_ISSUER_ADMIN_TOKEN" \
+  -H 'content-type: application/json' \
+  -d '{"email":"customer@example.com","tier":"pro","months":12}'
+```
+
+The response carries the license **token exactly once** — that response is the
+delivery channel to the customer. The token is never written to disk, never
+logged and never put in the event log: `store.js` has no API that can hold one
+(the store's `create()` takes no token argument at all), so a leaked state file
+cannot unlock anything. `issuer/state/` (the license records, the event log and
+the idempotency ledger) is gitignored.
+
+**Revoke means what it can mean.** A keyflip license is verified *locally*
+against an embedded public key with no phone-home — that is the product promise,
+and it also means an already-activated license **cannot be un-activated from
+the server**: at verify time there is nobody to ask. So `revoke` records the
+revocation, marks the record in the panel and stops the issuer from reissuing
+that license id; the customer's existing token stays valid until it **expires**.
+To shorten a customer's access for real, **reissue** a fresh license with a
+shorter expiry — they activate the new token and the old one stops mattering
+when it lapses. A true remote kill-switch would require a phone-home check,
+which keyflip deliberately refuses to ship.
+
+---
+
 ## SECURITY
 
 - **Private key never in git, never logged, never on argv.** It lives only at
@@ -184,3 +241,12 @@ değişkenlerinden (`process.env`) okunur; `config.js` yalnızca değişkenin
 **adını** çözer, değerini asla okumaz/loglamaz. Türkiye'de kayıtlı satıcılar
 Stripe kullanamadığı için **TR bölgesi iyzico'ya** (alternatif olarak PayTR)
 yönlendirilir; Stripe yalnızca TR dışı bölgelerde (`default`) kullanılır.
+
+**Yönetim paneli** (`admin.js`): `/admin` altında tek sayfalık bir arayüz ve
+`/admin/api/*` altında JSON API. Panel, `KEYFLIP_ISSUER_ADMIN_TOKEN` ortam
+değişkeni olmadan **kapalıdır** (503) — "unutuldu" diye açılmaz. Token sabit
+zamanlı karşılaştırmayla doğrulanır ve **yalnızca bir kez** gösterilen lisans
+jetonu diske/loga asla yazılmaz. `revoke`, **çevrimdışı doğrulanan** bir
+lisansı uzaklaştıramaz (doğrulama sırasında sorulacak bir sunucu yoktur);
+gerçek kısaltma **reissue** ile yapılır: daha kısa süreli yeni bir lisans
+minted edilir.

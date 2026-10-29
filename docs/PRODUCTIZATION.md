@@ -5,6 +5,13 @@
 > `src/license.js` (offline Ed25519 verification, no phone-home); everything else here is the
 > business/infra layer around it.
 
+> **Built (2026-10-29).** `src/license.js` (offline verify + tier gate), `issuer/` (Ed25519
+> keygen + signer, the four provider adapters — iyzico / PayTR / Lemon Squeezy / Stripe — a
+> `node:http` webhook router with an idempotency ledger, the license store + event log, and the
+> **admin panel** at `/admin`). **Left for the owner** (business steps, not code): the real
+> keypair → `PUBKEY_B64`, the PSP accounts and their product/price ids in
+> `issuer/issuer.config.json`, and finally `KEYFLIP_LICENSING=1`.
+
 ## 1. Model: open-core + offline signed licenses
 
 keyflip's differentiators are privacy and locality. A phone-home license server would betray that, so:

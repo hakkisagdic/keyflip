@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The issuer gets an admin panel: issue, reissue, revoke, look up — and the webhook event log.**
+  `issuer/admin.js` serves both a JSON API under `/admin/api/*` and a tiny single-page panel at
+  `/admin` (no build step, no framework, no CDN; the UI is a thin client over the same API, so
+  there is no privileged path the API cannot do). `issuer/store.js` holds the issuer's own
+  bookkeeping — the license records and the append-only event log — and it **cannot hold a token**:
+  `create()` takes no token argument at all, so a leaked state file can never unlock a paid feature.
+  The minted token is returned in the response **exactly once** (that response is the delivery
+  channel to the customer) and is never written to disk, logged or event-logged. Every request needs
+  `Authorization: Bearer <token>` compared in constant time; with **no token configured the panel
+  answers 503 and does nothing** — it fails closed rather than falling open because someone forgot
+  to set it — and a token in the query string is refused (query strings end up in logs). `revoke`
+  records the revocation and marks the record; it cannot un-activate a license that is already
+  activated on a customer machine, because a keyflip license is verified locally with no phone-home
+  (there is nobody to ask at verify time) — so the honest enforcement path is **reissue** with a
+  shorter expiry. The webhook router now appends what each call did (rejected, duplicate, unmapped,
+  issued) to the same event log.
 - **The price table updates itself: `keyflip cost prices --refresh`.** The cost estimates were pinned
   to a hand-maintained snapshot, so list-price drift (a new model, an intro price lapsing) silently
   skewed every number. New `src/prices.js` fetches the public LiteLLM price list, keeps the Claude
