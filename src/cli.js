@@ -113,7 +113,7 @@ import * as _menubar from './menubar.js';
 import * as _cowork from './cowork.js';
 import * as _chat from './chat.js';
 import * as _chatsession from './chatsession.js';
-import * as _skillstore from './skillstore.js';
+import * as _skillsync from './skillsync.js';
 import * as _archive from './archive.js';
 import * as _sessionmap from './sessionmap.js';
 import * as attrib from './attrib.js';
@@ -378,7 +378,8 @@ function usage() {
   print('                                 capture/save current login, switch accounts, list saved ones');
   print('  keyflip chatgpt [status|list|capture|switch|refresh|backups]  CHATGPT.app + CODEX CLI share ONE');
   print('                                 login (~/.codex/auth.json): capture/switch/remove it, refresh in place');
-  print('  keyflip skill add <owner/repo|./dir|file.tgz>   install a skill; also: skill list|remove');
+  print('  keyflip skill add <owner/repo|./dir|file.tgz>   install a skill into every agent here');
+  print('                                 (`skill agents` lists targets, `skill sync|list|remove` follow up)');
   print('  keyflip proxy start [--wire] | stop | status | stats');
   print('                                 command-started failover proxy (429/5xx → next account)');
   print('  keyflip status                which account each surface is on (CLI + desktop app)');
@@ -484,7 +485,7 @@ function usage() {
   print('  keyflip import <file|->       restore accounts from an export (--force overwrites)');
   print('  keyflip mcp [--setup|--register]  MCP server over stdio for agents (--register wires it');
   print('                                 into Claude Code + Desktop with absolute paths)');
-  print('  keyflip install-skill         install the Claude Code skill that teaches agents keyflip');
+  print('  keyflip install-skill         install the keyflip skill into every agent on this machine');
   print('  keyflip upgrade               update keyflip itself (auto-detects install method)');
   print('  keyflip reset [--soft] [--logout [--no-desktop]]   FACTORY reset: DELETE all keyflip data');
   print('                                 (--soft keeps accounts, clears only runtime state;');
@@ -3192,10 +3193,12 @@ async function cmdMcp(ctx, rest) {
   return mcp.serve(ctx);
 }
 
-// Install the bundled agent skill into ~/.claude/skills so Claude Code learns
-// when and how to drive keyflip.
+// Install the bundled agent skill into every agent on this machine that reads one. Claude keeps
+// skill.js's install (it backs up the previous copy and answers --check for drift); the same skill
+// dir is fanned out to the other detected agents through skillsync.
 function cmdInstallSkill(ctx, rest) {
   rest = rest || [];
+  const agents = skillAgentIds(rest);
   if (rest.indexOf('--check') !== -1) {
     const st = skill.status(ctx);
     print(
@@ -3205,7 +3208,20 @@ function cmdInstallSkill(ctx, rest) {
           ? style.warn('⚠ installed skill is out of date — run: keyflip install-skill --update')
           : 'not installed — run: keyflip install-skill',
     );
-    jsonOut({ skillStatus: st });
+    const rec = _skillsync.list(ctx).filter(function (s) {
+      return s.name === 'keyflip';
+    })[0];
+    if (rec)
+      rec.targets
+        .filter(function (t) {
+          return t.dir !== '.claude/skills'; // reported above, with its drift check
+        })
+        .forEach(function (t) {
+          const mark =
+            t.state === 'ok' ? style.ok('✓') : t.state === 'edited' ? style.warn('✎ edited') : style.warn('✗ missing');
+          print('  ' + mark + '  ' + t.dir);
+        });
+    jsonOut({ skillStatus: st, targets: rec ? rec.targets : [] });
     return;
   }
   let r;
@@ -3216,7 +3232,32 @@ function cmdInstallSkill(ctx, rest) {
   }
   print(style.ok('✅') + ' installed the keyflip skill to ' + r.dest + '  (' + r.mode + ')');
   if (r.mode === 'symlink') print('Symlinked — future keyflip upgrades update it automatically.');
-  print('Claude Code picks it up next session (account switching, provider routing,');
+  // One manifest for every agent, so `skill list`/`sync`/`remove` see the Claude copy too.
+  try {
+    _skillsync.recordTarget(
+      ctx,
+      'keyflip',
+      'claude',
+      '.claude/skills',
+      _skillsync.fingerprint(r.dest),
+      r.mode,
+      'dir:' + skill.sourceDir(),
+    );
+  } catch (e) {
+    /* a manifest problem must not undo a good install */
+  }
+  let fan = { installed: [], skipped: [] };
+  try {
+    fan = _skillsync.installBundled(ctx, { agents: agents });
+  } catch (e) {
+    print(style.warn('·') + ' other agents: ' + e.message);
+  }
+  fan.installed.forEach(function (s) {
+    s.targets.forEach(function (t) {
+      print('  ' + style.ok('✓') + ' ' + t.dir + '  (' + t.mode + ')');
+    });
+  });
+  print('Every agent reads it on its next session (account switching, provider routing,');
   print('usage-aware rotation, parallel sessions and the MCP tools).');
 }
 
@@ -5509,43 +5550,117 @@ async function cmdChat(ctx, rest) {
   }
 }
 
-// Skills marketplace: install arbitrary skills from GitHub/dir/archive.
+// Skills marketplace: install arbitrary skills from GitHub/dir/archive — into every agent on this
+// machine that can read one (default), or into the agents you name. Cross-agent fan-out lives in
+// skillsync.js; `keyflip skill agents` explains each target and whether this machine has it.
+function skillAgentIds(rest) {
+  const out = [];
+  for (let i = 0; i < rest.length; i++) {
+    if (rest[i] === '--agents' && rest[i + 1] != null) {
+      String(rest[i + 1])
+        .split(',')
+        .forEach(function (a) {
+          a = a.trim().toLowerCase();
+          if (a && out.indexOf(a) === -1) out.push(a);
+        });
+    }
+  }
+  return out;
+}
+function skillTargetsLine(t) {
+  return t.dir + (t.ids.length > 1 ? '  (' + t.ids.slice(0, 4).join(', ') + (t.ids.length > 4 ? ', …' : '') + ')' : '');
+}
 async function cmdSkill(ctx, rest) {
-  const skillstore = _skillstore;
   const sub = rest[0];
   const args = rest.slice(1);
+  const agents = skillAgentIds(args);
+  const dryRun = args.indexOf('--dry-run') !== -1;
+  const asJson = JSON_MODE;
+
+  if (sub === 'agents' || sub === 'targets') {
+    const detected = _skillsync.detectedTargets(ctx);
+    const seen = detected.map(function (t) {
+      return t.dir;
+    });
+    const rows = _skillsync.allTargets().map(function (t) {
+      return Object.assign({ detected: seen.indexOf(t.dir) !== -1 }, t);
+    });
+    if (asJson) return jsonOut({ targets: rows });
+    print('Skill targets (' + rows.length + ' dirs, ' + rows.filter((r) => r.detected).length + ' on this machine):');
+    rows.forEach(function (t) {
+      print(
+        '  ' + (t.detected ? style.ok('●') : style.dim('○')) + ' ' + skillTargetsLine(t) + '   ' + style.dim(t.level),
+      );
+    });
+    print(style.dim('  ● = the tool’s home exists, so `keyflip skill add` writes there by default.'));
+    print(style.dim('  ○ = absent; name it with --agents only if you know the tool lives elsewhere.'));
+    return;
+  }
+
   if (sub === 'add') {
     const src = args.filter(function (a) {
       return a.indexOf('-') !== 0;
     })[0];
     if (!src)
-      return fail('usage: keyflip skill add <owner/repo[@ref][/subdir] | ./dir | file.tar.gz> [--link] [--force]');
+      return fail(
+        'usage: keyflip skill add <owner/repo[@ref][/subdir] | ./dir | file.tar.gz> [--agents a,b] [--link] [--force] [--dry-run]',
+      );
     let r;
     try {
-      r = await skillstore.add(ctx, src, {
+      r = await _skillsync.add(ctx, src, {
+        agents: agents,
         link: args.indexOf('--link') !== -1,
         force: args.indexOf('--force') !== -1,
+        dryRun: dryRun,
       });
     } catch (e) {
       return fail(e.message);
     }
-    print(
-      style.ok('✅') +
-        ' installed ' +
-        r.length +
-        ' skill(s): ' +
-        r
-          .map(function (s) {
-            return s.name + ' (' + s.mode + ')';
-          })
-          .join(', '),
-    );
-    print('Claude Code picks them up next session.');
+    if (asJson) return jsonOut(r);
+    r.installed.forEach(function (s) {
+      print(
+        style.ok('✅') +
+          ' ' +
+          s.name +
+          ' → ' +
+          s.targets
+            .map(function (t) {
+              return t.dir + (dryRun ? ' (would write)' : ' (' + t.mode + ')');
+            })
+            .join(', '),
+      );
+    });
+    if (r.skipped.length)
+      print(style.warn('·') + ' skipped: ' + r.skipped.map((s) => s.name + ' — ' + s.reason).join(', '));
+    if (!dryRun) print('Each agent reads them on its next session. `keyflip skill sync` re-applies a source change.');
     return;
   }
+
+  if (sub === 'sync') {
+    let rows;
+    try {
+      rows = await _skillsync.sync(ctx, { agents: agents, dryRun: dryRun });
+    } catch (e) {
+      return fail(e.message);
+    }
+    if (asJson) return jsonOut({ synced: rows });
+    if (!rows.length) return print('Nothing installed by keyflip — add one: keyflip skill add owner/repo.');
+    rows.forEach(function (r) {
+      const tail = (r.targets || [])
+        .map(function (t) {
+          return t.id + ':' + t.action;
+        })
+        .join(' ');
+      const note = r.status === 'source-unavailable' || r.status === 'source-changed' ? ' — ' + (r.detail || '') : '';
+      print('  ' + r.name.padEnd(24) + r.status + (tail ? '  ' + style.dim(tail) : '') + (note ? style.dim(note) : ''));
+    });
+    if (dryRun) print(style.dim('· dry run — nothing written.'));
+    return;
+  }
+
   if (sub === 'list' || sub === undefined) {
-    const items = skillstore.list(ctx);
-    if (JSON_MODE) {
+    const items = _skillsync.list(ctx);
+    if (asJson) {
       jsonOut({ skills: items });
       return;
     }
@@ -5554,20 +5669,28 @@ async function cmdSkill(ctx, rest) {
       return;
     }
     items.forEach(function (s) {
-      print('  ' + s.name + '   ' + (s.source || '') + '   [' + s.mode + ']');
+      print('  ' + s.name + '   ' + style.dim(s.source || ''));
+      s.targets.forEach(function (t) {
+        const mark =
+          t.state === 'ok' ? style.ok('✓') : t.state === 'edited' ? style.warn('✎ edited') : style.warn('✗ missing');
+        print('      ' + mark + '  ' + t.dir + '  [' + t.mode + ']');
+      });
     });
     return;
   }
+
   if (sub === 'remove' || sub === 'rm') {
+    let r;
     try {
-      skillstore.remove(ctx, args[0]);
+      r = _skillsync.remove(ctx, args[0], { agents: agents });
     } catch (e) {
       return fail(e.message);
     }
-    print('🗑  removed skill: ' + args[0]);
+    if (asJson) return jsonOut(r);
+    print('🗑  removed ' + r.name + ' from ' + (r.removed.length ? r.removed.join(', ') : 'nowhere (no matching copy)'));
     return;
   }
-  return fail('usage: keyflip skill [add <src>|list|remove <name>]');
+  return fail('usage: keyflip skill [add <src>|sync|list|remove <name>|agents] [--agents a,b] [--dry-run]');
 }
 
 // Session manager: browse/search/resume Claude Code conversations (all accounts).

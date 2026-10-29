@@ -593,8 +593,8 @@ const CATALOG = [
     name: 'skill',
     group: 'agents',
     safe: false,
-    usage: 'keyflip skill add <owner/repo|./dir|file.tgz> | list | remove',
-    desc: 'Install/manage Claude Code skills.',
+    usage: 'keyflip skill add <owner/repo|./dir|file.tgz> | sync | list | remove <name> | agents',
+    desc: 'Install/manage skills across every agent on this machine.',
   },
   {
     name: 'mcp',
@@ -607,8 +607,8 @@ const CATALOG = [
     name: 'install-skill',
     group: 'agents',
     safe: false,
-    usage: 'keyflip install-skill',
-    desc: 'Install the Claude Code skill that teaches agents keyflip.',
+    usage: 'keyflip install-skill [--check]',
+    desc: 'Install the keyflip skill into every agent on this machine.',
   },
 
   // ---- maintenance ----

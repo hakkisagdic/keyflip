@@ -59,9 +59,9 @@ keyflip mcp --setup`} />
         <li>Şifreler asla MCP üzerinden kabul edilmez (örneğin sağlayıcı anahtarı ekleme CLI'da <code>--key-file</code>'a ertelenir)</li>
       </ul>
 
-      <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-4 mt-10">Claude Code Becerisi</h2>
-      <p class="text-surface-700 dark:text-surface-300 mb-4">Dahili beceri, ajana keyflip'i ne zaman ve nasıl kullanacağını öğretir:</p>
-      <CodeBlock code={`keyflip install-skill   # ~/.claude/skills/keyflip'e kopyalar`} />
+      <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-4 mt-10">Ajan Becerisi, Her Ajan İçin</h2>
+      <p class="text-surface-700 dark:text-surface-300 mb-4">Dahili beceri, ajana keyflip'i ne zaman ve nasıl kullanacağını öğretir. Claude için kurulur ve tespit edilen diğer ajanlara (Cursor, Kiro, Codex, Qoder, …) dağıtılır:</p>
+      <CodeBlock code={`keyflip install-skill             # Claude + tespit edilen her ajan\nkeyflip skill agents              # 72 hedef dizin, ● = burada kurulu\nkeyflip skill add owner/repo      # herhangi bir beceri → her ajana`} />
     </div>
   </section>
 </BaseLayout>

@@ -232,9 +232,11 @@ import CommandReference from '../../components/CommandReference.astro';
       <div id="mcp">
         <CommandReference title="MCP & Skills" commands={[
           { cmd: 'keyflip mcp [--setup|--register]', desc: 'MCP server over stdio for agents (--register: absolute-path self-entry in Claude Code + Desktop)' },
-          { cmd: 'keyflip install-skill', desc: 'Install Claude Code skill (~/.claude/skills/keyflip)' },
-          { cmd: 'keyflip skill add <repo|dir|tgz>', desc: 'Install any skill from GitHub/dir/file' },
-          { cmd: 'keyflip skill list|remove <name>', desc: 'Manage installed skills' },
+          { cmd: 'keyflip install-skill', desc: 'Bundled keyflip skill → ~/.claude/skills/keyflip + every other detected agent' },
+          { cmd: 'keyflip skill agents', desc: 'Every agent skill dir keyflip can write, and which tools are present' },
+          { cmd: 'keyflip skill add <repo|dir|tgz> [--agents a,b]', desc: 'Install a skill into every detected agent (or only the ones you name)' },
+          { cmd: 'keyflip skill sync', desc: 'Re-apply each skill source; a copy you edited is left alone' },
+          { cmd: 'keyflip skill list|remove <name>', desc: 'Per-agent state (ok/edited/missing); removes only keyflip-installed copies' },
           { cmd: 'keyflip brain "<intent>"', desc: 'Plain language to proposed keyflip steps (opt-in)' },
         ]} />
       </div>

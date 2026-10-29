@@ -4,9 +4,12 @@ description: >-
   Manage multiple Anthropic/Claude accounts on this machine with the keyflip
   CLI: check which account is active, compare each account's remaining 5h/7d
   quota, switch or rotate accounts (with the user's consent), run a second
-  account in parallel in one terminal, and diagnose login/quota problems.
+  account in parallel in one terminal, search past conversations across every
+  agent, install skills into each agent on the machine, and diagnose
+  login/quota problems.
   Use when the user mentions switching Claude accounts, hitting rate limits /
-  usage caps, "which account am I on", account quotas, or parallel accounts.
+  usage caps, "which account am I on", account quotas, parallel accounts,
+  past-conversation search, or installing a skill for several agents.
 ---
 
 # keyflip — operating multiple Claude accounts
@@ -809,13 +812,33 @@ Never paste secrets into any field; use the `.env` mechanism so only the variabl
 ## Installing skills & the failover proxy
 
 ```bash
-keyflip skill add owner/repo          # install any skill from GitHub (or ./dir, or file.tgz)
-keyflip skill list | remove <name>    # only removes skills keyflip installed
+keyflip skill agents                  # every agent skill dir keyflip can write + which are present (●)
+keyflip skill add owner/repo          # install any skill from GitHub (or ./dir, or file.tgz) into every detected agent
+keyflip skill add ./dir --agents claude,cursor   # or only the agents the user names
+keyflip skill sync                    # re-apply each skill's recorded source; a copy the user edited is LEFT ALONE
+keyflip skill list | remove <name>    # per-target state (✓ ok / ✎ edited / ✗ missing); removes only keyflip's copies
 
 keyflip proxy start --wire            # command-started localhost proxy; wires Claude Code to it
 keyflip proxy status | stats          # is it up? per-account request/token totals
 keyflip proxy stop                    # stops it and unwires
 ```
+
+Skills are **written into every agent on the machine that reads one** — the target
+is the tool's own home (`~/.cursor/skills`, `~/.kiro/skills`, `~/.agents/skills`, …),
+so a tool that is not installed is never given a directory. Three rules the agent
+must respect when asked to install a skill:
+
+- **Read the skill before installing.** A skill is code the agent will follow.
+- **A skill carrying a credential is refused**, not redacted (`refusing to install
+  '<name>': it carries a credential (<file>: <kind>)`). Do not work around it.
+- **`sync` never overwrites a copy the user edited** (`left-edited`). If the user
+  wants their edit replaced, remove and re-add, or `add --force`.
+
+`keyflip install-skill` installs keyflip's own skill into `~/.claude/skills` (with a
+backup and a drift check: `--check`) and fans the same directory out to every other
+detected agent. MCP equivalents: `keyflip_skills` and `keyflip_skill_agents`
+(read-only), `keyflip_skill_add` / `keyflip_skill_sync` / `keyflip_skill_remove`
+(confirm-gated, optional `agents` list).
 
 The proxy is **explicitly started/stopped** (never an always-on daemon). While up,
 it routes every request to the active account and **fails over to the next healthy

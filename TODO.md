@@ -26,18 +26,22 @@ Cursor, Gemini, Codex, Copilot, opencode, Windsurf, Kiro, Aider, …), not just 
 account's assets travel everywhere. Port the approach (zero-dep, MIT-attributed in `CREDITS.md`), the
 same way `provusage.js` ported CodexBar. Goal (owner's words): "convert all assets of all accounts."
 
-- [ ] Read RoleCraft's real surface (targets registry, SKILL.md schema, security scan, lockfile,
+- [x] Read RoleCraft's real surface (targets registry, SKILL.md schema, security scan, lockfile,
       `agents-xml`); decide port vs adapter. Confirm the target-agent config-dir map against
       keyflip's existing `agents.js` REGISTRY + `surface.js` SURFACES.
-- [ ] New `src/rolecraft.js` (or extend `agents.js`/`skills`): install a skill/MCP-server to N detected
-      agents from any source (local/GitHub/npm), with SHA256 integrity + a lockfile, security-scanned
-      (reuse `secretscan.js` where possible) — never install a skill carrying a secret.
-- [ ] CLI: extend `keyflip skill` (today Claude-Code-only) to a cross-agent `keyflip skill add <src>
-      [--agents a,b|--all]`, `skill sync`, `skill list --all`, `skill remove`, plus MCP-server
-      distribution via the existing `mcpreg`. Bilingual docs (README EN/TR + SKILL).
-- [ ] MCP tools for agents (mutating → confirm-gated), in lockstep with docs.
+- [x] New `src/skillsync.js`: install a skill to N detected agents from any source (local/GitHub/
+      archive), with SHA-256 per target in `~/.config/keyflip/installed-skills.json`, security
+      scan via `secretscan.js` — never install a skill carrying a secret.
+- [x] CLI: `keyflip skill add <src> [--agents a,b] [--link|--force|--dry-run]`, `skill sync`,
+      `skill list`, `skill remove`, `skill agents`; `install-skill` fans the bundled skill out.
+      Bilingual docs (README EN/TR + USE-CASES + SKILL + website EN/TR).
+- [x] MCP tools for agents (mutating → confirm-gated), in lockstep with docs:
+      `keyflip_skill_agents` (RO), `keyflip_skill_add`/`_sync`/`_remove` (confirm), per-target state.
 - [ ] Adversarial review (secret-in-skill leak, path traversal into an agent's config dir, integrity
-      spoofing, install-without-confirm) → fix → regression tests.
+      spoofing, install-without-confirm) → fix → regression tests. *(tests exist for secret refusal,
+      path check, edited-copy protection; an independent review is still open)*
+- [ ] MCP-server distribution to other agents (today `mcpreg` projects into Claude Code + Desktop
+      only); needs RoleCraft's per-agent `mcp` configPath/format table.
 
 ## C. Hardware / account validation — build-done, needs a real device/account
 

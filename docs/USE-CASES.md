@@ -446,9 +446,11 @@ keyflip import 'keyflip://…'           # preview + confirm + apply
 ## 15. Skills & MCP (teach agents keyflip)
 
 ```bash
-keyflip install-skill                  # install the Claude Code skill that teaches agents keyflip
-keyflip skill add owner/repo           # install any skill from GitHub (or ./dir, or file.tgz)
-keyflip skill list | remove <name>     # only removes skills keyflip installed
+keyflip install-skill                  # bundled keyflip skill → Claude + every other detected agent
+keyflip skill agents                   # the skill targets; ● = that tool is on this machine
+keyflip skill add owner/repo           # any skill → every detected agent (or --agents a,b)
+keyflip skill sync                     # re-apply sources; a copy you edited is left alone
+keyflip skill list | remove <name>     # per-agent state; only removes keyflip-installed copies
 keyflip mcp --setup                    # show how to register keyflip's MCP server
 keyflip mcpreg add ctx -- some-server  # manage MCP servers once, project into Code + Desktop
 keyflip mcpreg list | enable | disable | remove | import

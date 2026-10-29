@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **One skill, every agent on the machine.** `keyflip skill add <src>` now installs into **every
+  detected agent**, not just `~/.claude/skills`: `keyflip skill agents` lists the 72 HOME-level
+  skill directories keyflip knows (with `●` for the tools actually present here), and
+  `--agents claude,cursor` narrows it. Detection is by the tool's own home, so a tool you don't
+  have is never given a directory, and a shared dir (`~/.agents/skills` serves Codex, Warp, Goose,
+  Zed and more) is written once. New: `keyflip skill sync` re-applies each skill's recorded source
+  (an archive with no re-fetchable origin says so), `keyflip skill list` shows `✓ ok / ✎ edited /
+  ✗ missing` per target, and `keyflip install-skill` fans the bundled keyflip skill out to the
+  other detected agents while Claude keeps its backup + drift check. A manifest
+  (`~/.config/keyflip/installed-skills.json`) records a SHA-256 per target, so `sync` never
+  overwrites a copy you edited and `remove` deletes nothing keyflip did not write; an existing
+  skill keyflip did not install needs `--force`. Before any write the skill's text is scanned —
+  **a skill carrying a credential is refused, not redacted**. `--link` symlinks, `--dry-run`
+  reports the plan. The target table (and the shared-directory knowledge behind it) is adapted
+  from RoleCraft's MIT agent registry — see CREDITS.md. MCP: `keyflip_skill_agents` (read-only),
+  `keyflip_skill_sync` (confirm-gated), and `keyflip_skills` / `keyflip_skill_add` /
+  `keyflip_skill_remove` now speak per-target state, target selection and `dry_run`.
+
 ### Fixed
 
 - **`conv search --limit` is honored when the semantic side is missing.** Hybrid runs the lexical

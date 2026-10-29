@@ -24,3 +24,24 @@ normalize them into a common "windows + resetsAt" shape) was adapted.
 
 Thank you to the CodexBar authors for mapping out where each provider keeps its
 usage data.
+
+## RoleCraft — per-agent skill directory registry
+
+- Project: **RoleCraft** — https://github.com/sametcelikbicak/rolecraft
+- Author: Samet Çelikbicak and contributors
+- License: **MIT**
+
+RoleCraft is a catalog of role definitions and an installer that knows where 90+
+AI coding agents keep their skills, MCP configuration and instruction files, plus
+a per-agent support level and last-verified date.
+
+keyflip's `src/skillsync.js` reuses **the registry knowledge** — which tool reads
+skills from which HOME-level directory, and which tools share one (`~/.agents/skills`
+serves Codex, Warp, Goose, Zed, …) — as a static table. The install/verify/sync
+logic is keyflip's own (SHA-256 per target, secret refusal, edited-copy protection).
+RoleCraft's project-level-only targets (Copilot, Devin, Replit, …) are deliberately
+absent because keyflip cannot know your repositories. Support levels are carried as
+labels from RoleCraft; they are **not** a keyflip verification claim.
+
+Thank you to the RoleCraft authors for doing the catalogue work.
+

@@ -61,7 +61,7 @@ import * as _projctx from './projctx.js';
 import * as _rules from './rulesmodel.js';
 import * as _policy from './policy.js';
 import * as _cowork from './cowork.js';
-import * as _skillstore from './skillstore.js';
+import * as _skillsync from './skillsync.js';
 import * as _desktopgw from './desktopgw.js';
 import * as _mcpreg from './mcpreg.js';
 import * as _share from './share.js';
@@ -1835,49 +1835,98 @@ const TOOLS = [
     },
   },
 
-  // ---- skills marketplace ----
+  // ---- skills, across every agent ----
   {
     name: 'keyflip_skills',
     title: 'List installed skills',
-    description: 'Skills keyflip installed into ~/.claude/skills. Read-only.',
+    description:
+      'Skills keyflip installed, with each agent directory holding a copy and whether that copy is intact (ok), user-edited, or missing. Read-only.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
     annotations: RO,
     run: async function (ctx) {
-      return { skills: _skillstore.list(ctx) };
+      return { skills: _skillsync.list(ctx) };
+    },
+  },
+  {
+    name: 'keyflip_skill_agents',
+    title: 'List skill targets',
+    description:
+      'Every agent skill directory keyflip can write to, which tools read it, and whether this machine has that agent (detected). Read-only — call it before keyflip_skill_add to choose agents.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    annotations: RO,
+    run: async function (ctx) {
+      const here = _skillsync.detectedTargets(ctx).map(function (t) {
+        return t.dir;
+      });
+      return {
+        targets: _skillsync.allTargets().map(function (t) {
+          return Object.assign({ detected: here.indexOf(t.dir) !== -1 }, t);
+        }),
+      };
     },
   },
   {
     name: 'keyflip_skill_add',
     title: 'Install a skill',
     description:
-      'Install a skill from a GitHub repo (owner/repo[@ref][/subdir]), a local directory, or a .tar.gz/.zip. Installs code the agent will run — ask the user first, then confirm=true.',
+      'Install a skill from a GitHub repo (owner/repo[@ref][/subdir]), a local directory, or a .tar.gz/.zip into every agent on this machine (or only the agents named in `agents`, e.g. ["claude","cursor"]). Installs code the agent will run — ask the user first, then confirm=true. dry_run=true reports the plan and writes nothing.',
     inputSchema: {
       type: 'object',
-      properties: { source: { type: 'string' }, confirm: confirmProp.confirm },
+      properties: {
+        source: { type: 'string' },
+        agents: { type: 'array', items: { type: 'string' } },
+        dry_run: { type: 'boolean' },
+        confirm: confirmProp.confirm,
+      },
       required: ['source', 'confirm'],
       additionalProperties: false,
     },
     annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: true },
     run: async function (ctx, args) {
       needConfirm(args);
-      return { installed: await _skillstore.add(ctx, String(args.source), {}) };
+      return await _skillsync.add(ctx, String(args.source), { agents: args.agents, dryRun: !!args.dry_run });
+    },
+  },
+  {
+    name: 'keyflip_skill_sync',
+    title: 'Re-apply skills from their sources',
+    description:
+      'Re-fetch every keyflip-installed skill from the source it was installed from. A copy the user edited is reported, never overwritten. Ask the user first, then confirm=true.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        agents: { type: 'array', items: { type: 'string' } },
+        dry_run: { type: 'boolean' },
+        confirm: confirmProp.confirm,
+      },
+      required: ['confirm'],
+      additionalProperties: false,
+    },
+    annotations: MUT,
+    run: async function (ctx, args) {
+      needConfirm(args);
+      return { synced: await _skillsync.sync(ctx, { agents: args.agents, dryRun: !!args.dry_run }) };
     },
   },
   {
     name: 'keyflip_skill_remove',
     title: 'Remove an installed skill',
-    description: "Remove a keyflip-installed skill (never the user's own). Ask the user first, then confirm=true.",
+    description:
+      'Remove a keyflip-installed skill from every agent (or only from the agents named in `agents`). Never touches a skill the user installed. Ask the user first, then confirm=true.',
     inputSchema: {
       type: 'object',
-      properties: { name: { type: 'string' }, confirm: confirmProp.confirm },
+      properties: {
+        name: { type: 'string' },
+        agents: { type: 'array', items: { type: 'string' } },
+        confirm: confirmProp.confirm,
+      },
       required: ['name', 'confirm'],
       additionalProperties: false,
     },
     annotations: MUT,
     run: async function (ctx, args) {
       needConfirm(args);
-      _skillstore.remove(ctx, args.name);
-      return { removed: args.name };
+      return _skillsync.remove(ctx, args.name, { agents: args.agents });
     },
   },
 

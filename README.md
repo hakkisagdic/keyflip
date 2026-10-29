@@ -210,7 +210,7 @@ keyflip panel [--open]         # local web dashboard: accounts+quotas, activity 
 keyflip panel --export <f> [--anon]   # write a share-safe STATIC snapshot (no session content, no secrets)
 keyflip menubar [--install]   # menu-bar/tray plugin — macOS xbar/SwiftBar, Linux GNOME Argos/KDE kargos: account+quota at a glance, click-to-switch
 keyflip statusline install    # show active account + quota in the Claude Code prompt
-keyflip install-skill         # install the Claude Code skill that teaches agents keyflip
+keyflip install-skill         # install the keyflip skill into every agent on this machine
 keyflip export [file|-]       # back up accounts to a file (CONTAINS SECRETS)
 keyflip import <file|->       # restore accounts from an export (--force overwrites)
 keyflip migrate export <file> # bundle accounts + providers + transcripts + memory + config (MCP + settings)
@@ -1059,12 +1059,24 @@ keyflip context sync check --against incoming.json       # dry-run: what ships, 
 
 Env-var **values are never carried** — only the variable name and a description. Conflict detection compares a content hash against a parent checkpoint: if two machines edited the same base, `check` flags a conflict and offers `use-new` / `use-old` / `merge` / `two-branches`. Agents read the mode via `keyflip_ctxsync_status` and change it (with confirmation) via `keyflip_ctxsync_mode`.
 
-### Install skills, and the failover proxy
+### Install skills, into every agent you have
+
+One skill, every tool on the machine that reads one:
 
 ```bash
-keyflip skill add anthropics/skills   # install any skill from GitHub / ./dir / file.tgz
-keyflip skill list | keyflip skill remove <name>   # only touches keyflip-installed skills
+keyflip skill agents                  # 72 target dirs; ● = that tool is here
+keyflip skill add anthropics/skills   # install from GitHub / ./dir / file.tgz into every agent here
+keyflip skill add ./my-skill --agents claude,cursor   # …or only the agents you name
+keyflip skill sync                    # re-apply a source change; a copy you edited is left alone
+keyflip skill list | keyflip skill remove <name>      # only touches what keyflip installed
+keyflip install-skill                 # the bundled keyflip skill → Claude + every other detected agent
+```
 
+Detection is by the tool's own home (`~/.cursor`, `~/.kiro`, …): keyflip never invents a directory for a tool you don't have, and a shared dir (`~/.agents/skills` serves Codex, Warp, Goose, Zed and more) is written once. Before any write, the skill's text is scanned — **a skill carrying a credential is refused, not redacted**. A manifest (`~/.config/keyflip/installed-skills.json`) keeps a SHA-256 per target, so `sync` tells an untouched copy from one you edited (yours is never overwritten) and `remove` deletes nothing it did not write. `--link` symlinks instead of copying; `--dry-run` prints the plan and writes nothing.
+
+### Failover proxy
+
+```bash
 keyflip proxy start --wire            # start a localhost failover proxy + wire Claude to it
 keyflip proxy status | keyflip proxy stats
 keyflip proxy stop                    # stop it (and unwire)
@@ -1127,20 +1139,25 @@ confirm-gated), migrate + LAN
 registry (`keyflip_mcpreg_*`), directory pins (`keyflip_link/links`), isolated app instances
 (`keyflip_instances`, `keyflip_instance_*`), the shared ChatGPT/Codex login
 (`keyflip_chatgpt`, `_chatgpt_capture`, `_chatgpt_switch`, `_chatgpt_refresh`, read-only `_chatgpt_backups`, confirm-gated `_chatgpt_restore`), diagnostics
-(`keyflip_doctor`, `keyflip_usage_history`), backups, skills, and the failover proxy. Every tool has a proper JSON Schema and read-only/
+(`keyflip_doctor`, `keyflip_usage_history`), backups, skills (`keyflip_skills` and `keyflip_skill_agents` are read-only;
+`keyflip_skill_add`, `keyflip_skill_sync` and `keyflip_skill_remove` write into every detected agent, or only the `agents` you name),
+and the failover proxy. Every tool has a proper JSON Schema and read-only/
 destructive annotations; **mutating tools require `confirm: true`** and their
 descriptions tell the agent to ask the user first. Secrets are never accepted
 through MCP — e.g. adding a provider key is deferred to `--key-file` on the CLI.
 
-There's also a bundled **Claude Code skill** that teaches the agent when and
-how to use all of this (rate-limit playbook, sentinels, parallel sessions):
+There's also a bundled **agent skill** that teaches the agent when and
+how to use all of this (rate-limit playbook, sentinels, parallel sessions).
+`keyflip install-skill` puts it in Claude's skill dir through its own
+backup + drift check and fans the same skill out to every other detected
+agent (Cursor, Kiro, Codex, Qoder, …); `keyflip skill agents` lists the targets.
 
 ```bash
 keyflip panel [--open]         # local web dashboard: accounts+quotas, activity calendar, memory constellation, sessions
 keyflip panel --export <f> [--anon]   # write a share-safe STATIC snapshot (no session content, no secrets)
 keyflip menubar [--install]   # menu-bar/tray plugin — macOS xbar/SwiftBar, Linux GNOME Argos/KDE kargos: account+quota at a glance, click-to-switch
 keyflip statusline install    # show active account + quota in the Claude Code prompt
-keyflip install-skill      # copies it to ~/.claude/skills/keyflip
+keyflip install-skill         # bundled skill → ~/.claude/skills/keyflip + other detected agents
 ```
 
 ### Parallel sessions (`run`)

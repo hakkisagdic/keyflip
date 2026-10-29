@@ -446,9 +446,11 @@ keyflip import 'keyflip://…'           # önizle + onayla + uygula
 ## 15. Beceriler (skill) & MCP (ajanlara keyflip'i öğret)
 
 ```bash
-keyflip install-skill                  # ajanlara keyflip'i öğreten Claude Code skill'ini kur
-keyflip skill add owner/repo           # GitHub'dan (veya ./dizin, ya da file.tgz) skill kur
-keyflip skill list | remove <ad>       # yalnız keyflip'in kurduğu skill'leri kaldırır
+keyflip install-skill                  # paketli keyflip skill'i → Claude + tespit edilen diğer ajanlar
+keyflip skill agents                   # skill hedefleri; ● = o araç bu makinede
+keyflip skill add owner/repo           # herhangi bir skill → tespit edilen her ajan (ya da --agents a,b)
+keyflip skill sync                     # kaynakları yeniden uygula; senin düzenlediğin kopyaya dokunmaz
+keyflip skill list | remove <ad>       # ajan başına durum; yalnız keyflip'in kurduklarını kaldırır
 keyflip mcp --setup                    # keyflip'in MCP sunucusunu nasıl kaydedeceğini göster
 keyflip mcpreg add ctx -- some-server  # MCP sunucularını bir kez yönet, Code + Desktop'a yansıt
 keyflip mcpreg list | enable | disable | remove | import

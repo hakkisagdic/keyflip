@@ -209,7 +209,7 @@ keyflip panel [--open]         # yerel web paneli: hesaplar+kotalar, etkinlik ta
 keyflip panel --export <f> [--anon]   # paylaşıma-güvenli STATİK snapshot yaz (oturum içeriği yok, sır yok)
 keyflip menubar [--install]   # menü-çubuğu/tepsi eklentisi — macOS xbar/SwiftBar, Linux GNOME Argos/KDE kargos: hesap+kota tek bakışta, tıkla-geç
 keyflip statusline install    # aktif hesap + kotayı Claude Code promptunda göster
-keyflip install-skill         # agent'lara keyflip'i öğreten Claude Code skill'ini kur
+keyflip install-skill         # keyflip skill'ini bu makinedeki her agent'a kur
 keyflip export [dosya|-]      # hesapları dosyaya yedekle (SIR İÇERİR)
 keyflip import <dosya|->      # yedekten hesapları geri yükle (--force üzerine yazar)
 keyflip migrate export <dosya> # hesap + provider + transkript + memory + config (MCP + settings) paketle
@@ -1149,12 +1149,24 @@ keyflip context sync check --against incoming.json       # deneme: ne gönderili
 
 Ortam değişkeni **değerleri asla taşınmaz** — yalnızca değişken adı ve bir açıklama gider. Çakışma tespiti bir içerik özetini üst kontrol noktasıyla karşılaştırır: iki makine aynı tabanı düzenlediyse `check` bir çakışma bildirir ve `use-new` / `use-old` / `merge` / `two-branches` seçeneklerini sunar. Ajanlar modu `keyflip_ctxsync_status` ile okur ve (onay ile) `keyflip_ctxsync_mode` ile değiştirir.
 
-### Skill kur ve failover proxy
+### Skill kur — elindeki her agent'a
+
+Tek skill, makinede skill okuyan her araç:
 
 ```bash
-keyflip skill add anthropics/skills   # GitHub / ./dizin / file.tgz'den skill kur
+keyflip skill agents                  # 72 hedef dizin; ● = o araç burada
+keyflip skill add anthropics/skills   # GitHub / ./dizin / file.tgz'den her agent'a kur
+keyflip skill add ./benim-skill --agents claude,cursor   # …ya da yalnız adını verdiğin agent'lara
+keyflip skill sync                    # kaynak değiştiyse yeniden uygula; senin düzenlediğin kopyaya dokunmaz
 keyflip skill list | keyflip skill remove <ad>   # yalnız keyflip'in kurduklarına dokunur
+keyflip install-skill                 # paketli keyflip skill'i → Claude + tespit edilen diğer agent'lar
+```
 
+Tespit, aracın kendi ev dizinine bakar (`~/.cursor`, `~/.kiro`, …): keyflip kurulu olmayan bir araç için dizin uydurmaz; paylaşılan bir dizin (`~/.agents/skills` Codex, Warp, Goose, Zed ve daha fazlasına hizmet eder) bir kez yazılır. Yazmadan önce skill'in metni taranır — **sır taşıyan bir skill kabul edilmez, reddedilir (redakte edilmez)**. `~/.config/keyflip/installed-skills.json` manifesti hedef başına SHA-256 tutar: `sync` el değmemiş kopyayı senin düzenlediğinden ayırır (seninki asla üzerine yazılmaz), `remove` ise kendi yazmadığını silmez. `--link` kopyalamak yerine symlink kurar; `--dry-run` planı yazdırır, hiçbir şey yazmaz.
+
+### Failover proxy
+
+```bash
 keyflip proxy start --wire            # yerel failover proxy başlat + Claude'u ona bağla
 keyflip proxy status | keyflip proxy stats
 keyflip proxy stop                    # durdur (ve bağlantıyı kaldır)
@@ -1216,21 +1228,26 @@ migrate + LAN
 kaydı (`keyflip_mcpreg_*`), dizin pin'leri (`keyflip_link/links`), izole uygulama örnekleri
 (`keyflip_instances`, `keyflip_instance_*`), ortak ChatGPT/Codex girişi
 (`keyflip_chatgpt`, `_chatgpt_capture`, `_chatgpt_switch`, `_chatgpt_refresh`, salt-okunur `_chatgpt_backups`, onay-gerektiren `_chatgpt_restore`), tanılama
-(`keyflip_doctor`, `keyflip_usage_history`), yedekler, skill'ler ve failover proxy. Her aracın düzgün JSON Şeması ve
+(`keyflip_doctor`, `keyflip_usage_history`), yedekler, skill'ler (`keyflip_skills` ve `keyflip_skill_agents` salt-okunur;
+`keyflip_skill_add`, `keyflip_skill_sync` ve `keyflip_skill_remove` tespit edilen her agent'a, ya da yalnız verdiğin `agents`'a yazar)
+ve failover proxy. Her aracın düzgün JSON Şeması ve
 salt-okunur/yıkıcı anotasyonu var; **değiştiren araçlar `confirm: true` ister**
 ve açıklamaları agent'a önce kullanıcıya sormasını söyler. Sırlar MCP üzerinden
 asla alınmaz — ör. provider anahtarı ekleme CLI'daki `--key-file`'a bırakılır.
 
 Agent'a tüm bunları ne zaman ve nasıl kullanacağını öğreten paketli bir
-**Claude Code skill'i** de var (rate-limit playbook'u, durum kodları, paralel
-oturumlar):
+**agent skill'i** de var (rate-limit playbook'u, durum kodları, paralel
+oturumlar). `keyflip install-skill` onu Claude'un skill dizinine kendi
+yedek + sürüklenme kontrolüyle kurar ve aynı skill'i tespit edilen diğer
+agent'lara (Cursor, Kiro, Codex, Qoder, …) dağıtır; `keyflip skill agents`
+hedefleri listeler.
 
 ```bash
 keyflip panel [--open]         # yerel web paneli: hesaplar+kotalar, etkinlik takvimi, memory takımyıldızı, oturumlar
 keyflip panel --export <f> [--anon]   # paylaşıma-güvenli STATİK snapshot yaz (oturum içeriği yok, sır yok)
 keyflip menubar [--install]   # menü-çubuğu/tepsi eklentisi — macOS xbar/SwiftBar, Linux GNOME Argos/KDE kargos: hesap+kota tek bakışta, tıkla-geç
 keyflip statusline install    # aktif hesap + kotayı Claude Code promptunda göster
-keyflip install-skill      # ~/.claude/skills/keyflip dizinine kopyalar
+keyflip install-skill         # paketli skill → ~/.claude/skills/keyflip + diğer tespit edilen agent'lar
 ```
 
 ### Paralel oturumlar (`run`)

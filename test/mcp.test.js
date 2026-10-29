@@ -136,7 +136,9 @@ test('MCP lifecycle: initialize negotiates a supported protocol version and decl
     'keyflip_backups',
     'keyflip_backup_create',
     'keyflip_skills',
+    'keyflip_skill_agents',
     'keyflip_skill_add',
+    'keyflip_skill_sync',
     'keyflip_proxy_status',
     'keyflip_proxy_control',
     'keyflip_instances',
@@ -734,6 +736,28 @@ test('install-skill copies the bundled skill into ~/.claude/skills', function ()
   const dest = path.join(home, '.claude', 'skills', 'keyflip', 'SKILL.md');
   assert.ok(fs.existsSync(dest));
   assert.match(fs.readFileSync(dest, 'utf8'), /^---\r?\nname: keyflip/);
+});
+
+test('install-skill fans the bundled skill out to other detected agents and records one manifest', function () {
+  const home = mkhome();
+  fs.mkdirSync(path.join(home, '.cursor'), { recursive: true });
+  const r = cliRun(home, ['install-skill']);
+  assert.strictEqual(r.status, 0, r.stderr);
+  assert.ok(fs.existsSync(path.join(home, '.cursor', 'skills', 'keyflip', 'SKILL.md')));
+  const m = JSON.parse(fs.readFileSync(path.join(home, '.config', 'keyflip', 'installed-skills.json'), 'utf8'));
+  assert.deepStrictEqual(Object.keys(m.keyflip.targets).sort(), ['claude', 'cursor']);
+  assert.strictEqual(m.keyflip.targets.claude.dir, '.claude/skills');
+  const listed = JSON.parse(cliRun(home, ['skill', 'list', '--json']).stdout).skills[0];
+  assert.deepStrictEqual(
+    listed.targets.map(function (t) {
+      return t.id + ':' + t.state;
+    }),
+    ['claude:ok', 'cursor:ok'],
+  );
+  // Removing the skill takes it from every recorded agent, the Claude copy included.
+  assert.strictEqual(cliRun(home, ['skill', 'remove', 'keyflip']).status, 0);
+  assert.ok(!fs.existsSync(path.join(home, '.claude', 'skills', 'keyflip')));
+  assert.ok(!fs.existsSync(path.join(home, '.cursor', 'skills', 'keyflip')));
 });
 
 // SECURITY (review P1 #4): keyflip_settings show/get must NOT return provider API keys /

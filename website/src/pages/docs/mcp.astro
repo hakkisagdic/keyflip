@@ -67,9 +67,9 @@ keyflip mcp --setup`} />
         <li>Secrets are never accepted through MCP (e.g., adding a provider key is deferred to <code>--key-file</code> on CLI)</li>
       </ul>
 
-      <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-4 mt-10">Claude Code Skill</h2>
-      <p class="text-surface-700 dark:text-surface-300 mb-4">A bundled skill teaches the agent when and how to use keyflip (rate-limit playbook, sentinels, parallel sessions):</p>
-      <CodeBlock code={`keyflip install-skill   # copies to ~/.claude/skills/keyflip`} />
+      <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-4 mt-10">Agent Skill, Every Agent</h2>
+      <p class="text-surface-700 dark:text-surface-300 mb-4">A bundled skill teaches the agent when and how to use keyflip (rate-limit playbook, sentinels, parallel sessions). It is installed for Claude and fanned out to every other detected agent (Cursor, Kiro, Codex, Qoder, …):</p>
+      <CodeBlock code={`keyflip install-skill             # Claude + every detected agent\nkeyflip skill agents              # the 72 target dirs, ● = present here\nkeyflip skill add owner/repo      # any skill → every detected agent`} />
     </div>
   </section>
 </BaseLayout>
