@@ -142,3 +142,8 @@ Everything below is BUILT + unit-tested; it just cannot be validated in this env
 
 - [x] **Push** — `main` tracks `origin/main` and is in sync; every landed commit is on the remote.
       New work is committed and pushed per feature, not batched.
+- [x] **CI green on ubuntu / macos / windows × node 20 / 22.** The three Windows failures were
+      test assumptions, not code: a store-relative plan path uses the native separator, an XDG
+      root is built with `path.join`, and `npx` is deliberately wrapped as `cmd /c npx …` there
+      (now pinned by a simulated-win32 test). Dependabot's astro 7, eslint, prettier and
+      @types/node bumps are merged; the site builds 32 pages on astro 7 and the deploy succeeded.
