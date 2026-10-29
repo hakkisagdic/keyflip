@@ -75,6 +75,14 @@ keyflip cooldown clear --all  # release parked accounts
 keyflip proxy stats           # request counts, failovers
 keyflip proxy stop            # stop + unwire`} />
 
+      <h3 class="text-xl font-semibold text-surface-900 dark:text-surface-50 mb-3 mt-8">Per-request routing (optional)</h3>
+      <p class="text-surface-700 dark:text-surface-300 mb-4">
+        Drop <code>~/.config/keyflip/proxy-routes.json</code> (start from <code>proxy routes init</code>) and the running proxy reloads it on the next request — no restart. First-match rules on model / path / header / estimated token size / conversation user pick an account and/or a model; sticky conversations keep the same account for a TTL; <code>model-chain</code> degrades the model on the same account before spending another account's quota; transforms set/remove headers and cap <code>max_tokens</code>; a custom router script can decide itself. A rule may only name an account that is usable right now — a cooldown always wins. An invalid file is ignored and every problem is named.
+      </p>
+      <CodeBlock code={`keyflip proxy routes           # rules, errors and effective policy
+keyflip proxy explain --model claude-opus-4 --tokens 200000
+keyflip proxy routes init      # a valid starter file (never clobbers)`} />
+
       <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-4 mt-10">Import from Environment</h2>
       <CodeBlock code={`# Import provider endpoints from a .env file
 keyflip import-env .env --dry-run   # preview what would be imported

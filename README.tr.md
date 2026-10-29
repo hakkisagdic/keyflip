@@ -1211,9 +1211,63 @@ Failover bilinçli çalışır, ilk hatada körlemesine atlamaz:
   aktif hesap, sonra en-az-kullanılan (LRU).
 - **Hata ayıklama başlıkları** her yanıtta: `x-keyflip-account`,
   `x-keyflip-attempts`, `x-keyflip-failover`, `x-keyflip-error-class`,
-  `x-keyflip-cooldown` (`proxy.debugHeaders=false` kapatır).
+  `x-keyflip-cooldown`, `x-keyflip-model`, `x-keyflip-route`
+  (`proxy.debugHeaders=false` kapatır).
+
+#### Bildirimsel yönlendirme (`proxy-routes.json`)
+
+Yukarıdakilerin hepsi varsayılandır. **İstek bazında** karar vermek için
+`~/.config/keyflip/proxy-routes.json` oluştur (`keyflip proxy routes init` geçerli
+bir başlangıç dosyası yazar). Çalışan proxy dosyayı **bir sonraki istekte**
+yeniden okur — yeniden başlatma yok:
+
+```json
+{
+  "fallback": "retry",
+  "sticky": { "enabled": true, "ttlSeconds": 1800 },
+  "modelChain": ["claude-sonnet-4-5", "claude-haiku-4-5"],
+  "rules": [
+    { "name": "opus-is", "when": { "model": "*opus*" }, "use": { "account": "is" } },
+    { "when": { "tokensGt": 120000 }, "use": { "model": "claude-sonnet-4-5" } }
+  ],
+  "transforms": {
+    "setHeaders": { "x-team": "pay" },
+    "removeHeaders": ["x-internal"],
+    "bodyModel": null,
+    "maxTokens": 8192
+  }
+}
+```
+
+- **rules** — ilk eşleşen kazanır. `when`: `model`, `path`, `header`
+  (ad → glob), `tokensGt` (bağımlılıksız tahmin, ~karakter/4 — "yalnız çok büyük
+  istekler" demek için), `account`, `user`; glob `*` ve `?` kullanır. `use` bir
+  `account` ve/veya `model` seçer. Kural yalnız **o an kullanılabilir** bir hesabı
+  adlandırabilir: cooldown veya açık breaker her zaman kazanır ve gerekçe bunu
+  sessizce görmezden gelmek yerine söyler.
+- **sticky** — bir sohbet (`metadata.user_id`, ya da `x-keyflip-session` başlığıyla
+  isteğe bağlı) bir hesapta başarılı olursa TTL boyunca orada kalır (süreç içi,
+  1000 sohbetle sınırlı).
+- **fallback** — `off` (ilk yanıtı olduğu gibi döndür, yeniden deneme yok),
+  `retry` (yukarıdaki failover; varsayılan) veya `model-chain` (429/529/5xx'te
+  başka hesabın kotasını harcamadan önce **aynı hesapta** sıradaki modele düş —
+  model sorunu hesap arızası değildir, breaker açılmaz).
+- **transforms** — istek başlığı ekle/kaldır, gövde modelini değiştir,
+  `max_tokens` tavanı koy (yalnız düşürülür). Gövde yalnız JSON ise yeniden
+  yazılır; başka bir şey olduğu gibi iletilir.
+- **custom router** — `CUSTOM_ROUTER_PATH=/yol/router.js` (veya dosyada
+  `customRouter`) stdin'den `{model,path,user,tokens,accounts}` JSON'u alır ve
+  `{"account":"…","model":"…","reason":"…"}` döndürür; 1,5 sn zaman aşımı, 64 KB
+  sınır, herhangi bir hata kuralara geri düşer. Salt-okunur araçlar bu kancayı
+  **çalıştırmaz**.
+
+Geçersiz bir dosya proxy'yi asla bozmaz: yok sayılır ve `keyflip proxy routes` +
+`keyflip proxy status` her sorunu adıyla gösterir.
 
 ```bash
+keyflip proxy routes                  # dosya, hataları, geçerli politika
+keyflip proxy routes init [--force]   # geçerli bir şablondan başla (üzerine yazmaz)
+keyflip proxy explain --model claude-opus-4 --tokens 200000   # bu istek nereye gider, neden?
 keyflip cooldown                      # rota sırası + her hesabın breaker/cooldown durumu (kalan sn)
 keyflip cooldown clear <hesap>|--all
 ```

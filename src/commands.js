@@ -420,8 +420,8 @@ const CATALOG = [
     name: 'proxy',
     group: 'orchestration',
     safe: false,
-    usage: 'keyflip proxy start [--wire] | stop | status | stats',
-    desc: 'Command-started failover proxy (429/5xx routes to the next account, Retry-After aware).',
+    usage: 'keyflip proxy start [--wire] | stop | status | stats | routes [init] | explain [--model M]',
+    desc: 'Command-started failover proxy (429/5xx → next account, Retry-After aware; optional proxy-routes.json rules, sticky sessions, model chain).',
   },
   {
     name: 'cooldown',

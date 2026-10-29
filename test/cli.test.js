@@ -838,3 +838,43 @@ test('cooldown lists parked accounts and clears them', function () {
   assert.strictEqual(after.waitSeconds, 0, 'no wait once cleared');
   assert.deepStrictEqual(after.order, ['alice'], 'cleared account is tried again');
 });
+
+test('proxy routes init writes a valid file; routes and explain read it back', function () {
+  const home = setupHome();
+  assert.strictEqual(run(home, ['add']).status, 0);
+  let r = run(home, ['proxy', 'routes', '--json']);
+  assert.strictEqual(r.status, 0, r.stderr);
+  let j = JSON.parse(r.stdout);
+  assert.strictEqual(j.exists, false, 'no file yet — the defaults apply');
+  assert.strictEqual(j.fallback, 'retry');
+
+  r = run(home, ['proxy', 'routes', 'init']);
+  assert.strictEqual(r.status, 0, r.stderr);
+  const file = path.join(home, '.config', 'keyflip', 'proxy-routes.json');
+  assert.ok(fs.existsSync(file));
+  r = run(home, ['proxy', 'routes', '--json']);
+  j = JSON.parse(r.stdout);
+  assert.strictEqual(j.exists, true);
+  assert.deepStrictEqual(j.errors, [], 'the template it writes is valid');
+  assert.deepStrictEqual(j.rules, [], 'and ships no half-configured rule');
+
+  // It never clobbers routing a user already wrote; --force is explicit.
+  fs.writeFileSync(file, JSON.stringify({ fallback: 'off' }));
+  r = run(home, ['proxy', 'routes', 'init']);
+  assert.strictEqual(r.status, 1);
+  assert.match(r.stderr, /already exists/);
+  assert.strictEqual(JSON.parse(fs.readFileSync(file, 'utf8')).fallback, 'off');
+
+  // routes.json is config, not an account.
+  assert.match(run(home, ['list']).stdout, /alice@example\.com/);
+  assert.doesNotMatch(run(home, ['list']).stdout, /proxy-routes/);
+
+  r = run(home, ['proxy', 'explain', '--json', '--model', 'claude-sonnet-4-5', '--tokens', '2000']);
+  assert.strictEqual(r.status, 0, r.stderr);
+  const e = JSON.parse(r.stdout);
+  assert.strictEqual(e.input.model, 'claude-sonnet-4-5');
+  assert.strictEqual(e.input.tokens, 2000);
+  assert.strictEqual(e.decision.reason, 'default order');
+  assert.deepStrictEqual(e.order, ['alice']);
+  assert.strictEqual(e.routes.fallback, 'off');
+});

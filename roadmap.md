@@ -82,12 +82,12 @@ near‑term backlog; several are prerequisites for the big epics (E3 especially)
 ### Phase 0c — smart‑router substrate (→ folds into E3)
 | # | Item |
 |---|---|
-| 4 | Declarative `proxy-routes.json` with mtime hot‑reload |
-| 5 | Rule‑based routing engine + no‑dep token estimator |
-| 6 | Fallback modes: `off` / `retry` / `model-chain` (incl. model degradation) |
-| 7 | Per‑provider + per‑route body/header rewrites (transformers) |
-| 8 | Sticky same‑conversation‑same‑account routing (`user_id` key + TTL map) |
-| 19 | Custom router script hook (`CUSTOM_ROUTER_PATH`) |
+| 4 | ✅ Declarative `proxy-routes.json` with mtime hot‑reload |
+| 5 | ✅ Rule‑based routing engine + no‑dep token estimator |
+| 6 | ✅ Fallback modes: `off` / `retry` / `model-chain` (incl. model degradation) |
+| 7 | ✅ Per‑route body/header rewrites (transformers) |
+| 8 | ✅ Sticky same‑conversation‑same‑account routing (`user_id` key + TTL map) |
+| 19 | ✅ Custom router script hook (`CUSTOM_ROUTER_PATH`) |
 
 ### Phase 0d — reliability, cost & tier awareness
 | # | Item |

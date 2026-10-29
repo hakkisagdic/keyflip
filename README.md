@@ -1121,9 +1121,61 @@ Failover is deliberate, not first-error-wins:
   then the active account, then least-recently-used.
 - **Debug headers** on every proxied response: `x-keyflip-account`,
   `x-keyflip-attempts`, `x-keyflip-failover`, `x-keyflip-error-class`,
-  `x-keyflip-cooldown` (`proxy.debugHeaders=false` turns them off).
+  `x-keyflip-cooldown`, `x-keyflip-model`, `x-keyflip-route`
+  (`proxy.debugHeaders=false` turns them off).
+
+#### Declarative routing (`proxy-routes.json`)
+
+Everything above is the default. To decide **per request**, create
+`~/.config/keyflip/proxy-routes.json` (`keyflip proxy routes init` writes a valid
+starter). A running proxy reloads it on the **next request** — no restart:
+
+```json
+{
+  "fallback": "retry",
+  "sticky": { "enabled": true, "ttlSeconds": 1800 },
+  "modelChain": ["claude-sonnet-4-5", "claude-haiku-4-5"],
+  "rules": [
+    { "name": "opus-to-work", "when": { "model": "*opus*" }, "use": { "account": "work" } },
+    { "when": { "tokensGt": 120000 }, "use": { "model": "claude-sonnet-4-5" } }
+  ],
+  "transforms": {
+    "setHeaders": { "x-team": "pay" },
+    "removeHeaders": ["x-internal"],
+    "bodyModel": null,
+    "maxTokens": 8192
+  }
+}
+```
+
+- **rules** — first match wins. `when` can test `model`, `path`, `header`
+  (name → glob), `tokensGt` (a no-dependency estimate, ~chars/4 — so a rule can
+  say "only huge requests"), `account` and `user`; globs use `*` and `?`.
+  `use` picks an `account` and/or a `model`. A rule may only name an account that
+  is **usable right now**: a cooldown or open breaker always wins, and the reason
+  says so instead of quietly doing something else.
+- **sticky** — a conversation (`metadata.user_id`, or opt in with the
+  `x-keyflip-session` header) that succeeds on an account keeps it for the TTL
+  (in-process, bounded at 1000 conversations).
+- **fallback** — `off` (commit the first upstream response, never retry),
+  `retry` (the failover above; default) or `model-chain` (on 429/529/5xx degrade
+  to the next model **on the same account** before spending another account's
+  quota — a model problem is not an account failure, so no breaker is tripped).
+- **transforms** — set/remove request headers, override the body model, cap
+  `max_tokens` (only ever lowered). The body is rewritten only when it is JSON;
+  anything else is forwarded untouched.
+- **custom router** — `CUSTOM_ROUTER_PATH=/path/router.js` (or `customRouter` in
+  the file) gets `{model,path,user,tokens,accounts}` as JSON on stdin and answers
+  `{"account":"…","model":"…","reason":"…"}`; 1.5 s timeout, 64 KB cap, and any
+  failure falls back to the rules. The hook is never run by the read-only tools.
+
+An invalid file never breaks the proxy: it is ignored, and `keyflip proxy routes`
++ `keyflip proxy status` name every problem.
 
 ```bash
+keyflip proxy routes                  # the file, its errors, the effective policy
+keyflip proxy routes init [--force]   # start from a valid template (never clobbers)
+keyflip proxy explain --model claude-opus-4 --tokens 200000   # where would this go, and why?
 keyflip cooldown                      # route order + each account's breaker/cooldown (seconds left)
 keyflip cooldown clear <account>|--all
 ```

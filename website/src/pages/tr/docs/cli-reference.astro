@@ -83,6 +83,8 @@ import CommandReference from '../../../components/CommandReference.astro';
           { cmd: 'keyflip cache status|purge', desc: 'Yanıt önbellek yönetimi' },
           { cmd: 'keyflip proxy start --wire', desc: 'Localhost yedekleme proxy\'si başlat + Claude\'a bağla' },
           { cmd: 'keyflip proxy status', desc: 'Proxy sağlığı, istatistikler, canlı rota sırası + cooldown\'lar' },
+          { cmd: 'keyflip proxy routes [init]', desc: 'Bildirimsel yönlendirme dosyası: kurallar, sticky, fallback, transform' },
+          { cmd: 'keyflip proxy explain --model M', desc: 'Bir isteğin nereye gideceği ve neden (hiçbir şey gönderilmez)' },
           { cmd: 'keyflip proxy stop', desc: 'Proxy\'yi durdur ve bağlantıyı kes' },
           { cmd: 'keyflip cooldown [clear <hesap>|--all]', desc: 'Hangi hesaplar park edilmiş, ve onları serbest bırak' },
           { cmd: 'keyflip gateway use|off <sağlayıcı>', desc: 'Masaüstü uygulamasını bir sağlayıcıya yönlendir' },

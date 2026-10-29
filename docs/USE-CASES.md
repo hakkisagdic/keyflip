@@ -354,6 +354,16 @@ keyflip proxy stop                     # stop it and unwire settings.json
 - While up it routes each request to the active account and **fails over to the next
   healthy account on 429/5xx** before the client sees a byte. Ideal for long unattended
   runs where mid-request limits are likely.
+- Optional per-request routing in `~/.config/keyflip/proxy-routes.json` (hot-reloaded on
+  the next request): first-match rules on model/path/header/token size, sticky
+  conversations, `fallback: off|retry|model-chain`, header/body transforms, and a custom
+  router script. A rule can only name an account that is usable now; an invalid file is
+  ignored with every problem named.
+
+```bash
+keyflip proxy routes [init]            # the routing file, its errors and the policy
+keyflip proxy explain --model claude-opus-4 --tokens 200000   # where would it go, why?
+```
 
 ---
 

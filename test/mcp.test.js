@@ -142,6 +142,8 @@ test('MCP lifecycle: initialize negotiates a supported protocol version and decl
     'keyflip_skill_add',
     'keyflip_skill_sync',
     'keyflip_proxy_status',
+    'keyflip_proxy_routes',
+    'keyflip_proxy_explain',
     'keyflip_proxy_control',
     'keyflip_cooldowns',
     'keyflip_cooldown_clear',

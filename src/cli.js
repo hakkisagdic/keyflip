@@ -37,6 +37,7 @@ import * as sync from './sync.js';
 import * as sessions from './sessions.js';
 import * as mcp from './mcp.js';
 import * as proxy from './proxy.js';
+import * as proxyroutes from './proxyroutes.js';
 import * as uninstallmod from './uninstall.js';
 import * as exec from './exec.js';
 import { run } from './exec.js';
@@ -5413,7 +5414,147 @@ async function cmdProxy(ctx, rest) {
     if (!st.total) print('  (nothing yet)');
     return;
   }
-  return fail('usage: keyflip proxy [start [--port N] [--wire] | stop | status | stats]');
+  if (sub === 'routes') return cmdProxyRoutes(ctx, rest.slice(1));
+  if (sub === 'explain') return cmdProxyExplain(ctx, rest.slice(1));
+  return fail(
+    'usage: keyflip proxy [start [--port N] [--wire] | stop | status | stats | routes [init] | explain [--model M]]',
+  );
+}
+
+// `keyflip proxy routes [init] [--json]` — the declarative routing file
+// (<configDir>/proxy-routes.json): what it says, what it got wrong, and a
+// starter file to edit. `init` never overwrites an existing file.
+function cmdProxyRoutes(ctx, rest) {
+  const file = proxyroutes.routesPath(ctx);
+  if (rest.indexOf('init') !== -1) {
+    if (fs.existsSync(file) && rest.indexOf('--force') === -1)
+      return fail('proxy-routes.json already exists: ' + file + ' (edit it, or add --force to replace)');
+    const tpl = {
+      version: 1,
+      note: 'Rules are first-match. when: model/path/header/tokensGt/account/user (glob * ?). use: account and/or model. Fallback: off|retry|model-chain.',
+      fallback: 'retry',
+      sticky: { enabled: true, ttlSeconds: 1800 },
+      modelChain: [],
+      rules: [{ name: 'big-context', when: { tokensGt: 120000 }, use: { account: 'REPLACE_ME' } }],
+      transforms: { setHeaders: {}, removeHeaders: [], bodyModel: null, maxTokens: null },
+    };
+    // A template must not be a broken config: it is written with no rules, and
+    // the example lives in `note`.
+    tpl.rules = [];
+    try {
+      fs.mkdirSync(ctx.configDir, { recursive: true });
+      fs.writeFileSync(file, JSON.stringify(tpl, null, 2) + '\n', { mode: 0o600 });
+    } catch (e) {
+      return fail('could not write ' + file + ': ' + (e && e.message));
+    }
+    proxyroutes.resetCache();
+    if (JSON_MODE) {
+      jsonOut({ created: file });
+      return;
+    }
+    print(style.ok('✅') + ' wrote ' + style.bold(file));
+    print('   Edit it — the running proxy picks changes up on the NEXT request (no restart).');
+    print('   Check what it means with: keyflip proxy routes');
+    return;
+  }
+  const d = proxyroutes.describe(ctx);
+  if (JSON_MODE) {
+    jsonOut(d);
+    return;
+  }
+  printRoutes(d);
+}
+
+// `keyflip proxy explain [--model M] [--tokens N] [--path P] [--user U]
+// [--header k:v …] [--run-hook] [--json]` — the decision for a hypothetical
+// request, without sending it.
+async function cmdProxyExplain(ctx, rest) {
+  const headers = {};
+  rest.forEach(function (x, i) {
+    if (x !== '--header') return;
+    const h = rest[i + 1] || '';
+    const k = h.indexOf(':');
+    if (k > 0) headers[h.slice(0, k).trim()] = h.slice(k + 1).trim();
+  });
+  const sel = {
+    model: flagVal(rest, '--model'),
+    tokens: parseInt(flagVal(rest, '--tokens'), 10),
+    path: flagVal(rest, '--path'),
+    user: flagVal(rest, '--user'),
+    headers: headers,
+  };
+  const out = await proxy.explain(ctx, sel, { runHook: rest.indexOf('--run-hook') !== -1 });
+  if (JSON_MODE) {
+    jsonOut(out);
+    return;
+  }
+  print(
+    'Request: ' +
+      (out.input.model || '(no model)') +
+      ' · ' +
+      out.input.path +
+      (out.input.tokens ? ' · ~' + out.input.tokens + ' tokens' : '') +
+      (out.input.user ? ' · user ' + out.input.user : ''),
+  );
+  const d = out.decision;
+  print(
+    '  decision: ' +
+      d.reason +
+      (d.account ? ' → ' + style.bold(d.account) : '') +
+      (d.model ? ' · model ' + d.model : '') +
+      (d.hookError ? '  ' + style.warn('(hook: ' + d.hookError + ')') : ''),
+  );
+  print('  order: ' + (out.order.length ? out.order.join(' → ') : '(no usable account)'));
+  if (out.waitSeconds) print('  all parked — first frees in ' + fmtSeconds(out.waitSeconds));
+  const r = out.routes;
+  print(
+    '  policy: fallback ' +
+      r.fallback +
+      '; sticky ' +
+      (r.sticky.enabled ? 'on ' + fmtSeconds(r.sticky.ttlSeconds) : 'off') +
+      '; model chain ' +
+      (r.modelChain.length ? r.modelChain.join(' → ') : 'none'),
+  );
+}
+
+// The `proxy routes` readout, shared with `proxy status` so the two agree.
+function printRoutes(d) {
+  print('Routing file: ' + d.path + (d.exists ? '  (' + fmtAge(Date.now() - Date.parse(d.mtime)) + ' old)' : ''));
+  if (!d.exists) {
+    print('  (not created — defaults: active first, then least-recently-used; fallback retry)');
+    print('  Create a starter file with: keyflip proxy routes init');
+  }
+  d.errors.forEach(function (e) {
+    print('  ' + style.warn('⚠️ ' + e));
+  });
+  if (d.errors.length) print('  (an invalid file is ignored — the defaults above apply)');
+  print(
+    '  fallback: ' +
+      d.fallback +
+      ' · sticky: ' +
+      (d.sticky.enabled ? 'on, ' + fmtSeconds(d.sticky.ttlSeconds) : 'off') +
+      ' · model chain: ' +
+      (d.modelChain.length ? d.modelChain.join(' → ') : 'none'),
+  );
+  d.rules.forEach(function (r) {
+    const bits = Object.keys(r.when).map(function (k) {
+      return k + '=' + JSON.stringify(r.when[k]);
+    });
+    const use = [];
+    if (r.use.account) use.push('account ' + r.use.account);
+    if (r.use.model) use.push('model ' + r.use.model);
+    print(
+      '  rule #' + r.index + (r.name ? ' (' + r.name + ')' : '') + ': ' + bits.join(' & ') + ' → ' + use.join(', '),
+    );
+  });
+  const t = d.transforms;
+  const tb = [];
+  if (Object.keys(t.setHeaders).length) tb.push('set ' + Object.keys(t.setHeaders).join(','));
+  if (t.removeHeaders.length) tb.push('remove ' + t.removeHeaders.join(','));
+  if (t.bodyModel) tb.push('model ' + t.bodyModel);
+  if (t.maxTokens) tb.push('max_tokens ≤ ' + t.maxTokens);
+  print('  transforms: ' + (tb.length ? tb.join(' · ') : 'none'));
+  print('  custom router: ' + (d.customRouter ? d.customRouter.command + ' (' + d.customRouter.source + ')' : 'none'));
 }
 
 // The routing decision and every account's readiness, printed identically by
@@ -5448,6 +5589,17 @@ function printRouteLines(route) {
       c.server +
       's',
   );
+  const rr = route.routes;
+  if (rr) {
+    const bits = ['fallback ' + rr.fallback];
+    if (rr.sticky.enabled) bits.push('sticky ' + fmtSeconds(rr.sticky.ttlSeconds));
+    if (rr.modelChain.length) bits.push('chain ' + rr.modelChain.join('→'));
+    if (rr.rules.length) bits.push(rr.rules.length + ' rule(s)');
+    print('  rules: ' + (rr.exists ? bits.join(' · ') : 'none (no proxy-routes.json)'));
+    rr.errors.forEach(function (e) {
+      print('  ' + style.warn('⚠️ ' + e));
+    });
+  }
 }
 
 // `keyflip cooldown [clear <account>|--all]` — the readout/reset for per-account

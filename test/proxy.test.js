@@ -3,6 +3,7 @@ import assert from 'node:assert';
 import fs from 'fs';
 import path from 'path';
 import * as proxy from '../src/proxy.js';
+import * as proxyroutes from '../src/proxyroutes.js';
 import * as breaker from '../src/breaker.js';
 import * as config from '../src/config.js';
 import * as core from '../src/core.js';
@@ -392,4 +393,172 @@ test('debug headers can be turned off in config', async function () {
     return ok('{}');
   });
   assert.strictEqual(out.res.headers['x-keyflip-account'], undefined);
+});
+
+// ---- declarative routing (proxy-routes.json): rules, sticky, fallback, transforms ----
+
+function routesFile(ctx, obj) {
+  fs.writeFileSync(path.join(ctx.configDir, 'proxy-routes.json'), JSON.stringify(obj));
+  proxyroutes.resetCache();
+}
+
+// Like send(), but the request body is JSON so a model/token rule can match.
+function sendBody(ctx, forward, reqBody, extra) {
+  extra = extra || {};
+  const opts = Object.assign({}, extra);
+  delete opts.reqHeaders;
+  const res = fakeRes();
+  const sleeps = [];
+  return proxy
+    .handleRequest(
+      ctx,
+      {
+        method: 'POST',
+        path: '/v1/messages',
+        headers: extra.reqHeaders || {},
+        body: Buffer.from(JSON.stringify(reqBody)),
+      },
+      res,
+      Object.assign(
+        {
+          forward: forward,
+          sleep: function (ms) {
+            sleeps.push(ms);
+            return Promise.resolve();
+          },
+        },
+        opts,
+      ),
+    )
+    .then(function (r) {
+      return { r: r, res: res, sleeps: sleeps };
+    });
+}
+
+test('fallback:off commits the first retryable response instead of failing over', async function () {
+  const ctx = twoAccounts();
+  routesFile(ctx, { fallback: 'off' });
+  const seen = [];
+  const out = await sendBody(
+    ctx,
+    async function (up) {
+      seen.push(up.authVal);
+      return { status: 429, headers: {}, body: Buffer.from('busy') };
+    },
+    { model: 'm' },
+  );
+  assert.deepStrictEqual(seen, ['Bearer TB']);
+  assert.strictEqual(out.res.statusCode, 429);
+  assert.strictEqual(out.res.headers['x-keyflip-attempts'], '1');
+  assert.strictEqual(out.res.headers['x-keyflip-failover'], undefined);
+});
+
+test('fallback:model-chain degrades the model on the same account before failing over', async function () {
+  const ctx = twoAccounts();
+  routesFile(ctx, { fallback: 'model-chain', modelChain: ['claude-haiku-4-5'] });
+  const models = [];
+  const out = await sendBody(
+    ctx,
+    async function (up, req) {
+      const j = JSON.parse(req.body.toString());
+      models.push(j.model);
+      if (j.model === 'claude-sonnet-4-5') return { status: 429, headers: {}, body: Buffer.from('busy') };
+      return ok('{"ok":true}');
+    },
+    { model: 'claude-sonnet-4-5', max_tokens: 100 },
+  );
+  assert.deepStrictEqual(models, ['claude-sonnet-4-5', 'claude-haiku-4-5']);
+  assert.strictEqual(out.res.statusCode, 200);
+  assert.strictEqual(out.res.headers['x-keyflip-model'], 'claude-haiku-4-5');
+  assert.strictEqual(out.res.headers['x-keyflip-account'], 'b', 'same account, not another one');
+  assert.strictEqual(out.r.account, 'b');
+  assert.strictEqual(breaker.cooldownOf(ctx, 'b').active, false, 'a model problem is not an account failure');
+});
+
+test('a rule sends a matching request to its account before the active one', async function () {
+  const ctx = threeAccounts(); // c active
+  routesFile(ctx, { rules: [{ name: 'sonnet-to-a', when: { model: '*sonnet*' }, use: { account: 'a' } }] });
+  const seen = [];
+  const out = await sendBody(
+    ctx,
+    async function (up) {
+      seen.push(up.authVal);
+      return ok('{}');
+    },
+    { model: 'claude-sonnet-4-5' },
+  );
+  assert.deepStrictEqual(seen, ['Bearer TA']);
+  assert.strictEqual(out.r.account, 'a');
+  assert.strictEqual(out.res.headers['x-keyflip-route'], 'rule #1 (sonnet-to-a)');
+});
+
+test('transforms rewrite outgoing headers and only lower max_tokens', async function () {
+  const ctx = twoAccounts();
+  routesFile(ctx, {
+    transforms: {
+      setHeaders: { 'x-team': 'pay' },
+      removeHeaders: ['x-drop'],
+      bodyModel: 'claude-haiku-4-5',
+      maxTokens: 50,
+    },
+  });
+  let got = null;
+  const out = await sendBody(
+    ctx,
+    async function (up, req) {
+      got = req;
+      return ok('{}');
+    },
+    { model: 'claude-sonnet-4-5', max_tokens: 500 },
+    { reqHeaders: { 'x-drop': '1' } },
+  );
+  assert.strictEqual(got.headers['x-team'], 'pay');
+  assert.strictEqual(got.headers['x-drop'], undefined);
+  const j = JSON.parse(got.body.toString());
+  assert.strictEqual(j.model, 'claude-haiku-4-5');
+  assert.strictEqual(j.max_tokens, 50);
+  assert.strictEqual(out.r.model, 'claude-haiku-4-5');
+});
+
+test('a successful request pins its conversation (sticky) for the TTL', async function () {
+  const ctx = twoAccounts();
+  proxyroutes.resetCache();
+  const out = await sendBody(
+    ctx,
+    async function () {
+      return ok('{}');
+    },
+    { model: 'm', metadata: { user_id: 'conv-1' } },
+  );
+  assert.strictEqual(out.r.account, 'b');
+  const ex = await proxy.explain(ctx, { model: 'm', user: 'conv-1' });
+  assert.strictEqual(ex.decision.reason, 'sticky conversation -> b');
+  assert.deepStrictEqual(ex.order, ['b', 'a']);
+  proxyroutes.stickyReset();
+});
+
+test('explain reports the rule decision, the resulting order, and never sends anything', async function () {
+  const ctx = threeAccounts();
+  routesFile(ctx, { rules: [{ when: { tokensGt: 1000 }, use: { account: 'a' } }] });
+  const ex = await proxy.explain(ctx, { model: 'claude-x', tokens: 2000 });
+  assert.strictEqual(ex.decision.account, 'a');
+  assert.strictEqual(ex.decision.reason, 'rule #1');
+  assert.deepStrictEqual(ex.order, ['a', 'c', 'b']);
+  assert.deepStrictEqual(ex.defaultOrder, ['c', 'a', 'b']);
+  assert.strictEqual(ex.routes.exists, true);
+  assert.strictEqual(ex.routes.rules.length, 1);
+});
+
+test('routeState carries the routing file, its errors included', async function () {
+  const ctx = twoAccounts();
+  routesFile(ctx, { rules: [{ when: { model: '*' }, use: { account: 'a' } }] });
+  let st = proxy.routeState(ctx);
+  assert.strictEqual(st.routes.exists, true);
+  assert.strictEqual(st.routes.rules.length, 1);
+  assert.deepStrictEqual(st.routes.errors, []);
+  fs.writeFileSync(path.join(ctx.configDir, 'proxy-routes.json'), '{ oops');
+  proxyroutes.resetCache();
+  st = proxy.routeState(ctx);
+  assert.match(st.routes.errors[0], /cannot read proxy-routes\.json/);
+  assert.strictEqual(st.routes.fallback, 'retry', 'an invalid file falls back to the defaults');
 });

@@ -14,6 +14,7 @@ import * as usage from './usage.js';
 import * as breaker from './breaker.js';
 import * as provider from './provider.js';
 import * as history from './history.js';
+import * as proxyroutes from './proxyroutes.js';
 import * as _settings from './settings.js';
 import * as _fsutil from './fsutil.js';
 import * as _config from './config.js';
@@ -387,39 +388,107 @@ function httpForward(up, reqInfo) {
   });
 }
 
+// Only printable ASCII is legal in a header value; a rule's name is user text.
+function headerSafe(s) {
+  return String(s).replace(/[^\x20-\x7e]/g, '-');
+}
+
+// Move the preferred account to the front, keeping every other relative order.
+// A name that is not usable right now (cooling/breaker-open) changes nothing.
+function prefer(list, name) {
+  if (!name) return list;
+  const idx = list.findIndex(function (r) {
+    return r.name === name;
+  });
+  if (idx <= 0) return list;
+  const out = list.slice();
+  out.unshift(out.splice(idx, 1)[0]);
+  return out;
+}
+
+// The next model to degrade to for `model-chain`: the first chain entry that is
+// not the model already in use. An unlisted current model starts at chain[0].
+function nextChainModel(chain, current) {
+  for (let i = 0; i < chain.length; i++) {
+    if (chain[i] !== current) return chain[i];
+  }
+  return null;
+}
+
 // Core request handler. opts.forward(up, reqInfo) -> { status, headers, res }
 // (res is a readable stream) OR { status, headers, body:Buffer } for tests.
 // opts.sleep(ms) is injectable so a Retry-After wait is testable without real time.
+// Routing (proxy-routes.json) is decided up front from the ORIGINAL request
+// (facts/sticky), then a transformed copy is what actually goes upstream.
 async function handleRequest(ctx, reqInfo, clientRes, opts) {
   opts = opts || {};
   const forward = opts.forward || httpForward;
   const sleep = opts.sleep || defaultSleep;
   const clock = opts.now || Date.now;
   const debug = debugEnabled(ctx, opts);
+
+  // Declarative routing (#4–#8, #19): rules / sticky / custom hook pick the
+  // account to try FIRST, and may rewrite the model. The usable set decides
+  // what a rule or hook is allowed to name — a cooldown is never overridden.
+  const live = proxyroutes.load(ctx);
+  const routes = live.routes;
+  const userKey = proxyroutes.userKeyOf(reqInfo);
+  const facts = {
+    model: proxyroutes.modelOf(reqInfo.body),
+    path: reqInfo.path,
+    tokens: proxyroutes.estimateTokens(reqInfo.body),
+    headers: reqInfo.headers || {},
+    user: userKey,
+  };
+  const routed = proxyroutes.applyTransforms(reqInfo, routes);
+  let upstreamReq = routed.info;
+
   const list = candidates(ctx, { nowMs: clock() });
   if (!list.length) {
     clientRes.writeHead(503);
     clientRes.end('keyflip proxy: no usable account');
-    return { status: 503 };
+    return { status: 503, route: 'no usable account' };
+  }
+  const usable = list.map(function (r) {
+    return r.name;
+  });
+  const decision = await proxyroutes.decide(routes, facts, {
+    accounts: usable,
+    nowMs: clock(),
+    skipHook: opts.skipHook === true,
+    hook: opts.hook,
+  });
+  if (decision.model) {
+    const rewritten = proxyroutes.withModel(upstreamReq.body, decision.model);
+    if (rewritten) upstreamReq = Object.assign({}, upstreamReq, { body: rewritten });
+  }
+  let currentModel = proxyroutes.modelOf(upstreamReq.body) || facts.model;
+  const order = prefer(list, decision.account);
+  const fallback = routes.fallback;
+  function remember(acct) {
+    if (!routes.sticky.enabled || !userKey) return;
+    proxyroutes.stickySet(userKey, acct, routes.sticky.ttlSeconds * 1000, clock());
   }
   // All accounts parked but one frees up inside the wait budget: wait it out.
   const waitCap = maxWaitMs(ctx);
-  if (list[0].waitMs && list[0].waitMs <= waitCap) await sleep(list[0].waitMs);
+  if (order[0].waitMs && order[0].waitMs <= waitCap) await sleep(order[0].waitMs);
   let lastErr = null;
   const failed = [];
   let attempts = 0;
-  for (let i = 0; i < list.length; i++) {
-    const acct = list[i].name;
+  for (let i = 0; i < order.length; i++) {
+    const acct = order[i].name;
     const up = upstreamFor(ctx, acct);
     if (!up.authVal) {
       lastErr = 'no credential for ' + acct;
       continue;
     }
+    // Per-account budget for retries that keep the SAME model (one Retry-After
+    // wait, plus the model-chain descents); each is otherwise uncounted.
     for (let sameRetry = 0; ;) {
       attempts++;
       let resp;
       try {
-        resp = await forward(up, reqInfo);
+        resp = await forward(up, upstreamReq);
       } catch (e) {
         breaker.recordFailure(ctx, acct);
         park(ctx, acct, 'server', null);
@@ -432,10 +501,16 @@ async function handleRequest(ctx, reqInfo, clientRes, opts) {
       if (peeked) body = await peekError(resp.res, opts);
       const kind = classify(resp.status, resp.headers, body);
       const retryAfter = retryAfterMs(resp.headers, clock());
-      const canFailover = i < list.length - 1;
+      const canFailover = fallback !== 'off' && i < order.length - 1;
       // #2: a SHORT authoritative Retry-After is cheaper to wait out than to
       // spend another account's quota on — retry the SAME account once.
-      if (kind === 'throttled' && retryAfter != null && retryAfter <= waitCap && sameRetry === 0) {
+      if (
+        fallback !== 'off' &&
+        kind === 'throttled' &&
+        retryAfter != null &&
+        retryAfter <= waitCap &&
+        sameRetry === 0
+      ) {
         drain(resp);
         sameRetry++;
         await sleep(retryAfter);
@@ -453,7 +528,37 @@ async function handleRequest(ctx, reqInfo, clientRes, opts) {
           kind: kind,
           debug: debug,
           bodyOverride: peeked ? body : null,
+          model: currentModel,
+          route: decision.reason,
         });
+      }
+      // `model-chain`: degrade the MODEL on this same account before spending
+      // another account's quota. A model problem is not the account's fault, so
+      // no breaker failure is recorded for a descent that then succeeds; auth
+      // and billing are excluded because a cheaper model cannot fix those.
+      if (
+        fallback === 'model-chain' &&
+        sameRetry === 0 &&
+        RETRYABLE(resp.status) &&
+        kind !== 'auth' &&
+        kind !== 'billing'
+      ) {
+        const next = nextChainModel(routes.modelChain, currentModel);
+        const rewritten = next ? proxyroutes.withModel(upstreamReq.body, next) : null;
+        if (rewritten) {
+          history.recordEvent(ctx, {
+            kind: 'proxy-model-chain',
+            account: acct,
+            from: currentModel,
+            to: next,
+            reason: 'upstream ' + resp.status + (kind !== 'none' ? ' (' + kind + ')' : ''),
+          });
+          drain(resp);
+          currentModel = next;
+          upstreamReq = Object.assign({}, upstreamReq, { body: rewritten });
+          sameRetry++;
+          continue;
+        }
       }
       // Retry to the next account only while nothing has been sent to the client.
       if (RETRYABLE(resp.status) && canFailover) {
@@ -463,20 +568,24 @@ async function handleRequest(ctx, reqInfo, clientRes, opts) {
         history.recordEvent(ctx, {
           kind: 'proxy-failover',
           from: acct,
-          to: list[i + 1] && list[i + 1].name,
+          to: order[i + 1] && order[i + 1].name,
           reason: 'upstream ' + resp.status + (kind !== 'none' ? ' (' + kind + ')' : ''),
         });
         drain(resp);
         break;
       }
       // Commit this response to the client. A retryable status only reaches here
-      // when there was no other account to fail over to — that is still a FAILURE
-      // for this account's breaker (never a success), otherwise a persistently
-      // rate-limited/expired sole account could never trip open.
+      // when there was no other account to fail over to (or fallback is off) —
+      // that is still a FAILURE for this account's breaker (never a success),
+      // otherwise a persistently rate-limited/expired sole account could never
+      // trip open.
       if (RETRYABLE(resp.status)) {
         breaker.recordFailure(ctx, acct);
         park(ctx, acct, kind, retryAfter);
-      } else breaker.recordSuccess(ctx, acct);
+      } else {
+        breaker.recordSuccess(ctx, acct);
+        remember(acct);
+      }
       return commit(ctx, resp, clientRes, {
         acct: acct,
         attempts: attempts,
@@ -484,12 +593,14 @@ async function handleRequest(ctx, reqInfo, clientRes, opts) {
         kind: kind,
         debug: debug,
         bodyOverride: peeked ? body : null,
+        model: currentModel,
+        route: decision.reason,
       });
     }
   }
   clientRes.writeHead(502);
   clientRes.end('keyflip proxy: all accounts failed (' + lastErr + ')');
-  return { status: 502, error: lastErr, attempts: attempts };
+  return { status: 502, error: lastErr, attempts: attempts, route: decision.reason };
 }
 
 // Write the upstream response to the client exactly once, adding the route
@@ -502,6 +613,8 @@ function commit(ctx, resp, clientRes, info) {
     headers['x-keyflip-attempts'] = String(info.attempts);
     if (info.failed && info.failed.length) headers['x-keyflip-failover'] = info.failed.join(',');
     if (info.kind && info.kind !== 'none') headers['x-keyflip-error-class'] = info.kind;
+    if (info.model) headers['x-keyflip-model'] = headerSafe(info.model);
+    if (info.route) headers['x-keyflip-route'] = headerSafe(info.route);
     const cd = breaker.cooldownOf(ctx, info.acct);
     if (cd.active) headers['x-keyflip-cooldown'] = String(Math.ceil(cd.remainingMs / 1000));
   }
@@ -543,7 +656,8 @@ function commit(ctx, resp, clientRes, info) {
       }
     });
   }
-  const out = { status: resp.status, account: info.acct, attempts: info.attempts };
+  const out = { status: resp.status, account: info.acct, attempts: info.attempts, route: info.route || null };
+  if (info.model) out.model = info.model;
   if (info.failed && info.failed.length) out.failover = info.failed.slice();
   return out;
 }
@@ -686,6 +800,10 @@ function routeState(ctx) {
     // >0 means every account is parked and this is the soonest to free up.
     waitSeconds: Math.ceil(((cands[0] && cands[0].waitMs) || 0) / 1000),
     accounts: accounts,
+    // The declarative layer (#4–#8, #19): what proxy-routes.json says, or
+    // `exists:false` when the file was never written (the proxy then just uses
+    // the order above).
+    routes: proxyroutes.describe(ctx),
     policy: {
       priority: prio,
       providerActive: providerActive,
@@ -699,6 +817,46 @@ function routeState(ctx) {
         server: cfgInt(ctx, 'proxy.cooldownServerSeconds'),
       },
     },
+  };
+}
+
+// Answer "where would THIS request go?" without sending it: the live order, the
+// rule/sticky/hook decision and the resulting order. Backs `proxy explain` and
+// the MCP equivalent. The hook only runs when opts.runHook is true (a human
+// asking), never for the read-only default.
+async function explain(ctx, sel, opts) {
+  sel = sel || {};
+  opts = opts || {};
+  const nowMs = opts.nowMs || Date.now();
+  const live = proxyroutes.load(ctx);
+  const list = candidates(ctx, { nowMs: nowMs });
+  const facts = {
+    model: sel.model || null,
+    path: sel.path || '/v1/messages',
+    tokens: Number.isInteger(sel.tokens) && sel.tokens > 0 ? sel.tokens : 0,
+    headers: sel.headers || {},
+    user: sel.user || null,
+  };
+  const decision = await proxyroutes.decide(live.routes, facts, {
+    accounts: list.map(function (r) {
+      return r.name;
+    }),
+    nowMs: nowMs,
+    skipHook: !opts.runHook,
+    hook: opts.hook,
+  });
+  const order = prefer(list, decision.account);
+  return {
+    input: facts,
+    decision: decision,
+    order: order.map(function (r) {
+      return r.name;
+    }),
+    defaultOrder: list.map(function (r) {
+      return r.name;
+    }),
+    waitSeconds: Math.ceil(((order[0] && order[0].waitMs) || 0) / 1000),
+    routes: proxyroutes.describe(ctx),
   };
 }
 
@@ -841,6 +999,8 @@ export {
   extractUsage,
   stats,
   routeState,
+  explain,
+  prefer,
   clearCooldowns,
   retryAfterMs,
   classify,

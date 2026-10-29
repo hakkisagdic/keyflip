@@ -65,6 +65,14 @@ keyflip proxy status          # sağlık + canlı rota sırası
 keyflip cooldown              # hangi hesap parkta, neden
 keyflip cooldown clear --all  # parktaki hesapları bırak
 keyflip proxy stop            # durdur + bağlantısını kes`} />
+
+      <h3 class="text-xl font-semibold text-surface-900 dark:text-surface-50 mb-3 mt-8">İstek bazında yönlendirme (isteğe bağlı)</h3>
+      <p class="text-surface-700 dark:text-surface-300 mb-4">
+        <code>~/.config/keyflip/proxy-routes.json</code> dosyasını oluşturun (<code>proxy routes init</code> ile başlayın): çalışan proxy dosyayı <strong>bir sonraki istekte</strong> yeniden okur, yeniden başlatma gerekmez. Model / yol / başlık / tahmini token boyutu / sohbet kullanıcısı üzerinde ilk-eşleşen kurallar bir hesap ve/veya model seçer; sticky sohbetler TTL boyunca aynı hesapta kalır; <code>model-chain</code> başka hesabın kotasını harcamadan önce modeli aynı hesapta düşürür; transform'lar başlık ekler/kaldırır ve <code>max_tokens</code> tavanı koyar; özel bir router betiği kendisi karar verebilir. Bir kural yalnız <strong>o an kullanılabilir</strong> bir hesabı adlandırabilir — cooldown her zaman kazanır. Geçersiz dosya yok sayılır ve her sorun adıyla gösterilir.
+      </p>
+      <CodeBlock code={`keyflip proxy routes           # kurallar, hatalar, geçerli politika
+keyflip proxy explain --model claude-opus-4 --tokens 200000
+keyflip proxy routes init      # geçerli başlangıç dosyası (üzerine yazmaz)`} />
     </div>
   </section>
 </BaseLayout>

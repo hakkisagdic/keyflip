@@ -73,8 +73,9 @@ Multi-provider support for different AI services and routing logic.
 |--------|---------------|
 | `provider.js` | Provider abstraction and registration |
 | `provusage.js` | Per-provider usage tracking and analytics |
-| `proxy.js` | Proxy configuration and tunneling |
-| `router.js` | Request routing across multiple providers |
+| `proxy.js` | Command-started failover proxy (routing, cooldowns, token accounting) |
+| `proxyroutes.js` | Declarative per-request routing from `proxy-routes.json` (rules, sticky, fallback modes, transforms, custom hook) |
+| `router.js` | Model→provider routing (pins + arbitrage) and the response cache |
 | `breaker.js` | Circuit breaker pattern for provider failover |
 
 ### Sessions

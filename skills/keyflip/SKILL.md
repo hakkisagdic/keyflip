@@ -833,6 +833,8 @@ keyflip skill list | remove <name>    # per-target state (✓ ok / ✎ edited / 
 keyflip proxy start --wire            # command-started localhost proxy; wires Claude Code to it
 keyflip proxy status | stats          # is it up? per-account request/token totals + live route order
 keyflip proxy stop                    # stops it and unwires
+keyflip proxy routes [init]           # declarative proxy-routes.json (rules/sticky/fallback/transforms) + a valid starter
+keyflip proxy explain --model M [--tokens N] [--user U]   # where THIS request would go, and why (nothing sent)
 keyflip cooldown                      # route order + which accounts are parked (cooldown kind/seconds)
 keyflip cooldown clear <acct>|--all   # release parked accounts now
 ```
@@ -875,7 +877,29 @@ otherwise looks odd:
   `x-keyflip-account/-attempts/-failover/-error-class/-cooldown` unless
   `proxy.debugHeaders=false`.
 - MCP: `keyflip_cooldowns` (read-only), `keyflip_cooldown_clear` (confirm-gated),
-  `keyflip_proxy_status` (includes the route).
+  `keyflip_proxy_status` (includes the route), `keyflip_proxy_routes` and
+  `keyflip_proxy_explain` (read-only; the latter never runs a custom hook).
+
+**Declarative routing** — `~/.config/keyflip/proxy-routes.json` (optional; the
+running proxy hot-reloads it on the next request):
+
+- `rules` are first-match. `when` can test `model`, `path`, `header`,
+  `tokensGt` (a ~chars/4 estimate), `account`, `user` (glob `*`/`?`); `use` picks
+  an `account` and/or `model`. A rule may only name an account that is **usable
+  now** — a cooldown/breaker always wins and the reason says so.
+- `sticky` keeps a conversation (`metadata.user_id`, or the `x-keyflip-session`
+  header) on the account that last succeeded, for `ttlSeconds`.
+- `fallback`: `off` (never retry), `retry` (default failover), `model-chain`
+  (degrade to the next model on the SAME account before another account; no
+  breaker is tripped for that).
+- `transforms`: set/remove headers, override the body model, cap `max_tokens`
+  (only lowered); a non-JSON body is forwarded untouched.
+- `CUSTOM_ROUTER_PATH` / `customRouter` is a helper script fed the request facts
+  on stdin; 1.5 s timeout, failure falls back to the rules. Never claim a hook
+  ran — `keyflip proxy explain --run-hook` is the only thing that runs it.
+- An invalid file is ignored (defaults apply) and its problems are listed by
+  `keyflip proxy routes` / `proxy status`. Debug headers add
+  `x-keyflip-model` and `x-keyflip-route`.
 
 ## Parallel accounts in one terminal
 

@@ -9,6 +9,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Declarative proxy routing: `proxy-routes.json`, rules, sticky sessions and a model chain.**
+  The failover proxy can now decide *per request* instead of only reordering accounts.
+  `~/.config/keyflip/proxy-routes.json` (optional; `keyflip proxy routes init` writes a valid
+  starter) holds first-match `rules` whose `when` tests `model`, `path`, `header` (name → glob),
+  `tokensGt` (a no-dependency ~chars/4 estimate, so "only huge requests" is expressible), `account`
+  and `user` (globs `*`/`?`), and whose `use` picks an account and/or a model. A rule may only name
+  an account that is usable right now — a cooldown or open breaker always wins and the reason says
+  so. `sticky` keeps a conversation (`metadata.user_id`, or the opt-in `x-keyflip-session` header)
+  on the account that last succeeded for `ttlSeconds` (in-process, bounded at 1000 conversations).
+  `fallback` is `off` (commit the first response, never retry), `retry` (the existing failover) or
+  `model-chain` (on 429/529/5xx degrade to the next model **on the same account** before spending
+  another account's quota; a model problem is not an account failure, so no breaker is tripped).
+  `transforms` set/remove request headers, override the body model and cap `max_tokens` (only ever
+  lowered; a non-JSON body is forwarded untouched). `CUSTOM_ROUTER_PATH` (or `customRouter` in the
+  file) is an async helper script fed `{model,path,user,tokens,accounts}` on stdin that answers
+  `{account,model,reason}` — 1.5 s timeout, 64 KB cap, any failure falls back to the rules.
+  The file hot-reloads on the next request (mtime+size), an invalid file is ignored with every
+  problem named instead of breaking the proxy, and new debug headers `x-keyflip-model` /
+  `x-keyflip-route` say what was sent and why. New: `keyflip proxy routes [init]` and
+  `keyflip proxy explain [--model] [--tokens] [--path] [--user] [--run-hook]` (the decision for a
+  hypothetical request, nothing sent); `proxy status`/`cooldown` show the routing policy. MCP:
+  `keyflip_proxy_routes` and `keyflip_proxy_explain` (read-only; the explain tool never runs a
+  custom hook).
 - **The failover proxy now routes like a scheduler, not a first-failure switch.** Each account's
   failure is classified before anything moves: a 429 whose body says billing / credit / org-disabled
   is surfaced to the client instead of being masked by another account's quota; a rate-limit 429

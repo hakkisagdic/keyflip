@@ -73,8 +73,9 @@ Farkli yapay zeka servisleri ve yonlendirme mantigi icin coklu saglayici destegi
 |-------|------------|
 | `provider.js` | Saglayici soyutlamasi ve kaydi |
 | `provusage.js` | Saglayici bazinda kullanim takibi ve analitik |
-| `proxy.js` | Proxy yapilandirmasi ve tunelleme |
-| `router.js` | Birden fazla saglayici arasinda istek yonlendirme |
+| `proxy.js` | Komutla baslatilan failover proxy (yönlendirme, cooldown, token muhasebesi) |
+| `proxyroutes.js` | `proxy-routes.json` ile istek bazinda bildirimsel yönlendirme (kurallar, sticky, fallback modlari, transform'lar, özel kanca) |
+| `router.js` | Model→saglayici yönlendirme (pin + arbitraj) ve yanit önbellegi |
 | `breaker.js` | Saglayici yedeklemesi icin devre kesici deseni |
 
 ### Oturumlar

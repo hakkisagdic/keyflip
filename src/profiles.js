@@ -20,6 +20,7 @@ const RESERVED_NAMES = ['__proto__', 'prototype', 'constructor'];
 const RESERVED_FILES = [
   'breakers',
   'proxy',
+  'proxy-routes',
   'mcp-registry',
   'links',
   'installed-skills',

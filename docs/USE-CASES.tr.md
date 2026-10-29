@@ -354,6 +354,16 @@ keyflip proxy stop                     # durdur ve settings.json bağını çöz
 - Açıkken her isteği aktif hesaba yönlendirir ve istemci bir bayt görmeden **429/5xx'te
   bir sonraki sağlıklı hesaba yük devreder.** İstek ortası limitlerin olası olduğu uzun
   gözetimsiz koşular için ideal.
+- İsteğe bağlı istek bazında yönlendirme: `~/.config/keyflip/proxy-routes.json` (bir
+  sonraki istekte yeniden okunur): model/yol/başlık/token boyutuna göre ilk-eşleşen
+  kurallar, sticky sohbetler, `fallback: off|retry|model-chain`, başlık/gövde transform'ları
+  ve özel router betiği. Kural yalnız o an kullanılabilir bir hesabı adlandırabilir;
+  geçersiz dosya yok sayılır ve her sorun adıyla gösterilir.
+
+```bash
+keyflip proxy routes [init]            # yönlendirme dosyası, hataları ve politika
+keyflip proxy explain --model claude-opus-4 --tokens 200000   # nereye gider, neden?
+```
 
 ---
 

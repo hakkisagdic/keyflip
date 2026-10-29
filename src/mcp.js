@@ -27,6 +27,7 @@ import * as doctor from './doctor.js';
 import * as backup from './backup.js';
 import * as history from './history.js';
 import * as proxy from './proxy.js';
+import * as proxyroutes from './proxyroutes.js';
 import * as browser from './browser.js';
 import * as loginmod from './login.js';
 import * as exec from './exec.js';
@@ -2046,6 +2047,42 @@ const TOOLS = [
     run: async function (ctx, args) {
       needConfirm(args);
       return { cleared: proxy.clearCooldowns(ctx, args.name || null) };
+    },
+  },
+  {
+    name: 'keyflip_proxy_routes',
+    title: 'Show the proxy routing file',
+    description:
+      'The declarative routing layer behind the failover proxy (<configDir>/proxy-routes.json): fallback mode (off/retry/model-chain), sticky conversation TTL, the model chain, each rule (when → account/model), request transforms, the custom router command, and any validation errors. A missing file means the defaults (active first, then least-recently-used). Read-only.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    annotations: RO,
+    run: async function (ctx) {
+      return proxyroutes.describe(ctx);
+    },
+  },
+  {
+    name: 'keyflip_proxy_explain',
+    title: 'Explain where a request would route',
+    description:
+      'For a hypothetical request (model / path / token estimate / conversation user / headers), report which account the failover proxy would try FIRST and why — a rule, a sticky conversation, or the default order — plus the resulting order and effective policy. Nothing is sent upstream and a custom router hook is NOT executed (run `keyflip proxy explain --run-hook` for that). Read-only.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        model: { type: 'string', description: 'Model id, e.g. claude-sonnet-4-5.' },
+        path: { type: 'string', description: 'Request path (default /v1/messages).' },
+        tokens: { type: 'integer', description: 'Estimated input tokens for tokensGt rules.' },
+        user: { type: 'string', description: 'Conversation user id, as sent in metadata.user_id.' },
+        headers: { type: 'object', additionalProperties: { type: 'string' }, description: 'Headers for header rules.' },
+      },
+      additionalProperties: false,
+    },
+    annotations: RO,
+    run: async function (ctx, args) {
+      return proxy.explain(
+        ctx,
+        { model: args.model, path: args.path, tokens: args.tokens, user: args.user, headers: args.headers || {} },
+        { runHook: false },
+      );
     },
   },
   {
