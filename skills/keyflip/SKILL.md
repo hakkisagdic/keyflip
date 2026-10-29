@@ -172,7 +172,10 @@ Copilot, Aider — normalized into one shape, harness noise stripped. Use them w
   `keyflip_conv_index` with `confirm=true`), and the result honestly says `lexical` + a
   `warning` when no embeddings exist. Snippets are credential-masked by default. `account` narrows
   the ranked list to one account's chats (the filter runs after ranking, so `hits` can come back
-  shorter than `limit` — that is expected, not a broken index).
+  shorter than `limit` — that is expected, not a broken index). A hit is a whole turn (question +
+  answer), and identical text from a forked/resumed session is shown once: the surviving hit lists
+  the other conversations in `alsoIn` and `collapsed` counts the folded copies — cite `alsoIn` ids
+  too when the user asks "which chat".
 - **`keyflip_conv_context`** — the RAG block to paste into a prompt: char-budgeted
   (`budget`, default 12000), sources cited with id/app/cwd/date, `expand` pulls neighbouring
   chunks so a decision is not cut mid-thread. Prefer this over dumping a whole transcript.

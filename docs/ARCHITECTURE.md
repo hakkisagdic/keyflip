@@ -99,7 +99,7 @@ Every local AI tool's chats — read, normalized, indexed, exported.
 | `conversations.js` | Canonical conversation shape (`{id, app, surface, title, cwd, messages, counts, hash}`) and the per-app reader dispatch |
 | `cursor.js` | Cursor adapter: editor `state.vscdb` composers, the `cursor-agent` CLI blob store, the `agent-transcripts` mirror |
 | `foreign.js` | One-off normalization of another agent's session FILE (`keyflip foreign`) |
-| `convindex.js` | Incremental index: chunk files, manifest, token sidecar, embeddings |
+| `convindex.js` | Incremental index: turn-level chunks (a question and its answer, never a fixed window), manifest, token sidecar, embeddings, duplicate collapse at search time |
 | `convexport.js` | Markdown / HTML / JSON / Obsidian export and per-target transfer bundles |
 | `convaccounts.js` | Which keyflip account worked on a conversation, and whether that is stated or inferred |
 

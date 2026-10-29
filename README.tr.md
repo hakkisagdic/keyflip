@@ -990,6 +990,15 @@ keyflip conv transfer a7dc93d0 --to codex         # başka bir yapay zekâ arac�
   büyük, okunamaz, kayıp) **gerekçeli bir atlanmış kaynak** olarak adlandırır; sohbet üretmiş ama `-wal`
   yan dosyası yeniden oynatılamamış bir depoyu ise **uyarı** olarak — ikisi birden asla değil, sessizlik
   de asla.
+- **Bir parça, bir soru ve aldığı cevaptır.** Turlar asla ortadan kesilmez: bir kullanıcı mesajı ve
+  asistanın bir sonraki soruya kadar söyledikleri, sabit 1.400 karakterlik pencere yerine tek parçada
+  kalır; böylece bulunan cevap onu doğuran soruyu da taşır. Canlı 1864 sohbetlik indekste bu, sahipsiz
+  `Assistant: …` parçalarını ortadan kaldırdı — önce 122.611 parçanın 15.392'si (%12,6), sonra 117.033
+  parçanın 15'i. Bütün tutulamayacak kadar uzun bir tur, örtüşmeyle bölünür ve her parça sorusunun kısa
+  bir kopyasını taşır; yani uzun bir cevabın ortası da "ne sorulmuştu" ile bulunur.
+- **Aynı paragraf bir kez gösterilir.** Dallanmış (fork) ve devam ettirilmiş oturumlar önceki turları
+  birebir tekrarlar. `conv search` tek kopyayı tutar, diğer sohbetleri `alsoIn` içinde adlandırır ve
+  katlanan kopyaları `collapsed` diye sayar — aynı cevaba birkaç sonuç yuvası harcamaz.
 - **Sıralamayı nasıl yaptığını dürüstçe söyleyen arama.** Leksiksel taraf BM25: hafif bir stemmer ve
   gerçek belge frekansları. `--embed` varsayılan olarak yerel bir Ollama ile vektör hesaplar (ya da
   `KEYFLIP_EMBED_URL`; uzak uç noktaya giden metin önce sır-ayıklamadan geçer). Hibrit iki listeyi

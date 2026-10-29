@@ -901,6 +901,15 @@ keyflip conv transfer a7dc93d0 --to codex         # a handoff bundle for another
 - **A store that cannot be read never passes for an empty one.** `conv index` names every store it could
   not read (too large, unreadable, gone) as a **skipped source with a reason**, and a store that yielded
   chats but whose `-wal` sidecar could not be replayed as a **warning** — never both, and never silence.
+- **A chunk is a question and the answer it got.** Turns are never cut apart: a user message and
+  everything the assistant said before the next question stay in one chunk instead of a fixed
+  1,400-character window, so a retrieved answer still carries the question that produced it. On a live
+  1864-conversation index that removed the orphaned `Assistant: …` chunks — 15,392 of 122,611 (12.6%)
+  before, 15 of 117,033 after. A turn too long to keep whole is split with overlap and every piece keeps
+  a short copy of its question, so the middle of a long answer is still findable by what was asked.
+- **The same paragraph is shown once.** Forked and resumed sessions repeat earlier turns verbatim. `conv search`
+  keeps one copy, names the other conversations in `alsoIn` and counts the folded copies in `collapsed`
+  instead of spending several page slots on one answer.
 - **Search that tells the truth about how it ranked.** Lexical is BM25 with a light stemmer and exact
   document frequencies. `--embed` computes vectors with a local Ollama by default (or `KEYFLIP_EMBED_URL`;
   text sent to a remote endpoint is secret-redacted first). Hybrid fuses both lists with reciprocal rank

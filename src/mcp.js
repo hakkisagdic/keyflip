@@ -1341,7 +1341,7 @@ const TOOLS = [
     name: 'keyflip_conv_search',
     title: 'Search every conversation (BM25, embeddings, hybrid)',
     description:
-      'Search the CONTENT of every local conversation keyflip has indexed. Modes: lexical (BM25, always available), semantic (needs embeddings), hybrid (reciprocal-rank fusion; falls back to lexical with a warning when no vectors exist). Filters narrow by app/cwd/since. Snippets are masked for credential shapes by default. Results are chunk-level, one per conversation by default, so raise limit to page. Never uploads anything; embeddings run locally (Ollama) or at the URL the user configured. Read-only: it does NOT build an index — if none exists, ask the user and call keyflip_conv_index with confirm=true. Hints return the id to read with keyflip_conv_show and the query to feed keyflip_conv_context.',
+      'Search the CONTENT of every local conversation keyflip has indexed. Modes: lexical (BM25, always available), semantic (needs embeddings), hybrid (reciprocal-rank fusion; falls back to lexical with a warning when no vectors exist). Filters narrow by app/cwd/since. Snippets are masked for credential shapes by default. Results are chunk-level, one per conversation by default, so raise limit to page. Identical chunk text (a forked or resumed session repeating earlier turns) is shown ONCE: the surviving hit names the other conversation ids in `alsoIn` and `collapsed` counts the copies that were folded. Never uploads anything; embeddings run locally (Ollama) or at the URL the user configured. Read-only: it does NOT build an index — if none exists, ask the user and call keyflip_conv_index with confirm=true. Hints return the id to read with keyflip_conv_show and the query to feed keyflip_conv_context.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1404,6 +1404,7 @@ const TOOLS = [
         query: q,
         mode: r.mode || (r.semanticCoverage ? 'hybrid' : 'lexical'),
         count: r.hits.length,
+        collapsed: r.collapsed || 0,
         hits: r.hits.map(function (h) {
           const snip = convRedactText(h.snippet || '', args);
           return {
@@ -1418,6 +1419,8 @@ const TOOLS = [
             role: h.role || null,
             ts: h.ts || null,
             score: Math.round((h.score || 0) * 1000) / 1000,
+            chunkHash: h.chunkHash || null,
+            alsoIn: (h.alsoIn || []).slice(0, 5),
             snippet: snip.text,
             redacted: snip.count || 0,
           };

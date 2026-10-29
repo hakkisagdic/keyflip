@@ -6946,7 +6946,13 @@ function convPrintHits(query, r, limit) {
         style.dim(convWhen(h.updatedAt) + '  #' + (h.chunk + 1) + (h.account ? '  ' + h.account : '')),
     );
     if (h.snippet) print('      ' + style.dim('↳ ' + convClip(h.snippet, 220)));
+    if (h.alsoIn && h.alsoIn.length) {
+      const more = h.alsoIn.slice(0, 2).join(', ') + (h.alsoIn.length > 2 ? ' +' + (h.alsoIn.length - 2) : '');
+      print('      ' + style.dim('↳ same text also in ' + more));
+    }
   });
+  if (r.collapsed)
+    print(style.dim('· ' + r.collapsed + ' duplicate chunk(s) folded into the hits above (forked/resumed sessions).'));
   // `no-vectors` was already announced before the search (hybrid fallback); don't repeat it.
   if (r.semanticError && r.semanticError !== 'no-vectors')
     print(style.warn('·') + ' vectors unavailable (' + r.semanticError + ') — lexical ranking only.');
@@ -7376,6 +7382,7 @@ async function cmdConv(ctx, rest) {
         query: query,
         mode: r.mode || mode,
         hits: r.hits,
+        collapsed: r.collapsed || 0,
         coverage: r.semanticCoverage || r.coverage || null,
         semanticError: r.semanticError || null,
       });

@@ -30,6 +30,10 @@ const SCHEMA_VERSION = 1;
 // Bump when the way a conversation id is derived changes. A row written by an older scheme
 // is re-parsed once (so its id is re-derived) instead of being reused with the old id.
 const ID_SCHEME = 2;
+// Bump when the way text is cut into chunks changes. The reuse paths compare mtime/size, so
+// without this an unchanged transcript would keep serving chunks cut by the old rules.
+// 2: whole turns (question + its answer) instead of ~1400-char windows.
+const CHUNK_SCHEME = 2;
 const INDEX_DIR = 'conv-index';
 const CHUNK_TARGET = 1400; // characters per chunk
 const CHUNK_OVERLAP = 180; // only for a single oversized message
@@ -121,32 +125,55 @@ function splitLong(text) {
   return out;
 }
 
-// Group short turns into ~CHUNK_TARGET windows so a retrieved chunk carries a real exchange;
-// split a giant turn with overlap. `len` is stored so search never tokenizes a non-matching
-// document just to compute avgdl.
+// A chunk should be a question and the answer it got, not a 1400-character window that can
+// start in the middle of an answer. The window packer used to place "Assistant: …" alone in a
+// chunk whenever the user's question filled the previous one: on the live index 15,392 of
+// 122,611 chunks (12.6%) began with an answer whose question was nowhere in the chunk, so a
+// cosine/BM25 match had no question terms to lean on and the retrieved text lost its context.
+//
+// v2 groups messages into TURNS (a user message plus everything said before the next user
+// message) and only ever breaks BETWEEN turns. A turn that is itself too long is split with
+// overlap, and every continuation keeps a short copy of its question so the middle of a long
+// answer is still findable by what was asked.
 function chunkConversation(conv) {
-  const out = [];
-  let buf = [];
-  let size = 0;
-  const flush = () => {
-    if (!buf.length) return;
-    const text = buf.join('\n\n').trim();
-    if (text) out.push({ role: buf[0].role, ts: buf[0].ts || null, text: text });
-    buf = [];
-    size = 0;
-  };
+  const labelOf = (role) => (role === 'assistant' ? 'Assistant: ' : role === 'user' ? 'User: ' : '');
+  const turns = [];
+  let cur = null;
   for (const m of conv.messages || []) {
     const body = String(m.text || '').trim();
     if (!body) continue;
-    if (body.length > CHUNK_TARGET * 1.5) {
-      flush();
-      splitLong(body).forEach((part) => out.push({ role: m.role, ts: m.ts || null, text: part }));
+    const text = labelOf(m.role) + body;
+    // A user message always starts a turn; so does any message with no turn open (a transcript
+    // can begin with an assistant message, and tool/system lines sometimes lead).
+    if (!cur || m.role === 'user') {
+      cur = { role: m.role, ts: m.ts || null, head: text, parts: [text] };
+      turns.push(cur);
+    } else {
+      cur.parts.push(text);
+    }
+  }
+  const out = [];
+  let buf = null;
+  const flush = () => {
+    if (!buf) return;
+    out.push(buf);
+    buf = null;
+  };
+  for (const t of turns) {
+    const text = t.parts.join('\n\n');
+    // A turn up to 1.5x the target stays whole even when it is bigger than a window: the
+    // question and its answer belong together.
+    if (text.length <= CHUNK_TARGET * 1.5) {
+      if (buf && buf.text.length + 2 + text.length > CHUNK_TARGET) flush();
+      if (!buf) buf = { role: t.role, ts: t.ts, text: text };
+      else buf.text += '\n\n' + text;
       continue;
     }
-    if (size && size + body.length > CHUNK_TARGET) flush();
-    const label = m.role === 'assistant' ? 'Assistant: ' : m.role === 'user' ? 'User: ' : '';
-    buf.push(label + body);
-    size += body.length + label.length + 2;
+    flush();
+    const head = t.head.length > 220 ? t.head.slice(0, 220).trimEnd() + ' …' : t.head;
+    splitLong(text).forEach((part, i) => {
+      out.push({ role: t.role, ts: t.ts, text: i === 0 ? part : head + '\n\n' + part });
+    });
   }
   flush();
   return out.map((c, i) => ({
@@ -513,6 +540,7 @@ async function build(ctx, opts) {
         prev.id &&
         prev.hash &&
         prev.scheme === ID_SCHEME &&
+        prev.chunkScheme === CHUNK_SCHEME &&
         prev.mtimeMs === src.mtimeMs &&
         prev.size === src.size &&
         chunkBytesOk(ctx, prev)
@@ -545,7 +573,12 @@ async function build(ctx, opts) {
       // claimed one id could have overwritten it, and a reused count would then describe a
       // conversation that is not on disk.
       const sameEntry =
-        !!had && had.id === id && had.hash && fs.existsSync(chunkPath(ctx, id)) && chunkBytesOk(ctx, had);
+        !!had &&
+        had.id === id &&
+        had.hash &&
+        had.chunkScheme === CHUNK_SCHEME &&
+        fs.existsSync(chunkPath(ctx, id)) &&
+        chunkBytesOk(ctx, had);
       if (!opts.force && sameEntry && had.mtimeMs === src.mtimeMs && had.size === src.size) {
         // Re-attributed even though the row is reused: the account that was live when it was
         // written may have been learned (or deleted) since the last pass.
@@ -585,6 +618,7 @@ async function build(ctx, opts) {
       const entry = {
         id: id,
         scheme: ID_SCHEME,
+        chunkScheme: CHUNK_SCHEME,
         app: conv.app,
         surface: conv.surface,
         title: conv.title,
@@ -917,6 +951,14 @@ function makeSnippet(text, terms) {
   );
 }
 
+// Same text, another conversation: the duplicate is dropped from the page, so keep a pointer
+// to where else it lives.
+function foldTwin(twin, id) {
+  if (!twin || twin.id === id) return;
+  const list = twin.alsoIn || (twin.alsoIn = []);
+  if (list.length < 10 && list.indexOf(id) === -1) list.push(id);
+}
+
 // Top chunks often all come from the same long session. A result list should answer "which
 // conversations discuss this", so keep at most `perConv` chunks per conversation (default 1)
 // while preserving rank order. Context packs may ask for more.
@@ -1041,6 +1083,12 @@ function lexical(ctx, query, opts) {
   const chunkCache = new Map();
   const hits = [];
   const seen = Object.create(null);
+  // Forked and resumed sessions contain the very same turns, so the best hits for a query are
+  // often byte-identical text in different conversation ids (19,779 duplicate chunk hashes
+  // across 2,613 source pairs on the live index). A page that shows the same paragraph twice
+  // wastes a slot: the duplicate is folded into the first hit's `alsoIn` instead of printed.
+  const seenHash = new Map();
+  let collapsed = 0;
   for (const h of scored) {
     if (hits.length >= page) break;
     const used = seen[h.id] || 0;
@@ -1052,9 +1100,15 @@ function lexical(ctx, query, opts) {
     }
     const c = chunks[h.chunk];
     if (!c) continue;
+    const twin = c.h && seenHash.get(c.h);
+    if (twin) {
+      foldTwin(twin, h.id);
+      collapsed++;
+      continue;
+    }
     const src = meta.sources[h.id];
     seen[h.id] = used + 1;
-    hits.push({
+    const hit = {
       id: h.id,
       app: src.app,
       title: src.title,
@@ -1066,10 +1120,14 @@ function lexical(ctx, query, opts) {
       role: c.role,
       ts: c.ts,
       score: h.score,
+      chunkHash: c.h || null,
+      alsoIn: [],
       snippet: makeSnippet(c.text, need),
-    });
+    };
+    if (c.h) seenHash.set(c.h, hit);
+    hits.push(hit);
   }
-  return { ok: true, hits: hits, scanned: totalDocs };
+  return { ok: true, hits: hits, scanned: totalDocs, collapsed: collapsed };
 }
 
 // ---- semantic search -----------------------------------------------------------------------
@@ -1214,6 +1272,10 @@ async function semantic(ctx, query, opts) {
   const cap = opts.perConv == null ? 1 : Math.max(1, opts.perConv);
   const page = opts.limit || 10;
   const seen = Object.create(null);
+  // Same duplicate collapse as the lexical side: identical chunk text in a forked session
+  // scores identically, so the page would otherwise repeat itself.
+  const seenHash = new Map();
+  let collapsed = 0;
   for (const h of scored) {
     if (hits.length >= page) break;
     const used = seen[h.id] || 0;
@@ -1225,9 +1287,15 @@ async function semantic(ctx, query, opts) {
     }
     const c = chunks[h.i];
     if (!c) continue;
+    const twin = c.h && seenHash.get(c.h);
+    if (twin) {
+      foldTwin(twin, h.id);
+      collapsed++;
+      continue;
+    }
     const src = meta.sources[h.id];
     seen[h.id] = used + 1;
-    hits.push({
+    const hit = {
       id: h.id,
       app: src.app,
       title: src.title,
@@ -1239,13 +1307,18 @@ async function semantic(ctx, query, opts) {
       role: c.role,
       ts: c.ts,
       score: h.score,
+      chunkHash: c.h || null,
+      alsoIn: [],
       snippet: makeSnippet(c.text, needlesForQuery),
-    });
+    };
+    if (c.h) seenHash.set(c.h, hit);
+    hits.push(hit);
   }
   return {
     ok: true,
     mode: 'semantic',
     hits: hits,
+    collapsed: collapsed,
     coverage: { sources: covered, total: keys.length },
     model: space.model,
   };
@@ -1276,9 +1349,29 @@ function rrf(lists, limit, perConv, weights) {
   });
   const out = Object.keys(byId).map((k) => byId[k]);
   out.sort((a, b) => b.rrf - a.rrf);
-  return diversify(out, perConv)
-    .slice(0, limit || 10)
-    .map((h) => Object.assign(h, { score: h.rrf }));
+  // The two lists collapse duplicates inside themselves, but the same text can still arrive
+  // once from each list. Fold it here too, before `perConv` spends page slots on it.
+  const seenHash = new Map();
+  const unique = [];
+  let collapsed = 0;
+  for (const h of out) {
+    if (h.chunkHash) {
+      const twin = seenHash.get(h.chunkHash);
+      if (twin) {
+        foldTwin(twin, h.id);
+        collapsed++;
+        continue;
+      }
+      seenHash.set(h.chunkHash, h);
+    }
+    unique.push(h);
+  }
+  return {
+    hits: diversify(unique, perConv)
+      .slice(0, limit || 10)
+      .map((h) => Object.assign(h, { score: h.rrf })),
+    collapsed: collapsed,
+  };
 }
 
 async function search(ctx, query, opts) {
@@ -1312,7 +1405,13 @@ async function searchMode(ctx, query, opts, mode) {
       });
     }
     const fused = rrf([lex.hits, sem.hits], opts.limit || 10, opts.perConv);
-    return { ok: true, hits: fused, mode: 'hybrid', semanticCoverage: sem.coverage };
+    return {
+      ok: true,
+      hits: fused.hits,
+      mode: 'hybrid',
+      collapsed: (lex.collapsed || 0) + (sem.collapsed || 0) + (fused.collapsed || 0),
+      semanticCoverage: sem.coverage,
+    };
   }
   return { ok: false, reason: 'bad-mode', hits: [] };
 }

@@ -30,7 +30,7 @@ function seed(ctx) {
       message: { role: 'assistant', content: 'Run the migrate command in dry-run first, then apply it.' },
     },
   ]);
-  // Three oversized turns become three chunks, so expand can pull in neighbours.
+  // A question, its answer, and a second question: two chunks, so expand has a neighbour.
   writeClaude(ctx, 'expand-1', [
     { type: 'user', message: { role: 'user', content: 'ALPHAMARKER ' + 'a'.repeat(1000) } },
     { type: 'assistant', message: { role: 'assistant', content: 'BRAVOMARKER ' + 'b'.repeat(1000) } },
@@ -218,7 +218,7 @@ test('RRF ranks a document found by both retrievers above a single-list hit', fu
     ],
     5,
     1,
-  );
+  ).hits;
   assert.strictEqual(fused[0].id, 'a');
   assert.strictEqual(fused[1].id, 'b');
   assert.ok(fused[0].rrf > fused[1].rrf);
@@ -235,7 +235,7 @@ test('fusion keeps BM25 in front: a vector-only hit never displaces a lexical hi
     { id: 'f', chunk: 0, score: 0.9 },
     { id: 'a', chunk: 0, score: 0.8 },
   ];
-  const fused = convindex.rrf([lex, sem], 10, 1);
+  const fused = convindex.rrf([lex, sem], 10, 1).hits;
   const ids = fused.map((h) => h.id);
   assert.deepStrictEqual(ids.slice(0, 5), ['a', 'b', 'c', 'd', 'e'], 'the lexical order survives the fusion');
   assert.ok(ids.includes('f'), 'the vector list still contributes a candidate');
@@ -262,7 +262,7 @@ test('fusion promotes a chunk that both retrievers found', function () {
     ],
     10,
     1,
-  );
+  ).hits;
   const ids = fused.map((h) => h.id);
   assert.ok(ids.indexOf('c') < ids.indexOf('b'), 'agreement outranks a lexical-only hit');
   assert.deepStrictEqual(fused.find((h) => h.id === 'c').sources, { 0: true, 1: true });
@@ -282,7 +282,8 @@ test('the result page is filled with distinct conversations, not with one long c
   }
   writeClaude(ctx, 'long-1', long);
   for (const id of ['other-1', 'other-2', 'other-3', 'other-4']) {
-    writeClaude(ctx, id, [{ type: 'user', message: { role: 'user', content: 'a small migration note' } }]);
+    // Distinct texts on purpose: identical notes would (correctly) collapse into `alsoIn`.
+    writeClaude(ctx, id, [{ type: 'user', message: { role: 'user', content: 'a small migration note for ' + id } }]);
   }
   await convindex.build(ctx, {});
   const r = await convindex.lexical(ctx, 'migration', { limit: 5 });
@@ -296,16 +297,76 @@ test('equal scores keep the earlier conversation in front', async function () {
   const ctx = ctxFor();
   // Two chats with the same text get the same vector and therefore the same score. The
   // candidate heap has to break that tie the way a stable sort does, or the same query would
-  // return a different conversation on every run.
+  // return a different conversation on every run. The second copy is folded into `alsoIn`
+  // (same text, another conversation), so the page shows the earlier one and still names it.
   writeClaude(ctx, 'twin-a', [{ type: 'user', message: { role: 'user', content: 'identical text here' } }]);
   writeClaude(ctx, 'twin-b', [{ type: 'user', message: { role: 'user', content: 'identical text here' } }]);
   await convindex.build(ctx, { embed: true, post: stubPost({}) });
   const r = await convindex.semantic(ctx, 'identical text', { post: stubPost({}), limit: 5 });
   assert.strictEqual(r.ok, true);
-  assert.strictEqual(r.hits.length, 2);
-  assert.strictEqual(r.hits[0].score, r.hits[1].score, 'the scores are identical');
+  assert.strictEqual(r.hits.length, 1, 'one page slot, not the same paragraph twice');
   const order = Object.keys(readManifest(ctx).sources);
-  assert.ok(order.indexOf(r.hits[0].id) < order.indexOf(r.hits[1].id), 'the earlier conversation stays in front');
+  assert.strictEqual(r.hits[0].id, order[0], 'the earlier conversation stays in front');
+  assert.deepStrictEqual(r.hits[0].alsoIn, [order[1]]);
+  assert.strictEqual(r.collapsed, 1);
+});
+
+test('identical text in a forked session fills one page slot and names the twin', async function () {
+  const ctx = ctxFor();
+  // A resumed/forked session repeats the earlier turns verbatim. Showing the same paragraph
+  // twice spends two page slots on one answer, so the copy is folded into `alsoIn`.
+  const line = [
+    { type: 'user', message: { role: 'user', content: 'deploy the service to staging with kubectl' } },
+    { type: 'assistant', message: { role: 'assistant', content: 'Run kubectl apply -k overlays/staging.' } },
+  ];
+  writeClaude(ctx, 'fork-a', line);
+  writeClaude(ctx, 'fork-b', line);
+  writeClaude(ctx, 'other-1', [{ type: 'user', message: { role: 'user', content: 'deploy unrelated thing' } }]);
+  writeClaude(ctx, 'other-2', [{ type: 'user', message: { role: 'user', content: 'deploy another thing' } }]);
+  await convindex.build(ctx, {});
+  const r = convindex.lexical(ctx, 'kubectl staging deploy', { limit: 3 });
+  const ids = r.hits.map((h) => h.id);
+  const forks = ids.filter((id) => id === 'claude:local:fork-a' || id === 'claude:local:fork-b');
+  assert.strictEqual(forks.length, 1, 'the twin is not printed twice');
+  const kept = r.hits.find((h) => h.id === forks[0]);
+  assert.strictEqual(kept.alsoIn.length, 1, 'the other conversation is named, not lost');
+  assert.ok(['claude:local:fork-a', 'claude:local:fork-b'].includes(kept.alsoIn[0]));
+  assert.strictEqual(r.collapsed, 1);
+  assert.strictEqual(new Set(ids).size, ids.length, 'the page still holds distinct conversations');
+  assert.strictEqual(ids.length, 3, 'the freed slot went to another conversation');
+});
+
+test('fusion collapses a duplicate that each retriever found separately', function () {
+  const lex = [
+    { id: 'a', chunk: 0, score: 9, chunkHash: 'h1', alsoIn: [] },
+    { id: 'c', chunk: 0, score: 8, chunkHash: 'h2', alsoIn: [] },
+  ];
+  const sem = [
+    { id: 'b', chunk: 3, score: 0.9, chunkHash: 'h1', alsoIn: [] },
+    { id: 'd', chunk: 0, score: 0.8, chunkHash: 'h3', alsoIn: [] },
+  ];
+  const fused = convindex.rrf([lex, sem], 10, 1);
+  const ids = fused.hits.map((h) => h.id);
+  assert.deepStrictEqual(ids, ['a', 'c', 'd'], 'the same text arrives once, as the higher-ranked id');
+  assert.deepStrictEqual(fused.hits[0].alsoIn, ['b']);
+  assert.strictEqual(fused.collapsed, 1);
+});
+
+test('chunks cut by an older scheme are rebuilt even when the transcript is untouched', async function () {
+  const ctx = ctxFor();
+  writeClaude(ctx, 'db-1', [
+    { type: 'user', message: { role: 'user', content: 'How do we run the database migration safely?' } },
+  ]);
+  await convindex.build(ctx, {});
+  // Simulate a row written before CHUNK_SCHEME 2: same id, same hash, same mtime/size — only
+  // the chunking rules are older. Reusing it would keep serving chunks cut the old way.
+  const meta = readManifest(ctx);
+  meta.sources['claude:local:db-1'].chunkScheme = 1;
+  fs.writeFileSync(convindex.metaPath(ctx), JSON.stringify(meta));
+  const r = await convindex.build(ctx, {});
+  assert.strictEqual(r.changed, 1, 'the source is re-chunked');
+  assert.strictEqual(r.reused, 0);
+  assert.strictEqual(readManifest(ctx).sources['claude:local:db-1'].chunkScheme, 2);
 });
 
 test('context pack is budgeted, sourced, and expand pulls in neighbouring chunks', async function () {
@@ -329,7 +390,24 @@ test('context pack is budgeted, sourced, and expand pulls in neighbouring chunks
   assert.match(tight, /_No matching chunks\._/); // too small for even one source block
 });
 
-test('chunkConversation keeps each chunk within one turn group and marks oversized turns', function () {
+test('chunkConversation keeps a question with its answer and never orphans an answer', function () {
+  // The v1 packer flushed as soon as the window filled, so a 1200-char question followed by a
+  // 1200-char answer left "Assistant: …" alone at the top of the next chunk: 12.6% of the live
+  // index looked like that, and a hit on one carried no question terms at all.
+  const q = 'Q'.repeat(1200);
+  const a = 'A'.repeat(1200);
+  const chunks = convindex.chunkConversation({
+    messages: [
+      { role: 'user', text: q, ts: '2026-01-01T00:00:00Z' },
+      { role: 'assistant', text: a, ts: null },
+    ],
+  });
+  assert.ok(chunks.length >= 2, 'a 2400-char turn is split, it is bigger than a chunk');
+  chunks.forEach((c) => assert.match(c.text.slice(0, 7), /^User: Q/, 'every piece starts with the question'));
+  assert.strictEqual(chunks[0].ts, '2026-01-01T00:00:00Z');
+});
+
+test('chunkConversation packs short turns and marks oversized ones', function () {
   const conv = {
     messages: [
       { role: 'user', text: 'short one', ts: '2026-01-01T00:00:00Z' },
@@ -341,9 +419,28 @@ test('chunkConversation keeps each chunk within one turn group and marks oversiz
   assert.strictEqual(chunks[0].text, 'User: short one\n\nAssistant: short two');
   const long = chunks.filter((c) => c.n > 0);
   assert.ok(long.length >= 4); // 5000 chars split at 1400 with 180 overlap
-  long.forEach((c) => assert.ok(c.text.length <= convindex.CHUNK_TARGET));
+  assert.ok(long[0].text.length <= convindex.CHUNK_TARGET);
+  // Continuations carry a short copy of the question they answer (bounded, so it cannot grow).
+  long.slice(1).forEach((c) => {
+    assert.ok(c.text.startsWith('User: xxxx'));
+    assert.ok(c.text.length <= convindex.CHUNK_TARGET + 240);
+  });
   long.forEach((c) => assert.strictEqual(c.role, 'user'));
   assert.strictEqual(new Set(chunks.map((c) => c.n)).size, chunks.length);
+});
+
+test('a question and its answer stay in one chunk when they fit together', function () {
+  const q = 'How do I replay the WAL? ' + 'context '.repeat(80);
+  const a = 'Recover the overlay before reading. ' + 'detail '.repeat(80);
+  const chunks = convindex.chunkConversation({
+    messages: [
+      { role: 'user', text: q },
+      { role: 'assistant', text: a },
+    ],
+  });
+  assert.strictEqual(chunks.length, 1);
+  assert.match(chunks[0].text, /^User: How do I replay the WAL\?/);
+  assert.match(chunks[0].text, /Assistant: Recover the overlay/);
 });
 
 // ---- embedding: retries, skips, and honest mode labels --------------------------------------
@@ -501,7 +598,7 @@ test('a torn chunk file is reconciled to the disk, never embedded as if complete
   const id = 'claude:local:expand-1';
   const file = convindex.chunkPath(ctx, id);
   const full = convindex.readChunks(file).length;
-  assert.ok(full >= 3);
+  assert.ok(full >= 2, 'the exchange is one chunk and the next question another');
   // Keep only the first line and drop the vector, so the source is picked up for embedding
   // with fewer chunks than the manifest claims.
   fs.writeFileSync(file, JSON.stringify(convindex.readChunks(file)[0]) + '\n');

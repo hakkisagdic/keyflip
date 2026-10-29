@@ -52,6 +52,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **A chunk is now a question and the answer it got, and a duplicate paragraph fills one result
+  slot.** The indexer packed messages into ~1,400-character windows and flushed as soon as the
+  window filled, so a chunk could open with an `Assistant:` answer whose question sat in the
+  previous chunk: 15,392 of 122,611 chunks (12.6%) on a live index were orphans like that, and a
+  BM25 or vector match on one had no question terms to lean on. Chunking now works in turns — a
+  user message plus everything said before the next question — and only breaks between turns; a
+  turn too long to keep whole is split with overlap and every continuation keeps a short copy of
+  its question. On the same index the orphaned-answer chunks fell to 15 of 117,033 (transcripts
+  that genuinely start with an assistant turn). Forked and resumed sessions repeat earlier turns
+  verbatim (19,389 duplicate chunk hashes on the live index), so `conv search` now shows that
+  text once: the surviving hit lists the other conversations in `alsoIn`, `collapsed` counts the
+  folded copies, and a page of 10 no longer spends 2.2 slots on the same paragraph. Measured on
+  40 frozen paraphrase queries through the shipped search path, lexical quality held (hit@5
+  0.625 → 0.60 and MRR 0.447 → 0.472 — one query either way at n=40; hit@1 0.30 → 0.35 when a
+  hit naming the conversation in `alsoIn` counts, because 16 of the 40 targets are twins of
+  another conversation). The manifest records a chunk scheme, so an existing index re-chunks
+  itself on the next build instead of reusing windows cut the old way — and those new chunks need
+  `keyflip conv index --embed` before semantic/hybrid search has vectors again.
+
 - **Search over a 120k-chunk index is roughly 4× faster.** Lexical BM25 now reads a per-source
   token sidecar (`tokens/<key>.t32`: per-chunk `len` + `[token hash, tf]`, written with the chunks
   and derivable from them) instead of re-tokenizing ~150 MB of transcript text per query; snippets
