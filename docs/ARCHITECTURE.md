@@ -219,6 +219,7 @@ Specialized features spanning automation, monitoring, and system integration.
 | `onboard.js` | First-run onboarding flow |
 | `orchestrator.js` | Multi-step operation orchestration |
 | `policy.js` | Access policy enforcement |
+| `prices.js` | Live model price table: fetches the public price list on an explicit refresh, validates it, caches it (`prices-cache.json`) and hands `cost.js` an overlay whose rows win over the bundled snapshot |
 | `schedule.js` | Scheduled operations (rotation, cleanup) |
 | `share.js` | Profile sharing between users |
 | `shellhook.js` | Shell hook integration (cd, prompt) |

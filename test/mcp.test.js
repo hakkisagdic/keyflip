@@ -150,6 +150,8 @@ test('MCP lifecycle: initialize negotiates a supported protocol version and decl
     'keyflip_tiers',
     'keyflip_tier_set',
     'keyflip_cost_rates',
+    'keyflip_cost_prices',
+    'keyflip_cost_prices_refresh',
     'keyflip_instances',
     'keyflip_instance_create',
     'keyflip_instance_launch',

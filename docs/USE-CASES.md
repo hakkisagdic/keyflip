@@ -352,6 +352,7 @@ keyflip proxy stats                    # requests, tokens, cache reads/writes, ~
 keyflip proxy stop                     # stop it and unwire settings.json
 keyflip tier                           # each account's plan + whether a model may route to it
 keyflip cost rates [model]             # billable card: cache tiers, 200K premium, fast mode
+keyflip cost prices [--refresh]        # which price table is in use; refresh it from the public list
 ```
 - While up it routes each request to the active account and **fails over to the next
   healthy account on 429/5xx** before the client sees a byte. Ideal for long unattended
@@ -376,6 +377,13 @@ keyflip proxy explain --model claude-opus-4 --tokens 200000   # where would it g
   list-price cost (cache read 0.1×, 5-minute write 1.25×, 1-hour write 2×, a >200K prompt
   2× input / 1.5× output on the whole request, fast mode 6×); `keyflip cost rates` prints
   the card. Estimates from a dated snapshot — never a vendor invoice.
+- **The price table refreshes itself.** `keyflip cost prices --refresh` pulls the public
+  price list, keeps the Claude rows, validates them and caches them; every later estimate
+  uses the fresh numbers while the bundled snapshot stays as the floor. Only `--refresh`
+  touches the network, a corrupt cache is ignored whole, and a sha-256 pin
+  (`cost.pricesSha256`, `--pin`) refuses a mismatching refresh — keyflip never pins what
+  it just fetched. A live row may raise a rate or add a model the bundle never had, but
+  it never lowers a rate below the bundled snapshot.
 
 ---
 

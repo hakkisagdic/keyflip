@@ -192,7 +192,7 @@ keyflip import-env [<dosya>] [--dry-run] [--env]   # provider endpoint'lerini .e
 keyflip log [--tail N] [--grep S] [--since ISO]   # eylem/denetim log'unu görüntüle
 keyflip run-job "<prompt>" [--group g] [--strategy best]   # ORKESTRATOR: prompt'u en boş hesapta headless çalıştır (izole)
 keyflip jobs [list|run|clear] · keyflip fanout "<prompt>" --accounts a,b,c   # iş kuyruğu + aynı prompt'u N hesapta koştur
-keyflip cost [status|predict <hesap>|by-project|rates [model]]   # harcama/kullanım, limite-kalan-süre tahmini, repo bazında dağılım, ücret kartları
+keyflip cost [status|predict <hesap>|by-project|rates [model]|prices [--refresh]]   # harcama/kullanım, limite-kalan-süre tahmini, repo bazında dağılım, ücret kartları, canlı fiyat tablosu
 keyflip tier [<hesap> <plan|auto>]   # her hesabın planı (free/pro/max/… ) ve proxy'nin bir modeli ona yönlendirip yönlendiremeyeceği
 keyflip team <publish|pull|members|add-member|remove-member> --dir <shared> --pool <n> --passphrase-file <f>   # rollü ŞİFRELİ ekip havuzu
 keyflip policy <list|allow|deny|remove|default|check> [--cwd D --account A --group G]   # bir dizinin hangi hesabı kullanabileceğini kısıtla
@@ -1316,6 +1316,35 @@ keyflip proxy stats [--json]        # hesap başına cache token'ı + tahmini ha
 Bunlar tarihli bir anlık görüntüden gelen tahminlerdir (`keyflip cost rates`
 sürümü yazar), fatura değildir — ve `keyflip cost status` hâlâ yüzdeden dolar
 türetmez.
+
+#### Fiyat tablosu kendini günceller (`cost prices`)
+
+Liste fiyatları değişir (modeller çıkar, giriş fiyatları biter), dolayısıyla
+paketlenmiş anlık görüntü eskir. `keyflip cost prices --refresh` herkese açık
+LiteLLM fiyat listesini çeker, Claude satırlarını ayırır, doğrular ve
+`~/.config/keyflip/prices-cache.json` içine yazar; bundan sonra `cost rates`,
+`cost by-project` ve `proxy stats` yeni fiyatlarla hesaplar (paketlenmiş
+anlık görüntü taban olarak kalır, hiçbir model fiyatsız kalmaz).
+
+```bash
+keyflip cost prices                 # hangisi kullanılıyor: kaynak, yaş, sha-256, pin durumu
+keyflip cost prices --refresh       # çek + doğrula + önbelleğe al (ağa çıkan tek komut)
+keyflip cost prices --clear         # önbelleği sil; paketlenmiş anlık görüntü devreye girer
+```
+
+Ağa sadece açık bir `--refresh` dokunur; diğer tüm komutlar önbelleği okur.
+Önbellek güvenilmeyen girdidir: bütün hâlinde doğrulanır (sabit şekil, sınırlı
+boyut, yazdırılabilir model kimlikleri, sonlu ücretler) ve bozuk olanı yarım
+uygulanmak yerine tamamen yok sayılır. **Pinleme isteğe bağlıdır ve asla otomatik
+değildir:** `cost.pricesSha256` ayarlanırsa (ya da `--pin <sha256>` verilirse)
+özeti tutmayan bir yenileme reddedilir — keyflip az önce çektiğini kendisi
+asla pinlemez.
+
+Canlı bir satır ücreti **yükseltebilir** ya da paketlenmiş tabloda hiç olmayan
+bir modeli ekleyebilir; ama hiçbir zaman ücreti paketlenmiş anlık görüntünün
+altına düşüremez: kaynak listedeki düşüş genelde giriş fiyatıdır ya da bayat
+bir satırdır, ve harcamanın altını gösteren bir tahmin, üstünü gösteren
+tahminden daha kötüdür.
 
 ### Kullanıma göre otomatik geçiş (`autoswitch`)
 

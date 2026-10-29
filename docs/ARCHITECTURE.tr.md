@@ -206,6 +206,7 @@ Otomasyon, izleme ve sistem entegrasyonunu kapsayan ozellestirilmis ozellikler.
 | `onboard.js` | Ilk calistirma karsilama akisi |
 | `orchestrator.js` | Cok adimli islem orkestrasyonu |
 | `policy.js` | Erisim politikasi uygulama |
+| `prices.js` | Canli model fiyat tablosu: acik bir yenilemede fiyat listesini ceker, dogrular, onbellege alir (`prices-cache.json`) ve `cost.js`'e paketlenmis anlik goruntunun uzerine gelen bir katman verir |
 | `schedule.js` | Zamanlanmis islemler (rotasyon, temizlik) |
 | `share.js` | Kullanicilar arasi profil paylasimi |
 | `shellhook.js` | Kabuk kanca entegrasyonu (cd, prompt) |

@@ -95,7 +95,7 @@ near‑term backlog; several are prerequisites for the big epics (E3 especially)
 | 11 | ✅ Per‑error‑type cooldown TTLs + `keyflip cooldown` / `reset` readout |
 | 12 | ✅ Model‑eligibility filtering by subscription tier (Free≠Opus) before selecting an account — `keyflip tier`, `proxy.tierFilter`, 503 before sending |
 | 13 | ✅ Fine‑grained cost accounting (cache tiers + 200k + fast‑mode multiplier) — per request, `keyflip cost rates`, `proxy stats` spend |
-| 18 | Self‑updating model‑pricing table (LiteLLM prices, SHA‑256 verified, bundled fallback) |
+| 18 | ✅ Self‑updating model‑pricing table (LiteLLM prices, SHA‑256 verified, bundled fallback) — `keyflip cost prices --refresh`, opt‑in pin (never auto‑TOFU), cached overlay over the bundled snapshot |
 
 ---
 

@@ -9,6 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The price table updates itself: `keyflip cost prices --refresh`.** The cost estimates were pinned
+  to a hand-maintained snapshot, so list-price drift (a new model, an intro price lapsing) silently
+  skewed every number. New `src/prices.js` fetches the public LiteLLM price list, keeps the Claude
+  rows, normalizes them to keyflip's per-MTok shape and caches them in
+  `~/.config/keyflip/prices-cache.json`; `cost rates`, `cost by-project` and `proxy stats` then price
+  against the fresh table, with the bundled snapshot kept as the floor so nothing becomes unpriced.
+  The network is touched **only** by an explicit `--refresh` — every other command reads the cache —
+  and the cache is treated as untrusted input: fixed schema, bounded size and row count, printable
+  model ids, finite rates in range; a corrupt cache is ignored whole instead of half-applied.
+  **Pinning is opt-in and never automatic**: `cost.pricesSha256` (or `--pin <sha256>`) refuses a
+  refresh whose sha-256 does not match, and keyflip never pins what it just fetched. `keyflip cost
+  prices` reports the source, age, digest and pin state; `--clear` drops the cache. A live row may
+  raise a rate or add a model the bundle never had, but it never lowers a rate below the bundled
+  snapshot (an upstream drop is usually intro pricing or a stale row, and an estimate that
+  understates spend is worse than one that overstates it). The new state file is a reserved name
+  (never listed as a phantom account) and is removed by `uninstall`. MCP: `keyflip_cost_prices`
+  (read-only) and `keyflip_cost_prices_refresh` (confirm-gated).
 - **Cost accounting down to the request: cache tiers, the 200K long-context premium and fast mode.**
   Estimates were input/output only; every real invoice also bills prompt-cache reads (0.1x the input
   rate), 5-minute cache writes (1.25x) and 1-hour writes (2x), a **whole request** at 2x input /

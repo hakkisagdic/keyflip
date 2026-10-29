@@ -91,6 +91,7 @@ import CommandReference from '../../components/CommandReference.astro';
           { cmd: 'keyflip cooldown [clear <acct>|--all]', desc: 'Which accounts are parked, and release them' },
           { cmd: 'keyflip tier [<acct> <tier|auto>]', desc: 'Each account\'s plan and whether a model may route to it' },
           { cmd: 'keyflip cost rates [model]', desc: 'Billable card: cache tiers, 200K long-context premium, fast mode' },
+          { cmd: 'keyflip cost prices [--refresh|--clear|--pin <sha256>]', desc: 'Which price table the estimates use; refresh it from the public list (sha-256 pin optional, never automatic)' },
           { cmd: 'keyflip gateway use|off <provider>', desc: 'Route the desktop app to a provider' },
         ]} />
       </div>

@@ -58,6 +58,20 @@ test('priceFor resolves known models exactly', function () {
   assert.strictEqual(cost.priceFor('claude-haiku-4-5').inputPerMTok, 1);
 });
 
+test('a live price overlay may raise a rate but never lower it below the bundled floor', function () {
+  const higher = { 'claude-opus-4-8': { inputPerMTok: 9, outputPerMTok: 45, longContext: true, fast: true } };
+  assert.strictEqual(cost.priceFor('claude-opus-4-8', higher).inputPerMTok, 9);
+  assert.strictEqual(cost.rateCard('claude-opus-4-8', higher).outputPerMTok, 45);
+  // A drop (intro pricing, a stale upstream row) does not lower the estimate.
+  const lower = { 'claude-opus-4-8': { inputPerMTok: 1, outputPerMTok: 5 } };
+  assert.strictEqual(cost.priceFor('claude-opus-4-8', lower).inputPerMTok, 5);
+  assert.strictEqual(cost.priceFor('claude-opus-4-8', lower).outputPerMTok, 25);
+  // A model the bundle never had is priced from the overlay alone.
+  const fresh = { 'claude-opus-9': { inputPerMTok: 6, outputPerMTok: 30 } };
+  assert.strictEqual(cost.priceFor('claude-opus-9', fresh).inputPerMTok, 6);
+  assert.strictEqual(cost.priceFor('claude-opus-9', fresh).fallback, false);
+});
+
 test('priceFor normalizes provider/region prefixes, @version, dated + -fast suffixes, case', function () {
   assert.strictEqual(cost.priceFor('anthropic.claude-opus-4-8').id, 'claude-opus-4-8');
   assert.strictEqual(cost.priceFor('us.anthropic.claude-sonnet-4-6').id, 'claude-sonnet-4-6');

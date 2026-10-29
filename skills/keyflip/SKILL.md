@@ -542,8 +542,10 @@ pins); `keyflip_transfer_pull` (pull+merge a bundle from a LAN peer running `tra
   inferred from a %), `keyflip cost predict <acct>` (time-to-limit), `keyflip cost by-project` (per-repo
   token/cost, priced per transcript line too), `keyflip cost rates [model]` (the billable card: cache read
   0.1x / 5m write 1.25x / 1h write 2x, the 200K long-context premium 2x in / 1.5x out on the whole
-  request, fast mode 6x). (MCP: `keyflip_cost_status` / `_cost_predict` / `_cost_by_project` /
-  `_cost_rates`, all read-only.)
+  request, fast mode 6x), `keyflip cost prices [--refresh|--clear|--pin <sha256>]` (which price table
+  the estimates use; `--refresh` is the ONLY command that touches the network). (MCP: `keyflip_cost_status`
+  / `_cost_predict` / `_cost_by_project` / `_cost_rates` / `_cost_prices`, all read-only;
+  `keyflip_cost_prices_refresh` needs `confirm`.)
 - **Subscription tiers** — `keyflip tier` shows each account's plan (free/pro/max/max5x/max20x/team/
   enterprise) and where it came from; `keyflip tier <acct> <tier|auto>` pins or clears an override. The
   failover proxy skips an account whose plan cannot serve the requested model (only a KNOWN lower plan
@@ -920,7 +922,12 @@ before spending anything. `keyflip tier` shows the plan + source,
 disables the filter. `keyflip proxy stats` reports cache reads/writes and an
 **estimated list-price** cost per account, priced per request (cache read 0.1x,
 5m write 1.25x, 1h write 2x, 200K prompt 2x in / 1.5x out on the whole request,
-fast 6x); `keyflip cost rates [model]` prints the card. Treat every dollar figure
+fast 6x); `keyflip cost rates [model]` prints the card. The price table itself can
+refresh: `keyflip cost prices` shows the source/age/digest, `--refresh` pulls the
+public list (the only command that hits the network), `--clear` drops it — and a
+sha-256 pin (`cost.pricesSha256`, or `--pin`) refuses a mismatching refresh;
+keyflip never pins what it just fetched. A live row may raise a rate or add a
+model, never lower one below the bundled snapshot. Treat every dollar figure
 as an estimate from a dated snapshot, never a vendor invoice — and never derive
 one from a usage percentage.
 

@@ -465,8 +465,8 @@ const CATALOG = [
     name: 'cost',
     group: 'cost',
     safe: true,
-    usage: 'keyflip cost [status|predict <acct>|by-project|rates [model]]',
-    desc: 'Spend/utilization, time-to-limit, per-repo attribution, billable rate cards (cache tiers, 200K premium, fast mode).',
+    usage: 'keyflip cost [status|predict <acct>|by-project|rates [model]|prices [--refresh|--clear|--pin <sha256>]]',
+    desc: 'Spend/utilization, time-to-limit, per-repo attribution, billable rate cards (cache tiers, 200K premium, fast mode), and the self-updating price table.',
   },
   {
     name: 'budget',

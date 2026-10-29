@@ -32,6 +32,7 @@ import * as desktopgw from './desktopgw.js';
 import * as importcreds from './importcreds.js';
 import * as auditview from './auditview.js';
 import * as cost from './cost.js';
+import * as prices from './prices.js';
 import * as router from './router.js';
 import * as sync from './sync.js';
 import * as sessions from './sessions.js';
@@ -2139,9 +2140,13 @@ async function cmdFanout(ctx, rest) {
 }
 
 // COST intelligence: unified spend, prediction, per-project attribution.
-function cmdCost(ctx, rest) {
+async function cmdCost(ctx, rest) {
   const sub = rest[0] || 'status';
   const args = rest.slice(1);
+  // The live price overlay (prices.js) wins per model id over the bundled
+  // snapshot; null when no cache is present. Hot-reloaded, so a refresh made in
+  // another terminal applies to the next command without a restart.
+  const table = prices.overlay(ctx);
   if (sub === 'status') {
     const u = cost.unified(ctx);
     if (JSON_MODE) {
@@ -2198,7 +2203,10 @@ function cmdCost(ctx, rest) {
   }
   if (sub === 'by-project') {
     const li = args.indexOf('--limit');
-    const r = cost.attribute(ctx, { maxSessions: li !== -1 ? parseInt(args[li + 1], 10) : undefined });
+    const r = cost.attribute(ctx, {
+      maxSessions: li !== -1 ? parseInt(args[li + 1], 10) : undefined,
+      prices: table,
+    });
     if (JSON_MODE) {
       jsonOut(r);
       return;
@@ -2229,7 +2237,7 @@ function cmdCost(ctx, rest) {
       return '$' + (Math.round(n * 100) / 100).toFixed(2);
     };
     const describe = function (id) {
-      const c = cost.rateCard(id);
+      const c = cost.rateCard(id, table);
       const lc = c.longContext;
       print(
         style.bold(id) +
@@ -2261,27 +2269,121 @@ function cmdCost(ctx, rest) {
     };
     if (model) {
       if (JSON_MODE) {
-        jsonOut(cost.rateCard(model));
+        jsonOut(cost.rateCard(model, table));
         return;
       }
       describe(model);
       return;
     }
+    const ids = Object.keys(cost.PRICING);
+    if (table) {
+      Object.keys(table).forEach(function (id) {
+        if (ids.indexOf(id) === -1) ids.push(id);
+      });
+    }
     if (JSON_MODE) {
       jsonOut({
         asOf: cost.PRICING_AS_OF,
-        models: Object.keys(cost.PRICING).map(function (id) {
-          return cost.rateCard(id);
+        live: !!table,
+        models: ids.map(function (id) {
+          return cost.rateCard(id, table);
         }),
       });
       return;
     }
     print('Rate card (USD per MTok), as of ' + cost.PRICING_AS_OF + ':');
-    Object.keys(cost.PRICING).forEach(describe);
+    if (table) print(style.dim('live price cache in effect — keyflip cost prices shows its age and digest'));
+    ids.forEach(describe);
     print(style.dim('Estimates: list prices drift, and unknown models get a conservative fallback card.'));
     return;
   }
-  return fail('unknown: keyflip cost ' + sub + ' (use: status | predict <acct> | by-project | rates [model])');
+  if (sub === 'prices') {
+    const wantRefresh = args.indexOf('--refresh') !== -1;
+    const wantClear = args.indexOf('--clear') !== -1;
+    const pi = args.indexOf('--pin');
+    let pin = null;
+    if (pi !== -1) {
+      const raw = args[pi + 1];
+      if (!raw || raw.indexOf('--') === 0) {
+        return fail('--pin needs a 64-character sha-256 hex digest');
+      }
+      pin = raw;
+    }
+    const cfgPin = _cfg.get(ctx, 'cost.pricesSha256') || '';
+    const cfgUrl = _cfg.get(ctx, 'cost.pricesUrl') || '';
+    const url = process.env.KEYFLIP_PRICES_URL || cfgUrl || prices.DEFAULT_URL;
+    if (wantClear) {
+      const gone = prices.clear(ctx);
+      if (JSON_MODE) {
+        jsonOut({ cleared: gone });
+        return;
+      }
+      print(gone ? 'Price cache cleared; the bundled snapshot is in use again.' : 'No price cache to clear.');
+      return;
+    }
+    if (wantRefresh) {
+      const res = await prices.refresh(ctx, { url: url, pin: pin || cfgPin || null });
+      if (!res.ok) {
+        if (JSON_MODE) {
+          jsonOut(res);
+          process.exitCode = 1;
+          return;
+        }
+        return fail('price refresh failed: ' + res.error);
+      }
+      if (JSON_MODE) {
+        jsonOut(res);
+        return;
+      }
+      print(
+        'Price table refreshed: ' +
+          res.models +
+          ' models (' +
+          res.newModels +
+          ' new, ' +
+          res.repriced +
+          ' repriced, ' +
+          res.dropped +
+          ' dropped)',
+      );
+      print('  sha256 ' + res.digest);
+      print('  cached ' + res.fetchedAt + ' · ' + res.url);
+      if (res.pinMatches) print('  pin matches the configured cost.pricesSha256');
+      return;
+    }
+    const st = prices.describe(ctx, { pin: pin || cfgPin || null, url: url });
+    if (JSON_MODE) {
+      jsonOut(st);
+      return;
+    }
+    if (st.source === 'cache') {
+      print(
+        'Price table: live cache (' + st.models + ' models, fetched ' + st.fetchedAt + ', ' + st.ageHours + 'h ago)',
+      );
+      print('  bundled as-of ' + st.bundledAsOf + ' · ' + st.shadowed + ' ids repriced · ' + st.added + ' new');
+      print('  sha256 ' + st.digest);
+      print('  source ' + st.url);
+      if (st.pin) {
+        print(
+          st.pinMatches
+            ? '  pin (cost.pricesSha256) matches'
+            : '  pin (cost.pricesSha256) does NOT match — refresh refused earlier',
+        );
+      } else {
+        print(style.dim('  unpinned — pin it with: keyflip config set cost.pricesSha256 ' + st.digest));
+      }
+      return;
+    }
+    print('Price table: bundled snapshot (' + st.bundledAsOf + ', ' + st.bundledModels + ' models)');
+    print('  no live cache — keyflip cost prices --refresh fetches the LiteLLM price list');
+    print('  source ' + st.url);
+    return;
+  }
+  return fail(
+    'unknown: keyflip cost ' +
+      sub +
+      ' (use: status | predict <acct> | by-project | rates [model] | prices [--refresh|--clear|--pin <sha256>])',
+  );
 }
 
 // TEAM POOL: a shared, encrypted credential pool with role-scoped visibility.

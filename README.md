@@ -193,7 +193,7 @@ keyflip import-env [<file>] [--dry-run] [--env]   # import provider endpoints fr
 keyflip log [--tail N] [--grep S] [--since ISO]   # view the action/audit log
 keyflip run-job "<prompt>" [--group g] [--strategy best]   # ORCHESTRATOR: run a prompt headless on the best-headroom account (isolated)
 keyflip jobs [list|run|clear] · keyflip fanout "<prompt>" --accounts a,b,c   # job queue + run the same prompt across N accounts
-keyflip cost [status|predict <acct>|by-project|rates [model]]   # spend/utilization, time-to-limit prediction, per-repo attribution, rate cards
+keyflip cost [status|predict <acct>|by-project|rates [model]|prices [--refresh]]   # spend/utilization, time-to-limit prediction, per-repo attribution, rate cards, live price table
 keyflip tier [<acct> <tier|auto>]   # each account's plan (free/pro/max/… ) and whether the proxy may route a model to it
 keyflip team <publish|pull|members|add-member|remove-member> --dir <shared> --pool <n> --passphrase-file <f>   # ENCRYPTED team pool with roles
 keyflip policy <list|allow|deny|remove|default|check> [--cwd D --account A --group G]   # constrain which account a directory may use
@@ -1225,6 +1225,34 @@ keyflip proxy stats [--json]        # cache tokens + estimated spend per account
 These are estimates from a dated snapshot (`keyflip cost rates` prints the
 revision), not vendor invoices — and `keyflip cost status` still never derives a
 dollar figure from a percentage.
+
+#### The price table updates itself (`cost prices`)
+
+List prices drift (models launch, intro pricing lapses), so the bundled snapshot
+goes stale. `keyflip cost prices --refresh` fetches the public LiteLLM price
+list, keeps the Claude rows, validates them, and caches them in
+`~/.config/keyflip/prices-cache.json`; from then on `cost rates`, `cost
+by-project` and `proxy stats` price against the fresh numbers (the bundled
+snapshot stays as the floor, so nothing becomes unpriced).
+
+```bash
+keyflip cost prices                 # what is in use: source, age, sha-256, pin state
+keyflip cost prices --refresh       # fetch + validate + cache (the only command that hits the network)
+keyflip cost prices --clear         # drop the cache; the bundled snapshot takes over again
+```
+
+The network is only touched by an explicit `--refresh`; every other command
+reads the cache. The cache is untrusted input, so it is validated as a whole
+(fixed shape, bounded size, printable model ids, finite rates) and a corrupt
+one is ignored rather than half-applied. **Pinning is opt-in and never
+automatic**: set `cost.pricesSha256` (or pass `--pin <sha256>`) and a refresh
+whose digest does not match is refused — keyflip never pins what it just
+fetched.
+
+A live row may **raise** a rate or add a model the bundle never had, but it
+never lowers a rate below the bundled snapshot: a drop in the upstream list is
+usually intro pricing or a stale row, and an estimate that understates spend is
+worse than one that overstates it.
 
 ### Auto-switch on usage (`autoswitch`)
 

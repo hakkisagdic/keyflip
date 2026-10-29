@@ -93,23 +93,42 @@ function normalizeModel(model) {
   s = s.replace(/^anthropic\./, ''); // Bedrock provider prefix
   return s;
 }
-function lookup(id) {
-  return Object.prototype.hasOwnProperty.call(PRICING, id) ? PRICING[id] : null;
+// lookup(id) resolves against the bundled snapshot. `table` is an OPTIONAL
+// overlay (prices.overlay(ctx) -- a refreshed live table) whose rows win per id;
+// bundled rows stay as the floor, so a cache can add or reprice models but
+// never leave one unpriced.
+//
+// A live row never LOWERS a rate below the bundled snapshot: a drop in the
+// upstream list is usually intro pricing (Sonnet 5 was $2/$10 while the bundle
+// prices the standard $3/$15) or a stale upstream row, and an estimate that
+// understates spend is worse than one that overstates it. A live row may RAISE
+// a rate -- a real price increase -- and may add models the bundle never had.
+function lookup(id, table) {
+  const bundled = Object.prototype.hasOwnProperty.call(PRICING, id) ? PRICING[id] : null;
+  if (!table || !Object.prototype.hasOwnProperty.call(table, id)) return bundled;
+  const live = table[id];
+  if (!bundled) return live;
+  return {
+    inputPerMTok: Math.max(bundled.inputPerMTok, live.inputPerMTok),
+    outputPerMTok: Math.max(bundled.outputPerMTok, live.outputPerMTok),
+    longContext: !!(bundled.longContext || live.longContext),
+    fast: !!(bundled.fast || live.fast),
+  };
 }
 
 // priceFor(model) -> { id, inputPerMTok, outputPerMTok, fallback }. fallback is
 // true when the model wasn't in the table and default rates were used.
-function priceFor(model) {
+function priceFor(model, table) {
   const norm = normalizeModel(model);
   let id = norm;
-  let hit = lookup(id);
+  let hit = lookup(id, table);
   if (!hit) {
     const s = id.replace(/-\d{8}$/, '');
-    if (s !== id && (hit = lookup(s))) id = s;
+    if (s !== id && (hit = lookup(s, table))) id = s;
   } // trailing -YYYYMMDD
   if (!hit) {
     const s = id.replace(/-(fast|latest)$/, '');
-    if (s !== id && (hit = lookup(s))) id = s;
+    if (s !== id && (hit = lookup(s, table))) id = s;
   } // -fast / -latest
   if (hit) return { id: id, inputPerMTok: hit.inputPerMTok, outputPerMTok: hit.outputPerMTok, fallback: false };
   return {
@@ -129,9 +148,9 @@ function num(x) {
 // (null when the model has no 200K+ tier) and the fast-mode multiplier (null
 // when the model has no fast mode). Unknown models inherit the fallback card,
 // which assumes BOTH premiums so an estimate is never understated.
-function rateCard(model) {
-  const p = priceFor(model);
-  const row = lookup(p.id) || FALLBACK_PRICE;
+function rateCard(model, table) {
+  const p = priceFor(model, table);
+  const row = lookup(p.id, table) || FALLBACK_PRICE;
   return {
     id: p.id,
     inputPerMTok: p.inputPerMTok,
@@ -162,9 +181,11 @@ function rateCard(model) {
 //     on the invoice, so they count toward the threshold and are uprated too.
 //   * Pass longContext:false for an AGGREGATE figure (a month of usage is not
 //     one request) -- unified() does exactly that.
+//   * opts.prices (optional) is a live price overlay from prices.js; without it
+//     the bundled snapshot is used.
 function costBreakdown(opts) {
   opts = opts || {};
-  const card = rateCard(opts.model);
+  const card = rateCard(opts.model, opts.prices);
   const input = num(opts.inputTokens);
   const output = num(opts.outputTokens);
   const cacheRead = num(opts.cacheReadTokens);
@@ -531,7 +552,7 @@ function cacheWrites(u) {
 // costing each LINE on its own (one line = one request), so the 200K premium
 // and fast mode land on the requests that actually incurred them instead of on
 // a session-wide sum.
-function scanUsage(text, bucket) {
+function scanUsage(text, bucket, prices) {
   String(text)
     .split('\n')
     .forEach(function (line) {
@@ -566,6 +587,7 @@ function scanUsage(text, bucket) {
         cacheCreationTokens: w.write5m,
         cacheCreation1hTokens: w.write1h,
         fast: u.speed === 'fast' ? true : undefined,
+        prices: prices,
       }).totalUSD;
       bucket.tokens.input += input;
       bucket.tokens.output += output;
@@ -585,6 +607,7 @@ function attribute(ctx, opts) {
   const transcript = _transcript;
   const maxSessions = clampInt(opts.maxSessions, 200, 1, 5000);
   const maxBytes = clampInt(opts.maxBytesPerFile, 8 * 1024 * 1024, 64 * 1024, 128 * 1024 * 1024);
+  const prices = opts.prices || null; // live price overlay (prices.js), optional
 
   let rows;
   try {
@@ -620,7 +643,7 @@ function attribute(ctx, opts) {
     } catch (e) {
       /* ignore */
     }
-    scanUsage(head.text, bucket);
+    scanUsage(head.text, bucket, prices);
   });
 
   const totalTok = newTok();
@@ -636,7 +659,7 @@ function attribute(ctx, opts) {
       const t = b.models[mid];
       // Cost was summed per transcript line in scanUsage; only the fallback
       // price flag needs the table again here.
-      const fallback = priceFor(mid).fallback;
+      const fallback = priceFor(mid, prices).fallback;
       if (fallback) {
         anyFallback = true;
         b.estimate = true;
@@ -718,6 +741,7 @@ export {
   LONG_CONTEXT_INPUT_MULT,
   LONG_CONTEXT_OUTPUT_MULT,
   FAST_MULT,
+  normalizeModel,
   priceFor,
   rateCard,
   costBreakdown,

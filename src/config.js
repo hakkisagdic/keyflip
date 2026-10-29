@@ -116,6 +116,16 @@ SCHEMA['proxy.tierFilter'] = {
   default: true,
   help: 'Skip accounts whose plan cannot serve the requested model (e.g. a Free plan for an Opus request). Unknown tiers never block.',
 };
+SCHEMA['cost.pricesSha256'] = {
+  type: 'string',
+  default: '',
+  help: 'Expected sha-256 of the live price table. A refresh that does not match is refused (no auto-pinning).',
+};
+SCHEMA['cost.pricesUrl'] = {
+  type: 'string',
+  default: '',
+  help: 'URL of the live price table (empty = the bundled LiteLLM list). Overridden by KEYFLIP_PRICES_URL.',
+};
 SCHEMA['proxy.cooldownQuotaSeconds'] = {
   type: 'int',
   default: 300,

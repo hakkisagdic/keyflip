@@ -352,6 +352,7 @@ keyflip proxy stats                    # istek, token, cache okuma/yazma, ~liste
 keyflip proxy stop                     # durdur ve settings.json bağını çöz
 keyflip tier                           # her hesabın planı + bir modelin ona yönlendirilip yönlendirilemeyeceği
 keyflip cost rates [model]             # ücret kartı: cache kademeleri, 200K primi, hızlı mod
+keyflip cost prices [--refresh]        # hangi fiyat tablosu kullanılıyor; herkese açık listeden tazele
 ```
 - Açıkken her isteği aktif hesaba yönlendirir ve istemci bir bayt görmeden **429/5xx'te
   bir sonraki sağlıklı hesaba yük devreder.** İstek ortası limitlerin olası olduğu uzun
@@ -375,6 +376,14 @@ keyflip proxy explain --model claude-opus-4 --tokens 200000   # nereye gider, ne
   liste fiyatı maliyetini ekler (cache okuma 0.1×, 5 dk yazım 1.25×, 1 sa yazım 2×, 200K'yı
   geçen prompt tümüyle 2× giriş / 1.5× çıkış, hızlı mod 6×); `keyflip cost rates` kartı
   yazar. Tarihli bir anlık görüntüden tahmin — fatura değil.
+- **Fiyat tablosu kendini tazeler.** `keyflip cost prices --refresh` herkese açık fiyat
+  listesini çeker, Claude satırlarını ayırır, doğrular ve önbelleğe alır; sonraki tüm
+  tahminler yeni fiyatlarla hesaplanırken paketlenmiş anlık görüntü taban olarak kalır.
+  Ağa yalnız `--refresh` dokunur, bozuk önbellek bütünüyle yok sayılır ve sha-256 pin'i
+  (`cost.pricesSha256`, `--pin`) tutmayan bir yenilemeyi reddeder — keyflip az önce
+  çektiğini kendisi asla pinlemez. Canlı bir satır ücreti yükseltebilir ya da paketlenmiş
+  tabloda hiç olmayan bir modeli ekleyebilir, ama ücreti paketlenmiş anlık görüntünün altına
+  düşüremez.
 
 ---
 

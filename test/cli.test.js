@@ -949,3 +949,141 @@ test('cost rates prints the table, one model card, and flags an unknown model', 
   const unknown = JSON.parse(run(home, ['cost', 'rates', '--json', 'mystery-9']).stdout);
   assert.strictEqual(unknown.fallback, true);
 });
+
+test('cost prices refreshes the price table, honors the pin, and clears it', async function () {
+  const http = await import('http');
+  const payload = {
+    'claude-opus-4-8': {
+      litellm_provider: 'anthropic',
+      mode: 'chat',
+      max_input_tokens: 200000,
+      input_cost_per_token: 0.000009,
+      output_cost_per_token: 0.000045,
+    },
+    'claude-sonnet-4-6': {
+      litellm_provider: 'anthropic',
+      mode: 'chat',
+      max_input_tokens: 200000,
+      input_cost_per_token: 0.000003,
+      output_cost_per_token: 0.000015,
+    },
+    'claude-haiku-4-5': {
+      litellm_provider: 'anthropic',
+      mode: 'chat',
+      max_input_tokens: 200000,
+      input_cost_per_token: 0.000001,
+      output_cost_per_token: 0.000005,
+    },
+    'claude-new-9': {
+      litellm_provider: 'anthropic',
+      mode: 'chat',
+      max_input_tokens: 200000,
+      input_cost_per_token: 0.000004,
+      output_cost_per_token: 0.00002,
+    },
+    'claude-old-1': {
+      litellm_provider: 'anthropic',
+      mode: 'chat',
+      max_input_tokens: 200000,
+      input_cost_per_token: 0.000015,
+      output_cost_per_token: 0.000075,
+    },
+  };
+  const srv = http.createServer(function (req, res) {
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify(payload));
+  });
+  await new Promise(function (r) {
+    srv.listen(0, '127.0.0.1', r);
+  });
+  const port = srv.address().port;
+  const url = 'http://127.0.0.1:' + port + '/prices.json';
+  const home = setupHome();
+  const spawn = function (args, env) {
+    return new Promise(function (resolve) {
+      const child = _child_process.spawn(process.execPath, [BIN].concat(args), {
+        env: Object.assign(
+          {},
+          process.env,
+          {
+            HOME: home,
+            USERPROFILE: home,
+            XDG_CONFIG_HOME: path.join(home, '.config'),
+            KEYFLIP_CONFIG_DIR: path.join(home, '.config', 'keyflip'),
+            APPDATA: path.join(home, 'AppData', 'Roaming'),
+            KEYFLIP_TEST_CLAUDE: 'stopped',
+            KEYFLIP_APP_BUNDLE: path.join(home, 'no-such-Claude.app'),
+            KEYFLIP_PRICES_URL: url,
+          },
+          env || {},
+        ),
+      });
+      let out = '';
+      let err = '';
+      child.stdout.on('data', function (d) {
+        out += d;
+      });
+      child.stderr.on('data', function (d) {
+        err += d;
+      });
+      child.on('close', function (code) {
+        resolve({ code: code, out: out, err: err });
+      });
+    });
+  };
+  try {
+    // Nothing cached yet: the bundled table is in use.
+    const before = JSON.parse(run(home, ['cost', 'prices', '--json']).stdout);
+    assert.strictEqual(before.source, 'bundled');
+    assert.strictEqual(before.models, 0);
+
+    const refreshed = await spawn(['cost', 'prices', '--refresh', '--json']);
+    assert.strictEqual(refreshed.code, 0, refreshed.err);
+    const j = JSON.parse(refreshed.out);
+    assert.strictEqual(j.ok, true, refreshed.out);
+    assert.strictEqual(j.models, 5);
+    assert.match(j.digest, /^[a-f0-9]{64}$/);
+
+    // The cost engine now prices from the live table.
+    const opus = JSON.parse(run(home, ['cost', 'rates', '--json', 'claude-opus-4-8']).stdout);
+    assert.strictEqual(opus.inputPerMTok, 9);
+    const status = JSON.parse(run(home, ['cost', 'prices', '--json']).stdout);
+    assert.strictEqual(status.source, 'cache');
+    assert.strictEqual(status.digest, j.digest);
+
+    // A pin that does not match refuses the refresh and keeps the cache.
+    const refused = await spawn(['cost', 'prices', '--refresh', '--pin', 'a'.repeat(64), '--json']);
+    assert.strictEqual(refused.code, 1);
+    const refusedJson = JSON.parse(refused.out);
+    assert.strictEqual(refusedJson.ok, false);
+    assert.match(refusedJson.error, /sha-256 mismatch/);
+    assert.strictEqual(JSON.parse(run(home, ['cost', 'prices', '--json']).stdout).digest, j.digest);
+
+    // The matching pin is accepted.
+    const pinned = await spawn(['cost', 'prices', '--refresh', '--pin', j.digest, '--json']);
+    assert.strictEqual(pinned.code, 0, pinned.err);
+
+    // Clearing drops the cache; the bundled table takes over again.
+    const cleared = JSON.parse(run(home, ['cost', 'prices', '--clear', '--json']).stdout);
+    assert.strictEqual(cleared.cleared, true);
+    assert.strictEqual(JSON.parse(run(home, ['cost', 'prices', '--json']).stdout).source, 'bundled');
+    assert.strictEqual(JSON.parse(run(home, ['cost', 'rates', '--json', 'claude-opus-4-8']).stdout).inputPerMTok, 5);
+  } finally {
+    await new Promise(function (r) {
+      srv.close(r);
+    });
+  }
+});
+
+test('cost prices reports a failed refresh instead of pretending it worked', function () {
+  const home = setupHome();
+  const res = run(home, ['cost', 'prices', '--refresh', '--json'], {
+    KEYFLIP_PRICES_URL: 'http://127.0.0.1:1/prices.json',
+  });
+  assert.strictEqual(res.status, 1);
+  const j = JSON.parse(res.stdout);
+  assert.strictEqual(j.ok, false);
+  assert.ok(j.error, 'the failure is explained');
+  // Nothing was cached by the failed refresh.
+  assert.strictEqual(JSON.parse(run(home, ['cost', 'prices', '--json']).stdout).source, 'bundled');
+});

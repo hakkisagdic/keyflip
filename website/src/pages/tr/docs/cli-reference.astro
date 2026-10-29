@@ -90,6 +90,7 @@ import CommandReference from '../../../components/CommandReference.astro';
           { cmd: 'keyflip cooldown [clear <hesap>|--all]', desc: 'Hangi hesaplar park edilmiş, ve onları serbest bırak' },
           { cmd: 'keyflip tier [<hesap> <plan|auto>]', desc: 'Her hesabın planı ve bir modelin ona yönlendirilip yönlendirilemeyeceği' },
           { cmd: 'keyflip cost rates [model]', desc: 'Ücret kartı: cache kademeleri, 200K uzun bağlam primi, hızlı mod' },
+          { cmd: 'keyflip cost prices [--refresh|--clear|--pin <sha256>]', desc: 'Tahminlerde hangi fiyat tablosunun kullanıldığı; herkese açık listeden tazeleme (sha-256 pin isteğe bağlı, asla otomatik değil)' },
           { cmd: 'keyflip gateway use|off <sağlayıcı>', desc: 'Masaüstü uygulamasını bir sağlayıcıya yönlendir' },
         ]} />
       </div>

@@ -15,6 +15,7 @@ import * as breaker from './breaker.js';
 import * as provider from './provider.js';
 import * as history from './history.js';
 import * as _cost from './cost.js';
+import * as prices from './prices.js';
 import * as proxyroutes from './proxyroutes.js';
 import * as tiers from './tiers.js';
 import * as _profiles from './profiles.js';
@@ -436,6 +437,7 @@ function recordCost(ctx, account, u) {
     cacheCreationTokens: u.cacheCreationTokens,
     cacheCreation1hTokens: u.cacheCreation1hTokens,
     fast: u.fast === true,
+    prices: prices.overlay(ctx),
   });
   try {
     fs.appendFileSync(
@@ -890,11 +892,12 @@ function stats(ctx) {
         cacheCreationTokens: r.cacheCreationTokens,
         cacheCreation1hTokens: r.cacheCreation1hTokens,
         fast: r.fast === true,
+        prices: prices.overlay(ctx),
       }).totalUSD;
     }
     a.costUSD += usd;
     totalCost += usd;
-    if (_cost.priceFor(r.model).fallback) a.estimated = true;
+    if (_cost.priceFor(r.model, prices.overlay(ctx)).fallback) a.estimated = true;
   });
   return { total: lines.length, costUSD: totalCost, byAccount: byAccount };
 }

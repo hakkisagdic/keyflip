@@ -75,6 +75,7 @@ import * as _autoswitch from './autoswitch.js';
 import * as _budget from './budget.js';
 import * as _notify from './notify.js';
 import * as _cost from './cost.js';
+import * as _prices from './prices.js';
 import * as _router from './router.js';
 import * as _provusage from './provusage.js';
 import * as _brain from './brain.js';
@@ -114,6 +115,9 @@ function needConfirm(args) {
 const RO = { readOnlyHint: true, destructiveHint: false, openWorldHint: false };
 const RO_NET = { readOnlyHint: true, destructiveHint: false, openWorldHint: true };
 const MUT = { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false };
+// A write that only replaces keyflip's own cache file: not destructive, and a
+// second identical refresh writes the same bytes.
+const MUT_NET = { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true };
 const confirmProp = {
   confirm: { type: 'boolean', description: 'Must be true — set it only after the user has agreed.' },
 };
@@ -3700,7 +3704,7 @@ const TOOLS = [
     inputSchema: { type: 'object', properties: { limit: { type: 'number' } }, additionalProperties: false },
     annotations: RO,
     run: async function (ctx, args) {
-      return _cost.attribute(ctx, { maxSessions: args && args.limit });
+      return _cost.attribute(ctx, { maxSessions: args && args.limit, prices: _prices.overlay(ctx) });
     },
   },
   {
@@ -3711,9 +3715,17 @@ const TOOLS = [
     inputSchema: { type: 'object', properties: { model: { type: 'string' } }, additionalProperties: false },
     annotations: RO,
     run: async function (ctx, args) {
-      if (args && args.model) return _cost.rateCard(String(args.model));
+      const table = _prices.overlay(ctx);
+      if (args && args.model) return _cost.rateCard(String(args.model), table);
+      const ids = Object.keys(_cost.PRICING);
+      if (table) {
+        Object.keys(table).forEach(function (id) {
+          if (ids.indexOf(id) === -1) ids.push(id);
+        });
+      }
       return {
         asOf: _cost.PRICING_AS_OF,
+        live: !!table,
         multipliers: {
           cacheRead: _cost.CACHE_READ_MULT,
           cacheWrite5m: _cost.CACHE_WRITE_MULT,
@@ -3723,10 +3735,47 @@ const TOOLS = [
           longContextOutput: _cost.LONG_CONTEXT_OUTPUT_MULT,
           fast: _cost.FAST_MULT,
         },
-        models: Object.keys(_cost.PRICING).map(function (id) {
-          return _cost.rateCard(id);
+        models: ids.map(function (id) {
+          return _cost.rateCard(id, table);
         }),
       };
+    },
+  },
+  {
+    name: 'keyflip_cost_prices',
+    title: 'Which price table the cost estimates use',
+    description:
+      'The price table behind keyflip cost estimates: the bundled snapshot, plus the live cache when one was refreshed (keyflip cost prices --refresh). Reports the source, when it was fetched, its sha-256, how many model ids it reprices and whether the configured pin (cost.pricesSha256) matches. Read-only — it never fetches.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    annotations: RO,
+    run: async function (ctx, args) {
+      return _prices.describe(ctx, { pin: _config.get(ctx, 'cost.pricesSha256') || null });
+    },
+  },
+  {
+    name: 'keyflip_cost_prices_refresh',
+    title: 'Refresh the model price table from the price list',
+    description:
+      'Fetch the public model price list, validate it, and cache it for keyflip cost estimates. Only Claude rows are kept; the bundled snapshot stays as the floor. When a pin is given (or cost.pricesSha256 is configured) the sha-256 must match or nothing is written. Mutating (writes the price cache) — ask the user, then confirm=true.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        pin: { type: 'string', description: 'Expected sha-256 hex digest of the fetched list.' },
+        url: { type: 'string', description: 'Price list URL (defaults to the built-in LiteLLM list).' },
+        confirm: { type: 'boolean' },
+      },
+      required: ['confirm'],
+      additionalProperties: false,
+    },
+    annotations: MUT_NET,
+    run: async function (ctx, args) {
+      needConfirm(args);
+      const cfgPin = _config.get(ctx, 'cost.pricesSha256') || '';
+      const cfgUrl = _config.get(ctx, 'cost.pricesUrl') || '';
+      return _prices.refresh(ctx, {
+        url: (args && args.url) || cfgUrl || _prices.DEFAULT_URL,
+        pin: (args && args.pin) || cfgPin || null,
+      });
     },
   },
   {
