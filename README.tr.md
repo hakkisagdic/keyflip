@@ -192,7 +192,8 @@ keyflip import-env [<dosya>] [--dry-run] [--env]   # provider endpoint'lerini .e
 keyflip log [--tail N] [--grep S] [--since ISO]   # eylem/denetim log'unu görüntüle
 keyflip run-job "<prompt>" [--group g] [--strategy best]   # ORKESTRATOR: prompt'u en boş hesapta headless çalıştır (izole)
 keyflip jobs [list|run|clear] · keyflip fanout "<prompt>" --accounts a,b,c   # iş kuyruğu + aynı prompt'u N hesapta koştur
-keyflip cost [status|predict <hesap>|by-project]   # harcama/kullanım, limite-kalan-süre tahmini, repo bazında dağılım
+keyflip cost [status|predict <hesap>|by-project|rates [model]]   # harcama/kullanım, limite-kalan-süre tahmini, repo bazında dağılım, ücret kartları
+keyflip tier [<hesap> <plan|auto>]   # her hesabın planı (free/pro/max/… ) ve proxy'nin bir modeli ona yönlendirip yönlendiremeyeceği
 keyflip team <publish|pull|members|add-member|remove-member> --dir <shared> --pool <n> --passphrase-file <f>   # rollü ŞİFRELİ ekip havuzu
 keyflip policy <list|allow|deny|remove|default|check> [--cwd D --account A --group G]   # bir dizinin hangi hesabı kullanabileceğini kısıtla
 keyflip vault <status|use op|bw|vault|off>   # kimlik bilgilerini 1Password / Bitwarden / HashiCorp Vault'ta sakla
@@ -1271,6 +1272,50 @@ keyflip proxy explain --model claude-opus-4 --tokens 200000   # bu istek nereye 
 keyflip cooldown                      # rota sırası + her hesabın breaker/cooldown durumu (kalan sn)
 keyflip cooldown clear <hesap>|--all
 ```
+
+#### Abonelik planları (`keyflip tier`)
+
+Planlar sundukları modelde farklıdır: Free bir hesap Opus sınıfını kullanamaz,
+Sonnet ve Haiku ise normal yönlenir. Proxy her hesabın planını yakalanan
+girişten okur (`subscriptionType` + `rateLimitTier`, ör. `max` +
+`default_claude_max_5x`); böylece farklı planlardaki hesaplarda bir Opus isteği
+sessizce reddedecek olana gönderilmez.
+
+```bash
+keyflip tier                                   # her hesap: plan, etiket, kaynak, filtre durumu
+keyflip tier is max5x                          # giriş dizesi eksik/yanlışsa override sabitle
+keyflip tier is auto                           # override'ı sil, yakalanan girişe dön
+keyflip proxy explain --model claude-opus-4-8  # atlanan hesapları gerekçesiyle listeler
+```
+
+Planlar: `free`, `pro`, `max`, `max5x`, `max20x`, `team`, `enterprise`. Yalnız
+**bilinen ve düşük** bir plan isteği engeller: bilinmeyen plan, Claude olmayan
+model ve aktif sağlayıcı modu serbesttir; filtre asla olmayan bir ret uydurmaz.
+Kullanılabilir **her** hesap modeli reddediyorsa proxy hiçbir şey göndermeden
+plan detayıyla `503` döner — istek, sunamayacak bir plana harcanmaz.
+`keyflip config set proxy.tierFilter false` filtreyi makine genelinde kapatır.
+Override hesabın mevcut meta JSON'unda durur; yeni bir durum dosyası oluşmaz.
+
+#### Ne kadar tutuyor (`proxy stats`, `cost rates`)
+
+`keyflip proxy stats` hesap başına şunları gösterir: istek sayısı, yeni
+giriş/çıkış token'ı, cache okuma/yazma ve tahmini **liste fiyatı** maliyeti.
+Motor faturadaki gibi hesaplar — cache okuma giriş ücretinin 0.1×'i, 5 dakikalık
+cache yazımı 1.25×, 1 saatlik yazım 2×, prompt'u **200K token**'ı geçen istek
+tümüyle 2× giriş / 1.5× çıkış (cache token'ları eşiğe sayılır ve o oranla
+fiyatlanır), hızlı (fast) mod ise düz 6×. Maliyet proxy kaydederken **istek
+bazında** hesaplanır; uzun bağlamlı veya hızlı bir istek ortalamada kaybolmaz.
+`keyflip cost by-project` her transkript satırını aynı şekilde fiyatlar.
+
+```bash
+keyflip cost rates                  # ücret tablosu: giriş/çıkış, cache kademeleri, 200K primi, fast
+keyflip cost rates claude-opus-4-8  # tek model; bilinmeyen kimlik (işaretli) fallback kartını gösterir
+keyflip proxy stats [--json]        # hesap başına cache token'ı + tahmini harcama
+```
+
+Bunlar tarihli bir anlık görüntüden gelen tahminlerdir (`keyflip cost rates`
+sürümü yazar), fatura değildir — ve `keyflip cost status` hâlâ yüzdeden dolar
+türetmez.
 
 ### Kullanıma göre otomatik geçiş (`autoswitch`)
 

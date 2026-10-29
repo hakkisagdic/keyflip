@@ -38,6 +38,7 @@ import * as sessions from './sessions.js';
 import * as mcp from './mcp.js';
 import * as proxy from './proxy.js';
 import * as proxyroutes from './proxyroutes.js';
+import * as tiers from './tiers.js';
 import * as uninstallmod from './uninstall.js';
 import * as exec from './exec.js';
 import { run } from './exec.js';
@@ -389,6 +390,8 @@ function usage() {
   print('                                 command-started failover proxy (429/5xx → next account; honors');
   print('                                 Retry-After, parks failing accounts, x-keyflip-* debug headers)');
   print('  keyflip cooldown [clear <acct>|--all]   per-account cooldown readout / reset');
+  print('  keyflip tier [<acct> <tier|auto>]       subscription tier per account (Free≠Opus): what the');
+  print('                                 proxy may route to, and a manual override when detection is wrong');
   print('  keyflip status                which account each surface is on (CLI + desktop app)');
   print('  keyflip verify [acct] [--usage|--live]  would switching there WORK right now? reads each');
   print('                                 surface back the way its own app does (token/cookie expiry, capture age)');
@@ -438,7 +441,9 @@ function usage() {
   print(
     '  keyflip jobs [list|run|clear] · keyflip fanout "<prompt>" --accounts a,b,c   job queue + same prompt across N accounts',
   );
-  print('  keyflip cost [status|predict <acct>|by-project]   spend/utilization, time-to-limit, per-repo attribution');
+  print(
+    '  keyflip cost [status|predict <acct>|by-project|rates]  spend/utilization, time-to-limit, per-repo attribution, rate cards',
+  );
   print(
     '  keyflip team <publish|pull|members|add-member|remove-member> --dir <shared> --pool <n> --passphrase-file <f>   encrypted team pool (roles)',
   );
@@ -2216,7 +2221,67 @@ function cmdCost(ctx, rest) {
     if (r.note) print(style.dim(r.note));
     return;
   }
-  return fail('unknown: keyflip cost ' + sub + ' (use: status | predict <acct> | by-project)');
+  if (sub === 'rates') {
+    const model = args.filter(function (a) {
+      return a.indexOf('-') !== 0;
+    })[0];
+    const money = function (n) {
+      return '$' + (Math.round(n * 100) / 100).toFixed(2);
+    };
+    const describe = function (id) {
+      const c = cost.rateCard(id);
+      const lc = c.longContext;
+      print(
+        style.bold(id) +
+          (c.fallback ? style.dim(' (unknown model -> fallback card)') : '') +
+          '  in ' +
+          money(c.inputPerMTok) +
+          '/MTok · out ' +
+          money(c.outputPerMTok) +
+          '/MTok',
+      );
+      print(
+        '  cache  read 0.1x ' +
+          money(c.inputPerMTok * c.cache.read) +
+          ' · 5m write 1.25x ' +
+          money(c.inputPerMTok * c.cache.write5m) +
+          ' · 1h write 2x ' +
+          money(c.inputPerMTok * c.cache.write1h),
+      );
+      print(
+        '  long context  ' +
+          (lc
+            ? '200K+ prompt -> in 2x ' +
+              money(c.inputPerMTok * lc.inputMult) +
+              ' · out 1.5x ' +
+              money(c.outputPerMTok * lc.outputMult)
+            : 'not offered'),
+      );
+      print('  fast mode     ' + (c.fast ? c.fast + 'x on every rate' : 'not offered'));
+    };
+    if (model) {
+      if (JSON_MODE) {
+        jsonOut(cost.rateCard(model));
+        return;
+      }
+      describe(model);
+      return;
+    }
+    if (JSON_MODE) {
+      jsonOut({
+        asOf: cost.PRICING_AS_OF,
+        models: Object.keys(cost.PRICING).map(function (id) {
+          return cost.rateCard(id);
+        }),
+      });
+      return;
+    }
+    print('Rate card (USD per MTok), as of ' + cost.PRICING_AS_OF + ':');
+    Object.keys(cost.PRICING).forEach(describe);
+    print(style.dim('Estimates: list prices drift, and unknown models get a conservative fallback card.'));
+    return;
+  }
+  return fail('unknown: keyflip cost ' + sub + ' (use: status | predict <acct> | by-project | rates [model])');
 }
 
 // TEAM POOL: a shared, encrypted credential pool with role-scoped visibility.
@@ -5406,10 +5471,32 @@ async function cmdProxy(ctx, rest) {
       jsonOut(st);
       return;
     }
-    print('Proxy usage (' + st.total + ' requests):');
+    print(
+      'Proxy usage (' +
+        st.total +
+        ' requests' +
+        (st.costUSD ? ', ~' + cost.fmtUsd(st.costUSD) + ' list price' : '') +
+        '):',
+    );
     Object.keys(st.byAccount).forEach(function (a) {
       const x = st.byAccount[a];
-      print('  ' + a + ': ' + x.requests + ' req, ' + x.inputTokens + ' in / ' + x.outputTokens + ' out tokens');
+      const cache =
+        x.cacheReadTokens || x.cacheCreationTokens
+          ? ', ' + (x.cacheReadTokens || 0) + ' cache read / ' + (x.cacheCreationTokens || 0) + ' cache write'
+          : '';
+      print(
+        '  ' +
+          a +
+          ': ' +
+          x.requests +
+          ' req, ' +
+          x.inputTokens +
+          ' in / ' +
+          x.outputTokens +
+          ' out tokens' +
+          cache +
+          (x.costUSD ? '  ~' + cost.fmtUsd(x.costUSD) + (x.estimated ? ' (est)' : '') : ''),
+      );
     });
     if (!st.total) print('  (nothing yet)');
     return;
@@ -5505,6 +5592,15 @@ async function cmdProxyExplain(ctx, rest) {
       (d.hookError ? '  ' + style.warn('(hook: ' + d.hookError + ')') : ''),
   );
   print('  order: ' + (out.order.length ? out.order.join(' → ') : '(no usable account)'));
+  if (out.skipped && out.skipped.length)
+    print(
+      '  skipped by tier: ' +
+        out.skipped
+          .map(function (s) {
+            return s.name + ' (' + s.label + ')';
+          })
+          .join(', '),
+    );
   if (out.waitSeconds) print('  all parked — first frees in ' + fmtSeconds(out.waitSeconds));
   const r = out.routes;
   print(
@@ -5568,6 +5664,7 @@ function printRouteLines(route) {
   route.accounts.forEach(function (a) {
     const bits = [];
     if (a.active) bits.push('active');
+    if (a.tierLabel) bits.push(a.tierLabel.toLowerCase() + (a.tierSource === 'override' ? ' (override)' : ''));
     if (a.coolingSeconds) bits.push('cooling ' + fmtSeconds(a.coolingSeconds) + ' · ' + a.cooldownKind);
     if (a.breaker !== 'closed') bits.push('breaker ' + a.breaker);
     if (a.priority !== -1) bits.push('priority #' + (a.priority + 1));
@@ -5632,6 +5729,83 @@ function cmdCooldown(ctx, rest) {
   print('Account rotation readiness:');
   if (!route.accounts.length) print('  (no accounts with CLI credentials yet)');
   printRouteLines(route);
+}
+
+// `keyflip tier` — what plan keyflip believes each account is on, and which model
+// families that plan may use (#12). `keyflip tier <account> <tier|auto>` pins an
+// override on the account's metadata when the vendor's own string is wrong.
+function fmtTierFamilies(list) {
+  return (
+    (list || [])
+      .map(function (f) {
+        return f.charAt(0).toUpperCase() + f.slice(1);
+      })
+      .join(' · ') || '-'
+  );
+}
+function cmdTier(ctx, rest) {
+  const args = rest.filter(function (a) {
+    return a.indexOf('-') !== 0;
+  });
+  if (args.length >= 2) {
+    const name = core.resolveProfile(ctx, args[0]);
+    if (!name) return fail("no such account: '" + args[0] + "'");
+    const meta = profiles.read(ctx.configDir, name) || { name: name };
+    let next;
+    try {
+      next = tiers.applyOverride(meta, args[1]);
+    } catch (e) {
+      return fail(e.message);
+    }
+    if (next.tier === meta.tier) {
+      if (JSON_MODE) return jsonOut({ account: name, tier: next.tier || null, changed: false });
+      return print('tier for ' + name + ' is already ' + (next.tier || 'auto'));
+    }
+    profiles.write(ctx.configDir, next);
+    if (JSON_MODE) {
+      jsonOut({ account: name, tier: next.tier || null, changed: true });
+      return;
+    }
+    print(
+      style.ok('✅') +
+        ' tier for ' +
+        name +
+        ': ' +
+        (next.tier ? tiers.labelOf(next.tier) : 'auto-detected') +
+        (next.tier ? ' (override)' : ''),
+    );
+    return;
+  }
+  if (args.length === 1) return fail('usage: keyflip tier [<account> <tier|auto>]');
+  const st = proxy.tierState(ctx);
+  if (JSON_MODE) {
+    jsonOut(st);
+    return;
+  }
+  if (!st.accounts.length) return print('No saved accounts with CLI credentials yet.');
+  print('Subscription tiers (filter ' + (st.filter ? 'on' : 'off') + '):');
+  st.accounts.forEach(function (a) {
+    const bits = [];
+    if (a.active) bits.push('active');
+    if (a.source === 'override') bits.push('override');
+    if (!a.known) bits.push('unknown → never blocks');
+    if (a.coolingSeconds) bits.push('cooling ' + fmtSeconds(a.coolingSeconds));
+    print(
+      '  ' +
+        (a.name + '                ').slice(0, 16) +
+        ' ' +
+        tiers.labelOf(a.tier).padEnd(10) +
+        ' ' +
+        style.dim(fmtTierFamilies(a.families) + (bits.length ? ' · ' + bits.join(' · ') : '')),
+    );
+  });
+  print(
+    style.dim(
+      '  Pin one: keyflip tier <account> <' +
+        tiers.TIER_IDS.join('|') +
+        '|auto>   Disable filtering: keyflip config set proxy.tierFilter false',
+    ),
+  );
 }
 
 // The detached background server. Runs until killed.
@@ -16267,6 +16441,9 @@ async function dispatch(ctx, cmd, rest) {
         return cmdProxy(ctx, rest);
       case 'cooldown':
         return cmdCooldown(ctx, rest);
+      case 'tier':
+      case 'tiers':
+        return cmdTier(ctx, rest);
       case '__proxy-serve': // hidden: the detached background server process
         return proxyServe(ctx, rest);
       case 'mcp':

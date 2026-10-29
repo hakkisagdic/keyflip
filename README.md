@@ -193,7 +193,8 @@ keyflip import-env [<file>] [--dry-run] [--env]   # import provider endpoints fr
 keyflip log [--tail N] [--grep S] [--since ISO]   # view the action/audit log
 keyflip run-job "<prompt>" [--group g] [--strategy best]   # ORCHESTRATOR: run a prompt headless on the best-headroom account (isolated)
 keyflip jobs [list|run|clear] · keyflip fanout "<prompt>" --accounts a,b,c   # job queue + run the same prompt across N accounts
-keyflip cost [status|predict <acct>|by-project]   # spend/utilization, time-to-limit prediction, per-repo attribution
+keyflip cost [status|predict <acct>|by-project|rates [model]]   # spend/utilization, time-to-limit prediction, per-repo attribution, rate cards
+keyflip tier [<acct> <tier|auto>]   # each account's plan (free/pro/max/… ) and whether the proxy may route a model to it
 keyflip team <publish|pull|members|add-member|remove-member> --dir <shared> --pool <n> --passphrase-file <f>   # ENCRYPTED team pool with roles
 keyflip policy <list|allow|deny|remove|default|check> [--cwd D --account A --group G]   # constrain which account a directory may use
 keyflip vault <status|use op|bw|vault|off>   # store credentials in 1Password / Bitwarden / HashiCorp Vault
@@ -1179,6 +1180,51 @@ keyflip proxy explain --model claude-opus-4 --tokens 200000   # where would this
 keyflip cooldown                      # route order + each account's breaker/cooldown (seconds left)
 keyflip cooldown clear <account>|--all
 ```
+
+#### Subscription tiers (`keyflip tier`)
+
+Plans differ in what they can serve: a Free account cannot use Opus-class models,
+while Sonnet and Haiku route normally. The proxy reads each account's tier from
+its captured login (`subscriptionType` + `rateLimitTier`, e.g. `max` +
+`default_claude_max_5x`), so on a machine with accounts on different plans an
+Opus request is not silently sent to the one that will refuse it.
+
+```bash
+keyflip tier                                   # every account: tier, label, source, filter state
+keyflip tier work max5x                        # pin an override when the login string is missing/wrong
+keyflip tier work auto                         # drop the override, use the captured login again
+keyflip proxy explain --model claude-opus-4-8  # lists skipped accounts + why
+```
+
+Tiers are `free`, `pro`, `max`, `max5x`, `max20x`, `team`, `enterprise`. Only an
+explicitly known lower plan ever blocks a request: an unknown tier, a non-Claude
+model and provider-active mode are all permissive, so the filter cannot invent a
+refusal. When **every** usable account refuses the model, the proxy answers `503`
+with the tier detail before sending anything upstream — the request never burns
+against a plan that cannot serve it. `keyflip config set proxy.tierFilter false`
+turns the filter off machine-wide. The override lives in that account's existing
+meta JSON, so no new state file appears.
+
+#### What it costs (`proxy stats`, `cost rates`)
+
+`keyflip proxy stats` reports, per account: requests, fresh input/output tokens,
+cache reads/writes, and an estimated **list-price** cost. The engine bills the
+way the invoice does — cache reads at 0.1× the input rate, 5-minute cache writes
+at 1.25×, 1-hour writes at 2×, a request whose prompt passes **200K tokens** at
+2× input / 1.5× output on the whole request (cached tokens count toward the
+threshold and are uprated too), and fast mode at a flat 6×. Cost is priced **per
+request** as the proxy records it, so a long-context or fast request is not
+averaged away; `keyflip cost by-project` costs each transcript line the same way.
+
+```bash
+keyflip cost rates                  # billable table: in/out, cache tiers, 200K premium, fast mode
+keyflip cost rates claude-opus-4-8  # one model; an unknown id shows the flagged fallback card
+keyflip proxy stats [--json]        # cache tokens + estimated spend per account
+```
+
+These are estimates from a dated snapshot (`keyflip cost rates` prints the
+revision), not vendor invoices — and `keyflip cost status` still never derives a
+dollar figure from a percentage.
 
 ### Auto-switch on usage (`autoswitch`)
 

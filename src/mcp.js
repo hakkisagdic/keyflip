@@ -28,6 +28,7 @@ import * as backup from './backup.js';
 import * as history from './history.js';
 import * as proxy from './proxy.js';
 import * as proxyroutes from './proxyroutes.js';
+import * as tiers from './tiers.js';
 import * as browser from './browser.js';
 import * as loginmod from './login.js';
 import * as exec from './exec.js';
@@ -1992,7 +1993,7 @@ const TOOLS = [
     name: 'keyflip_proxy_status',
     title: 'Failover proxy status',
     description:
-      "Is the local failover proxy running? On what port, wired? Per-account request/token totals, plus the live route order and each account's breaker/cooldown state. Read-only.",
+      "Is the local failover proxy running? On what port, wired? Per-account request/token totals, plus the live route order, each account's breaker/cooldown state and subscription tier. Read-only.",
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
     annotations: RO,
     run: async function (ctx) {
@@ -2083,6 +2084,47 @@ const TOOLS = [
         { model: args.model, path: args.path, tokens: args.tokens, user: args.user, headers: args.headers || {} },
         { runHook: false },
       );
+    },
+  },
+  {
+    name: 'keyflip_tiers',
+    title: 'Show subscription tiers per account',
+    description:
+      'Which plan each account is on (free/pro/max/max5x/max20x/team/enterprise), where that came from (captured credentials or an override), and which Claude model families it may serve. The failover proxy uses this to skip an account that cannot answer the requested model (a Free plan cannot use Opus). Unknown tiers never block. Read-only.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    annotations: RO,
+    run: async function (ctx) {
+      return proxy.tierState(ctx);
+    },
+  },
+  {
+    name: 'keyflip_tier_set',
+    title: 'Pin an account subscription tier',
+    description:
+      "Override the tier keyflip reads from an account's credentials, or clear the override with tier='auto'. Use when detection is wrong (a plan name the vendor changed, a token-only capture). Ask the user first, then confirm=true.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Account name.' },
+        tier: {
+          type: 'string',
+          enum: tiers.TIER_IDS.concat(['auto']),
+          description: 'Tier to pin, or auto to clear the override.',
+        },
+        confirm: confirmProp.confirm,
+      },
+      required: ['name', 'tier', 'confirm'],
+      additionalProperties: false,
+    },
+    annotations: MUT,
+    run: async function (ctx, args) {
+      needConfirm(args);
+      const name = core.resolveProfile(ctx, args.name);
+      if (!name) throw new Error("no such account: '" + args.name + "'");
+      const meta = profiles.read(ctx.configDir, name) || { name: name };
+      const next = tiers.applyOverride(meta, args.tier);
+      profiles.write(ctx.configDir, next);
+      return { account: name, tier: next.tier || null, cleared: !next.tier };
     },
   },
   {
@@ -3659,6 +3701,32 @@ const TOOLS = [
     annotations: RO,
     run: async function (ctx, args) {
       return _cost.attribute(ctx, { maxSessions: args && args.limit });
+    },
+  },
+  {
+    name: 'keyflip_cost_rates',
+    title: 'Billable rate card for a model',
+    description:
+      'The billable rate card behind keyflip cost estimates: per-MTok input/output, the cache multipliers (read 0.1x, 5-minute write 1.25x, 1-hour write 2x), the long-context tier (a prompt over 200K bills 2x input / 1.5x output on the whole request) and the fast-mode multiplier (6x). Pass a model id for its card (unknown ids return the conservative fallback, flagged); omit it for the whole table. Estimates from a dated snapshot — Read-only.',
+    inputSchema: { type: 'object', properties: { model: { type: 'string' } }, additionalProperties: false },
+    annotations: RO,
+    run: async function (ctx, args) {
+      if (args && args.model) return _cost.rateCard(String(args.model));
+      return {
+        asOf: _cost.PRICING_AS_OF,
+        multipliers: {
+          cacheRead: _cost.CACHE_READ_MULT,
+          cacheWrite5m: _cost.CACHE_WRITE_MULT,
+          cacheWrite1h: _cost.CACHE_WRITE_1H_MULT,
+          longContextThreshold: _cost.LONG_CONTEXT_THRESHOLD,
+          longContextInput: _cost.LONG_CONTEXT_INPUT_MULT,
+          longContextOutput: _cost.LONG_CONTEXT_OUTPUT_MULT,
+          fast: _cost.FAST_MULT,
+        },
+        models: Object.keys(_cost.PRICING).map(function (id) {
+          return _cost.rateCard(id);
+        }),
+      };
     },
   },
   {

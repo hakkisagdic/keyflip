@@ -348,8 +348,10 @@ keyflip threads drop fatura -y            # adı UNUT — her transkript ve her 
 ```bash
 keyflip proxy start --wire             # localhost proxy başlat + Claude Code'u ona bağla
 keyflip proxy status                   # açık mı? hangi portta? hesap başına toplamlar
-keyflip proxy stats                    # hesap başına istek/token toplamları
+keyflip proxy stats                    # istek, token, cache okuma/yazma, ~liste fiyatı harcaması
 keyflip proxy stop                     # durdur ve settings.json bağını çöz
+keyflip tier                           # her hesabın planı + bir modelin ona yönlendirilip yönlendirilemeyeceği
+keyflip cost rates [model]             # ücret kartı: cache kademeleri, 200K primi, hızlı mod
 ```
 - Açıkken her isteği aktif hesaba yönlendirir ve istemci bir bayt görmeden **429/5xx'te
   bir sonraki sağlıklı hesaba yük devreder.** İstek ortası limitlerin olası olduğu uzun
@@ -364,6 +366,15 @@ keyflip proxy stop                     # durdur ve settings.json bağını çöz
 keyflip proxy routes [init]            # yönlendirme dosyası, hataları ve politika
 keyflip proxy explain --model claude-opus-4 --tokens 200000   # nereye gider, neden?
 ```
+- **Plana duyarlı.** Her hesabın abonelik planı yakalanan girişten okunur; Free bir hesap
+  Opus sınıfında atlanır, Sonnet/Haiku yine yönlenir. Yalnız **bilinen ve düşük** plan
+  engeller (bilinmeyen plan, Claude olmayan model ve sağlayıcı modu serbesttir); her hesap
+  reddederse proxy hiçbir şey göndermeden 503 döner. `keyflip tier <hesap> <plan|auto>`
+  override'ı sabitler/siler; `proxy.tierFilter=false` filtreyi kapatır.
+- **Harcama istek bazında fiyatlanır.** `proxy stats` cache okuma/yazmasını ve tahmini
+  liste fiyatı maliyetini ekler (cache okuma 0.1×, 5 dk yazım 1.25×, 1 sa yazım 2×, 200K'yı
+  geçen prompt tümüyle 2× giriş / 1.5× çıkış, hızlı mod 6×); `keyflip cost rates` kartı
+  yazar. Tarihli bir anlık görüntüden tahmin — fatura değil.
 
 ---
 

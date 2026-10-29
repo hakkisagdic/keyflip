@@ -540,7 +540,16 @@ pins); `keyflip_transfer_pull` (pull+merge a bundle from a LAN peer running `tra
   (read), `keyflip_job_enqueue` / `keyflip_job_run` / `keyflip_fanout` need `confirm`; run/fanout spend quota.)
 - **Cost intelligence** — `keyflip cost status` (utilization + $ where token totals are known — never
   inferred from a %), `keyflip cost predict <acct>` (time-to-limit), `keyflip cost by-project` (per-repo
-  token/cost). (MCP: `keyflip_cost_status` / `_cost_predict` / `_cost_by_project`, all read-only.)
+  token/cost, priced per transcript line too), `keyflip cost rates [model]` (the billable card: cache read
+  0.1x / 5m write 1.25x / 1h write 2x, the 200K long-context premium 2x in / 1.5x out on the whole
+  request, fast mode 6x). (MCP: `keyflip_cost_status` / `_cost_predict` / `_cost_by_project` /
+  `_cost_rates`, all read-only.)
+- **Subscription tiers** — `keyflip tier` shows each account's plan (free/pro/max/max5x/max20x/team/
+  enterprise) and where it came from; `keyflip tier <acct> <tier|auto>` pins or clears an override. The
+  failover proxy skips an account whose plan cannot serve the requested model (only a KNOWN lower plan
+  blocks; unknown tiers, non-Claude models and provider mode are permissive) and answers 503 before
+  sending anything when every account refuses. `proxy.tierFilter=false` disables it. (MCP: `keyflip_tiers`
+  read, `keyflip_tier_set` needs `confirm`.)
 - **Team pool** — `keyflip team publish/pull --dir <shared> --pool <n> --passphrase-file <f>`: an ENCRYPTED
   shared credential pool with roles (owner sees all; member sees member-tagged). (MCP: `keyflip_team_members`
   (read), `keyflip_team_publish` / `_team_pull` / `_team_member_add` / `_team_member_remove` need `confirm`.)
@@ -831,12 +840,13 @@ keyflip skill sync                    # re-apply each skill's recorded source; a
 keyflip skill list | remove <name>    # per-target state (✓ ok / ✎ edited / ✗ missing); removes only keyflip's copies
 
 keyflip proxy start --wire            # command-started localhost proxy; wires Claude Code to it
-keyflip proxy status | stats          # is it up? per-account request/token totals + live route order
+keyflip proxy status | stats          # is it up? request/token/cache totals + estimated spend + live route order
 keyflip proxy stop                    # stops it and unwires
 keyflip proxy routes [init]           # declarative proxy-routes.json (rules/sticky/fallback/transforms) + a valid starter
 keyflip proxy explain --model M [--tokens N] [--user U]   # where THIS request would go, and why (nothing sent)
 keyflip cooldown                      # route order + which accounts are parked (cooldown kind/seconds)
 keyflip cooldown clear <acct>|--all   # release parked accounts now
+keyflip tier [<acct> <tier|auto>]     # each account's plan + whether a model may route to it
 ```
 
 Skills are **written into every agent on the machine that reads one** — the target
@@ -900,6 +910,19 @@ running proxy hot-reloads it on the next request):
 - An invalid file is ignored (defaults apply) and its problems are listed by
   `keyflip proxy routes` / `proxy status`. Debug headers add
   `x-keyflip-model` and `x-keyflip-route`.
+
+**Plans and cost** — the proxy reads each account's subscription tier from its
+captured login and skips an account whose plan cannot serve the requested model
+(Free ↔ Opus). Only a *known* lower plan blocks; unknown tiers, non-Claude models
+and provider mode are permissive, and if every account refuses it answers 503
+before spending anything. `keyflip tier` shows the plan + source,
+`keyflip tier <acct> <tier|auto>` pins/clears an override; `proxy.tierFilter=false`
+disables the filter. `keyflip proxy stats` reports cache reads/writes and an
+**estimated list-price** cost per account, priced per request (cache read 0.1x,
+5m write 1.25x, 1h write 2x, 200K prompt 2x in / 1.5x out on the whole request,
+fast 6x); `keyflip cost rates [model]` prints the card. Treat every dollar figure
+as an estimate from a dated snapshot, never a vendor invoice — and never derive
+one from a usage percentage.
 
 ## Parallel accounts in one terminal
 

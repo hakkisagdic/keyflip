@@ -73,8 +73,9 @@ Multi-provider support for different AI services and routing logic.
 |--------|---------------|
 | `provider.js` | Provider abstraction and registration |
 | `provusage.js` | Per-provider usage tracking and analytics |
-| `proxy.js` | Command-started failover proxy (routing, cooldowns, token accounting) |
+| `proxy.js` | Command-started failover proxy (routing, cooldowns, tier eligibility, per-request cost accounting) |
 | `proxyroutes.js` | Declarative per-request routing from `proxy-routes.json` (rules, sticky, fallback modes, transforms, custom hook) |
+| `tiers.js` | Subscription plan model read from the captured login (`subscriptionType`/`rateLimitTier`), per-account overrides, and model eligibility |
 | `router.js` | Model→provider routing (pins + arbitrage) and the response cache |
 | `breaker.js` | Circuit breaker pattern for provider failover |
 
@@ -205,7 +206,7 @@ Specialized features spanning automation, monitoring, and system integration.
 | `backup.js` | Profile backup and restore |
 | `brain.js` | Intelligent decision engine |
 | `budget.js` | Usage budget management |
-| `cost.js` | Cost tracking and estimation |
+| `cost.js` | Cost tracking and estimation: `rateCard`/`costBreakdown` (cache read 0.1×, 5m write 1.25×, 1h write 2×, 200K long-context 2×/1.5×, fast 6×), unified utilization, prediction, per-repo attribution priced per transcript line |
 | `doctor.js` | System health diagnostics |
 | `groups.js` | Profile group management |
 | `history.js` | Command and switch history |

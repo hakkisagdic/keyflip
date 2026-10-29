@@ -81,25 +81,108 @@ test('priceFor does not strip hyphens (regression: model id stays intact)', func
   assert.strictEqual(cost.priceFor('claude-opus-4-8').fallback, false);
 });
 
-// ---- estimateCost -----------------------------------------------------------
+// ---- rateCard / estimateCost -------------------------------------------------
+
+test('rateCard exposes cache multipliers, the long-context tier and fast mode', function () {
+  const opus = cost.rateCard('claude-opus-4-8');
+  assert.strictEqual(opus.id, 'claude-opus-4-8');
+  assert.strictEqual(opus.fallback, false);
+  assert.deepStrictEqual(opus.cache, { read: 0.1, write5m: 1.25, write1h: 2 });
+  assert.strictEqual(opus.longContext.threshold, 200000);
+  assert.strictEqual(opus.longContext.inputMult, 2);
+  assert.strictEqual(opus.longContext.outputMult, 1.5);
+  assert.strictEqual(opus.fast, 6);
+  // haiku: no 200K tier, no fast mode
+  assert.strictEqual(cost.rateCard('claude-haiku-4-5').longContext, null);
+  assert.strictEqual(cost.rateCard('claude-haiku-4-5').fast, null);
+  // unknown -> fallback card assumes BOTH premiums (never understated)
+  const fb = cost.rateCard('mystery-9');
+  assert.strictEqual(fb.fallback, true);
+  assert.ok(fb.longContext && fb.fast);
+});
 
 test('estimateCost prices input + output at per-MTok rates', function () {
-  assert.strictEqual(cost.estimateCost({ model: 'claude-opus-4-8', inputTokens: 1e6, outputTokens: 1e6 }), 30);
+  // 100K in + 100K out on opus (5/25) stays under the 200K threshold
+  assert.strictEqual(cost.estimateCost({ model: 'claude-opus-4-8', inputTokens: 1e5, outputTokens: 1e5 }), 0.5 + 2.5);
   assert.ok(
     close(cost.estimateCost({ model: 'claude-haiku-4-5', inputTokens: 100, outputTokens: 50 }), 0.0001 + 0.00025),
   );
 });
 
 test('estimateCost adds cache tokens at input-relative multipliers', function () {
-  // opus input rate 5: read 1e6 -> 5*0.1=0.5 ; write 1e6 -> 5*1.25=6.25
+  // opus input rate 5, long-context premium off: read 100K -> 5*0.1*0.1 ; write 100K -> 5*1.25*0.1
   const c = cost.estimateCost({
     model: 'claude-opus-4-8',
     inputTokens: 0,
     outputTokens: 0,
-    cacheReadTokens: 1e6,
-    cacheCreationTokens: 1e6,
+    cacheReadTokens: 1e5,
+    cacheCreationTokens: 1e5,
+    longContext: false,
   });
-  assert.ok(close(c, 0.5 + 6.25), 'got ' + c);
+  assert.ok(close(c, 0.05 + 0.625), 'got ' + c);
+});
+
+test('costBreakdown bills 1-hour cache writes at 2x the input rate (not the 1.25x 5m rate)', function () {
+  const b = cost.costBreakdown({
+    model: 'claude-opus-4-8',
+    cacheCreation1hTokens: 1e6,
+    longContext: false,
+  });
+  assert.strictEqual(b.rates.cacheWrite1h, 10); // 5 * 2
+  assert.strictEqual(b.usd.cacheWrite1h, 10);
+  assert.strictEqual(b.usd.cacheWrite, 0);
+  assert.strictEqual(b.tokens.cacheCreation1h, 1e6);
+  assert.strictEqual(b.totalUSD, 10);
+});
+
+test('costBreakdown applies the 200K long-context premium to the WHOLE request', function () {
+  const below = cost.costBreakdown({ model: 'claude-opus-4-8', inputTokens: 199999, outputTokens: 1000 });
+  assert.strictEqual(below.longContext.applied, false);
+  assert.ok(close(below.totalUSD, 0.199999 * 5 + 0.001 * 25));
+  // exactly 200K is NOT over the threshold
+  assert.strictEqual(cost.costBreakdown({ model: 'claude-opus-4-8', inputTokens: 200000 }).longContext.applied, false);
+  const over = cost.costBreakdown({ model: 'claude-opus-4-8', inputTokens: 200001, outputTokens: 1000 });
+  assert.strictEqual(over.longContext.applied, true);
+  assert.strictEqual(over.rates.input, 10); // 5 * 2
+  assert.strictEqual(over.rates.output, 37.5); // 25 * 1.5
+  assert.ok(close(over.totalUSD, 0.200001 * 10 + 0.001 * 37.5), 'got ' + over.totalUSD);
+});
+
+test('cached tokens count toward the 200K threshold and are uprated with it', function () {
+  // 250K cache reads alone: prompt > 200K -> premium, read billed at 5*0.1*2 = 1 $/MTok
+  const b = cost.costBreakdown({ model: 'claude-opus-4-8', cacheReadTokens: 250000 });
+  assert.strictEqual(b.longContext.applied, true);
+  assert.strictEqual(b.rates.cacheRead, 1);
+  assert.ok(close(b.totalUSD, 0.25));
+  // a model without a 200K tier never applies it, even when forced
+  const h = cost.costBreakdown({ model: 'claude-haiku-4-5', inputTokens: 1e6, longContext: true });
+  assert.strictEqual(h.longContext.applied, false);
+  assert.strictEqual(h.longContext.supported, false);
+});
+
+test('fast mode is a flat 6x on every rate, and the -fast suffix turns it on', function () {
+  const plain = cost.costBreakdown({ model: 'claude-opus-4-8', inputTokens: 1e5, outputTokens: 1e5 });
+  const fast = cost.costBreakdown({ model: 'claude-opus-4-8', inputTokens: 1e5, outputTokens: 1e5, fast: true });
+  assert.strictEqual(fast.fast.applied, true);
+  assert.strictEqual(fast.fast.mult, 6);
+  assert.ok(close(fast.totalUSD, plain.totalUSD * 6), 'got ' + fast.totalUSD);
+  assert.strictEqual(fast.rates.cacheRead, 3); // 5 * 0.1 * 6
+  const suffix = cost.costBreakdown({ model: 'claude-opus-4-8-fast', inputTokens: 1e5 });
+  assert.strictEqual(suffix.fast.applied, true);
+  assert.strictEqual(suffix.id, 'claude-opus-4-8');
+  // reported fast on a model with no fast mode still bills the reported speed
+  const h = cost.costBreakdown({ model: 'claude-haiku-4-5', inputTokens: 1e6, fast: true });
+  assert.strictEqual(h.fast.applied, true);
+  assert.strictEqual(h.fast.supported, false);
+  assert.strictEqual(h.totalUSD, 6);
+});
+
+test('estimateCost can price an AGGREGATE total without inventing a long-context premium', function () {
+  // a month of small requests is not one 200K request
+  assert.strictEqual(
+    cost.estimateCost({ model: 'claude-opus-4-8', inputTokens: 1e6, outputTokens: 1e6, longContext: false }),
+    30,
+  );
 });
 
 test('estimateCost treats missing/negative/NaN tokens as zero and returns a number', function () {
@@ -112,8 +195,8 @@ test('estimateCost treats missing/negative/NaN tokens as zero and returns a numb
 });
 
 test('estimateCost uses fallback pricing for an unknown model', function () {
-  // fallback = opus-tier 5/25 -> 1e6 in + 1e6 out = 30
-  assert.strictEqual(cost.estimateCost({ model: 'mystery-model', inputTokens: 1e6, outputTokens: 1e6 }), 30);
+  // fallback = opus-tier 5/25 -> 100K in + 100K out = 3
+  assert.strictEqual(cost.estimateCost({ model: 'mystery-model', inputTokens: 1e5, outputTokens: 1e5 }), 3);
 });
 
 // ---- unified ----------------------------------------------------------------
@@ -374,13 +457,37 @@ test('attribute uses fallback pricing for an unknown model and says so', functio
   const ctx = makeCtx();
   writeSession(ctx, '-mystery', 'sessM', [
     userLine('/mystery'),
-    asstLine('/mystery', 'some-future-model', { input_tokens: 1e6, output_tokens: 1e6 }),
+    asstLine('/mystery', 'some-future-model', { input_tokens: 1e5, output_tokens: 1e5 }),
   ]);
   const r = cost.attribute(ctx);
   assert.strictEqual(r.byCwd[0].estimate, true);
   assert.strictEqual(r.byCwd[0].models['some-future-model'].fallbackPrice, true);
-  assert.strictEqual(r.byCwd[0].costUSD, 30); // fallback opus-tier
+  assert.strictEqual(r.byCwd[0].costUSD, 3); // fallback opus-tier 5/25
   assert.match(r.note, /fallback pricing/);
+});
+
+test('attribute costs each transcript line on its own (200K + fast + 1h cache)', function () {
+  const ctx = makeCtx();
+  writeSession(ctx, '-big', 'sessBig', [
+    userLine('/big'),
+    // one long-context request: 250K input -> premium on the whole request
+    asstLine('/big', 'claude-opus-4-8', { input_tokens: 250000, output_tokens: 1000 }),
+    // one small request: no premium
+    asstLine('/big', 'claude-opus-4-8', { input_tokens: 1000, output_tokens: 1000 }),
+    // one fast request with a 1-hour cache write
+    asstLine('/big', 'claude-opus-4-8', {
+      input_tokens: 0,
+      output_tokens: 0,
+      cache_creation_input_tokens: 1000,
+      cache_creation: { ephemeral_1h_input_tokens: 1000 },
+      speed: 'fast',
+    }),
+  ]);
+  const r = cost.attribute(ctx);
+  const expected = 0.25 * 10 + 0.001 * 37.5 + 0.001 * 5 + 0.001 * 25 + 0.001 * 10 * 6;
+  assert.ok(close(r.byCwd[0].costUSD, expected), 'got ' + r.byCwd[0].costUSD + ' want ' + expected);
+  assert.strictEqual(r.byCwd[0].models['claude-opus-4-8'].tokens.cacheCreation1h, 1000);
+  assert.strictEqual(r.byCwd[0].tokens.cacheCreation, 0); // the 1h share is reported once, separately
 });
 
 // ---- fmt helpers ------------------------------------------------------------

@@ -431,6 +431,13 @@ const CATALOG = [
     desc: 'Which accounts are parked (cooldown/breaker) and the order the proxy would try.',
   },
   {
+    name: 'tier',
+    group: 'orchestration',
+    safe: true,
+    usage: 'keyflip tier [<account> <tier|auto>]',
+    desc: 'Subscription tier per account (Free≠Opus) and which model families the proxy may route to it; pin an override when auto-detection is wrong.',
+  },
+  {
     name: 'autoswitch',
     group: 'orchestration',
     safe: false,
@@ -458,8 +465,8 @@ const CATALOG = [
     name: 'cost',
     group: 'cost',
     safe: true,
-    usage: 'keyflip cost [status|predict <acct>|by-project]',
-    desc: 'Spend/utilization, time-to-limit, per-repo attribution.',
+    usage: 'keyflip cost [status|predict <acct>|by-project|rates [model]]',
+    desc: 'Spend/utilization, time-to-limit, per-repo attribution, billable rate cards (cache tiers, 200K premium, fast mode).',
   },
   {
     name: 'budget',

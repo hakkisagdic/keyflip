@@ -23,21 +23,26 @@ import * as _history from './history.js';
 //     STANDARD $3/$15 so estimates never understate steady-state spend.
 // ---------------------------------------------------------------------------
 const PRICING_AS_OF = '2026-06-24';
+// Rows may carry two capability flags (see the rate card below):
+//   longContext: the model bills a PREMIUM once the request's input (fresh +
+//                cache) passes 200K tokens — 2x input, 1.5x output today.
+//   fast:        the model offers fast mode, billed at a flat 6x multiplier.
+// Legacy rows carry neither: a retired model is priced at its plain list rate.
 const PRICING = Object.freeze({
   // --- current generation (authoritative) ---
-  'claude-fable-5': { inputPerMTok: 10, outputPerMTok: 50 },
-  'claude-mythos-5': { inputPerMTok: 10, outputPerMTok: 50 },
-  'claude-opus-4-8': { inputPerMTok: 5, outputPerMTok: 25 },
-  'claude-opus-4-7': { inputPerMTok: 5, outputPerMTok: 25 },
-  'claude-opus-4-6': { inputPerMTok: 5, outputPerMTok: 25 },
-  'claude-sonnet-5': { inputPerMTok: 3, outputPerMTok: 15 },
-  'claude-sonnet-4-6': { inputPerMTok: 3, outputPerMTok: 15 },
+  'claude-fable-5': { inputPerMTok: 10, outputPerMTok: 50, longContext: true, fast: true },
+  'claude-mythos-5': { inputPerMTok: 10, outputPerMTok: 50, longContext: true, fast: true },
+  'claude-opus-4-8': { inputPerMTok: 5, outputPerMTok: 25, longContext: true, fast: true },
+  'claude-opus-4-7': { inputPerMTok: 5, outputPerMTok: 25, longContext: true, fast: true },
+  'claude-opus-4-6': { inputPerMTok: 5, outputPerMTok: 25, longContext: true, fast: true },
+  'claude-sonnet-5': { inputPerMTok: 3, outputPerMTok: 15, longContext: true },
+  'claude-sonnet-4-6': { inputPerMTok: 3, outputPerMTok: 15, longContext: true },
   'claude-haiku-4-5': { inputPerMTok: 1, outputPerMTok: 5 },
   // --- legacy (still active or recently retired) -- historical list prices ---
-  'claude-opus-4-5': { inputPerMTok: 5, outputPerMTok: 25 },
+  'claude-opus-4-5': { inputPerMTok: 5, outputPerMTok: 25, longContext: true },
   'claude-opus-4-1': { inputPerMTok: 15, outputPerMTok: 75 },
   'claude-opus-4-0': { inputPerMTok: 15, outputPerMTok: 75 },
-  'claude-sonnet-4-5': { inputPerMTok: 3, outputPerMTok: 15 },
+  'claude-sonnet-4-5': { inputPerMTok: 3, outputPerMTok: 15, longContext: true },
   'claude-sonnet-4-0': { inputPerMTok: 3, outputPerMTok: 15 },
   'claude-3-opus': { inputPerMTok: 15, outputPerMTok: 75 },
   'claude-3-5-haiku': { inputPerMTok: 0.8, outputPerMTok: 4 },
@@ -45,13 +50,31 @@ const PRICING = Object.freeze({
 });
 // Unknown model -> Opus-tier default. Conservative (not the cheapest), and
 // always flagged fallback:true so callers can label the estimate as a guess.
-const FALLBACK_PRICE = Object.freeze({ inputPerMTok: 5, outputPerMTok: 25 });
+// Both premium capabilities are assumed so an unknown model is never understated.
+const FALLBACK_PRICE = Object.freeze({
+  inputPerMTok: 5,
+  outputPerMTok: 25,
+  longContext: true,
+  fast: true,
+});
 
 // Cache-token economics, relative to the model's INPUT rate (see the prompt-
-// caching docs): reads bill ~0.1x, 5-minute writes ~1.25x. Applied on top of
-// the same input $/MTok so cache tokens are costed without a second table.
+// caching docs): reads bill ~0.1x, 5-minute writes ~1.25x, 1-hour writes ~2x.
+// Applied on top of the same input $/MTok so cache tokens are costed without a
+// second table.
 const CACHE_READ_MULT = 0.1;
-const CACHE_WRITE_MULT = 1.25;
+const CACHE_WRITE_MULT = 1.25; // 5-minute writes (the long-standing default)
+const CACHE_WRITE_1H_MULT = 2;
+
+// Long-context premium: a request whose total input passes 200K tokens bills a
+// higher rate for the WHOLE request (not just the excess): 2x input, 1.5x
+// output on models that support the 1M-context beta.
+const LONG_CONTEXT_THRESHOLD = 200000;
+const LONG_CONTEXT_INPUT_MULT = 2;
+const LONG_CONTEXT_OUTPUT_MULT = 1.5;
+
+// Fast mode is a flat 6x on every rate of the request.
+const FAST_MULT = 6;
 
 // ---- pricing lookup --------------------------------------------------------
 
@@ -101,22 +124,109 @@ function num(x) {
   return typeof x === 'number' && isFinite(x) && x >= 0 ? x : 0;
 }
 
-// estimateCost({model, inputTokens, outputTokens[, cacheReadTokens,
-// cacheCreationTokens]}) -> USD number. Cache fields are optional (default 0),
-// so the required {model,inputTokens,outputTokens} shape works unchanged.
-function estimateCost(opts) {
+// rateCard(model) -> the BILLABLE rate card behind a model, on top of the
+// stable 4-field priceFor() shape: cache multipliers, the long-context premium
+// (null when the model has no 200K+ tier) and the fast-mode multiplier (null
+// when the model has no fast mode). Unknown models inherit the fallback card,
+// which assumes BOTH premiums so an estimate is never understated.
+function rateCard(model) {
+  const p = priceFor(model);
+  const row = lookup(p.id) || FALLBACK_PRICE;
+  return {
+    id: p.id,
+    inputPerMTok: p.inputPerMTok,
+    outputPerMTok: p.outputPerMTok,
+    fallback: p.fallback,
+    cache: { read: CACHE_READ_MULT, write5m: CACHE_WRITE_MULT, write1h: CACHE_WRITE_1H_MULT },
+    longContext: row.longContext
+      ? {
+          threshold: LONG_CONTEXT_THRESHOLD,
+          inputMult: LONG_CONTEXT_INPUT_MULT,
+          outputMult: LONG_CONTEXT_OUTPUT_MULT,
+        }
+      : null,
+    fast: row.fast ? FAST_MULT : null,
+  };
+}
+
+// costBreakdown(opts) -> itemized USD for ONE request (or one metered
+// transcript line):
+//   { model, id, fallback, tokens, rates, longContext, fast, usd, totalUSD }
+// opts = { model, inputTokens, outputTokens [, cacheReadTokens,
+//          cacheCreationTokens (5-minute writes), cacheCreation1hTokens,
+//          fast, longContext] }.
+//   * fast defaults to true when the model id carries a -fast suffix (a
+//     caller that read the response's speed reports it explicitly instead).
+//   * longContext defaults to "prompt tokens passed the model's threshold";
+//     the premium bills the WHOLE request, and cached tokens are input tokens
+//     on the invoice, so they count toward the threshold and are uprated too.
+//   * Pass longContext:false for an AGGREGATE figure (a month of usage is not
+//     one request) -- unified() does exactly that.
+function costBreakdown(opts) {
   opts = opts || {};
-  const p = priceFor(opts.model);
+  const card = rateCard(opts.model);
   const input = num(opts.inputTokens);
   const output = num(opts.outputTokens);
   const cacheRead = num(opts.cacheReadTokens);
   const cacheWrite = num(opts.cacheCreationTokens);
-  return (
-    (input / 1e6) * p.inputPerMTok +
-    (output / 1e6) * p.outputPerMTok +
-    (cacheRead / 1e6) * p.inputPerMTok * CACHE_READ_MULT +
-    (cacheWrite / 1e6) * p.inputPerMTok * CACHE_WRITE_MULT
+  const cacheWrite1h = num(opts.cacheCreation1hTokens);
+  const promptTokens = input + cacheRead + cacheWrite + cacheWrite1h;
+  const fast = opts.fast === undefined || opts.fast === null ? /-fast$/.test(normalizeModel(opts.model)) : !!opts.fast;
+  const lcOn = !!(
+    card.longContext &&
+    (opts.longContext === undefined || opts.longContext === null
+      ? promptTokens > card.longContext.threshold
+      : opts.longContext)
   );
+  const lcIn = lcOn ? card.longContext.inputMult : 1;
+  const lcOut = lcOn ? card.longContext.outputMult : 1;
+  const fastMult = fast ? FAST_MULT : 1;
+  const rates = {
+    input: card.inputPerMTok * lcIn * fastMult,
+    output: card.outputPerMTok * lcOut * fastMult,
+    cacheRead: card.inputPerMTok * CACHE_READ_MULT * lcIn * fastMult,
+    cacheWrite: card.inputPerMTok * CACHE_WRITE_MULT * lcIn * fastMult,
+    cacheWrite1h: card.inputPerMTok * CACHE_WRITE_1H_MULT * lcIn * fastMult,
+  };
+  const usd = {
+    input: (input / 1e6) * rates.input,
+    output: (output / 1e6) * rates.output,
+    cacheRead: (cacheRead / 1e6) * rates.cacheRead,
+    cacheWrite: (cacheWrite / 1e6) * rates.cacheWrite,
+    cacheWrite1h: (cacheWrite1h / 1e6) * rates.cacheWrite1h,
+  };
+  return {
+    model: normalizeModel(opts.model) || null,
+    id: card.id,
+    fallback: card.fallback,
+    tokens: {
+      input: input,
+      output: output,
+      cacheRead: cacheRead,
+      cacheCreation: cacheWrite,
+      cacheCreation1h: cacheWrite1h,
+      total: input + output + cacheRead + cacheWrite + cacheWrite1h,
+    },
+    rates: rates,
+    longContext: {
+      supported: !!card.longContext,
+      applied: lcOn,
+      threshold: card.longContext ? card.longContext.threshold : null,
+      inputMult: lcIn,
+      outputMult: lcOut,
+    },
+    fast: { supported: card.fast !== null, applied: fast, mult: fastMult },
+    usd: usd,
+    totalUSD: usd.input + usd.output + usd.cacheRead + usd.cacheWrite + usd.cacheWrite1h,
+  };
+}
+
+// estimateCost({model, inputTokens, outputTokens[, cacheReadTokens,
+// cacheCreationTokens, cacheCreation1hTokens, fast, longContext]}) -> USD
+// number. Cache/latency fields are optional (default 0 / inferred), so the
+// required {model,inputTokens,outputTokens} shape works unchanged.
+function estimateCost(opts) {
+  return costBreakdown(opts).totalUSD;
 }
 
 // ---- usage cache (read-only; usage.js owns writing it) ---------------------
@@ -165,6 +275,7 @@ function tokensOf(entry) {
     output: num(raw.output),
     cacheRead: num(raw.cacheRead),
     cacheCreation: num(raw.cacheCreation),
+    cacheCreation1h: num(raw.cacheCreation1h),
   };
 }
 function tokensModel(entry) {
@@ -188,7 +299,7 @@ function unified(ctx, opts) {
   const cache = opts.cache || readUsageCache(ctx);
   const names = Object.keys(cache).sort();
   const accounts = [];
-  const totalTok = { input: 0, output: 0, cacheRead: 0, cacheCreation: 0 };
+  const totalTok = { input: 0, output: 0, cacheRead: 0, cacheCreation: 0, cacheCreation1h: 0 };
   let anyTokens = false,
     totalCost = 0,
     costMeasured = false;
@@ -207,18 +318,23 @@ function unified(ctx, opts) {
     if (tok) {
       anyTokens = true;
       costMeasured = true;
+      // Aggregate spend: never infer a per-request long-context premium from
+      // the sum (a month of small requests is not one 200K request).
       row.costUSD = estimateCost({
         model: tokensModel(e),
         inputTokens: tok.input,
         outputTokens: tok.output,
         cacheReadTokens: tok.cacheRead,
         cacheCreationTokens: tok.cacheCreation,
+        cacheCreation1hTokens: tok.cacheCreation1h,
+        longContext: false,
       });
       row.measured = true;
       totalTok.input += tok.input;
       totalTok.output += tok.output;
       totalTok.cacheRead += tok.cacheRead;
       totalTok.cacheCreation += tok.cacheCreation;
+      totalTok.cacheCreation1h += tok.cacheCreation1h;
       totalCost += row.costUSD;
     }
     accounts.push(row);
@@ -335,7 +451,19 @@ function predict(ctx, name, opts) {
 // ---- per-cwd / repo attribution -------------------------------------------
 
 function newTok() {
-  return { input: 0, output: 0, cacheRead: 0, cacheCreation: 0 };
+  return { input: 0, output: 0, cacheRead: 0, cacheCreation: 0, cacheCreation1h: 0, costUSD: 0 };
+}
+// Public view of a token bucket: counts only (no accumulator fields), with the
+// cached-token split preserved and a total that includes every kind.
+function tokenView(t) {
+  return {
+    input: t.input,
+    output: t.output,
+    cacheRead: t.cacheRead,
+    cacheCreation: t.cacheCreation,
+    cacheCreation1h: t.cacheCreation1h,
+    total: t.input + t.output + t.cacheRead + t.cacheCreation + t.cacheCreation1h,
+  };
 }
 function clampInt(v, dflt, lo, hi) {
   const n = typeof v === 'number' && isFinite(v) ? Math.floor(v) : dflt;
@@ -387,7 +515,22 @@ function readHead(file, maxBytes) {
   }
 }
 
-// Sum per-model token usage from a transcript's assistant lines into `bucket`.
+// Split one usage object into 5-minute and 1-hour cache-write counts. The
+// top-level cache_creation_input_tokens is the TOTAL; the nested ephemeral_*
+// pair says how it splits, so the 1h share is never counted twice.
+function cacheWrites(u) {
+  const cc = u && u.cache_creation && typeof u.cache_creation === 'object' ? u.cache_creation : null;
+  const e5 = num(cc && cc.ephemeral_5m_input_tokens);
+  const e1 = num(cc && cc.ephemeral_1h_input_tokens);
+  const total = num(u && u.cache_creation_input_tokens) || e5 + e1;
+  const write1h = Math.min(total, e1);
+  return { write5m: Math.max(0, total - write1h), write1h: write1h };
+}
+
+// Sum per-model token usage from a transcript's assistant lines into `bucket`,
+// costing each LINE on its own (one line = one request), so the 200K premium
+// and fast mode land on the requests that actually incurred them instead of on
+// a session-wide sum.
 function scanUsage(text, bucket) {
   String(text)
     .split('\n')
@@ -406,18 +549,29 @@ function scanUsage(text, bucket) {
       const input = num(u.input_tokens);
       const output = num(u.output_tokens);
       const cacheRead = num(u.cache_read_input_tokens);
-      const cacheWrite = num(u.cache_creation_input_tokens);
-      if (!(input || output || cacheRead || cacheWrite)) return;
+      const w = cacheWrites(u);
+      if (!(input || output || cacheRead || w.write5m || w.write1h)) return;
       const model = scrub(m.model, 100) || 'unknown';
       const mt = bucket.models[model] || (bucket.models[model] = newTok());
       mt.input += input;
       mt.output += output;
       mt.cacheRead += cacheRead;
-      mt.cacheCreation += cacheWrite;
+      mt.cacheCreation += w.write5m;
+      mt.cacheCreation1h += w.write1h;
+      mt.costUSD += costBreakdown({
+        model: model,
+        inputTokens: input,
+        outputTokens: output,
+        cacheReadTokens: cacheRead,
+        cacheCreationTokens: w.write5m,
+        cacheCreation1hTokens: w.write1h,
+        fast: u.speed === 'fast' ? true : undefined,
+      }).totalUSD;
       bucket.tokens.input += input;
       bucket.tokens.output += output;
       bucket.tokens.cacheRead += cacheRead;
-      bucket.tokens.cacheCreation += cacheWrite;
+      bucket.tokens.cacheCreation += w.write5m;
+      bucket.tokens.cacheCreation1h += w.write1h;
     });
 }
 
@@ -480,32 +634,28 @@ function attribute(ctx, opts) {
     let cost = 0;
     Object.keys(b.models).forEach(function (mid) {
       const t = b.models[mid];
-      const p = priceFor(mid);
-      const c = estimateCost({
-        model: mid,
-        inputTokens: t.input,
-        outputTokens: t.output,
-        cacheReadTokens: t.cacheRead,
-        cacheCreationTokens: t.cacheCreation,
-      });
-      if (p.fallback) {
+      // Cost was summed per transcript line in scanUsage; only the fallback
+      // price flag needs the table again here.
+      const fallback = priceFor(mid).fallback;
+      if (fallback) {
         anyFallback = true;
         b.estimate = true;
       }
       models[mid] = {
-        tokens: Object.assign({ total: t.input + t.output + t.cacheRead + t.cacheCreation }, t),
-        costUSD: c,
-        fallbackPrice: p.fallback,
+        tokens: tokenView(t),
+        costUSD: t.costUSD,
+        fallbackPrice: fallback,
       };
-      cost += c;
+      cost += t.costUSD;
     });
     b.models = models;
     b.costUSD = cost;
-    b.tokens.total = b.tokens.input + b.tokens.output + b.tokens.cacheRead + b.tokens.cacheCreation;
+    b.tokens = tokenView(b.tokens);
     totalTok.input += b.tokens.input;
     totalTok.output += b.tokens.output;
     totalTok.cacheRead += b.tokens.cacheRead;
     totalTok.cacheCreation += b.tokens.cacheCreation;
+    totalTok.cacheCreation1h += b.tokens.cacheCreation1h;
     totalCost += cost;
     totalSessions += b.sessions;
     totalMessages += b.messages;
@@ -514,8 +664,6 @@ function attribute(ctx, opts) {
   list.sort(function (a, b) {
     return b.costUSD - a.costUSD || (a.cwd < b.cwd ? -1 : 1);
   });
-  totalTok.total = totalTok.input + totalTok.output + totalTok.cacheRead + totalTok.cacheCreation;
-
   return {
     at: ctx.now(),
     scanned: { sessions: rows.length, filesRead: filesRead, truncatedFiles: truncatedFiles },
@@ -525,7 +673,7 @@ function attribute(ctx, opts) {
       cwds: list.length,
       sessions: totalSessions,
       messages: totalMessages,
-      tokens: totalTok,
+      tokens: tokenView(totalTok),
       costUSD: totalCost,
     },
     note:
@@ -565,7 +713,14 @@ export {
   FALLBACK_PRICE,
   CACHE_READ_MULT,
   CACHE_WRITE_MULT,
+  CACHE_WRITE_1H_MULT,
+  LONG_CONTEXT_THRESHOLD,
+  LONG_CONTEXT_INPUT_MULT,
+  LONG_CONTEXT_OUTPUT_MULT,
+  FAST_MULT,
   priceFor,
+  rateCard,
+  costBreakdown,
   estimateCost,
   unified,
   predict,

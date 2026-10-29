@@ -14,7 +14,10 @@ import * as usage from './usage.js';
 import * as breaker from './breaker.js';
 import * as provider from './provider.js';
 import * as history from './history.js';
+import * as _cost from './cost.js';
 import * as proxyroutes from './proxyroutes.js';
+import * as tiers from './tiers.js';
+import * as _profiles from './profiles.js';
 import * as _settings from './settings.js';
 import * as _fsutil from './fsutil.js';
 import * as _config from './config.js';
@@ -214,12 +217,21 @@ function readMeta(ctx) {
   }
 }
 
-// Ordered accounts to try. Deterministic (#9): the ACTIVE account first, then
-// `proxy.priority` names in listed order, then least-recently-used, then name.
-// An account that is breaker-open OR inside a cooldown is skipped; if every
-// account is parked, the one that frees up soonest comes back with `waitMs` so
-// the request can wait it out instead of answering 503.
-function candidates(ctx, opts) {
+// Tier eligibility filtering (#12) is on by default. `keyflip config set
+// proxy.tierFilter false` disables it for a machine where the vendor's tier
+// strings are wrong; unknown tiers never block anything either way.
+function tierFilterEnabled(ctx) {
+  try {
+    return _config.get(ctx, 'proxy.tierFilter') !== false;
+  } catch (e) {
+    return true;
+  }
+}
+
+// Every account that holds a credential, with its breaker state, tier and (when
+// a model is given) whether that tier can serve it. Ordered per rank(); callers
+// decide what to drop. opts.model turns tier filtering on.
+function candidateRows(ctx, opts) {
   opts = opts || {};
   const nowMs = opts.nowMs !== undefined ? opts.nowMs : Date.now();
   const prio = priorityNames(ctx);
@@ -230,18 +242,26 @@ function candidates(ctx, opts) {
   } catch (e) {
     providerActive = false;
   }
+  // A provider profile is an API-key endpoint, not a Claude plan: tier rules do
+  // not apply, because the endpoint serves whatever its key is allowed to.
+  const filterModel = opts.model && !providerActive && tierFilterEnabled(ctx) ? opts.model : null;
   const rows = [];
   core.listProfiles(ctx).forEach(function (e) {
+    let blob = null;
     let hasKey = providerActive;
     if (!hasKey) {
       try {
-        hasKey = !!ctx.store.getProfile(e.name);
+        blob = ctx.store.getProfile(e.name);
       } catch (err) {
-        hasKey = false;
+        blob = null;
       }
+      hasKey = !!blob;
     }
     if (!hasKey) return;
     const cd = breaker.cooldownOf(ctx, e.name, { nowMs: nowMs });
+    const meta = _profiles.read(ctx.configDir, e.name);
+    const tier = tiers.resolve(blob, meta);
+    const elig = filterModel ? tiers.allows(tier, filterModel) : null;
     rows.push({
       name: e.name,
       active: !!e.active,
@@ -250,30 +270,48 @@ function candidates(ctx, opts) {
       cooldownKind: cd.kind,
       lastUsedAt: (all[e.name] && all[e.name].lastUsedAt) || 0,
       priority: prio.indexOf(e.name),
+      tier: tier,
+      eligible: elig ? elig.allowed : true,
+      ineligibleReason: elig && !elig.allowed ? elig.reason : null,
     });
   });
-  function rank(a, b) {
-    // A configured priority list wins over "active": if the user names an order,
-    // that IS the order. Unlisted accounts fall back to active-first, then LRU.
-    const pa = a.priority === -1 ? Number.MAX_SAFE_INTEGER : a.priority;
-    const pb = b.priority === -1 ? Number.MAX_SAFE_INTEGER : b.priority;
-    if (pa !== pb) return pa - pb;
-    if (a.active !== b.active) return a.active ? -1 : 1;
-    if (a.lastUsedAt !== b.lastUsedAt) return a.lastUsedAt - b.lastUsedAt;
-    return a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
-  }
-  const usable = rows.filter(function (r) {
+  return rows;
+}
+
+function rankRows(a, b) {
+  // A configured priority list wins over "active": if the user names an order,
+  // that IS the order. Unlisted accounts fall back to active-first, then LRU.
+  const pa = a.priority === -1 ? Number.MAX_SAFE_INTEGER : a.priority;
+  const pb = b.priority === -1 ? Number.MAX_SAFE_INTEGER : b.priority;
+  if (pa !== pb) return pa - pb;
+  if (a.active !== b.active) return a.active ? -1 : 1;
+  if (a.lastUsedAt !== b.lastUsedAt) return a.lastUsedAt - b.lastUsedAt;
+  return a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
+}
+
+// Ordered accounts to try. Deterministic (#9): the ACTIVE account first, then
+// `proxy.priority` names in listed order, then least-recently-used, then name.
+// An account that is breaker-open, inside a cooldown, or whose plan cannot serve
+// `opts.model` is skipped; if every account is parked, the one that frees up
+// soonest comes back with `waitMs` so the request can wait it out.
+function candidates(ctx, opts) {
+  opts = opts || {};
+  const rows = candidateRows(ctx, opts);
+  const eligible = rows.filter(function (r) {
+    return r.eligible !== false;
+  });
+  const usable = eligible.filter(function (r) {
     return !r.broken && !r.coolingMs;
   });
-  usable.sort(rank);
+  usable.sort(rankRows);
   if (usable.length) return usable;
   // Everything parked: offer the soonest-expiring cooldown, with the wait hint.
-  const soonest = rows
+  const soonest = eligible
     .filter(function (r) {
       return !r.broken;
     })
     .sort(function (a, b) {
-      return a.coolingMs - b.coolingMs || rank(a, b);
+      return a.coolingMs - b.coolingMs || rankRows(a, b);
     })[0];
   if (soonest) {
     soonest.waitMs = soonest.coolingMs;
@@ -281,10 +319,23 @@ function candidates(ctx, opts) {
   }
   // Every account breaker-open: the configured/active one is still the only
   // sensible last resort (breaker half-open recovery will re-admit it soon).
-  const active = rows.filter(function (r) {
+  const active = eligible.filter(function (r) {
     return r.active;
   })[0];
   return active ? [active] : [];
+}
+
+// Accounts a model is excluded from (#12), with the reason. Empty when tier
+// filtering is off, no model was given, or every account is eligible.
+function tierBlocked(ctx, opts) {
+  opts = opts || {};
+  return candidateRows(ctx, opts)
+    .filter(function (r) {
+      return r.eligible === false;
+    })
+    .map(function (r) {
+      return { name: r.name, tier: r.tier.id, label: r.tier.label, reason: r.ineligibleReason };
+    });
 }
 
 // The auth header + upstream base for a given account name. Uses the active
@@ -314,37 +365,78 @@ function upstreamFor(ctx, name) {
   return { base: 'https://api.anthropic.com', authKey: 'authorization', authVal: token ? 'Bearer ' + token : null };
 }
 
-// Best-effort token accounting from a (possibly SSE) response buffer.
-function extractUsage(buf) {
-  const text = buf.toString('utf8');
-  let input = null,
-    output = null,
-    model = null;
-  try {
-    const j = JSON.parse(text);
-    if (j.usage) {
-      input = j.usage.input_tokens;
-      output = j.usage.output_tokens;
-    }
-    model = j.model || model;
-  } catch (e) {
-    /* not plain JSON, try SSE */
+// The counter with the HIGHEST value for a quoted numeric field. Counts only
+// grow across SSE chunks (message_start -> message_delta), so the max is the
+// final value and a re-sent partial never undercounts. The leading quote means
+// "input_tokens" cannot be matched inside "cache_read_input_tokens".
+function maxInt(text, field) {
+  const re = new RegExp('"' + field + '"\\s*:\\s*(\\d+)', 'g');
+  let best = null,
+    m;
+  while ((m = re.exec(text))) {
+    const n = parseInt(m[1], 10);
+    if (best === null || n > best) best = n;
   }
-  if (input == null) {
-    const m = /"input_tokens"\s*:\s*(\d+)/.exec(text);
-    if (m) input = parseInt(m[1], 10);
-  }
-  // in SSE the final output count arrives in message_delta usage
-  const outs = text.match(/"output_tokens"\s*:\s*(\d+)/g);
-  if (outs && outs.length) output = parseInt(/(\d+)/.exec(outs[outs.length - 1])[1], 10);
-  if (!model) {
-    const mm = /"model"\s*:\s*"([^"]+)"/.exec(text);
-    if (mm) model = mm[1];
-  }
-  return { model: model, inputTokens: input, outputTokens: output };
+  return best;
 }
 
+// Best-effort token accounting from a (possibly SSE) response buffer. Returns
+// { model, inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens,
+//   cacheCreation1hTokens, fast } -- cacheCreationTokens is the 5-MINUTE share
+// (a 1h write is reported separately so the two are never double-counted) and
+// fast is true when the response says so or the served id ends in -fast.
+function extractUsage(buf) {
+  const text = buf.toString('utf8');
+  let model = null,
+    speed = null;
+  try {
+    const j = JSON.parse(text);
+    const msg = j && j.message && typeof j.message === 'object' ? j.message : j;
+    if (msg) {
+      if (typeof msg.model === 'string') model = msg.model;
+      if (msg.usage && typeof msg.usage.speed === 'string') speed = msg.usage.speed;
+    }
+  } catch (e) {
+    /* not plain JSON (SSE stream), the regex scan below covers it */
+  }
+  if (!model) {
+    const mm = /"model"\s*:\s*"([^"]{1,120})"/.exec(text);
+    if (mm) model = mm[1];
+  }
+  if (!speed) {
+    const sm = /"speed"\s*:\s*"([a-z]{1,20})"/.exec(text);
+    if (sm) speed = sm[1];
+  }
+  const writeTotal = maxInt(text, 'cache_creation_input_tokens');
+  const e1 = maxInt(text, 'ephemeral_1h_input_tokens');
+  const write1h = writeTotal === null ? e1 : Math.min(writeTotal, e1 === null ? 0 : e1);
+  const write5m =
+    writeTotal === null ? maxInt(text, 'ephemeral_5m_input_tokens') : Math.max(0, writeTotal - (write1h || 0));
+  return {
+    model: model,
+    inputTokens: maxInt(text, 'input_tokens'),
+    outputTokens: maxInt(text, 'output_tokens'),
+    cacheReadTokens: maxInt(text, 'cache_read_input_tokens'),
+    cacheCreationTokens: write5m,
+    cacheCreation1hTokens: write1h,
+    fast: speed === 'fast' || (!!model && /-fast$/.test(model)),
+  };
+}
+
+// Append one metered request to the cost log. costUSD is computed HERE, at the
+// per-request level, so the 200K long-context premium and fast mode are priced
+// on the request that incurred them (see cost.costBreakdown).
 function recordCost(ctx, account, u) {
+  if (!u) return;
+  const b = _cost.costBreakdown({
+    model: u.model,
+    inputTokens: u.inputTokens,
+    outputTokens: u.outputTokens,
+    cacheReadTokens: u.cacheReadTokens,
+    cacheCreationTokens: u.cacheCreationTokens,
+    cacheCreation1hTokens: u.cacheCreation1hTokens,
+    fast: u.fast === true,
+  });
   try {
     fs.appendFileSync(
       costFile(ctx),
@@ -354,6 +446,12 @@ function recordCost(ctx, account, u) {
         model: u.model,
         inputTokens: u.inputTokens,
         outputTokens: u.outputTokens,
+        cacheReadTokens: u.cacheReadTokens,
+        cacheCreationTokens: u.cacheCreationTokens,
+        cacheCreation1hTokens: u.cacheCreation1hTokens,
+        fast: u.fast === true,
+        longContext: b.longContext.applied,
+        costUSD: b.totalUSD,
       }) + '\n',
       { mode: 0o600 },
     );
@@ -443,11 +541,24 @@ async function handleRequest(ctx, reqInfo, clientRes, opts) {
   const routed = proxyroutes.applyTransforms(reqInfo, routes);
   let upstreamReq = routed.info;
 
-  const list = candidates(ctx, { nowMs: clock() });
+  const list = candidates(ctx, { nowMs: clock(), model: facts.model });
   if (!list.length) {
+    // Distinguish "every plan refuses this model" from "nothing available".
+    const blocked = tierBlocked(ctx, { nowMs: clock(), model: facts.model });
+    const msg = blocked.length
+      ? 'no account can serve ' +
+        facts.model +
+        ' (tier: ' +
+        blocked
+          .map(function (b) {
+            return b.name + ' ' + b.label;
+          })
+          .join(', ') +
+        ')'
+      : 'no usable account';
     clientRes.writeHead(503);
-    clientRes.end('keyflip proxy: no usable account');
-    return { status: 503, route: 'no usable account' };
+    clientRes.end('keyflip proxy: ' + msg);
+    return { status: 503, route: msg };
   }
   const usable = list.map(function (r) {
     return r.name;
@@ -747,13 +858,45 @@ function stats(ctx) {
     lines = [];
   }
   const byAccount = {};
+  let totalCost = 0;
   lines.forEach(function (r) {
-    const a = byAccount[r.account] || (byAccount[r.account] = { requests: 0, inputTokens: 0, outputTokens: 0 });
+    const a =
+      byAccount[r.account] ||
+      (byAccount[r.account] = {
+        requests: 0,
+        inputTokens: 0,
+        outputTokens: 0,
+        cacheReadTokens: 0,
+        cacheCreationTokens: 0,
+        cacheCreation1hTokens: 0,
+        costUSD: 0,
+        estimated: false,
+      });
     a.requests++;
     a.inputTokens += r.inputTokens || 0;
     a.outputTokens += r.outputTokens || 0;
+    a.cacheReadTokens += r.cacheReadTokens || 0;
+    a.cacheCreationTokens += r.cacheCreationTokens || 0;
+    a.cacheCreation1hTokens += r.cacheCreation1hTokens || 0;
+    // Lines written before per-request cost accounting carry no costUSD; price
+    // them now (one line = one request, so the premium logic still applies).
+    let usd = typeof r.costUSD === 'number' && isFinite(r.costUSD) ? r.costUSD : null;
+    if (usd === null) {
+      usd = _cost.costBreakdown({
+        model: r.model,
+        inputTokens: r.inputTokens,
+        outputTokens: r.outputTokens,
+        cacheReadTokens: r.cacheReadTokens,
+        cacheCreationTokens: r.cacheCreationTokens,
+        cacheCreation1hTokens: r.cacheCreation1hTokens,
+        fast: r.fast === true,
+      }).totalUSD;
+    }
+    a.costUSD += usd;
+    totalCost += usd;
+    if (_cost.priceFor(r.model).fallback) a.estimated = true;
   });
-  return { total: lines.length, byAccount: byAccount };
+  return { total: lines.length, costUSD: totalCost, byAccount: byAccount };
 }
 
 // Read-only view of the current routing decision (#10/#11): the order a request
@@ -762,35 +905,29 @@ function stats(ctx) {
 function routeState(ctx) {
   const nowMs = Date.now();
   const prio = priorityNames(ctx);
-  const all = breaker.readAll(ctx);
   let providerActive = false;
   try {
     providerActive = !!provider.readActive(ctx);
   } catch (e) {
     providerActive = false;
   }
-  const accounts = [];
-  core.listProfiles(ctx).forEach(function (e) {
-    let hasKey = providerActive;
-    if (!hasKey) {
-      try {
-        hasKey = !!ctx.store.getProfile(e.name);
-      } catch (err) {
-        hasKey = false;
-      }
-    }
-    if (!hasKey) return;
-    const cd = breaker.cooldownOf(ctx, e.name, { nowMs: nowMs });
-    accounts.push({
-      name: e.name,
-      active: !!e.active,
-      breaker: breaker.state(ctx, e.name, { nowMs: nowMs }),
-      coolingSeconds: cd.active ? Math.ceil(cd.remainingMs / 1000) : 0,
-      cooldownKind: cd.kind,
-      cooldownUntil: cd.active ? new Date(cd.until).toISOString() : null,
-      priority: prio.indexOf(e.name),
-      lastUsedAt: (all[e.name] && all[e.name].lastUsedAt) || 0 ? new Date(all[e.name].lastUsedAt).toISOString() : null,
-    });
+  const rows = candidateRows(ctx, { nowMs: nowMs });
+  const accounts = rows.map(function (r) {
+    const cd = breaker.cooldownOf(ctx, r.name, { nowMs: nowMs });
+    return {
+      name: r.name,
+      active: r.active,
+      breaker: r.broken ? 'open' : breaker.state(ctx, r.name, { nowMs: nowMs }),
+      coolingSeconds: r.coolingMs ? Math.ceil(r.coolingMs / 1000) : 0,
+      cooldownKind: r.cooldownKind,
+      cooldownUntil: r.coolingMs ? new Date(nowMs + r.coolingMs).toISOString() : null,
+      priority: r.priority,
+      lastUsedAt: r.lastUsedAt ? new Date(r.lastUsedAt).toISOString() : null,
+      tier: r.tier.id,
+      tierLabel: r.tier.label,
+      tierSource: r.tier.source,
+      tierKnown: r.tier.known,
+    };
   });
   const cands = candidates(ctx, { nowMs: nowMs });
   return {
@@ -809,6 +946,7 @@ function routeState(ctx) {
       providerActive: providerActive,
       maxWaitSeconds: cfgInt(ctx, 'proxy.maxWaitSeconds'),
       debugHeaders: debugEnabled(ctx),
+      tierFilter: tierFilterEnabled(ctx),
       cooldownSeconds: {
         quota: cfgInt(ctx, 'proxy.cooldownQuotaSeconds'),
         throttled: cfgInt(ctx, 'proxy.cooldownThrottledSeconds'),
@@ -829,7 +967,6 @@ async function explain(ctx, sel, opts) {
   opts = opts || {};
   const nowMs = opts.nowMs || Date.now();
   const live = proxyroutes.load(ctx);
-  const list = candidates(ctx, { nowMs: nowMs });
   const facts = {
     model: sel.model || null,
     path: sel.path || '/v1/messages',
@@ -837,6 +974,8 @@ async function explain(ctx, sel, opts) {
     headers: sel.headers || {},
     user: sel.user || null,
   };
+  const list = candidates(ctx, { nowMs: nowMs, model: facts.model });
+  const skipped = tierBlocked(ctx, { nowMs: nowMs, model: facts.model });
   const decision = await proxyroutes.decide(live.routes, facts, {
     accounts: list.map(function (r) {
       return r.name;
@@ -855,8 +994,34 @@ async function explain(ctx, sel, opts) {
     defaultOrder: list.map(function (r) {
       return r.name;
     }),
+    // Accounts excluded before any rule ran because their plan cannot serve the
+    // requested model (#12). Empty unless a Claude model was named.
+    skipped: skipped,
     waitSeconds: Math.ceil(((order[0] && order[0].waitMs) || 0) / 1000),
     routes: proxyroutes.describe(ctx),
+  };
+}
+
+// Read-only per-account tier view (#12): what keyflip believes each plan is,
+// where that came from, and any override. Backs `keyflip tier` and the MCP tool.
+function tierState(ctx) {
+  return {
+    at: new Date().toISOString(),
+    filter: tierFilterEnabled(ctx),
+    accounts: candidateRows(ctx, {}).map(function (r) {
+      return {
+        name: r.name,
+        active: r.active,
+        tier: r.tier.id,
+        label: r.tier.label,
+        source: r.tier.source, // credentials | override | null
+        known: r.tier.known,
+        families: r.tier.families,
+        override: r.tier.override,
+        coolingSeconds: Math.ceil(r.coolingMs / 1000),
+        breaker: r.broken ? 'open' : 'closed',
+      };
+    }),
   };
 }
 
@@ -995,6 +1160,9 @@ export {
   serve,
   handleRequest,
   candidates,
+  candidateRows,
+  tierBlocked,
+  tierState,
   upstreamFor,
   extractUsage,
   stats,

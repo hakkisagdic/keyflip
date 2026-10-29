@@ -9,6 +9,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Cost accounting down to the request: cache tiers, the 200K long-context premium and fast mode.**
+  Estimates were input/output only; every real invoice also bills prompt-cache reads (0.1x the input
+  rate), 5-minute cache writes (1.25x) and 1-hour writes (2x), a **whole request** at 2x input /
+  1.5x output once its prompt passes 200K tokens, and fast mode at a flat 6x. `src/cost.js` now
+  exposes a `rateCard(model)` (cache multipliers + `longContext` tier + `fast` multiplier, with
+  unknown models on a conservative fallback card) and `costBreakdown(tokens)` that itemizes
+  input/output/cache-read/cache-5m/cache-1h dollars and says whether the premium and fast mode
+  applied; `estimateCost` keeps its old signature on top of it and gains `cacheCreation1hTokens`,
+  `fast` and `longContext`. The proxy prices **each request** as it records it — it now reads
+  `cache_read_input_tokens`, the `cache_creation` 5m/1h split and `speed` from plain or SSE
+  responses — so `keyflip proxy stats` reports cache tokens and list-price spend per account, and
+  old `proxy-usage.jsonl` lines without a stored cost are priced on read. `keyflip cost by-project`
+  costs each transcript line on its own (one line = one request), and `cost status` still never
+  turns a percentage into dollars. New `keyflip cost rates [model]` prints the whole card (cache
+  multipliers, threshold, fast) or one model's; MCP: `keyflip_cost_rates` (read-only).
+- **The failover proxy now respects what each account's plan can actually serve.** The subscription
+  tier is read from the captured OAuth blob (`subscriptionType` + `rateLimitTier`, e.g. `max` +
+  `default_claude_max_5x`), normalized to free / pro / max / max5x / max20x / team / enterprise.
+  Only an explicitly known lower plan ever blocks: Free is skipped for Opus-class models while
+  Sonnet/Haiku still route; an unknown tier, a non-Claude model and provider-active mode are all
+  permissive, so the filter can never invent a refusal. `keyflip tier` shows each account's plan
+  and where it came from, and `keyflip tier <account> <tier|auto>` pins an override in that
+  account's existing meta JSON (no new state file) for a vendor string that is missing or wrong.
+  When a request's plan is refused by **every** account the proxy answers 503 with the reason and
+  tier detail *before sending anything* upstream; `proxy explain` lists the skipped accounts, and
+  `proxy.tierFilter=false` (new config key) turns the filter off. MCP: `keyflip_tiers` (read-only)
+  and `keyflip_tier_set` (confirm-gated).
 - **Declarative proxy routing: `proxy-routes.json`, rules, sticky sessions and a model chain.**
   The failover proxy can now decide *per request* instead of only reordering accounts.
   `~/.config/keyflip/proxy-routes.json` (optional; `keyflip proxy routes init` writes a valid

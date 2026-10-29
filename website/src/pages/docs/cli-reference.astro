@@ -85,9 +85,12 @@ import CommandReference from '../../components/CommandReference.astro';
           { cmd: 'keyflip proxy start --wire', desc: 'Start localhost failover proxy + wire Claude to it' },
           { cmd: 'keyflip proxy status', desc: 'Proxy health, stats, live route order + cooldowns' },
           { cmd: 'keyflip proxy routes [init]', desc: 'Declarative routing file: rules, sticky, fallback, transforms' },
-          { cmd: 'keyflip proxy explain --model M', desc: 'Where a request would go, and why (nothing sent)' },
+          { cmd: 'keyflip proxy explain --model M', desc: 'Where a request would go, and why (nothing sent); lists tier-skipped accounts' },
+          { cmd: 'keyflip proxy stats', desc: 'Requests, tokens, cache reads/writes and estimated list-price spend per account' },
           { cmd: 'keyflip proxy stop', desc: 'Stop proxy and unwire' },
           { cmd: 'keyflip cooldown [clear <acct>|--all]', desc: 'Which accounts are parked, and release them' },
+          { cmd: 'keyflip tier [<acct> <tier|auto>]', desc: 'Each account\'s plan and whether a model may route to it' },
+          { cmd: 'keyflip cost rates [model]', desc: 'Billable card: cache tiers, 200K long-context premium, fast mode' },
           { cmd: 'keyflip gateway use|off <provider>', desc: 'Route the desktop app to a provider' },
         ]} />
       </div>

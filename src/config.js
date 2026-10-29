@@ -111,6 +111,11 @@ SCHEMA['proxy.debugHeaders'] = {
   default: true,
   help: 'Add x-keyflip-account / x-keyflip-attempts / x-keyflip-failover headers to proxied responses.',
 };
+SCHEMA['proxy.tierFilter'] = {
+  type: 'bool',
+  default: true,
+  help: 'Skip accounts whose plan cannot serve the requested model (e.g. a Free plan for an Opus request). Unknown tiers never block.',
+};
 SCHEMA['proxy.cooldownQuotaSeconds'] = {
   type: 'int',
   default: 300,

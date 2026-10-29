@@ -348,8 +348,10 @@ keyflip threads drop fatura -y            # forget the NAME — every transcript
 ```bash
 keyflip proxy start --wire             # start localhost proxy + wire Claude Code to it
 keyflip proxy status                   # is it up? on what port? per-account totals
-keyflip proxy stats                    # request/token totals by account
+keyflip proxy stats                    # requests, tokens, cache reads/writes, ~list-price spend
 keyflip proxy stop                     # stop it and unwire settings.json
+keyflip tier                           # each account's plan + whether a model may route to it
+keyflip cost rates [model]             # billable card: cache tiers, 200K premium, fast mode
 ```
 - While up it routes each request to the active account and **fails over to the next
   healthy account on 429/5xx** before the client sees a byte. Ideal for long unattended
@@ -364,6 +366,16 @@ keyflip proxy stop                     # stop it and unwire settings.json
 keyflip proxy routes [init]            # the routing file, its errors and the policy
 keyflip proxy explain --model claude-opus-4 --tokens 200000   # where would it go, why?
 ```
+- **Plan-aware.** Each account's subscription tier is read from its captured login, so a
+  Free account is skipped for Opus-class models while Sonnet/Haiku still route. Only a
+  known lower plan blocks (unknown tiers, non-Claude models and provider mode are
+  permissive); when every account refuses, the proxy answers 503 before sending anything.
+  `keyflip tier <acct> <tier|auto>` pins or clears an override; `proxy.tierFilter=false`
+  disables the filter.
+- **Spend is priced per request.** `proxy stats` adds cache reads/writes and an estimated
+  list-price cost (cache read 0.1×, 5-minute write 1.25×, 1-hour write 2×, a >200K prompt
+  2× input / 1.5× output on the whole request, fast mode 6×); `keyflip cost rates` prints
+  the card. Estimates from a dated snapshot — never a vendor invoice.
 
 ---
 

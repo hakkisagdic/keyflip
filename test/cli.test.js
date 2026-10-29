@@ -878,3 +878,74 @@ test('proxy routes init writes a valid file; routes and explain read it back', f
   assert.deepStrictEqual(e.order, ['alice']);
   assert.strictEqual(e.routes.fallback, 'off');
 });
+
+test('tier shows/pins a plan, explain honors it, and auto clears it', function () {
+  const home = setupHome();
+  assert.strictEqual(run(home, ['add']).status, 0);
+
+  // The captured blob in this harness carries no subscriptionType -> unknown.
+  let j = JSON.parse(run(home, ['tier', '--json']).stdout);
+  assert.strictEqual(j.accounts.length, 1);
+  assert.strictEqual(j.accounts[0].tier, null);
+  assert.strictEqual(j.accounts[0].known, false);
+  assert.strictEqual(j.filter, true);
+
+  assert.strictEqual(run(home, ['tier', 'alice', 'free']).status, 0);
+  j = JSON.parse(run(home, ['tier', '--json']).stdout);
+  assert.strictEqual(j.accounts[0].tier, 'free');
+  assert.strictEqual(j.accounts[0].source, 'override');
+
+  // A Free plan cannot use Opus: nothing is eligible, and explain says who was skipped.
+  const opus = JSON.parse(run(home, ['proxy', 'explain', '--json', '--model', 'claude-opus-4-8']).stdout);
+  assert.deepStrictEqual(opus.order, []);
+  assert.deepStrictEqual(
+    opus.skipped.map(function (s) {
+      return s.name;
+    }),
+    ['alice'],
+  );
+
+  // Sonnet is fine on Free.
+  const sonnet = JSON.parse(run(home, ['proxy', 'explain', '--json', '--model', 'claude-sonnet-4-5']).stdout);
+  assert.deepStrictEqual(sonnet.order, ['alice']);
+  assert.deepStrictEqual(sonnet.skipped, []);
+
+  // A typo is refused and changes nothing.
+  const bad = run(home, ['tier', 'alice', 'ultra']);
+  assert.strictEqual(bad.status, 1);
+  assert.match(bad.stderr, /unknown tier/);
+  assert.strictEqual(JSON.parse(run(home, ['tier', '--json']).stdout).accounts[0].tier, 'free');
+
+  // 'auto' clears the override, and an unknown tier never blocks routing.
+  assert.strictEqual(run(home, ['tier', 'alice', 'auto']).status, 0);
+  j = JSON.parse(run(home, ['tier', '--json']).stdout);
+  assert.strictEqual(j.accounts[0].tier, null);
+  const again = JSON.parse(run(home, ['proxy', 'explain', '--json', '--model', 'claude-opus-4-8']).stdout);
+  assert.deepStrictEqual(again.order, ['alice']);
+});
+
+test('cost rates prints the table, one model card, and flags an unknown model', function () {
+  const home = setupHome();
+  const all = run(home, ['cost', 'rates', '--json']);
+  assert.strictEqual(all.status, 0, all.stderr);
+  const j = JSON.parse(all.stdout);
+  assert.ok(j.models.length >= 5);
+  const opus = j.models.find(function (m) {
+    return m.id === 'claude-opus-4-8';
+  });
+  assert.strictEqual(opus.inputPerMTok, 5);
+  assert.strictEqual(opus.longContext.inputMult, 2);
+  assert.strictEqual(opus.fast, 6);
+
+  const one = JSON.parse(run(home, ['cost', 'rates', '--json', 'claude-haiku-4-5']).stdout);
+  assert.strictEqual(one.id, 'claude-haiku-4-5');
+  assert.strictEqual(one.longContext, null);
+
+  const txt = run(home, ['cost', 'rates', 'claude-opus-4-8']);
+  assert.strictEqual(txt.status, 0, txt.stderr);
+  assert.match(txt.stdout, /long context/);
+  assert.match(txt.stdout, /fast mode/);
+
+  const unknown = JSON.parse(run(home, ['cost', 'rates', '--json', 'mystery-9']).stdout);
+  assert.strictEqual(unknown.fallback, true);
+});
