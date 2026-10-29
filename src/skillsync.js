@@ -96,27 +96,167 @@ const TARGETS = [
   { dir: '.zenflow/skills', ids: ['zenflow'], level: 'experimental' },
 ];
 
-const TEXT_EXT = [
-  '.md',
-  '.txt',
-  '.json',
-  '.jsonc',
-  '.js',
-  '.mjs',
-  '.cjs',
-  '.ts',
-  '.py',
-  '.sh',
-  '.yaml',
-  '.yml',
-  '.toml',
-  '.xml',
-  '.html',
-  '.css',
-];
+// A skill is CODE the agent will run, so the install inspects the WHOLE tree — every file
+// (hidden ones included) and every link. Two rules, no exceptions:
+//   - a link that leaves the skill is refused: it would point the agent at the user's
+//     ~/.ssh/id_rsa while no scan ever sees what it points at;
+//   - a file carrying a credential is refused, wherever it hides.
+const MAX_SCAN_BYTES = 2 * 1024 * 1024;
+// The fingerprint algorithm the manifest stores, so a manifest written by an older keyflip is
+// read with THAT algorithm instead of being misread as an edited copy.
+const FP_VERSION = 2;
 
 function manifestPath(ctx) {
   return path.join(ctx.configDir, 'installed-skills.json');
+}
+
+// Every entry in the tree, hidden files included. .git is skipped: it is version-control
+// metadata, never installed, never scanned and never hashed.
+function walkTree(dir, rel, cb, depth) {
+  if (depth > 12) return;
+  let entries;
+  try {
+    entries = fs.readdirSync(path.join(dir, rel), { withFileTypes: true });
+  } catch (e) {
+    return;
+  }
+  entries.forEach(function (e) {
+    if (e.name === '.git') return;
+    const childRel = rel ? rel + '/' + e.name : e.name;
+    cb(childRel, path.join(dir, childRel), e);
+    if (e.isDirectory()) walkTree(dir, childRel, cb, depth + 1);
+  });
+}
+
+// A binary is not where a readable credential hides; skip it instead of guessing.
+function isBinary(buf) {
+  const n = Math.min(buf.length, 8192);
+  for (let i = 0; i < n; i++) if (buf[i] === 0) return true;
+  return false;
+}
+
+// Read the head of a file. A skill may ship a big blob; the credential is near the top.
+function readHead(abs, max) {
+  let size;
+  try {
+    size = fs.statSync(abs).size;
+  } catch (e) {
+    return null;
+  }
+  if (!size) return Buffer.alloc(0);
+  let fd;
+  try {
+    fd = fs.openSync(abs, 'r');
+  } catch (e) {
+    return null;
+  }
+  try {
+    const buf = Buffer.alloc(Math.min(size, max));
+    const n = fs.readSync(fd, buf, 0, buf.length, 0);
+    return buf.subarray(0, n);
+  } catch (e) {
+    return null;
+  } finally {
+    try {
+      fs.closeSync(fd);
+    } catch (e) {
+      /* */
+    }
+  }
+}
+
+// A credential whose VALUE has no tell-tale shape: `AWS_SECRET_ACCESS_KEY=<40 base64 chars>`.
+// The key name gives it away, the value decides (a placeholder or a sentence is not a secret).
+function credentialValues(text) {
+  const hits = [];
+  text.split('\n').forEach(function (line) {
+    const m = line.match(/^\s*[-*]?\s*(["']?[A-Za-z0-9_.\-[\]]+["']?)\s*[:=]\s*(.+?)\s*[,;]?\s*$/);
+    if (!m) return;
+    const key = m[1].replace(/^["']|["']$/g, '');
+    const val = m[2].trim().replace(/^["']|["']$/g, '');
+    if (!_secretscan.isCredentialKey(key)) return;
+    if (_secretscan.isEnvRefOrEmpty(val)) return;
+    if (!_secretscan.looksSecret(val)) return;
+    hits.push(key);
+  });
+  return hits;
+}
+
+// Every file in the skill, scanned for credentials — hidden files included, because `.env` and
+// `.claude/settings.json` are read by the agent exactly like SKILL.md. Returns labels only
+// (never the secret).
+function secretsIn(dir) {
+  const found = [];
+  walkTree(dir, '', function (rel, abs, e) {
+    if (!e.isFile() || e.isSymbolicLink()) return;
+    const buf = readHead(abs, MAX_SCAN_BYTES);
+    if (!buf || !buf.length) return;
+    if (isBinary(buf)) return;
+    const text = buf.toString('utf8');
+    const labels = _secretscan.scanLabeled(text);
+    credentialValues(text).forEach(function (k) {
+      const label = 'credential-value:' + k;
+      if (labels.indexOf(label) === -1) labels.push(label);
+    });
+    if (labels.length) found.push({ file: rel, kinds: labels });
+  });
+  return found;
+}
+
+// A skill must be self-contained. A link inside it is refused: copied as-is it becomes a link
+// in the agent's skills dir that points at the SOURCE (a temp dir that is deleted right after
+// the install — a dangling link), and a link to ~/.ssh/id_rsa would hand the agent the user's
+// private key while no scan ever sees what it points at. Returns a human reason, or null when
+// the tree is clean.
+function linkProblem(dir) {
+  let problem = null;
+  const root = path.resolve(dir);
+  walkTree(dir, '', function (rel, abs, e) {
+    if (problem || !e.isSymbolicLink()) return;
+    let raw;
+    try {
+      raw = fs.readlinkSync(abs);
+    } catch (err) {
+      raw = '';
+    }
+    const resolved = path.resolve(path.dirname(abs), raw);
+    if (resolved !== root && resolved.indexOf(root + path.sep) !== 0) {
+      problem = rel + ' links outside the skill (' + raw + ')';
+      return;
+    }
+    problem = rel + ' is a link (' + raw + ') — a skill must be self-contained';
+  });
+  return problem;
+}
+
+// Copy a skill into place. .git is version-control metadata, not skill content: it is left
+// behind (and it is not in the fingerprint either, so the hash still describes what is written).
+function copySkill(src, dest) {
+  fs.cpSync(src, dest, {
+    recursive: true,
+    filter: function (s) {
+      return path.basename(s) !== '.git';
+    },
+  });
+}
+
+// The exact bytes keyflip will write: every file the skill ships, hidden ones included.
+function fingerprint(dir) {
+  return skill.fingerprint(dir);
+}
+
+// The hash an older keyflip recorded (visible files only). READ to recognise an old manifest;
+// never written any more.
+function legacyFingerprint(dir) {
+  return skill.fingerprintVisible(dir);
+}
+
+// Does the tree at `dir` still hold what the manifest recorded? `ver` is the fingerprint
+// algorithm that produced the recorded hash.
+function matchesRecorded(dir, sha256, ver) {
+  if (!sha256) return false;
+  const hash = ver >= FP_VERSION ? fingerprint(dir) : legacyFingerprint(dir);
+  return hash === sha256;
 }
 function readManifest(ctx) {
   try {
@@ -148,6 +288,17 @@ function targetById(id) {
   return (
     TARGETS.filter(function (t) {
       return t.ids.indexOf(id) !== -1;
+    })[0] || null
+  );
+}
+// The manifest is a file on disk: it can be edited, restored from a backup or copied from another
+// machine. Its `dir` is therefore NOT trusted — a skill may only be written to a directory keyflip
+// knows it writes to. That is what stops a poisoned manifest from turning `keyflip skill sync`
+// into "delete ~/.ssh and put the skill there".
+function targetForDir(dir) {
+  return (
+    TARGETS.filter(function (t) {
+      return t.dir === dir;
     })[0] || null
   );
 }
@@ -194,52 +345,17 @@ function safeName(name) {
   return /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(String(name || ''));
 }
 
-// Every text file in the skill, scanned for credentials. Returns labels only (never the secret).
-function secretsIn(dir) {
-  const found = [];
-  function walk(d, depth) {
-    if (depth > 6) return;
-    let entries;
-    try {
-      entries = fs.readdirSync(d, { withFileTypes: true });
-    } catch (e) {
-      return;
-    }
-    entries.forEach(function (e) {
-      if (e.name[0] === '.') return;
-      const p = path.join(d, e.name);
-      if (e.isDirectory()) return walk(p, depth + 1);
-      if (!e.isFile() || TEXT_EXT.indexOf(path.extname(e.name).toLowerCase()) === -1) return;
-      let text;
-      try {
-        if (fs.statSync(p).size > 2 * 1024 * 1024) return;
-        text = fs.readFileSync(p, 'utf8');
-      } catch (e2) {
-        return;
-      }
-      const labels = _secretscan.scanLabeled(text);
-      if (labels.length) found.push({ file: path.relative(dir, p), kinds: labels });
-    });
-  }
-  walk(dir, 0);
-  return found;
-}
-
-// The exact bytes keyflip will write: skill.fingerprint skips hidden files, which is also what an
-// agent reads, so the hash describes the skill rather than an editor's droppings.
-function fingerprint(dir) {
-  return skill.fingerprint(dir);
-}
-
 // A skill target is replaced by unlink-and-write, so a leaf symlink (which is how a --link install
 // is stored) is a normal state here, not an escape.
 function safeDest(dest, root) {
   return fsutil.safeDestUnder(root, dest, { allowSymlinkLeaf: true }).ok;
 }
 
-// Install the skill dirs under one resolved source into the chosen targets.
-// Returns { installed:[{name, targets:[{id, dir, mode}]}], skipped:[{name, reason}] }.
-function installResolved(ctx, root, source, opts) {
+// The target set a skill would be written to, plus every check that must pass BEFORE anything is
+// written: an unsafe name, a link that leaves the skill, a credential inside it, or a copy that
+// keyflip did not install (that one needs --force). All of it is checked up front, so a refusal
+// never leaves half an install behind.
+function prepareInstall(ctx, root, opts) {
   opts = opts || {};
   const dirs = _skillstore.findSkillDirs(root);
   if (!dirs.length) throw new Error('no SKILL.md found under ' + root + ' — not a skill');
@@ -249,11 +365,16 @@ function installResolved(ctx, root, source, opts) {
   if (!sel.targets.length)
     throw new Error('no agent detected on this machine — name one with --agents (see `keyflip skill agents`)');
   const manifest = readManifest(ctx);
-  const installed = [];
+  const plans = [];
   const skipped = [];
   dirs.forEach(function (d) {
     const name = path.basename(d);
-    if (!safeName(name)) return skipped.push({ name: name, reason: 'unsafe name' });
+    if (!safeName(name)) {
+      skipped.push({ name: name, reason: 'unsafe name' });
+      return;
+    }
+    const link = linkProblem(d);
+    if (link) throw new Error("refusing to install '" + name + "': " + link);
     const secrets = secretsIn(d);
     if (secrets.length) {
       // A skill the agent will read is code the agent will follow. A credential inside it is a leak
@@ -286,10 +407,27 @@ function installResolved(ctx, root, source, opts) {
             ' (not installed by keyflip) — pass --force to overwrite',
         );
       }
-      if (opts.dryRun) {
-        tgt.push({ id: t.ids[0], dir: t.dir, mode: opts.link ? 'symlink' : 'copy', dryRun: true });
-        return;
-      }
+      tgt.push({ id: t.ids[0], dir: t.dir, mode: opts.link ? 'symlink' : 'copy' });
+    });
+    plans.push({ name: name, dir: d, fp: fp, targets: tgt });
+  });
+  return { plans: plans, skipped: skipped };
+}
+
+// Write a prepared plan. Links inside the skill are copied dereferenced, so the installed tree
+// holds exactly the bytes the fingerprint described.
+function writeInstall(ctx, source, prepared, opts) {
+  opts = opts || {};
+  const manifest = readManifest(ctx);
+  const installed = [];
+  prepared.plans.forEach(function (p) {
+    const name = p.name;
+    const d = p.dir;
+    const fp = p.fp;
+    const tgt = [];
+    p.targets.forEach(function (x) {
+      const dest = path.join(ctx.home, x.dir, name);
+      if (!safeDest(dest, path.join(ctx.home, x.dir))) return;
       fs.rmSync(dest, { recursive: true, force: true });
       let mode = 'copy';
       if (opts.link) {
@@ -297,40 +435,79 @@ function installResolved(ctx, root, source, opts) {
           fs.symlinkSync(fs.realpathSync(d), dest, 'dir');
           mode = 'symlink';
         } catch (e) {
-          fs.cpSync(d, dest, { recursive: true });
+          copySkill(d, dest);
         }
       } else {
         fs.mkdirSync(path.dirname(dest), { recursive: true });
-        fs.cpSync(d, dest, { recursive: true });
+        copySkill(d, dest);
       }
-      tgt.push({ id: t.ids[0], dir: t.dir, mode: mode });
+      tgt.push({ id: x.id, dir: x.dir, mode: mode });
     });
-    if (opts.dryRun) {
-      installed.push({ name: name, targets: tgt, dryRun: true });
-      return;
-    }
     const prev = manifest[name] || {};
     manifest[name] = {
       source: String(source || ''),
       installedAt: ctx.now(),
       mode: tgt.length ? tgt[0].mode : 'copy',
       sha256: fp,
+      fp: FP_VERSION,
       targets: Object.assign({}, prev.targets || {}),
     };
     tgt.forEach(function (x) {
-      manifest[name].targets[x.id] = { dir: x.dir, sha256: fp, mode: x.mode };
+      manifest[name].targets[x.id] = { dir: x.dir, sha256: fp, mode: x.mode, fp: FP_VERSION };
     });
     installed.push({ name: name, targets: tgt });
   });
-  if (!opts.dryRun) writeManifest(ctx, manifest);
-  return { installed: installed, skipped: skipped };
+  writeManifest(ctx, manifest);
+  return { installed: installed, skipped: prepared.skipped };
+}
+
+// The plan as it would be written — what a dry run reports.
+function plannedInstall(prepared) {
+  return {
+    installed: prepared.plans.map(function (p) {
+      return {
+        name: p.name,
+        targets: p.targets.map(function (t) {
+          return Object.assign({}, t, { dryRun: true });
+        }),
+        dryRun: true,
+      };
+    }),
+    skipped: prepared.skipped,
+  };
+}
+
+// Install the skill dirs under one resolved source into the chosen targets.
+// Returns { installed:[{name, targets:[{id, dir, mode}]}], skipped:[{name, reason}] }.
+function installResolved(ctx, root, source, opts) {
+  opts = opts || {};
+  const prepared = prepareInstall(ctx, root, opts);
+  if (opts.dryRun) return plannedInstall(prepared);
+  return writeInstall(ctx, source, prepared, opts);
 }
 
 async function add(ctx, src, opts) {
   opts = opts || {};
   const resolved = await _skillstore.resolveSource(src, opts);
   try {
-    return installResolved(ctx, resolved.root, resolved.source, opts);
+    const prepared = prepareInstall(ctx, resolved.root, opts);
+    if (opts.approve) {
+      // A skill is CODE the agent will run, so the user sees the exact list of directories that
+      // will receive it and says yes BEFORE anything is written.
+      const ok = await opts.approve(
+        prepared.plans.map(function (p) {
+          return { name: p.name, targets: p.targets };
+        }),
+      );
+      if (!ok) {
+        prepared.plans.forEach(function (p) {
+          prepared.skipped.push({ name: p.name, reason: 'not approved' });
+        });
+        return { installed: [], skipped: prepared.skipped };
+      }
+    }
+    if (opts.dryRun) return plannedInstall(prepared);
+    return writeInstall(ctx, resolved.source, prepared, opts);
   } finally {
     if (resolved.cleanup) {
       try {
@@ -342,8 +519,8 @@ async function add(ctx, src, opts) {
   }
 }
 
-// The bundled keyflip skill, fanned out to the OTHER agents on this machine. Claude keeps skill.js's
-// install (it backs up the previous copy and answers `install-skill --check` for drift), so this
+// The bundled keyflip skill, fanned out to the OTHER agents on this machine. Claude keeps
+// skill.js's install (it backs up the previous copy and answers `install-skill --check` for drift), so this
 // skips ~/.claude/skills and reports an empty result when that is the only CLI here.
 function installBundled(ctx, opts) {
   opts = opts || {};
@@ -397,14 +574,18 @@ function list(ctx) {
     .sort()
     .map(function (n) {
       const e = m[n];
+      const nameOk = safeName(n);
       const targets = Object.keys(e.targets || {}).map(function (id) {
         const t = e.targets[id];
-        const dest = path.join(ctx.home, t.dir, n);
+        const known = targetForDir(t.dir);
+        if (!known) return { id: id, dir: t.dir, mode: t.mode, state: 'unknown-target' };
+        if (!nameOk) return { id: id, dir: known.dir, mode: t.mode, state: 'unsafe-name' };
+        const dest = path.join(ctx.home, known.dir, n);
         let state = 'missing';
         if (fs.existsSync(path.join(dest, 'SKILL.md'))) {
-          state = fingerprint(dest) === t.sha256 ? 'ok' : 'edited';
+          state = matchesRecorded(dest, t.sha256, t.fp || 1) ? 'ok' : 'edited';
         }
-        return { id: id, dir: t.dir, mode: t.mode, state: state };
+        return { id: id, dir: known.dir, mode: t.mode, state: state };
       });
       return {
         name: n,
@@ -445,25 +626,60 @@ async function sync(ctx, opts) {
         report.push({ name: name, status: 'source-changed', detail: 'the source no longer contains ' + name });
         continue;
       }
-      const fresh = fingerprint(dir);
+      // The source is held to the same rule as a fresh install: a skill that carries a link or a
+      // credential is not written into an agent's skills dir.
+      const link = linkProblem(dir);
+      if (link) {
+        report.push({ name: name, status: 'source-unsafe', detail: link });
+        continue;
+      }
+      const secrets = secretsIn(dir);
+      if (secrets.length) {
+        report.push({
+          name: name,
+          status: 'source-unsafe',
+          detail:
+            'it carries a credential (' +
+            secrets
+              .map(function (s) {
+                return s.file + ': ' + s.kinds.join(', ');
+              })
+              .join('; ') +
+            ')',
+        });
+        continue;
+      }
       const targets = [];
       Object.keys(e.targets || {}).forEach(function (id) {
         const t = e.targets[id];
-        const dest = path.join(ctx.home, t.dir, name);
+        // The manifest is a file on disk: it can be edited, restored from a backup or copied from
+        // another machine. Its `dir` is therefore NOT trusted — a skill may only be written to a
+        // directory keyflip knows it writes to. That is what stops a poisoned manifest from
+        // turning `keyflip skill sync` into "delete ~/.ssh and put the skill there".
+        const known = targetForDir(t.dir);
+        if (!known) return targets.push({ id: id, action: 'skipped-unknown-target' });
+        if (!safeName(name)) return targets.push({ id: id, action: 'skipped-unsafe-name' });
+        const dest = path.join(ctx.home, known.dir, name);
+        if (!safeDest(dest, path.join(ctx.home, known.dir)))
+          return targets.push({ id: id, action: 'skipped-unsafe-path' });
         const present = fs.existsSync(path.join(dest, 'SKILL.md'));
-        const state = !present ? 'missing' : fingerprint(dest) === t.sha256 ? 'ok' : 'edited';
+        const ver = t.fp || 1; // 1 = a manifest written before the fingerprint covered hidden files
+        const state = !present ? 'missing' : matchesRecorded(dest, t.sha256, ver) ? 'ok' : 'edited';
         if (state === 'edited') return targets.push({ id: id, action: 'left-edited' });
+        const fresh = ver >= FP_VERSION ? fingerprint(dir) : legacyFingerprint(dir);
         if (fresh === t.sha256 && state === 'ok') return targets.push({ id: id, action: 'current' });
         if (opts.dryRun) return targets.push({ id: id, action: 'would-update' });
         fs.rmSync(dest, { recursive: true, force: true });
         fs.mkdirSync(path.dirname(dest), { recursive: true });
-        fs.cpSync(dir, dest, { recursive: true });
-        t.sha256 = fresh;
+        copySkill(dir, dest);
+        t.sha256 = fingerprint(dir);
+        t.fp = FP_VERSION;
         t.mode = 'copy';
         targets.push({ id: id, action: 'updated' });
       });
       if (!opts.dryRun) {
-        e.sha256 = fresh;
+        e.sha256 = fingerprint(dir);
+        e.fp = FP_VERSION;
         writeManifest(ctx, m);
       }
       const changed = targets.some(function (t2) {
@@ -488,6 +704,7 @@ function remove(ctx, name, opts) {
   const m = readManifest(ctx);
   const e = m[name];
   if (!e) throw new Error("'" + name + "' was not installed by keyflip (refusing to remove it)");
+  if (!safeName(name)) throw new Error("refusing to remove '" + name + "': that is not a plain skill name");
   const ids =
     opts.agents && opts.agents.length
       ? opts.agents.map(function (id) {
@@ -496,11 +713,22 @@ function remove(ctx, name, opts) {
         })
       : Object.keys(e.targets || {});
   const removed = [];
+  const skipped = [];
   ids.forEach(function (id) {
     const t = (e.targets || {})[id];
     if (!t) return;
-    const dest = path.join(ctx.home, t.dir, name);
-    if (!safeDest(dest, path.join(ctx.home, t.dir))) return;
+    // Only a directory keyflip knows it writes to may be touched. The manifest's own `dir` is
+    // never used as the root of the check — a self-referential check would bless any path.
+    const known = targetForDir(t.dir);
+    if (!known) {
+      skipped.push(id + ' (unknown target dir ' + t.dir + ')');
+      return;
+    }
+    const dest = path.join(ctx.home, known.dir, name);
+    if (!safeDest(dest, path.join(ctx.home, known.dir))) {
+      skipped.push(id + ' (unsafe path)');
+      return;
+    }
     try {
       fs.rmSync(dest, { recursive: true, force: true });
       removed.push(id);
@@ -511,13 +739,14 @@ function remove(ctx, name, opts) {
   });
   if (!Object.keys(e.targets || {}).length) delete m[name];
   writeManifest(ctx, m);
-  return { name: name, removed: removed };
+  return { name: name, removed: removed, skipped: skipped };
 }
 
 export {
   TARGETS,
   allTargets,
   targetById,
+  targetForDir,
   isDetected,
   detectedTargets,
   selectTargets,
@@ -529,7 +758,9 @@ export {
   sync,
   remove,
   secretsIn,
+  linkProblem,
   fingerprint,
+  legacyFingerprint,
   readManifest,
   manifestPath,
 };

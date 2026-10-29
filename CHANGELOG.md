@@ -227,6 +227,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   build drops what is no longer there; a filtered build (`--app`, `--limit-sources`) still
   leaves the rest alone.
 
+### Security
+
+- **Cursor's tool output entered the conversation index verbatim; it is now capped and labelled.**
+  Cursor is the one adapter with nowhere else to keep a tool's payload — it lives in the message —
+  so a `cat` of a large file was embedded as if the assistant had written it, and could fill several
+  chunks. The message is now flagged `machine` and contributes at most 800 characters to the index,
+  prefixed `Tool output:`; the full text is still exported and still searchable by its head, and a
+  conversation that carries the flag re-chunks on its own (its hash changes), so no other source is
+  re-parsed. Every other reader already dropped tool results: they index tool calls by name only,
+  and a turn that held nothing but a tool result is skipped. Measured on this machine: 6 of 801
+  sampled chunks (0.7%) carry any tool marker.
+- **A skill could hide a credential in a dotfile and the install went ahead.** The pre-install scan
+  walked the skill tree with a `name[0] === '.'` skip, so `.env`, `.env.local` and any other hidden
+  file were never read — while `cpSync` copied them into the agent's directory, where the agent
+  reads them. The scan now covers **every** file, binary ones skipped by content, and a hit names
+  the file and the kind of secret (`refusing to install '<name>': it carries a credential
+  (.env: AWS_SECRET_ACCESS_KEY)`) without ever printing the value: both token shapes and
+  `KEY=value` lines whose key looks credential-shaped and whose value has entropy are caught.
+  Placeholder lines (`.env.example`, `${FOO}`, `<your-key>`) are still allowed through.
+- **A skill could put a symlink in an agent's directory that pointed at `~/.ssh`.** Installing used
+  `cpSync(..., {dereference:true})`, which — proved by probe — still copies a leaf symlink **as a
+  link**, with an absolute target back into the source tree; deleting the temp source then left a
+  dangling link, and an absolute link to `/etc` or `~/.ssh` survived verbatim. A skill is now
+  required to be self-contained: any symlink refuses the install, whether it points outside the
+  skill or back inside it. Copying also never carries `.git`, so the tree that lands in the agent's
+  directory is exactly the tree that was scanned.
+- **The manifest could redirect `sync` and `remove` anywhere on disk.** `installed-skills.json` is a
+  file on disk — editable, restorable from a backup, copyable from another machine — and its `dir`
+  was used verbatim, so a poisoned entry turned `keyflip skill sync` into "delete `~/.ssh` and put
+  the skill there". A target is now resolved through keyflip's own table of agent directories, and
+  the manifest's `dir` is only a *label*: an unknown one is reported as `skipped-unknown-target`
+  and nothing is written or deleted. The skill name from the same file is validated too — `remove`
+  accepts only a plain name (`^[A-Za-z0-9][A-Za-z0-9._-]*$`) and refuses the rest, `list` reports
+  such an entry as `unsafe-name` instead of trusting it.
+- **Editing a hidden file in an installed skill looked like an untouched copy.** The per-target
+  SHA-256 covered visible regular files only, so a `.env` or a `.mcp.json` added, changed or
+  removed under an installed skill kept the "ok" state — and `sync` overwrote it as if the user
+  had never touched it. The fingerprint (v2) now covers every file, hidden ones included, and
+  hashes a link by its target string. Manifest rows record `fp`; a row written by an older keyflip
+  (no `fp`, or `fp: 1`) is still read with the old algorithm, so existing installs do not all turn
+  into "edited" on upgrade.
+- **Installing or removing a skill wrote into the user's agents without asking.** `keyflip skill
+  add` fetched a repo and copied it into every detected agent's directory, and `skill remove`
+  deleted across all of them, from a script or an agent with no prompt at all. Both now confirm:
+  on a terminal a `[y/N]` question (printed per target before anything is written), and in a
+  non-interactive run they refuse with "re-run with --yes to confirm." An MCP caller that declines
+  gets `skipped: [{reason: 'not approved'}]` and zero writes. `--dry-run` still needs no approval.
+
 ### Changed
 
 - **What the conversation search is worth, measured and published.** The chunking work below shipped on

@@ -176,7 +176,10 @@ Copilot, Aider — normalized into one shape, harness noise stripped. Use them w
   `warning` when no embeddings exist. Snippets are credential-masked by default. `account` narrows
   the ranked list to one account's chats (the filter runs after ranking, so `hits` can come back
   shorter than `limit` — that is expected, not a broken index). A hit is a whole turn (question +
-  answer), and identical text from a forked/resumed session is shown once: the surviving hit lists
+  answer); a chunk labelled `Tool output:` is a tool's payload, not the user's or the assistant's
+  words — tool calls are otherwise indexed by name only and tool results not at all (Cursor keeps
+  one in the message, so it is capped at 800 chars and labelled). Identical text from a forked or
+  resumed session is shown once: the surviving hit lists
   the other conversations in `alsoIn` and `collapsed` counts the folded copies — cite `alsoIn` ids
   too when the user asks "which chat".
   **Measured on a 1,869-conversation index (84 frozen developer-style queries): BM25 hit@1 0.49 ·
@@ -847,6 +850,7 @@ keyflip skill add owner/repo          # install any skill from GitHub (or ./dir,
 keyflip skill add ./dir --agents claude,cursor   # or only the agents the user names
 keyflip skill sync                    # re-apply each skill's recorded source; a copy the user edited is LEFT ALONE
 keyflip skill list | remove <name>    # per-target state (✓ ok / ✎ edited / ✗ missing); removes only keyflip's copies
+keyflip skill remove <name> --yes     # non-interactive: add/remove write into agents' dirs, so they ask first
 
 keyflip proxy start --wire            # command-started localhost proxy; wires Claude Code to it
 keyflip proxy status | stats          # is it up? request/token/cache totals + estimated spend + live route order
@@ -860,14 +864,23 @@ keyflip tier [<acct> <tier|auto>]     # each account's plan + whether a model ma
 
 Skills are **written into every agent on the machine that reads one** — the target
 is the tool's own home (`~/.cursor/skills`, `~/.kiro/skills`, `~/.agents/skills`, …),
-so a tool that is not installed is never given a directory. Three rules the agent
+so a tool that is not installed is never given a directory. Four rules the agent
 must respect when asked to install a skill:
 
 - **Read the skill before installing.** A skill is code the agent will follow.
 - **A skill carrying a credential is refused**, not redacted (`refusing to install
-  '<name>': it carries a credential (<file>: <kind>)`). Do not work around it.
+  '<name>': it carries a credential (<file>: <kind>)`). Every file is scanned, hidden
+  ones included — a `.env` counts. Do not work around it.
+- **A skill must be self-contained.** Any symlink refuses the install: a copy would
+  leave a link pointing outside the agent's directory. `.git` is never copied, and
+  never hashed, so the fingerprint describes exactly what was installed.
 - **`sync` never overwrites a copy the user edited** (`left-edited`). If the user
   wants their edit replaced, remove and re-add, or `add --force`.
+
+The manifest is a file on disk and is not trusted: `sync`/`remove` only act on target
+dirs keyflip knows, report anything else as `skipped-unknown-target`, and refuse a
+name that is not a plain skill name. Both commands ask before writing into an agent's
+directory — on a terminal `[y/N]`, otherwise they need `--yes`.
 
 `keyflip install-skill` installs keyflip's own skill into `~/.claude/skills` (with a
 backup and a drift check: `--check`) and fans the same directory out to every other

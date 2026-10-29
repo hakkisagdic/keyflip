@@ -872,6 +872,7 @@ test(
       '<user_query> unwrapped, [REDACTED] dropped, editor-injected context dropped, graph blob carries no text',
     );
     assert.strictEqual(chat.messages[1].tools.join(','), 'Shell', 'a tool-call block names the tool');
+    assert.strictEqual(chat.messages[1].machine, undefined, 'reasoning is the agent’s scratchpad, not tool output');
     assert.strictEqual(
       chat.createdAt,
       '2025-12-31T23:58:20.000Z',
@@ -959,6 +960,10 @@ test(
       ['user:run it', 'assistant:2 tests failed'],
       'a tool result is reported as machine output, not as something the user said',
     );
+    // The payload is flagged so the conversation index can cap it: Cursor has no other place to
+    // keep a tool's output, and an unflagged 40 KB dump would be indexed verbatim.
+    assert.strictEqual(chat.messages[1].machine, true);
+    assert.strictEqual(chat.messages[0].machine, undefined, 'a user turn is never machine output');
   },
 );
 

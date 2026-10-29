@@ -581,6 +581,9 @@ function parseCursorChat(ctx, src, opts) {
       text: cleanMessage(m.text),
       ts: m.ts || null,
       tools: m.tools || [],
+      // Set only when the text is a tool's payload (Cursor keeps it in the message). An absent key
+      // leaves every other adapter's conversation hash byte-identical.
+      machine: m.machine === true ? true : undefined,
     }))
     .filter((m) => m.text || m.tools.length);
   // Surface is part of the identity, the same way Kiro's `kiro:cli:` / `kiro:ide:` are: an editor

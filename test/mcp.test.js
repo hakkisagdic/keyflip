@@ -783,8 +783,10 @@ test('install-skill fans the bundled skill out to other detected agents and reco
     }),
     ['claude:ok', 'cursor:ok'],
   );
-  // Removing the skill takes it from every recorded agent, the Claude copy included.
-  assert.strictEqual(cliRun(home, ['skill', 'remove', 'keyflip']).status, 0);
+  // Removing the skill takes it from every recorded agent, the Claude copy included. A removal
+  // deletes from the user's agents, so a non-TTY run has to carry the explicit --yes.
+  assert.strictEqual(cliRun(home, ['skill', 'remove', 'keyflip']).status, 1);
+  assert.strictEqual(cliRun(home, ['skill', 'remove', 'keyflip', '--yes']).status, 0);
   assert.ok(!fs.existsSync(path.join(home, '.claude', 'skills', 'keyflip')));
   assert.ok(!fs.existsSync(path.join(home, '.cursor', 'skills', 'keyflip')));
 });

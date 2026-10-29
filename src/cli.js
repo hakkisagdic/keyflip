@@ -6249,6 +6249,20 @@ function skillAgentIds(rest) {
 function skillTargetsLine(t) {
   return t.dir + (t.ids.length > 1 ? '  (' + t.ids.slice(0, 4).join(', ') + (t.ids.length > 4 ? ', …' : '') + ')' : '');
 }
+// A skill is CODE the agent will run, and `keyflip skill` writes into the user's own agent
+// config dirs. The MCP tools already demand confirm=true; the CLI asks the same question —
+// on a terminal, or with --yes when there is no terminal to ask.
+async function confirmSkillWrite(args, question) {
+  if (args.indexOf('--yes') !== -1 || args.indexOf('-y') !== -1) return true;
+  if (!process.stdin.isTTY) {
+    fail('this writes into your agents’ skill directories — re-run with --yes to confirm.');
+    return false;
+  }
+  const ok = await confirm(question);
+  if (!ok) print('Cancelled.');
+  return ok;
+}
+
 async function cmdSkill(ctx, rest) {
   const sub = rest[0];
   const args = rest.slice(1);
@@ -6282,7 +6296,7 @@ async function cmdSkill(ctx, rest) {
     })[0];
     if (!src)
       return fail(
-        'usage: keyflip skill add <owner/repo[@ref][/subdir] | ./dir | file.tar.gz> [--agents a,b] [--link] [--force] [--dry-run]',
+        'usage: keyflip skill add <owner/repo[@ref][/subdir] | ./dir | file.tar.gz> [--agents a,b] [--link] [--force] [--dry-run] [--yes]',
       );
     let r;
     try {
@@ -6291,6 +6305,25 @@ async function cmdSkill(ctx, rest) {
         link: args.indexOf('--link') !== -1,
         force: args.indexOf('--force') !== -1,
         dryRun: dryRun,
+        approve: async function (plan) {
+          if (dryRun) return true;
+          let dirs = 0;
+          plan.forEach(function (p) {
+            dirs += p.targets.length;
+            print(
+              '  ' +
+                style.bold(p.name) +
+                ' → ' +
+                p.targets
+                  .map(function (t) {
+                    return t.dir;
+                  })
+                  .join(', '),
+            );
+          });
+          if (!dirs) return false;
+          return await confirmSkillWrite(args, 'Install into ' + dirs + ' agent directory(ies)? [y/N] ');
+        },
       });
     } catch (e) {
       return fail(e.message);
@@ -6316,6 +6349,13 @@ async function cmdSkill(ctx, rest) {
   }
 
   if (sub === 'sync') {
+    if (!dryRun) {
+      const ok = await confirmSkillWrite(
+        args,
+        'Re-apply the installed skills into the agents’ skill directories? [y/N] ',
+      );
+      if (!ok) return;
+    }
     let rows;
     try {
       rows = await _skillsync.sync(ctx, { agents: agents, dryRun: dryRun });
@@ -6359,6 +6399,8 @@ async function cmdSkill(ctx, rest) {
   }
 
   if (sub === 'remove' || sub === 'rm') {
+    const ok = await confirmSkillWrite(args, 'Remove the skill from the agents’ skill directories? [y/N] ');
+    if (!ok) return;
     let r;
     try {
       r = _skillsync.remove(ctx, args[0], { agents: agents });
@@ -6367,9 +6409,10 @@ async function cmdSkill(ctx, rest) {
     }
     if (asJson) return jsonOut(r);
     print('🗑  removed ' + r.name + ' from ' + (r.removed.length ? r.removed.join(', ') : 'nowhere (no matching copy)'));
+    if (r.skipped && r.skipped.length) print(style.warn('·') + ' skipped: ' + r.skipped.join(', '));
     return;
   }
-  return fail('usage: keyflip skill [add <src>|sync|list|remove <name>|agents] [--agents a,b] [--dry-run]');
+  return fail('usage: keyflip skill [add <src>|sync|list|remove <name>|agents] [--agents a,b] [--dry-run] [--yes]');
 }
 
 // Session manager: browse/search/resume Claude Code conversations (all accounts).

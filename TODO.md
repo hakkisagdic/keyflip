@@ -64,9 +64,15 @@ same way `provusage.js` ported CodexBar. Goal (owner's words): "convert all asse
       Bilingual docs (README EN/TR + USE-CASES + SKILL + website EN/TR).
 - [x] MCP tools for agents (mutating → confirm-gated), in lockstep with docs:
       `keyflip_skill_agents` (RO), `keyflip_skill_add`/`_sync`/`_remove` (confirm), per-target state.
-- [ ] Adversarial review (secret-in-skill leak, path traversal into an agent's config dir, integrity
-      spoofing, install-without-confirm) → fix → regression tests. *(tests exist for secret refusal,
-      path check, edited-copy protection; an independent review is still open)*
+- [x] Adversarial review (secret-in-skill leak, path traversal into an agent's config dir, integrity
+      spoofing, install-without-confirm) → fix → regression tests. All five findings are closed and
+      pinned: the scan now reads **hidden files too** (a `.env` no longer slips through), any symlink
+      refuses the install (a copy would leave a link pointing outside the agent's dir), `sync`/`remove`
+      resolve the target through keyflip's own table (a poisoned manifest entry is
+      `skipped-unknown-target`, never followed) and validate the name, the fingerprint (v2) covers
+      every file including hidden ones so an edit cannot pass as "ok" (v1 rows from older manifests are
+      still read), and `add`/`remove` now prompt on a TTY and require `--yes` otherwise. `.git` is
+      neither scanned, copied nor hashed. `test/skillsync.test.js` carries the regressions.
 - [ ] MCP-server distribution to other agents (today `mcpreg` projects into Claude Code + Desktop
       only); needs RoleCraft's per-agent `mcp` configPath/format table.
 

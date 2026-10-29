@@ -748,6 +748,11 @@ function agentTextAndTools(doc) {
   const content = doc.content;
   const parts = [];
   const tools = [];
+  // Cursor is the one adapter that has nowhere else to put a tool's payload: the transcript holds
+  // it inside the message. It is kept (export and exact-string search want it) but flagged, so the
+  // conversation index can cap what one `cat` of a 2 MB file turns into. Reasoning is the agent's
+  // scratchpad in the same way — it stays, it is just not what the user said.
+  let machine = false;
   const push = function (t) {
     if (typeof t === 'string' && t.trim()) parts.push(t.trim());
   };
@@ -763,6 +768,7 @@ function agentTextAndTools(doc) {
       // never presented as something a person wrote.
       else if (b.type === 'tool-result' || b.type === 'tool_result') {
         if (b.toolName || b.name) tools.push(b.toolName || b.name);
+        const before = parts.length;
         const r = b.result != null ? b.result : b.output;
         if (typeof r === 'string') push(r);
         else if (Array.isArray(r))
@@ -775,6 +781,7 @@ function agentTextAndTools(doc) {
               .join('\n'),
           );
         else if (r && typeof r === 'object') push(JSON.stringify(r));
+        if (parts.length > before) machine = true;
       }
     });
   }
@@ -789,6 +796,7 @@ function agentTextAndTools(doc) {
       .replace(/\[REDACTED\]/g, '')
       .trim(),
     tools: tools,
+    machine: machine,
   };
 }
 
@@ -894,6 +902,7 @@ function agentChats(ctx, opts) {
           text: body.text,
           ts: toIso(doc.createdAt) || null,
           tools: body.tools,
+          machine: body.machine || undefined,
         });
       });
       if (!messages.length) return; // an empty session directory is not a chat
@@ -1030,6 +1039,7 @@ function transcriptChat(src) {
         text: body.text,
         ts: toIso(msg.createdAt || doc.createdAt || msg.timestamp) || null,
         tools: body.tools,
+        machine: body.machine || undefined,
       });
     });
   if (!messages.length) throw new Error('transcript ' + src.path + ' has no readable messages');

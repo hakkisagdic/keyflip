@@ -1013,6 +1013,15 @@ keyflip conv transfer a7dc93d0 --to codex         # başka bir yapay zekâ arac�
   `Assistant: …` parçalarını ortadan kaldırdı — önce 122.611 parçanın 15.392'si (%12,6), sonra 117.033
   parçanın 15'i. Bütün tutulamayacak kadar uzun bir tur, örtüşmeyle bölünür ve her parça sorusunun kısa
   bir kopyasını taşır; yani uzun bir cevabın ortası da "ne sorulmuştu" ile bulunur.
+- **Bir parçada ne var — ve bilerek ne yok.** İndekste sohbet vardır: bir kullanıcı turu ve aldığı
+  cevap. Araç çağrıları **adıyla** tutulur (`tools`), araç sonuçları ise hiç indekslenmez —
+  Claude/Qoder, Codex, Kiro ve Gemini okuyucuları onları atar, yalnızca araç sonucundan oluşan tur
+  da atlanır. Tek istisna Cursor: deposu aracın çıktısını mesajın içinde tutar. O çıktı yine birebir
+  dışa aktarılır (aradığın şey bir hata satırı ya da bir yol olur), ama indekslenen metin 800
+  karakterle sınırlanır, `Tool output:` etiketiyle işaretlenir ve mesaj `machine` olarak damgalanır;
+  böylece büyük bir dosyanın tek bir `cat`'i onlarca parçaya sahip olamaz. Bu makinede ölçüm:
+  örneklenen 801 parçanın 6'sında (%0,7) herhangi bir araç izi var — komut çıktısı fiilen vektör
+  deposunda değil. Amaç da bu: uzun, makine biçimli ve istemi tekrar eden bir metindir.
 - **Aynı paragraf bir kez gösterilir.** Dallanmış (fork) ve devam ettirilmiş oturumlar önceki turları
   birebir tekrarlar. `conv search` tek kopyayı tutar, diğer sohbetleri `alsoIn` içinde adlandırır ve
   katlanan kopyaları `collapsed` diye sayar — aynı cevaba birkaç sonuç yuvası harcamaz.
@@ -1188,11 +1197,13 @@ keyflip skill agents                  # 72 hedef dizin; ● = o araç burada
 keyflip skill add anthropics/skills   # GitHub / ./dizin / file.tgz'den her agent'a kur
 keyflip skill add ./benim-skill --agents claude,cursor   # …ya da yalnız adını verdiğin agent'lara
 keyflip skill sync                    # kaynak değiştiyse yeniden uygula; senin düzenlediğin kopyaya dokunmaz
-keyflip skill list | keyflip skill remove <ad>   # yalnız keyflip'in kurduklarına dokunur
+keyflip skill list | keyflip skill remove <ad> --yes  # yalnız keyflip'in kurduklarına dokunur
 keyflip install-skill                 # paketli keyflip skill'i → Claude + tespit edilen diğer agent'lar
 ```
 
-Tespit, aracın kendi ev dizinine bakar (`~/.cursor`, `~/.kiro`, …): keyflip kurulu olmayan bir araç için dizin uydurmaz; paylaşılan bir dizin (`~/.agents/skills` Codex, Warp, Goose, Zed ve daha fazlasına hizmet eder) bir kez yazılır. Yazmadan önce skill'in metni taranır — **sır taşıyan bir skill kabul edilmez, reddedilir (redakte edilmez)**. `~/.config/keyflip/installed-skills.json` manifesti hedef başına SHA-256 tutar: `sync` el değmemiş kopyayı senin düzenlediğinden ayırır (seninki asla üzerine yazılmaz), `remove` ise kendi yazmadığını silmez. `--link` kopyalamak yerine symlink kurar; `--dry-run` planı yazdırır, hiçbir şey yazmaz.
+Tespit, aracın kendi ev dizinine bakar (`~/.cursor`, `~/.kiro`, …): keyflip kurulu olmayan bir araç için dizin uydurmaz; paylaşılan bir dizin (`~/.agents/skills` Codex, Warp, Goose, Zed ve daha fazlasına hizmet eder) bir kez yazılır. Yazmadan önce skill'in metni taranır — **sır taşıyan bir skill kabul edilmez, reddedilir (redakte edilmez)** — ve *her* dosya sayılır, gizli olanlar dahil: bir `.env` ya da `AWS_SECRET_ACCESS_KEY=` satırı, bir token biçimi gibi kurulumu durdurur. Skill ayrıca kendi kendine yetmelidir: herhangi bir symlink (`/etc`'ye, `~/.ssh`'a, hatta skill'in kendi içine) kurulumu reddettirir, çünkü kopya dışarıyı gösteren bir bağ bırakırdı. `.git` hiç kopyalanmaz ve hiç hash'lenmez. `~/.config/keyflip/installed-skills.json` manifesti hedef başına SHA-256 ve parmak izi sürümünü tutar: `sync` el değmemiş kopyayı senin düzenlediğinden ayırır (seninki asla üzerine yazılmaz), gizli dosya düzenlemeleri artık görünmez değildir.
+
+Manifest diskteki bir dosyadır, bu yüzden güvenilmez: `sync` ve `remove` yalnızca keyflip'in kendi yazdığı hedef dizinlerde işlem yapar; başka bir yeri (`~/.ssh`, iç içe bir yol) gösteren manifest kaydı izlenmez, `skipped-unknown-target` olarak raporlanır; `remove` düz bir skill adı olmayan adı reddeder. Kurulum ve kaldırma agent'larının kendi dizinlerine yazdığı için ikisi de önce sorar: uçbirimde `[y/N]`, betikte veya agent'tan `--yes` gerekir. `--link` kopyalamak yerine symlink kurar; `--dry-run` planı yazdırır, hiçbir şey yazmaz.
 
 ### Failover proxy
 

@@ -923,6 +923,15 @@ keyflip conv transfer a7dc93d0 --to codex         # a handoff bundle for another
   1864-conversation index that removed the orphaned `Assistant: …` chunks — 15,392 of 122,611 (12.6%)
   before, 15 of 117,033 after. A turn too long to keep whole is split with overlap and every piece keeps
   a short copy of its question, so the middle of a long answer is still findable by what was asked.
+- **What a chunk contains — and what it deliberately leaves out.** The index holds the conversation:
+  a user turn and the answer it got. Tool calls are kept by **name** (`tools`), and tool results are
+  not indexed at all — the Claude/Qoder, Codex, Kiro and Gemini readers drop them, and a turn that
+  held nothing but a tool result is skipped. The one exception is Cursor, whose store keeps a tool's
+  payload inside the message: it is still exported verbatim (an error string or a path is what you
+  search for), but the indexed text is capped at 800 characters, labelled `Tool output:`, and the
+  message is marked `machine`, so one `cat` of a large file cannot own dozens of chunks. Measured
+  here: of 801 sampled chunks, 6 (0.7%) carry any tool marker — command output is effectively not in
+  the vector store, which is the point: it is long, machine-formatted and repeats the prompt.
 - **The same paragraph is shown once.** Forked and resumed sessions repeat earlier turns verbatim. `conv search`
   keeps one copy, names the other conversations in `alsoIn` and counts the folded copies in `collapsed`
   instead of spending several page slots on one answer.
@@ -1097,11 +1106,13 @@ keyflip skill agents                  # 72 target dirs; ● = that tool is here
 keyflip skill add anthropics/skills   # install from GitHub / ./dir / file.tgz into every agent here
 keyflip skill add ./my-skill --agents claude,cursor   # …or only the agents you name
 keyflip skill sync                    # re-apply a source change; a copy you edited is left alone
-keyflip skill list | keyflip skill remove <name>      # only touches what keyflip installed
+keyflip skill list | keyflip skill remove <name> --yes # only touches what keyflip installed
 keyflip install-skill                 # the bundled keyflip skill → Claude + every other detected agent
 ```
 
-Detection is by the tool's own home (`~/.cursor`, `~/.kiro`, …): keyflip never invents a directory for a tool you don't have, and a shared dir (`~/.agents/skills` serves Codex, Warp, Goose, Zed and more) is written once. Before any write, the skill's text is scanned — **a skill carrying a credential is refused, not redacted**. A manifest (`~/.config/keyflip/installed-skills.json`) keeps a SHA-256 per target, so `sync` tells an untouched copy from one you edited (yours is never overwritten) and `remove` deletes nothing it did not write. `--link` symlinks instead of copying; `--dry-run` prints the plan and writes nothing.
+Detection is by the tool's own home (`~/.cursor`, `~/.kiro`, …): keyflip never invents a directory for a tool you don't have, and a shared dir (`~/.agents/skills` serves Codex, Warp, Goose, Zed and more) is written once. Before any write, the skill's text is scanned — **a skill carrying a credential is refused, not redacted** — and every file counts, hidden ones included: a `.env` or an `AWS_SECRET_ACCESS_KEY=` line stops the install just as a token shape does. A skill must also be self-contained: any symlink (to `/etc`, to `~/.ssh`, even one pointing back inside the skill) refuses the install, because a copy would leave a link pointing outside it. `.git` is never copied and never hashed. A manifest (`~/.config/keyflip/installed-skills.json`) keeps a SHA-256 per target and records the fingerprint version, so `sync` tells an untouched copy from one you edited (yours is never overwritten) and hidden-file edits are no longer invisible.
+
+The manifest is a file on disk, so it is not trusted: `sync` and `remove` act only on target directories keyflip itself writes to, and a manifest entry naming anything else (`~/.ssh`, a nested path) is reported as `skipped-unknown-target` rather than followed, and `remove` refuses a name that is not a plain skill name. Because installing and removing write into your agents' own directories, both ask first: on a terminal you get a `[y/N]` prompt, and in a script or from an agent you must pass `--yes`. `--link` symlinks instead of copying; `--dry-run` prints the plan and writes nothing.
 
 ### Failover proxy
 

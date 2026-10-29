@@ -1403,7 +1403,7 @@ const TOOLS = [
     name: 'keyflip_conv_search',
     title: 'Search every conversation (BM25, embeddings, hybrid)',
     description:
-      'Search the CONTENT of every local conversation keyflip has indexed. Modes: lexical (BM25, always available), semantic (needs embeddings), hybrid (reciprocal-rank fusion; falls back to lexical with a warning when no vectors exist). Filters narrow by app/cwd/since. Snippets are masked for credential shapes by default. Results are chunk-level, one per conversation by default, so raise limit to page. Identical chunk text (a forked or resumed session repeating earlier turns) is shown ONCE: the surviving hit names the other conversation ids in `alsoIn` and `collapsed` counts the copies that were folded. Never uploads anything; embeddings run locally (Ollama) or at the URL the user configured. Read-only: it does NOT build an index — if none exists, ask the user and call keyflip_conv_index with confirm=true. Hints return the id to read with keyflip_conv_show and the query to feed keyflip_conv_context.',
+      'Search the CONTENT of every local conversation keyflip has indexed. Modes: lexical (BM25, always available), semantic (needs embeddings), hybrid (reciprocal-rank fusion; falls back to lexical with a warning when no vectors exist). Filters narrow by app/cwd/since. Snippets are masked for credential shapes by default. Results are chunk-level, one per conversation by default, so raise limit to page. Chunks hold the conversation: tool calls are indexed by name only and tool results not at all, except Cursor (its store keeps the payload in the message) where the text is capped at 800 chars and prefixed `Tool output:` — quote it as machine output, never as something a person said. Identical chunk text (a forked or resumed session repeating earlier turns) is shown ONCE: the surviving hit names the other conversation ids in `alsoIn` and `collapsed` counts the copies that were folded. Never uploads anything; embeddings run locally (Ollama) or at the URL the user configured. Read-only: it does NOT build an index — if none exists, ask the user and call keyflip_conv_index with confirm=true. Hints return the id to read with keyflip_conv_show and the query to feed keyflip_conv_context.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1931,7 +1931,7 @@ const TOOLS = [
     name: 'keyflip_skill_add',
     title: 'Install a skill',
     description:
-      'Install a skill from a GitHub repo (owner/repo[@ref][/subdir]), a local directory, or a .tar.gz/.zip into every agent on this machine (or only the agents named in `agents`, e.g. ["claude","cursor"]). Installs code the agent will run — ask the user first, then confirm=true. dry_run=true reports the plan and writes nothing.',
+      'Install a skill from a GitHub repo (owner/repo[@ref][/subdir]), a local directory, or a .tar.gz/.zip into every agent on this machine (or only the agents named in `agents`, e.g. ["claude","cursor"]). Installs code the agent will run — ask the user first, then confirm=true. dry_run=true reports the plan and writes nothing. The source is inspected first, hidden files included: a skill that ships a credential-looking value or token, or any symlink, is refused rather than copied.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1953,7 +1953,7 @@ const TOOLS = [
     name: 'keyflip_skill_sync',
     title: 'Re-apply skills from their sources',
     description:
-      'Re-fetch every keyflip-installed skill from the source it was installed from. A copy the user edited is reported, never overwritten. Ask the user first, then confirm=true.',
+      'Re-fetch every keyflip-installed skill from the source it was installed from. A copy the user edited is reported, never overwritten. Each source is re-checked before it is copied (it may have gained a secret or a link); a manifest entry naming a directory keyflip does not own is skipped, not followed. Ask the user first, then confirm=true.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1974,7 +1974,7 @@ const TOOLS = [
     name: 'keyflip_skill_remove',
     title: 'Remove an installed skill',
     description:
-      'Remove a keyflip-installed skill from every agent (or only from the agents named in `agents`). Never touches a skill the user installed. Ask the user first, then confirm=true.',
+      'Remove a keyflip-installed skill from every agent (or only from the agents named in `agents`). Never touches a skill the user installed, and deletes only in directories keyflip knows it writes to — a manifest entry pointing anywhere else is reported as skipped. Ask the user first, then confirm=true.',
     inputSchema: {
       type: 'object',
       properties: {

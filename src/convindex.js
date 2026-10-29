@@ -33,9 +33,15 @@ const ID_SCHEME = 2;
 // Bump when the way text is cut into chunks changes. The reuse paths compare mtime/size, so
 // without this an unchanged transcript would keep serving chunks cut by the old rules.
 // 2: whole turns (question + its answer) instead of ~1400-char windows.
+// Not bumped for the tool-output cap below: a tool payload only exists in a Cursor message, and
+// the flag changes that conversation's hash, so those sources re-chunk on their own — bumping
+// here would re-parse all 142 MB of this machine's transcripts to change nothing.
 const CHUNK_SCHEME = 2;
 const INDEX_DIR = 'conv-index';
 const CHUNK_TARGET = 1400; // characters per chunk
+// A tool result (Cursor keeps it inside the message) is searchable by its head; the tail of a
+// `cat` of a large file is not what anyone is looking for, and it would eat the chunk budget.
+const MACHINE_CAP = 800;
 const CHUNK_OVERLAP = 180; // only for a single oversized message
 const EMBED_BATCH = 32;
 const EMBED_MAX_CHARS = 6000;
@@ -135,12 +141,23 @@ function splitLong(text) {
 // message) and only ever breaks BETWEEN turns. A turn that is itself too long is split with
 // overlap, and every continuation keeps a short copy of its question so the middle of a long
 // answer is still findable by what was asked.
+// What a message contributes to the index. A tool's output (marked `machine` by the one adapter
+// that keeps it in the message text) is kept — an error string or a path is exactly what someone
+// searches for — but only its head, labelled, so one `cat` cannot fill several chunks with bytes
+// nobody meant to search. The full text stays in the transcript and every export.
+function chunkBody(m) {
+  const body = String(m.text || '').trim();
+  if (!body || m.machine !== true) return body;
+  const head = body.length > MACHINE_CAP ? body.slice(0, MACHINE_CAP).trimEnd() + ' …' : body;
+  return 'Tool output: ' + head;
+}
+
 function chunkConversation(conv) {
   const labelOf = (role) => (role === 'assistant' ? 'Assistant: ' : role === 'user' ? 'User: ' : '');
   const turns = [];
   let cur = null;
   for (const m of conv.messages || []) {
-    const body = String(m.text || '').trim();
+    const body = chunkBody(m);
     if (!body) continue;
     const text = labelOf(m.role) + body;
     // A user message always starts a turn; so does any message with no turn open (a transcript
@@ -1482,6 +1499,7 @@ function contextPack(ctx, query, hits, opts) {
 export {
   SCHEMA_VERSION,
   INDEX_DIR,
+  CHUNK_SCHEME,
   CHUNK_TARGET,
   RRF_K,
   RRF_WEIGHTS,

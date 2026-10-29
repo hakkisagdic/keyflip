@@ -364,15 +364,15 @@ test('chunks cut by an older scheme are rebuilt even when the transcript is unto
     { type: 'user', message: { role: 'user', content: 'How do we run the database migration safely?' } },
   ]);
   await convindex.build(ctx, {});
-  // Simulate a row written before CHUNK_SCHEME 2: same id, same hash, same mtime/size — only
+  // Simulate a row written by the previous scheme: same id, same hash, same mtime/size — only
   // the chunking rules are older. Reusing it would keep serving chunks cut the old way.
   const meta = readManifest(ctx);
-  meta.sources['claude:local:db-1'].chunkScheme = 1;
+  meta.sources['claude:local:db-1'].chunkScheme = convindex.CHUNK_SCHEME - 1;
   fs.writeFileSync(convindex.metaPath(ctx), JSON.stringify(meta));
   const r = await convindex.build(ctx, {});
   assert.strictEqual(r.changed, 1, 'the source is re-chunked');
   assert.strictEqual(r.reused, 0);
-  assert.strictEqual(readManifest(ctx).sources['claude:local:db-1'].chunkScheme, 2);
+  assert.strictEqual(readManifest(ctx).sources['claude:local:db-1'].chunkScheme, convindex.CHUNK_SCHEME);
 });
 
 test('context pack is budgeted, sourced, and expand pulls in neighbouring chunks', async function () {
@@ -433,6 +433,29 @@ test('chunkConversation packs short turns and marks oversized ones', function ()
   });
   long.forEach((c) => assert.strictEqual(c.role, 'user'));
   assert.strictEqual(new Set(chunks.map((c) => c.n)).size, chunks.length);
+});
+
+test('a tool result is indexed by its head, labelled, not swallowed into the answer', function () {
+  // Cursor is the only adapter that keeps a tool's payload in the message text. A 40 KB `cat`
+  // would otherwise own dozens of chunks and drown the turn it belongs to; the head keeps an
+  // error string or a path searchable, and the label says whose words these are not.
+  const dump = 'Exit code: 1\n' + 'stack frame line\n'.repeat(3000);
+  const conv = {
+    messages: [
+      { role: 'user', text: 'why did the build fail?' },
+      { role: 'assistant', text: 'the retry count', machine: false },
+      { role: 'assistant', text: dump, machine: true },
+    ],
+  };
+  const chunks = convindex.chunkConversation(conv);
+  assert.strictEqual(chunks.length, 1, 'the capped payload fits in the turn');
+  assert.match(chunks[0].text, /why did the build fail\?/);
+  assert.match(chunks[0].text, /Assistant: the retry count/);
+  assert.match(chunks[0].text, /Tool output: Exit code: 1/);
+  assert.ok(chunks[0].text.length < convindex.CHUNK_TARGET * 1.5, 'the dump does not fill the chunk');
+  // A message that is not a tool payload is untouched — no label, no cap.
+  const plain = convindex.chunkConversation({ messages: [{ role: 'assistant', text: dump.slice(0, 100) }] });
+  assert.strictEqual(plain[0].text, 'Assistant: ' + dump.slice(0, 100));
 });
 
 test('a question and its answer stay in one chunk when they fit together', function () {

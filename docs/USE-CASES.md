@@ -481,6 +481,7 @@ keyflip skill agents                   # the skill targets; ● = that tool is o
 keyflip skill add owner/repo           # any skill → every detected agent (or --agents a,b)
 keyflip skill sync                     # re-apply sources; a copy you edited is left alone
 keyflip skill list | remove <name>     # per-agent state; only removes keyflip-installed copies
+keyflip skill remove <name> --yes      # non-interactive scripts must confirm the write
 keyflip mcp --setup                    # show how to register keyflip's MCP server
 keyflip mcpreg add ctx -- some-server  # manage MCP servers once, project into Code + Desktop
 keyflip mcpreg list | enable | disable | remove | import

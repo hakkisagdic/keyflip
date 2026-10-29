@@ -243,9 +243,9 @@ import CommandReference from '../../../components/CommandReference.astro';
           { cmd: 'keyflip mcp [--setup|--register]', desc: 'Ajanlar için stdio üzerinden MCP sunucusu (--register: mutlak yollu kendi kaydı)' },
           { cmd: 'keyflip install-skill', desc: 'Paketli keyflip becerisi → ~/.claude/skills/keyflip + tespit edilen diğer ajanlar' },
           { cmd: 'keyflip skill agents', desc: 'Keyflip’in yazabildiği tüm ajan beceri dizinleri ve hangi araçların kurulu olduğu' },
-          { cmd: 'keyflip skill add <repo|dir|tgz> [--agents a,b]', desc: 'Beceri kur: tespit edilen her ajana (veya yalnız adını verdiklerine)' },
-          { cmd: 'keyflip skill sync', desc: 'Her becerinin kaynağını yeniden uygula; senin düzenlediğin kopyaya dokunmaz' },
-          { cmd: 'keyflip skill list|remove <isim>', desc: 'Ajan başına durum (ok/edited/missing); yalnız keyflip’in kurduğunu siler' },
+          { cmd: 'keyflip skill add <repo|dir|tgz> [--agents a,b] [--yes]', desc: 'Beceri kur: tespit edilen her ajana (veya yalnız adını verdiklerine); sır taşıyan (gizli dosyalar dahil) veya symlink içeren beceriyi reddeder' },
+          { cmd: 'keyflip skill sync [--yes]', desc: 'Her becerinin kaynağını yeniden uygula; senin düzenlediğin kopyaya dokunmaz, sonradan sır eklenen kaynağı atlar' },
+          { cmd: 'keyflip skill list|remove <isim> [--yes]', desc: 'Ajan başına durum (ok/edited/missing); yalnız keyflip’in bildiği dizinlerde siler' },
           { cmd: 'keyflip brain "<niyet>"', desc: 'Düz dilden önerilen keyflip adımlarına (isteğe bağlı)' },
         ]} />
       </div>

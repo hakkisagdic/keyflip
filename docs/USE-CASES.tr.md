@@ -481,6 +481,7 @@ keyflip skill agents                   # skill hedefleri; ● = o araç bu makin
 keyflip skill add owner/repo           # herhangi bir skill → tespit edilen her ajan (ya da --agents a,b)
 keyflip skill sync                     # kaynakları yeniden uygula; senin düzenlediğin kopyaya dokunmaz
 keyflip skill list | remove <ad>       # ajan başına durum; yalnız keyflip'in kurduklarını kaldırır
+keyflip skill remove <ad> --yes        # etkileşimsiz betikler yazmayı onaylamalı
 keyflip mcp --setup                    # keyflip'in MCP sunucusunu nasıl kaydedeceğini göster
 keyflip mcpreg add ctx -- some-server  # MCP sunucularını bir kez yönet, Code + Desktop'a yansıt
 keyflip mcpreg list | enable | disable | remove | import

@@ -244,9 +244,9 @@ import CommandReference from '../../components/CommandReference.astro';
           { cmd: 'keyflip mcp [--setup|--register]', desc: 'MCP server over stdio for agents (--register: absolute-path self-entry in Claude Code + Desktop)' },
           { cmd: 'keyflip install-skill', desc: 'Bundled keyflip skill → ~/.claude/skills/keyflip + every other detected agent' },
           { cmd: 'keyflip skill agents', desc: 'Every agent skill dir keyflip can write, and which tools are present' },
-          { cmd: 'keyflip skill add <repo|dir|tgz> [--agents a,b]', desc: 'Install a skill into every detected agent (or only the ones you name)' },
-          { cmd: 'keyflip skill sync', desc: 'Re-apply each skill source; a copy you edited is left alone' },
-          { cmd: 'keyflip skill list|remove <name>', desc: 'Per-agent state (ok/edited/missing); removes only keyflip-installed copies' },
+          { cmd: 'keyflip skill add <repo|dir|tgz> [--agents a,b] [--yes]', desc: 'Install a skill into every detected agent (or only the ones you name); refuses one that ships a secret (hidden files included) or any symlink' },
+          { cmd: 'keyflip skill sync [--yes]', desc: 'Re-apply each skill source; a copy you edited is left alone, a source that gained a secret is skipped' },
+          { cmd: 'keyflip skill list|remove <name> [--yes]', desc: 'Per-agent state (ok/edited/missing); removes only in dirs keyflip knows it wrote' },
           { cmd: 'keyflip brain "<intent>"', desc: 'Plain language to proposed keyflip steps (opt-in)' },
         ]} />
       </div>

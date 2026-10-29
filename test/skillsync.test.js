@@ -6,6 +6,11 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { makeCtx } from './helpers.js';
+import _child_process from 'child_process';
+import { fileURLToPath } from 'url';
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const BIN = path.join(__dirname, '..', 'bin', 'keyflip.js');
 import * as skillsync from '../src/skillsync.js';
 
 function pkgWith(name, body) {
@@ -203,4 +208,198 @@ test('install-skill fan-out skips ~/.claude/skills and writes the bundled skill 
   assert.ok(fs.existsSync(path.join(ctx.home, '.kiro', 'skills', 'keyflip', 'SKILL.md')));
   // Claude stays with skill.js's install (backup + --check), so this must not create it.
   assert.ok(!fs.existsSync(path.join(ctx.home, '.claude', 'skills', 'keyflip')));
+});
+
+// ---- adversarial review (TODO §B): a skill is code the agent will run, so the tree it ships
+// is inspected whole — hidden files included, links included, and the manifest is not trusted.
+
+test('a credential hidden in .env is refused, not overlooked', function () {
+  const ctx = makeCtx();
+  have(ctx, '.claude');
+  const root = pkgWith('hidden');
+  fs.writeFileSync(path.join(root, 'hidden', '.env'), 'ANTHROPIC_API_KEY=sk-ant-api03-' + 'A'.repeat(24) + '\n');
+  assert.throws(function () {
+    return skillsync.installResolved(ctx, root, 'dir:' + root, {});
+  }, /refusing to install 'hidden'.*anthropic-api-key/);
+  assert.ok(!fs.existsSync(path.join(ctx.home, '.claude', 'skills', 'hidden')));
+});
+
+test('a credential whose value has no known shape is refused too (key name + entropy)', function () {
+  const ctx = makeCtx();
+  have(ctx, '.claude');
+  const root = pkgWith('envfile');
+  fs.writeFileSync(
+    path.join(root, 'envfile', '.env'),
+    'AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMIK7MDENGbPxRfiCYEXAMPLEKEY\n',
+  );
+  assert.throws(function () {
+    return skillsync.installResolved(ctx, root, 'dir:' + root, {});
+  }, /refusing to install 'envfile'.*credential-value:AWS_SECRET_ACCESS_KEY/);
+  assert.ok(!fs.existsSync(path.join(ctx.home, '.claude', 'skills', 'envfile')));
+});
+
+test('a placeholder value is not a credential (a skill may document one)', function () {
+  const ctx = makeCtx();
+  have(ctx, '.claude');
+  const root = pkgWith('doc');
+  fs.writeFileSync(
+    path.join(root, 'doc', '.env.example'),
+    'ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}\nAWS_SECRET_ACCESS_KEY=your-key-here\n',
+  );
+  const r = skillsync.installResolved(ctx, root, 'dir:' + root, {});
+  assert.strictEqual(r.installed.length, 1);
+});
+
+test('a skill that links outside itself is refused (it would point the agent at ~/.ssh)', function () {
+  const ctx = makeCtx();
+  have(ctx, '.claude');
+  const outside = path.join(ctx.home, 'secret.txt');
+  fs.writeFileSync(outside, 'my private key');
+  const root = pkgWith('linky');
+  fs.symlinkSync(outside, path.join(root, 'linky', 'notes.md'));
+  assert.throws(function () {
+    return skillsync.installResolved(ctx, root, 'dir:' + root, {});
+  }, /refusing to install 'linky'.*links outside the skill/);
+  assert.ok(!fs.existsSync(path.join(ctx.home, '.claude', 'skills', 'linky')));
+});
+
+test('a link inside a skill is refused — a skill must be self-contained', async function () {
+  const ctx = makeCtx();
+  have(ctx, '.claude');
+  const root = pkgWith('inner');
+  fs.writeFileSync(path.join(root, 'inner', 'notes.md'), 'real notes');
+  fs.symlinkSync('./notes.md', path.join(root, 'inner', 'ref.md'));
+  assert.throws(function () {
+    return skillsync.installResolved(ctx, root, 'dir:' + root, {});
+  }, /refusing to install 'inner'.*is a link/);
+  assert.ok(!fs.existsSync(path.join(ctx.home, '.claude', 'skills', 'inner')));
+});
+
+test('an edit inside a HIDDEN file is detected — the hash covers what the agent reads', async function () {
+  const ctx = makeCtx();
+  have(ctx, '.claude');
+  const root = pkgWith('demo');
+  fs.mkdirSync(path.join(root, 'demo', '.claude'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'demo', '.claude', 'settings.json'), '{"a":1}');
+  await skillsync.add(ctx, root, {});
+  assert.strictEqual(skillsync.list(ctx)[0].targets[0].state, 'ok');
+  fs.writeFileSync(path.join(ctx.home, '.claude', 'skills', 'demo', '.claude', 'settings.json'), '{"a":2}');
+  assert.strictEqual(skillsync.list(ctx)[0].targets[0].state, 'edited');
+});
+
+test('a poisoned manifest cannot make sync write outside the agent skill dirs', async function () {
+  const ctx = makeCtx();
+  have(ctx, '.claude');
+  const victim = path.join(ctx.home, '.ssh');
+  fs.mkdirSync(victim, { recursive: true });
+  fs.writeFileSync(path.join(victim, 'id_rsa'), 'PRIVATE KEY');
+  const root = pkgWith('demo', 'v2');
+  // The manifest claims the skill lives in ~/.ssh — keyflip never writes there.
+  fs.writeFileSync(
+    skillsync.manifestPath(ctx),
+    JSON.stringify({
+      demo: {
+        source: 'dir:' + root,
+        installedAt: 't',
+        mode: 'copy',
+        sha256: skillsync.fingerprint(path.join(root, 'demo')),
+        fp: 2,
+        targets: { evil: { dir: '.ssh', sha256: 'x', mode: 'copy', fp: 2 } },
+      },
+    }),
+  );
+  const rep = await skillsync.sync(ctx, {});
+  assert.strictEqual(rep[0].targets[0].action, 'skipped-unknown-target');
+  assert.strictEqual(fs.readFileSync(path.join(victim, 'id_rsa'), 'utf8'), 'PRIVATE KEY');
+  assert.ok(!fs.existsSync(path.join(victim, 'demo')));
+});
+
+test('a poisoned manifest cannot make remove delete outside the agent skill dirs', function () {
+  const ctx = makeCtx();
+  have(ctx, '.claude');
+  const victim = path.join(ctx.home, '.ssh');
+  fs.mkdirSync(victim, { recursive: true });
+  fs.writeFileSync(path.join(victim, 'id_rsa'), 'PRIVATE KEY');
+  const root = pkgWith('demo');
+  fs.writeFileSync(
+    skillsync.manifestPath(ctx),
+    JSON.stringify({
+      demo: {
+        source: 'dir:' + root,
+        installedAt: 't',
+        mode: 'copy',
+        sha256: 'x',
+        targets: { evil: { dir: '.ssh', sha256: 'x', mode: 'copy' } },
+      },
+    }),
+  );
+  const r = skillsync.remove(ctx, 'demo');
+  assert.deepStrictEqual(r.removed, []);
+  assert.match(r.skipped[0], /unknown target dir \.ssh/);
+  assert.strictEqual(fs.readFileSync(path.join(victim, 'id_rsa'), 'utf8'), 'PRIVATE KEY');
+  assert.ok(!fs.existsSync(path.join(victim, 'demo')));
+});
+
+test('a manifest name that is not a plain skill name is refused', function () {
+  const ctx = makeCtx();
+  have(ctx, '.claude');
+  const root = pkgWith('demo');
+  fs.writeFileSync(
+    skillsync.manifestPath(ctx),
+    JSON.stringify({
+      '../../etc': {
+        source: 'dir:' + root,
+        installedAt: 't',
+        mode: 'copy',
+        sha256: 'x',
+        targets: { claude: { dir: '.claude/skills', sha256: 'x', mode: 'copy' } },
+      },
+    }),
+  );
+  assert.throws(function () {
+    return skillsync.remove(ctx, '../../etc');
+  }, /not a plain skill name/);
+  assert.deepStrictEqual(skillsync.list(ctx)[0].targets[0].state, 'unsafe-name');
+});
+
+test('add writes nothing when the plan is not approved', async function () {
+  const ctx = makeCtx();
+  have(ctx, '.claude');
+  const root = pkgWith('demo');
+  const r = await skillsync.add(ctx, root, {
+    approve: async function () {
+      return false;
+    },
+  });
+  assert.deepStrictEqual(r.installed, []);
+  assert.strictEqual(r.skipped[0].reason, 'not approved');
+  assert.ok(!fs.existsSync(path.join(ctx.home, '.claude', 'skills', 'demo')));
+});
+
+test('the CLI asks before it writes into an agent skill dir (--yes is the non-interactive way)', function () {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'kf-skill-cli-'));
+  fs.mkdirSync(path.join(home, '.claude'), { recursive: true });
+  const src = pkgWith('demo');
+  const env = {
+    HOME: home,
+    USERPROFILE: home,
+    XDG_CONFIG_HOME: path.join(home, '.config'),
+    KEYFLIP_CONFIG_DIR: path.join(home, '.config', 'keyflip'),
+    APPDATA: path.join(home, 'AppData', 'Roaming'),
+    KEYFLIP_TEST_CLAUDE: 'stopped',
+  };
+  const no = _child_process.spawnSync(process.execPath, [BIN, 'skill', 'add', src], {
+    encoding: 'utf8',
+    env: Object.assign({}, process.env, env),
+  });
+  assert.strictEqual(no.status, 1);
+  assert.match(no.stderr, /--yes/);
+  assert.ok(!fs.existsSync(path.join(home, '.claude', 'skills', 'demo')));
+
+  const yes = _child_process.spawnSync(process.execPath, [BIN, 'skill', 'add', src, '--yes'], {
+    encoding: 'utf8',
+    env: Object.assign({}, process.env, env),
+  });
+  assert.strictEqual(yes.status, 0, yes.stderr);
+  assert.ok(fs.existsSync(path.join(home, '.claude', 'skills', 'demo', 'SKILL.md')));
 });
