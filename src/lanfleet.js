@@ -162,4 +162,44 @@ function discover(opts) {
   });
 }
 
-export { encodeBeacon, decodeBeacon, discover, announce, fingerprint, MCAST_ADDR, MCAST_PORT, TAG, VERSION };
+// Shape `tailscale status --json` peers into the same result as discover(). Used as the fallback
+// when multicast finds nobody (two machines on one tailnet but not one LAN). Pure, so the mapping
+// is testable without Tailscale installed and without touching the network.
+//
+// A Tailscale hostname is NOT a trusted filename token: it can carry spaces/punctuation, and two
+// peers can sanitise to the same id. Only peers that are online, have an address, and yield a
+// non-empty safe id are returned; the first sighting of an id wins. As with the beacon, the result
+// carries reachability only — never a node key, auth key, or anything else in the status JSON.
+function peersFromTailscale(status) {
+  const out = [];
+  const seen = Object.create(null);
+  const peers = status && typeof status === 'object' ? status.Peer : null;
+  if (!peers || typeof peers !== 'object') return out;
+  Object.keys(peers).forEach(function (k) {
+    const p = peers[k];
+    if (!p || p.Online !== true) return;
+    const ips = Array.isArray(p.TailscaleIPs) ? p.TailscaleIPs : [];
+    const host = typeof p.Hostname === 'string' ? p.Hostname : '';
+    const ip = ips.length ? String(ips[0] || '') : '';
+    const machineId = host.replace(/[^A-Za-z0-9_-]/g, '').slice(0, 40);
+    if (!ip || !machineId) return;
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(machineId)) return;
+    if (seen[machineId]) return;
+    seen[machineId] = true;
+    out.push({ machineId: machineId, name: host.slice(0, 80), host: ip, transport: 'tailscale', online: true });
+  });
+  return out;
+}
+
+export {
+  encodeBeacon,
+  decodeBeacon,
+  discover,
+  announce,
+  fingerprint,
+  peersFromTailscale,
+  MCAST_ADDR,
+  MCAST_PORT,
+  TAG,
+  VERSION,
+};

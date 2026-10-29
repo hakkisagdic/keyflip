@@ -24,6 +24,7 @@ import { createStore } from './stores/index.js';
  * @property {string} credsFilePath - Path to .credentials.json file.
  * @property {string} claudeSettingsPath - Path to Claude settings.json.
  * @property {string | null} appDataDir - Claude desktop app data directory.
+ * @property {string | null} instancesBase - Isolated app-instance root (macOS only).
  * @property {string} account - Current system account name.
  * @property {CredentialStore} store - Credential store instance.
  * @property {() => string} now - Function returning current ISO timestamp.
@@ -39,6 +40,7 @@ import { createStore } from './stores/index.js';
  * @property {string} [credsFilePath] - Override credentials file path.
  * @property {string} [claudeSettingsPath] - Override Claude settings path.
  * @property {string | null} [appDataDir] - Override app data directory.
+ * @property {string | null} [instancesBase] - Override the isolated-instance root.
  * @property {string} [account] - Override account name.
  * @property {CredentialStore} [store] - Override credential store.
  * @property {() => string} [now] - Override clock function.
@@ -98,6 +100,15 @@ function createContext(opts) {
     } else appDataDir = null;
   }
 
+  // Isolated clones (`keyflip instance`) live outside the app dir, so doctor needs their root
+  // to verify per-clone update switches. The manager itself is macOS-only (APFS clone + `open`).
+  const instancesBase =
+    opts.instancesBase !== undefined
+      ? opts.instancesBase
+      : platform === 'darwin'
+        ? path.join(home, '.keyflip-instances') // short on purpose: Kiro's 103-char socket path
+        : null;
+
   let account = opts.account;
   if (!account) {
     try {
@@ -131,6 +142,7 @@ function createContext(opts) {
     credsFilePath: credsFilePath,
     claudeSettingsPath: claudeSettingsPath,
     appDataDir: appDataDir,
+    instancesBase: instancesBase,
     account: account,
     store: store,
     now: now,

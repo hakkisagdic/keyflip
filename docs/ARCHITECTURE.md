@@ -73,8 +73,10 @@ Multi-provider support for different AI services and routing logic.
 |--------|---------------|
 | `provider.js` | Provider abstraction and registration |
 | `provusage.js` | Per-provider usage tracking and analytics |
-| `proxy.js` | Proxy configuration and tunneling |
-| `router.js` | Request routing across multiple providers |
+| `proxy.js` | Command-started failover proxy (routing, cooldowns, tier eligibility, per-request cost accounting) |
+| `proxyroutes.js` | Declarative per-request routing from `proxy-routes.json` (rules, sticky, fallback modes, transforms, custom hook) |
+| `tiers.js` | Subscription plan model read from the captured login (`subscriptionType`/`rateLimitTier`), per-account overrides, and model eligibility |
+| `router.js` | Model→provider routing (pins + arbitrage) and the response cache |
 | `breaker.js` | Circuit breaker pattern for provider failover |
 
 ### Sessions
@@ -89,6 +91,19 @@ Session lifecycle management, transcript handling, and recall.
 | `sessionedit.js` | Session metadata editing |
 | `transcript.js` | Conversation transcript storage and retrieval |
 | `recall.js` | Session recall and search across transcripts |
+
+### Conversations
+
+Every local AI tool's chats — read, normalized, indexed, exported.
+
+| Module | Responsibility |
+|--------|---------------|
+| `conversations.js` | Canonical conversation shape (`{id, app, surface, title, cwd, messages, counts, hash}`) and the per-app reader dispatch |
+| `cursor.js` | Cursor adapter: editor `state.vscdb` composers, the `cursor-agent` CLI blob store, the `agent-transcripts` mirror |
+| `foreign.js` | One-off normalization of another agent's session FILE (`keyflip foreign`) |
+| `convindex.js` | Incremental index: turn-level chunks (a question and its answer, never a fixed window), manifest, token sidecar, embeddings, duplicate collapse at search time |
+| `convexport.js` | Markdown / HTML / JSON / Obsidian export and per-target transfer bundles |
+| `convaccounts.js` | Which keyflip account worked on a conversation, and whether that is stated or inferred |
 
 ### Fleet and Transfer
 
@@ -138,7 +153,9 @@ Claude desktop app, browser automation, and app-level session management.
 |--------|---------------|
 | `claude.js` | Claude desktop application integration |
 | `appauth.js` | Desktop app authentication |
-| `appsessions.js` | Desktop app session management |
+| `appsessions.js` | Desktop app session management (Recents/Cowork union across accounts and instance clones) |
+| `codex.js` | ChatGPT.app + Codex CLI shared login (`~/.codex/auth.json`): capture, switch, lineage-safe refresh |
+| `instances.js` | Isolated multi-instance app clones per tool/account (Claude, Kiro, ChatGPT, Cursor) |
 | `browser.js` | Browser profile and cookie management |
 | `chat.js` | Chat interface integration |
 | `cowork.js` | Co-working and collaboration features |
@@ -174,7 +191,7 @@ File system helpers, encoding, data format readers, and miscellaneous tools.
 | `qr.js` | QR code generation for transfer links |
 | `embed.js` | Embedding utilities |
 | `llm.js` | LLM interaction helpers |
-| `sqliteread.js` | SQLite database reader (for Claude local DB) |
+| `sqliteread.js` | Zero-dependency SQLite reader (B-tree pages, records, overflow chains, WAL overlay) for Cursor's `state.vscdb` and other tool DBs |
 | `yamlread.js` | YAML file parser |
 | `walmerge.js` | WAL (Write-Ahead Log) merge operations |
 
@@ -189,7 +206,7 @@ Specialized features spanning automation, monitoring, and system integration.
 | `backup.js` | Profile backup and restore |
 | `brain.js` | Intelligent decision engine |
 | `budget.js` | Usage budget management |
-| `cost.js` | Cost tracking and estimation |
+| `cost.js` | Cost tracking and estimation: `rateCard`/`costBreakdown` (cache read 0.1×, 5m write 1.25×, 1h write 2×, 200K long-context 2×/1.5×, fast 6×), unified utilization, prediction, per-repo attribution priced per transcript line |
 | `doctor.js` | System health diagnostics |
 | `groups.js` | Profile group management |
 | `history.js` | Command and switch history |
@@ -202,6 +219,7 @@ Specialized features spanning automation, monitoring, and system integration.
 | `onboard.js` | First-run onboarding flow |
 | `orchestrator.js` | Multi-step operation orchestration |
 | `policy.js` | Access policy enforcement |
+| `prices.js` | Live model price table: fetches the public price list on an explicit refresh, validates it, caches it (`prices-cache.json`) and hands `cost.js` an overlay whose rows win over the bundled snapshot |
 | `schedule.js` | Scheduled operations (rotation, cleanup) |
 | `share.js` | Profile sharing between users |
 | `shellhook.js` | Shell hook integration (cd, prompt) |

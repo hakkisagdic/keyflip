@@ -40,6 +40,8 @@ website/
 ├── tsconfig.json
 ├── public/               # Static assets (copied as-is to dist/)
 ├── src/
+│   ├── checkout.config.json # The paid plans: prices, checkout links, portals (one file)
+│   ├── checkout.ts          # Typed accessors over that file
 │   ├── components/       # Reusable Astro components
 │   │   ├── CodeBlock.astro
 │   │   ├── CommandReference.astro
@@ -59,6 +61,7 @@ website/
 │   │   ├── architecture.astro
 │   │   ├── faq.astro
 │   │   ├── features.astro
+│   │   ├── license.astro
 │   │   ├── pricing.astro
 │   │   ├── use-cases.astro
 │   │   ├── docs/                 # EN documentation pages
@@ -75,6 +78,7 @@ website/
 │   │       ├── architecture.astro
 │   │       ├── faq.astro
 │   │       ├── features.astro
+│   │       ├── license.astro
 │   │       ├── pricing.astro
 │   │       ├── use-cases.astro
 │   │       └── docs/
@@ -116,6 +120,42 @@ import FeatureCard from '../components/FeatureCard.astro';
 ### Styling
 
 The project uses Tailwind CSS v4 (via the Vite plugin). Global styles live in `src/styles/global.css`.
+
+### The paid plans: `src/checkout.config.json`
+
+One file holds every commercial fact about the paid tiers — the price, the checkout link per
+provider and billing cycle, and the customer's subscription portal:
+
+```json
+{
+  "salesOpen": false,
+  "currency": "USD",
+  "tiers": {
+    "pro": {
+      "price": "$8-12",
+      "providers": {
+        "iyzico": { "region": "TR", "monthly": "", "yearly": "" },
+        "stripe": { "region": "GLOBAL", "monthly": "", "yearly": "" }
+      },
+      "portals": { "iyzico": "", "stripe": "" }
+    }
+  }
+}
+```
+
+- **An empty URL means "not configured"** — the page hides that button entirely, so the shipped
+  site never links to a 404. The pricing page shows "Coming Soon" until a tier has at least one
+  URL.
+- **`"salesOpen": true`** removes the "Coming Soon" badges and the early-adopter note on the
+  license page. Leave it `false` until checkout really works.
+- **Region routing matches the issuer**: `TR` -> iyzico / PayTR, everyone else -> Lemon Squeezy /
+  Stripe (see `issuer/issuer.config.json`).
+- **The product ids behind these links** are the same ones the issuer maps to a tier and a
+  duration. Keep both files in sync: a checkout link that points at a product the issuer does not
+  know pays for a license the issuer cannot mint.
+
+`src/checkout.ts` is the typed layer over that file. Pages import `checkoutOptions()`,
+`portalLinks()`, `planPrice()` and `salesOpen()` — never the raw JSON.
 
 ---
 

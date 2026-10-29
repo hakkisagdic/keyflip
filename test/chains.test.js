@@ -189,7 +189,8 @@ test('the credential store name for a provider is derived from provider.js, not 
 
 // ---------------------------------------------------------------- risk: loose file mode
 
-test('a world-readable secret inside the state repo is a high risk; the same mode OUTSIDE it is not', function () {
+test('a world-readable secret inside the state repo is a high risk; the same mode OUTSIDE it is not', function (t) {
+  if (process.platform === 'win32') return t.skip('POSIX permissions not applicable on Windows');
   const ctx = mkctx();
   profiles.write(ctx.configDir, { name: 'work', email: 'w@example.com' });
   // keyflip's own capture, left at 644 by a plain copy: the whole machine can read a session cookie.
@@ -241,7 +242,8 @@ test('a directory at 755 is not flagged: only the secret CONTENT of a file is ex
   assert.strictEqual(risksOf(d, 'loose-mode').length, 0);
 });
 
-test('tighten: dry run by default, chmod 600 on apply, and never outside the secret set', function () {
+test('tighten: dry run by default, chmod 600 on apply, and never outside the secret set', function (t) {
+  if (process.platform === 'win32') return t.skip('POSIX permissions not applicable on Windows');
   const ctx = mkctx();
   const loose = inRepo(ctx, 'browser-sessions/work__chrome.sql', { mode: 0o644, content: 'cookie db' });
   inRepo(ctx, 'app/work.cookies', { mode: 0o644, content: 'cookie snapshot' });
@@ -323,7 +325,11 @@ test('two accounts captured from one single-tenant store: only one of them can b
   assert.strictEqual(r[0].severity, 'high');
   assert.match(r[0].detail, /2 captures \(alpha, beta\)/);
   assert.match(r[0].detail, /holds a single account/);
-  assert.strictEqual(r[0].file, '~/' + path.relative(ctx.home, live), 'the shared store, ~-relative');
+  assert.strictEqual(
+    r[0].file,
+    '~/' + path.relative(ctx.home, live).split(path.sep).join('/'),
+    'the shared store, ~-relative',
+  );
   assert.deepStrictEqual(
     r[0].nodes,
     ['browser:alpha__chrome.sql', 'browser:beta__chrome.sql'],
@@ -543,7 +549,8 @@ test('an empty state repo still maps: two human roots and nothing claimed', func
   assert.strictEqual(chains.tighten(ctx, { apply: true }).changed.length, 0);
 });
 
-test('the MCP surface exposes the map read-only and the chmod only behind confirm', async function () {
+test('the MCP surface exposes the map read-only and the chmod only behind confirm', async function (t) {
+  if (process.platform === 'win32') return t.skip('POSIX permissions not applicable on Windows');
   const ctx = mkctx();
   inRepo(ctx, 'browser-sessions/work__chrome.sql', { mode: 0o644, content: 'x' });
   const names = chains.mcpTools.map(function (t) {

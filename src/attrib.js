@@ -47,6 +47,24 @@ function switchName(msg) {
   return null;
 }
 
+// A Kiro account and a ChatGPT/Codex account live in their OWN namespaces
+// (<configDir>/surfaces/<surface>/<slug>), so the Claude timeline cannot answer for them:
+// `keyflip kiro switch` writes `kiro -> <slug>` and `keyflip chatgpt switch` writes
+// `codex -> <slug>`, and each surface is read on its own. These lines are deliberately NOT in
+// SWITCH_RES: the global timeline stays the Claude one, so a Kiro switch can never move a
+// Claude Code session to another account.
+const SURFACE_RES = {
+  kiro: /^kiro -> (\S+)/,
+  codex: /^codex -> (\S+)/,
+};
+
+function surfaceSwitchName(msg, surface) {
+  const re = SURFACE_RES[surface];
+  if (!re) return null;
+  const m = re.exec(String(msg == null ? '' : msg));
+  return m ? m[1] : null;
+}
+
 // ── provenance sidecar ──────────────────────────────────────────────────────────────────────
 function sourcePath(ctx) {
   return path.join(ctx.configDir, SOURCE_NAME + '.json');
@@ -109,6 +127,12 @@ function provenanceFor(id, assigned, src) {
 // history was cut by the bounded read. A timeline that cannot see the beginning must not pretend
 // sessions older than it belong to anyone.
 function timeline(ctx, opts) {
+  return timelineFrom(ctx, switchName, opts);
+}
+
+// The same timeline, read for ONE surface. `extract` is what turns a log line into an account
+// name — the global one for Claude profiles, the surface's own for Kiro and ChatGPT/Codex.
+function timelineFrom(ctx, extract, opts) {
   opts = opts || {};
   const found = auditview.scan(ctx, {
     limit: opts.events || 20000,
@@ -118,7 +142,7 @@ function timeline(ctx, opts) {
   found.entries.forEach(function (e) {
     const ms = Date.parse(e.ts);
     if (Number.isNaN(ms)) return;
-    const name = switchName(e.msg);
+    const name = extract(e.msg);
     if (!name) return;
     events.push({ ms: ms, name: name });
   });
@@ -140,6 +164,19 @@ function timeline(ctx, opts) {
     events: events.length,
     truncated: found.truncated,
   };
+}
+
+// The switch timeline of ONE surface (kiro, codex). Empty for a surface keyflip does not
+// manage — an empty timeline is honest, a wrong one is not.
+function surfaceTimeline(ctx, surface, opts) {
+  if (!SURFACE_RES[surface]) return { boundaries: [], from: null, events: 0, truncated: false };
+  return timelineFrom(
+    ctx,
+    function (msg) {
+      return surfaceSwitchName(msg, surface);
+    },
+    opts,
+  );
 }
 
 // Milliseconds of [start,end] that fall under each account, oldest-first. The LAST window is
@@ -205,7 +242,19 @@ function verdict(tl, row) {
   const thin = start < tl.from;
   const segs = spans(tl.boundaries, Math.max(start, tl.from), end);
   if (!segs.length) {
-    return { confidence: 'none', why: 'it sits exactly on a switch instant, which decides nothing' };
+    // A life of zero length: a transcript with a single message opens and closes at the same
+    // instant. That is not "no evidence" — the account live at that instant IS the account
+    // that worked on it, exactly like the no-start-timestamp case above.
+    const b = activeAt(tl.boundaries, end);
+    if (!b) return { confidence: 'none', why: 'it sits before the first switch keyflip logged (' + iso(tl.from) + ')' };
+    return {
+      confidence: 'high',
+      account: b.name,
+      spanning: false,
+      from: end,
+      to: end,
+      why: 'the whole life sits at ' + iso(end) + ', inside the ' + b.name + ' window',
+    };
   }
   const held = {};
   segs.forEach(function (s) {
@@ -351,7 +400,11 @@ function recordStated(ctx, id, opts) {
 export {
   SOURCE_NAME,
   switchName,
+  surfaceSwitchName,
+  SURFACE_RES,
   timeline,
+  timelineFrom,
+  surfaceTimeline,
   spans,
   verdict,
   proposals,

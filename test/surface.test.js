@@ -17,15 +17,17 @@ test('SURFACES covers exactly the CONFIG_REGISTRY tools, each with the required 
   const ids = surface.SURFACES.map(function (s) {
     return s.id;
   }).sort();
-  assert.deepStrictEqual(ids, ['aider', 'codex', 'copilot', 'cursor', 'gemini', 'opencode']);
+  assert.deepStrictEqual(ids, ['aider', 'codex', 'command-code', 'copilot', 'cursor', 'gemini', 'opencode']);
   surface.SURFACES.forEach(function (s) {
     assert.strictEqual(typeof s.id, 'string');
     assert.strictEqual(typeof s.label, 'string');
     assert.ok(['file', 'keychain', 'env'].indexOf(s.kind) !== -1, s.id + ' kind');
     assert.strictEqual(typeof s.detect, 'function');
     assert.strictEqual(typeof s.list, 'function');
-    assert.strictEqual(s.switchable, false);
+    // Command Code is the one tool with a real adapter here; the rest are read-only projections.
+    assert.strictEqual(s.switchable, s.id === 'command-code', s.id + ' switchable');
   });
+  assert.match(surface.get('command-code').switchHint, /keyflip commandcode/);
 });
 
 // ---- absent (pristine home): everything not detected ----
@@ -37,9 +39,22 @@ test('pristine home -> every surface present:false, no active account, not switc
     assert.strictEqual(s.present, false, s.id);
     assert.strictEqual(s.activeAccount, null, s.id);
     assert.deepStrictEqual(s.accounts, [], s.id);
-    assert.strictEqual(s.switchable, false, s.id);
+    // Switchability is a property of the adapter, not of presence.
+    assert.strictEqual(s.switchable, s.id === 'command-code', s.id);
     assert.strictEqual(s.note, 'not detected', s.id);
   });
+});
+
+test('command-code: present -> switchable note points at the CLI group', function () {
+  const ctx = makeCtx();
+  write(ctx, '.commandcode/auth.json', JSON.stringify({ apiKey: 'SECRET-KEY', userName: 'me' }));
+  const s = surface.detectOne(ctx, 'command-code');
+  assert.strictEqual(s.present, true);
+  assert.strictEqual(s.switchable, true);
+  assert.match(s.note, /switchable: keyflip commandcode/);
+  assert.strictEqual(s.store.location, '~/.commandcode/auth.json');
+  assert.strictEqual(s.store.exists, true);
+  assert.doesNotMatch(JSON.stringify(s), /SECRET-KEY/);
 });
 
 // ---- gemini happy path: active account read from the NON-SECRET identity file ----

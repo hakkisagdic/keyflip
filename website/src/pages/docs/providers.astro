@@ -16,11 +16,22 @@ import CodeBlock from '../../components/CodeBlock.astro';
       </p>
 
       <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-4 mt-10">Quick Start</h2>
-      <CodeBlock code={`# Add a provider (key read from stdin - never on command line)
+      <CodeBlock code={`# Built-in presets: Z.AI, Zhipu, Kimi, DeepSeek, MiniMax, Qwen, Ark, OpenRouter,
+# OpenAI, Gemini, xAI, Mistral, Groq, Together, Fireworks, Anthropic and local
+# Ollama / LM Studio / llama.cpp
+keyflip provider catalog
+
+# A preset needs only the key - URL, models and compatibility come from it
+keyflip provider add zai --key-file -
+
+# ...or save any third-party endpoint (key read from stdin - never on command line)
 keyflip provider add openrouter --base-url https://openrouter.ai/api/v1 --key-file -
 
+# Ask the endpoint what it actually serves (GET /v1/models)
+keyflip provider models zai
+
 # Route Claude Code to it
-keyflip use openrouter
+keyflip use zai
 
 # Back to your subscription (OAuth)
 keyflip provider off
@@ -37,6 +48,9 @@ keyflip test openrouter`} />
       <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-4 mt-10">How it works</h2>
       <ul class="list-disc pl-6 text-surface-700 dark:text-surface-300 space-y-3 mb-8">
         <li>The API key is stored in the OS credential store, never in the metadata file and never on the command line</li>
+        <li>Each preset records whether it speaks the <strong>Anthropic API</strong> (Claude Code can be pointed at it directly) or the <strong>OpenAI chat API</strong> (needs an Anthropic-compatible gateway/shim). <code>provider use</code> warns for the latter instead of silently breaking the CLI</li>
+        <li>Model names drift, so <code>provider models</code> queries the live list; <code>--model default=…</code> overrides a preset's hint</li>
+        <li>A bare <code>keyflip provider add</code> on a terminal opens a numbered, category-grouped picker</li>
         <li>Switching only touches the keys keyflip manages; your own settings.json (hooks, plugins, model overrides) is preserved</li>
         <li><code>provider off</code> removes exactly what was injected</li>
         <li><code>keyflip gateway use &lt;provider&gt;</code> does the same for the Claude desktop app (restart the app to apply)</li>
@@ -55,9 +69,19 @@ keyflip cache status          # response caching`} />
         The proxy is command-started (never an always-on daemon). While running, it routes each API request to your active account and, on a 429/5xx before any byte reaches the client, fails over to the next healthy account and retries.
       </p>
       <CodeBlock code={`keyflip proxy start --wire    # start + wire Claude to it
-keyflip proxy status          # check health
+keyflip proxy status          # check health + live route order
+keyflip cooldown              # which account is parked, and why
+keyflip cooldown clear --all  # release parked accounts
 keyflip proxy stats           # request counts, failovers
 keyflip proxy stop            # stop + unwire`} />
+
+      <h3 class="text-xl font-semibold text-surface-900 dark:text-surface-50 mb-3 mt-8">Per-request routing (optional)</h3>
+      <p class="text-surface-700 dark:text-surface-300 mb-4">
+        Drop <code>~/.config/keyflip/proxy-routes.json</code> (start from <code>proxy routes init</code>) and the running proxy reloads it on the next request — no restart. First-match rules on model / path / header / estimated token size / conversation user pick an account and/or a model; sticky conversations keep the same account for a TTL; <code>model-chain</code> degrades the model on the same account before spending another account's quota; transforms set/remove headers and cap <code>max_tokens</code>; a custom router script can decide itself. A rule may only name an account that is usable right now — a cooldown always wins. An invalid file is ignored and every problem is named.
+      </p>
+      <CodeBlock code={`keyflip proxy routes           # rules, errors and effective policy
+keyflip proxy explain --model claude-opus-4 --tokens 200000
+keyflip proxy routes init      # a valid starter file (never clobbers)`} />
 
       <h2 class="text-2xl font-bold text-surface-900 dark:text-surface-50 mb-4 mt-10">Import from Environment</h2>
       <CodeBlock code={`# Import provider endpoints from a .env file

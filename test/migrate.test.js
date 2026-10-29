@@ -185,11 +185,35 @@ test('pushBundle then pullBundle round-trips over a fake WebDAV (encrypted)', as
   seedAccount(src, 'work', 'a@x.com', '{"token":"AAA"}');
   seedTranscript(src, '-p', 's1', 'HELLO\n');
 
-  // In-memory WebDAV: PUT stores the encrypted body, GET returns it.
+  // In-memory WebDAV: PUT stores the encrypted body (string or stream), GET returns it.
   let stored = null;
   const fakeFetch = async function (url, init) {
     if (init.method === 'PUT') {
-      stored = init.body;
+      // Handle both string and stream bodies
+      if (typeof init.body === 'string') {
+        stored = init.body;
+      } else if (init.body && typeof init.body.pipe === 'function') {
+        // Node ReadableStream: collect chunks
+        const chunks = [];
+        await new Promise(function (resolve, reject) {
+          init.body.on('data', function (chunk) {
+            chunks.push(chunk);
+          });
+          init.body.on('end', resolve);
+          init.body.on('error', reject);
+        });
+        stored = Buffer.concat(chunks).toString('utf8');
+      } else if (init.body && typeof init.body.getReader === 'function') {
+        // Web ReadableStream
+        const reader = init.body.getReader();
+        const chunks = [];
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          chunks.push(value);
+        }
+        stored = Buffer.concat(chunks).toString('utf8');
+      }
       return { status: 201 };
     }
     if (init.method === 'GET') {

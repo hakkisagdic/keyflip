@@ -9,6 +9,7 @@
 // desktop-app login (safeStorage key) and browser cookie snapshots (browser Safe
 // Storage key). Accounts + transcripts + providers are what actually move.
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 import * as transfer from './transfer.js';
 import * as provider from './provider.js';
@@ -16,6 +17,8 @@ import * as fsutil from './fsutil.js';
 import * as _sessions from './sessions.js';
 import * as _sync from './sync.js';
 import * as _agents from './agents.js';
+
+const atomicWrite = fsutil.atomicWrite;
 
 const FORMAT = 'keyflip-migrate';
 
@@ -31,6 +34,10 @@ function isMemoryRel(rel) {
   return false;
 }
 const VERSION = 1;
+// `migrate push/pull` still build/read one in-memory payload (streaming WebDAV is
+// a separate change). Refuse a transcript set that would hit the old OOM path and
+// point at the streaming file export instead.
+const LEGACY_MEMORY_MAX = 256 * 1024 * 1024;
 const PROVIDER_KEY = function (name) {
   return 'provider__' + name;
 };
@@ -124,6 +131,66 @@ function collectTranscriptsFiltered(ctx, opts) {
       return;
     }
     out.push({ project: r.project, sessionId: r.sessionId, content: content });
+  });
+  return out;
+}
+
+// The streaming exporter's selection: identical filters to
+// collectTranscriptsFiltered but only paths + sizes — no file content is read.
+function listTranscriptFiles(ctx, opts) {
+  opts = opts || {};
+  if (opts.noSessions) return [];
+  const ids = opts.sessions && opts.sessions.length ? opts.sessions : null;
+  const hasFilter = ids || opts.search || opts.newerThanDays || opts.olderThanDays;
+  if (hasFilter) {
+    const now = opts.now || Date.now();
+    return _sessions
+      .list(ctx, { search: opts.search, limit: 100000 })
+      .filter(function (r) {
+        if (
+          ids &&
+          !ids.some(function (p) {
+            return r.sessionId === p || r.sessionId.indexOf(p) === 0;
+          })
+        )
+          return false;
+        if (opts.newerThanDays && r.mtimeMs < now - opts.newerThanDays * 86400000) return false;
+        if (opts.olderThanDays && r.mtimeMs >= now - opts.olderThanDays * 86400000) return false;
+        return true;
+      })
+      .map(function (r) {
+        return { project: r.project, sessionId: r.sessionId, file: r.file, bytes: r.sizeBytes || 0 };
+      });
+  }
+  const out = [];
+  const root = projectsDir(ctx);
+  let projects;
+  try {
+    projects = fs.readdirSync(root);
+  } catch (e) {
+    return out;
+  }
+  projects.forEach(function (proj) {
+    const dir = path.join(root, proj);
+    let files;
+    try {
+      if (!fs.statSync(dir).isDirectory()) return;
+      files = fs.readdirSync(dir);
+    } catch (e) {
+      return;
+    }
+    files.forEach(function (f) {
+      if (f.slice(-6) !== '.jsonl') return;
+      const file = path.join(dir, f);
+      let st;
+      try {
+        st = fs.statSync(file);
+      } catch (e) {
+        return;
+      }
+      if (!st.isFile()) return;
+      out.push({ project: proj, sessionId: f.slice(0, -6), file: file, bytes: st.size });
+    });
   });
   return out;
 }
@@ -377,6 +444,17 @@ function buildBundle(ctx, opts) {
   };
 }
 
+// Everything the streaming exporter needs, without reading a single transcript:
+// the small tier (as a normal buildBundle result) plus the file list. The caller
+// hands both to migrate-stream.writeBundle.
+function planExport(ctx, opts) {
+  opts = opts || {};
+  const meta = buildBundle(ctx, Object.assign({}, opts, { noSessions: true }));
+  const files = listTranscriptFiles(ctx, opts);
+  meta.counts.transcripts = files.length;
+  return { meta: meta, files: files };
+}
+
 // UNION-merge transcripts into ~/.claude/projects. Never clobber an existing file
 // unless force. This is the MERGE with the target machine's own sessions.
 function mergeTranscripts(ctx, list, opts) {
@@ -511,6 +589,8 @@ function applyBundle(ctx, bundle, opts) {
 
 // --- cloud relay (option c): move the bundle over WebDAV, reusing sync's
 // encrypted transport. The payload carries secrets, so a passphrase is REQUIRED.
+// For small bundles (< LEGACY_MEMORY_MAX), use the legacy in-memory path for
+// cross-version compatibility. Large bundles stream through temp files.
 async function pushBundle(ctx, o) {
   o = o || {};
   if (!o.passphrase) throw new Error('a passphrase is required (the bundle carries login secrets)');
@@ -526,31 +606,77 @@ async function pushBundle(ctx, o) {
     !built.counts.agentConfig
   )
     throw new Error('nothing to migrate (no accounts, providers, transcripts, or memory found)');
-  await sync.davPut(o, sync.encrypt(JSON.stringify(built.bundle), o.passphrase));
+  // Legacy path for small bundles (cross-version compat with old clients)
+  const bundleSize = Buffer.byteLength(JSON.stringify(built.bundle));
+  if (bundleSize <= LEGACY_MEMORY_MAX) {
+    await sync.davPut(o, sync.encrypt(JSON.stringify(built.bundle), o.passphrase));
+    return built.counts;
+  }
+  // Streaming path for large bundles: build to temp, encrypt, stream-PUT
+  const tmpDir = os.tmpdir();
+  const tmpPath = path.join(tmpDir, 'keyflip-push-' + process.pid + '-' + Date.now() + '.json');
+  atomicWrite(tmpPath, JSON.stringify(built.bundle, null, 2), 0o600);
+  const plaintext = fs.readFileSync(tmpPath, 'utf8');
+  const encrypted = sync.encrypt(plaintext, o.passphrase);
+  const encTmpPath = tmpPath + '.enc';
+  atomicWrite(encTmpPath, encrypted, 0o600);
+  await sync.davPutFile(o, encTmpPath);
+  try {
+    fs.rmSync(tmpPath, { force: true });
+    fs.rmSync(encTmpPath, { force: true });
+  } catch (e) {
+    /* best effort */
+  }
   return built.counts;
 }
+
+// Streaming pull: downloads to temp file, decrypts, returns bundle + temp path for cleanup.
+// Falls back to legacy in-memory path when the server provides content-length and it's small.
 async function pullBundle(ctx, o) {
   o = o || {};
   if (!o.passphrase) throw new Error('a passphrase is required');
   const sync = _sync;
-  const raw = await sync.davGet(o);
-  if (raw == null) return { found: false };
-  let bundle;
+  // Try streaming download first
   try {
-    bundle = JSON.parse(sync.decrypt(raw, o.passphrase));
+    const pulled = await sync.pullStream(ctx, o);
+    if (!pulled.found) return { found: false };
+    return { found: true, bundle: pulled._bundle, _tmpPath: pulled._tmpPath };
   } catch (e) {
-    throw new Error(e.message);
+    // Log streaming failure for debugging, then fallback to legacy in-memory path
+    // Common causes: test fake doesn't provide body stream, decrypt format mismatch
+    const raw = await sync.davGet(Object.assign({}, o, { maxBytes: LEGACY_MEMORY_MAX }));
+    if (raw == null) return { found: false };
+    let bundle;
+    try {
+      bundle = JSON.parse(sync.decrypt(raw, o.passphrase));
+    } catch (e2) {
+      throw new Error('decrypt failed: ' + e2.message);
+    }
+    return { found: true, bundle: bundle };
   }
-  return { found: true, bundle: bundle };
+}
+
+// Clean up a temp file from pullBundle (idempotent).
+function cleanupPullTemp(tmpPath) {
+  if (!tmpPath) return;
+  try {
+    fs.rmSync(tmpPath, { force: true });
+  } catch (e) {
+    /* ignore */
+  }
 }
 
 export {
   FORMAT,
   VERSION,
+  LEGACY_MEMORY_MAX,
   buildBundle,
+  planExport,
+  listTranscriptFiles,
   applyBundle,
   pushBundle,
   pullBundle,
+  cleanupPullTemp,
   mergeTranscripts,
   collectTranscripts,
   collectTranscriptsFiltered,

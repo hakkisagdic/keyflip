@@ -1,0 +1,42 @@
+# Fleet simulation: three independent "machines" sharing ONE rendezvous folder.
+#
+# No `version:` key — Compose v2+ deprecates it.
+# The build context is the repo root because the image bakes in bin/ + src/ from there.
+# The named volume is the only path between machines; nothing about the host leaks in.
+services:
+  machine-a:
+    build:
+      context: ../..
+      dockerfile: test/fleet-docker/Dockerfile
+    image: keyflip-fleet-sim
+    container_name: fleet-machine-a
+    hostname: machine-a
+    volumes:
+      - fleet-rendezvous:/rendezvous
+      - ./passphrase.txt:/run/keyflip/pass:ro
+    networks: [fleet-net]
+
+  machine-b:
+    image: keyflip-fleet-sim
+    container_name: fleet-machine-b
+    hostname: machine-b
+    volumes:
+      - fleet-rendezvous:/rendezvous
+      - ./passphrase.txt:/run/keyflip/pass:ro
+    networks: [fleet-net]
+
+  machine-c:
+    image: keyflip-fleet-sim
+    container_name: fleet-machine-c
+    hostname: machine-c
+    volumes:
+      - fleet-rendezvous:/rendezvous
+      - ./passphrase.txt:/run/keyflip/pass:ro
+    networks: [fleet-net]
+
+volumes:
+  fleet-rendezvous:
+
+networks:
+  fleet-net:
+    driver: bridge

@@ -156,9 +156,12 @@ keyflip <ad> --rollback-on-fail  # ...geri-okuma geçişin tutmadığını söyl
                               # (bilerek açılır: kimlik bilgilerini yeniden yazar)
 keyflip next                  # sıradaki kayıtlı hesaba dön
 keyflip next --strategy best  # ...veya kalan kotaya göre seç (ayrıca: next-available)
-keyflip provider add <ad> --base-url <url> --key-file -   # 3. taraf endpoint kaydet
+keyflip provider catalog      # hazır presetler (Z.AI, Kimi, DeepSeek, MiniMax, OpenRouter, Ollama…)
+keyflip provider add <id> --key-file -                    # ...bir preset için yalnızca anahtar gerekir
+keyflip provider add <ad> --base-url <url> --key-file -   # ...veya herhangi bir 3. taraf endpoint kaydet
+keyflip provider models <id|ad>   # endpoint gerçekte ne sunuyor? (GET /v1/models)
 keyflip use <ad>              # Claude Code'u bir provider'a yönlendir (geri: keyflip provider off)
-keyflip doctor                # sağlık kontrolü: git-e-sır, orphan oturumlar, versiyonlama, config, giriş, endpointler, masaüstü oturumu
+keyflip doctor                # sağlık kontrolü: git-e-sır, orphan oturumlar, versiyonlama, config, giriş, endpointler, masaüstü oturumu, otomatik güncelleme durumu, arka plan servisleri (kurulu mu? tutuluyor mu? her biri en son ne zaman çalıştı?)
                               #   --history ekle: keyflip'in commit ettiği her blob'da hâlâ okunabilir bir sır var mı?
 keyflip backup now|list|restore <n>   # keyflip metadata anlık görüntüsü (sırsız)
 keyflip usage --history       # hesap-başına kullanım eğilimi + failover olayları
@@ -189,7 +192,8 @@ keyflip import-env [<dosya>] [--dry-run] [--env]   # provider endpoint'lerini .e
 keyflip log [--tail N] [--grep S] [--since ISO]   # eylem/denetim log'unu görüntüle
 keyflip run-job "<prompt>" [--group g] [--strategy best]   # ORKESTRATOR: prompt'u en boş hesapta headless çalıştır (izole)
 keyflip jobs [list|run|clear] · keyflip fanout "<prompt>" --accounts a,b,c   # iş kuyruğu + aynı prompt'u N hesapta koştur
-keyflip cost [status|predict <hesap>|by-project]   # harcama/kullanım, limite-kalan-süre tahmini, repo bazında dağılım
+keyflip cost [status|predict <hesap>|by-project|rates [model]|prices [--refresh]]   # harcama/kullanım, limite-kalan-süre tahmini, repo bazında dağılım, ücret kartları, canlı fiyat tablosu
+keyflip tier [<hesap> <plan|auto>]   # her hesabın planı (free/pro/max/… ) ve proxy'nin bir modeli ona yönlendirip yönlendiremeyeceği
 keyflip team <publish|pull|members|add-member|remove-member> --dir <shared> --pool <n> --passphrase-file <f>   # rollü ŞİFRELİ ekip havuzu
 keyflip policy <list|allow|deny|remove|default|check> [--cwd D --account A --group G]   # bir dizinin hangi hesabı kullanabileceğini kısıtla
 keyflip vault <status|use op|bw|vault|off>   # kimlik bilgilerini 1Password / Bitwarden / HashiCorp Vault'ta sakla
@@ -209,7 +213,7 @@ keyflip panel [--open]         # yerel web paneli: hesaplar+kotalar, etkinlik ta
 keyflip panel --export <f> [--anon]   # paylaşıma-güvenli STATİK snapshot yaz (oturum içeriği yok, sır yok)
 keyflip menubar [--install]   # menü-çubuğu/tepsi eklentisi — macOS xbar/SwiftBar, Linux GNOME Argos/KDE kargos: hesap+kota tek bakışta, tıkla-geç
 keyflip statusline install    # aktif hesap + kotayı Claude Code promptunda göster
-keyflip install-skill         # agent'lara keyflip'i öğreten Claude Code skill'ini kur
+keyflip install-skill         # keyflip skill'ini bu makinedeki her agent'a kur
 keyflip export [dosya|-]      # hesapları dosyaya yedekle (SIR İÇERİR)
 keyflip import <dosya|->      # yedekten hesapları geri yükle (--force üzerine yazar)
 keyflip migrate export <dosya> # hesap + provider + transkript + memory + config (MCP + settings) paketle
@@ -219,8 +223,10 @@ keyflip migrate export <dosya> # hesap + provider + transkript + memory + config
 keyflip agents                # diğer ajanların memory + config'ini listele (Cursor/Gemini/Codex/Copilot/opencode/Aider; sırlar redakte edilir)
 keyflip settings [show|get <k>|set <k> <v>]   # ~/.claude/settings.json'ı gör/düzenle (`migrate` ile diğer makinelere gider)
 keyflip migrate import <dosya> # bu paketi bu makineyle BİRLEŞTİR (birleşim; --force üzerine yazar)
-keyflip migrate push --url <webdav>   # paketi başka makineye WebDAV üzerinden ilet (şifreli)
-keyflip migrate pull --url <webdav>   # diğer makinede çekip BİRLEŞTİR (--force üzerine yazar)
+                              #   dosya paketleri AKIŞ (stream) hâlinde: önce metadata, sonra 128 KiB'lik
+                              #   transkript parçaları; --passphrase-file ile kayıt-başına AES-256-GCM
+keyflip migrate push --url <webdav>   # paketi başka makineye WebDAV üzerinden ilet (şifreli; bellekte, >256 MB reddedilir)
+keyflip migrate pull --url <webdav>   # diğer makinede çekip BİRLEŞTİR (--force üzerine yazar; bellekte, >256 MB reddedilir)
 keyflip transfer serve [--qr] # LAN: tek-kullanımlık kod (+ taranabilir QR) göster + şifreli paketi eşe akıt
 keyflip transfer pull --code X # LAN: eşi otomatik bul, çek + BİRLEŞTİR (ya da <host:port> ver)
 keyflip transfer serve --receive   # LAN: push edilen paketi ALMAK için BEKLE (ters yön)
@@ -237,7 +243,8 @@ keyflip fleet send-account <hesap> --to <makine> [--from <makine>]   # hesabı d
 keyflip fleet collect         # filoda yayınlanmış tüm hesapları bu makineye topla
 keyflip fleet keys            # her makinenin imza-anahtarı parmak izini denetle (ok / CHANGED / unpinned)
 keyflip fleet trust <makine>  # meşru bir yeniden-anahtarlama SONRASI makinenin imza anahtarını yeniden sabitle (aşağıdaki "Filo — origin authentication")
-keyflip consolidate [--watch] # her hesabın sohbet dizinini eşitle; her biri TÜM sohbetleri görsün
+keyflip consolidate [--dry-run] [--watch] [--no-instances]  # her hesabın + kopyanın sohbet dizinini birleştir; her biri TÜM sohbetleri görsün
+                                                 #   --dry-run yalnızca planı gösterir (uygulama açıkken de çalışır)
 keyflip remove <ad|numara>    # kayıtlı hesabı sil (onay ister; --force ile atla)
 keyflip logout [--browser] [--desktop]   # canlı oturum(lar)dan çık — kayıtlı hesaplar korunur
 keyflip history | undo | restore <ref>   # git-versiyonlu config: her değişikliği incele / geri al / geri dön (sırlar asla commit edilmez)
@@ -290,8 +297,10 @@ klasör yok, parola yok. Dinlerken **bu makineyi de ilan eder** (varsayılan AÇ
 off` ya da `--no-announce` ile kapat). Beacon **yalnız genel kimlik** taşır (makine id'si, görünen ad ve
 Ed25519 imza anahtarının kısa SHA-256 parmak izi) — asla parola, özel anahtar ya da komut — bu yüzden
 liste yazdırılması güvenlidir. Bulunan bir eş yalnızca *erişilebilir*dir: bir komut hâlâ parola **ve**
-sabitli bir anahtar gerektirir (yukarıdaki gibi pair et). Multicast'ı engelleyen bir ağ basitçe "kimse
-bulunamadı" der ve paylaşılan klasör yedek yol olarak kalır.
+sabitli bir anahtar gerektirir (yukarıdaki gibi pair et). Multicast kimseyi bulamazsa `fleet discover`
+`tailscale status --json`'a düşer ve çevrimiçi tailnet eşlerini (`[Tailscale]` işaretli) listeler —
+aynı genel-kimlik kuralları, hiç aynı LAN'da olmayan makineler için. İki taşıma da kimseyi bulamazsa
+bunu söyler ve paylaşılan klasör yedek yol olarak kalır.
 
 ### Filo — origin authentication
 
@@ -334,14 +343,27 @@ bloğunu yamalar; Claude Code bunu **anında yeniden yükler, yeniden başlatma
 gerekmez.**
 
 ```bash
-keyflip provider add openrouter --base-url https://openrouter.ai/api/v1 --key-file -   # anahtar stdin'den
-keyflip use openrouter          # Claude Code'u ona yönlendir
+keyflip provider catalog        # 19 preset: Z.AI/GLM, Zhipu, Kimi, DeepSeek, MiniMax, Qwen, Ark,
+                                # OpenRouter, OpenAI, Gemini, xAI, Mistral, Groq, Together,
+                                # Fireworks, Anthropic ve yerel Ollama / LM Studio / llama.cpp
+keyflip provider add zai --key-file -          # bir preset yalnızca anahtar ister (URL katalogdan gelir)
+keyflip provider add benim-gw --from deepseek --key-file -   # preseti kendi adınla kaydet
+keyflip provider add openrouter --base-url https://openrouter.ai/api/v1 --key-file -   # herhangi bir endpoint
+keyflip use zai                 # Claude Code'u ona yönlendir
 keyflip provider off            # aboneliğine geri dön (OAuth)
+keyflip provider list           # kayıtlı / aktif olan
+keyflip provider models zai     # endpoint gerçekte ne sunuyor? (GET /v1/models)
 keyflip speedtest openrouter    # endpoint'leri ölç, en hızlısını kullan
 keyflip test openrouter         # tek gerçek istek: auth çalışıyor mu?
-keyflip doctor                  # sağlık kontrolü: git-e-sır + orphan + versiyonlama + config + giriş + endpointler + masaüstü oturumu
+keyflip doctor                  # sağlık kontrolü: git-e-sır + orphan + versiyonlama + config + giriş + endpointler + masaüstü oturumu + otomatik güncelleme durumu + her arka plan servisi (kurulu / tutuluyor / son çıktı)
 ```
 
+- Her preset, **Anthropic API** mi konuştuğunu (Claude Code doğrudan
+  yönlendirilebilir) yoksa **OpenAI chat API**'si mi (Anthropic-uyumlu bir
+  gateway/shim gerekir ya da yalnızca router/maliyet için uygundur) kaydeder —
+  ikinci durumda `provider use` sessizce CLI'ı bozmak yerine uyarır. Model adları
+  değişir; `provider models <id>` canlı listeyi sorar, `--model default=…` ezer.
+- Terminalde çıplak `keyflip provider add` kategori gruplu, numaralı bir seçici açar.
 - **API anahtarı sırdır** → OS kimlik deposunda saklanır, asla metadata dosyasında
   veya komut satırında değil (stdin/dosyadan okunur).
 - Geçiş yalnızca keyflip'in yönettiği anahtarlara dokunur; kendi `settings.json`'un
@@ -437,6 +459,27 @@ birleştirir; her hesap hepsini görür. **claude.ai Chat** ise bulutta, hesap-b
 sunucu tarafında; `keyflip chat` bunu bir **claude.ai oturum çerezi**yle okur.
 **Deneyseldir** (belgesiz API) ve çerez-bağımlıdır:
 
+**Birleştirme hem temel uygulamayı hem de keyflip kopyalarını kapsar.** Claude
+Desktop Recents/Cowork işaretçilerini hesap-başına `<accountUuid>/<orgUuid>/`
+klasörlerine yazar; her `keyflip instance` kopyası bunların kendi kopyasını
+`~/.keyflip-instances/<araç>/<slug>/User Data/` altında taşır. `consolidate` bütün
+bu depoları hesap klasörleriyle birlikte birleştirir; bir kopyada açılan sohbet
+temel uygulamada ve diğer tüm kopyalarda görünür. İki hesap farklı transcript'ler
+için aynı `local_*.json` adını meşru olarak kullanabilir: keyflip birini sessizce
+düşürmek yerine `local_<cliSessionId>.json` adına geri düşer ve `deleted_<id>`
+mezar taşı yine kazanır. `instance.pid`'i canlı bir kopya atlanır (dizini uygulama
+sahiplenir ve çıkışta yeniden yazar) ve sonuçta adıyla bildirilir; `--no-instances`
+yalnızca temel uygulamayla sınırlar. Birleştirme yalnızca dosya ekler ve önce her
+depoyu yedekler.
+
+**Kiro ve ChatGPT için birleştirme gerekmez.** Kiro sohbet durumunu tek IDE profilinde,
+hesaba göre değil çalışma alanına göre saklar (`User/workspaceStorage/<hash>/state.vscdb`
+ve `User/globalStorage/kiro.kiroagent/artifacts/sess_*`); hesap değişince yalnızca kimlik
+bilgisi değişir, yerel geçmiş yerinde kalır. ChatGPT sohbetleri hesap başına sunucuda tutar
+(claude.ai Chat gibi) ve yerel veri kökü (`~/Library/Application Support/Codex`) ortaktır —
+birleştirilecek hesap-başına sohbet dizini yoktur. keyflip ChatGPT'nin *girişini* yönetir
+(`keyflip chatgpt`), sohbet geçmişini değil.
+
 - Oturum çerezi otomatik bulunur ve her listeleme nereden okunduğunu yazar: uygulamanın
   kendi çerezi, yoksa claude.ai'a girişli bir tarayıcı (güncel masaüstü sürümleri
   `sessionKey`'i bellekte tutar; diskteki çerez kavanozu genelde *kullanılabilir olmaz*),
@@ -448,6 +491,12 @@ sunucu tarafında; `keyflip chat` bunu bir **claude.ai oturum çerezi**yle okur.
   claude.ai'a giriş yap ve bir kez `keyflip browser capture <hesap>` çalıştır
   (`browser sync` tersini yapar — kayıtlı oturumu tarayıcıya geri yazar). Her keyflip
   geçişi ayrıca bırakılan hesabın girişini *ve çerezini* tazeler.
+- Bir Chromium **profili** tam olarak tek bir claude.ai hesabı tutar; iki hesabın aynı anda
+  canlı olması için iki profil gerekir. keyflip her profili görür (`Default` `chrome` olarak
+  kalır; diğerleri `chrome-<ProfilDizini>` olarak görünür, örn. `chrome-Profile-2`), her birini
+  kendi kimliği altında kaydedip geri yükler ve geçiş tarayıcıyı hepsi için bir kez kapatıp
+  açar. `keyflip browser status --browser chrome` tüm profilleri kapsar; tek profile inmek
+  için tam kimliği ver.
 - **403, Cloudflare doğrulamasının bayatladığı** demektir — çıkış yapıldığı değil.
   `keyflip chat --flush` uygulamayı bir kez kapatıp açar ve tekrar dener.
 - Arama yalnızca sohbet **başlıklarında** yapılır; mesaj içerikleri yerel kayıtlarında —
@@ -457,6 +506,207 @@ sunucu tarafında; `keyflip chat` bunu bir **claude.ai oturum çerezi**yle okur.
   `keyflip transfer`.
 
 (Uygulama tercihleri, `design/`, worktree'ler global/boş — orada taşınacak hesap-bazlı veri yok.)
+
+### Kiro — CLI ve IDE girişleri ayrıdır (`kiro`, macOS)
+
+Kiro, keyflip'in yönettiği ilk Claude-dışı yüzey. **Birbiriyle bağlantısız iki
+giriş** tutar: CLI'ın token'ı + cihaz kaydı macOS Anahtar Zinciri'nde
+(`kirocli:odic:*`), IDE'nin ise `~/.aws/sso/cache/kiro-auth-token.json` dosyası ve
+yanındaki `<clientIdHash>.json` kaydı. keyflip her yüzeyi ayrı yakalar; böylece
+kayıtlı hesap "ekranda hangi token varsa o" değil, gerçek bir kimlik bilgisi
+çiftidir:
+
+```bash
+keyflip kiro status          # canlı CLI e-postası/son geçerlilik + IDE süresi/hash'i ve kayıtlı hesaplar
+keyflip kiro capture [ad]    # iki yüzeyi de kaydet (--cli-only / --ide-only ile daralt)
+keyflip kiro switch <ad|n> [--dry-run] [--force] [--no-verify]
+keyflip kiro usage [ad]      # IDE'nin kendi q-client.log'undan son kota bloğu
+keyflip kiro list            # kayıtlı hesaplar ve her yüzeyin son geçerliliği
+keyflip kiro import <slug>   # eski keyflip:surface:kiro:<slug>:* kaydını taşı
+keyflip kiro remove <ad> --force
+```
+
+Kayıtlar `~/.config/keyflip/surfaces/kiro/<hesap>/` altında (0600, zaten
+git-ignored `surfaces/` içinde) durur; `meta.json` sır içermez. CLI değeri asla
+argv'den geçmez: keyflip `surfaces/kiro/.bin/` altında küçük bir yardımcı derler,
+değeri stdin'den verir ve `SecItemUpdate` kullanır; böylece `kiro-cli` kendi
+öğesini ve ACL'ini korur. Geçiş iki yüzeyi de bayt bayt geri okur; `whoami`
+pozitif bir uyuşmazlık bildirirse yazım geri alınır. Önce Kiro'yu kapat —
+çalışan `Kiro`/`kiro_cli_desktop` oturumu tutar ve çıkışta yeniden yazabilir; bu
+yüzden komut `--force` olmadan reddeder.
+
+İki yüzey tek bir yenileme zincirini paylaşabilir: IDE'deki bir yenileme CLI
+token'ını, CLI'daki bir yenileme IDE token'ını geçersiz kılabilir. keyflip her
+yüzeyin kendi baytlarını saklar; ama yüzey başına tamamen bağımsız zincir için her
+yüzeye bir tarayıcı girişi gerekir (#33). Süresi geçmiş kayıt `EXPIRED` görünür;
+ona geçiş taze bir giriş ister.
+
+### ChatGPT + Codex — tek ortak giriş (`chatgpt`, tüm platformlar)
+
+ChatGPT.app ve Codex CLI **aynı dosyayla** kimlik doğrular:
+`~/.codex/auth.json` (veya `$CODEX_HOME/auth.json`, kip 0600). Dosya OAuth
+token'larını — API-key girişinden sonra `OPENAI_API_KEY`'i de — tutar. Hesap
+e-postası, plan ve hesap kimliği id_token'dan okunur. Uygulamanın diskteki
+çerezleri burada **kimlik bilgisi değildir**: yalnızca Cloudflare/analytics
+kayıtları içerir.
+
+```bash
+keyflip chatgpt status          # canlı e-posta/plan/son geçerlilik + kayıtlı hesaplar; asla token değeri
+keyflip chatgpt capture [ad]    # canlı girişi kaydet (e-postasından otomatik adlandırır)
+keyflip chatgpt switch <ad|n|e-posta> [--dry-run] [--force] [--no-verify]
+keyflip chatgpt refresh [--force]   # şimdi döndür; --force 24s eşiğini yok sayar
+keyflip chatgpt list            # kayıtlı hesaplar ve token son geçerlilikleri
+keyflip chatgpt backups         # geçmiş geçiş/yenilemelerden auth.json kopyaları
+keyflip chatgpt backups restore <n|dosya> [--dry-run] [--force]
+keyflip chatgpt remove <ad> --force
+```
+
+`codex`, `chatgpt` için takma addır. Kayıtlar
+`~/.config/keyflip/surfaces/codex/<slug>/` altında: 0600 kipinde `auth.json` ve
+sır içermeyen `meta.json` (e-posta, plan, hesap kimliği, son geçerlilik — asla
+token). Geçiş canlı dosyayı yedekler, giden girişi en-iyi-çabayla yakalar, saklı
+baytları yazar ve geri okur (ham içerik + e-posta kimliği). ChatGPT/Codex
+çalışırken `--force` olmadan reddeder; çünkü uygulama token'ları önbelleğe alır ve
+çıkışta dosyayı yeniden yazar.
+
+**Kötü bir geçiş geri alınabilir.** Her geçiş ve token yenilemesi canlı `auth.json`
+dosyasını `~/.config/keyflip/backups/` altına kopyalar (en yeni 10 tanesi saklanır).
+`keyflip chatgpt backups` bunları hesap e-postası/plan/son geçerlilikle listeler —
+asla token — ve `backups restore <n|dosya>` birini geri yazar; önce mevcut canlı
+girişi yedeklediği için geri yükleme de geri alınabilir. ChatGPT/Codex çalışırken
+`--force` olmadan reddeder ve dosyayı geri okuyup doğrular.
+
+**Yenileme yalnızca canlı dosyada ve soy-güvenlidir.** Erişim token'ları yaklaşık
+on gün yaşar (beş güne indiği görüldü). Arka plan yenileme daemon'ı (`keyflip
+refresh --daemon-start`) beş dakikada bir kontrol eder ve son geçerliliğe 24 saat
+kala **canlı** dosyayı döndürür — ChatGPT/Codex çalışırken asla. Az önce
+harcanan refresh token'ını aynen tutan kayıtlı bir kopya varsa o da güncellenir;
+böylece ona geri dönüş ölü bir token'ı tekrar oynatmaz. Uyuyan kayıtlar kendi
+başlarına yenilenmez: hesap başına tek soy, birbiriyle yarışan iki refresh token
+yok. Bu özellikten önce zaten bayatlamış bir kayıt yine taze giriş ister (eski
+refresh token'ı uygulama tarafından harcanmıştır); başarısız yenileme dosyayı olduğu
+gibi bırakır ve sağlayıcı hatasını bildirir; `refresh` ayrıca neden ertelediğini
+yazar (vadesi gelmedi / çalışıyor / refresh token yok). Gece `refresh --schedule`
+işi Claude OAuth token'larını kapsar; bu giriş için tek seferlik komut
+`keyflip chatgpt refresh`'tir.
+
+### Command Code — CLI ve VS Code eklentisi tek girişi paylaşır (`commandcode`)
+
+Command Code (`cmd`, npm paketi `command-code`) **tek** kimlik dosyası tutar,
+`~/.commandcode/auth.json` (kip 0600), ve hem CLI hem de birlikte gelen VS Code
+eklentisi aynı dosyayı okur — tek geçiş ikisini birden değiştirir. keyflip dosyanın
+tamamını hesap başına saklar; bu, girişin yanında o hesabın BYOK sağlayıcı
+anahtarlarını da (`{ <sağlayıcı>: { type: 'api', key } }`) taşır. `userName` bir
+kullanıcı adıdır (e-posta değil) ve etiket odur; anahtar asla yazdırılmaz.
+
+```bash
+keyflip commandcode status            # canlı giriş, BYOK sağlayıcılar, model, cmd PATH'te mi?, kayıtlı hesaplar
+keyflip commandcode capture [ad]      # canlı auth.json'ı kaydet (userName'den otomatik ad)
+keyflip commandcode switch <ad|n|user> [--dry-run] [--no-verify]
+keyflip commandcode list
+keyflip commandcode backups           # geçmiş geçiş/geri yüklemelerden auth.json kopyaları (en yeni 10)
+keyflip commandcode restore <n|dosya> [--dry-run]
+keyflip commandcode remove <ad> --force
+```
+
+Kayıtlar `~/.config/keyflip/surfaces/command-code/<slug>/` altında: 0600 kipinde
+`auth.json` ve sır içermeyen `meta.json` (kullanıcı adı, kullanıcı kimliği, anahtar
+adı, sağlayıcı kimlikleri, zaman damgaları — asla anahtar). Geçiş canlı dosyayı
+yedekler, giden girişi yakalar, saklı baytları yazar ve geri okur (ham baytlar +
+kullanıcı kimliği/adı); uyuşmazlıkta dönülecek yedeği bildirir. **Hâlihazırda çalışan
+`cmd` oturumları eski girişle devam eder** — dosya açılışta okunur.
+
+keyflip'in sizin yerinize çeviremeyeceği iki şey:
+
+- **Web panosu** (`commandcode.ai/billing`, `/usage`) ayrı bir tarayıcı çerezi
+  girişidir. Her hesap için oraya bir kez elle girin.
+- Shell'deki **`COMMAND_CODE_API_KEY`**, `auth.json`'un önüne geçer; o zaman geçiş
+  hiçbir şey yapmamış gibi görünür. Dışa aktarılmışsa `status` uyarır.
+
+Sürüm yönetimli bir Node (fnm/nvm) altına kurulmuş `cmd` yalnızca o Node sürümünün
+PATH'inde olur; `status` nerede durduğunu ve hangi `fnm use`/`nvm use` ile
+düzeleceğini söyler. Command Code'un
+`~/.commandcode/projects/<slug>/*.jsonl` oturumları da aranabilir — bkz.
+`keyflip conv --app command-code` ve `keyflip foreign --list`.
+
+### Aynı anda birden çok hesap — izole uygulama kopyaları (`instance`, macOS)
+
+> **Yalnızca macOS.** Bu komutlar bir macOS `.app` paketini `~/Library/Application Support`
+> altına kopyalar, `open` ile başlatır ve AppleScript ile sürer — bunların hiçbiri Linux/Windows'ta
+> yoktur. Oralarda komut *"`<Araç>.app` /Applications/… konumunda bulunamadı"* diyerek erken durur.
+> Bunun yerine `keyflip switch` kullanın: kimlik bilgisi geçişi her platformda çalışır, uygulama
+> kopyaları ise yalnızca macOS'tadır.
+
+Masaüstü uygulamalarının çerezleri ~30 günde düşer. `keyflip instance` her hesap için
+uygulamanın APFS copy-on-write kopyasını (`cp -cR`, neredeyse sıfır disk) ve ayrı bir
+`--user-data-dir` oluşturur; oturumlar birbirine karışmaz ve yeniden giriş istemez.
+
+```bash
+keyflip instance list                     # tüm araçlar (ya da: list claude)
+keyflip instance create <araç> <hesap>    # ör. create claude yahoo@gmail.com
+keyflip instance launch <araç> <hesap>    # önce aynı aracın diğer örneklerini kapatır (deep-link tuzağı)
+keyflip instance focus <araç> <hesap>
+keyflip instance kill <araç> <hesap>
+keyflip instance harden [araç] [hesap]    # uygulamanın sunduğu güncelleme anahtarını uygular (varsayılan: hepsi)
+keyflip instance enable-all <araç>        # kayıtlı tüm hesaplar için örnek oluşturur
+keyflip instance help                     # desteklenen araçlar adaptörlerden okunur
+```
+
+**Desteklenen araçlar:** `claude`, `kiro`, `chatgpt` (kurulu uygulamalara karşı doğrulandı —
+Claude.app, Kiro.app, ChatGPT.app) ve `cursor` (standart yol; doğrulama makinesinde kurulu değil).
+Dördü de Electron olduğu için `--user-data-dir` gerçek çerez/oturum izolasyonu verir. Yeni araç =
+`src/instances.js` içindeki `TOOL_ADAPTERS`'a tek kayıt; CLI yönlendirmesi, MCP uçları, PID takibi ve
+launch/focus/kill mantığı otomatik çalışır.
+
+**Konum:** `~/.keyflip-instances/<araç>/<hesap>/` — `<Araç>.app` kopyası,
+`User Data/`, `Config/` (adaptör config env tanımlıyorsa uygulamaya geçirilir; Claude:
+`CLAUDE_CONFIG_DIR`), `profile.json`, `instance.pid`.
+
+Kısa yol bilinçli: Kiro kendi user-data dizininde bir Unix soketi açar ve macOS bu yolları 103
+karakterle sınırlar; eski `~/Library/Application Support/keyflip-instances` konumu her Kiro
+kopyasını `listen EINVAL` ile düşürüyordu. Mevcut örnekler ilk kullanımda otomatik taşınır.
+
+Otomatik güncelleme: uygulama kendi anahtarını sunuyorsa `create` onu kapatır — Claude kopyasının
+`User Data/config.json` dosyasına `disableAutoUpdates: true` yazar; ChatGPT'nin Sparkle
+`Info.plist` feed'i boşaltılır (en-iyi-çaba). Plist imza kapsamında olduğu için anahtar yazıldıktan
+sonra kopya ad-hoc yeniden imzalanır (Apple'ın iç yardımcılarına dokunulmaz); imzalama başarısız
+olursa özgün plist geri konur ki kopya açılmaya devam etsin. Kiro/Cursor böyle bir anahtar sunmaz. Eski
+`keyflip instance harden [araç] [hesap]` mevcut kopyalara anahtarı yeniden uygular (hedefsiz
+çağrı tümüne; çalışan kopyayı önce kapatın — `config.json` uygulamanın elindedir ve üzerine yazar). `keyflip doctor` **canlı** durumu okur: kapatılabilir olduğu hâlde hâlâ açık bir
+kopya uyarıdır, anahtarı olmayan araç ise olduğu gibi — `uncontrollable` — raporlanır. Eski
+`keyflip claude-profiles` komutları uyumluluk sarmalayıcısıyla çalışmaya devam eder.
+
+**Hangi girişler gerçekten izole:** bir kopya uygulamanın *profilini* (çerezler,
+önbellekler, pencere durumu) izole eder; aracın sahip olduğu her kimlik bilgisini değil.
+Tamamen kopya-izole tek araç Claude'dur: CLI yapılandırması (`CLAUDE_CONFIG_DIR`) ve
+masaüstü kullanıcı verisi kopyanın içinde yaşar. ChatGPT/Kiro girişi global bir depoda
+tutar (`~/.codex/auth.json`, Anahtar Zinciri ve `~/.aws/sso/cache`); her kopya bu depoyu
+paylaşır — farklı hesap için kopya kullanmak yine önce `keyflip chatgpt switch` /
+`keyflip kiro switch` ister. Antigravity (Anahtar Zinciri `gemini/antigravity`) ve Qoder
+(`~/.qoder/.auth/user`) için instance adaptörü yoktur ve girişleri globaldir; kopyalamak
+onları ayırmaz. Cursor tanımlı ama doğrulama makinesinde denenmedi.
+
+**Sorun giderme:**
+
+- *"No instance found for claude/work"* — önce oluşturun; slug hesap adıdır, yani `yahoo@gmail.com` ile
+  `yahoo` ayrı slug'lardır. `keyflip instance list` tam `araç/slug` çiftlerini yazar.
+- *"`<Araç>.app` /Applications/… konumunda bulunamadı"* — keyflip uygulamayı indirmez, kopyalar.
+  Temel uygulamayı kurun ya da kurulu bir aracı seçin.
+- *Kopya açılışta oturumsuz görünüyor* — `create` uygulamayı kopyalar, girişi değil. Hesabın kayıtlı
+  uygulama oturumunu **o kopyaya** geri yükleyin: `keyflip switch <hesap> --instance claude/<slug>`
+  (`keyflip <hesap> --instance …` kısayolu da geçerli). Düz `keyflip switch` yalnızca temel uygulamaya dokunur.
+- *`harden` çalışan kopyayı reddediyor* — önce kapatın (`keyflip instance kill claude/<slug>`). Çalışan
+  uygulama `config.json`'ı belleğinde tutar ve çıkışta üzerine yazar; altına yazmak sessizce geri alınırdı.
+- *Bir örneği başlatmak diğerlerini kapatıyor* — bilinçli: iki canlı kopya, macOS'un `claude://`
+  bağlantılarını yanlış olana yönlendirmesine yol açar.
+- *`du` kopya başına yüzlerce MB gösteriyor* — APFS'te beklenen: dokunulmamış bloklar fiziksel olarak
+  paylaşılır. Gerçek maliyeti öncesi/sonrası `df` ile ölçün.
+- *`harden` `Info.plist`'i düzenledikten sonra kopya açılmıyor* — güncel keyflip plist'i yamaladıktan
+  hemen sonra dış paketi ad-hoc yeniden imzalar; imzalama başarısız olursa özgün plist'i geri koyar, yani
+  bu artık olmamalı. Eski sürümle oluşturulmuş bir kopya takıldıysa kapatıp
+  `keyflip instance harden <araç>/<slug>` komutunu yeniden koşun; son çare kopyayı yeniden oluşturun.
+  Onarım için `codesign --deep` **kullanmayın**: derin imzalama Apple'ın iç yardımcılarını yeniden yazar;
+  otomatik yol bilinçli olarak onlara dokunmaz.
 
 ### Görevleri hangi model koşar (`llm`)
 
@@ -517,6 +767,40 @@ keyflip refresh --unschedule
   bir şey zamanlanınca yeşile döner. MCP tarafında: `keyflip_refresh_schedule` (`action=status|install|
   remove`, `confirm` ister). Zamanlanmış bir yenilemenin *kurtaramayacağı* kısımlar için `keyflip
   chains`'e bak — masaüstü uygulamasının session cookie'si insan ister, hiçbir zamanlayıcı bunu değiştirmez.
+- **Diğer araçların kendi saatleri var.** ChatGPT/Codex erişim token'ı (~10 gün) ayrıca kurulan
+  yenileme daemon'ıyla (`keyflip refresh --daemon-start`, 5 dakikada bir) son geçerliliğe 24 saat
+  kala döndürülür — ChatGPT/Codex çalışırken asla. `keyflip chatgpt refresh` bunu elle bir kez yapar;
+  yukarıdaki gece zamanlayıcısı yalnızca Claude OAuth içindir.
+- **Döndürülecek bir şey kalmadan süresi dolmuşsa bu sessiz bir sürpriz değil, doctor hatası.**
+  Token'ı dolmuş ve döndürecek refresh token'ı kalmamış (ya da apikey modunda) bir ChatGPT/Codex
+  yakalaması geçiş anında çalışmaz; `keyflip doctor`'ın **chatgpt/codex captures** satırı slug'ları,
+  geçerlilik bitişlerini ve tek çareyi söyler — bir kez giriş yap, sonra `keyflip chatgpt capture
+  <slug>`. Daemon da bu ölü kümeyi (tick başına değil, küme başına bir kez) log'lar.
+
+### Arkada gerçekten çalışan bir şey var mı? (`keyflip doctor`)
+
+Zamanlanmış bir iş bir sözdür ve sözler çürür: launchd bir gün tuttuğu plist'i ertesi gün tutmayabilir
+(çıkış yapmış olman, dizini taşımış olman, dosyayı elle düzenlemiş olman), 04:30'da uykudaki bir
+dizüstü gecelik işi hiç çalıştırmaz, ve bütün belirti haftalar sonra gelir — bayat bir arama cevabı ya
+da ölmüş bir token. Bu yüzden `doctor`, kurabildiği her arka plan işini sayar — `dream`, `refresh`,
+süre-dolumu `daemon`'ı ve sohbet indeksi — ve her birine üç ayrı soru sorar:
+
+```bash
+keyflip doctor                    # → "2 of 4 scheduled — dream: off · refresh: nightly at 04:30 · spoke 9 h ago …"
+keyflip doctor --json | jq '.checks[] | select(.name=="background services") | .services'
+```
+
+- **Kurulu** (keyflip'in yazdığı dosya yerinde), **tutulan** (launchd/cron gerçekten sahibi) ve
+  **konuşmuş** (log'u en son ne zaman değişmiş) üç ayrı bilgidir; işin çalıştığını gösteren son
+  ikisidir. `kurulu + NOT LOADED` bir uyarıdır ve tamir komutuyla birlikte gelir.
+- Sessizlik, işin **kurulurken** söz verdiği arılığa göre yargılanır: 30 dakikada bir denen bir indeks
+  bir gün boyunca hiçbir şey yazmadıysa bozulmuştur; on dakika önce kurulmuş olan ise henüz sırası
+  gelmemiştir. `KeepAlive` daemon'ının arılığı yoktur, sessizliği suç sayılmaz.
+- Bir günden eski sohbet indeksi ve onu tazeleyen bir iş yoksa bu ayrı bir uyarıdır — o indeks
+  dünkü sohbetler hakkında cevap verir.
+- Her işin kendi görüntüsü de duruyor: `keyflip conv index --schedule-status`,
+  `keyflip refresh --schedule-status`, `keyflip dream status`, `keyflip refresh --daemon-status`.
+  MCP tarafında `keyflip_doctor` tüm envanteri yapısal `services` satırları olarak döndürür.
 
 ### Her giriş ne kadar eski? (`keyflip freshness`)
 
@@ -719,6 +1003,137 @@ keyflip threads drop dugum-acmak -y    # yalnız ADI unutur; her transkript ve h
   mutlak kalır (çalıştırmak onu ister, bir çalışma dizini sır değildir) ve insan çıktısı, açılabilsin diye
   gerçek yolları korur.
 
+### Her aracın sohbetleri, aranabilir hâlde (`conv`)
+
+Claude Code `~/.claude/projects`'e, Codex `~/.codex/sessions`'a (bazen zstd sıkıştırılmış), Kiro hem
+`~/.kiro/sessions/cli`'ye hem IDE deposuna, Cursor üç ayrı depoya yazar (editörün `state.vscdb`'si,
+`cursor-agent` CLI'ının içerik-adresli `~/.cursor/chats`'i ve `agent-transcripts` aynası);
+opencode/Qoder/Gemini/Copilot/Aider'in ise kendine göre. `keyflip conv` hepsini **tek kanonik biçimde**
+okur — id, uygulama, yüzey, başlık, çalışma dizini, zaman damgaları, `{role, text, ts, tools}`
+mesajları — ve araçların kendi gürültüsünü ayıklar:
+`<system-reminder>`, `<task-notification>`, `<command-name>` tesisatı, ortam bağlamları ve
+`<pasted_content>` sarmalayıcıları (bazı araçların bozuk kapanış etiketleri dahil) indekse ya da
+dışa aktarıma asla ulaşmaz. Kaynaklar salt-okunur; keyflip hiçbir aracın deposuna yazmaz.
+
+```bash
+keyflip conv list --app claude,codex --since 7d   # gez: id öneki, uygulama, yaş, mesaj sayısı, başlık
+keyflip conv list --account yahoo                 # yalnızca o hesabın çalıştığı sohbetler
+keyflip conv index                                # bir kez çözümle, parçaları keyflip tutsun (artımlı)
+keyflip conv index --embed                        # + yerel embedding (varsayılan Ollama nomic-embed-text)
+keyflip conv index --schedule --interval 30        # kendini güncel tut (macOS'ta launchd, Linux'ta cron)
+keyflip conv search "database migration"          # şimdi BM25; vektörler varsa hibrit
+keyflip conv search "database migration" --account gmail   # …ve yalnızca o hesabın sohbetleri
+keyflip conv context "database migration"         # yapıştırmaya hazır RAG bloğu, kaynak atıflı
+keyflip conv show a7dc93d0                        # tek sohbeti oku, gürültüsüz
+keyflip conv export --all --obsidian --out ~/Documents/Vault
+keyflip conv transfer a7dc93d0 --to codex         # başka bir yapay zekâ aracına devir paketi
+```
+
+- **Cursor: veritabanı dosyası başına değil, composer başına bir sohbet.** Tek bir `state.vscdb`
+  makinedeki bütün sohbetleri tutar; bu yüzden editör deposu sohbet sohbet okunur — sohbet listesi yeni
+  sürümlerde `composerHeaders` tablosundan, eski sürümlerde `composerData:` KV satırlarından, her balon
+  kendi `bubbleId:` kaydından gelir. `fullConversationHeadersOnly` Cursor'un gerçekten çizdiği şey kabul
+  edilir: `isRenderable:false` işaretli bir balon transkriptte yoktur, listelenmiş ama metni gitmiş bir
+  balon ise **sayılır**, uydurulmaz. Araç kartları ve düşünme adımları araç olarak korunur (yeni
+  sürümlerde `toolFormerData`, eskilerde `capabilities`) ve yükü kaybolmuş bir araç kartı yine de bir
+  turu adlandırır — tahmin edilmez, etiketlenir. `cursor-agent` CLI'ının kendi deposu vardır
+  (`~/.cursor/chats`, içerik-adresli blob'lar artı bir meta kaydı) ve her oturumu
+  `agent-transcripts/*.jsonl` aynasına da yazar; ayna oturum id'sinden tanınır ve zengin kopyadan bir
+  kez indekslenir. Bu okuyucuların yazıldığı makinede Cursor kurulu değil, yani testler sözleşmeyi
+  dağıtılan uygulamanın kendi biçiminden kurulmuş fikstürlerle sabitler — yakalanmış canlı bir depoyla
+  değil.
+- **Okunamayan bir depo asla boş bir depo gibi görünmez.** `conv index` okuyamadığı her depoyu (çok
+  büyük, okunamaz, kayıp) **gerekçeli bir atlanmış kaynak** olarak adlandırır; sohbet üretmiş ama `-wal`
+  yan dosyası yeniden oynatılamamış bir depoyu ise **uyarı** olarak — ikisi birden asla değil, sessizlik
+  de asla.
+- **Bir parça, bir soru ve aldığı cevaptır.** Turlar asla ortadan kesilmez: bir kullanıcı mesajı ve
+  asistanın bir sonraki soruya kadar söyledikleri, sabit 1.400 karakterlik pencere yerine tek parçada
+  kalır; böylece bulunan cevap onu doğuran soruyu da taşır. Canlı 1864 sohbetlik indekste bu, sahipsiz
+  `Assistant: …` parçalarını ortadan kaldırdı — önce 122.611 parçanın 15.392'si (%12,6), sonra 117.033
+  parçanın 15'i. Bütün tutulamayacak kadar uzun bir tur, örtüşmeyle bölünür ve her parça sorusunun kısa
+  bir kopyasını taşır; yani uzun bir cevabın ortası da "ne sorulmuştu" ile bulunur.
+- **Bir parçada ne var — ve bilerek ne yok.** İndekste sohbet vardır: bir kullanıcı turu ve aldığı
+  cevap. Araç çağrıları **adıyla** tutulur (`tools`), araç sonuçları ise hiç indekslenmez —
+  Claude/Qoder, Codex, Kiro ve Gemini okuyucuları onları atar, yalnızca araç sonucundan oluşan tur
+  da atlanır. Tek istisna Cursor: deposu aracın çıktısını mesajın içinde tutar. O çıktı yine birebir
+  dışa aktarılır (aradığın şey bir hata satırı ya da bir yol olur), ama indekslenen metin 800
+  karakterle sınırlanır, `Tool output:` etiketiyle işaretlenir ve mesaj `machine` olarak damgalanır;
+  böylece büyük bir dosyanın tek bir `cat`'i onlarca parçaya sahip olamaz. Bu makinede ölçüm:
+  örneklenen 801 parçanın 6'sında (%0,7) herhangi bir araç izi var — komut çıktısı fiilen vektör
+  deposunda değil. Amaç da bu: uzun, makine biçimli ve istemi tekrar eden bir metindir.
+- **Aynı paragraf bir kez gösterilir.** Dallanmış (fork) ve devam ettirilmiş oturumlar önceki turları
+  birebir tekrarlar. `conv search` tek kopyayı tutar, diğer sohbetleri `alsoIn` içinde adlandırır ve
+  katlanan kopyaları `collapsed` diye sayar — aynı cevaba birkaç sonuç yuvası harcamaz.
+- **Sıralamayı nasıl yaptığını dürüstçe söyleyen arama.** Leksiksel taraf BM25: hafif bir stemmer ve
+  gerçek belge frekansları. `--embed` varsayılan olarak yerel bir Ollama ile vektör hesaplar (ya da
+  `KEYFLIP_EMBED_URL`; uzak uç noktaya giden metin önce sır-ayıklamadan geçer). Hibrit iki listeyi
+  reciprocal rank fusion ile kaynaştırır; leksiksel liste ağır basar, yani sadece vektörden gelen
+  bir eşleşme BM25 sonucunu sayfadan düşüremez — vektör yoksa sonuç `lexical` etiketiyle ve notla döner,
+  asla sessizce "hibrit" olmaz. İlk sorguda `search` indeksi bir kez kurar; ilk arama da çalışır.
+- **Aramanın gerçekte ne kadar işe yaradığı, ölçülmüş hali.** Bu makinenin 1.869 sohbetlik /
+  117.503 chunk'lık indeksi üzerinde, yerel bir modelin rastgele bir *mesajdan* (asla bir chunk'tan
+  değil, yani hiçbir chunk sınırı öne geçmesin) yazdığı 84 geliştirici tarzı soru: BM25
+  **hit@1 0,49 · hit@5 0,83 · MRR 0,63**, vektör listesi tek başına **0,24 · 0,43 · 0,32**.
+  Geliştirici transkriptlerinde nadir terim anlamdan daha iyi bir sinyal, dolayısıyla gönderilen
+  1:0,25 ağırlıkla hibrit tam olarak BM25 sayılarına düşüyor ve semantik ağırlık arttıkça sonuç
+  kötüleşiyor (1:0,5 → hit@1 0,46; 1:1 → 0,45; 1:2 → 0,25). Tur bazlı chunklama sıralamada bilinçli
+  olarak nötr: tur indeksiyle pencere indeksi 84 soruda bir-iki soru kadar ayrışıyor. Kazandırdığı
+  şey geri verdiğin metin (soru her zaman cevabın yanında) ve kopya katlama: katlama olmasaydı **sayfa
+  yuvalarının %9,3'ü sayfanın zaten gösterdiği bir paragrafı tekrar ediyordu** (aynı 84 soruda 840
+  yuvanın 78'i), katlama ise her birini adlandırılmış bir `alsoIn` ikizi çeviriyor. Vektörler gerçek CPU
+  maliyeti: 117.033 chunk'ın tamamını taramak ve gömmek burada **2 saat 35 dakika** (nomic-embed-text),
+  bu yüzden indeks kademeli gömüyor ve semantik listeyi bilinçli hafif tutuyor.
+- **Hangi hesap bu sohbetle çalıştı — ve keyflip bunu nereden biliyor.** Her sohbet satırı bir `account`
+  taşır; iki kaynak, kesin sırayla: **SİZİN SÖZÜNÜZ** (`keyflip sessions assign <oturum> <hesap>`) her
+  zaman keyflip'in tahminine öncelik alır. Tahmin, keyflip'in kendi geçiş zaman çizelgesinden gelir —
+  Claude Code için `active -> <profil>`, diğer yüzeyler için `kiro -> <slug>` ve `codex -> <slug>` —
+  ve sohbetin yaşam aralığı, vaktin çoğunu elinde tutan hesabın penceresine yerleştirilir. Her yüzey
+  **kendi** çizelgesini okur; yani bir Kiro geçişi asla bir Claude oturumunu yeniden etiketleyemez.
+  Etiket daima cevapla birlikte taşınır: `accountSource` `stated` ya da `inferred`dir, `accountConfidence`
+  `high` (görünür yaşamın tamamı tek pencerede), `medium` (başlangıcı kayıtlı tarihten önce) ya da `low`
+  (bir geçişin ortasına denk düşer); gerekçesini `keyflip conv show <id>` yazar. Kayıtlı hiçbir geçişten
+  eski sohbete **hesap verilmez**, tahmin de verilmez; keyflip'in hesabını yönetmediği araçlar (Qoder,
+  Gemini) de hesap almaz; sildiğiniz hesap asla adlandırılmaz. `conv list`te tahmin edilen adın sonunda
+  `*` vardır ve açıklama satırı bunu söyler.
+- **İndeks kendini güncel tutar.** `keyflip conv index --schedule [--interval N]` indeksi bir zamanlayıcıya
+  koyar (macOS'ta launchd ajanı, Linux'ta crontab satırı) böylece `conv search` az önce yaptığınız sohbeti
+  bulur, bayat olanı değil — **gece saatinde değil, aralıkla** çalışır, çünkü günlük indeks bir gün geride
+  kalırdı. Geçiş kademeli: değişmeyen bir transcript tek `stat()` demektir, yalnızca yeni ya da değişen
+  parçalar gömülür, dolayısıyla bir tur saniyeler sürer. **Yerel** embedding modelini çalıştırır — bulut
+  modeli yok, kota yok. Durumu `--schedule-status` gösterir, `--unschedule` kaldırır; terminali açık
+  tutmayı severseniz ön planlı karşılığı `--watch`.
+- **`conv context` RAG giriş noktasıdır.** Karakter bütçeli (varsayılan 12.000) taşınabilir tek blok
+  döndürür: kararlı başlıklar, kaynak id'leri, çalışma dizinleri ve tarihler; `--expand N` komşu
+  parçaları da çeker ki bir karar ikiye bölünmesin. Hiçbir şey yüklenmez; erişim diskte çalışır.
+- **Dışa aktarım varsayılan olarak sır ayıklar.** MD / kendi kendine yeten HTML / kanonik JSON, ve
+  YAML başlıklı, etiketli, indeks notlu Obsidian notları. Kimlik-bilgisi biçimli satırlar maske edilir;
+  `--no-redact` ile birebir kalır. Dosyalar `0600`'dır ve `export`, `--force` olmadan üzerine yazmayı
+  reddeder.
+- **Obsidian aktarımı sahiplik izler, kör senkron değildir.** Notlar
+  `<vault>/keyflip/Conversations/`'a, içerik özetlerinin gizli manifestosuyla yazılır. keyflip'in
+  yazdığı not yerinde güncellenir; sizin düzenlediğiniz not üzerine yazılmaz, **çakışma kopyası**
+  (`<ad> (conflict <zaman damgası>).md`) bırakılır; başlığı değişen not, hâlâ keyflip'in yazdığıyla
+  bayt-bayt aynıysa kaldırılır. Vault'unuz asla yeniden düzenlenmez.
+- **Devir, neyin var olduğunu dürüstçe anlatır.** `keyflip conv transfer <id> --to claude|codex|kiro|cursor|opencode|windsurf|gemini|copilot|aider|generic`
+  0600 bir paket yazar — `conversation.json` (kayıpsız), `CONTINUE.md` (hedefe göre ayarlanmış devam
+  istemi) ve gerçeği söyleyen bir README: **hiçbir hedef aracın belgelenmiş bir içe aktarımı yok**;
+  paket eklenip/yapıştırılacak bağlamdır ve hedef aracın kendi deposunda hiçbir şey değişmez.
+- **İndeks, sıra-komşusu bir artefakt gibi muamele görür.** `~/.config/keyflip/conv-index` içinde
+  yaşar (kayıtlı sır dizini: asla versiyonlanmaz, yedeklenmez, `migrate` dışlanır), `0600`, mtime+boyut+
+  özete göre artımlıdır: değişmemiş bir konuşma manifest satırından, yeniden ayrıştırılmadan kullanılır;
+  uzayan bir sohbet yalnızca yeni kuyruğunu yeniden embed eder. Bir token yan dosyası (`tokens/`, yine
+  0600, parçalardan türetilir) metni yeniden tokenize etmeden BM25'i hızlı tutar. Sayılar diskten ileri gidemez — parça
+  dosyası kaybolan satır yeniden parçalanır, parçası olmayan kaynak asla "embed edildi" sayılmaz ve
+  yarım parça dosyası vektörü yazılmadan önce diskle uzlaştırılır. Her satır kendi parça dosyasının
+  parmak izini de tutar: dosya başka bir konuşma tarafından ezilmişse diskte karşılığı olmayan bir
+  sayıyla yeniden kullanılmaz, kaynak konuşmadan yeniden parçalanır; aynı id'yi isteyen iki transcript
+  birbirinden ayrılır ve raporlanır (`id çakışması ayrı tutuldu`). Silmek gerçektir: tam yeniden kurulum
+  gitmiş sohbetleri düşürür; filtreli kurulum (`--app`, `--limit-sources`) geri kalanına dokunmaz.
+- MCP tarafında: salt-okunur `keyflip_conv_list`, `_show`, `_search`, `_context`, `_status` (indeksi
+  asla kendileri kurmaz — o iş `keyflip_conv_index`'in, `keyflip_conv_export` gibi `confirm` ister).
+  Kesitler ve bağlam blokları bir agent kaydına ulaşmadan önce sır-maskelenir, indeks yolu durum
+  dizinine göreli raporlanır, asla ev yolu olarak değil.
+
 ## Bağlam Katmanı — taşınabilir proje hafızası (`.keyflip/`)
 
 Yapay zeka araçları değişir; proje hafızanız değişmemeli. Bağlam Katmanı, projenizin dizininde
@@ -812,12 +1227,26 @@ keyflip context sync check --against incoming.json       # deneme: ne gönderili
 
 Ortam değişkeni **değerleri asla taşınmaz** — yalnızca değişken adı ve bir açıklama gider. Çakışma tespiti bir içerik özetini üst kontrol noktasıyla karşılaştırır: iki makine aynı tabanı düzenlediyse `check` bir çakışma bildirir ve `use-new` / `use-old` / `merge` / `two-branches` seçeneklerini sunar. Ajanlar modu `keyflip_ctxsync_status` ile okur ve (onay ile) `keyflip_ctxsync_mode` ile değiştirir.
 
-### Skill kur ve failover proxy
+### Skill kur — elindeki her agent'a
+
+Tek skill, makinede skill okuyan her araç:
 
 ```bash
-keyflip skill add anthropics/skills   # GitHub / ./dizin / file.tgz'den skill kur
-keyflip skill list | keyflip skill remove <ad>   # yalnız keyflip'in kurduklarına dokunur
+keyflip skill agents                  # 72 hedef dizin; ● = o araç burada
+keyflip skill add anthropics/skills   # GitHub / ./dizin / file.tgz'den her agent'a kur
+keyflip skill add ./benim-skill --agents claude,cursor   # …ya da yalnız adını verdiğin agent'lara
+keyflip skill sync                    # kaynak değiştiyse yeniden uygula; senin düzenlediğin kopyaya dokunmaz
+keyflip skill list | keyflip skill remove <ad> --yes  # yalnız keyflip'in kurduklarına dokunur
+keyflip install-skill                 # paketli keyflip skill'i → Claude + tespit edilen diğer agent'lar
+```
 
+Tespit, aracın kendi ev dizinine bakar (`~/.cursor`, `~/.kiro`, …): keyflip kurulu olmayan bir araç için dizin uydurmaz; paylaşılan bir dizin (`~/.agents/skills` Codex, Warp, Goose, Zed ve daha fazlasına hizmet eder) bir kez yazılır. Yazmadan önce skill'in metni taranır — **sır taşıyan bir skill kabul edilmez, reddedilir (redakte edilmez)** — ve *her* dosya sayılır, gizli olanlar dahil: bir `.env` ya da `AWS_SECRET_ACCESS_KEY=` satırı, bir token biçimi gibi kurulumu durdurur. Skill ayrıca kendi kendine yetmelidir: herhangi bir symlink (`/etc`'ye, `~/.ssh`'a, hatta skill'in kendi içine) kurulumu reddettirir, çünkü kopya dışarıyı gösteren bir bağ bırakırdı. `.git` hiç kopyalanmaz ve hiç hash'lenmez. `~/.config/keyflip/installed-skills.json` manifesti hedef başına SHA-256 ve parmak izi sürümünü tutar: `sync` el değmemiş kopyayı senin düzenlediğinden ayırır (seninki asla üzerine yazılmaz), gizli dosya düzenlemeleri artık görünmez değildir.
+
+Manifest diskteki bir dosyadır, bu yüzden güvenilmez: `sync` ve `remove` yalnızca keyflip'in kendi yazdığı hedef dizinlerde işlem yapar; başka bir yeri (`~/.ssh`, iç içe bir yol) gösteren manifest kaydı izlenmez, `skipped-unknown-target` olarak raporlanır; `remove` düz bir skill adı olmayan adı reddeder. Kurulum ve kaldırma agent'larının kendi dizinlerine yazdığı için ikisi de önce sorar: uçbirimde `[y/N]`, betikte veya agent'tan `--yes` gerekir. `--link` kopyalamak yerine symlink kurar; `--dry-run` planı yazdırır, hiçbir şey yazmaz.
+
+### Failover proxy
+
+```bash
 keyflip proxy start --wire            # yerel failover proxy başlat + Claude'u ona bağla
 keyflip proxy status | keyflip proxy stats
 keyflip proxy stop                    # durdur (ve bağlantıyı kaldır)
@@ -827,6 +1256,158 @@ keyflip proxy stop                    # durdur (ve bağlantıyı kaldır)
 API isteğini aktif hesaba yönlendirir ve istemciye bir bayt gitmeden önce
 `429`/`5xx` olursa **sıradaki sağlıklı hesaba geçip yeniden dener** — kota-eşikli
 `autoswitch`'in veremeyeceği istek-seviyesi failover. Yalnız `127.0.0.1` dinler.
+
+Failover bilinçli çalışır, ilk hatada körlemesine atlamaz:
+
+- **`Retry-After` uygulanır.** Üst servis beklenebilir bir süre verdiyse ve bu süre
+  `proxy.maxWaitSeconds` (varsayılan 10 sn) içindeyse keyflip bekler ve **aynı**
+  hesabı bir kez daha dener — başka hesabın kotasını harcamaktan ucuzdur. Daha uzun
+  bir bekleme verilmişse hemen failover yapılır ve hesap en az o süre park edilir.
+- **Faturalama 429'u hız limiti değildir.** Yanıt gövdesi kredi/faturalama/
+  kuruluş-devredışı diyorsa hata sana döner (başka hesabın kotasıyla maskelenmez);
+  gerçek hız-limitli 429'lar failover olur.
+- **Türe göre cooldown.** 429, 401/403, 529 veya 5xx alan hesap `breakers.json`
+  içinde türe özel TTL ile park edilir (`keyflip config`:
+  `proxy.cooldownQuotaSeconds`, `…ThrottledSeconds`, `…OverloadedSeconds`,
+  `…AuthSeconds`, `…ServerSeconds`; `0` o türü kapatır). Park edilen hesap
+  atlanır; hepsi parktaysa en erken açılacak olan bekleme bilgisiyle kullanılır.
+- **Belirlenimci sıra.** Önce `proxy.priority` (virgüllü hesap adları), sonra
+  aktif hesap, sonra en-az-kullanılan (LRU).
+- **Hata ayıklama başlıkları** her yanıtta: `x-keyflip-account`,
+  `x-keyflip-attempts`, `x-keyflip-failover`, `x-keyflip-error-class`,
+  `x-keyflip-cooldown`, `x-keyflip-model`, `x-keyflip-route`
+  (`proxy.debugHeaders=false` kapatır).
+
+#### Bildirimsel yönlendirme (`proxy-routes.json`)
+
+Yukarıdakilerin hepsi varsayılandır. **İstek bazında** karar vermek için
+`~/.config/keyflip/proxy-routes.json` oluştur (`keyflip proxy routes init` geçerli
+bir başlangıç dosyası yazar). Çalışan proxy dosyayı **bir sonraki istekte**
+yeniden okur — yeniden başlatma yok:
+
+```json
+{
+  "fallback": "retry",
+  "sticky": { "enabled": true, "ttlSeconds": 1800 },
+  "modelChain": ["claude-sonnet-4-5", "claude-haiku-4-5"],
+  "rules": [
+    { "name": "opus-is", "when": { "model": "*opus*" }, "use": { "account": "is" } },
+    { "when": { "tokensGt": 120000 }, "use": { "model": "claude-sonnet-4-5" } }
+  ],
+  "transforms": {
+    "setHeaders": { "x-team": "pay" },
+    "removeHeaders": ["x-internal"],
+    "bodyModel": null,
+    "maxTokens": 8192
+  }
+}
+```
+
+- **rules** — ilk eşleşen kazanır. `when`: `model`, `path`, `header`
+  (ad → glob), `tokensGt` (bağımlılıksız tahmin, ~karakter/4 — "yalnız çok büyük
+  istekler" demek için), `account`, `user`; glob `*` ve `?` kullanır. `use` bir
+  `account` ve/veya `model` seçer. Kural yalnız **o an kullanılabilir** bir hesabı
+  adlandırabilir: cooldown veya açık breaker her zaman kazanır ve gerekçe bunu
+  sessizce görmezden gelmek yerine söyler.
+- **sticky** — bir sohbet (`metadata.user_id`, ya da `x-keyflip-session` başlığıyla
+  isteğe bağlı) bir hesapta başarılı olursa TTL boyunca orada kalır (süreç içi,
+  1000 sohbetle sınırlı).
+- **fallback** — `off` (ilk yanıtı olduğu gibi döndür, yeniden deneme yok),
+  `retry` (yukarıdaki failover; varsayılan) veya `model-chain` (429/529/5xx'te
+  başka hesabın kotasını harcamadan önce **aynı hesapta** sıradaki modele düş —
+  model sorunu hesap arızası değildir, breaker açılmaz).
+- **transforms** — istek başlığı ekle/kaldır, gövde modelini değiştir,
+  `max_tokens` tavanı koy (yalnız düşürülür). Gövde yalnız JSON ise yeniden
+  yazılır; başka bir şey olduğu gibi iletilir.
+- **custom router** — `CUSTOM_ROUTER_PATH=/yol/router.js` (veya dosyada
+  `customRouter`) stdin'den `{model,path,user,tokens,accounts}` JSON'u alır ve
+  `{"account":"…","model":"…","reason":"…"}` döndürür; 1,5 sn zaman aşımı, 64 KB
+  sınır, herhangi bir hata kuralara geri düşer. Salt-okunur araçlar bu kancayı
+  **çalıştırmaz**.
+
+Geçersiz bir dosya proxy'yi asla bozmaz: yok sayılır ve `keyflip proxy routes` +
+`keyflip proxy status` her sorunu adıyla gösterir.
+
+```bash
+keyflip proxy routes                  # dosya, hataları, geçerli politika
+keyflip proxy routes init [--force]   # geçerli bir şablondan başla (üzerine yazmaz)
+keyflip proxy explain --model claude-opus-4 --tokens 200000   # bu istek nereye gider, neden?
+keyflip cooldown                      # rota sırası + her hesabın breaker/cooldown durumu (kalan sn)
+keyflip cooldown clear <hesap>|--all
+```
+
+#### Abonelik planları (`keyflip tier`)
+
+Planlar sundukları modelde farklıdır: Free bir hesap Opus sınıfını kullanamaz,
+Sonnet ve Haiku ise normal yönlenir. Proxy her hesabın planını yakalanan
+girişten okur (`subscriptionType` + `rateLimitTier`, ör. `max` +
+`default_claude_max_5x`); böylece farklı planlardaki hesaplarda bir Opus isteği
+sessizce reddedecek olana gönderilmez.
+
+```bash
+keyflip tier                                   # her hesap: plan, etiket, kaynak, filtre durumu
+keyflip tier is max5x                          # giriş dizesi eksik/yanlışsa override sabitle
+keyflip tier is auto                           # override'ı sil, yakalanan girişe dön
+keyflip proxy explain --model claude-opus-4-8  # atlanan hesapları gerekçesiyle listeler
+```
+
+Planlar: `free`, `pro`, `max`, `max5x`, `max20x`, `team`, `enterprise`. Yalnız
+**bilinen ve düşük** bir plan isteği engeller: bilinmeyen plan, Claude olmayan
+model ve aktif sağlayıcı modu serbesttir; filtre asla olmayan bir ret uydurmaz.
+Kullanılabilir **her** hesap modeli reddediyorsa proxy hiçbir şey göndermeden
+plan detayıyla `503` döner — istek, sunamayacak bir plana harcanmaz.
+`keyflip config set proxy.tierFilter false` filtreyi makine genelinde kapatır.
+Override hesabın mevcut meta JSON'unda durur; yeni bir durum dosyası oluşmaz.
+
+#### Ne kadar tutuyor (`proxy stats`, `cost rates`)
+
+`keyflip proxy stats` hesap başına şunları gösterir: istek sayısı, yeni
+giriş/çıkış token'ı, cache okuma/yazma ve tahmini **liste fiyatı** maliyeti.
+Motor faturadaki gibi hesaplar — cache okuma giriş ücretinin 0.1×'i, 5 dakikalık
+cache yazımı 1.25×, 1 saatlik yazım 2×, prompt'u **200K token**'ı geçen istek
+tümüyle 2× giriş / 1.5× çıkış (cache token'ları eşiğe sayılır ve o oranla
+fiyatlanır), hızlı (fast) mod ise düz 6×. Maliyet proxy kaydederken **istek
+bazında** hesaplanır; uzun bağlamlı veya hızlı bir istek ortalamada kaybolmaz.
+`keyflip cost by-project` her transkript satırını aynı şekilde fiyatlar.
+
+```bash
+keyflip cost rates                  # ücret tablosu: giriş/çıkış, cache kademeleri, 200K primi, fast
+keyflip cost rates claude-opus-4-8  # tek model; bilinmeyen kimlik (işaretli) fallback kartını gösterir
+keyflip proxy stats [--json]        # hesap başına cache token'ı + tahmini harcama
+```
+
+Bunlar tarihli bir anlık görüntüden gelen tahminlerdir (`keyflip cost rates`
+sürümü yazar), fatura değildir — ve `keyflip cost status` hâlâ yüzdeden dolar
+türetmez.
+
+#### Fiyat tablosu kendini günceller (`cost prices`)
+
+Liste fiyatları değişir (modeller çıkar, giriş fiyatları biter), dolayısıyla
+paketlenmiş anlık görüntü eskir. `keyflip cost prices --refresh` herkese açık
+LiteLLM fiyat listesini çeker, Claude satırlarını ayırır, doğrular ve
+`~/.config/keyflip/prices-cache.json` içine yazar; bundan sonra `cost rates`,
+`cost by-project` ve `proxy stats` yeni fiyatlarla hesaplar (paketlenmiş
+anlık görüntü taban olarak kalır, hiçbir model fiyatsız kalmaz).
+
+```bash
+keyflip cost prices                 # hangisi kullanılıyor: kaynak, yaş, sha-256, pin durumu
+keyflip cost prices --refresh       # çek + doğrula + önbelleğe al (ağa çıkan tek komut)
+keyflip cost prices --clear         # önbelleği sil; paketlenmiş anlık görüntü devreye girer
+```
+
+Ağa sadece açık bir `--refresh` dokunur; diğer tüm komutlar önbelleği okur.
+Önbellek güvenilmeyen girdidir: bütün hâlinde doğrulanır (sabit şekil, sınırlı
+boyut, yazdırılabilir model kimlikleri, sonlu ücretler) ve bozuk olanı yarım
+uygulanmak yerine tamamen yok sayılır. **Pinleme isteğe bağlıdır ve asla otomatik
+değildir:** `cost.pricesSha256` ayarlanırsa (ya da `--pin <sha256>` verilirse)
+özeti tutmayan bir yenileme reddedilir — keyflip az önce çektiğini kendisi
+asla pinlemez.
+
+Canlı bir satır ücreti **yükseltebilir** ya da paketlenmiş tabloda hiç olmayan
+bir modeli ekleyebilir; ama hiçbir zaman ücreti paketlenmiş anlık görüntünün
+altına düşüremez: kaynak listedeki düşüş genelde giriş fiyatıdır ya da bayat
+bir satırdır, ve harcamanın altını gösteren bir tahmin, üstünü gösteren
+tahminden daha kötüdür.
 
 ### Kullanıma göre otomatik geçiş (`autoswitch`)
 
@@ -846,6 +1427,26 @@ autoswitch status` aktif mi gösterir; `keyflip autoswitch uninstall` durdurur.
 Varsayılanlar (threshold/strategy/group/interval), flag verilmezse `keyflip
 config`'ten gelir. MCP: `keyflip_autoswitch_service` (`action=status|install|remove`).
 
+### Tek MCP sunucu kaydı, her ajan
+
+`keyflip mcpreg add ctx -- npx -y ctx7` sunucuyu bir kez saklar; `keyflip mcpreg enable ctx`
+onu **bu makinede keyflip'in yazabildiği her ajan yapılandırmasına** ekler — Claude Code
+(`~/.claude.json`), Claude Desktop (`claude_desktop_config.json`), Cursor
+(`~/.cursor/mcp.json`), Kiro (`~/.kiro/settings/mcp.json`), Gemini CLI
+(`~/.gemini/settings.json`), Devin Desktop/Windsurf (`mcp_config.json`) ve opencode
+(`opencode.json`, `mcp` altında, kendi `{type:'local', command:[argv], environment}`
+şekliyle). Disable yalnızca adı verilen kaydı siler; `--code` / `--desktop` /
+`--surface <id>` yazımı daraltır, hiç bayrak vermemek hepsini birden yazar.
+
+İki kural diğer araçların yapılandırmasını korur. **Var olup çözülemeyen** bir yapılandırma
+yazımı baştan durdurur, `{}` ile değiştirilmez. Yapılandırma **yalnızca** ajan kuruluysa ve
+yol tek anlamlıysa oluşturulur: Windsurf'ün dosyası Devin adı değişiminde taşındı (üç olası
+konum) ve opencode `opencode.jsonc` dosyasını yorumlarla birlikte dağıtır — bu ikisi sadece
+tam JSON dosyası zaten varsa düzenlenir. `keyflip mcpreg surfaces` her hedefi, yolunu, o an
+taşıdığı sunucuları ve atlanma gerekçesini yazar; keyflip'in güvenle yazamadığı ajanlar
+**gerekçesiyle** listelenir: Codex sunucuları TOML'de (`[mcp_servers]`) tutar, Continue
+`experimental.mcpServers` altında dizi kullanır, Copilot'ın dosyası depo kapsamlıdır.
+
 ### Agent'lar için: MCP sunucusu ve skill
 
 Agent'lar CLI'ı tahmin etmek zorunda kalmasın — keyflip **MCP** konuşur:
@@ -857,7 +1458,9 @@ claude mcp add keyflip -- keyflip mcp     # veya: keyflip mcp --setup
 **Tüm CLI yüzeyi 160+ MCP aracı olarak sunulur** — agent hiçbir şeyi kabuğa
 dökmeden yapabilir: hesaplar (`keyflip_status/list/switch/next/add/account_remove`), provider'lar
 (`keyflip_providers`, `keyflip_provider_use/add/remove`, `keyflip_test_provider`, `keyflip_speedtest`),
-**filo** kontrol düzlemi (`keyflip_fleet_status/switch/send_account/collect/keys/trust`),
+**filo** kontrol düzlemi (`keyflip_fleet_status/push/switch/send_account/collect/keys/trust`;
+`push` bu makinenin durumunu yayınlar ve gelen kutusunu işler — sırlar ve kuyruktaki
+switch/save komutlarının uygulanması ayrı izin bayraklarıdır),
 oturumlar (`keyflip_sessions`, `keyflip_resume_command`, archive/distill/compact), **hesaplar arası tek
 görev** (`keyflip_threads` salt-okunurdur: liste / `slug` / `timeline` / `suggest` / tersten `id` arama;
 `keyflip_thread_create|add|remove|drop|mirror` yazar ve `confirm` ister), **geçiş ön kontrolü**
@@ -874,22 +1477,29 @@ okunabilir olduğu — yol ve stat, asla değer; `keyflip_chains_tighten` chmod 
 migrate + LAN
 (`keyflip_migrate_*`, `keyflip_transfer_pull`), WebDAV sync (`keyflip_sync_test/push/pull`),
 `keyflip://` linkleri (`keyflip_share/share_apply`), masaüstü gateway (`keyflip_gateway_*`), MCP-sunucu
-kaydı (`keyflip_mcpreg_*`), dizin pin'leri (`keyflip_link/links`), tanılama
-(`keyflip_doctor`, `keyflip_usage_history`), yedekler, skill'ler ve failover proxy. Her aracın düzgün JSON Şeması ve
+kaydı (`keyflip_mcpreg_*`), dizin pin'leri (`keyflip_link/links`), izole uygulama örnekleri
+(`keyflip_instances`, `keyflip_instance_*`), ortak ChatGPT/Codex girişi
+(`keyflip_chatgpt`, `_chatgpt_capture`, `_chatgpt_switch`, `_chatgpt_refresh`, salt-okunur `_chatgpt_backups`, onay-gerektiren `_chatgpt_restore`), tanılama
+(`keyflip_doctor`, `keyflip_usage_history`), yedekler, skill'ler (`keyflip_skills` ve `keyflip_skill_agents` salt-okunur;
+`keyflip_skill_add`, `keyflip_skill_sync` ve `keyflip_skill_remove` tespit edilen her agent'a, ya da yalnız verdiğin `agents`'a yazar)
+ve failover proxy. Her aracın düzgün JSON Şeması ve
 salt-okunur/yıkıcı anotasyonu var; **değiştiren araçlar `confirm: true` ister**
 ve açıklamaları agent'a önce kullanıcıya sormasını söyler. Sırlar MCP üzerinden
 asla alınmaz — ör. provider anahtarı ekleme CLI'daki `--key-file`'a bırakılır.
 
 Agent'a tüm bunları ne zaman ve nasıl kullanacağını öğreten paketli bir
-**Claude Code skill'i** de var (rate-limit playbook'u, durum kodları, paralel
-oturumlar):
+**agent skill'i** de var (rate-limit playbook'u, durum kodları, paralel
+oturumlar). `keyflip install-skill` onu Claude'un skill dizinine kendi
+yedek + sürüklenme kontrolüyle kurar ve aynı skill'i tespit edilen diğer
+agent'lara (Cursor, Kiro, Codex, Qoder, …) dağıtır; `keyflip skill agents`
+hedefleri listeler.
 
 ```bash
 keyflip panel [--open]         # yerel web paneli: hesaplar+kotalar, etkinlik takvimi, memory takımyıldızı, oturumlar
 keyflip panel --export <f> [--anon]   # paylaşıma-güvenli STATİK snapshot yaz (oturum içeriği yok, sır yok)
 keyflip menubar [--install]   # menü-çubuğu/tepsi eklentisi — macOS xbar/SwiftBar, Linux GNOME Argos/KDE kargos: hesap+kota tek bakışta, tıkla-geç
 keyflip statusline install    # aktif hesap + kotayı Claude Code promptunda göster
-keyflip install-skill      # ~/.claude/skills/keyflip dizinine kopyalar
+keyflip install-skill         # paketli skill → ~/.claude/skills/keyflip + diğer tespit edilen agent'lar
 ```
 
 ### Paralel oturumlar (`run`)
@@ -933,7 +1543,13 @@ oturumlarını gösterir.
 
 keyflip her geçişte (uygulama kapalıyken) bu dizini **birleştirir** — diğer
 hesapların oturum işaretçilerini aktif olana kopyalar; böylece Recents hepsini
-gösterir. Önce yedek alır ve yalnızca dosya *ekler* (asla silmez).
+gösterir. Aynı geçiş **Cowork** oturum işaretçilerini de kapsar ve temel
+uygulamayı her **instance kopyasıyla** birleştirir (`User Data/claude-code-sessions`
+ve `local-agent-mode-sessions`); bir kopyada açılan sohbet her yerde görünür.
+Farklı hesapların aynı adlı dosyaları `local_<cliSessionId>.json` adına geri
+düşülerek ayrı tutulur; çalışan bir kopya atlanır (kapatıp yeniden koşun) ve
+`--no-instances` birleştirmeyi temel uygulamayla sınırlar. Önce her depoyu yedekler
+ve yalnızca dosya *ekler* (asla silmez).
 
 > `~/.claude/projects` transcript'leriniz zaten hesaptan bağımsızdır; bu sadece
 > uygulamanın listesinin onları göstermesini sağlar. **Bulut "Chat" sohbetlerine

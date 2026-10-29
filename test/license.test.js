@@ -137,13 +137,32 @@ test('an unknown tier is refused even with a genuine signature', function () {
   assert.strictEqual(v.reason, 'unknown-tier');
 });
 
-test('the placeholder public key verifies nothing (fail-closed default)', function () {
+test('an UNPARSEABLE verifying key verifies nothing (fail-closed)', function () {
   const k = freshKeys();
   const token = license.makeLicense(k.privateKey, { tier: 'pro', email: 'a@b.co', expiry: null }, { now: NOW });
-  license.setPublicKey(license.PUBKEY_B64); // the un-replaced placeholder
+  license.setPublicKey('not-a-real-key');
   const v = license.verify(token, { now: NOW });
   assert.strictEqual(v.valid, false);
   assert.strictEqual(v.reason, 'no-pubkey');
+  assert.strictEqual(v.tier, 'free');
+  license.setPublicKey(license.PUBKEY_B64); // leave the module on the shipped key
+});
+
+test('the SHIPPED release key is a real Ed25519 public key', function () {
+  // The release build embeds the issuer's PUBLIC key so a license signed by the
+  // issuer verifies out of the box. This test fails if someone re-introduces a
+  // placeholder: an unparseable key makes every license verify nothing, which
+  // would silently turn every paid customer back into a free one.
+  // PUBKEY_B64 is the immutable constant that ships in the build (getPublicKeyB64()
+  // returns whatever key the current test injected, so it is not what we assert on).
+  const b64 = license.PUBKEY_B64;
+  assert.strictEqual(typeof b64, 'string');
+  assert.ok(b64.length > 0, 'the release key must not be empty');
+  assert.ok(!/REPLACE|TODO|CHANGEME/i.test(b64), 'the release key must not be a placeholder');
+  const key = crypto.createPublicKey({ key: Buffer.from(b64, 'base64'), format: 'der', type: 'spki' });
+  assert.strictEqual(key.asymmetricKeyType, 'ed25519');
+  // An Ed25519 SPKI DER is a fixed 44-byte structure (12-byte header + 32-byte key).
+  assert.strictEqual(Buffer.from(b64, 'base64').length, 44);
 });
 
 // ---- state: activate / status / tier ----------------------------------------
@@ -337,6 +356,24 @@ test('MCP license_status is read-only and reports the plan', async function () {
   assert.strictEqual(out.plan, 'pro');
   assert.strictEqual(out.valid, true);
   assert.ok(out.features.indexOf('fleet') !== -1);
+  // The status must say whether the paywall is actually gating anything — a
+  // valid license with enforcement off means "nothing is locked yet".
+  assert.strictEqual(typeof out.enforcement, 'boolean');
+});
+
+test('MCP license_status reports enforcement on/off from the environment', async function () {
+  const ctx = makeCtx({ now: NOW });
+  const tool = toolNamed('keyflip_license_status');
+  const prev = process.env.KEYFLIP_LICENSING;
+  try {
+    delete process.env.KEYFLIP_LICENSING;
+    assert.strictEqual((await tool.run(ctx, {})).enforcement, false);
+    process.env.KEYFLIP_LICENSING = '1';
+    assert.strictEqual((await tool.run(ctx, {})).enforcement, true);
+  } finally {
+    if (prev === undefined) delete process.env.KEYFLIP_LICENSING;
+    else process.env.KEYFLIP_LICENSING = prev;
+  }
 });
 
 test('MCP license_activate requires confirm and then activates from a file', async function () {

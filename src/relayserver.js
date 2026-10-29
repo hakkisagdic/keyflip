@@ -197,6 +197,11 @@ function handlePut(cfg, req, res, r) {
       /* ignore */
     }
   }
+  // Windows cannot unlink a file while the write stream still holds its handle, so the unlink in
+  // abort() fails there (EBUSY) and used to leave the temp file behind. Removing it again after the
+  // stream is really closed is a no-op on POSIX and the actual cleanup on Windows; on the success
+  // path the rename already moved it, so this just hits ENOENT and is ignored.
+  ws.on('close', cleanup);
   function abort(code, msg) {
     if (aborted || finished) return;
     aborted = true;

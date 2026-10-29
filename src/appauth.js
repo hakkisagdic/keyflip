@@ -454,7 +454,11 @@ function liveAppSession(ctx, opts) {
 // 'ok' | 'incomplete' | 'missing' — 'incomplete' means the DB was copied but has
 // no sessionKey yet (Chromium hadn't flushed a fresh login to disk; capturing
 // again with the app closed fixes it).
-function snapshotToProfile(ctx, name) {
+// When opts.instanceUserDataDir is given, the cookie snapshot goes into that
+// isolated clone instead of the base app dir; the token cache still lands in
+// config.json because Electron's safeStorage key is machine-wide.
+function snapshotToProfile(ctx, name, opts) {
+  opts = opts || {};
   const cp = configPath(ctx);
   if (!cp) return { ok: false, reason: 'no Claude desktop app data directory on this platform' };
   const cfg = readJSON(cp);
@@ -473,7 +477,9 @@ function snapshotToProfile(ctx, name) {
   try {
     const ck = cookiesPath(ctx);
     if (ck && fs.existsSync(ck)) {
-      const dest = profileCookiesPath(ctx, name);
+      const dest = opts.instanceUserDataDir
+        ? path.join(opts.instanceUserDataDir, 'Cookies')
+        : profileCookiesPath(ctx, name);
       copyCookieDb(ck, dest);
       cookies = cookiesLookLoggedIn(dest) ? 'ok' : 'incomplete';
     }
@@ -501,7 +507,11 @@ function pruneConfigBackups(ctx, keep) {
 }
 
 // Restore profile <name>'s desktop login into config.json. App must be closed.
-function applyFromProfile(ctx, name) {
+// When opts.instanceUserDataDir is given, the cookie snapshot goes into that
+// isolated clone instead of the base app dir; the token cache still lands in
+// config.json because Electron's safeStorage key is machine-wide.
+function applyFromProfile(ctx, name, opts) {
+  opts = opts || {};
   const cp = configPath(ctx);
   if (!cp) return { ok: false, reason: 'no Claude desktop app data directory on this platform' };
   const snap = readJSON(profilePath(ctx, name));
@@ -561,11 +571,14 @@ function applyFromProfile(ctx, name) {
   // the app just re-authenticates from the old cookie and rewrites the old tokens.
   try {
     const savedCk = profileCookiesPath(ctx, name);
-    const ck = cookiesPath(ctx);
+    const ck = opts.instanceUserDataDir ? path.join(opts.instanceUserDataDir, 'Cookies') : cookiesPath(ctx);
     if (ck && fs.existsSync(savedCk)) {
       fs.copyFileSync(savedCk, ck);
       try {
-        fs.rmSync(cookiesJournalPath(ctx), { force: true });
+        const journal = opts.instanceUserDataDir
+          ? path.join(opts.instanceUserDataDir, 'Cookies-journal')
+          : cookiesJournalPath(ctx);
+        if (journal) fs.rmSync(journal, { force: true });
       } catch (e) {
         /* stale journal */
       }

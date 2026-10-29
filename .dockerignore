@@ -1,0 +1,4 @@
+# The only Docker build in this repo is test/fleet-docker, and its build context is the repo root
+# (the image bakes in bin/ + src/). Keep the context small; nothing else is copied.
+node_modules
+.git

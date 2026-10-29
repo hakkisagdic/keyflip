@@ -41,7 +41,7 @@ import CommandReference from '../../components/CommandReference.astro';
           { cmd: 'keyflip add <name> --token <file|->', desc: 'Headless import of raw credential (CI/provisioning)' },
           { cmd: 'keyflip status', desc: 'Which account each surface is on (CLI + desktop app)' },
           { cmd: 'keyflip list [--usage]', desc: 'List accounts; --usage shows 5h/7d utilization' },
-          { cmd: 'keyflip doctor', desc: 'Health check: secrets-in-git, orphaned sessions, config, endpoints' },
+          { cmd: 'keyflip doctor', desc: 'Health check: secrets-in-git, orphaned sessions, config, endpoints, and every background service — installed, actually held by launchd/cron, and when it last produced output' },
           { cmd: 'keyflip doctor --history', desc: 'Also scan every blob keyflip ever committed for a reachable secret' },
           { cmd: 'keyflip verify [account] [--usage|--live]', desc: 'Would switching there actually work? Re-reads each surface the way its own app does — presence, expiry, age; never a value' },
           { cmd: 'keyflip config <list|get|set|unset>', desc: 'Validated settings home' },
@@ -70,7 +70,10 @@ import CommandReference from '../../components/CommandReference.astro';
 
       <div id="providers">
         <CommandReference title="Providers" commands={[
-          { cmd: 'keyflip provider add <name> --base-url <url> --key-file -', desc: 'Save a third-party endpoint (key on stdin)' },
+          { cmd: 'keyflip provider catalog', desc: 'Built-in presets (Z.AI, Kimi, DeepSeek, OpenRouter, Ollama…)' },
+          { cmd: 'keyflip provider add <id> --key-file -', desc: 'Save a preset — only the key is needed' },
+          { cmd: 'keyflip provider add <name> --base-url <url> --key-file -', desc: 'Save any third-party endpoint (key on stdin)' },
+          { cmd: 'keyflip provider models <id|name>', desc: 'Ask GET /v1/models what the endpoint serves' },
           { cmd: 'keyflip use <name>', desc: 'Route Claude Code to a provider' },
           { cmd: 'keyflip provider off', desc: 'Back to subscription (OAuth)' },
           { cmd: 'keyflip provider list', desc: 'List saved/active providers' },
@@ -80,8 +83,15 @@ import CommandReference from '../../components/CommandReference.astro';
           { cmd: 'keyflip route list|set|clear|arbitrage', desc: 'Model routing and arbitrage mode' },
           { cmd: 'keyflip cache status|purge', desc: 'Response cache management' },
           { cmd: 'keyflip proxy start --wire', desc: 'Start localhost failover proxy + wire Claude to it' },
-          { cmd: 'keyflip proxy status', desc: 'Proxy health and stats' },
+          { cmd: 'keyflip proxy status', desc: 'Proxy health, stats, live route order + cooldowns' },
+          { cmd: 'keyflip proxy routes [init]', desc: 'Declarative routing file: rules, sticky, fallback, transforms' },
+          { cmd: 'keyflip proxy explain --model M', desc: 'Where a request would go, and why (nothing sent); lists tier-skipped accounts' },
+          { cmd: 'keyflip proxy stats', desc: 'Requests, tokens, cache reads/writes and estimated list-price spend per account' },
           { cmd: 'keyflip proxy stop', desc: 'Stop proxy and unwire' },
+          { cmd: 'keyflip cooldown [clear <acct>|--all]', desc: 'Which accounts are parked, and release them' },
+          { cmd: 'keyflip tier [<acct> <tier|auto>]', desc: 'Each account\'s plan and whether a model may route to it' },
+          { cmd: 'keyflip cost rates [model]', desc: 'Billable card: cache tiers, 200K long-context premium, fast mode' },
+          { cmd: 'keyflip cost prices [--refresh|--clear|--pin <sha256>]', desc: 'Which price table the estimates use; refresh it from the public list (sha-256 pin optional, never automatic)' },
           { cmd: 'keyflip gateway use|off <provider>', desc: 'Route the desktop app to a provider' },
         ]} />
       </div>
@@ -104,7 +114,7 @@ import CommandReference from '../../components/CommandReference.astro';
           { cmd: 'keyflip sessions delete <id> [--hard]', desc: 'Delete a conversation (archives first by default)' },
           { cmd: 'keyflip sessions edit <id> <action> <n>', desc: 'Surgical JSONL edits (delete/redact/truncate)' },
           { cmd: 'keyflip sessions export <id> [--format md|html|json]', desc: 'Export chat as shareable doc' },
-          { cmd: 'keyflip foreign <file> [--format ...]', desc: 'Normalize another agent session (Cursor/Copilot/etc)' },
+          { cmd: 'keyflip foreign <file> [--format ...]', desc: 'Normalize another agent session (Cursor/Copilot/Qoder/Command Code/etc)' },
           { cmd: 'keyflip recall "<query>" [--answer]', desc: 'BM25/semantic search all chats + cited synthesis' },
           { cmd: 'keyflip dream [--older-than 30d] [--apply]', desc: 'Distill + archive old chats in one pass' },
           { cmd: 'keyflip dream schedule|unschedule|status', desc: 'Run dreaming nightly unattended' },
@@ -120,13 +130,21 @@ import CommandReference from '../../components/CommandReference.astro';
           { cmd: 'keyflip threads where <id>', desc: 'Which threads contain this session' },
           { cmd: 'keyflip threads drop <slug> -y', desc: 'Forget only the NAME; transcripts and assignments stay' },
           { cmd: 'keyflip threads mirror <slug> | unmirror <slug>', desc: 'Opt-in merged text on disk (needs threads.mirror=true)' },
+          { cmd: 'keyflip conv list [--app claude,codex] [--since 7d] [--cwd <dir>] [--account <name>]', desc: 'Every local AI tool\'s chats in one shape (Claude Code, Codex, Kiro, Gemini, Qoder, Command Code, Cursor, opencode, Copilot, Aider); --account shows only one account\'s chats' },
+          { cmd: 'keyflip conv index [--embed] [--force] [--watch]', desc: 'Build the conversation index (incremental; --embed adds local vectors; --watch keeps it current every N min). Cursor is read per composer from its editor DB, CLI store and transcript mirror; a store it cannot read is reported as skipped, a degraded one as a warning' },
+          { cmd: 'keyflip conv index --schedule [--interval N]', desc: 'Keep the conversation index current unattended (launchd on macOS, cron on Linux); --schedule-status / --unschedule' },
+          { cmd: 'keyflip conv search "<query>" [--lexical|--semantic] [--account <name>]', desc: 'BM25 / embedding / hybrid content search across all chats. A hit is a whole turn (question + answer); identical text from a forked session is shown once and names the other chats in alsoIn' },
+          { cmd: 'keyflip conv context "<query>" [--budget 12000]', desc: 'A ready-to-paste RAG block: cited sources + neighbouring chunks, char-budgeted' },
+          { cmd: 'keyflip conv show <id|prefix|title> [--format md|html|json]', desc: 'Read one conversation, harness noise stripped — and which account wrote it (stated by you, or inferred from the switch timeline with its confidence and reason)' },
+          { cmd: 'keyflip conv export --all [--obsidian] --out <dir>', desc: 'Export every chat as MD/HTML/JSON or an Obsidian vault (owned notes, conflict copies, never overwrites your edits)' },
+          { cmd: 'keyflip conv transfer <id> --to claude|codex|kiro|cursor|opencode|windsurf|gemini|copilot|aider|generic', desc: 'Handoff bundle (CONTINUE.md + conversation.json) for another AI tool — no store is modified' },
         ]} />
       </div>
 
       <div id="fleet">
         <CommandReference title="Fleet & Transfer" commands={[
           { cmd: 'keyflip fleet init --dir <folder>', desc: 'Link this machine into an encrypted fleet' },
-          { cmd: 'keyflip fleet discover', desc: 'Find keyflip machines on this LAN (multicast; announces by default)' },
+          { cmd: 'keyflip fleet discover', desc: 'Find keyflip machines on this LAN (multicast, Tailscale fallback; announces by default)' },
           { cmd: 'keyflip fleet invite | join <host> --code X', desc: 'Pair a new machine with a one-time code (no silent trust)' },
           { cmd: 'keyflip fleet announce on|off', desc: 'Announce this machine on the LAN (default on)' },
           { cmd: 'keyflip fleet push [--with-secrets]', desc: 'Publish status + apply queued commands' },
@@ -211,7 +229,10 @@ import CommandReference from '../../components/CommandReference.astro';
       <div id="desktop">
         <CommandReference title="Desktop & Browser" commands={[
           { cmd: 'keyflip browser status|logout|sync', desc: 'Check/reset/restore browser claude.ai account' },
-          { cmd: 'keyflip consolidate [--watch]', desc: 'Sync every account chat index' },
+          { cmd: 'keyflip consolidate [--dry-run] [--watch] [--no-instances]', desc: 'Union every account and instance clone chat index; --dry-run prints the plan (app may stay open)' },
+          { cmd: 'MCP keyflip_consolidate_plan', desc: 'Read-only plan of the same merge — what each account folder would gain' },
+          { cmd: 'keyflip chatgpt status|list|capture|switch|refresh|backups|remove', desc: 'Save/switch/refresh the shared ChatGPT.app + Codex login, and restore an auth.json backup (alias: codex)' },
+          { cmd: 'keyflip commandcode status|list|capture|switch|backups|restore|remove', desc: 'Save/switch the one ~/.commandcode/auth.json shared by the cmd CLI and its VS Code extension; status flags an exported COMMAND_CODE_API_KEY (which overrides the file) and a cmd installed under a version-managed Node' },
           { cmd: 'keyflip agents', desc: 'List other agents memory + config keyflip can carry' },
           { cmd: 'keyflip settings show|get|set', desc: 'View/edit ~/.claude/settings.json' },
           { cmd: 'keyflip surfaces', desc: 'Detect other AI tools on this machine' },
@@ -222,9 +243,13 @@ import CommandReference from '../../components/CommandReference.astro';
       <div id="mcp">
         <CommandReference title="MCP & Skills" commands={[
           { cmd: 'keyflip mcp [--setup|--register]', desc: 'MCP server over stdio for agents (--register: absolute-path self-entry in Claude Code + Desktop)' },
-          { cmd: 'keyflip install-skill', desc: 'Install Claude Code skill (~/.claude/skills/keyflip)' },
-          { cmd: 'keyflip skill add <repo|dir|tgz>', desc: 'Install any skill from GitHub/dir/file' },
-          { cmd: 'keyflip skill list|remove <name>', desc: 'Manage installed skills' },
+          { cmd: 'keyflip mcpreg add <name> -- <cmd> | enable <name> [--surface id|--code|--desktop]', desc: 'One registry, projected into every agent keyflip can write (Claude Code/Desktop, Cursor, Kiro, Gemini CLI, Devin/Windsurf, opencode); no flag = every surface present' },
+          { cmd: 'keyflip mcpreg list | surfaces | disable | remove | import', desc: 'Where each server landed and why a target is skipped; Codex (TOML), Continue (array) and Copilot (repo-scoped) are named as not projected' },
+          { cmd: 'keyflip install-skill', desc: 'Bundled keyflip skill → ~/.claude/skills/keyflip + every other detected agent' },
+          { cmd: 'keyflip skill agents', desc: 'Every agent skill dir keyflip can write, and which tools are present' },
+          { cmd: 'keyflip skill add <repo|dir|tgz> [--agents a,b] [--yes]', desc: 'Install a skill into every detected agent (or only the ones you name); refuses one that ships a secret (hidden files included) or any symlink' },
+          { cmd: 'keyflip skill sync [--yes]', desc: 'Re-apply each skill source; a copy you edited is left alone, a source that gained a secret is skipped' },
+          { cmd: 'keyflip skill list|remove <name> [--yes]', desc: 'Per-agent state (ok/edited/missing); removes only in dirs keyflip knows it wrote' },
           { cmd: 'keyflip brain "<intent>"', desc: 'Plain language to proposed keyflip steps (opt-in)' },
         ]} />
       </div>

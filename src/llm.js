@@ -138,9 +138,16 @@ function available(ctx, opts) {
 }
 
 function claudeInstalled(runner) {
+  const r = runner || run;
   try {
-    const r = (runner || run)('claude', ['--version']);
-    return !!(r && r.code === 0);
+    // Windows resolves a global npm bin through a `claude.cmd` shim, and Node refuses to spawn a
+    // `.cmd` without a shell (CVE-2024-27980), so go through cmd — which also applies PATHEXT.
+    if (process.platform === 'win32') {
+      const w = r('cmd', ['/c', 'claude', '--version']);
+      if (w && w.code === 0) return true;
+    }
+    const v = r('claude', ['--version']);
+    return !!(v && v.code === 0);
   } catch (e) {
     return false;
   }

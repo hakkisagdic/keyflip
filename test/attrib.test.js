@@ -286,3 +286,18 @@ test('sessions.list exposes startedAtMs from the transcript, and drops a skewed 
   })[0];
   assert.strictEqual(row2.startedAtMs, null);
 });
+
+test('a life of zero length (one message) still resolves to the account live at that instant', function () {
+  const ctx = makeCtx();
+  writeLog(ctx, ['2026-10-14T09:00:00.000Z active -> gmail', '2026-10-14T12:00:00.000Z active -> yahoo']);
+  const tl = attrib.timeline(ctx);
+  // A transcript with a single message opens and closes at the same instant — a zero-length
+  // span. That is a fact, not an absence: the account live at that instant worked on it.
+  const v = attrib.verdict(tl, {
+    mtimeMs: Date.parse('2026-10-14T10:30:00.000Z'),
+    startedAtMs: Date.parse('2026-10-14T10:30:00.000Z'),
+  });
+  assert.strictEqual(v.confidence, 'high');
+  assert.strictEqual(v.account, 'gmail');
+  assert.strictEqual(v.spanning, false);
+});

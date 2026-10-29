@@ -114,14 +114,40 @@ const CATALOG = [
     usage: 'keyflip browser [status|logout|sync]',
     desc: 'Check/reset/restore the browser claude.ai account so the Chrome extension connects.',
   },
+  {
+    name: 'kiro',
+    group: 'accounts',
+    safe: false,
+    usage: 'keyflip kiro [status|list|capture [name]|switch <name|n>|usage|import <slug>|remove <name>]',
+    desc: 'Kiro CLI (Keychain) + IDE (~/.aws/sso/cache) sessions: capture both, switch with --dry-run, read IDE usage.',
+  },
+  {
+    name: 'chatgpt',
+    group: 'accounts',
+    safe: false,
+    aliases: ['codex'],
+    usage:
+      'keyflip chatgpt [status|list|capture [name]|switch <name|n|email>|refresh|backups [restore <n|file>]|remove <name>]',
+    desc: 'ChatGPT.app + Codex CLI share one login (~/.codex/auth.json): capture, switch and refresh it.',
+  },
+  {
+    name: 'commandcode',
+    group: 'accounts',
+    safe: false,
+    aliases: ['command-code'],
+    usage:
+      'keyflip commandcode [status|list|capture [name]|switch <name|n|user>|backups|restore <n|file>|remove <name>]',
+    desc: 'Command Code (`cmd`) CLI + VS Code extension share ~/.commandcode/auth.json: capture, switch, and undo a switch from its backups.',
+  },
 
   // ---- providers ----
   {
     name: 'provider',
     group: 'providers',
     safe: false,
-    usage: 'keyflip provider add <name> --base-url <url> [--key-file <f|->] | list | off',
-    desc: 'Manage 3rd-party endpoints (relay/gateway/Bedrock/OpenRouter).',
+    usage:
+      'keyflip provider catalog | add <id|name> [--base-url <url>] [--from <id>] [--key-file <f|->] | list | models <id|name> | off',
+    desc: 'Manage 3rd-party endpoints (relay/gateway/Bedrock/OpenRouter); a catalog preset needs only a key.',
   },
   {
     name: 'use',
@@ -222,8 +248,8 @@ const CATALOG = [
     name: 'consolidate',
     group: 'sessions',
     safe: false,
-    usage: 'keyflip consolidate [--watch]',
-    desc: "Sync every account's chat index so each shows all conversations.",
+    usage: 'keyflip consolidate [--dry-run] [--watch] [--no-instances]',
+    desc: "Sync every account's chat index (base app + clone User Data stores) so each shows all conversations; --dry-run prints the plan without writing (MCP: keyflip_consolidate_plan / keyflip_consolidate).",
   },
   {
     name: 'dream',
@@ -240,11 +266,19 @@ const CATALOG = [
     desc: 'Search your chats (BM25; --semantic embeddings; --answer synthesis).',
   },
   {
+    name: 'conv',
+    group: 'sessions',
+    safe: true,
+    usage:
+      'keyflip conv [list|search|show|context|status] [--account <name>] | index [--embed] [--watch|--schedule] | export --all [--obsidian] --out <dir> | transfer <id> --to <tool>',
+    desc: "Every local AI tool's chats in one shape: browse, search, RAG context, Obsidian/MD/HTML export, handoff.",
+  },
+  {
     name: 'foreign',
     group: 'sessions',
     safe: false,
     usage: 'keyflip foreign --list | <session-file> [--format md|html|json]',
-    desc: "Find/normalize another agent's session (Cursor/opencode/Gemini/Qoder/Aider).",
+    desc: "Find/normalize another agent's session (Cursor/opencode/Gemini/Qoder/Command Code/Aider).",
   },
 
   // ---- context (portable project memory in .keyflip/) ----
@@ -395,8 +429,22 @@ const CATALOG = [
     name: 'proxy',
     group: 'orchestration',
     safe: false,
-    usage: 'keyflip proxy start [--wire] | stop | status | stats',
-    desc: 'Command-started failover proxy (429/5xx routes to the next account).',
+    usage: 'keyflip proxy start [--wire] | stop | status | stats | routes [init] | explain [--model M]',
+    desc: 'Command-started failover proxy (429/5xx → next account, Retry-After aware; optional proxy-routes.json rules, sticky sessions, model chain).',
+  },
+  {
+    name: 'cooldown',
+    group: 'orchestration',
+    safe: true,
+    usage: 'keyflip cooldown [clear <account>|--all]',
+    desc: 'Which accounts are parked (cooldown/breaker) and the order the proxy would try.',
+  },
+  {
+    name: 'tier',
+    group: 'orchestration',
+    safe: true,
+    usage: 'keyflip tier [<account> <tier|auto>]',
+    desc: 'Subscription tier per account (Free≠Opus) and which model families the proxy may route to it; pin an override when auto-detection is wrong.',
   },
   {
     name: 'autoswitch',
@@ -426,8 +474,8 @@ const CATALOG = [
     name: 'cost',
     group: 'cost',
     safe: true,
-    usage: 'keyflip cost [status|predict <acct>|by-project]',
-    desc: 'Spend/utilization, time-to-limit, per-repo attribution.',
+    usage: 'keyflip cost [status|predict <acct>|by-project|rates [model]|prices [--refresh|--clear|--pin <sha256>]]',
+    desc: 'Spend/utilization, time-to-limit, per-repo attribution, billable rate cards (cache tiers, 200K premium, fast mode), and the self-updating price table.',
   },
   {
     name: 'budget',
@@ -509,8 +557,8 @@ const CATALOG = [
     name: 'mcpreg',
     group: 'config',
     safe: true,
-    usage: 'keyflip mcpreg [add|list|enable|disable|import]',
-    desc: 'Manage MCP servers across Claude Code + Desktop.',
+    usage: 'keyflip mcpreg [add|list|surfaces|enable|disable|import]',
+    desc: 'Manage MCP servers once, project into every agent keyflip can write.',
   },
   {
     name: 'shell-init',
@@ -569,8 +617,8 @@ const CATALOG = [
     name: 'skill',
     group: 'agents',
     safe: false,
-    usage: 'keyflip skill add <owner/repo|./dir|file.tgz> | list | remove',
-    desc: 'Install/manage Claude Code skills.',
+    usage: 'keyflip skill add <owner/repo|./dir|file.tgz> | sync | list | remove <name> | agents',
+    desc: 'Install/manage skills across every agent on this machine.',
   },
   {
     name: 'mcp',
@@ -583,8 +631,8 @@ const CATALOG = [
     name: 'install-skill',
     group: 'agents',
     safe: false,
-    usage: 'keyflip install-skill',
-    desc: 'Install the Claude Code skill that teaches agents keyflip.',
+    usage: 'keyflip install-skill [--check]',
+    desc: 'Install the keyflip skill into every agent on this machine.',
   },
 
   // ---- maintenance ----

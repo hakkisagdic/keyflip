@@ -9,59 +9,7 @@ import * as memory from './memory.js';
 import * as _llm from './llm.js';
 import * as _embed from './embed.js';
 import _crypto from 'crypto';
-
-const K1 = 1.5,
-  B = 0.75;
-const STOP = new Set([
-  'the',
-  'a',
-  'an',
-  'and',
-  'or',
-  'of',
-  'to',
-  'in',
-  'is',
-  'it',
-  'for',
-  'on',
-  'with',
-  'this',
-  'that',
-  'as',
-  'at',
-  'by',
-  'be',
-  'i',
-]);
-
-// A light stemmer so "retries"/"retry", "limiting"/"limit", "backoffs"/"backoff" converge —
-// the "light query expansion" of I1 (both query + docs stem the same way). Not linguistically
-// perfect, just enough to beat exact-token brittleness. Zero-dep.
-function stem(w) {
-  if (w.length > 4 && w.slice(-3) === 'ies') return w.slice(0, -3) + 'y'; // "queries"->"query"
-  if (w.length > 5 && w.slice(-3) === 'ing')
-    w = w.slice(0, -3); // "limiting"->"limit"
-  else if (w.length > 4 && w.slice(-2) === 'ed')
-    w = w.slice(0, -2); // "limited"->"limit"
-  else if (w.length > 3 && w.slice(-2) === 'es')
-    w = w.slice(0, -2); // "caches"->"cach", "boxes"->"box"
-  else if (w.length > 3 && w.slice(-1) === 's' && w.slice(-2) !== 'ss') w = w.slice(0, -1); // "tokens"->"token"
-  // Normalize a trailing silent 'e' so a singular ("cache") and a de-pluralized stem
-  // ("caches"->"cach") land on the SAME token. Query and docs run this identically, so
-  // convergence — not linguistic accuracy — is what matters. (Also folds "code"/"coding".)
-  if (w.length > 3 && w.slice(-1) === 'e') w = w.slice(0, -1);
-  return w;
-}
-function tokenize(s) {
-  return String(s || '')
-    .toLowerCase()
-    .split(/[^a-z0-9]+/)
-    .filter(function (t) {
-      return t && t.length > 1 && !STOP.has(t);
-    })
-    .map(stem);
-}
+import { tokenize, scores as bm25Scores } from './bm25.js';
 
 // Build the keepsake corpus (each doc = one keepsake). Returns [{ key, session, cwd, text, toks }].
 function corpus(ctx) {
@@ -103,46 +51,21 @@ function snippet(text, terms) {
 function rank(docs, query, limit) {
   const qterms = tokenize(query);
   if (!qterms.length || !docs.length) return [];
-  const N = docs.length;
-  const avgdl =
-    docs.reduce(function (s, d) {
-      return s + d.toks.length;
-    }, 0) / N;
-  const df = Object.create(null);
+  const byKey = Object.create(null);
   docs.forEach(function (d) {
-    const seen = Object.create(null);
-    d.toks.forEach(function (t) {
-      if (!seen[t]) {
-        seen[t] = 1;
-        df[t] = (df[t] || 0) + 1;
-      }
-    });
+    byKey[d.key] = d;
   });
-  const scored = docs
-    .map(function (d) {
-      const tf = Object.create(null);
-      d.toks.forEach(function (t) {
-        tf[t] = (tf[t] || 0) + 1;
-      });
-      const dl = d.toks.length;
-      let score = 0;
-      qterms.forEach(function (q) {
-        const n = df[q] || 0;
-        if (!n) return;
-        const idf = Math.log(1 + (N - n + 0.5) / (n + 0.5));
-        const f = tf[q] || 0;
-        if (!f) return;
-        score += (idf * (f * (K1 + 1))) / (f + K1 * (1 - B + (B * dl) / avgdl));
-      });
-      return { key: d.key, session: d.session, cwd: d.cwd, score: score, snippet: snippet(d.text, qterms) };
-    })
-    .filter(function (r) {
-      return r.score > 0;
+  return bm25Scores(
+    docs.map(function (d) {
+      return { id: d.key, toks: d.toks };
+    }),
+    query,
+  )
+    .slice(0, limit || 10)
+    .map(function (r) {
+      const d = byKey[r.id];
+      return { key: d.key, session: d.session, cwd: d.cwd, score: r.score, snippet: snippet(d.text, qterms) };
     });
-  scored.sort(function (a, b) {
-    return b.score - a.score;
-  });
-  return scored.slice(0, limit || 10);
 }
 
 // Search the keepsakes for `query`.
