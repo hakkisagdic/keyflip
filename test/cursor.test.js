@@ -721,7 +721,7 @@ test('the editor and agent roots honour Cursor’s own environment overrides', f
   assert.strictEqual(cursor.agentRoots(ctx)[0], '/elsewhere/.cursor');
   assert.deepStrictEqual(
     cursor.agentRoots({ home: '/home/me', env: { XDG_CONFIG_HOME: '/xdg' } }).slice(0, 1),
-    ['/xdg/cursor'],
+    [path.join('/xdg', 'cursor')],
     'XDG first, then the home default',
   );
   assert.ok(cursor.agentRoots({ home: '/home/me', env: {} }).includes(path.join('/home/me', '.cursor')));

@@ -882,9 +882,17 @@ test('CLI: mcpreg enable reaches every agent on the machine; --code narrows it t
   const readCfg = function (rel) {
     return JSON.parse(fs.readFileSync(path.join(home, rel), 'utf8'));
   };
-  assert.strictEqual(readCfg('.cursor/mcp.json').mcpServers.ctx7.command, 'npx');
-  assert.strictEqual(readCfg('.gemini/settings.json').mcpServers.ctx7.command, 'npx');
-  assert.strictEqual(readCfg('.claude.json').mcpServers.ctx7.command, 'npx');
+  // Windows has no exec-able `npx`, so the entry is wrapped as `cmd /c npx …` there.
+  const wantCmd = process.platform === 'win32' ? 'cmd' : 'npx';
+  const wantArgs = process.platform === 'win32' ? ['/c', 'npx', '-y', 'ctx7'] : ['-y', 'ctx7'];
+  const checkEntry = function (rel) {
+    const e = readCfg(rel).mcpServers.ctx7;
+    assert.strictEqual(e.command, wantCmd, rel);
+    assert.deepStrictEqual(e.args, wantArgs, rel);
+  };
+  checkEntry('.cursor/mcp.json');
+  checkEntry('.gemini/settings.json');
+  checkEntry('.claude.json');
   // Kiro is not installed in this home: reported as skipped, and no config invented for it.
   assert.match(r.stdout, /kiro:\s+skipped \(agent not installed\)/);
   assert.ok(!fs.existsSync(path.join(home, '.kiro')));

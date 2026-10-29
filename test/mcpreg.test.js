@@ -33,6 +33,31 @@ test('cursor: creates ~/.cursor/mcp.json when Cursor is installed, keeps other k
   assert.strictEqual(cfg.mcpServers.other.command, 'node');
 });
 
+test('Windows: npx/node/npm get a `cmd /c` head, other commands do not — in both shapes', function () {
+  const ctx = makeCtx({ platform: 'win32' });
+  fs.mkdirSync(path.join(ctx.home, '.cursor'), { recursive: true });
+  const opencode = write(path.join(ctx.home, '.config', 'opencode', 'opencode.json'), {});
+  mcpreg.add(ctx, 'npxsrv', { command: 'npx', args: ['-y', 'pkg'], env: { A: '1' } });
+  mcpreg.add(ctx, 'nodesrv', { command: 'node', args: ['s.js'] });
+  mcpreg.add(ctx, 'other', { command: 'uvx', args: ['x'] });
+  ['npxsrv', 'nodesrv', 'other'].forEach(function (n) {
+    assert.strictEqual(mcpreg.setEnabled(ctx, n, 'cursor', true), 'applied');
+    assert.strictEqual(mcpreg.setEnabled(ctx, n, 'opencode', true), 'applied');
+  });
+  const cfg = read(path.join(ctx.home, '.cursor', 'mcp.json'));
+  assert.deepStrictEqual(cfg.mcpServers.npxsrv, { command: 'cmd', args: ['/c', 'npx', '-y', 'pkg'], env: { A: '1' } });
+  assert.deepStrictEqual(cfg.mcpServers.nodesrv, { command: 'cmd', args: ['/c', 'node', 's.js'], env: {} });
+  assert.deepStrictEqual(cfg.mcpServers.other, { command: 'uvx', args: ['x'], env: {} });
+  // opencode wants ONE argv array, so the wrapper travels at its head.
+  const oc = read(opencode);
+  assert.deepStrictEqual(oc.mcp.npxsrv, {
+    type: 'local',
+    command: ['cmd', '/c', 'npx', '-y', 'pkg'],
+    environment: { A: '1' },
+  });
+  assert.deepStrictEqual(oc.mcp.other.command, ['uvx', 'x']);
+});
+
 test('kiro: never invents a config for an agent that is not on this machine', function () {
   const ctx = makeCtx();
   mcpreg.add(ctx, 'files', { command: 'node', args: ['s.js'] });

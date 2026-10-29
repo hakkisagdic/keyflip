@@ -246,7 +246,7 @@ test('consolidate dry run reports the exact plan and writes nothing', function (
   assert.strictEqual(r.plan.length, 2);
   const dests = r.plan
     .map(function (p) {
-      return p.to;
+      return p.to.split(/[\\/]/).join('/'); // the plan is store-relative; compare it in one separator
     })
     .sort();
   // `to` is store-relative; aaaa… sorts first, so B's session (local_2) landing in A is dests[0].
