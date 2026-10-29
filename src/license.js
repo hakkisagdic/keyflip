@@ -13,12 +13,20 @@ import path from 'path';
 import crypto from 'crypto';
 import { atomicWrite, readJsonForWrite } from './fsutil.js';
 
-// The release PUBLIC key (single-line base64 of an Ed25519 SPKI DER, exactly the
-// shape src/fleet.js publishes). This placeholder is NOT a valid key, so a build
-// that forgets to replace it verifies NOTHING (everything degrades to 'free') —
-// fail-closed by construction. The maintainer swaps this at release; tests call
-// setPublicKey() with a throwaway key.
-const PUBKEY_B64 = 'REPLACE_AT_RELEASE_WITH_ED25519_SPKI_DER_BASE64';
+// The release VERIFYING key: single-line base64 of an Ed25519 SPKI DER (exactly
+// the shape src/fleet.js publishes). It is the PUBLIC half of the issuer keypair —
+// the matching PRIVATE key lives only at issuer/private/issuer.key (mode 0600,
+// gitignored) and never ships in any artifact. A client can therefore VERIFY a
+// license fully offline but can never MINT one.
+//
+// Generated with `node issuer/keygen.js`. ROTATE by generating a new keypair and
+// replacing this one line — but note that every license signed by the old key
+// stops verifying the moment you do, so reissue the affected customers first.
+// Fail-closed: an unparseable key here makes verify() answer 'no-pubkey' and
+// every effective tier collapse to 'free', so a broken release locks nothing
+// open — it locks everything shut. Paywall enforcement itself is a separate
+// switch (KEYFLIP_LICENSING, below) and is OFF unless explicitly enabled.
+const PUBKEY_B64 = 'MCowBQYDK2VwAyEAem3b9ybdmIiW0h/gq3FqLz1q0aDDUrIsZMw6Beq6rxM=';
 
 let PUBLIC_KEY_B64 = PUBKEY_B64;
 let _pubCache = null; // cached KeyObject
@@ -385,7 +393,7 @@ const mcpTools = [
     name: 'keyflip_license_status',
     title: 'License / plan status',
     description:
-      "Show the machine's keyflip license: effective plan (free|pro|team|enterprise), the licensed email, expiry, whether it is currently valid, and which paid features are unlocked. Fully offline (no phone-home). Read-only.",
+      "Show the machine's keyflip license: effective plan (free|pro|team|enterprise), the licensed email, expiry, whether it is currently valid, which paid features are unlocked, and whether the paywall is actually enforcing (enforcement=false means paid features are not gated in this environment yet). Fully offline (no phone-home). Read-only.",
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
     annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     run: async function (ctx) {
@@ -398,6 +406,7 @@ const mcpTools = [
         valid: s.valid,
         reason: s.reason,
         features: unlockedFeatures(ctx),
+        enforcement: enforcementEnabled(),
       };
     },
   },

@@ -139,3 +139,142 @@ test('consolidate does not resurrect a session deleted in an account', function 
   assert.ok(!fs.existsSync(path.join(s.store, s.B, s.OB, 'local_1.json')), 'deleted session stays deleted in B');
   assert.ok(fs.existsSync(path.join(s.store, s.A, s.OA, 'local_1.json')), 'A keeps its own copy');
 });
+
+// Two accounts can legitimately name DIFFERENT transcripts local_<same>.json. The old
+// existsSync() guard dropped one of them forever; the merge must give the newcomer a
+// transcript-derived filename instead.
+test('consolidate keeps both sessions when accounts reuse the same filename', function () {
+  const s = setup();
+  fs.rmSync(path.join(s.store, s.A, s.OA, 'local_1.json'));
+  fs.rmSync(path.join(s.store, s.B, s.OB, 'local_2.json'));
+  fs.writeFileSync(
+    path.join(s.store, s.A, s.OA, 'local_7.json'),
+    JSON.stringify({ sessionId: 'local_7', cliSessionId: 'cs-A', title: 'A chat' }),
+  );
+  fs.writeFileSync(
+    path.join(s.store, s.B, s.OB, 'local_7.json'),
+    JSON.stringify({ sessionId: 'local_7', cliSessionId: 'cs-B', title: 'B chat' }),
+  );
+  const r = consolidate(s.ctx);
+  assert.strictEqual(r.merged, 2);
+  const aNames = fs.readdirSync(path.join(s.store, s.A, s.OA)).sort();
+  const bNames = fs.readdirSync(path.join(s.store, s.B, s.OB)).sort();
+  assert.deepStrictEqual(aNames, ['local_7.json', 'local_cs-B.json'].sort());
+  assert.deepStrictEqual(bNames, ['local_7.json', 'local_cs-A.json'].sort());
+  assert.strictEqual(cliIdOfTest(path.join(s.store, s.A, s.OA, 'local_cs-B.json')), 'cs-B');
+  assert.strictEqual(cliIdOfTest(path.join(s.store, s.B, s.OB, 'local_cs-A.json')), 'cs-A');
+});
+
+test('a collision fallback still respects the tombstone for the transcript id', function () {
+  const s = setup();
+  fs.rmSync(path.join(s.store, s.A, s.OA, 'local_1.json'));
+  fs.rmSync(path.join(s.store, s.B, s.OB, 'local_2.json'));
+  fs.writeFileSync(
+    path.join(s.store, s.A, s.OA, 'local_7.json'),
+    JSON.stringify({ sessionId: 'local_7', cliSessionId: 'cs-A' }),
+  );
+  fs.writeFileSync(
+    path.join(s.store, s.B, s.OB, 'local_7.json'),
+    JSON.stringify({ sessionId: 'local_7', cliSessionId: 'cs-B' }),
+  );
+  fs.writeFileSync(path.join(s.store, s.B, s.OB, 'deleted_cs-A'), '1791378056000');
+  const r = consolidate(s.ctx);
+  assert.strictEqual(r.merged, 1); // only cs-B -> A
+  assert.ok(!fs.existsSync(path.join(s.store, s.B, s.OB, 'local_cs-A.json')), 'tombstoned transcript stays gone');
+});
+
+test('consolidate unions the base app store with instance clone stores', function () {
+  const s = setup();
+  const base = path.join(s.ctx.home, '.keyflip-instances', 'claude', 'work');
+  const userData = path.join(base, 'User Data');
+  const C = 'cccccccc-0000-4000-8000-000000000003';
+  const OC = 'cccccccc-0000-4000-8000-0000000000c3';
+  const cloneStore = path.join(userData, 'claude-code-sessions');
+  fs.mkdirSync(path.join(cloneStore, C, OC), { recursive: true });
+  fs.writeFileSync(
+    path.join(cloneStore, C, OC, 'local_3.json'),
+    JSON.stringify({ sessionId: 'local_3', cliSessionId: 'cs3', title: 'in-clone' }),
+  );
+
+  const r = consolidate(s.ctx);
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(r.merged, 6); // each of the 3 folders is missing the other two sessions
+  assert.strictEqual(r.instances, 1);
+  assert.ok(fs.existsSync(path.join(cloneStore, C, OC, 'local_1.json')), 'clone gains the base sessions');
+  assert.ok(fs.existsSync(path.join(s.store, s.A, s.OA, 'local_3.json')), 'base gains the clone session');
+  assert.ok(fs.existsSync(path.join(s.store, s.B, s.OB, 'local_3.json')));
+  const r2 = consolidate(s.ctx);
+  assert.strictEqual(r2.merged, 0, 'second pass is idempotent across roots');
+});
+
+test('consolidate skips a clone whose instance.pid is alive', function () {
+  const s = setup();
+  const base = path.join(s.ctx.home, '.keyflip-instances', 'claude', 'work');
+  const userData = path.join(base, 'User Data');
+  const C = 'cccccccc-0000-4000-8000-000000000003';
+  const OC = 'cccccccc-0000-4000-8000-0000000000c3';
+  const cloneStore = path.join(userData, 'claude-code-sessions');
+  fs.mkdirSync(path.join(cloneStore, C, OC), { recursive: true });
+  fs.writeFileSync(
+    path.join(cloneStore, C, OC, 'local_3.json'),
+    JSON.stringify({ sessionId: 'local_3', cliSessionId: 'cs3' }),
+  );
+  fs.writeFileSync(path.join(base, 'instance.pid'), String(process.pid)); // this test process is alive
+
+  const r = consolidate(s.ctx);
+  assert.strictEqual(r.skippedRunning, 1);
+  assert.ok(fs.existsSync(path.join(cloneStore, C, OC, 'local_1.json')) === false, 'running clone is not written');
+  assert.ok(!fs.existsSync(path.join(s.store, s.A, s.OA, 'local_3.json')), 'running clone is not read');
+});
+
+function cliIdOfTest(file) {
+  return JSON.parse(fs.readFileSync(file, 'utf8')).cliSessionId;
+}
+
+// ---- dry run: the plan without the writes ---------------------------------------------------
+
+test('consolidate dry run reports the exact plan and writes nothing', function () {
+  const s = setup();
+  const r = consolidate(s.ctx, { dryRun: true });
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(r.dryRun, true);
+  assert.strictEqual(r.wouldMerge, 2); // cs2 -> A, cs1 -> B
+  assert.strictEqual(r.wouldCode, 2);
+  assert.strictEqual(r.wouldCowork, 0);
+  assert.strictEqual(r.merged, 0);
+  // The plan names where each pointer would land, relative to its store.
+  assert.strictEqual(r.plan.length, 2);
+  const dests = r.plan
+    .map(function (p) {
+      return p.to.split(/[\\/]/).join('/'); // the plan is store-relative; compare it in one separator
+    })
+    .sort();
+  // `to` is store-relative; aaaa… sorts first, so B's session (local_2) landing in A is dests[0].
+  assert.ok(dests[0].indexOf(s.A + '/' + s.OA + '/local_2.json') !== -1, 'B session lands in A: ' + dests[0]);
+  assert.ok(dests[1].indexOf(s.B + '/' + s.OB + '/local_1.json') !== -1, 'A session lands in B: ' + dests[1]);
+  r.plan.forEach(function (p) {
+    assert.strictEqual(p.instance, null); // base store, not a clone
+    assert.ok(fs.existsSync(p.from), 'the plan source exists: ' + p.from);
+  });
+  // Nothing moved: no backup, no copied pointer.
+  assert.deepStrictEqual(r.backups, []);
+  assert.ok(!fs.existsSync(path.join(s.store, s.A, s.OA, 'local_2.json')), 'A unchanged');
+  assert.ok(!fs.existsSync(path.join(s.store, s.B, s.OB, 'local_1.json')), 'B unchanged');
+  assert.ok(!fs.existsSync(path.join(s.ctx.configDir, 'backups')), 'no backup dir created');
+
+  // A dry run is also idempotent and does not change what a real run would do.
+  const again = consolidate(s.ctx, { dryRun: true });
+  assert.strictEqual(again.wouldMerge, 2);
+  const real = consolidate(s.ctx);
+  assert.strictEqual(real.merged, 2);
+  assert.ok(fs.existsSync(path.join(s.store, s.A, s.OA, 'local_2.json')));
+});
+
+test('consolidate dry run plans nothing when the stores already agree', function () {
+  const s = setup();
+  consolidate(s.ctx);
+  const r = consolidate(s.ctx, { dryRun: true });
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(r.wouldMerge, 0);
+  assert.strictEqual(r.plan, undefined);
+});

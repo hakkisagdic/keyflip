@@ -55,9 +55,30 @@ bubble→message mapping (order from the composer header list, role from `type`)
 (opencode + others — largest array of `{role, text/content}` objects); **Aider**
 `.aider.chat.history.md` via a best-effort markdown parser. The Cursor/JSON/Aider mappings are
 NEEDS-VERIFICATION against a real install — the SQLite *reader* itself is fixture-verified.
+**Cursor is now a first-class conversation family, not only a `foreign` file** (`src/cursor.js`,
+2026-10-29): the editor `state.vscdb` is one source per composer, the `cursor-agent` CLI store
+(`~/.cursor/chats/<md5(workspace)>/<uuid>/store.db`) and its `agent-transcripts` mirror are read too,
+and `keyflip foreign <state.vscdb>` still normalizes a single DB on demand.
 **Copilot** (YAML) now ships too — parsed via the from-scratch zero-dep `src/yamlread.js` and wired
 into `detect()`/`normalize()` (23/23 tests). Each parser is isolated behind `detect()`, so adding a
 source later is one function + a fixture test.
+
+## ⚠️ Kiro token refresh limitation (platform constraint)
+
+Kiro uses AWS SSO OAuth with **single-use refresh tokens**. When either the CLI or IDE refreshes its
+token, the other surface's refresh token is **automatically invalidated**. If both surfaces attempt
+to refresh concurrently, AWS detects "token reuse" and **revokes the entire token family**, forcing
+a human re-login.
+
+**What this means for keyflip:**
+- ✅ keyflip can capture and switch Kiro accounts across CLI + IDE surfaces
+- ❌ keyflip **cannot** implement background auto-refresh for Kiro without risking session invalidation
+- ✅ Safe approach: only refresh reactively after a 401 error, and check disk first to see if the
+  other surface already refreshed
+
+This is an **AWS/Kiro platform limitation**, not a keyflip bug. Separate client registrations for
+CLI and IDE would be required to enable independent refresh chains — that change must come from the
+Kiro team.
 
 Unified shape: `{ tool, sessionId, created_at, updated_at, resumable, resumeCommand, messages[], metadata }`.
 
@@ -65,7 +86,7 @@ Unified shape: `{ tool, sessionId, created_at, updated_at, resumable, resumeComm
 |---|---|---|---|---|
 | **Copilot** | `~/.copilot/session-state/<id>/` (workspace.yaml + checkpoints/index.md) | YAML+MD | ✅ `copilot --resume=<id>` | easiest |
 | **Gemini** | `~/.gemini/antigravity-cli/brain/<UUID>/…/transcript.jsonl` (+ conversations/<UUID>.db) | JSONL | ✅ | easy |
-| **Cursor** | `~/.cursor/chats/*store.db` (`cursorDiskKV`: `composerData:*`, `bubbleId:*`) | SQLite | ✅ `cursor agent --resume <id>` | medium |
+| **Cursor** | editor: `<User>/globalStorage/state.vscdb` (`cursorDiskKV`: `composerData:*`, `bubbleId:*`, `composerHeaders` table on ≥3.12); CLI: `~/.cursor/chats/<md5>/<uuid>/store.db` (`blobs` + `meta`); mirror: `~/.cursor/projects/<enc>/agent-transcripts/<id>/<id>.jsonl` | SQLite + JSONL | ✅ `cursor agent --resume <id>` | medium |
 | **opencode** | `~/.local/share/opencode/project/*/storage/` (`ses_*`) | JSON/JSONL (NEEDS-VERIFICATION) | ✅ `opencode --session <id>` | medium |
 | **Aider** | `.aider.chat.history.md` per repo | Markdown | ⚠️ partial (no session ids) | hardest |
 
@@ -81,4 +102,206 @@ surfaced to the user as printable commands, never shell-executed by keyflip.
 - opencode: instruction-file location + `storage/` message schema (the `--session` resume is mapped).
 - Copilot: `data.db` token extraction (or skip — carry only the memory md).
 - Aider: confirmed no `--resume`/session-list exists (resumeCommand returns null).
-- Cursor: `cursorDiskKV` bubble ordering for a faithful transcript.
+- Cursor: bubble order and the render manifest on a real store (`fullConversationHeadersOnly` /
+  `isRenderable`), the `composerHeaders` table on ≥3.12, and `toolFormerData` vs `capabilities` —
+  fixtures pin the contract, no live store has been read yet.
+
+## G — background token refresh daemon (SHIPPED 2026-10-20)
+
+**Architecture:** Continuous background daemon (`keyflip refresh --daemon-start`) runs as launchd
+KeepAlive agent (macOS) or @reboot crontab entry (Linux), checking credential expiry every 5 minutes.
+
+**Per-tool refresh strategies:**
+
+| Tool | Strategy | Mechanism | Lifetime | Notes |
+|---|---|---|---|---|
+| **Antigravity** | Proactive | Google OAuth refresh_token → access_token | ~1 hour | Uses public client credentials; exponential backoff on failure (1→5→15 min, max 3 retries) |
+| **ChatGPT** | Proactive | Session token → bearer via `/api/auth/session` | ~7 days | Bearer short-lived, session token ~3 months; backoff same as Antigravity |
+| **Kiro** | Reactive-only | SHA256 hash of refresh_token | N/A | NO proactive refresh (AWS SSO single-use tokens); detects IDE/CLI rotation via hash change |
+| **Claude Desktop** | Reactive-only | AES-128-CBC decryption of cookie DB | ~30 days | Keychain "Claude Safe Storage" → PBKDF2-HMAC-SHA1 (saltysalt, 1003 iter) → decrypt cookies SQLite; cannot refresh without human re-login |
+
+**Security model:**
+- Only reads/writes 0600 files under `~/.config/keyflip/surfaces/`
+- No tokens passed on command lines; Keychain access uses stdin-based helpers
+- Claude cookie decryption: IV = 16 space chars, prefix strip for Chromium ≥ v130 (32-byte host-binding)
+- Metrics file (`refresh-metrics.json`) contains counts/timestamps only — never tokens or secrets
+
+**Error handling:**
+- Exponential backoff: 1min → 5min → 15min between retry attempts
+- Max 3 consecutive failures before giving up until next successful refresh
+- Persistent metrics tracking: total checks, refreshes, failures per account
+- Daemon continues operating even when individual tool refreshes fail
+
+**Observability:**
+- Logs to `~/Library/Logs/refresh-keyflip.log` (macOS launchd)
+- `keyflip refresh --metrics` shows per-account statistics
+- Kiro hash changes logged with old/new hash prefixes for debugging
+- Claude session extraction failures logged but don't stop daemon
+
+**Complementary to nightly scheduler:**
+The existing `keyflip refresh --schedule` runs `refresh --all` once daily as a batch job. The daemon
+provides continuous monitoring between scheduled runs, catching tokens that expire unexpectedly or
+detecting platform-initiated rotations (Kiro IDE/CLI, Claude Desktop re-auth).
+
+**Limitations:**
+- Claude Desktop: Cannot proactively refresh; requires human re-login every ~30 days
+- Kiro: Hash detection only; cannot prevent AWS SSO revocation if refresh_token used elsewhere
+- Linux: @reboot cron may not run if system doesn't boot (laptop asleep); launchd KeepAlive more reliable
+
+---
+
+## G — Multi-instance architecture for session isolation
+
+Desktop-app cookies expire every ~30 days, forcing frequent re-logins. keyflip solves this by creating **isolated app clones** for any supported AI tool — each runs independently with its own user data directory, so sessions persist indefinitely without expiry concerns.
+
+### Architecture overview
+
+**Generic adapter pattern:** The `src/instances.js` module provides a tool-agnostic abstraction layer that can support any AI desktop application requiring multi-account isolation.
+
+```javascript
+const TOOL_ADAPTERS = {
+  claude: {
+    name: 'Claude',
+    appName: 'Claude.app',
+    baseAppPath: '/Applications/Claude.app',
+    userDataFlag: '--user-data-dir',
+    configEnv: 'CLAUDE_CONFIG_DIR',
+    processPattern: 'Claude\\.app',
+    supportsMultiInstance: true,
+    disableAutoUpdate: false, // Claude ships Squirrel, which ignores the Info.plist keys
+    autoUpdateConfig: { file: 'config.json', key: 'disableAutoUpdates', value: true },
+  },
+  kiro:      { /* /Applications/Kiro.app,     dev.kiro.desktop,  no config env */ },
+  chatgpt:   { /* /Applications/ChatGPT.app,  com.openai.codex,  Sparkle updater */ },
+  cursor:    { /* /Applications/Cursor.app,   standard path, not on the verification machine */ },
+};
+```
+
+**Verification status (2026-10-21):** `claude`, `kiro` and `chatgpt` adapters were checked against
+the real installs on the dev machine — the app bundles and bundle ids were read from
+`Contents/Info.plist`, and all three are Electron (`ElectronAsarIntegrity` present), which is what
+makes `--user-data-dir` isolation work. Three facts worth knowing:
+
+- **The base plists have no `SUEnableAutomaticChecks` key.** `plutil -replace` therefore fails with
+  a nonzero exit; the code now falls back to `-insert`, and clears `SUFeedURL` instead of
+  `SUPublicEDKey` (an empty feed disables update checks without breaking signature data).
+- **Only ChatGPT actually bundles Sparkle** (`Sparkle.framework`); Claude ships
+  `Squirrel.framework`, whose updater ignores these Info.plist keys. Claude's
+  `disableAutoUpdate` is therefore `false` — the earlier `true` patched keys nothing reads.
+  ChatGPT's hardening stays best-effort (its `SUFeedURL` is absent, so a programmatic feed
+  cannot be ruled out).
+- **Claude does expose its own switch.** The app resolves
+  `(config.autoUpdate?.disabled ?? config.disableAutoUpdates) === true` from
+  `userData/config.json` (verified by reading `app.asar`). `createInstance()` seeds
+  `"disableAutoUpdates": true` into the clone's config before first launch; the nested
+  `autoUpdate.disabled` key, when present, wins — keyflip mirrors that precedence when reading.
+- **`cursor` is defined but was not installed on the verification machine.** `createInstance()`
+  checks the base path first and fails with a clear message, so a missing app can never produce a
+  half-created instance. A live launch test per app is still outstanding.
+
+**What an instance clone does — and does not — isolate:** the clone's `--user-data-dir` separates
+the app *profile* (cookies, cache, window state). It does not relocate credentials the tool keeps
+outside that profile:
+
+| Tool | Login store | Isolated by a clone? | What to do for a second account |
+|---|---|---|---|
+| Claude | CLI config + desktop user data | yes (`CLAUDE_CONFIG_DIR` + `User Data`) | `keyflip <name> --instance claude/<slug>` |
+| ChatGPT/Codex | `~/.codex/auth.json` (shared by app + CLI) | no — global | `keyflip chatgpt switch <name>` first |
+| Kiro | CLI Keychain + `~/.aws/sso/cache` | no — global | `keyflip kiro switch <name>` first |
+| Antigravity | Keychain `gemini/antigravity` | no instance adapter | `keyflip antigravity switch <name>` |
+| Qoder | `~/.qoder/.auth/user` | no instance adapter | sign in as the account you want |
+| Cursor | not verified | — | adapter defined, path unverified |
+
+`consolidate` follows the same boundary for chat history: Claude Desktop's Recents/Cowork stores are
+per-account and are unioned across the base app **and** every non-running clone
+(`~/.keyflip-instances/<tool>/<slug>/User Data/`); ChatGPT conversations stay server-side per account,
+so only the login is managed, not the history.
+
+
+### Instance lifecycle
+
+Each instance is created under `~/Library/Application Support/keyflip-instances/<tool>/<account>/`:
+
+1. **APFS clone:** Uses `cp -cR` to create a copy-on-write clone of the base app (near-zero disk overhead)
+2. **Auto-update switch, where one exists:** Writes `"disableAutoUpdates": true` into the clone's `User Data/config.json` (Claude) and/or inserts `SUEnableAutomaticChecks=false` plus an empty `SUFeedURL` in `Info.plist` (Sparkle apps such as ChatGPT, best-effort). Kiro/Cursor expose neither.
+3. **Isolated directories:** Creates separate `User Data/` and `Config/` directories per account
+4. **PID tracking:** Writes `instance.pid` file for process lifecycle management
+
+`profile.json` records the **live state read back after the write** (`autoUpdateDisabled`,
+`autoUpdateMethod`), not the adapter's intent. `keyflip instance harden [tool] [account]` re-applies
+the switch to existing clones; with no target it applies to every instance and reports tools whose
+updater has no switch instead of pretending. It refuses to write a running Claude instance's config:
+the app owns that file in memory and rewrites it on exit, so the fix is quit → harden → relaunch.
+
+### Doctor: `desktop auto-updates`
+
+`keyflip doctor` has a `desktop auto-updates` row that reads the live state of the base Claude app
+and every clone. Only a **controllable clone whose switch is still ON** is a warning, with
+`keyflip instance harden …` as the fix. A base app that updates itself is normal, and a Kiro/Cursor
+instance with no switch is reported as `uncontrollable (<mechanism>)` rather than nagged.
+
+### Commands (generic across all tools)
+
+```bash
+keyflip instance list [tool]                    # List all instances (optionally filtered by tool)
+keyflip instance create <tool> <account>        # Create new isolated instance
+keyflip instance launch <tool> <account>        # Launch specific instance (closes others first)
+keyflip instance focus <tool> <account>         # Bring running instance window to front
+keyflip instance kill <tool> <account>          # Terminate specific instance by PID
+keyflip instance harden [tool] [account]        # Re-apply the available auto-update switch (all by default)
+keyflip instance enable-all <tool>              # Launch all saved accounts as separate instances
+```
+
+### Deep link trap avoidance
+
+When launching a specific instance, keyflip closes ALL other instances of that tool first using `pkill -f <processPattern>`. This prevents macOS from routing deep links (e.g., `claude://` URLs) to the wrong instance.
+
+### Disk usage characteristics
+
+- **APFS clone-on-write:** Each clone shares physical storage with the original app
+- **Actual consumption:** Only changed blocks consume space — typically <50 MB per instance (config files, user data, cache)
+- **No duplication:** The ~200 MB app binary is shared across all instances via APFS metadata
+
+### Backward compatibility
+
+The old `keyflip claude-profiles` commands still work via a compatibility wrapper (`cmdClaudeProfilesCompat()` in `src/cli.js`) that maps them to the generic `keyflip instance` system with deprecation warnings.
+
+### MCP endpoints
+
+Six MCP tools expose instance management to agents:
+
+- `keyflip_instances` — List all instances across all tools
+- `keyflip_instance_create` — Create new isolated instance (requires confirm=true)
+- `keyflip_instance_launch` — Launch specific instance (requires confirm=true)
+- `keyflip_instance_focus` — Focus running instance window (requires confirm=true)
+- `keyflip_instance_kill` — Terminate specific instance (requires confirm=true)
+- `keyflip_instance_harden` — Apply the app's own auto-update switch and read the live state back (requires confirm=true)
+
+All mutating operations follow the confirmation pattern: ask the user first, then call with `confirm=true`.
+
+### Platform scope
+
+Currently **macOS-only** due to APFS clone-on-write requirement. Linux/Windows support would require alternative isolation strategies (e.g., symlinks, containerization).
+
+### Future expansion
+
+Adding support for a new tool requires one entry in `TOOL_ADAPTERS` (`src/instances.js`) plus two
+facts checked against a real install: the bundle path and whether it is Electron (Chromium switch
+support). Example of the minimal shape:
+
+```javascript
+windsurf: {
+  name: 'Windsurf',
+  appName: 'Windsurf.app',
+  baseAppPath: '/Applications/Windsurf.app',
+  userDataFlag: '--user-data-dir',
+  configEnv: null,          // only set when the tool documents one
+  processPattern: 'Windsurf\\.app',
+  supportsMultiInstance: true,
+  disableAutoUpdate: false, // true only when the plist carries Sparkle keys
+},
+```
+
+The rest of the system (CLI routing, MCP endpoints, PID tracking, launch/focus/kill logic) works
+automatically for any tool with an adapter entry. `keyflip instance list` and the MCP
+`keyflip_instances` tool enumerate every adapter via `listAllInstances()`.

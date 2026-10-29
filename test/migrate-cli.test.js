@@ -32,9 +32,17 @@ function run(home, args) {
     }),
   });
 }
+// A credentials FILE pins the store to the file backend: on macOS a home
+// without it selects the Keychain, and a spawned CLI test must never write
+// (or wait on) the developer's real login keychain.
+function seedFileStore(home) {
+  fs.mkdirSync(path.join(home, '.claude'), { recursive: true });
+  fs.writeFileSync(path.join(home, '.claude', '.credentials.json'), '{"claudeAiOauth":{"accessToken":"test"}}');
+}
 function seed(home) {
   fs.mkdirSync(path.join(home, 'kfcfg', 'creds'), { recursive: true });
   fs.mkdirSync(path.join(home, '.claude', 'projects', '-p'), { recursive: true });
+  seedFileStore(home);
   fs.writeFileSync(path.join(home, 'kfcfg', 'work.json'), '{"name":"work","email":"a@x.com","oauthAccount":{}}');
   fs.writeFileSync(path.join(home, 'kfcfg', 'creds', 'work.cred'), '{"t":1}');
   fs.writeFileSync(path.join(home, '.claude', 'projects', '-p', 's1.jsonl'), 'chat\n');
@@ -84,16 +92,85 @@ test('migrate export with an UNREADABLE passphrase file fails and writes no plai
   fs.rmSync(home, { recursive: true, force: true });
 });
 
-test('migrate export - writes ONLY the bundle to stdout (notes go to stderr)', function () {
+test('migrate export - writes ONLY the streaming bundle to stdout (notes go to stderr)', function () {
   const home = tmp();
   seed(home);
   const pf = path.join(home, 'pass.txt');
   fs.writeFileSync(pf, 'pw\n');
   const r = run(home, ['migrate', 'export', '-', '--passphrase-file', pf]);
   assert.strictEqual(r.status, 0);
-  const obj = JSON.parse(r.stdout); // must be pure JSON, no human notes mixed in
-  assert.strictEqual(obj.magic, 'keyflip-sync');
+  assert.strictEqual(r.stdout.split('\n')[0], 'KEYFLIP-MIGRATE-STREAM/2');
+  const header = JSON.parse(r.stdout.split('\n')[1]);
+  assert.strictEqual(header.format, 'keyflip-migrate-stream');
+  assert.strictEqual(header.version, 2);
+  assert.strictEqual(header.encrypted, true);
+  assert.ok(header.salt, 'encrypted header carries the KDF salt');
+  assert.strictEqual(header.transcripts, 1);
+  // The human notes (summary, warnings) must not corrupt a piped bundle.
+  assert.ok(r.stdout.indexOf('migrate bundle written') === -1, 'no notes on stdout');
+  assert.ok(r.stderr.indexOf('migrate bundle written') === -1, 'stdout mode writes no file to report');
+  const record = JSON.parse(r.stdout.split('\n')[2]);
+  assert.ok(record.ct && record.iv && record.tag, 'each record is individually encrypted');
   fs.rmSync(home, { recursive: true, force: true });
+});
+
+test('migrate export - --json keeps stdout a pure bundle and puts the JSON summary on stderr', function () {
+  const home = tmp();
+  seed(home);
+  const pf = path.join(home, 'pass.txt');
+  fs.writeFileSync(pf, 'pw\n');
+  const r = run(home, ['migrate', 'export', '-', '--passphrase-file', pf, '--json']);
+  assert.strictEqual(r.status, 0, r.stderr);
+  // stdout must be nothing but the stream: every line is the magic or one JSON value,
+  // and the summary object must never trail the bundle (the importer rejects trailing data).
+  const lines = r.stdout.split('\n').filter(function (l) {
+    return l.trim() !== '';
+  });
+  assert.strictEqual(lines[0], 'KEYFLIP-MIGRATE-STREAM/2');
+  lines.slice(1).forEach(function (l) {
+    JSON.parse(l); // throws on any non-JSON line
+  });
+  assert.strictEqual(r.stdout.indexOf('migrateExport'), -1, 'the summary must not be inside the bundle');
+  // ...and it is available as one parseable JSON line on stderr.
+  const summary = r.stderr.split('\n').find(function (l) {
+    try {
+      return !!JSON.parse(l).migrateExport;
+    } catch (e) {
+      return false;
+    }
+  });
+  assert.ok(summary, 'stderr carries the JSON summary: ' + r.stderr);
+  const parsed = JSON.parse(summary);
+  assert.strictEqual(parsed.migrateExport.path, null);
+  assert.strictEqual(parsed.migrateExport.encrypted, true);
+  assert.strictEqual(parsed.migrateExport.counts.transcripts, 1);
+  fs.rmSync(home, { recursive: true, force: true });
+});
+
+test('migrate export <file> → import on a fresh home restores the account and transcript', function () {
+  const src = tmp();
+  seed(src);
+  const pf = path.join(src, 'pass.txt');
+  fs.writeFileSync(pf, 'pw\n');
+  const bundle = path.join(src, 'bundle.kf');
+  const exp = run(src, ['migrate', 'export', bundle, '--passphrase-file', pf]);
+  assert.strictEqual(exp.status, 0, exp.stderr);
+  assert.strictEqual(fs.readFileSync(bundle, 'utf8').split('\n')[0], 'KEYFLIP-MIGRATE-STREAM/2');
+  // The login secret must not appear in an encrypted bundle in the clear.
+  assert.strictEqual(fs.readFileSync(bundle, 'utf8').indexOf('{"t":1}'), -1);
+
+  const dst = tmp();
+  fs.mkdirSync(path.join(dst, 'kfcfg'), { recursive: true });
+  seedFileStore(dst);
+  const dpf = path.join(dst, 'pass.txt');
+  fs.writeFileSync(dpf, 'pw\n');
+  const imp = run(dst, ['migrate', 'import', bundle, '--passphrase-file', dpf, '--no-consolidate']);
+  assert.strictEqual(imp.status, 0, imp.stderr);
+  assert.match(imp.stdout, /accounts:\s+imported work/);
+  assert.match(imp.stdout, /transcripts: 1 added/);
+  assert.strictEqual(fs.readFileSync(path.join(dst, '.claude', 'projects', '-p', 's1.jsonl'), 'utf8'), 'chat\n');
+  fs.rmSync(src, { recursive: true, force: true });
+  fs.rmSync(dst, { recursive: true, force: true });
 });
 
 // ---- CLI: transfer pull --code (no host) runs discovery, not code-as-host ----

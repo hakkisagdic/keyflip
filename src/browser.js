@@ -15,13 +15,19 @@ import { decryptCookie } from './chat.js';
 // Known Chromium browsers: default-profile Cookies DB, the macOS login-Keychain
 // service/account that holds their cookie key, and the process name (for the
 // "is it running?" guard before we touch the on-disk Cookies DB).
+//
+// One Chromium profile holds exactly ONE claude.ai account, so a user who wants two
+// accounts live at once needs two profiles. `catalog` therefore expands each browser
+// into one entry per profile it finds in Local State (`Default` keeps the bare id,
+// so existing captures and tests are untouched); the REST of keyflip (snapshot
+// store, switch leg, chat reads) already keys everything by browser id.
 function catalog(home) {
   const AS = path.join(home, 'Library', 'Application Support');
-  return {
+  const base = {
     chrome: {
       id: 'chrome',
       name: 'Chrome',
-      cookies: path.join(AS, 'Google', 'Chrome', 'Default', 'Cookies'),
+      dataDir: path.join(AS, 'Google', 'Chrome'),
       service: 'Chrome Safe Storage',
       account: 'Chrome',
       proc: 'Google Chrome',
@@ -29,7 +35,7 @@ function catalog(home) {
     brave: {
       id: 'brave',
       name: 'Brave',
-      cookies: path.join(AS, 'BraveSoftware', 'Brave-Browser', 'Default', 'Cookies'),
+      dataDir: path.join(AS, 'BraveSoftware', 'Brave-Browser'),
       service: 'Brave Safe Storage',
       account: 'Brave',
       proc: 'Brave Browser',
@@ -37,7 +43,7 @@ function catalog(home) {
     edge: {
       id: 'edge',
       name: 'Edge',
-      cookies: path.join(AS, 'Microsoft Edge', 'Default', 'Cookies'),
+      dataDir: path.join(AS, 'Microsoft Edge'),
       service: 'Microsoft Edge Safe Storage',
       account: 'Microsoft Edge',
       proc: 'Microsoft Edge',
@@ -45,12 +51,56 @@ function catalog(home) {
     arc: {
       id: 'arc',
       name: 'Arc',
-      cookies: path.join(AS, 'Arc', 'User Data', 'Default', 'Cookies'),
+      dataDir: path.join(AS, 'Arc', 'User Data'),
       service: 'Arc Safe Storage',
       account: 'Arc',
       proc: 'Arc',
     },
   };
+  const out = {};
+  Object.keys(base).forEach(function (k) {
+    withProfiles(base[k]).forEach(function (entry) {
+      out[entry.id] = entry;
+    });
+  });
+  return out;
+}
+
+// The local profile directories a Chromium browser has (from Local State's info_cache),
+// `Default` first. A missing/unreadable Local State degrades to `Default` alone — the
+// pre-profile behaviour — so this can never hide a browser that used to be found.
+function withProfiles(b) {
+  let labels = {};
+  try {
+    const st = JSON.parse(fs.readFileSync(path.join(b.dataDir, 'Local State'), 'utf8'));
+    labels = (st && st.profile && st.profile.info_cache) || {};
+  } catch (e) {
+    labels = {}; /* no Local State → just Default */
+  }
+  const profiles = ['Default'].concat(
+    Object.keys(labels)
+      .filter(function (p) {
+        return p !== 'Default';
+      })
+      .sort(),
+  );
+  return profiles.map(function (p, i) {
+    // The id becomes part of snapshot file names (`<account>__<id>.sql`), so it must stay
+    // filesystem-safe: `chrome` for the default profile, `chrome-Profile-2` for a named one.
+    const id = i === 0 ? b.id : b.id + '-' + String(p).replace(/[^A-Za-z0-9]+/g, '-');
+    // `Default` is commonly named "Person 1"; the human label only disambiguates the others.
+    const label = labels[p] && labels[p].name ? labels[p].name : p;
+    return {
+      id: id,
+      name: i === 0 ? b.name : b.name + ' (' + label + ')',
+      profile: p,
+      dataDir: b.dataDir,
+      cookies: path.join(b.dataDir, p, 'Cookies'),
+      service: b.service, // every profile of a browser shares its Safe Storage key
+      account: b.account,
+      proc: b.proc,
+    };
+  });
 }
 
 // Chromium browsers actually present on this machine (a Cookies DB exists).

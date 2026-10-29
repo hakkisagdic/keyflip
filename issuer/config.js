@@ -34,6 +34,15 @@ const KNOWN_PROVIDERS = ['iyzico', 'paytr', 'lemonsqueezy', 'stripe'];
 // (free is not a purchasable product tier, so it is intentionally excluded).
 const KNOWN_TIERS = ['pro', 'team'];
 
+// A product id that still carries this prefix is the OWNER'S FILL-IN SLOT, not a
+// real product: it is the placeholder that ships in issuer.config.json until the
+// owner signs up with a PSP and pastes the real product/price id in. A payment
+// provider can never send such an id, and — more importantly — an unfilled slot
+// must never be treated as "this purchase grants tier X". tierForProduct()
+// therefore refuses placeholders (fail closed), and pendingProducts() lists them
+// so the issuer can say out loud that it is not ready to sell yet.
+const PLACEHOLDER_PREFIX = 'REPLACE_';
+
 // Provider id -> the NAME(s) of the env var(s) holding its webhook signing
 // secret. A single-secret provider maps to one string; PayTR authenticates with
 // a merchant key + salt pair, so it maps to an array of two names. NOTE: these
@@ -163,13 +172,33 @@ function providerForRegion(cfg, regionCode) {
 // tierForProduct(cfg, providerProductId) -> { tier, months } | null. Null for
 // an unknown id so the caller can reject an unrecognized purchase rather than
 // mint an arbitrary license. Own-property check guards against prototype keys.
+// A PLACEHOLDER id (the owner's unfilled slot) also resolves to null: it is not
+// a product yet, so it must never grant a tier.
 function tierForProduct(cfg, providerProductId) {
   const products = (cfg && cfg.products) || {};
   const id = providerProductId == null ? '' : String(providerProductId);
   if (!Object.prototype.hasOwnProperty.call(products, id)) return null;
+  if (isPlaceholderId(id)) return null;
   const entry = products[id];
   if (!isPlainObject(entry)) return null;
   return { tier: entry.tier, months: entry.months };
+}
+
+// isPlaceholderId(id) -> true when the id is still an unfilled owner slot.
+function isPlaceholderId(id) {
+  return String(id == null ? '' : id).indexOf(PLACEHOLDER_PREFIX) === 0;
+}
+
+// pendingProducts(cfg) -> the sorted ids that are still placeholders. Empty
+// array == the config is fully filled in and the issuer can map real purchases.
+function pendingProducts(cfg) {
+  const products = (cfg && cfg.products) || {};
+  return Object.keys(products).filter(isPlaceholderId).sort();
+}
+
+// configIsReady(cfg) -> true when no product slot is left unfilled.
+function configIsReady(cfg) {
+  return pendingProducts(cfg).length === 0;
 }
 
 // secretEnvFor(providerId) -> ENV VAR NAME (string) or NAMES (array, for PayTR),
@@ -188,8 +217,12 @@ module.exports = {
   validateConfig: validateConfig,
   providerForRegion: providerForRegion,
   tierForProduct: tierForProduct,
+  isPlaceholderId: isPlaceholderId,
+  pendingProducts: pendingProducts,
+  configIsReady: configIsReady,
   secretEnvFor: secretEnvFor,
   KNOWN_PROVIDERS: KNOWN_PROVIDERS,
   KNOWN_TIERS: KNOWN_TIERS,
+  PLACEHOLDER_PREFIX: PLACEHOLDER_PREFIX,
   DEFAULT_CONFIG_PATH: DEFAULT_CONFIG_PATH,
 };

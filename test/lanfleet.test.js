@@ -48,6 +48,50 @@ test('fingerprint matches the one fleet prints for the same key (out-of-band com
   assert.strictEqual(lanfleet.fingerprint(pub), fleet.fingerprint(pub));
 });
 
+// ---- Tailscale fallback mapping (pure) ---------------------------------------
+
+test('tailscale peers map to reachability records, first address and sanitised id', function () {
+  const got = lanfleet.peersFromTailscale({
+    Peer: {
+      a: { Hostname: 'Studio Mac', Online: true, TailscaleIPs: ['100.64.0.9', 'fd7a::9'], PublicKey: 'SECRET' },
+    },
+  });
+  assert.deepStrictEqual(got, [
+    { machineId: 'StudioMac', name: 'Studio Mac', host: '100.64.0.9', transport: 'tailscale', online: true },
+  ]);
+  assert.strictEqual(JSON.stringify(got).indexOf('SECRET'), -1, 'node keys never leave the status JSON');
+});
+
+test('tailscale mapping skips offline, addressless and empty-hostname peers', function () {
+  const got = lanfleet.peersFromTailscale({
+    Peer: {
+      off: { Hostname: 'offline', Online: false, TailscaleIPs: ['100.64.0.1'] },
+      noip: { Hostname: 'no-ip', Online: true, TailscaleIPs: [] },
+      empty: { Hostname: '...', Online: true, TailscaleIPs: ['100.64.0.3'] },
+      ok: { Hostname: 'ok', Online: true, TailscaleIPs: ['100.64.0.4'] },
+    },
+  });
+  assert.deepStrictEqual(
+    got.map(function (p) {
+      return p.machineId;
+    }),
+    ['ok'],
+  );
+});
+
+test('two hostnames that sanitise to one id yield one peer; malformed input yields none', function () {
+  const got = lanfleet.peersFromTailscale({
+    Peer: {
+      a: { Hostname: 'mac book', Online: true, TailscaleIPs: ['100.64.0.5'] },
+      b: { Hostname: 'mac.book', Online: true, TailscaleIPs: ['100.64.0.6'] },
+    },
+  });
+  assert.strictEqual(got.length, 1, 'a downstream machine id must stay unique');
+  assert.strictEqual(got[0].host, '100.64.0.5', 'first sighting wins');
+  assert.deepStrictEqual(lanfleet.peersFromTailscale(null), []);
+  assert.deepStrictEqual(lanfleet.peersFromTailscale({ Peer: [] }), []);
+});
+
 // ---- real loopback multicast (the actual wire) -------------------------------
 
 test('announce is heard by discover, and discover excludes the announcer itself', async function () {

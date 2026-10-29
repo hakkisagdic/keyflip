@@ -249,6 +249,8 @@ function readRawBody(req, limit) {
 //   deliverLicense(record, token) -> void   (out-of-band; must not log token)
 //   expiryFor(tier) -> ISO expiry string | null
 //   now() -> ISO string     ledgerFile -> path | null     ledger -> Map     log -> fn
+//   admin -> an admin handler (issuer/admin.js) mounted at /admin
+//   events -> an EventLog (issuer/store.js) that records what each webhook did
 function createIssuer(deps) {
   deps = deps || {};
   const resolveAdapter = deps.resolveAdapter || defaultResolveAdapter;
@@ -268,6 +270,20 @@ function createIssuer(deps) {
     };
   const ledgerFile = deps.ledgerFile || null;
   const ledger = deps.ledger || new Map();
+  // Optional admin panel (issuer/admin.js) and event log (issuer/store.js).
+  // Both are absent by default so the webhook router keeps working standalone.
+  const admin = deps.admin || null;
+  const events = deps.events || null;
+
+  // Record what a webhook did — never the token, never the raw body.
+  function recordEvent(evt) {
+    if (!events || typeof events.append !== 'function') return;
+    try {
+      events.append(evt);
+    } catch (e) {
+      /* the log is for humans; the ledger is for correctness */
+    }
+  }
   // Structured, secret-free logger. Only ever receives non-sensitive fields.
   const log =
     deps.log ||
@@ -325,6 +341,7 @@ function createIssuer(deps) {
       // Do NOT log the reason at info if it might echo secret material; adapters
       // return only coarse reasons, so this is safe and useful.
       log({ evt: 'webhook', provider: provider, status: 401, reason: (v && v.reason) || 'unverified' });
+      recordEvent({ event: 'webhook.rejected', provider: provider, note: (v && v.reason) || 'unverified' });
       sendJson(res, 401, { error: 'signature verification failed' });
       return; // 401 and absolutely nothing else.
     }
@@ -345,6 +362,7 @@ function createIssuer(deps) {
       // Refunds/other are acknowledged but mint nothing here (refund handling is
       // a separate concern). Ack so the PSP stops retrying.
       log({ evt: 'webhook', provider: provider, status: 200, type: event.type, issued: false });
+      recordEvent({ event: 'webhook.other', provider: provider, note: event.type || 'other' });
       sendJson(res, 200, { issued: false, type: event.type || 'other' });
       return;
     }
@@ -367,6 +385,13 @@ function createIssuer(deps) {
         issued: true,
         idempotent: true,
       });
+      recordEvent({
+        event: 'webhook.duplicate',
+        provider: provider,
+        orderId: orderId,
+        tier: existing.tier,
+        note: 'already issued',
+      });
       sendJson(res, 200, { issued: true, tier: existing.tier, idempotent: true });
       return;
     }
@@ -377,7 +402,17 @@ function createIssuer(deps) {
     const mapped = productToTier(event.product);
     const tier = mapped && typeof mapped === 'object' ? mapped.tier : mapped;
     if (!tier) {
+      // The product id is NOT a secret (it is a public catalogue id), and naming
+      // it is what makes this actionable: the operator can paste it straight
+      // into issuer.config.json. Bounded so a hostile id cannot bloat the log.
+      const product = String(event.product == null ? '' : event.product).slice(0, 200);
       log({ evt: 'webhook', provider: provider, status: 422, orderId: orderId, reason: 'unmapped-product' });
+      recordEvent({
+        event: 'webhook.unmapped',
+        provider: provider,
+        orderId: orderId,
+        note: 'product not mapped to a tier: ' + product,
+      });
       sendJson(res, 422, { error: 'product not mapped to a tier' });
       return;
     }
@@ -421,6 +456,15 @@ function createIssuer(deps) {
     token = null; // drop the reference promptly.
 
     log({ evt: 'webhook', provider: provider, status: 200, orderId: orderId, tier: tier, issued: true });
+    recordEvent({
+      event: 'license.issued',
+      source: 'webhook',
+      provider: provider,
+      orderId: orderId,
+      email: payload.email,
+      tier: tier,
+      note: 'issued from ' + provider,
+    });
     sendJson(res, 200, { issued: true, tier: tier });
   }
 
@@ -436,6 +480,12 @@ function createIssuer(deps) {
 
     if (req.method === 'GET' && pathname === '/health') {
       sendJson(res, 200, { ok: true });
+      return;
+    }
+
+    // The admin panel (issuer/admin.js) owns everything under /admin.
+    if (admin && (pathname === '/admin' || pathname.startsWith('/admin/'))) {
+      admin(req, res);
       return;
     }
 
@@ -467,16 +517,68 @@ function createIssuer(deps) {
   return { server: server, handler: handler, ledger: ledger, secretEnvName: secretEnvName };
 }
 
+// configReadiness() -> { ready, pendingProducts } for the config in effect.
+// "ready" means every product slot carries a REAL provider product id, so a
+// purchase can actually be mapped to a tier. While slots are still the
+// REPLACE_ placeholders the issuer is not ready to sell, and it says so.
+function configReadiness() {
+  try {
+    const pending = cfgMod().pendingProducts(cfgData());
+    return { ready: pending.length === 0, pendingProducts: pending };
+  } catch (e) {
+    // A broken config surfaces loudly on first use (validateConfig throws) —
+    // here we just report "not ready" rather than crashing the boot.
+    return { ready: false, pendingProducts: [] };
+  }
+}
+
 // ---- production bootstrap ----------------------------------------------------
 function start(deps) {
   deps = deps || {};
   const port = Number(deps.port || process.env.PORT || 8787);
   const host = deps.host || process.env.HOST || DEFAULT_HOST;
   const ledgerFile = deps.ledgerFile || path.join(__dirname, 'state', 'ledger.json');
-  const issuer = createIssuer(Object.assign({ ledgerFile: ledgerFile }, deps));
+  // The event log and the admin panel are part of the default runtime: the log
+  // records what each webhook did (never a token), and the panel is the
+  // operator's view of it. The panel fails CLOSED — with no
+  // KEYFLIP_ISSUER_ADMIN_TOKEN set it answers 503 and does nothing.
+  const events =
+    deps.events ||
+    new (require('./store').EventLog)({
+      file: deps.eventLogFile || path.join(__dirname, 'state', 'events.jsonl'),
+    });
+  const admin =
+    deps.admin ||
+    require('./admin').createAdmin({
+      events: events,
+      storeFile: deps.storeFile || path.join(__dirname, 'state', 'licenses.json'),
+      eventLogFile: deps.eventLogFile || path.join(__dirname, 'state', 'events.jsonl'),
+    }).handler;
+  const issuer = createIssuer(
+    Object.assign({}, deps, {
+      ledgerFile: ledgerFile,
+      events: events,
+      admin: admin,
+    }),
+  );
   issuer.server.listen(port, host, function () {
     // No secrets here — just where we're listening.
     process.stdout.write(JSON.stringify({ evt: 'listen', host: host, port: port }) + '\n');
+    // If the config still carries REPLACE_ product slots, the owner has not
+    // pasted the real PSP product ids yet: a real purchase would NOT map to a
+    // tier and no license would be minted. Say so at boot rather than letting
+    // a paying customer hit a silent no-op.
+    const readiness = configReadiness();
+    if (!readiness.ready) {
+      process.stdout.write(
+        JSON.stringify({
+          evt: 'config',
+          ready: false,
+          pendingProducts: readiness.pendingProducts,
+          note: 'replace every REPLACE_ product id in issuer.config.json with the real PSP product id before selling',
+        }) + '\n',
+      );
+    }
   });
   return issuer;
 }
@@ -485,6 +587,7 @@ module.exports = {
   createIssuer: createIssuer,
   start: start,
   secretEnvName: secretEnvName,
+  configReadiness: configReadiness,
   MAX_BODY_BYTES: MAX_BODY_BYTES,
 };
 

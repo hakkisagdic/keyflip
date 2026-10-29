@@ -18,6 +18,7 @@ const DERIVED = [
   'events.jsonl', // autoswitch/failover event log
   '.usage-cache.json', // cached usage probe
   '.update-check.json', // "new version?" throttle stamp
+  'prices-cache.json', // refreshed model price table (cost prices --refresh)
   { name: 'logs', dir: true },
 ];
 

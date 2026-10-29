@@ -202,3 +202,47 @@ test('saveSession then loadSession round-trips a snapshot through the store', fu
   fs.rmSync(b.cookies, { force: true });
   fs.rmSync(cfg, { recursive: true, force: true });
 });
+
+// #37: one Chromium profile holds ONE claude.ai account, so a second account needs a second
+// profile. catalog() expands a browser into one entry per profile in Local State; the default
+// profile keeps the bare id so every existing capture (`<account>__chrome.sql`) still resolves.
+test('catalog() expands a browser into one entry per Chrome profile, Default keeping the bare id', function () {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'keyflip-profiles-'));
+  const dataDir = path.join(home, 'Library', 'Application Support', 'Google', 'Chrome');
+  fs.mkdirSync(dataDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(dataDir, 'Local State'),
+    JSON.stringify({
+      profile: {
+        info_cache: {
+          Default: { name: 'Hakkı' },
+          'Profile 2': { name: 'Work' },
+        },
+      },
+    }),
+  );
+  const c = browser.catalog(home);
+  assert.strictEqual(c.chrome.id, 'chrome', 'the default profile keeps the id every capture uses');
+  assert.strictEqual(c.chrome.cookies, path.join(dataDir, 'Default', 'Cookies'));
+  const second = c['chrome-Profile-2'];
+  assert.ok(second, 'the named profile is discovered under a filesystem-safe id');
+  assert.strictEqual(second.cookies, path.join(dataDir, 'Profile 2', 'Cookies'));
+  assert.strictEqual(second.name, 'Chrome (Work)');
+  assert.strictEqual(second.service, 'Chrome Safe Storage', 'all profiles share the browser key');
+  assert.strictEqual(second.proc, 'Google Chrome');
+  fs.rmSync(home, { recursive: true, force: true });
+});
+
+test('catalog() degrades to Default alone when Local State is missing or unreadable', function () {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'keyflip-nolstate-'));
+  const c = browser.catalog(home);
+  assert.strictEqual(c.chrome.id, 'chrome');
+  assert.strictEqual(
+    Object.keys(c).filter(function (k) {
+      return k.indexOf('chrome') === 0;
+    }).length,
+    1,
+    'no invented profiles without evidence',
+  );
+  fs.rmSync(home, { recursive: true, force: true });
+});

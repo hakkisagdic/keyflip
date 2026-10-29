@@ -88,9 +88,15 @@ function normalizePattern(input, ctx) {
     .replace(/\\/g, '/');
   if (!p) return { error: 'a rule needs a path (or "*" for any path) — see keyflip secrets list' };
   if (p.slice(0, 2) === './') p = p.slice(2);
-  if (p.charAt(0) === '/' && ctx && ctx.configDir) {
-    const rel = path.relative(ctx.configDir, p.split('/').join(path.sep));
-    if (rel && rel.indexOf('..') !== 0) p = rel.split(path.sep).join('/');
+  // A pasted path can be POSIX (`/…`) or a Windows drive path (`C:/…` after the fold above).
+  if ((p.charAt(0) === '/' || /^[A-Za-z]:\//.test(p)) && ctx && ctx.configDir) {
+    // Containment is decided by path.relative, not by a leading character: a Windows drive path
+    // is native only on Windows, and on Windows `\etc\passwd` is already absolute (an UNC-rooted
+    // relative result), so `indexOf('..')` alone would let it slip through.
+    const native = /^[A-Za-z]:\//.test(p) && path.sep === '\\' ? p : p.split('/').join(path.sep);
+    const rel = path.relative(ctx.configDir, native);
+    const inside = rel && rel !== '..' && !path.isAbsolute(rel) && rel.indexOf('..' + path.sep) !== 0;
+    if (inside) p = rel.split(path.sep).join('/');
     else return { error: 'that path is not inside the state repo (' + ctx.configDir + ') — rules are repo-relative' };
   }
   if (p.indexOf('..') !== -1) return { error: 'a rule path cannot contain ".." — rules are relative to the state dir' };

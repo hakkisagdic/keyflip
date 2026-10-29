@@ -128,6 +128,8 @@ test('MCP lifecycle: initialize negotiates a supported protocol version and decl
     'keyflip_refresh',
     'keyflip_next',
     'keyflip_providers',
+    'keyflip_provider_catalog',
+    'keyflip_provider_models',
     'keyflip_provider_use',
     'keyflip_sessions',
     'keyflip_resume_command',
@@ -136,9 +138,33 @@ test('MCP lifecycle: initialize negotiates a supported protocol version and decl
     'keyflip_backups',
     'keyflip_backup_create',
     'keyflip_skills',
+    'keyflip_skill_agents',
     'keyflip_skill_add',
+    'keyflip_skill_sync',
     'keyflip_proxy_status',
+    'keyflip_proxy_routes',
+    'keyflip_proxy_explain',
     'keyflip_proxy_control',
+    'keyflip_cooldowns',
+    'keyflip_cooldown_clear',
+    'keyflip_tiers',
+    'keyflip_tier_set',
+    'keyflip_cost_rates',
+    'keyflip_cost_prices',
+    'keyflip_cost_prices_refresh',
+    'keyflip_instances',
+    'keyflip_instance_create',
+    'keyflip_instance_launch',
+    'keyflip_instance_focus',
+    'keyflip_instance_kill',
+    'keyflip_instance_harden',
+    'keyflip_conv_list',
+    'keyflip_conv_show',
+    'keyflip_conv_search',
+    'keyflip_conv_context',
+    'keyflip_conv_status',
+    'keyflip_conv_index',
+    'keyflip_conv_export',
   ].forEach(function (n) {
     assert.ok(names.indexOf(n) !== -1, 'missing MCP tool: ' + n);
   });
@@ -192,6 +218,7 @@ test('MCP: login/logout/browser tools are exposed, gated, and structured', async
     'keyflip_browser_status',
     'keyflip_browser_logout',
     'keyflip_consolidate',
+    'keyflip_consolidate_plan',
   ].forEach(function (n) {
     assert.ok(names.indexOf(n) !== -1, 'missing MCP tool: ' + n);
   });
@@ -579,8 +606,15 @@ test('MCP new tools work: providers (read) + provider_use requires confirm', asy
         params: { name: 'keyflip_provider_use', arguments: { name: 'relay', confirm: true } },
       },
       { jsonrpc: '2.0', id: 5, method: 'tools/call', params: { name: 'keyflip_sessions', arguments: { limit: 1 } } },
+      { jsonrpc: '2.0', id: 6, method: 'tools/call', params: { name: 'keyflip_provider_catalog', arguments: {} } },
+      {
+        jsonrpc: '2.0',
+        id: 7,
+        method: 'tools/call',
+        params: { name: 'keyflip_provider_add', arguments: { name: 'z', catalog_id: 'zai', confirm: true } },
+      },
     ],
-    [1, 2, 3, 4, 5],
+    [1, 2, 3, 4, 5, 6, 7],
   );
   assert.ok(
     got[2].result.structuredContent.providers.some(function (p) {
@@ -590,6 +624,17 @@ test('MCP new tools work: providers (read) + provider_use requires confirm', asy
   assert.strictEqual(got[3].result.isError, true); // confirm=false refused
   assert.strictEqual(got[4].result.structuredContent.provider, 'relay'); // switched
   assert.ok(Array.isArray(got[5].result.structuredContent.sessions)); // read-only tool works
+  const cat = got[6].result.structuredContent.catalog;
+  assert.ok(
+    cat.some(function (e) {
+      return e.id === 'zai' && e.compat === 'anthropic';
+    }),
+    'the catalog lists presets with their compat',
+  );
+  // catalog_id fills the URL and models; the key is still absent and the note points at stdin.
+  assert.strictEqual(got[7].result.structuredContent.baseUrl, 'https://api.z.ai/api/anthropic');
+  assert.match(got[7].result.structuredContent.note, /--key-file -/);
+  assert.strictEqual(JSON.stringify(got[7]).indexOf('apiKey'), -1);
 });
 
 test('MCP: unknown method -> -32601, unknown tool -> -32602, parse error -> -32700', async function () {
@@ -722,6 +767,30 @@ test('install-skill copies the bundled skill into ~/.claude/skills', function ()
   assert.match(fs.readFileSync(dest, 'utf8'), /^---\r?\nname: keyflip/);
 });
 
+test('install-skill fans the bundled skill out to other detected agents and records one manifest', function () {
+  const home = mkhome();
+  fs.mkdirSync(path.join(home, '.cursor'), { recursive: true });
+  const r = cliRun(home, ['install-skill']);
+  assert.strictEqual(r.status, 0, r.stderr);
+  assert.ok(fs.existsSync(path.join(home, '.cursor', 'skills', 'keyflip', 'SKILL.md')));
+  const m = JSON.parse(fs.readFileSync(path.join(home, '.config', 'keyflip', 'installed-skills.json'), 'utf8'));
+  assert.deepStrictEqual(Object.keys(m.keyflip.targets).sort(), ['claude', 'cursor']);
+  assert.strictEqual(m.keyflip.targets.claude.dir, '.claude/skills');
+  const listed = JSON.parse(cliRun(home, ['skill', 'list', '--json']).stdout).skills[0];
+  assert.deepStrictEqual(
+    listed.targets.map(function (t) {
+      return t.id + ':' + t.state;
+    }),
+    ['claude:ok', 'cursor:ok'],
+  );
+  // Removing the skill takes it from every recorded agent, the Claude copy included. A removal
+  // deletes from the user's agents, so a non-TTY run has to carry the explicit --yes.
+  assert.strictEqual(cliRun(home, ['skill', 'remove', 'keyflip']).status, 1);
+  assert.strictEqual(cliRun(home, ['skill', 'remove', 'keyflip', '--yes']).status, 0);
+  assert.ok(!fs.existsSync(path.join(home, '.claude', 'skills', 'keyflip')));
+  assert.ok(!fs.existsSync(path.join(home, '.cursor', 'skills', 'keyflip')));
+});
+
 // SECURITY (review P1 #4): keyflip_settings show/get must NOT return provider API keys /
 // auth tokens (which `provider use` writes into env) in plaintext over MCP.
 test('keyflip_settings redacts credential env on show/get (never leaks a key to the agent)', async function () {
@@ -780,6 +849,57 @@ test('parity MCP: mcpreg set/list/remove round-trips (and gates on confirm)', as
   assert.ok(JSON.stringify((await toolByName('keyflip_mcpreg_list').run(ctx)).servers).indexOf('ctx7') !== -1);
   await toolByName('keyflip_mcpreg_remove').run(ctx, { name: 'ctx7', confirm: true });
   assert.strictEqual(JSON.stringify((await toolByName('keyflip_mcpreg_list').run(ctx)).servers).indexOf('ctx7'), -1);
+  // The list reports the surfaces too, and "all" is a valid surface for the enable tool.
+  const rows = (await toolByName('keyflip_mcpreg_list').run(ctx)).surfaces;
+  assert.ok(
+    rows.some(function (r) {
+      return r.id === 'cursor';
+    }),
+  );
+  assert.ok(
+    rows.some(function (r) {
+      return r.id === 'codex' && r.supported === false;
+    }),
+  );
+  await toolByName('keyflip_mcpreg_set').run(ctx, { name: 'files', command: 'node', confirm: true });
+  const all = await toolByName('keyflip_mcpreg_enable').run(ctx, {
+    name: 'files',
+    surface: 'all',
+    enabled: true,
+    confirm: true,
+  });
+  assert.strictEqual(all.results['claude-code'], 'applied');
+  await toolByName('keyflip_mcpreg_remove').run(ctx, { name: 'files', confirm: true });
+});
+
+test('CLI: mcpreg enable reaches every agent on the machine; --code narrows it to Claude', function () {
+  const home = mkhome();
+  fs.mkdirSync(path.join(home, '.cursor'), { recursive: true });
+  fs.mkdirSync(path.join(home, '.gemini'), { recursive: true });
+  assert.strictEqual(cliRun(home, ['mcpreg', 'add', 'ctx7', '--', 'npx', '-y', 'ctx7']).status, 0);
+  const r = cliRun(home, ['mcpreg', 'enable', 'ctx7']);
+  assert.strictEqual(r.status, 0, r.stderr);
+  const readCfg = function (rel) {
+    return JSON.parse(fs.readFileSync(path.join(home, rel), 'utf8'));
+  };
+  // Windows has no exec-able `npx`, so the entry is wrapped as `cmd /c npx …` there.
+  const wantCmd = process.platform === 'win32' ? 'cmd' : 'npx';
+  const wantArgs = process.platform === 'win32' ? ['/c', 'npx', '-y', 'ctx7'] : ['-y', 'ctx7'];
+  const checkEntry = function (rel) {
+    const e = readCfg(rel).mcpServers.ctx7;
+    assert.strictEqual(e.command, wantCmd, rel);
+    assert.deepStrictEqual(e.args, wantArgs, rel);
+  };
+  checkEntry('.cursor/mcp.json');
+  checkEntry('.gemini/settings.json');
+  checkEntry('.claude.json');
+  // Kiro is not installed in this home: reported as skipped, and no config invented for it.
+  assert.match(r.stdout, /kiro:\s+skipped \(agent not installed\)/);
+  assert.ok(!fs.existsSync(path.join(home, '.kiro')));
+  const r2 = cliRun(home, ['mcpreg', 'disable', 'ctx7', '--code']);
+  assert.strictEqual(r2.status, 0, r2.stderr);
+  assert.strictEqual(readCfg('.claude.json').mcpServers.ctx7, undefined);
+  assert.ok(readCfg('.cursor/mcp.json').mcpServers.ctx7, 'narrowing to Claude must not touch Cursor');
 });
 
 test('parity MCP: link/links pin and list a directory→account', async function () {
@@ -816,7 +936,8 @@ test('parity MCP: share builds a pointer link and share_apply imports the provid
 });
 // #39 — the credential-chain tools, reached through the real registry (so this also proves the
 // Wave-2 splice in src/mcp.js actually mounted them).
-test('chains MCP: keyflip_chains maps read-only, keyflip_chains_tighten is confirm-gated', async function () {
+test('chains MCP: keyflip_chains maps read-only, keyflip_chains_tighten is confirm-gated', async function (t) {
+  if (process.platform === 'win32') return t.skip('POSIX permissions not applicable on Windows');
   const ctx = makeCtx();
   const map = toolByName('keyflip_chains');
   const tighten = toolByName('keyflip_chains_tighten');
@@ -875,6 +996,29 @@ test('#36 MCP: keyflip_refresh_schedule maps status read-only and gates install/
   assert.strictEqual(t.inputSchema.additionalProperties, false, 'no unknown argument can slip into a cron line');
   const st = await t.run(makeCtx(), { action: 'status' });
   assert.strictEqual(st.schedule.job, 'refresh');
+  assert.strictEqual(st.schedule.installed, false);
+  await assert.rejects(function () {
+    return t.run(makeCtx(), { action: 'install' });
+  }, /confirmation required/);
+  await assert.rejects(function () {
+    return t.run(makeCtx(), { action: 'remove' });
+  }, /confirmation required/);
+  // Deliberately NOT executed: schedule.install() resolves the runner from ctx/opts, and an MCP call
+  // has neither — running it here would edit the real machine's crontab. The gate is the contract.
+});
+
+// The conversation-index schedule is its own MCP tool for the same reason the refresh one is: the
+// token-refresh job's promise ("spends your quota") would be a lie for a job that runs a local
+// embedding model, and an agent reading the description would be misled.
+test('MCP: keyflip_conv_index_schedule maps status read-only and gates install/remove on confirm', async function () {
+  const t = toolByName('keyflip_conv_index_schedule');
+  assert.ok(t, 'the index job is reachable from an agent, not just the CLI');
+  assert.strictEqual(t.annotations.readOnlyHint, false, 'it can write a schedule');
+  assert.ok(t.inputSchema.required.indexOf('confirm') !== -1, 'a mutating tool must require confirm');
+  assert.ok(t.inputSchema.properties.interval, 'it takes a cadence');
+  assert.strictEqual(t.inputSchema.additionalProperties, false, 'no unknown argument can slip into a cron line');
+  const st = await t.run(makeCtx(), { action: 'status' });
+  assert.strictEqual(st.schedule.job, 'conv');
   assert.strictEqual(st.schedule.installed, false);
   await assert.rejects(function () {
     return t.run(makeCtx(), { action: 'install' });
@@ -1044,7 +1188,8 @@ test('#35 MCP: the thread tools are registered, gated, and path-safe', async fun
   _config.set(ctx, 'threads.mirror', true);
   const mirrored = await toolByName('keyflip_thread_mirror').run(ctx, { slug: 'design', confirm: true });
   assert.strictEqual(mirrored.path, 'thread-mirror/design.md', 'and the path it reports is relative');
-  assert.strictEqual(fs.statSync(path.join(ctx.configDir, 'thread-mirror', 'design.md')).mode & 0o777, 0o600);
+  if (process.platform !== 'win32')
+    assert.strictEqual(fs.statSync(path.join(ctx.configDir, 'thread-mirror', 'design.md')).mode & 0o777, 0o600);
 
   await toolByName('keyflip_thread_remove').run(ctx, {
     slug: 'design',
@@ -1149,4 +1294,181 @@ test('mcp --register wires keyflip with absolute paths a GUI launcher can run', 
   const cfg = JSON.parse(fs.readFileSync(ctx.claudeConfigPath, 'utf8'));
   assert.deepStrictEqual(cfg.mcpServers.keyflip, e);
   assert.deepStrictEqual(cfg.mcpServers.other, { command: 'x' }, 'other servers are untouched');
+});
+
+// ---- unified conversation layer -------------------------------------------------------------
+function seedConversation(home) {
+  const dir = path.join(home, '.claude', 'projects', '-work-proj');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(
+    path.join(dir, 'sess-mcp.jsonl'),
+    [
+      {
+        type: 'user',
+        timestamp: '2026-01-01T10:00:00.000Z',
+        cwd: '/work/proj',
+        message: { role: 'user', content: 'Index the MCP conversations safely.' },
+      },
+      {
+        type: 'assistant',
+        timestamp: '2026-01-01T10:00:01.000Z',
+        message: { role: 'assistant', content: 'The database migration is a dry run first.' },
+      },
+    ]
+      .map((l) => JSON.stringify(l))
+      .join('\n') + '\n',
+  );
+}
+
+function call(id, name, args) {
+  return { jsonrpc: '2.0', id: id, method: 'tools/call', params: { name: name, arguments: args } };
+}
+
+test('MCP conversation tools: read-only tools never build, index needs confirm', async function () {
+  const home = mkhome();
+  seedConversation(home);
+  const noIndex = await mcpSession(home, [call(1, 'keyflip_conv_search', { query: 'database' })], [1]);
+  assert.strictEqual(noIndex[1].result.isError, true);
+  assert.match(noIndex[1].result.content[0].text, /no conversation index/i);
+
+  const guarded = await mcpSession(home, [call(1, 'keyflip_conv_index', {})], [1]);
+  assert.strictEqual(guarded[1].result.isError, true);
+  assert.match(guarded[1].result.content[0].text, /confirm/i);
+
+  const built = await mcpSession(home, [call(1, 'keyflip_conv_index', { confirm: true, limit_sources: 5 })], [1]);
+  const r = built[1].result.structuredContent;
+  assert.strictEqual(r.ok, true);
+  assert.ok(r.indexed >= 1);
+  assert.ok(r.stats.sources >= 1);
+  assert.strictEqual(r.coverage, 0);
+});
+
+test('MCP conversation tools: list, search, context, show, and a handoff bundle', async function () {
+  const home = mkhome();
+  seedConversation(home);
+  const out = path.join(home, 'handoff-out');
+  const got = await mcpSession(
+    home,
+    [
+      call(1, 'keyflip_conv_index', { confirm: true }),
+      call(2, 'keyflip_conv_list', { limit: 5 }),
+      call(3, 'keyflip_conv_search', { query: 'database migration', limit: 3 }),
+      call(4, 'keyflip_conv_context', { query: 'database migration', budget: 2000 }),
+      call(5, 'keyflip_conv_show', { id: 'sess-mcp', max_chars: 2000 }),
+      call(6, 'keyflip_conv_export', { confirm: true, id: 'sess-mcp', target: 'claude', out: out }),
+    ],
+    [2, 3, 4, 5, 6],
+  );
+  const list = got[2].result.structuredContent;
+  assert.strictEqual(list.indexed, true);
+  assert.strictEqual(list.total, 1);
+  assert.strictEqual(list.conversations[0].id, 'claude:local:sess-mcp');
+  assert.strictEqual(list.conversations[0].messages, 2);
+
+  const search = got[3].result.structuredContent;
+  assert.strictEqual(search.mode, 'lexical'); // no vectors: never claim hybrid
+  assert.strictEqual(search.count, 1);
+  assert.strictEqual(search.hits[0].id, 'claude:local:sess-mcp');
+  // The page is honest about duplicates even when there are none: a hit carries the identity of
+  // its text and an (empty) list of conversations that hold the same text.
+  assert.strictEqual(search.collapsed, 0);
+  assert.match(search.hits[0].chunkHash, /^[0-9a-f]{16}$/);
+  assert.deepStrictEqual(search.hits[0].alsoIn, []);
+
+  const ctxRes = got[4].result.structuredContent;
+  assert.match(ctxRes.context, /^# Conversation context/);
+  assert.match(ctxRes.context, /database migration/i);
+  assert.ok(ctxRes.sources.length >= 1);
+
+  const show = got[5].result.structuredContent;
+  assert.strictEqual(show.id, 'claude:local:sess-mcp');
+  assert.match(show.content, /Index the MCP conversations safely/);
+  assert.strictEqual(show.truncated, false);
+
+  const bundle = got[6].result.structuredContent;
+  assert.strictEqual(bundle.target, 'claude');
+  assert.ok(fs.existsSync(path.join(out, 'CONTINUE.md')));
+  assert.ok(fs.existsSync(path.join(out, 'conversation.json')));
+});
+
+test('MCP keyflip_consolidate: plan is read-only; apply is gated', async function () {
+  const home = mkhome();
+  const got = await mcpSession(
+    home,
+    [call(1, 'keyflip_consolidate_plan', {}), call(2, 'keyflip_consolidate', {})],
+    [1, 2],
+  );
+  // The plan tool answers without confirm: ok/reason shape, never an MCP error.
+  assert.strictEqual(got[1].result.isError, false);
+  const plan = got[1].result.structuredContent;
+  assert.strictEqual(plan.dryRun, true);
+  assert.strictEqual(typeof plan.wouldMerge, 'number');
+  assert.ok(Array.isArray(plan.plan));
+  assert.match(plan.note, /nothing was written/);
+  // The apply refuses without confirm.
+  assert.strictEqual(got[2].result.isError, true);
+  assert.match(got[2].result.content[0].text, /confirm/i);
+});
+
+// ---- which account worked on a conversation (MCP surface) ----------------------------------
+// An agent filtering by account must get the same answer the CLI prints, including the
+// stated/inferred label: a guess an agent cannot tell from the user's word is a hazard.
+
+test('MCP conversation tools: the account is reported, labelled, and filterable', async function () {
+  const home = mkhome();
+  seedConversation(home);
+  const cfg = path.join(home, '.config', 'keyflip');
+  fs.mkdirSync(cfg, { recursive: true });
+  fs.writeFileSync(path.join(cfg, 'gmail.json'), JSON.stringify({ name: 'gmail', email: 'g@example.com' }));
+  const logs = path.join(cfg, 'logs');
+  fs.mkdirSync(logs, { recursive: true });
+  // The conversation lives at 2026-01-01T10:00, so the gmail window must open before it.
+  fs.writeFileSync(path.join(logs, 'keyflip.log'), '2026-01-01T09:00:00.000Z active -> gmail\n', { mode: 0o600 });
+
+  const built = await mcpSession(home, [call(1, 'keyflip_conv_index', { confirm: true, limit_sources: 5 })], [1]);
+  assert.strictEqual(built[1].result.structuredContent.ok, true);
+
+  const list = await mcpSession(home, [call(1, 'keyflip_conv_list', { limit: 10 })], [1]);
+  const rows = list[1].result.structuredContent.conversations;
+  const row = rows.filter(function (r) {
+    return r.id.indexOf('sess-mcp') !== -1;
+  })[0];
+  assert.ok(row, 'the conversation is listed');
+  assert.strictEqual(row.account, 'gmail');
+  assert.strictEqual(row.accountSource, 'inferred', 'a guess is labelled as a guess');
+
+  const filtered = await mcpSession(
+    home,
+    [call(1, 'keyflip_conv_list', { account: 'gmail' }), call(2, 'keyflip_conv_list', { account: 'yahoo' })],
+    [1, 2],
+  );
+  assert.strictEqual(filtered[1].result.structuredContent.conversations.length, 1);
+  assert.strictEqual(
+    filtered[2].result.structuredContent.conversations.length,
+    0,
+    'an unknown account matches nothing',
+  );
+
+  const show = await mcpSession(home, [call(1, 'keyflip_conv_show', { id: 'sess-mcp' })], [1]);
+  const one = show[1].result.structuredContent;
+  assert.strictEqual(one.account, 'gmail');
+  assert.strictEqual(one.accountSource, 'inferred');
+  assert.strictEqual(one.accountConfidence, 'high');
+  assert.match(one.accountWhy, /gmail window/, 'and the agent can read WHY: ' + one.accountWhy);
+
+  const search = await mcpSession(
+    home,
+    [call(1, 'keyflip_conv_search', { query: 'database migration', account: 'gmail' })],
+    [1],
+  );
+  const hits = search[1].result.structuredContent.hits;
+  assert.ok(hits.length >= 1);
+  assert.strictEqual(hits[0].account, 'gmail');
+
+  const away = await mcpSession(
+    home,
+    [call(1, 'keyflip_conv_search', { query: 'database migration', account: 'yahoo' })],
+    [1],
+  );
+  assert.strictEqual(away[1].result.structuredContent.hits.length, 0, 'the filter runs on the ranked list');
 });

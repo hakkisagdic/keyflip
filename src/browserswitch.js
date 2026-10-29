@@ -123,6 +123,10 @@ async function align(ctx, name, opts) {
   if (ctx.platform !== 'darwin' && !opts.anyPlatform) return out;
   const wantOrg = targetOrg(ctx, name);
   const list = opts.installed || br.installed(ctx.home);
+  // Several profiles of the SAME browser share one process: quit it once, restore every profile,
+  // and reopen once at the end — otherwise profile #2 would quit the browser profile #1 reopened.
+  const quitDone = {};
+  const reopen = {};
   for (let i = 0; i < list.length; i++) {
     const b = list[i];
     const s = inspect(ctx, name, b, wantOrg, br, opts);
@@ -144,8 +148,12 @@ async function align(ctx, name, opts) {
       continue;
     }
     if (d.quit) {
-      br.quit(b, run);
-      for (let t = 0; t < 40 && br.isRunning(b); t++) await sleep(250);
+      reopen[b.proc] = true;
+      if (!quitDone[b.proc]) {
+        quitDone[b.proc] = true;
+        br.quit(b, run);
+        for (let t = 0; t < 40 && br.isRunning(b); t++) await sleep(250);
+      }
       if (br.isRunning(b)) {
         // Never write the Cookies DB of a browser that is still running — it would be overwritten
         // on exit at best and corrupted at worst.
@@ -165,8 +173,10 @@ async function align(ctx, name, opts) {
     const r = br.restoreClaudeCookies(b, sql, { force: true });
     if (r && r.ok) out.synced.push(b.name);
     else out.skipped.push({ browser: b.name, reason: 'restore-failed' });
-    if (d.quit) run('open', ['-a', b.proc]);
   }
+  Object.keys(reopen).forEach(function (proc) {
+    run('open', ['-a', proc]);
+  });
   return out;
 }
 

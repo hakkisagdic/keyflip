@@ -96,6 +96,7 @@ keyflip list                 # all captured accounts, which is active on each su
 keyflip list --usage         # + each account's 5h / 7d quota utilization
 keyflip list --usage --json  # machine-readable usage + headroomPct + usageStatus
 keyflip doctor               # config + login + endpoint reachability + a real desktop-app login check
+                             # + every background service: installed / held / last output
 ```
 - `list` shows a **web** column and a browser/extension footer, warning on a mismatch.
 - `doctor`'s **desktop app session** check reads the app's own cookie jar, so a capture
@@ -103,6 +104,28 @@ keyflip doctor               # config + login + endpoint reachability + a real d
   app `(signed out on disk…)`, and `list --json` carries `appSessionLive` / `appSessionExpires`.
 - `usageStatus` sentinels: `ok`, `expired` (re-`add` the account), `throttled`
   (**unknown**, not proof of a rate-limit), `error`, `no-creds`/`no-token`.
+
+### Is anything running unattended?
+
+keyflip can put four jobs on a timer, and `keyflip doctor` reports each one as three separate
+facts — the file is installed, the system is holding it, and when it last produced output:
+
+```bash
+keyflip doctor
+#   ✓ background services — 2 of 4 scheduled — dream: off · refresh: nightly at 04:30 ·
+#     spoke 9 h ago · daemon: off · conv: every 30 min · spoke 13 min ago
+
+keyflip doctor --json        # every job as a row: installed, loaded, lastRun, cadenceMs, does, install
+keyflip refresh --schedule-status     # per job: launchd/cron, held?, last output, the log path
+keyflip conv index --schedule-status
+keyflip dream status
+```
+
+A receipt only proves the promise was made, so the warnings fire on the gap between the promise
+and the evidence: a plist launchd never picked up, a job that has been silent past twice the
+cadence it was installed with, and a conversation index older than a day that nothing refreshes.
+`loaded: null` in `--json` means doctor did not ask the system (no runner available) — it never
+means "not running".
 
 ---
 
@@ -229,11 +252,18 @@ keyflip threads suggest                # one TASK split over 2+ accounts? see §
   `browser sync` restores it into the browser — they are opposite directions; keyflip also
   refreshes the app login it switches away from) — cookies only decrypt on the
   machine+browser that captured them. Titles only — bodies: `keyflip recall`.
-- `foreign` reads what Claude Code's own store doesn't hold: Cursor's SQLite chat DB (a `-wal`
-  sibling is replayed first so the recent chats it holds aren't missed, and keyflip says so when
-  the WAL is there but cannot be folded in), opencode / Gemini /
+- `conv` reads Cursor natively — the editor's `state.vscdb` (one chat per composer, not one per DB
+  file), the `cursor-agent` CLI store and its `agent-transcripts` mirror — while `foreign` still
+  normalizes a Cursor SQLite DB you point at directly (a `-wal` sibling is replayed first so the
+  recent chats it holds aren't missed, and keyflip says so when the WAL is there but cannot be
+  folded in). `foreign` also reads opencode / Gemini /
   **Qoder CLI** JSONL and Copilot YAML; a file you point at directly may also be a plain-JSON
-  log or Aider's `.aider.chat.history.md`. Discovery is newest-first with a per-tool
+  log or Aider's `.aider.chat.history.md`. **Command Code** sessions
+  (`~/.commandcode/projects/<slug>/*.jsonl`) are read in both on-disk layouts — the flat
+  `{role, content}` event log and the v3 `{type:'session'|'message'}` one — with
+  `.checkpoints.jsonl` sidecars and thinking/tool-result payloads skipped; their title comes
+  from the `<sessionId>.meta.json` sidecar and they appear as `--app command-code`.
+  Discovery is newest-first with a per-tool
   file budget, so one chatty tool cannot bury the rest; a tool's non-session folders
   (`log/`, `snapshot/`, `tool-output/`, Qoder's `subagents/`) are skipped, and so is anything
   credential-shaped (`auth.json`, `credentials.json`, `oauth*.json`) — keyflip will never hand a
@@ -253,14 +283,14 @@ keyflip consolidate --watch            # re-sync on an interval whenever the app
 keyflip consolidate --watch --interval 60
 ```
 - The desktop app's store is locked while it runs, so a one-shot offers to
-  close→sync→reopen the app (`-y` to skip the prompt).
-- Also runs automatically on every switch.
-- Account folders are recognised by their UUID name, so the app's own bookkeeping
-  (`skills-plugin/<org>/<account>/`, laid out the same way) is neither read nor written — before,
-  a consolidate pass spread pointers into it. A session the user deleted in one account (the app
-  leaves a `deleted_<id>` tombstone beside the index) is not copied back from another account's
-  folder. `keyflip cowork` then lists a consolidated session once: the copy whose data folder
-  still sits beside it, otherwise the most recently active.
+  close→sync→reopen the app (`-y` to skip the prompt). Also runs automatically on every switch.
+- The union covers Claude Desktop's Recents and Cowork stores in the base app **and in every
+  non-running instance clone** (`~/.keyflip-instances/<tool>/<slug>/User Data/`), so a chat opened
+  in one clone appears in all of them. A clone with a live `instance.pid` is skipped and named in
+  the result; `--no-instances` keeps the pass to the base app only.
+- Two accounts can legitimately use the same `local_*.json` filename for different transcripts.
+  keyflip then falls back to `local_<cliSessionId>.json` (with a numeric suffix on a true
+  collision) instead of silently dropping one.
 - Only UUID-named folders count as accounts: the app's own bookkeeping
   (`skills-plugin/<org>/<account>/`) is laid out the same way but is neither read nor written,
   and a session the user deleted in an account (its `deleted_<id>` tombstone) is not copied back
@@ -323,12 +353,42 @@ keyflip threads drop fatura -y            # forget the NAME — every transcript
 ```bash
 keyflip proxy start --wire             # start localhost proxy + wire Claude Code to it
 keyflip proxy status                   # is it up? on what port? per-account totals
-keyflip proxy stats                    # request/token totals by account
+keyflip proxy stats                    # requests, tokens, cache reads/writes, ~list-price spend
 keyflip proxy stop                     # stop it and unwire settings.json
+keyflip tier                           # each account's plan + whether a model may route to it
+keyflip cost rates [model]             # billable card: cache tiers, 200K premium, fast mode
+keyflip cost prices [--refresh]        # which price table is in use; refresh it from the public list
 ```
 - While up it routes each request to the active account and **fails over to the next
   healthy account on 429/5xx** before the client sees a byte. Ideal for long unattended
   runs where mid-request limits are likely.
+- Optional per-request routing in `~/.config/keyflip/proxy-routes.json` (hot-reloaded on
+  the next request): first-match rules on model/path/header/token size, sticky
+  conversations, `fallback: off|retry|model-chain`, header/body transforms, and a custom
+  router script. A rule can only name an account that is usable now; an invalid file is
+  ignored with every problem named.
+
+```bash
+keyflip proxy routes [init]            # the routing file, its errors and the policy
+keyflip proxy explain --model claude-opus-4 --tokens 200000   # where would it go, why?
+```
+- **Plan-aware.** Each account's subscription tier is read from its captured login, so a
+  Free account is skipped for Opus-class models while Sonnet/Haiku still route. Only a
+  known lower plan blocks (unknown tiers, non-Claude models and provider mode are
+  permissive); when every account refuses, the proxy answers 503 before sending anything.
+  `keyflip tier <acct> <tier|auto>` pins or clears an override; `proxy.tierFilter=false`
+  disables the filter.
+- **Spend is priced per request.** `proxy stats` adds cache reads/writes and an estimated
+  list-price cost (cache read 0.1×, 5-minute write 1.25×, 1-hour write 2×, a >200K prompt
+  2× input / 1.5× output on the whole request, fast mode 6×); `keyflip cost rates` prints
+  the card. Estimates from a dated snapshot — never a vendor invoice.
+- **The price table refreshes itself.** `keyflip cost prices --refresh` pulls the public
+  price list, keeps the Claude rows, validates them and caches them; every later estimate
+  uses the fresh numbers while the bundled snapshot stays as the floor. Only `--refresh`
+  touches the network, a corrupt cache is ignored whole, and a sha-256 pin
+  (`cost.pricesSha256`, `--pin`) refuses a mismatching refresh — keyflip never pins what
+  it just fetched. A live row may raise a rate or add a model the bundle never had, but
+  it never lowers a rate below the bundled snapshot.
 
 ---
 
@@ -357,12 +417,22 @@ keyflip migrate export bundle.json --no-sessions --no-providers # accounts only
 ```
 - **MERGE = union:** anything already on the target is **kept, never clobbered**,
   unless `--force`. So you combine with the sessions already there.
+- **The bundle streams, so a large history never has to fit in memory.** Export writes a record
+  stream (`KEYFLIP-MIGRATE-STREAM/2`): the small metadata tier first, then each transcript in
+  128 KiB chunks; import reads it line by line and renames each session only when its byte count
+  agrees. With `--passphrase-file` every record is sealed individually with AES-256-GCM and chained
+  to the previous one, so a tampered, reordered or truncated bundle is rejected. Measured peak RSS:
+  ~300 MB for a 2 GB (4-session) encrypted set. Older one-string bundles still import below 256 MB;
+  above that, re-export on the source machine with a current keyflip.
 
 ### 12.2 By cloud relay (no LAN) — WebDAV
 ```bash
 keyflip migrate push --url https://dav.example/kf.enc --passphrase-file pass.txt   # source
 keyflip migrate pull --url https://dav.example/kf.enc --passphrase-file pass.txt   # target (previews + merges)
 ```
+`push`/`pull` still build the payload in memory, so they refuse a transcript set above 256 MB; use
+the streaming file export in 12.1 for a large history (or add `--no-sessions` and copy transcripts
+out of band).
 
 ### 12.3 Live, device-to-device over the LAN — `keyflip transfer`
 ```bash
@@ -411,12 +481,16 @@ keyflip import 'keyflip://…'           # preview + confirm + apply
 ## 15. Skills & MCP (teach agents keyflip)
 
 ```bash
-keyflip install-skill                  # install the Claude Code skill that teaches agents keyflip
-keyflip skill add owner/repo           # install any skill from GitHub (or ./dir, or file.tgz)
-keyflip skill list | remove <name>     # only removes skills keyflip installed
+keyflip install-skill                  # bundled keyflip skill → Claude + every other detected agent
+keyflip skill agents                   # the skill targets; ● = that tool is on this machine
+keyflip skill add owner/repo           # any skill → every detected agent (or --agents a,b)
+keyflip skill sync                     # re-apply sources; a copy you edited is left alone
+keyflip skill list | remove <name>     # per-agent state; only removes keyflip-installed copies
+keyflip skill remove <name> --yes      # non-interactive scripts must confirm the write
 keyflip mcp --setup                    # show how to register keyflip's MCP server
-keyflip mcpreg add ctx -- some-server  # manage MCP servers once, project into Code + Desktop
-keyflip mcpreg list | enable | disable | remove | import
+keyflip mcpreg add ctx -- some-server  # register once, project into every agent keyflip can write
+keyflip mcpreg list | surfaces | enable | disable | remove | import
+keyflip mcpreg enable ctx --surface cursor   # or --code / --desktop; no flag = every surface present
 ```
 - **Via MCP tools** (prefer over shelling out): `keyflip_status`, `keyflip_list`,
   `keyflip_switch`, `keyflip_switch_plan`, `keyflip_verify`, `keyflip_refresh`,
@@ -434,6 +508,30 @@ keyflip mcpreg list | enable | disable | remove | import
   store with a rival, or world-readable — all before asking for consent.
   `keyflip_refresh_schedule` puts `refresh --all` on a nightly timer (it calls no model and spends no
   quota) and refuses with `changed: false` while a Claude session still holds the credential.
+- **Keeping chat search current.** `keyflip conv index --schedule [--interval N]` puts the conversation
+  index on a timer (launchd on macOS, cron on Linux) so `keyflip conv search` finds the chat you just had
+  rather than a day-old one. It runs on an **interval**, not at a nightly hour, because a daily index
+  would be a day behind; the pass is incremental (an unchanged transcript costs one `stat()`) and embeds
+  only new or changed chunks with the **local** model — no cloud model, no quota. Over MCP the same job
+  is `keyflip_conv_index_schedule` (`action:"status"|"install"|"remove"`, `interval` in minutes).
+- **What chat search is worth, measured.** On a live 1,869-conversation / 117,503-chunk index, a frozen
+  set of 84 developer-style queries (written from a random *message*, so no chunk boundary is favoured)
+  scores BM25 at hit@1 0.49 / hit@5 0.83 / MRR 0.63, the vector list alone 0.24 / 0.43 / 0.32, and
+  hybrid — shipped at the 1:0.25 weight — exactly the BM25 numbers. On transcripts the rare term beats
+  the meaning, so hybrid is deliberately kept from displacing BM25 (1:0.5 → 0.46, 1:1 → 0.45, 1:2 →
+  0.25). Turn-grouped chunks are ranking-neutral (one or two queries in 84) and pay off in the text you
+  get back: the question always travels with the answer, and the duplicate folding turns the 9.3 % of
+  page slots that used to repeat a paragraph the page already showed (78 of 840 slots over those 84
+  queries) into named `alsoIn` twins. Vectors cost CPU — a full scan-and-embed of 117,033 chunks took
+  2 h 35 min — so the index embeds incrementally and the semantic list stays light.
+- **Sorting two accounts' chats apart.** `keyflip conv list --account yahoo` and
+  `keyflip conv search "the release plan" --account gmail` answer "which of my accounts actually wrote
+  this?" The account comes from what you stated (`keyflip sessions assign`) first and, only where you
+  said nothing, from keyflip's own switch timeline (`active -> <profile>`, `kiro -> <slug>`,
+  `codex -> <slug>`) — each surface keeps its own timeline, so a Kiro switch never relabels a Claude
+  session. `conv list` marks an inferred name with `*` and `keyflip conv show <id>` prints the reason and
+  the confidence. A chat older than every logged switch, a deleted account, or a tool keyflip holds no
+  accounts for (Qoder, Gemini) simply shows no account — the honest answer is "unknown", never a guess.
 
 ---
 

@@ -52,6 +52,9 @@ function run(home, args, extraEnv) {
         HOME: home,
         USERPROFILE: home, // Windows homedir
         XDG_CONFIG_HOME: path.join(home, '.config'),
+        // Windows otherwise resolves the state dir to %APPDATA%\keyflip, while every assertion
+        // here reads under the temp home — pin it so the suite tests the same tree on every OS.
+        KEYFLIP_CONFIG_DIR: path.join(home, '.config', 'keyflip'),
         APPDATA: path.join(home, 'AppData', 'Roaming'),
         KEYFLIP_TEST_CLAUDE: 'stopped', // never touch a real app; deterministic across machines
         // The app bundle path is machine-GLOBAL; point it at a nonexistent dir so an update on the
@@ -294,7 +297,7 @@ test('switch to an already-active CLI account still flips a lagging desktop app 
   const sw = run(home, ['alice', '--restart']);
   assert.strictEqual(sw.status, 0, sw.stderr);
   assert.match(sw.stdout, /the desktop app is on yahoo/);
-  assert.match(sw.stdout, /switched the Claude desktop-app login too/);
+  assert.match(sw.stdout, /switched the Claude desktop-app login/);
   assert.match(fs.readFileSync(path.join(appCfgDir, 'config.json'), 'utf8'), /ALICE-APP/);
 });
 
@@ -324,6 +327,47 @@ test('list and doctor tell when the desktop app is signed out on disk (macOS)', 
   const doc = run(home, ['doctor']);
   assert.match(doc.stdout, /desktop app session.*sign-in screen/s);
   assert.match(doc.stdout, /sign in once/);
+});
+
+// The gap this closes: the cookie jar can hold a valid sessionKey (the swap landed) but the
+// server calls it too old for the app's scope expansion — the "Sign in again" banner. list/status
+// must treat that as signed-out and name the fix, not claim the app is healthy.
+test('list and status call out a latched session_stale_relogin (macOS)', function (t) {
+  if (process.platform !== 'darwin') return t.skip('the desktop app store is macOS-only');
+  const home = setupHome();
+  run(home, ['add']); // profile "alice"
+  const appCfgDir = path.join(home, 'Library', 'Application Support', 'Claude');
+  fs.mkdirSync(appCfgDir, { recursive: true });
+  const ALICE_ORG = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+  const cfg = { 'oauth:tokenCacheV2': 'ALICE-APP' };
+  cfg['dxt:allowlistLastUpdated:' + ALICE_ORG] = '2026-07-05T00:00:00.000Z';
+  fs.writeFileSync(path.join(appCfgDir, 'config.json'), JSON.stringify(cfg));
+  fs.writeFileSync(path.join(appCfgDir, 'Cookies'), 'sessionKey ALICE-APP');
+  assert.strictEqual(run(home, ['add', 'alice', '--app']).status, 0);
+
+  // Fake the log so staleRelogin sees the refusal.
+  const logDir = path.join(home, 'Library', 'Logs', 'Claude');
+  fs.mkdirSync(logDir, { recursive: true });
+  const logLines = [
+    '2026-10-20 15:23:40 INFO  authorize failed for orgId=' + ALICE_ORG + ' code=session_stale_relogin',
+    '2026-10-20 15:23:40 WARN  session_stale_relogin latched',
+  ];
+  fs.writeFileSync(path.join(logDir, 'main.log'), logLines.join('\n') + '\n');
+
+  const list = run(home, ['list']);
+  assert.strictEqual(list.status, 0, 'a stale latch is not an error exit');
+  assert.match(list.stdout, /claude\.ai refused the saved sign-in/, 'human output names the refusal');
+  assert.match(list.stdout, /Fix: sign in once in Claude/, 'human output gives the fix');
+  const j = JSON.parse(run(home, ['list', '--json']).stdout);
+  assert.strictEqual(j.appSessionLive, false, 'JSON says the app session is NOT live');
+  assert.ok(j.appStaleRelogin && j.appStaleRelogin.at, 'JSON carries the stale verdict');
+  assert.strictEqual(j.appStaleRelogin.org, ALICE_ORG);
+
+  const st = run(home, ['status']);
+  assert.strictEqual(st.status, 0);
+  assert.match(st.stdout, /claude\.ai refused the saved sign-in/, 'status also names the refusal');
+  const sj = JSON.parse(run(home, ['status', '--json']).stdout);
+  assert.ok(sj.appStaleRelogin && sj.appStaleRelogin.at, 'status JSON carries the stale verdict');
 });
 
 test('chat --as rejects an unknown account before touching any cookie', function (t) {
@@ -568,15 +612,15 @@ test('threads CLI: suggest → create → add by prefix → merged --md → opt-
   assert.ok(pointer.indexOf(ID_A) !== -1 && pointer.indexOf(ID_B) !== -1, 'both pointers are stored as FULL ids');
   assert.strictEqual(pointer.indexOf('sk-ant-PASTEDKEY'), -1, 'a thread is a POINTER file; prose never rides into it');
   assert.strictEqual(pointer.indexOf('fatura akışını'), -1, 'not even the preview label — expand() reads that live');
-  assert.strictEqual(fs.statSync(pf).mode & 0o777, 0o600);
+  if (process.platform !== 'win32') assert.strictEqual(fs.statSync(pf).mode & 0o777, 0o600);
 
   // `--json` is the surface that gets pasted into an agent transcript, so keyflip's own paths come back
   // relative there — the state dir for pointers, ~/.claude/projects for transcripts — exactly as the MCP
   // tools and `keyflip chains` do. What stays absolute is a resume command's cwd, which needs it.
   const listJson = JSON.parse(run(home, ['threads', 'list', '--json']).stdout);
-  assert.strictEqual(listJson.threads[0].file, path.join('threads', 'fatura.json'), 'relative to the state dir');
+  assert.strictEqual(listJson.threads[0].file, 'threads/fatura.json', 'relative to the state dir (POSIX)');
   const showJson = JSON.parse(run(home, ['threads', 'show', 'fatura', '--json']).stdout);
-  assert.strictEqual(showJson.thread.file, path.join('threads', 'fatura.json'));
+  assert.strictEqual(showJson.thread.file, 'threads/fatura.json');
   assert.notStrictEqual(showJson.members[0].file.charAt(0), '/', 'a transcript path is relative too…');
   assert.match(showJson.members[0].file, new RegExp(ID_A + '\\.jsonl$'), '…and still names the session it points at');
   assert.strictEqual(JSON.stringify(showJson).indexOf(cfg), -1, 'never the state dir, which is a home path');
@@ -603,8 +647,8 @@ test('threads CLI: suggest → create → add by prefix → merged --md → opt-
   assert.strictEqual(run(home, ['threads', 'mirror', 'fatura']).status, 0);
   const mf = path.join(cfg, 'thread-mirror', 'fatura.md');
   assert.ok(fs.existsSync(mf), 'the merged text is on disk once both gates say yes');
-  assert.strictEqual(fs.statSync(mf).mode & 0o777, 0o600);
   assert.ok(fs.readFileSync(mf, 'utf8').indexOf('sk-ant-PASTEDKEY') !== -1);
+  if (process.platform !== 'win32') assert.strictEqual(fs.statSync(mf).mode & 0o777, 0o600);
 
   const noConfirm = run(home, ['threads', 'drop', 'fatura']);
   assert.notStrictEqual(noConfirm.status, 0, 'forgetting a name needs confirmation');
@@ -755,4 +799,317 @@ test('secrets + doctor + scrub-history: a tolerated finding stops being an alarm
   // Undoing the decision brings the alarm back — nothing about toleration is sticky or invisible.
   run(home, ['secrets', 'untolerate', 'providers-gmail.json']);
   assert.match(run(home, ['doctor', '--history']).stdout, /✗ history scan {2}— 1 alarm/);
+});
+
+test('cooldown lists parked accounts and clears them', function () {
+  const home = setupHome();
+  assert.strictEqual(run(home, ['add']).status, 0);
+  const cfg = path.join(home, '.config', 'keyflip');
+  fs.mkdirSync(cfg, { recursive: true });
+  fs.writeFileSync(
+    path.join(cfg, 'breakers.json'), // what a 429 in the proxy leaves behind
+    JSON.stringify({
+      alice: {
+        state: 'closed',
+        failures: 0,
+        successes: 0,
+        openedAt: 0,
+        cooldownUntil: Date.now() + 60000,
+        cooldownKind: 'throttled',
+        lastUsedAt: Date.now(),
+      },
+    }),
+  );
+  const listed = run(home, ['cooldown', '--json']);
+  assert.strictEqual(listed.status, 0, listed.stderr);
+  const o = JSON.parse(listed.stdout);
+  const alice = o.accounts.filter(function (a) {
+    return a.name === 'alice';
+  })[0];
+  assert.ok(alice.coolingSeconds > 0, 'the cooldown is visible');
+  assert.strictEqual(alice.cooldownKind, 'throttled');
+  assert.deepStrictEqual(o.order, ['alice'], 'the sole account is offered after its cooldown');
+  assert.ok(o.waitSeconds > 0, 'with the wait made explicit');
+
+  const cleared = run(home, ['cooldown', 'clear', '--all', '--json']);
+  assert.deepStrictEqual(JSON.parse(cleared.stdout).cleared, ['alice']);
+  const after = JSON.parse(run(home, ['cooldown', '--json']).stdout);
+  assert.strictEqual(after.accounts[0].coolingSeconds, 0);
+  assert.strictEqual(after.waitSeconds, 0, 'no wait once cleared');
+  assert.deepStrictEqual(after.order, ['alice'], 'cleared account is tried again');
+});
+
+test('proxy routes init writes a valid file; routes and explain read it back', function () {
+  const home = setupHome();
+  assert.strictEqual(run(home, ['add']).status, 0);
+  let r = run(home, ['proxy', 'routes', '--json']);
+  assert.strictEqual(r.status, 0, r.stderr);
+  let j = JSON.parse(r.stdout);
+  assert.strictEqual(j.exists, false, 'no file yet — the defaults apply');
+  assert.strictEqual(j.fallback, 'retry');
+
+  r = run(home, ['proxy', 'routes', 'init']);
+  assert.strictEqual(r.status, 0, r.stderr);
+  const file = path.join(home, '.config', 'keyflip', 'proxy-routes.json');
+  assert.ok(fs.existsSync(file));
+  r = run(home, ['proxy', 'routes', '--json']);
+  j = JSON.parse(r.stdout);
+  assert.strictEqual(j.exists, true);
+  assert.deepStrictEqual(j.errors, [], 'the template it writes is valid');
+  assert.deepStrictEqual(j.rules, [], 'and ships no half-configured rule');
+
+  // It never clobbers routing a user already wrote; --force is explicit.
+  fs.writeFileSync(file, JSON.stringify({ fallback: 'off' }));
+  r = run(home, ['proxy', 'routes', 'init']);
+  assert.strictEqual(r.status, 1);
+  assert.match(r.stderr, /already exists/);
+  assert.strictEqual(JSON.parse(fs.readFileSync(file, 'utf8')).fallback, 'off');
+
+  // routes.json is config, not an account.
+  assert.match(run(home, ['list']).stdout, /alice@example\.com/);
+  assert.doesNotMatch(run(home, ['list']).stdout, /proxy-routes/);
+
+  r = run(home, ['proxy', 'explain', '--json', '--model', 'claude-sonnet-4-5', '--tokens', '2000']);
+  assert.strictEqual(r.status, 0, r.stderr);
+  const e = JSON.parse(r.stdout);
+  assert.strictEqual(e.input.model, 'claude-sonnet-4-5');
+  assert.strictEqual(e.input.tokens, 2000);
+  assert.strictEqual(e.decision.reason, 'default order');
+  assert.deepStrictEqual(e.order, ['alice']);
+  assert.strictEqual(e.routes.fallback, 'off');
+});
+
+test('tier shows/pins a plan, explain honors it, and auto clears it', function () {
+  const home = setupHome();
+  assert.strictEqual(run(home, ['add']).status, 0);
+
+  // The captured blob in this harness carries no subscriptionType -> unknown.
+  let j = JSON.parse(run(home, ['tier', '--json']).stdout);
+  assert.strictEqual(j.accounts.length, 1);
+  assert.strictEqual(j.accounts[0].tier, null);
+  assert.strictEqual(j.accounts[0].known, false);
+  assert.strictEqual(j.filter, true);
+
+  assert.strictEqual(run(home, ['tier', 'alice', 'free']).status, 0);
+  j = JSON.parse(run(home, ['tier', '--json']).stdout);
+  assert.strictEqual(j.accounts[0].tier, 'free');
+  assert.strictEqual(j.accounts[0].source, 'override');
+
+  // A Free plan cannot use Opus: nothing is eligible, and explain says who was skipped.
+  const opus = JSON.parse(run(home, ['proxy', 'explain', '--json', '--model', 'claude-opus-4-8']).stdout);
+  assert.deepStrictEqual(opus.order, []);
+  assert.deepStrictEqual(
+    opus.skipped.map(function (s) {
+      return s.name;
+    }),
+    ['alice'],
+  );
+
+  // Sonnet is fine on Free.
+  const sonnet = JSON.parse(run(home, ['proxy', 'explain', '--json', '--model', 'claude-sonnet-4-5']).stdout);
+  assert.deepStrictEqual(sonnet.order, ['alice']);
+  assert.deepStrictEqual(sonnet.skipped, []);
+
+  // A typo is refused and changes nothing.
+  const bad = run(home, ['tier', 'alice', 'ultra']);
+  assert.strictEqual(bad.status, 1);
+  assert.match(bad.stderr, /unknown tier/);
+  assert.strictEqual(JSON.parse(run(home, ['tier', '--json']).stdout).accounts[0].tier, 'free');
+
+  // 'auto' clears the override, and an unknown tier never blocks routing.
+  assert.strictEqual(run(home, ['tier', 'alice', 'auto']).status, 0);
+  j = JSON.parse(run(home, ['tier', '--json']).stdout);
+  assert.strictEqual(j.accounts[0].tier, null);
+  const again = JSON.parse(run(home, ['proxy', 'explain', '--json', '--model', 'claude-opus-4-8']).stdout);
+  assert.deepStrictEqual(again.order, ['alice']);
+});
+
+test('cost rates prints the table, one model card, and flags an unknown model', function () {
+  const home = setupHome();
+  const all = run(home, ['cost', 'rates', '--json']);
+  assert.strictEqual(all.status, 0, all.stderr);
+  const j = JSON.parse(all.stdout);
+  assert.ok(j.models.length >= 5);
+  const opus = j.models.find(function (m) {
+    return m.id === 'claude-opus-4-8';
+  });
+  assert.strictEqual(opus.inputPerMTok, 5);
+  assert.strictEqual(opus.longContext.inputMult, 2);
+  assert.strictEqual(opus.fast, 6);
+
+  const one = JSON.parse(run(home, ['cost', 'rates', '--json', 'claude-haiku-4-5']).stdout);
+  assert.strictEqual(one.id, 'claude-haiku-4-5');
+  assert.strictEqual(one.longContext, null);
+
+  const txt = run(home, ['cost', 'rates', 'claude-opus-4-8']);
+  assert.strictEqual(txt.status, 0, txt.stderr);
+  assert.match(txt.stdout, /long context/);
+  assert.match(txt.stdout, /fast mode/);
+
+  const unknown = JSON.parse(run(home, ['cost', 'rates', '--json', 'mystery-9']).stdout);
+  assert.strictEqual(unknown.fallback, true);
+});
+
+test('cost prices refreshes the price table, honors the pin, and clears it', async function () {
+  const http = await import('http');
+  const payload = {
+    'claude-opus-4-8': {
+      litellm_provider: 'anthropic',
+      mode: 'chat',
+      max_input_tokens: 200000,
+      input_cost_per_token: 0.000009,
+      output_cost_per_token: 0.000045,
+    },
+    'claude-sonnet-4-6': {
+      litellm_provider: 'anthropic',
+      mode: 'chat',
+      max_input_tokens: 200000,
+      input_cost_per_token: 0.000003,
+      output_cost_per_token: 0.000015,
+    },
+    'claude-haiku-4-5': {
+      litellm_provider: 'anthropic',
+      mode: 'chat',
+      max_input_tokens: 200000,
+      input_cost_per_token: 0.000001,
+      output_cost_per_token: 0.000005,
+    },
+    'claude-new-9': {
+      litellm_provider: 'anthropic',
+      mode: 'chat',
+      max_input_tokens: 200000,
+      input_cost_per_token: 0.000004,
+      output_cost_per_token: 0.00002,
+    },
+    'claude-old-1': {
+      litellm_provider: 'anthropic',
+      mode: 'chat',
+      max_input_tokens: 200000,
+      input_cost_per_token: 0.000015,
+      output_cost_per_token: 0.000075,
+    },
+  };
+  const srv = http.createServer(function (req, res) {
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify(payload));
+  });
+  await new Promise(function (r) {
+    srv.listen(0, '127.0.0.1', r);
+  });
+  const port = srv.address().port;
+  const url = 'http://127.0.0.1:' + port + '/prices.json';
+  const home = setupHome();
+  const spawn = function (args, env) {
+    return new Promise(function (resolve) {
+      const child = _child_process.spawn(process.execPath, [BIN].concat(args), {
+        env: Object.assign(
+          {},
+          process.env,
+          {
+            HOME: home,
+            USERPROFILE: home,
+            XDG_CONFIG_HOME: path.join(home, '.config'),
+            KEYFLIP_CONFIG_DIR: path.join(home, '.config', 'keyflip'),
+            APPDATA: path.join(home, 'AppData', 'Roaming'),
+            KEYFLIP_TEST_CLAUDE: 'stopped',
+            KEYFLIP_APP_BUNDLE: path.join(home, 'no-such-Claude.app'),
+            KEYFLIP_PRICES_URL: url,
+          },
+          env || {},
+        ),
+      });
+      let out = '';
+      let err = '';
+      child.stdout.on('data', function (d) {
+        out += d;
+      });
+      child.stderr.on('data', function (d) {
+        err += d;
+      });
+      child.on('close', function (code) {
+        resolve({ code: code, out: out, err: err });
+      });
+    });
+  };
+  try {
+    // Nothing cached yet: the bundled table is in use.
+    const before = JSON.parse(run(home, ['cost', 'prices', '--json']).stdout);
+    assert.strictEqual(before.source, 'bundled');
+    assert.strictEqual(before.models, 0);
+
+    const refreshed = await spawn(['cost', 'prices', '--refresh', '--json']);
+    assert.strictEqual(refreshed.code, 0, refreshed.err);
+    const j = JSON.parse(refreshed.out);
+    assert.strictEqual(j.ok, true, refreshed.out);
+    assert.strictEqual(j.models, 5);
+    assert.match(j.digest, /^[a-f0-9]{64}$/);
+
+    // The cost engine now prices from the live table.
+    const opus = JSON.parse(run(home, ['cost', 'rates', '--json', 'claude-opus-4-8']).stdout);
+    assert.strictEqual(opus.inputPerMTok, 9);
+    const status = JSON.parse(run(home, ['cost', 'prices', '--json']).stdout);
+    assert.strictEqual(status.source, 'cache');
+    assert.strictEqual(status.digest, j.digest);
+
+    // A pin that does not match refuses the refresh and keeps the cache.
+    const refused = await spawn(['cost', 'prices', '--refresh', '--pin', 'a'.repeat(64), '--json']);
+    assert.strictEqual(refused.code, 1);
+    const refusedJson = JSON.parse(refused.out);
+    assert.strictEqual(refusedJson.ok, false);
+    assert.match(refusedJson.error, /sha-256 mismatch/);
+    assert.strictEqual(JSON.parse(run(home, ['cost', 'prices', '--json']).stdout).digest, j.digest);
+
+    // The matching pin is accepted.
+    const pinned = await spawn(['cost', 'prices', '--refresh', '--pin', j.digest, '--json']);
+    assert.strictEqual(pinned.code, 0, pinned.err);
+
+    // Clearing drops the cache; the bundled table takes over again.
+    const cleared = JSON.parse(run(home, ['cost', 'prices', '--clear', '--json']).stdout);
+    assert.strictEqual(cleared.cleared, true);
+    assert.strictEqual(JSON.parse(run(home, ['cost', 'prices', '--json']).stdout).source, 'bundled');
+    assert.strictEqual(JSON.parse(run(home, ['cost', 'rates', '--json', 'claude-opus-4-8']).stdout).inputPerMTok, 5);
+  } finally {
+    await new Promise(function (r) {
+      srv.close(r);
+    });
+  }
+});
+
+test('cost prices reports a failed refresh instead of pretending it worked', function () {
+  const home = setupHome();
+  const res = run(home, ['cost', 'prices', '--refresh', '--json'], {
+    KEYFLIP_PRICES_URL: 'http://127.0.0.1:1/prices.json',
+  });
+  assert.strictEqual(res.status, 1);
+  const j = JSON.parse(res.stdout);
+  assert.strictEqual(j.ok, false);
+  assert.ok(j.error, 'the failure is explained');
+  // Nothing was cached by the failed refresh.
+  assert.strictEqual(JSON.parse(run(home, ['cost', 'prices', '--json']).stdout).source, 'bundled');
+});
+
+test('agents: an installed tool with only a login reads as installed, not "not found"', function () {
+  const home = setupHome();
+  fs.mkdirSync(path.join(home, '.commandcode'), { recursive: true });
+  fs.writeFileSync(path.join(home, '.commandcode', 'auth.json'), '{"userName":"someone"}', { mode: 0o600 });
+  const res = run(home, ['agents']);
+  assert.strictEqual(res.status, 0, res.stderr);
+  const line = res.stdout.split('\n').find(function (l) {
+    return l.indexOf('Command Code') !== -1;
+  });
+  assert.ok(line, 'Command Code is listed');
+  assert.ok(line.indexOf('●') !== -1, 'marked present: ' + line);
+  assert.ok(line.indexOf('nothing to carry') !== -1, line);
+  assert.ok(res.stdout.indexOf('None detected on this machine') === -1);
+});
+
+test('surfaces: a switchable tool says how, and the footer no longer denies switching', function () {
+  const home = setupHome();
+  fs.mkdirSync(path.join(home, '.commandcode'), { recursive: true });
+  fs.writeFileSync(path.join(home, '.commandcode', 'auth.json'), '{"userName":"someone"}', { mode: 0o600 });
+  const res = run(home, ['surfaces']);
+  assert.strictEqual(res.status, 0, res.stderr);
+  assert.ok(res.stdout.indexOf('keyflip commandcode') !== -1, res.stdout);
+  assert.ok(res.stdout.indexOf('Switchable from this list: Command Code') !== -1, res.stdout);
+  assert.ok(res.stdout.indexOf('Switching other tools is not supported yet') === -1);
 });

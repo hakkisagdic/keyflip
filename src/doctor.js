@@ -12,12 +12,15 @@ import * as _sessions from './sessions.js';
 import * as _appauth from './appauth.js';
 import * as _llm from './llm.js';
 import * as _schedule from './schedule.js';
+import * as _convindex from './convindex.js';
 import * as _leakscan from './leakscan.js';
 import * as _chains from './chains.js';
 import * as _memory from './memory.js';
 import * as _profiles from './profiles.js';
 import * as _threads from './threads.js';
 import * as _sessionage from './sessionage.js';
+import * as _instances from './instances.js';
+import * as _codex from './codex.js';
 
 async function probe(url, opts) {
   opts = opts || {};
@@ -49,8 +52,10 @@ async function diagnose(ctx, opts) {
   opts = opts || {};
   const checks = [];
   // ok: true | false (problem) | 'warn' (advisory). fix: optional remediation hint.
-  const add = function (name, ok, detail, fix) {
-    checks.push({ name: name, ok: ok, detail: detail || '', fix: fix || undefined });
+  // extra: optional structured fields merged into the check, so `--json` and the MCP tool can carry
+  // a whole inventory while the printed line stays one line.
+  const add = function (name, ok, detail, fix, extra) {
+    checks.push(Object.assign({ name: name, ok: ok, detail: detail || '', fix: fix || undefined }, extra || {}));
   };
 
   add('claude config dir', fs.existsSync(ctx.claudeDir), ctx.claudeDir);
@@ -71,7 +76,9 @@ async function diagnose(ctx, opts) {
   secretsInGit(ctx, add);
   versioningState(ctx, add);
   appSession(ctx, add, opts);
+  autoUpdates(ctx, add);
   signInAge(ctx, add, opts);
+  codexCaptures(ctx, add);
   orphanSessions(ctx, add);
   rebindBackups(ctx, add);
   threadsCheck(ctx, add);
@@ -81,6 +88,7 @@ async function diagnose(ctx, opts) {
   quotaPressure(ctx, add);
   choreProvider(ctx, add);
   tokenRenewalCheck(ctx, add);
+  backgroundServices(ctx, add, opts);
   settingsJson(ctx, add);
 
   const active = provider.readActive(ctx);
@@ -134,7 +142,7 @@ async function testProvider(ctx, name, opts) {
     headers[meta.authScheme === 'api-key' ? 'x-api-key' : 'authorization'] =
       meta.authScheme === 'api-key' ? key : 'Bearer ' + key;
   const body = JSON.stringify({
-    model: (meta.models && meta.models.default) || 'claude-3-5-haiku-latest',
+    model: (meta.models && meta.models.default) || 'claude-haiku-5-5',
     max_tokens: 1,
     messages: [{ role: 'user', content: 'ping' }],
   });
@@ -251,6 +259,63 @@ function appSession(ctx, add, opts) {
   );
 }
 
+// An isolated clone only stays isolated if it does not replace its bundle underneath a signed-in
+// account. There is no universal switch: Claude reads `disableAutoUpdates` from its own
+// userData/config.json, ChatGPT's Sparkle reads the Info.plist keys keyflip inserts, and
+// Kiro/Cursor expose neither. Report the LIVE state (never creation metadata), so a failed write
+// cannot masquerade as "disabled". The base app updating is normal — only a clone that CAN update
+// and still has its switch ON is a warning.
+function autoUpdates(ctx, add) {
+  const NAME = 'desktop auto-updates';
+  const rows = [];
+  const flagged = [];
+  const label = function (u) {
+    if (u.state === 'disabled') return 'updates off';
+    if (u.state === 'enabled') return 'updates ON';
+    if (u.state === 'uncontrollable') return 'uncontrollable (' + u.mechanism + ')';
+    if (u.state === 'invalid') return 'config unreadable';
+    return 'unknown';
+  };
+  if (ctx.appDataDir) {
+    const baseApp = _instances.TOOL_ADAPTERS.claude.baseAppPath;
+    const base = _instances.updateState('claude', ctx.appDataDir, baseApp);
+    rows.push('Claude app: ' + label(base));
+  }
+  let instances = [];
+  try {
+    instances = ctx.instancesBase ? _instances.listAllInstances(ctx.instancesBase) : [];
+  } catch (_) {
+    instances = [];
+  }
+  instances.forEach(function (i) {
+    const u = _instances.updateState(i.tool, i.userDataDir, i.appPath);
+    rows.push(i.tool + '/' + i.slug + ': ' + label(u));
+    // control===null means this updater has no switch keyflip can flip — report, never nag.
+    if (u.control && u.state !== 'disabled') flagged.push({ tool: i.tool, slug: i.slug, state: u.state });
+  });
+  if (!rows.length) return;
+  if (!flagged.length) {
+    add(NAME, true, rows.join('; '));
+    return;
+  }
+  const fixTarget = flagged.length === 1 ? ' ' + flagged[0].tool + ' ' + flagged[0].slug : '';
+  add(
+    NAME,
+    'warn',
+    rows.join('; ') +
+      ' — ' +
+      flagged
+        .map(function (f) {
+          return f.tool + '/' + f.slug + ' (' + f.state + ')';
+        })
+        .join(', ') +
+      ' can replace its bundle under a signed-in account',
+    'keyflip instance harden' +
+      fixTarget +
+      '  (Claude: "disableAutoUpdates": true in config.json; ChatGPT: empty Sparkle feed)',
+  );
+}
+
 // How OLD is each claude.ai sign-in keyflip would restore? The sessionKey cookie cannot be refreshed
 // by anything but a human sign-in: it dies 28 days after it was minted, and the server refuses an old
 // one earlier ("Sign in again" / session_stale_relogin). So the useful check is its AGE, read from the
@@ -320,6 +385,80 @@ function signInAge(ctx, add, opts) {
     return;
   }
   add(NAME, true, total + ' saved sign-in(s) fresh — oldest ' + _sessionage.fmt(oldest) + learned);
+}
+
+// ChatGPT/Codex captures: a stored login whose access token has expired AND cannot be
+// refreshed is a capture that will NOT work at switch time — say so before the user plans
+// around it. Refreshable-due captures are the daemon's job, not a warning here.
+function codexCaptures(ctx, add) {
+  let captures;
+  try {
+    captures = _codex.listCaptures(ctx);
+  } catch {
+    return; // no codex surface at all — nothing to report
+  }
+  const dead = [];
+  const expiring = [];
+  captures.forEach(function (c) {
+    if (!c.usable) return; // never had a credential shape worth expiring
+    const reason = c.refreshReason || '';
+    const left = c.expiresAt ? Date.parse(c.expiresAt) - Date.now() : null;
+    // "expired" = past expiry with no refresh token left; "not-refreshable" = past expiry
+    // holding only an API key or a one-shot that cannot rotate.
+    if (reason === 'expired' || reason === 'not-refreshable' || (left != null && left <= 0))
+      dead.push({ c: c, why: reason || 'expired' });
+    else if (c.needsRefresh || (left != null && left <= _codex.REFRESH_THRESHOLD_MS))
+      expiring.push({ c: c, why: reason || 'expiring' });
+  });
+  const NAME = 'chatgpt/codex captures';
+  if (dead.length) {
+    const first = dead[0].c;
+    add(
+      NAME,
+      false,
+      dead
+        .map(function (d) {
+          return (
+            d.c.slug +
+            (d.c.email ? ' (' + d.c.email + ')' : '') +
+            ' expired' +
+            (d.c.expiresAt ? ' ' + String(d.c.expiresAt).slice(0, 16).replace('T', ' ') + 'Z' : '') +
+            (d.why === 'not-refreshable' ? ' and not refreshable' : '')
+          );
+        })
+        .join('; '),
+      'sign in once as ' +
+        (first.email || first.slug) +
+        ' in ChatGPT/Codex, then `keyflip chatgpt capture ' +
+        first.slug +
+        '` (an expired capture cannot be renewed without you)',
+    );
+    return;
+  }
+  if (expiring.length) {
+    const first = expiring[0].c;
+    add(
+      NAME,
+      'warn',
+      expiring
+        .map(function (d) {
+          return d.c.slug + ' due for refresh (' + d.why + ')';
+        })
+        .join('; ') + ' — the refresh daemon rotates these automatically while ChatGPT/Codex is not running',
+      'keyflip chatgpt refresh ' + first.slug + ' (or wait for the daemon)',
+    );
+    return;
+  }
+  if (captures.length)
+    add(
+      NAME,
+      true,
+      captures.length +
+        ' capture(s) usable — ' +
+        (captures[0].expiresAt
+          ? 'next expiry ' + String(captures[0].expiresAt).slice(0, 16).replace('T', ' ') + 'Z'
+          : 'no expiry recorded'),
+    );
 }
 
 function orphanSessions(ctx, add) {
@@ -652,6 +791,136 @@ function tokenRenewalCheck(ctx, add) {
     accounts.length + ' saved account(s) and nothing renews their tokens',
     'keyflip refresh --schedule — an unused token expires (~6 days) and only a human sign-in revives it (or a one-year token: keyflip login <name> --long-lived); `keyflip verify` shows which are already dead',
   );
+}
+
+// WHICH BACKGROUND SERVICES EXIST, AND ARE THEY ACTUALLY RUNNING?
+// A job nobody can see is a job that silently stops doing its work: launchd can drop a plist it never
+// loaded, a logout can unload one, a laptop that sleeps at 04:30 never runs the nightly one, and every
+// symptom is weeks late — a search answer from an index nobody refreshed, a token that died quietly.
+// So doctor names each job, says whether the system is holding it, and says when it last produced
+// output. The whole inventory rides along in `extra` so `--json` and the MCP tool get the structure,
+// not just the line.
+function backgroundServices(ctx, add, opts) {
+  opts = opts || {};
+  // The clock contract in this project is an ISO STRING (ctx.now()), so it must be parsed before any
+  // subtraction: `now - Date.parse(lastRun)` on a string is NaN, and a NaN age reads as "spoke NaN d
+  // ago" in a report people trust to tell them whether their backups ran.
+  const rawNow = opts.now ? opts.now() : ctx.now ? ctx.now() : Date.now();
+  const now = typeof rawNow === 'string' ? Date.parse(rawNow) : Number(rawNow);
+  let rows;
+  try {
+    rows = _schedule.inventory(ctx, {
+      home: opts.home || ctx.home,
+      run: opts.run,
+      // Ask launchd/crontab only when the caller handed over a runner: `keyflip doctor` and the MCP
+      // server do, a hermetic test does not — and spawning `crontab -l` inside a suite is how a
+      // suite hangs. Without it, `loaded` is null and the check simply does not claim otherwise.
+      askSystem: !!opts.run,
+    });
+  } catch (e) {
+    return add('background services', 'warn', 'the job inventory is unreadable: ' + (e && e.message));
+  }
+  const scheduled = rows.filter(function (r) {
+    return r.installed;
+  });
+  const problems = [];
+  scheduled.forEach(function (r) {
+    // launchd says a loaded job by name; a plist on disk that it does not know about is decoration.
+    if (r.kind === 'launchd' && r.loaded === false)
+      problems.push(
+        r.job + ': the plist is on disk but launchd is not holding it — re-install with `' + r.install + '`',
+      );
+    if (!r.cadenceMs) return; // a KeepAlive daemon has no cadence to be silent against
+    const due = r.installedAt ? Date.parse(r.installedAt) + 2 * r.cadenceMs : null;
+    if (!r.lastRun) {
+      if (due !== null && now > due)
+        problems.push(
+          r.job +
+            ': scheduled since ' +
+            r.installedAt.slice(0, 10) +
+            ' and it has produced no output at all — check ' +
+            (r.log || 'its log') +
+            ', then re-install with `' +
+            r.install +
+            '`',
+        );
+      return;
+    }
+    const silent = now - Date.parse(r.lastRun);
+    if (silent > 2 * r.cadenceMs)
+      problems.push(
+        r.job +
+          ': silent for ' +
+          humanAge(silent) +
+          ' while it is scheduled every ' +
+          humanAge(r.cadenceMs) +
+          ' — the job fires and does nothing, or the machine is asleep when it is due',
+      );
+  });
+  // An index nobody refreshes quietly stops answering about today's chats. Only blame the missing
+  // schedule when the index is actually ageing; tokenRenewalCheck already owns that complaint for
+  // `refresh`, so this check does not repeat it.
+  if (
+    !scheduled.some(function (r) {
+      return r.job === 'conv';
+    })
+  ) {
+    let builtAt = null;
+    try {
+      const m = JSON.parse(fs.readFileSync(_convindex.metaPath(ctx), 'utf8'));
+      builtAt = m && m.builtAt ? Date.parse(m.builtAt) : null;
+    } catch (e) {
+      builtAt = null; // no index yet — nothing to be stale
+    }
+    if (builtAt !== null && now - builtAt > 24 * 3600 * 1000)
+      problems.push(
+        'the conversation index is ' +
+          humanAge(now - builtAt) +
+          ' old and nothing refreshes it — `keyflip conv index --schedule`',
+      );
+  }
+  const detail =
+    scheduled.length +
+    ' of ' +
+    rows.length +
+    ' scheduled — ' +
+    rows
+      .map(function (r) {
+        if (!r.installed) return r.job + ': off';
+        const held = r.kind === 'launchd' ? (r.loaded ? '' : ' · NOT LOADED') : '';
+        // Three different kinds of cadence, and one label that calls the always-on daemon "nightly"
+        // is a wrong answer about a job the user is paying attention to.
+        const cadence =
+          r.mode === 'interval'
+            ? 'every ' + r.everyMinutes + ' min'
+            : r.mode === 'continuous'
+              ? 'always-on'
+              : 'nightly' + (r.atLabel ? ' at ' + r.atLabel : '');
+        const spoke = r.lastRun ? 'spoke ' + humanAge(now - Date.parse(r.lastRun)) + ' ago' : 'no output yet';
+        return r.job + ': ' + cadence + held + ' · ' + spoke;
+      })
+      .join(' · ');
+  if (problems.length)
+    return add(
+      'background services',
+      'warn',
+      // The complaint first, the whole picture after: a warning that only names the broken job leaves
+      // the user guessing whether the other three are fine, and "which ones do I have at all?" is
+      // exactly the question this check exists to answer.
+      problems.join('; ') + ' — ' + detail,
+      'keyflip doctor --json reads the full inventory; each job also has its own --schedule-status',
+      { services: rows },
+    );
+  add('background services', true, detail, undefined, { services: rows });
+}
+
+// A span of time in the one unit a human scans for: "3 d" not "259200000 ms".
+function humanAge(ms) {
+  const m = Math.max(0, Math.floor(ms / 60000));
+  if (m < 60) return m + ' min';
+  const h = Math.floor(m / 60);
+  if (h < 48) return h + ' h';
+  return Math.floor(h / 24) + ' d';
 }
 
 function settingsJson(ctx, add) {

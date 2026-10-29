@@ -52,6 +52,9 @@ function atomicWrite(filePath, data, mode) {
 //       pre-planted symlinked intermediate directory, e.g. projects/x -> /tmp/out),
 //   (c) if dest already exists it is not a symlink (blocks following a planted leaf
 //       symlink, e.g. settings.json -> ~/.bashrc).
+// `opts.allowSymlinkLeaf` relaxes (c) for callers that only ever UNLINK or re-create the leaf
+// (installing a skill as a symlink to its source): removing a symlink never touches its target,
+// and the intermediate-directory check (b) still holds.
 // Returns { ok:true } or { ok:false, reason }. Used by every bundle-merge write so an
 // untrusted bundle can never land a file outside its intended root.
 function deepestExisting(p) {
@@ -59,7 +62,8 @@ function deepestExisting(p) {
   while (d !== path.dirname(d) && !fs.existsSync(d)) d = path.dirname(d);
   return d;
 }
-function safeDestUnder(root, dest) {
+function safeDestUnder(root, dest, opts) {
+  opts = opts || {};
   const lroot = path.resolve(root);
   const resolved = path.resolve(dest);
   if (resolved !== lroot && resolved.indexOf(lroot + path.sep) !== 0) return { ok: false, reason: 'escape' };
@@ -79,7 +83,7 @@ function safeDestUnder(root, dest) {
   }
   if (ranc !== ranchor && ranc.indexOf(ranchor + path.sep) !== 0) return { ok: false, reason: 'symlink-dir' };
   try {
-    if (fs.lstatSync(resolved).isSymbolicLink()) return { ok: false, reason: 'symlink-leaf' };
+    if (fs.lstatSync(resolved).isSymbolicLink() && !opts.allowSymlinkLeaf) return { ok: false, reason: 'symlink-leaf' };
   } catch (e) {
     /* absent = fine */
   }

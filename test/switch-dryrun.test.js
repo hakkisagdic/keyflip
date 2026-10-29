@@ -66,6 +66,7 @@ function run(home, args, extraEnv) {
         HOME: home,
         USERPROFILE: home,
         XDG_CONFIG_HOME: path.join(home, '.config'),
+        KEYFLIP_CONFIG_DIR: path.join(home, '.config', 'keyflip'), // same tree on every OS
         APPDATA: path.join(home, 'AppData', 'Roaming'),
         KEYFLIP_TEST_CLAUDE: 'stopped',
       },

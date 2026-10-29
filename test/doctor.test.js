@@ -14,6 +14,7 @@ import * as config from '../src/config.js';
 import * as profiles from '../src/profiles.js';
 import * as schedule from '../src/schedule.js';
 import * as threads from '../src/threads.js';
+import * as instances from '../src/instances.js';
 import { makeCtx } from './helpers.js';
 
 const HAS_GIT = vcs.gitAvailable();
@@ -21,6 +22,22 @@ function find(checks, name) {
   return checks.filter(function (c) {
     return c.name === name;
   })[0];
+}
+
+// Synthesize what createInstance() leaves on disk — without cloning a real /Applications app.
+function fakeInstance(ctx, tool, slug, opts) {
+  opts = opts || {};
+  const dir = path.join(ctx.instancesBase, tool, slug);
+  const userDataDir = path.join(dir, 'User Data');
+  fs.mkdirSync(userDataDir, { recursive: true });
+  fs.mkdirSync(path.join(dir, 'Config'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'profile.json'), JSON.stringify({ tool: tool, slug: slug }));
+  if (opts.framework) {
+    const app = path.join(dir, instances.TOOL_ADAPTERS[tool].appName, 'Contents', 'Frameworks');
+    fs.mkdirSync(path.join(app, opts.framework + '.framework'), { recursive: true });
+  }
+  if (opts.config) fs.writeFileSync(path.join(userDataDir, 'config.json'), JSON.stringify(opts.config));
+  return { dir: dir, userDataDir: userDataDir };
 }
 
 test('secrets in git: clean repo passes', async function (t) {
@@ -276,7 +293,8 @@ test('chore provider: a schedule whose cost changed after install is called out'
 // #39 — the credential-chain row. The distinction being tested is the one that keeps doctor honest:
 // a relationship problem (a stale capture, four accounts in one browser profile) is advisory, while
 // a secret keyflip itself left world-readable is the only thing that may turn the row red.
-test('doctor: credential chains are clean until a state-repo secret is world-readable', async function () {
+test('doctor: credential chains are clean until a state-repo secret is world-readable', async function (t) {
+  if (process.platform === 'win32') return t.skip('POSIX permissions not applicable on Windows');
   const ctx = makeCtx();
   const clean = find((await doctor.diagnose(ctx)).checks, 'credential chains');
   assert.ok(clean, 'the row exists');
@@ -402,4 +420,316 @@ test('doctor: threads are named, checked and fixed — and the row never prints 
     /mirror ON — 1 text file\(s\) in thread-mirror\/ \(0600, never versioned or backed up\)/,
   );
   assert.strictEqual(mirrored.detail.indexOf(ctx.configDir), -1, 'even with the mirror on, no absolute path leaks');
+});
+
+test('desktop auto-updates: the base Claude app updating is normal, not a warning', async function () {
+  const ctx = makeCtx();
+  ctx.appDataDir = path.join(ctx.home, 'Claude');
+  fs.mkdirSync(ctx.appDataDir, { recursive: true });
+  const c = find((await doctor.diagnose(ctx)).checks, 'desktop auto-updates');
+  assert.ok(c, 'the check is present whenever there is a Claude app dir');
+  assert.strictEqual(c.ok, true, 'the unmodified base install updates itself by design');
+  assert.match(c.detail, /Claude app: updates ON/);
+});
+
+test('desktop auto-updates: the base Claude config switch is read live', async function () {
+  const ctx = makeCtx();
+  ctx.appDataDir = path.join(ctx.home, 'Claude');
+  fs.mkdirSync(ctx.appDataDir, { recursive: true });
+  fs.writeFileSync(path.join(ctx.appDataDir, 'config.json'), JSON.stringify({ disableAutoUpdates: true }));
+  const c = find((await doctor.diagnose(ctx)).checks, 'desktop auto-updates');
+  assert.strictEqual(c.ok, true);
+  assert.match(c.detail, /Claude app: updates off/);
+});
+
+test('desktop auto-updates: an unhardened Claude clone warns with the universal harden command', async function () {
+  const ctx = makeCtx();
+  ctx.instancesBase = path.join(ctx.home, 'instances');
+  fakeInstance(ctx, 'claude', 'yahoo');
+  const c = find((await doctor.diagnose(ctx)).checks, 'desktop auto-updates');
+  assert.ok(c, 'instances alone are enough to run the check');
+  assert.strictEqual(c.ok, 'warn', 'a clone that can self-update is a real risk');
+  assert.match(c.detail, /claude\/yahoo: updates ON/);
+  assert.match(c.fix, /keyflip instance harden claude yahoo/);
+});
+
+test('desktop auto-updates: a hardened Claude clone passes', async function () {
+  const ctx = makeCtx();
+  ctx.instancesBase = path.join(ctx.home, 'instances');
+  fakeInstance(ctx, 'claude', 'yahoo', { config: { disableAutoUpdates: true } });
+  const c = find((await doctor.diagnose(ctx)).checks, 'desktop auto-updates');
+  assert.strictEqual(c.ok, true);
+  assert.match(c.detail, /claude\/yahoo: updates off/);
+  assert.strictEqual(c.fix, undefined, 'nothing to fix');
+});
+
+test('desktop auto-updates: autoUpdate.disabled wins over the flat key, exactly like Claude', async function () {
+  const ctx = makeCtx();
+  ctx.instancesBase = path.join(ctx.home, 'instances');
+  const inst = fakeInstance(ctx, 'claude', 'yahoo', {
+    config: { disableAutoUpdates: true, autoUpdate: { disabled: false } },
+  });
+  const st = instances.updateState('claude', inst.userDataDir, path.join(inst.dir, 'Claude.app'));
+  assert.strictEqual(st.state, 'enabled', 'the nested key has precedence in Claude, so mirror it');
+});
+
+test('desktop auto-updates: a tool with no switch is reported, never nagged', async function () {
+  const ctx = makeCtx();
+  ctx.instancesBase = path.join(ctx.home, 'instances');
+  fakeInstance(ctx, 'kiro', 'work', { framework: 'Squirrel' });
+  const c = find((await doctor.diagnose(ctx)).checks, 'desktop auto-updates');
+  assert.strictEqual(c.ok, true, 'keyflip cannot disable Kiro updates, so this is not the user’s fault');
+  assert.match(c.detail, /kiro\/work: uncontrollable \(squirrel\)/);
+});
+
+test('instance harden: writes the Claude switch without clobbering existing config', async function () {
+  const ctx = makeCtx();
+  ctx.instancesBase = path.join(ctx.home, 'instances');
+  const inst = fakeInstance(ctx, 'claude', 'yahoo');
+  // The nested key outranks the flat one, so harden must flip both when it is already present.
+  fs.writeFileSync(
+    path.join(inst.userDataDir, 'config.json'),
+    JSON.stringify({ locale: 'en-US', autoUpdate: { disabled: false, channel: 'stable' } }),
+  );
+
+  const st = instances.hardenInstance('claude', 'yahoo', ctx.instancesBase);
+  assert.strictEqual(st.state, 'disabled');
+  const cfg = JSON.parse(fs.readFileSync(path.join(inst.userDataDir, 'config.json'), 'utf8'));
+  assert.strictEqual(cfg.locale, 'en-US', 'unrelated keys survive');
+  assert.strictEqual(cfg.disableAutoUpdates, true);
+  assert.strictEqual(cfg.autoUpdate.disabled, true, 'the winning nested key is flipped too');
+  assert.strictEqual(cfg.autoUpdate.channel, 'stable', 'siblings inside autoUpdate survive');
+
+  const meta = JSON.parse(fs.readFileSync(path.join(inst.dir, 'profile.json'), 'utf8'));
+  assert.strictEqual(meta.autoUpdateDisabled, true, 'metadata now reflects the live state');
+  assert.strictEqual(meta.autoUpdateMethod, 'config');
+});
+
+test('instance harden: refuses while the Claude instance runs, because it would rewrite the config', async function (t) {
+  if (process.platform === 'win32') return t.skip('PID liveness uses kill -0 (POSIX)');
+  const ctx = makeCtx();
+  ctx.instancesBase = path.join(ctx.home, 'instances');
+  const inst = fakeInstance(ctx, 'claude', 'yahoo');
+  fs.writeFileSync(path.join(inst.dir, 'instance.pid'), String(process.pid));
+  assert.throws(() => instances.hardenInstance('claude', 'yahoo', ctx.instancesBase), /is running/);
+  assert.ok(!fs.existsSync(path.join(inst.userDataDir, 'config.json')), 'nothing written while running');
+});
+
+// ---- #106: expired ChatGPT/Codex captures must be visible in doctor ------------------------
+
+function fakeJwt(claims) {
+  const b64 = function (o) {
+    return Buffer.from(JSON.stringify(o)).toString('base64url');
+  };
+  return b64({ alg: 'none' }) + '.' + b64(claims) + '.';
+}
+
+function fakeCodexCapture(ctx, slug, opts) {
+  opts = opts || {};
+  const dir = path.join(ctx.configDir, 'surfaces', 'codex', slug);
+  fs.mkdirSync(dir, { recursive: true });
+  const tokens = {
+    id_token: fakeJwt({ email: (opts.email || slug) + '@example.com', exp: Math.floor(Date.now() / 1000) - 86400 }),
+    access_token: fakeJwt({ exp: Math.floor(Date.now() / 1000) + (opts.expiresInSec || -3600) }),
+  };
+  if (opts.refreshable) tokens.refresh_token = 'rt-' + slug;
+  const auth = { tokens: tokens, auth_mode: opts.authMode || 'chatgpt' };
+  if (opts.apiKey) auth.OPENAI_API_KEY = 'sk-test';
+  fs.writeFileSync(path.join(dir, 'auth.json'), JSON.stringify(auth));
+  fs.writeFileSync(
+    path.join(dir, 'meta.json'),
+    JSON.stringify({ email: (opts.email || slug) + '@example.com', capturedAt: '2026-01-01T00:00:00.000Z' }),
+  );
+  return dir;
+}
+
+test('doctor: a ChatGPT/Codex capture that expired with no refresh token is a failed check', async function () {
+  const ctx = makeCtx();
+  fakeCodexCapture(ctx, 'dead', { refreshable: false }); // past expiry, nothing to rotate
+  const r = await doctor.diagnose(ctx, {});
+  const c = find(r.checks, 'chatgpt/codex captures');
+  assert.ok(c, 'the check exists');
+  assert.strictEqual(c.ok, false);
+  assert.match(c.detail, /dead.*expired/);
+  assert.match(c.fix, /keyflip chatgpt capture dead/);
+});
+
+test('doctor: a refreshable-due capture is only a warning (the daemon rotates it)', async function () {
+  const ctx = makeCtx();
+  fakeCodexCapture(ctx, 'soon', { refreshable: true, expiresInSec: 60 * 60 * 12 }); // inside the 24h window
+  const r = await doctor.diagnose(ctx, {});
+  const c = find(r.checks, 'chatgpt/codex captures');
+  assert.ok(c);
+  assert.strictEqual(c.ok, 'warn');
+  assert.match(c.detail, /due for refresh/);
+  assert.match(c.fix, /keyflip chatgpt refresh soon/);
+});
+
+test('doctor: a fresh capture passes and no codex surface adds no check', async function () {
+  const ctx = makeCtx();
+  fakeCodexCapture(ctx, 'fresh', { refreshable: true, expiresInSec: 60 * 60 * 24 * 8 });
+  let r = await doctor.diagnose(ctx, {});
+  let c = find(r.checks, 'chatgpt/codex captures');
+  assert.ok(c);
+  assert.strictEqual(c.ok, true);
+  assert.match(c.detail, /1 capture\(s\) usable/);
+
+  const bare = makeCtx(); // nothing captured: the check is simply absent, not an error
+  r = await doctor.diagnose(bare, {});
+  c = find(r.checks, 'chatgpt/codex captures');
+  assert.strictEqual(c, undefined);
+});
+
+// ---- the background-service inventory ---------------------------------------------------------
+// An unattended job that quietly stopped being unattended looks exactly like one that is working: the
+// plist is still there, the command still exists, and the only symptom is a stale answer weeks later.
+// So `doctor` asks three separate questions per job — is it installed, is the system actually holding
+// it, when did it last produce output — and the tests pin that a "yes" to the first is not treated as
+// a "yes" to the others.
+function serviceRunner(labels) {
+  return function (cmd, args) {
+    if (cmd === 'launchctl' && args[0] === 'list') {
+      const label = args[1];
+      if (labels.indexOf(label) !== -1) return { code: 0, stdout: '{\n\t"Label" = "' + label + '";\n}\n' };
+      return { code: 113, stdout: '', stderr: 'Could not find service\n' };
+    }
+    if (cmd === 'which') return { code: 0, stdout: '/usr/local/bin/keyflip\n' };
+    return { code: 0, stdout: '' };
+  };
+}
+function serviceCtx() {
+  return makeCtx({ platform: 'darwin' });
+}
+function writeIndexMeta(ctx, builtAt) {
+  const dir = path.join(ctx.configDir, 'conv-index');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'meta.json'), JSON.stringify({ schemaVersion: 1, builtAt: builtAt, sources: {} }));
+}
+
+test('background services: the whole inventory is shown, even when nothing is scheduled', async function () {
+  const ctx = serviceCtx();
+  const c = find(
+    (await doctor.diagnose(ctx, { run: serviceRunner([]), now: () => Date.now() })).checks,
+    'background services',
+  );
+  assert.ok(c, 'the check exists');
+  assert.strictEqual(c.ok, true, 'nothing scheduled is a fact to display, not automatically an alarm');
+  assert.match(c.detail, /^0 of 4 scheduled/, 'and the count is honest');
+  ['dream', 'refresh', 'daemon', 'conv'].forEach(function (j) {
+    assert.match(c.detail, new RegExp(j + ': off'), 'each job is named');
+  });
+  assert.strictEqual(c.services.length, 4, 'the structured inventory travels with the line');
+  assert.ok(
+    c.services.every(function (r) {
+      return r.installed === false;
+    }),
+  );
+});
+
+test('background services: a plist launchd does not hold is a warning, with the command to fix it', async function () {
+  const ctx = serviceCtx();
+  schedule.install(ctx, { job: 'conv', interval: 30, home: ctx.home, run: serviceRunner([]) });
+  const c = find(
+    (await doctor.diagnose(ctx, { run: serviceRunner([]), now: () => Date.now() })).checks,
+    'background services',
+  );
+  assert.strictEqual(c.ok, 'warn', 'installed-but-not-loaded is precisely the silent failure');
+  assert.match(c.detail, /conv: the plist is on disk but launchd is not holding it/);
+  assert.match(c.detail, /keyflip conv index --schedule/, 'and it names the command that re-installs it');
+  assert.strictEqual(
+    c.services.filter(function (r) {
+      return r.job === 'conv';
+    })[0].loaded,
+    false,
+    'the JSON says it too',
+  );
+});
+
+test('background services: a job that has said nothing past twice its cadence is called out', async function () {
+  const ctx = serviceCtx();
+  const runner = serviceRunner([schedule.CONV_LABEL]);
+  schedule.install(ctx, { job: 'conv', interval: 30, home: ctx.home, run: runner });
+  const log = schedule.logPath(ctx.home, { job: 'conv' });
+  fs.mkdirSync(path.dirname(log), { recursive: true });
+  fs.writeFileSync(log, 'old run\n');
+  const stale = new Date(Date.now() - 3 * 24 * 3600 * 1000);
+  fs.utimesSync(log, stale, stale);
+  const c = find((await doctor.diagnose(ctx, { run: runner, now: () => Date.now() })).checks, 'background services');
+  assert.strictEqual(c.ok, 'warn');
+  assert.match(c.detail, /conv: silent for 3 d while it is scheduled every 30 min/);
+});
+
+test('background services: a job younger than two cadences is not blamed for silence', async function () {
+  const ctx = serviceCtx();
+  const runner = serviceRunner([schedule.CONV_LABEL]);
+  schedule.install(ctx, { job: 'conv', interval: 30, home: ctx.home, run: runner });
+  const c = find((await doctor.diagnose(ctx, { run: runner, now: () => Date.now() })).checks, 'background services');
+  assert.strictEqual(c.ok, true, 'its first tick is not due yet — warning here is noise');
+  assert.match(c.detail, /conv: every 30 min · no output yet/);
+});
+
+test('background services: a search index nobody refreshes is on the schedule that refreshes it', async function () {
+  const ctx = serviceCtx();
+  writeIndexMeta(ctx, new Date(Date.now() - 30 * 3600 * 1000).toISOString());
+  const c = find(
+    (await doctor.diagnose(ctx, { run: serviceRunner([]), now: () => Date.now() })).checks,
+    'background services',
+  );
+  assert.strictEqual(c.ok, 'warn', 'a day-old index answers yesterday, and only a job keeps it honest');
+  assert.match(c.detail, /conversation index is 30 h old and nothing refreshes it/);
+  assert.match(c.detail, /keyflip conv index --schedule/);
+});
+
+test('background services: a fresh index with no schedule is not a warning', async function () {
+  const ctx = serviceCtx();
+  writeIndexMeta(ctx, new Date().toISOString());
+  const c = find(
+    (await doctor.diagnose(ctx, { run: serviceRunner([]), now: () => Date.now() })).checks,
+    'background services',
+  );
+  assert.strictEqual(c.ok, true);
+});
+
+test('background services: asking no questions at all (no runner) never invents an answer', async function () {
+  const ctx = serviceCtx();
+  schedule.install(ctx, { job: 'conv', interval: 30, home: ctx.home, run: serviceRunner([schedule.CONV_LABEL]) });
+  const c = find((await doctor.diagnose(ctx, { now: () => Date.now() })).checks, 'background services');
+  assert.strictEqual(c.ok, true, 'without a runner the loaded state is unknown, so it cannot be a failure');
+  assert.strictEqual(
+    c.services.filter(function (r) {
+      return r.job === 'conv';
+    })[0].loaded,
+    null,
+  );
+});
+
+test('background services: a warning still names every job, so "which ones do I have" stays answerable', async function () {
+  const ctx = serviceCtx();
+  const runner = serviceRunner([schedule.CONV_LABEL]);
+  schedule.install(ctx, { job: 'dream', at: '03:00', home: ctx.home, run: serviceRunner([]) });
+  schedule.install(ctx, { job: 'daemon', home: ctx.home, run: serviceRunner([]) });
+  schedule.install(ctx, { job: 'conv', interval: 30, home: ctx.home, run: runner });
+  const c = find((await doctor.diagnose(ctx, { run: runner, now: () => Date.now() })).checks, 'background services');
+  assert.strictEqual(c.ok, 'warn', 'the two installed-but-not-held jobs are the complaint');
+  assert.match(c.detail, /dream: nightly at 03:00/, 'but the line still shows every job, with its hour');
+  assert.match(c.detail, /daemon: always-on/, 'and a KeepAlive daemon is never called nightly');
+  assert.match(c.detail, /conv: every 30 min/, 'an interval job shows the cadence it was installed with');
+  assert.match(c.detail, /refresh: off/, 'the uninstalled one is still listed');
+});
+
+test('background services: ages are computed against the project clock, which is an ISO string', async function () {
+  // ctx.now() returns an ISO string by contract. Subtracting a parsed date from a string is NaN, and
+  // "spoke NaN d ago" is the kind of line that makes a report unreadable while still looking green.
+  const ctx = makeCtx({ platform: 'darwin' }); // fixed clock: 2026-01-01T00:00:00.000Z
+  const runner = serviceRunner([schedule.CONV_LABEL]);
+  schedule.install(ctx, { job: 'conv', interval: 30, home: ctx.home, run: runner });
+  const log = schedule.logPath(ctx.home, { job: 'conv' });
+  fs.mkdirSync(path.dirname(log), { recursive: true });
+  fs.writeFileSync(log, 'ran once\n');
+  const when = new Date(Date.parse('2025-12-31T00:00:00.000Z')); // 24 h before the fixed clock
+  fs.utimesSync(log, when, when);
+  const c = find((await doctor.diagnose(ctx, { run: runner })).checks, 'background services');
+  assert.strictEqual(c.ok, 'warn');
+  assert.match(c.detail, /silent for 24 h while it is scheduled every 30 min/);
+  assert.ok(c.detail.indexOf('NaN') === -1, c.detail);
 });

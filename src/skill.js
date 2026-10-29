@@ -1,8 +1,9 @@
 // #10 Bundled-skill install/freshness. The package's skills/keyflip dir is the
 // single source of truth; install symlinks it into ~/.claude/skills (copy
 // fallback for Windows/permission issues) so upgrades propagate. Drift is
-// detected by a SHA-256 fingerprint over sorted "relpath\0content\0" of the
-// non-hidden files. The old install is backed up before overwrite/removal.
+// detected by a SHA-256 fingerprint over sorted "relpath\0content\0" of EVERY
+// file the skill ships (hidden ones included — an agent reads those too). The old
+// install is backed up before overwrite/removal.
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
@@ -20,6 +21,8 @@ function backupsDir(ctx) {
   return path.join(ctx.configDir, 'skill-backups');
 }
 
+// The legacy walk: visible files only. Kept because a manifest written by an older keyflip
+// stores THAT hash — see fingerprintVisible below.
 function walk(dir, base, acc) {
   base = base || dir;
   acc = acc || [];
@@ -38,8 +41,98 @@ function walk(dir, base, acc) {
   return acc.sort();
 }
 
+// Every file a skill ships — HIDDEN ones included. A skill is code the agent will run, and a
+// hidden file (`.env`, `.claude/settings.json`, `.mcp.json`) is read by that agent just like
+// SKILL.md, so a hash that skips it cannot claim the installed copy is the one keyflip wrote.
+// A symlink is hashed by the CONTENT it points at when it stays inside the skill (that is what
+// the installer writes: links are copied dereferenced); a link that leaves the skill is hashed
+// by its target string, because no content can describe it.
+function walkAll(dir, base, acc, depth) {
+  base = base || dir;
+  acc = acc || [];
+  if (depth > 12) return acc;
+  let entries = [];
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch (e) {
+    return acc;
+  }
+  entries.forEach(function (e) {
+    const p = path.join(dir, e.name);
+    const rel = path.relative(base, p);
+    if (e.isDirectory()) {
+      // .git is version-control metadata, not skill content: it is never installed and never
+      // hashed, so the hash describes exactly what ends up in the agent's skills dir.
+      if (e.name === '.git') return;
+      walkAll(p, base, acc, depth + 1);
+      return;
+    }
+    if (e.isSymbolicLink()) {
+      let target = null;
+      try {
+        target = fs.realpathSync(p);
+      } catch (e2) {
+        target = null;
+      }
+      let inside = false;
+      try {
+        inside = !!target && (target === base || target.indexOf(base + path.sep) === 0);
+      } catch (e3) {
+        inside = false;
+      }
+      if (inside) {
+        let st = null;
+        try {
+          st = fs.statSync(target);
+        } catch (e4) {
+          st = null;
+        }
+        if (st && st.isFile()) {
+          acc.push({ rel: rel, file: target });
+          return;
+        }
+      }
+      let raw = '';
+      try {
+        raw = fs.readlinkSync(p);
+      } catch (e5) {
+        raw = '';
+      }
+      acc.push({ rel: rel, link: raw });
+      return;
+    }
+    if (e.isFile()) acc.push({ rel: rel, file: p });
+  });
+  return acc;
+}
+
 // SHA-256 over sorted "relpath\0content\0" — order-independent, content-sensitive.
 function fingerprint(dir) {
+  const h = crypto.createHash('sha256');
+  const items = walkAll(dir).sort(function (a, b) {
+    return a.rel < b.rel ? -1 : a.rel > b.rel ? 1 : 0;
+  });
+  items.forEach(function (it) {
+    h.update(it.rel);
+    h.update('\0');
+    if (it.link !== undefined) {
+      h.update('L');
+      h.update(it.link);
+    } else {
+      try {
+        h.update(fs.readFileSync(it.file));
+      } catch (e) {
+        /* */
+      }
+    }
+    h.update('\0');
+  });
+  return h.digest('hex');
+}
+
+// The hash an older keyflip stored: visible files only. Read ONLY to recognise a manifest
+// written before the fingerprint covered hidden files — never written any more.
+function fingerprintVisible(dir) {
   const h = crypto.createHash('sha256');
   walk(dir).forEach(function (rel) {
     h.update(rel);
@@ -118,4 +211,4 @@ function install(ctx) {
   return { dest: dest, mode: mode };
 }
 
-export { sourceDir, installDir, fingerprint, status, install, isInstalled };
+export { sourceDir, installDir, fingerprint, fingerprintVisible, status, install, isInstalled };
