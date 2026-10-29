@@ -109,24 +109,34 @@ that both the CLI and the shipped VS Code extension read, so a switch flips both
       `mcpreg` projection to `~/.commandcode/mcp.json` (`mcpServers`), 4 MCP tools
       (`keyflip_commandcode` RO + `_capture`/`_switch`/`_remove` confirm-gated), EN/TR docs,
       CHANGELOG, SKILL, website CLI reference, tests.
-- [ ] Live write path (capture/switch on a second real account) — only read-only `status` has been
-      run here; the first real capture is the owner's.
+- [x] Live capture + MCP projection verified here: the live login is saved as `hakkisagdic`
+      (`auth.json` 0600, `meta.json` 0600, no key in it) and `keyflip mcpreg enable keyflip
+      --surface command-code` wrote `~/.commandcode/mcp.json` (0600, `mcpServers.keyflip` only,
+      command exists). `switch --dry-run` prints the plan and writes nothing.
+- [ ] Switch between TWO real Command Code accounts — needs a second login on this machine
+      (owner: sign in, `keyflip commandcode capture`, then `switch`). Everything else is done.
 
 ## D. Hardware / account validation — build-done, needs a real device/account
 
 Everything below is BUILT + unit-tested; it just cannot be validated in this environment.
 
-- [ ] **Linux app-auth** live test (`secret-tool`/libsecret cookie path; shared v10 blob).
+- [ ] **Linux app-auth** live test (`secret-tool`/libsecret cookie path; shared v10 blob) — no Linux host here.
 - [ ] **Windows app-auth** live test — confirm exact `Local State` + token-cache paths on a real install.
 - [ ] **Linux tray** (GNOME Argos / KDE kargos) — render/click on a real desktop.
 - [ ] **SSO org-login** live round-trip (`claude auth login --sso` against a real enterprise org).
 - [ ] **Gemini brain** live round-trip — real `GEMINI_API_KEY`, verify a real plan comes back.
+      (No Gemini/OpenRouter/OpenAI key is exported or stored on this machine today.)
 - [ ] **JetBrains plugin** — `./gradlew test` + `runIde` (generate `gradle-wrapper.jar` once); verify
       the Terminal API + status-bar/widget signatures on the target IntelliJ version.
-- [ ] **provusage** live-API provider shapes — gemini/openrouter/cursor/copilot/opencode endpoints +
-      response shapes (codex is the verified real path).
-- [ ] **Windsurf / Kiro** session-import format (`foreign.js` NEEDS-VERIFICATION) — confirm their
-      on-disk chat/session store, then wire the import.
+      (Wrapper jar is absent, and the build wants Gradle 8.9 + JDK 17; this machine has JDK 27 and
+      no `gradle` on PATH — installing a JDK 17 is a machine-level step for the owner.)
+- [ ] **provusage** live-API provider shapes. Live check here: **codex = ok** (real
+      `{used_percent, resets_in_seconds, credits}` shape, 1% weekly, "resets in 5d 10h") and
+      **claude = ok**; gemini / opencode / copilot come back `present: true, status: unknown`
+      because their tokens/keys are not readable here — verify each once a key exists.
+- [ ] **Windsurf / Kiro** session import. Kiro is already read natively by `conv`
+      (`~/.kiro/sessions/cli/*.jsonl` + `<hash>/sess_*/messages.jsonl`), so nothing is missing
+      there; **Windsurf is not installed** on this machine, so its store stays unverified.
 
 ## E. Release
 

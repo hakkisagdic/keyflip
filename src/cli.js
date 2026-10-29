@@ -388,7 +388,7 @@ function usage() {
   print('                                 capture/save current login, switch accounts, list saved ones');
   print('  keyflip chatgpt [status|list|capture|switch|refresh|backups]  CHATGPT.app + CODEX CLI share ONE');
   print('                                 login (~/.codex/auth.json): capture/switch/remove it, refresh in place');
-  print('  keyflip commandcode [status|list|capture|switch|backups|restore]  COMMAND CODE (`cmd`) — CLI +');
+  print('  keyflip commandcode [status|list|capture|switch|backups|restore|remove]  COMMAND CODE (`cmd`) — CLI +');
   print('                                 VS Code extension share ~/.commandcode/auth.json: capture, switch,');
   print('                                 undo a switch from its backups; the web dashboard is a separate login');
   print('  keyflip skill add <owner/repo|./dir|file.tgz>   install a skill into every agent here');

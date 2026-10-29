@@ -170,3 +170,32 @@ test('importLive() reads mcpServers and opencode’s mcp shape into one registry
   assert.deepStrictEqual(reg.files, { command: 'node', args: ['files.js'], env: { ROOT: '/tmp' } });
   assert.strictEqual(reg.ctx7.command, 'npx');
 });
+
+test('command-code: creates ~/.commandcode/mcp.json only when the tool is installed, 0600', function () {
+  const ctx = makeCtx();
+  mcpreg.add(ctx, 'files', { command: 'node', args: ['s.js'] });
+  assert.strictEqual(mcpreg.setEnabled(ctx, 'files', 'command-code', true), 'skipped-not-installed');
+  assert.strictEqual(fs.existsSync(path.join(ctx.home, '.commandcode', 'mcp.json')), false);
+  fs.mkdirSync(path.join(ctx.home, '.commandcode'), { recursive: true });
+  assert.strictEqual(mcpreg.surfaces(ctx).filter((r) => r.id === 'command-code')[0].state, 'will-create');
+  assert.strictEqual(mcpreg.setEnabled(ctx, 'files', 'command-code', true), 'applied');
+  const file = path.join(ctx.home, '.commandcode', 'mcp.json');
+  assert.deepStrictEqual(read(file).mcpServers.files, { command: 'node', args: ['s.js'], env: {} });
+  assertPrivateMode(file);
+  assert.strictEqual(mcpreg.surfaces(ctx).filter((r) => r.id === 'command-code')[0].state, 'ready');
+  mcpreg.setEnabled(ctx, 'files', 'command-code', false);
+  assert.deepStrictEqual(read(file).mcpServers, {});
+});
+
+test('command-code: an unparseable mcp.json aborts instead of being replaced by {}', function () {
+  const ctx = makeCtx();
+  const dir = path.join(ctx.home, '.commandcode');
+  fs.mkdirSync(dir, { recursive: true });
+  const file = path.join(dir, 'mcp.json');
+  fs.writeFileSync(file, '{ broken');
+  mcpreg.add(ctx, 'files', { command: 'node', args: ['s.js'] });
+  assert.throws(function () {
+    mcpreg.setEnabled(ctx, 'files', 'command-code', true);
+  }, /not valid JSON/);
+  assert.strictEqual(fs.readFileSync(file, 'utf8'), '{ broken');
+});
