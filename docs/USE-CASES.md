@@ -507,6 +507,16 @@ keyflip mcpreg list | enable | disable | remove | import
   would be a day behind; the pass is incremental (an unchanged transcript costs one `stat()`) and embeds
   only new or changed chunks with the **local** model — no cloud model, no quota. Over MCP the same job
   is `keyflip_conv_index_schedule` (`action:"status"|"install"|"remove"`, `interval` in minutes).
+- **What chat search is worth, measured.** On a live 1,869-conversation / 117,503-chunk index, a frozen
+  set of 84 developer-style queries (written from a random *message*, so no chunk boundary is favoured)
+  scores BM25 at hit@1 0.49 / hit@5 0.83 / MRR 0.63, the vector list alone 0.24 / 0.43 / 0.32, and
+  hybrid — shipped at the 1:0.25 weight — exactly the BM25 numbers. On transcripts the rare term beats
+  the meaning, so hybrid is deliberately kept from displacing BM25 (1:0.5 → 0.46, 1:1 → 0.45, 1:2 →
+  0.25). Turn-grouped chunks are ranking-neutral (one or two queries in 84) and pay off in the text you
+  get back: the question always travels with the answer, and the duplicate folding turns the 9.3 % of
+  page slots that used to repeat a paragraph the page already showed (78 of 840 slots over those 84
+  queries) into named `alsoIn` twins. Vectors cost CPU — a full scan-and-embed of 117,033 chunks took
+  2 h 35 min — so the index embeds incrementally and the semantic list stays light.
 - **Sorting two accounts' chats apart.** `keyflip conv list --account yahoo` and
   `keyflip conv search "the release plan" --account gmail` answer "which of my accounts actually wrote
   this?" The account comes from what you stated (`keyflip sessions assign`) first and, only where you

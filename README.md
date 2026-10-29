@@ -932,6 +932,19 @@ keyflip conv transfer a7dc93d0 --to codex         # a handoff bundle for another
   fusion, weighted so the lexical list leads and a vector-only hit can never push a BM25 hit off the
   page — and when no vectors exist, the result is labelled `lexical` with a note, never silently
   "hybrid". `search` builds the index once on first use so the very first query just works.
+- **What the search is actually worth, measured.** A frozen set of 84 developer-style queries (written by
+  a local model from a random *message*, never from a chunk, so no chunk boundary is favoured) over this
+  machine's 1,869-conversation / 117,503-chunk index: BM25 reaches **hit@1 0.49 · hit@5 0.83 · MRR 0.63**,
+  the vector list alone **0.24 · 0.43 · 0.32**. On developer transcripts the rare term beats the meaning,
+  so hybrid at the shipped 1:0.25 weight lands exactly on the BM25 numbers, and every heavier semantic
+  weight is worse (1:0.5 → hit@1 0.46, 1:1 → 0.45, 1:2 → 0.25). The turn-grouped chunking is
+  ranking-neutral by design — a turn index and a window index differ by one or two queries in 84 — and
+  what it buys is the text you get back (the question is always with the answer) plus the duplicate
+  folding: without it **9.3 % of page slots repeat a paragraph the page already showed** (78 of 840
+  slots over the same 84 queries), and folding turns every one of those into a named `alsoIn` twin
+  instead of a wasted slot. Vectors cost real CPU: a full scan-and-embed of 117,033 chunks took
+  **2 h 35 min** here (nomic-embed-text), which is why the index embeds incrementally and keeps the
+  semantic list deliberately light.
 - **Which account worked on a chat — and how keyflip knows.** Every conversation row carries an
   `account`, from two sources in strict order: what YOU said (`keyflip sessions assign <session> <account>`)
   wins over what keyflip inferred. The inference is keyflip's own switch timeline — `active -> <profile>`

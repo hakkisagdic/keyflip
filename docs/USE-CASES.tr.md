@@ -509,6 +509,17 @@ keyflip mcpreg list | enable | disable | remove | import
   indeks bir gün geride kalırdı; geçiş kademelidir (değişmeyen bir transcript tek `stat()` demektir) ve
   yalnızca yeni ya da değişen parçaları **yerel** modelle gömer — bulut modeli yok, kota yok. MCP'de aynı
   iş `keyflip_conv_index_schedule` (`action:"status"|"install"|"remove"`, `interval` dakika cinsinden).
+- **Sohbet aramasının ölçülmüş değeri.** Canlı 1.869 sohbetlik / 117.503 chunk'lık indeks üzerinde,
+  rastgele bir *mesajdan* (yani hiçbir chunk sınırı öne geçmesin diye) yazılmış 84 geliştirici tarzı
+  soru: BM25 hit@1 0,49 / hit@5 0,83 / MRR 0,63; vektör listesi tek başına 0,24 / 0,43 / 0,32; hibrit ise
+  — gönderilen 1:0,25 ağırlıkla — tam olarak BM25 sayılarına düşüyor. Transkriptlerde nadir terim
+  anlamdan daha iyi bir sinyal; bu yüzden hibrit bilinçli olarak BM25'i yerinden etmiyor (1:0,5 →
+  0,46; 1:1 → 0,45; 1:2 → 0,25). Tur bazlı chunk'lar sıralamada nötr (84 soruda bir-iki soru) ve
+  kazandırdığı şey geri verilen metin: soru her zaman cevabın yanında; kopya katlama ise sayfa
+  yuvalarının %9,3'ünü — aynı 84 soruda 840 yuvanın 78'i — sayfanın zaten gösterdiği bir paragrafı
+  tekrarlamaktan kurtarıp adlandırılmış `alsoIn` ikizlerine çeviriyor. Vektörler CPU ister — 117.033
+  chunk'ın tamamını taramak ve gömmek 2 saat 35 dakika sürdü — bu yüzden indeks kademeli gömer ve
+  semantik liste hafif kalır.
 - **İki hesabın sohbetini ayırmak.** `keyflip conv list --account yahoo` ve
   `keyflip conv search "release plan" --account gmail` şu soruyu yanıtlar: "bunu hangisi yazdı?" Hesap
   önce sizin sözünüzden gelir (`keyflip sessions assign`); hiçbir şey söylemediğiniz yerde keyflip'in kendi

@@ -1022,6 +1022,19 @@ keyflip conv transfer a7dc93d0 --to codex         # başka bir yapay zekâ arac�
   reciprocal rank fusion ile kaynaştırır; leksiksel liste ağır basar, yani sadece vektörden gelen
   bir eşleşme BM25 sonucunu sayfadan düşüremez — vektör yoksa sonuç `lexical` etiketiyle ve notla döner,
   asla sessizce "hibrit" olmaz. İlk sorguda `search` indeksi bir kez kurar; ilk arama da çalışır.
+- **Aramanın gerçekte ne kadar işe yaradığı, ölçülmüş hali.** Bu makinenin 1.869 sohbetlik /
+  117.503 chunk'lık indeksi üzerinde, yerel bir modelin rastgele bir *mesajdan* (asla bir chunk'tan
+  değil, yani hiçbir chunk sınırı öne geçmesin) yazdığı 84 geliştirici tarzı soru: BM25
+  **hit@1 0,49 · hit@5 0,83 · MRR 0,63**, vektör listesi tek başına **0,24 · 0,43 · 0,32**.
+  Geliştirici transkriptlerinde nadir terim anlamdan daha iyi bir sinyal, dolayısıyla gönderilen
+  1:0,25 ağırlıkla hibrit tam olarak BM25 sayılarına düşüyor ve semantik ağırlık arttıkça sonuç
+  kötüleşiyor (1:0,5 → hit@1 0,46; 1:1 → 0,45; 1:2 → 0,25). Tur bazlı chunklama sıralamada bilinçli
+  olarak nötr: tur indeksiyle pencere indeksi 84 soruda bir-iki soru kadar ayrışıyor. Kazandırdığı
+  şey geri verdiğin metin (soru her zaman cevabın yanında) ve kopya katlama: katlama olmasaydı **sayfa
+  yuvalarının %9,3'ü sayfanın zaten gösterdiği bir paragrafı tekrar ediyordu** (aynı 84 soruda 840
+  yuvanın 78'i), katlama ise her birini adlandırılmış bir `alsoIn` ikizi çeviriyor. Vektörler gerçek CPU
+  maliyeti: 117.033 chunk'ın tamamını taramak ve gömmek burada **2 saat 35 dakika** (nomic-embed-text),
+  bu yüzden indeks kademeli gömüyor ve semantik listeyi bilinçli hafif tutuyor.
 - **Hangi hesap bu sohbetle çalıştı — ve keyflip bunu nereden biliyor.** Her sohbet satırı bir `account`
   taşır; iki kaynak, kesin sırayla: **SİZİN SÖZÜNÜZ** (`keyflip sessions assign <oturum> <hesap>`) her
   zaman keyflip'in tahminine öncelik alır. Tahmin, keyflip'in kendi geçiş zaman çizelgesinden gelir —

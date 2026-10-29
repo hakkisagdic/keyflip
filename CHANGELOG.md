@@ -176,6 +176,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **What the conversation search is worth, measured and published.** The chunking work below shipped on
+  the strength of an intuition ("a chunk that keeps its question should retrieve better"); this entry
+  puts a number on it, and the number says the intuition was **wrong about ranking and right about
+  everything else**. Measured on this machine's live 1,869-conversation / 117,503-chunk index with a
+  frozen set of 84 developer-style queries — written by a local model from a random *message*, never
+  from a chunk, so no chunk boundary is favoured — BM25 scores hit@1 **0.49** / hit@5 **0.83** /
+  MRR **0.63** and the vector list alone **0.24 / 0.43 / 0.32**. On developer transcripts the rare
+  term beats the meaning: hybrid at the shipped 1:0.25 weight lands *exactly* on the BM25 numbers,
+  and every heavier semantic weight is worse (1:0.5 → hit@1 0.46, 1:1 → 0.45, 1:2 → 0.25). So the
+  turn-grouped chunking is ranking-neutral by design — a turn index and a window index differ by one
+  or two queries in 84 — and what it actually buys is the text you get back (the question always
+  travels with the answer) and the duplicate folding: without it **9.3 % of page slots repeat a
+  paragraph the page already showed** (78 of 840 slots over those 84 queries), and folding turns each
+  of those into a named `alsoIn` twin instead of a wasted slot. Vectors cost real CPU — a full
+  scan-and-embed of 117,033 chunks took **2 h 35 min** on this machine (nomic-embed-text) — which is
+  why the index embeds incrementally and the semantic list stays deliberately light. The numbers are
+  published in the README (EN/TR), `docs/USE-CASES` (EN/TR) and the skill, so the claim is checkable
+  instead of folkloric.
+
 - **A chunk is now a question and the answer it got, and a duplicate paragraph fills one result
   slot.** The indexer packed messages into ~1,400-character windows and flushed as soon as the
   window filled, so a chunk could open with an `Assistant:` answer whose question sat in the

@@ -179,6 +179,11 @@ Copilot, Aider — normalized into one shape, harness noise stripped. Use them w
   answer), and identical text from a forked/resumed session is shown once: the surviving hit lists
   the other conversations in `alsoIn` and `collapsed` counts the folded copies — cite `alsoIn` ids
   too when the user asks "which chat".
+  **Measured on a 1,869-conversation index (84 frozen developer-style queries): BM25 hit@1 0.49 ·
+  hit@5 0.83 · MRR 0.63, vector-only 0.24 · 0.43 · 0.32, hybrid == BM25.** On developer transcripts
+  the rare term beats the meaning, so leave `mode` at `lexical` (or `hybrid`) and reach for
+  `semantic` only when the wording genuinely differs from the transcript — identifiers, paths and
+  error strings are BM25's home turf.
 - **`keyflip_conv_context`** — the RAG block to paste into a prompt: char-budgeted
   (`budget`, default 12000), sources cited with id/app/cwd/date, `expand` pulls neighbouring
   chunks so a decision is not cut mid-thread. Prefer this over dumping a whole transcript.
