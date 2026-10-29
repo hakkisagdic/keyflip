@@ -55,6 +55,10 @@ bubble→message mapping (order from the composer header list, role from `type`)
 (opencode + others — largest array of `{role, text/content}` objects); **Aider**
 `.aider.chat.history.md` via a best-effort markdown parser. The Cursor/JSON/Aider mappings are
 NEEDS-VERIFICATION against a real install — the SQLite *reader* itself is fixture-verified.
+**Cursor is now a first-class conversation family, not only a `foreign` file** (`src/cursor.js`,
+2026-10-29): the editor `state.vscdb` is one source per composer, the `cursor-agent` CLI store
+(`~/.cursor/chats/<md5(workspace)>/<uuid>/store.db`) and its `agent-transcripts` mirror are read too,
+and `keyflip foreign <state.vscdb>` still normalizes a single DB on demand.
 **Copilot** (YAML) now ships too — parsed via the from-scratch zero-dep `src/yamlread.js` and wired
 into `detect()`/`normalize()` (23/23 tests). Each parser is isolated behind `detect()`, so adding a
 source later is one function + a fixture test.
@@ -82,7 +86,7 @@ Unified shape: `{ tool, sessionId, created_at, updated_at, resumable, resumeComm
 |---|---|---|---|---|
 | **Copilot** | `~/.copilot/session-state/<id>/` (workspace.yaml + checkpoints/index.md) | YAML+MD | ✅ `copilot --resume=<id>` | easiest |
 | **Gemini** | `~/.gemini/antigravity-cli/brain/<UUID>/…/transcript.jsonl` (+ conversations/<UUID>.db) | JSONL | ✅ | easy |
-| **Cursor** | `~/.cursor/chats/*store.db` (`cursorDiskKV`: `composerData:*`, `bubbleId:*`) | SQLite | ✅ `cursor agent --resume <id>` | medium |
+| **Cursor** | editor: `<User>/globalStorage/state.vscdb` (`cursorDiskKV`: `composerData:*`, `bubbleId:*`, `composerHeaders` table on ≥3.12); CLI: `~/.cursor/chats/<md5>/<uuid>/store.db` (`blobs` + `meta`); mirror: `~/.cursor/projects/<enc>/agent-transcripts/<id>/<id>.jsonl` | SQLite + JSONL | ✅ `cursor agent --resume <id>` | medium |
 | **opencode** | `~/.local/share/opencode/project/*/storage/` (`ses_*`) | JSON/JSONL (NEEDS-VERIFICATION) | ✅ `opencode --session <id>` | medium |
 | **Aider** | `.aider.chat.history.md` per repo | Markdown | ⚠️ partial (no session ids) | hardest |
 
@@ -98,7 +102,9 @@ surfaced to the user as printable commands, never shell-executed by keyflip.
 - opencode: instruction-file location + `storage/` message schema (the `--session` resume is mapped).
 - Copilot: `data.db` token extraction (or skip — carry only the memory md).
 - Aider: confirmed no `--resume`/session-list exists (resumeCommand returns null).
-- Cursor: `cursorDiskKV` bubble ordering for a faithful transcript.
+- Cursor: bubble order and the render manifest on a real store (`fullConversationHeadersOnly` /
+  `isRenderable`), the `composerHeaders` table on ≥3.12, and `toolFormerData` vs `capabilities` —
+  fixtures pin the contract, no live store has been read yet.
 
 ## G — background token refresh daemon (SHIPPED 2026-10-20)
 

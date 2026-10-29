@@ -5,7 +5,8 @@
 //   codex   ~/.codex/sessions/**.jsonl[.zst]                     (ChatGPT desktop + Codex CLI)
 //   kiro    ~/.kiro/sessions/cli/<id>.jsonl                      (Kiro CLI)
 //           ~/.kiro/sessions/<hash>/sess_*/messages.jsonl        (Kiro IDE)
-//   foreign Cursor / opencode / Qoder / Gemini / Copilot / Aider via foreign.js
+//   cursor  <Cursor>/User/**/state.vscdb  cursorDiskKV rows       (editor + cursor-agent, via cursor.js)
+//   foreign opencode / Qoder / Gemini / Copilot / Aider via foreign.js
 //
 // The shape is deliberately small so transfer, export and retrieval never have to
 // learn a vendor schema twice:
@@ -24,6 +25,7 @@ import zlib from 'zlib';
 import { run } from './exec.js';
 import * as transcript from './transcript.js';
 import * as foreign from './foreign.js';
+import * as cursor from './cursor.js';
 
 const SCHEMA_VERSION = 1;
 const MAX_FILE_BYTES = 160 * 1024 * 1024; // on-disk cap per source (rollouts reach ~140 MB)
@@ -563,7 +565,45 @@ function parseGeminiTranscript(text, src, opts) {
   return withFallbackTitle(conv, path.basename(path.dirname(src.path)));
 }
 
-// ---- foreign tools (Cursor, opencode, Qoder, Gemini, Copilot, Aider) -----------------------
+// ---- foreign tools (opencode, Qoder, Gemini, Copilot, Aider) -------------------------------
+
+// ---- Cursor composers (one `state.vscdb` holds MANY chats) ---------------------------------
+
+// Cursor is not a JSONL tool: its editor chats are `composerData:` / `bubbleId:` rows in a SQLite
+// key/value store (one file holds every chat the machine has), its CLI agent keeps one `store.db`
+// per session, and it mirrors agent sessions as JSONL under `projects/`. src/cursor.js expands all
+// three into one chat each, deduped by session id across the global and per-workspace copies.
+function parseCursorChat(ctx, src, opts) {
+  const chat = cursor.loadChat(ctx, src);
+  const messages = (chat.messages || [])
+    .map((m) => ({
+      role: m.role === 'assistant' ? 'assistant' : 'user',
+      text: cleanMessage(m.text),
+      ts: m.ts || null,
+      tools: m.tools || [],
+    }))
+    .filter((m) => m.text || m.tools.length);
+  // Surface is part of the identity, the same way Kiro's `kiro:cli:` / `kiro:ide:` are: an editor
+  // composer and a CLI session are different products even if a UUID someday collided.
+  const surface = src.surface || (src.kind === 'cursor-composer' ? 'local' : 'cli');
+  const conv = makeConv({
+    id: 'cursor:' + surface + ':' + chat.composerId,
+    app: 'cursor',
+    surface: surface,
+    title: chat.title || src.title || null,
+    cwd: chat.cwd || src.cwd || (opts && opts.cwd) || null,
+    createdAt: chat.createdAt || null,
+    updatedAt: chat.updatedAt || null,
+    messages: messages,
+    path: src.path,
+    mtimeMs: src.mtimeMs,
+    size: src.size,
+  });
+  return withFallbackTitle(
+    conv,
+    (src.kind === 'cursor-composer' ? 'composer ' : 'session ') + String(chat.composerId).slice(0, 8),
+  );
+}
 
 function parseForeignSource(text, src, opts) {
   const normalized = foreign.normalize(src.path, text);
@@ -728,6 +768,40 @@ function kiroSources(ctx) {
   return out;
 }
 
+// Cursor is its own family because one file is many chats: discovery expands every composer, agent
+// session and transcript mirror, and a source row carries the session id it stands for.
+function cursorSources(ctx) {
+  const out = [];
+  let found;
+  try {
+    found = cursor.discover(ctx);
+  } catch {
+    return out; // a Cursor layout keyflip does not recognise must not hide the other apps
+  }
+  found.forEach((c) => {
+    const src = statSource(c.path, c.kind || 'cursor-composer', {
+      app: 'cursor',
+      surface: c.surface || 'local',
+      // The session id is the identity: stable across runs, so a rebuilt index reuses the chat's
+      // chunks and vectors instead of re-embedding the same conversation under a new key.
+      idHint: c.composerId,
+      title: c.title,
+      cwd: c.cwd,
+      composerId: c.composerId,
+    });
+    if (src) out.push(src);
+  });
+  // A store the adapter refused to read yields NO source row, so the per-source error path in the
+  // indexer can never mention it. Keep the reason attached; `discover` aggregates it and `conv
+  // index` prints it, because "Cursor is not installed" and "Cursor's database is past the read
+  // budget" must not look like the same empty result.
+  out.issues = (found.skipped || []).map((s) => ({ path: s.file, app: 'cursor', error: s.reason }));
+  // A store that yielded chats but whose newest writes could not be replayed is not a skip: it is a
+  // degraded read, reported apart so the count of skipped sources stays what it says.
+  out.storeWarnings = (found.warnings || []).map((w) => ({ path: w.file, app: 'cursor', error: w.reason }));
+  return out;
+}
+
 function foreignSources(ctx) {
   const out = [];
   let found;
@@ -763,27 +837,43 @@ function foreignSources(ctx) {
 function discover(ctx, opts) {
   opts = opts || {};
   const want = opts.apps && opts.apps.length ? new Set(opts.apps) : null;
+  const cursorFamily = cursorSources(ctx);
   const all = []
     .concat(claudeSources(ctx))
     .concat(codexSources(ctx))
     .concat(kiroSources(ctx))
+    .concat(cursorFamily)
     .concat(opts.foreign === false ? [] : foreignSources(ctx));
   const seen = new Set();
   const out = [];
   for (const src of all) {
     if (want && !want.has(src.app)) continue;
-    if (seen.has(src.path)) continue;
-    seen.add(src.path);
+    // The dedupe key is the CHAT, not the file: a Cursor store contributes many sources with one
+    // path, and keying on the path would collapse months of work into the first composer.
+    const key = src.composerId ? src.path + '#' + src.composerId : src.path;
+    if (seen.has(key)) continue;
+    seen.add(key);
     out.push(src);
     if (out.length >= (opts.limitSources || SOURCE_BUDGET)) break;
   }
   out.sort((a, b) => b.mtimeMs - a.mtimeMs);
+  // Store-level refusals and degraded reads travel with the source list for the index report to
+  // print — but only when this run actually asked for Cursor, so `--app claude` does not inherit
+  // another app's complaint.
+  const asked = !want || want.has('cursor');
+  out.storeIssues = asked ? cursorFamily.issues || [] : [];
+  out.storeWarnings = asked ? cursorFamily.storeWarnings || [] : [];
   return out;
 }
 
 // Load one source into the canonical shape.
 function load(ctx, src, opts) {
   opts = opts || {};
+  // Cursor's stores are SQLite databases or its own JSONL mirror, not the text formats below:
+  // reading a 100 MB vscdb as a string would hit the text size cap and decode megabytes of non-chat
+  // state. The adapter opens them itself, for every one of its three kinds.
+  if (src.kind === 'cursor-composer' || src.kind === 'cursor-agent' || src.kind === 'cursor-transcript')
+    return parseCursorChat(ctx, src, opts);
   const text = readText(src.path);
   if (src.kind === 'claude-local') return parseClaudeLocal(text, src, opts);
   if (src.kind === 'codex-rollout')

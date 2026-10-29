@@ -84,6 +84,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Cursor is a first-class conversation source — one chat per composer, from three stores.**
+  `keyflip conv` used to reach Cursor only through `keyflip foreign <file>`, where one
+  `state.vscdb` became ONE giant conversation. `src/cursor.js` now reads the editor store chat by
+  chat (`composerHeaders` on ≥3.12, `composerData:` KV rows before), treats
+  `fullConversationHeadersOnly` as the render manifest (a bubble marked `isRenderable:false` is not
+  in the transcript; a listed bubble whose text is gone is counted, not invented), keeps tool and
+  thinking bubbles as tools (`toolFormerData` on new builds, `capabilities` on old) and derives the
+  cwd from the project/workspace chain. It also reads the `cursor-agent` CLI store
+  (`~/.cursor/chats/<md5>/<uuid>/store.db`, content-addressed `blobs` + a hex-JSON `meta` row) and
+  its `agent-transcripts` mirror, recognising a session already read by its id so it is never
+  indexed twice. Every store is opened through the zero-dependency `sqliteread.js` with the `-wal`
+  overlay; a store past the read budget is a skipped source with a reason, and a store that yielded
+  chats but whose `-wal` could not be replayed is a warning — separate fields in `conv index` and
+  `keyflip_conv_index`, so an unreadable history never looks like an empty one. Cursor is not
+  installed on the machine this was written on: 36 fixture tests pin the contract against the
+  shipped format, not a captured live store.
+
 - **`keyflip doctor` now inventories the background services, and tells installed apart from
   running.** keyflip can put four jobs on a timer — the nightly `dream`, the nightly token `refresh`,
   the expiry `daemon`, and the conversation index — and until now each one answered "is it

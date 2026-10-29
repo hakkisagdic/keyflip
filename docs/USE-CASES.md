@@ -252,9 +252,11 @@ keyflip threads suggest                # one TASK split over 2+ accounts? see §
   `browser sync` restores it into the browser — they are opposite directions; keyflip also
   refreshes the app login it switches away from) — cookies only decrypt on the
   machine+browser that captured them. Titles only — bodies: `keyflip recall`.
-- `foreign` reads what Claude Code's own store doesn't hold: Cursor's SQLite chat DB (a `-wal`
-  sibling is replayed first so the recent chats it holds aren't missed, and keyflip says so when
-  the WAL is there but cannot be folded in), opencode / Gemini /
+- `conv` reads Cursor natively — the editor's `state.vscdb` (one chat per composer, not one per DB
+  file), the `cursor-agent` CLI store and its `agent-transcripts` mirror — while `foreign` still
+  normalizes a Cursor SQLite DB you point at directly (a `-wal` sibling is replayed first so the
+  recent chats it holds aren't missed, and keyflip says so when the WAL is there but cannot be
+  folded in). `foreign` also reads opencode / Gemini /
   **Qoder CLI** JSONL and Copilot YAML; a file you point at directly may also be a plain-JSON
   log or Aider's `.aider.chat.history.md`. Discovery is newest-first with a per-tool
   file budget, so one chatty tool cannot bury the rest; a tool's non-session folders

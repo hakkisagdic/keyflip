@@ -1256,7 +1256,7 @@ const TOOLS = [
     name: 'keyflip_conv_list',
     title: 'List conversations from every local AI tool',
     description:
-      'Browse the chats keyflip can read on this machine — Claude Code, Codex/ChatGPT, Kiro, Gemini/Antigravity and foreign agents (Qoder, Cursor, opencode, Copilot, Aider) — in ONE normalized shape: id, app, surface, title, cwd, account, message count, dates. Each row also carries `accountSource` ("stated" = you assigned it with `keyflip sessions assign`; "inferred" = keyflip placed it on its own switch timeline) and `accountConfidence`; treat an inferred account as a labelled guess, never as your word, and call keyflip_conv_show for the reason. `search` filters TITLES only; use keyflip_conv_search for content. When the index exists this reads its manifest and is instant; otherwise it parses transcripts live (slow, reported as indexed:false). Read-only, local.',
+      'Browse the chats keyflip can read on this machine — Claude Code, Codex/ChatGPT, Kiro, Gemini/Antigravity, Cursor (the editor DB per composer, the cursor-agent CLI store and its transcript mirror) and other agents (Qoder, opencode, Copilot, Aider) — in ONE normalized shape: id, app, surface, title, cwd, account, message count, dates. Each row also carries `accountSource` ("stated" = you assigned it with `keyflip sessions assign`; "inferred" = keyflip placed it on its own switch timeline) and `accountConfidence`; treat an inferred account as a labelled guess, never as your word, and call keyflip_conv_show for the reason. `search` filters TITLES only; use keyflip_conv_search for content. When the index exists this reads its manifest and is instant; otherwise it parses transcripts live (slow, reported as indexed:false). Read-only, local.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1524,7 +1524,7 @@ const TOOLS = [
     name: 'keyflip_conv_index',
     title: 'Build/refresh the conversation index',
     description:
-      "Parse every local conversation once into chunk files keyflip owns (configDir/conv-index, never versioned or backed up) so search and RAG context are instant. Incremental: unchanged files are reused by mtime+hash, appended chats reuse their vector prefix. `embed:true` also computes local embeddings (Ollama nomic-embed-text by default, or KEYFLIP_EMBED_URL) — a FIRST full embedding pass over a large corpus takes many minutes and can outlive an MCP request; for that, tell the user to run `keyflip conv index --embed` in a terminal. Filter with app/limit_sources for a quick slice. Writes only keyflip's own index; no conversation is modified. Ask the user first, then set confirm=true.",
+      "Parse every local conversation once into chunk files keyflip owns (configDir/conv-index, never versioned or backed up) so search and RAG context are instant. Incremental: unchanged files are reused by mtime+hash, appended chats reuse their vector prefix. `embed:true` also computes local embeddings (Ollama nomic-embed-text by default, or KEYFLIP_EMBED_URL) — a FIRST full embedding pass over a large corpus takes many minutes and can outlive an MCP request; for that, tell the user to run `keyflip conv index --embed` in a terminal. The report names every store it could not read as a skipped source with a reason and every store that yielded chats but whose -wal could not be replayed under `warnings` — an unreadable history never looks like an empty one. Filter with app/limit_sources for a quick slice. Writes only keyflip's own index; no conversation is modified. Ask the user first, then set confirm=true.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -1566,6 +1566,9 @@ const TOOLS = [
         vectorChunks: st.vectorChunks || 0,
         coverage: st.coverage || 0,
         errors: (report.errors || []).slice(0, 5),
+        // Degraded reads: a store that yielded chats but whose newest writes could not be replayed.
+        // Kept apart from `errors` (sources that cost conversations) so an agent can tell the two.
+        warnings: (report.warnings || []).slice(0, 5),
         note: report.embedding
           ? report.embedding.error
             ? 'embeddings failed: ' + report.embedding.error + ' — lexical search still works'

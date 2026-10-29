@@ -454,9 +454,19 @@ async function build(ctx, opts) {
     duplicates: 0,
     duplicateIds: [],
     errors: [],
+    warnings: [],
     embedded: 0,
     embedding: null,
   };
+  // A store an adapter refused outright contributes no sources at all, so it can never reach the
+  // per-source `catch` below. Fold its reason in here: a database past the read budget counts as a
+  // skipped source, while a store that still yielded chats from an unreadable -wal is a warning —
+  // an unreadable history and an empty one must not print the same line.
+  (sources.storeIssues || []).forEach((issue) => {
+    report.skipped++;
+    report.errors.push(issue);
+  });
+  (sources.storeWarnings || []).forEach((w) => report.warnings.push(w));
   // One id, one conversation. If two DIFFERENT transcripts resolve to the same id, the second
   // one would overwrite the first one's chunk file while the manifest keeps a single row — the
   // counts then disagree with the disk. The newcomer gets a stable, path-derived id instead and

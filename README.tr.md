@@ -950,9 +950,11 @@ keyflip threads drop dugum-acmak -y    # yalnız ADI unutur; her transkript ve h
 ### Her aracın sohbetleri, aranabilir hâlde (`conv`)
 
 Claude Code `~/.claude/projects`'e, Codex `~/.codex/sessions`'a (bazen zstd sıkıştırılmış), Kiro hem
-`~/.kiro/sessions/cli`'ye hem IDE deposuna, Cursor/opencode/Qoder/Gemini/Copilot/Aider da kendine göre
-yazar. `keyflip conv` hepsini **tek kanonik biçimde** okur — id, uygulama, yüzey, başlık, çalışma dizini,
-zaman damgaları, `{role, text, ts, tools}` mesajları — ve araçların kendi gürültüsünü ayıklar:
+`~/.kiro/sessions/cli`'ye hem IDE deposuna, Cursor üç ayrı depoya yazar (editörün `state.vscdb`'si,
+`cursor-agent` CLI'ının içerik-adresli `~/.cursor/chats`'i ve `agent-transcripts` aynası);
+opencode/Qoder/Gemini/Copilot/Aider'in ise kendine göre. `keyflip conv` hepsini **tek kanonik biçimde**
+okur — id, uygulama, yüzey, başlık, çalışma dizini, zaman damgaları, `{role, text, ts, tools}`
+mesajları — ve araçların kendi gürültüsünü ayıklar:
 `<system-reminder>`, `<task-notification>`, `<command-name>` tesisatı, ortam bağlamları ve
 `<pasted_content>` sarmalayıcıları (bazı araçların bozuk kapanış etiketleri dahil) indekse ya da
 dışa aktarıma asla ulaşmaz. Kaynaklar salt-okunur; keyflip hiçbir aracın deposuna yazmaz.
@@ -971,6 +973,23 @@ keyflip conv export --all --obsidian --out ~/Documents/Vault
 keyflip conv transfer a7dc93d0 --to codex         # başka bir yapay zekâ aracına devir paketi
 ```
 
+- **Cursor: veritabanı dosyası başına değil, composer başına bir sohbet.** Tek bir `state.vscdb`
+  makinedeki bütün sohbetleri tutar; bu yüzden editör deposu sohbet sohbet okunur — sohbet listesi yeni
+  sürümlerde `composerHeaders` tablosundan, eski sürümlerde `composerData:` KV satırlarından, her balon
+  kendi `bubbleId:` kaydından gelir. `fullConversationHeadersOnly` Cursor'un gerçekten çizdiği şey kabul
+  edilir: `isRenderable:false` işaretli bir balon transkriptte yoktur, listelenmiş ama metni gitmiş bir
+  balon ise **sayılır**, uydurulmaz. Araç kartları ve düşünme adımları araç olarak korunur (yeni
+  sürümlerde `toolFormerData`, eskilerde `capabilities`) ve yükü kaybolmuş bir araç kartı yine de bir
+  turu adlandırır — tahmin edilmez, etiketlenir. `cursor-agent` CLI'ının kendi deposu vardır
+  (`~/.cursor/chats`, içerik-adresli blob'lar artı bir meta kaydı) ve her oturumu
+  `agent-transcripts/*.jsonl` aynasına da yazar; ayna oturum id'sinden tanınır ve zengin kopyadan bir
+  kez indekslenir. Bu okuyucuların yazıldığı makinede Cursor kurulu değil, yani testler sözleşmeyi
+  dağıtılan uygulamanın kendi biçiminden kurulmuş fikstürlerle sabitler — yakalanmış canlı bir depoyla
+  değil.
+- **Okunamayan bir depo asla boş bir depo gibi görünmez.** `conv index` okuyamadığı her depoyu (çok
+  büyük, okunamaz, kayıp) **gerekçeli bir atlanmış kaynak** olarak adlandırır; sohbet üretmiş ama `-wal`
+  yan dosyası yeniden oynatılamamış bir depoyu ise **uyarı** olarak — ikisi birden asla değil, sessizlik
+  de asla.
 - **Sıralamayı nasıl yaptığını dürüstçe söyleyen arama.** Leksiksel taraf BM25: hafif bir stemmer ve
   gerçek belge frekansları. `--embed` varsayılan olarak yerel bir Ollama ile vektör hesaplar (ya da
   `KEYFLIP_EMBED_URL`; uzak uç noktaya giden metin önce sır-ayıklamadan geçer). Hibrit iki listeyi

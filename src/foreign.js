@@ -22,20 +22,13 @@ import * as _transcript from './transcript.js';
 // Best-effort locations of OTHER agents' session stores (relative to $HOME). Existence-gated,
 // so a machine without a given tool simply yields nothing. Paths are NEEDS-VERIFICATION —
 // confirm on a real install; adding/fixing one is a one-line change.
-// Cursor lives under a platform-specific base (macOS Application Support / Windows AppData\Roaming /
-// Linux .config). All variants are listed and existence-gated, so the right one matches per OS and
-// the others simply yield nothing — no platform branch needed.
-const CURSOR_BASES = ['Library/Application Support/Cursor', 'AppData/Roaming/Cursor', '.config/Cursor'];
+// Cursor's own store paths moved to src/cursor.js with it becoming a first-class conversation
+// family (one `state.vscdb` is many chats, so it is no longer a file-per-source entry).
 const SESSION_SOURCES = [
-  {
-    tool: 'cursor',
-    files: CURSOR_BASES.map(function (b) {
-      return b + '/User/globalStorage/state.vscdb';
-    }),
-    dirs: CURSOR_BASES.map(function (b) {
-      return { base: b + '/User/workspaceStorage', match: /state\.vscdb$/ };
-    }),
-  },
+  // Cursor is NOT listed here any more: one `state.vscdb` holds every chat on the machine, and a
+  // file-per-source reading collapsed months of work into one giant conversation. It is a
+  // first-class family now (src/cursor.js), one source per composer. `keyflip foreign <path>` on a
+  // Cursor DB still works — `detect()` and `parseCursor()` below are untouched.
   {
     tool: 'opencode',
     // log/, snapshot/, tool-output/ and repos/ sit beside the session store and hold no chats.

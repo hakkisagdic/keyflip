@@ -85,6 +85,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import * as _transcript from '../src/transcript.js';
+import * as cursor from '../src/cursor.js';
 let HAS_SQLITE = false;
 try {
   cp.execFileSync('sqlite3', ['--version'], { stdio: 'ignore' });
@@ -176,11 +177,20 @@ test('discover: finds foreign sessions at the known locations, existence-gated',
       return f.tool;
     })
     .sort();
-  assert.deepStrictEqual(tools, ['cursor', 'gemini', 'opencode']);
+  assert.deepStrictEqual(tools, ['gemini', 'opencode']);
   assert.ok(
     found.every(function (f) {
       return f.path && f.mtime;
     }),
+  );
+  // Cursor left this list on purpose: one `state.vscdb` is MANY chats, and treating the file as a
+  // single source both hid all but the biggest composer and double-counted whatever src/cursor.js
+  // reports. It must appear in exactly one family, and that family is now the dedicated one.
+  assert.ok(!tools.includes('cursor'), 'foreign discovery does not claim a Cursor store any more');
+  assert.strictEqual(
+    cursor.storePaths({ home: home, env: {} }).length,
+    1,
+    'and the Cursor adapter finds the same file through its own default paths',
   );
 });
 

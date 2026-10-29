@@ -153,6 +153,14 @@ Claude Code, Codex/ChatGPT, Kiro (CLI + IDE), Gemini/Antigravity, Qoder, Cursor,
 Copilot, Aider — normalized into one shape, harness noise stripped. Use them when the user asks
 "what did we decide about X?", "find the chat where Y", or wants a new agent to continue old work.
 
+- **Cursor is native, one conversation per composer.** Its editor keeps every chat in one
+  `state.vscdb`; the adapter reads it composer by composer, plus the `cursor-agent` CLI store
+  (`~/.cursor/chats`) and its `agent-transcripts` mirror (the same session id is indexed once).
+  `fullConversationHeadersOnly` decides what exists — a bubble Cursor marks unrenderable is not a
+  message, and a bubble whose text disappeared is counted rather than invented. `keyflip foreign
+  <state.vscdb>` remains the one-off path for a DB file. Cursor was not installed on the machine
+  these readers were written on: the tests pin the contract on fixtures, not a captured store.
+
 - **`keyflip_conv_list`** — browse (title/`search` filter only, `app`, `cwd`, `since`, `account`, `limit`).
   Instant when the index exists; otherwise it parses live and says `indexed:false`. Each row carries
   `account` + `accountSource` + `accountConfidence`: `stated` means the user assigned it
@@ -172,7 +180,10 @@ Copilot, Aider — normalized into one shape, harness noise stripped. Use them w
   way to explain an account: it returns `account`, `accountSource`, `accountConfidence` and
   `accountWhy`, the last one naming the window the chat landed in.
 - **`keyflip_conv_status`** — what is indexed, per-app counts, embedding coverage.
-- **`keyflip_conv_index` / `keyflip_conv_export`** — confirm-gated writes. A first full
+- **`keyflip_conv_index` / `keyflip_conv_export`** — confirm-gated writes. The index report names
+  every store it could not read as a skipped source with a reason, and every store that yielded
+  chats but whose `-wal` could not be replayed as a `warnings` entry — an unreadable history never
+  looks like an empty one. A first full
   embedding pass can take many minutes and may outlive an MCP request: for that, tell the user
   to run `keyflip conv index --embed` in a terminal. Export modes: one `id` to a file, `all`
   with `limit`/`offset` paging, `obsidian:true` into a vault (user-edited notes become conflict

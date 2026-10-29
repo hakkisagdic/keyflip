@@ -254,9 +254,11 @@ keyflip foreign <dosya> [--format md|html|json]   # birini aynı görünüme nor
   ters yöndedirler; keyflip uzaklaştığı hesabın uygulama girişini de tazeler) — çerezler
   yalnızca yakalandıkları makine+tarayıcıda çözülür.
   Yalnız başlıklar — içerik: `keyflip recall`.
-- `foreign`, Claude Code deposunun tutmadıklarını okur: Cursor'ün SQLite sohbet DB'si
-  (yanındaki `-wal` önce oynatılır ki içindeki yeni sohbetler kaçmasın; WAL vardır ama
-  içeri alınamıyorsa bunu söyler), opencode / Gemini / **Qoder CLI** JSONL ve Copilot YAML;
+- `conv`, Cursor'ü yerel olarak okur — editörün `state.vscdb`'si (DB dosyası başına değil,
+  composer başına bir sohbet), `cursor-agent` CLI deposu ve `agent-transcripts` aynası — `foreign`
+  ise doğrudan gösterdiğiniz bir Cursor SQLite DB'sini hâlâ normalize eder (yanındaki `-wal` önce
+  oynatılır ki içindeki yeni sohbetler kaçmasın; WAL vardır ama içeri alınamıyorsa bunu söyler).
+  `foreign` ayrıca opencode / Gemini / **Qoder CLI** JSONL ve Copilot YAML okur;
   doğrudan gösterdiğiniz bir dosya düz JSON ya da Aider'ın `.aider.chat.history.md` dosyası da
   olabilir. Keşif yeniden-eskiye sıralıdır ve araç başına bir dosya kotası taşır, böylece
   çok dosyası olan bir araç diğerlerini ezmez; aracın oturum olmayan klasörleri (`log/`,

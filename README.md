@@ -863,9 +863,11 @@ keyflip threads drop dugum-acmak -y    # forgets the NAME; every transcript and 
 ### Every tool's chats, searchable (`conv`)
 
 Claude Code writes `~/.claude/projects`, Codex writes `~/.codex/sessions` (sometimes zstd-compressed),
-Kiro writes both `~/.kiro/sessions/cli` and its IDE store, and Cursor/opencode/Qoder/Gemini/Copilot/Aider
-each have their own. `keyflip conv` reads **all of them** into one canonical shape — id, app, surface,
-title, cwd, timestamps, `{role, text, ts, tools}` messages — with the host apps' harness noise stripped:
+Kiro writes both `~/.kiro/sessions/cli` and its IDE store, Cursor keeps three separate stores (the
+editor's `state.vscdb`, the `cursor-agent` CLI's content-addressed `~/.cursor/chats`, and the
+`agent-transcripts` mirror), and opencode/Qoder/Gemini/Copilot/Aider each have their own. `keyflip conv`
+reads **all of them** into one canonical shape — id, app, surface, title, cwd, timestamps,
+`{role, text, ts, tools}` messages — with the host apps' harness noise stripped:
 `<system-reminder>`, `<task-notification>`, `<command-name>` plumbing, environment contexts and
 `<pasted_content>` wrappers (including the malformed closing tags some hosts emit) never reach the
 index or an export. Sources are read-only; keyflip never writes into any tool's store.
@@ -884,6 +886,21 @@ keyflip conv export --all --obsidian --out ~/Documents/Vault
 keyflip conv transfer a7dc93d0 --to codex         # a handoff bundle for another AI tool
 ```
 
+- **Cursor: one conversation per composer, never one per database file.** A single `state.vscdb` holds
+  every chat on the machine, so the editor store is read chat by chat — the chat list from the
+  `composerHeaders` table on recent builds and from `composerData:` KV rows on older ones, each bubble
+  from its own `bubbleId:` record. `fullConversationHeadersOnly` is treated as what Cursor actually
+  draws: a bubble it marks `isRenderable:false` is not part of the transcript, and a listed bubble whose
+  text is gone is **counted**, not invented. Tool cards and thinking steps are kept as tools (from
+  `toolFormerData` on new builds, `capabilities` on old) and a tool card whose payload did not survive
+  still names a turn, labelled rather than guessed. The `cursor-agent` CLI has its own store
+  (`~/.cursor/chats`, content-addressed blobs plus a meta record) and mirrors each session into
+  `agent-transcripts/*.jsonl`; the mirror is recognised by session id and indexed once, from the richer
+  copy. Cursor is not installed on the machine these readers were written on, so the tests pin the
+  contract on fixtures built from the shipped app's own format — not a captured live store.
+- **A store that cannot be read never passes for an empty one.** `conv index` names every store it could
+  not read (too large, unreadable, gone) as a **skipped source with a reason**, and a store that yielded
+  chats but whose `-wal` sidecar could not be replayed as a **warning** — never both, and never silence.
 - **Search that tells the truth about how it ranked.** Lexical is BM25 with a light stemmer and exact
   document frequencies. `--embed` computes vectors with a local Ollama by default (or `KEYFLIP_EMBED_URL`;
   text sent to a remote endpoint is secret-redacted first). Hybrid fuses both lists with reciprocal rank

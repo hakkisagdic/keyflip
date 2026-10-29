@@ -90,6 +90,19 @@ Session lifecycle management, transcript handling, and recall.
 | `transcript.js` | Conversation transcript storage and retrieval |
 | `recall.js` | Session recall and search across transcripts |
 
+### Conversations
+
+Every local AI tool's chats — read, normalized, indexed, exported.
+
+| Module | Responsibility |
+|--------|---------------|
+| `conversations.js` | Canonical conversation shape (`{id, app, surface, title, cwd, messages, counts, hash}`) and the per-app reader dispatch |
+| `cursor.js` | Cursor adapter: editor `state.vscdb` composers, the `cursor-agent` CLI blob store, the `agent-transcripts` mirror |
+| `foreign.js` | One-off normalization of another agent's session FILE (`keyflip foreign`) |
+| `convindex.js` | Incremental index: chunk files, manifest, token sidecar, embeddings |
+| `convexport.js` | Markdown / HTML / JSON / Obsidian export and per-target transfer bundles |
+| `convaccounts.js` | Which keyflip account worked on a conversation, and whether that is stated or inferred |
+
 ### Fleet and Transfer
 
 Multi-device synchronization, team management, and data transfer.
@@ -176,7 +189,7 @@ File system helpers, encoding, data format readers, and miscellaneous tools.
 | `qr.js` | QR code generation for transfer links |
 | `embed.js` | Embedding utilities |
 | `llm.js` | LLM interaction helpers |
-| `sqliteread.js` | SQLite database reader (for Claude local DB) |
+| `sqliteread.js` | Zero-dependency SQLite reader (B-tree pages, records, overflow chains, WAL overlay) for Cursor's `state.vscdb` and other tool DBs |
 | `yamlread.js` | YAML file parser |
 | `walmerge.js` | WAL (Write-Ahead Log) merge operations |
 

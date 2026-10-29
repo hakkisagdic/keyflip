@@ -7040,6 +7040,20 @@ function convReportText(ctx, r) {
         })
         .join('\n');
   }
+  // Degraded reads: the chats were indexed, but part of the store could not be trusted. Distinct
+  // from the skips above, which cost conversations.
+  if (r.warnings && r.warnings.length) {
+    line +=
+      '\n' +
+      style.warn('· ' + r.warnings.length + ' store(s) read with a warning') +
+      '\n' +
+      r.warnings
+        .slice(0, 5)
+        .map(function (w) {
+          return '    ' + (w.path ? w.path + ': ' : '') + w.error;
+        })
+        .join('\n');
+  }
   return line;
 }
 async function cmdConv(ctx, rest) {

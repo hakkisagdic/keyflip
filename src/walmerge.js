@@ -132,4 +132,4 @@ function applyOverlay(dbBuf, walBuf) {
   }
 }
 
-export { overlay, applyOverlay };
+export { overlay, applyOverlay, recover };
