@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-10-30
+
 ### Added
 
 - **Command Code (`cmd`, npm `command-code`) is a managed surface.** Both the CLI and its shipped
@@ -29,6 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `.checkpoints.jsonl` sidecars and `compaction` rows dropped, the tool name kept on the assistant
   turn, the title read from the `<sessionId>.meta.json` sidecar, and `cmd --resume <id>` as the
   resume command.
+
 - **One MCP registry, projected into every agent keyflip can write.** `mcpreg` knew only Claude Code
   and Claude Desktop, so the same server had to be re-typed into every other agent's config. Now
   `keyflip mcpreg enable <name>` also lands the entry in Cursor (`~/.cursor/mcp.json`), Kiro
@@ -47,6 +50,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `--desktop` / `--surface <id>` narrows the write; no flag means every surface on this machine.
   Over MCP, `keyflip_mcpreg_list` now returns `surfaces` alongside `servers` and
   `keyflip_mcpreg_enable` accepts any surface id or `all`.
+
 - **The release verifying key is embedded, so a real license works the moment it is bought.**
   `src/license.js` carried the placeholder `REPLACE_AT_RELEASE_WITH_ED25519_SPKI_DER_BASE64`, so
   every shipped client verified *nothing* until a release patched the key in. The issuer keypair now
@@ -59,6 +63,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   private half still needs an **encrypted off-machine backup** — lose it and no license can ever be
   signed again; the rotation rule (a new key invalidates every old license, so reissue) is in
   `issuer/README.md`.
+
 - **The issuer says what it is not ready for, instead of silently minting nothing.** The product-id
   slots in `issuer/issuer.config.json` shipped as fake-but-plausible ids (`price_1QZexample…` looks
   exactly like a real Stripe price id); they are now explicit `REPLACE_…` **placeholders**. An
@@ -66,6 +71,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   prints `{"evt":"config","ready":false,"pendingProducts":[…]}` at startup, and an unmapped webhook
   records the **product id in the event log** so the operator knows precisely what to paste in. A
   test asserts the shipped config can never contain a real-looking id.
+
 - **The activation runbook** — `issuer/README.md` now carries the whole owner path in order (keygen →
   back up the key → PSP signup → fill the product ids → fill the checkout URLs → `KEYFLIP_LICENSING=1`),
   in English and Turkish, with the rotation rule and the reason a revoked offline license cannot be
@@ -84,6 +90,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   The page is also honest about the limits of the model: because verification is local, an
   already-activated license **cannot be revoked from a server** — the enforcement path is a
   shorter reissued license, not a kill switch.
+
 - **The issuer gets an admin panel: issue, reissue, revoke, look up — and the webhook event log.**
   `issuer/admin.js` serves both a JSON API under `/admin/api/*` and a tiny single-page panel at
   `/admin` (no build step, no framework, no CDN; the UI is a thin client over the same API, so
@@ -100,6 +107,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (there is nobody to ask at verify time) — so the honest enforcement path is **reissue** with a
   shorter expiry. The webhook router now appends what each call did (rejected, duplicate, unmapped,
   issued) to the same event log.
+
 - **The price table updates itself: `keyflip cost prices --refresh`.** The cost estimates were pinned
   to a hand-maintained snapshot, so list-price drift (a new model, an intro price lapsing) silently
   skewed every number. New `src/prices.js` fetches the public LiteLLM price list, keeps the Claude
@@ -117,6 +125,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   understates spend is worse than one that overstates it). The new state file is a reserved name
   (never listed as a phantom account) and is removed by `uninstall`. MCP: `keyflip_cost_prices`
   (read-only) and `keyflip_cost_prices_refresh` (confirm-gated).
+
 - **Cost accounting down to the request: cache tiers, the 200K long-context premium and fast mode.**
   Estimates were input/output only; every real invoice also bills prompt-cache reads (0.1x the input
   rate), 5-minute cache writes (1.25x) and 1-hour writes (2x), a **whole request** at 2x input /
@@ -132,6 +141,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   costs each transcript line on its own (one line = one request), and `cost status` still never
   turns a percentage into dollars. New `keyflip cost rates [model]` prints the whole card (cache
   multipliers, threshold, fast) or one model's; MCP: `keyflip_cost_rates` (read-only).
+
 - **The failover proxy now respects what each account's plan can actually serve.** The subscription
   tier is read from the captured OAuth blob (`subscriptionType` + `rateLimitTier`, e.g. `max` +
   `default_claude_max_5x`), normalized to free / pro / max / max5x / max20x / team / enterprise.
@@ -144,6 +154,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   tier detail *before sending anything* upstream; `proxy explain` lists the skipped accounts, and
   `proxy.tierFilter=false` (new config key) turns the filter off. MCP: `keyflip_tiers` (read-only)
   and `keyflip_tier_set` (confirm-gated).
+
 - **Declarative proxy routing: `proxy-routes.json`, rules, sticky sessions and a model chain.**
   The failover proxy can now decide *per request* instead of only reordering accounts.
   `~/.config/keyflip/proxy-routes.json` (optional; `keyflip proxy routes init` writes a valid
@@ -167,6 +178,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   hypothetical request, nothing sent); `proxy status`/`cooldown` show the routing policy. MCP:
   `keyflip_proxy_routes` and `keyflip_proxy_explain` (read-only; the explain tool never runs a
   custom hook).
+
 - **The failover proxy now routes like a scheduler, not a first-failure switch.** Each account's
   failure is classified before anything moves: a 429 whose body says billing / credit / org-disabled
   is surfaced to the client instead of being masked by another account's quota; a rate-limit 429
@@ -184,6 +196,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `keyflip cooldown clear <acct>|--all` releases them; `keyflip proxy status` prints the same
   readout. MCP: `keyflip_cooldowns` (read-only), `keyflip_cooldown_clear` (confirm-gated), and
   `keyflip_proxy_status` now includes the route. Seven new routing settings under `keyflip config`.
+
 - **A provider preset catalog, so a third-party endpoint needs only a key.** `keyflip provider catalog`
   lists 19 built-in endpoints — Z.AI/GLM, Zhipu, Kimi, DeepSeek, MiniMax, Qwen/DashScope,
   Volcengine Ark, OpenRouter, OpenAI, Gemini, xAI, Mistral, Groq, Together, Fireworks, Anthropic
@@ -198,6 +211,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   preset model names drift. Provider metadata is now `schemaVersion: 2` with a persisted `compat`.
   MCP: `keyflip_provider_catalog` (read-only), `keyflip_provider_models` (read-only network), and
   `keyflip_provider_add` accepts `catalog_id` (still confirm-gated; the key never crosses MCP).
+
 - **One skill, every agent on the machine.** `keyflip skill add <src>` now installs into **every
   detected agent**, not just `~/.claude/skills`: `keyflip skill agents` lists the 72 HOME-level
   skill directories keyflip knows (with `●` for the tools actually present here), and
@@ -215,191 +229,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   from RoleCraft's MIT agent registry — see CREDITS.md. MCP: `keyflip_skill_agents` (read-only),
   `keyflip_skill_sync` (confirm-gated), and `keyflip_skills` / `keyflip_skill_add` /
   `keyflip_skill_remove` now speak per-target state, target selection and `dry_run`.
-
-### Fixed
-
-- **`keyflip agents` no longer calls an installed tool "not found".** Presence was decided by
-  home-level *memory* roots plus a config file, so a tool that keeps only a login (Kiro, opencode,
-  Command Code) — or whose MCP file appears only after the first `mcpreg enable` — read as absent
-  while `keyflip surfaces` and `mcpreg` saw it. Each registry row now carries an installation
-  footprint (`detect`), a new `installedAgents()` drives the ●/○ mark, and a row with nothing to
-  carry says `installed — nothing to carry here` instead of `not found`; the JSON listing gained
-  `installed`. `presentAgents()` keeps its old meaning ("has memory to carry"), so the migrate
-  paths are unchanged. Live: Kiro, opencode and Command Code now show as installed here.
-
-- **`keyflip surfaces` says how to switch a switchable tool, and stopped denying it can.** The
-  human listing printed only the detection line, so the footer still claimed "Switching other
-  tools is not supported yet" after Command Code got its own group. A switchable row now prints its
-  hint (`↳ keyflip commandcode status | switch <name>`), the footer names the tools that are
-  switchable from the list, and the detect result — including `keyflip_surfaces` over MCP — carries
-  `switchHint` instead of leaving the information inside `note`.
-
-- **`conv search --limit` is honored when the semantic side is missing.** Hybrid runs the lexical
-  retriever wide (50 candidates) so rank fusion has room to work; with no vectors to fuse, that
-  wide list was handed back as the page, so `--limit 3` printed 50 results. The fallback now cuts
-  back to the page that was asked for (live: 3 results for `--limit 3`), and its `collapsed` count
-  only names duplicates that were folded into the hits actually shown.
-
-- **The conversation index can no longer claim chunks or vectors that are not on disk.**
-  An index row copied from a colliding id, or whose chunk file was deleted, is now re-chunked
-  instead of reused; a source with zero chunks on disk is never recorded as embedded (that used to
-  leave a 0-byte vector file and a healthy-looking count); a torn chunk file is reconciled to what
-  the disk actually holds before embedding, and `status` counts a vector only when its file is
-  exactly `dim × count × 4` bytes. The build report gained a `rechunk` count, and `stats.chunks`
-  now always equals the chunk lines on disk.
-
-- **Codex Desktop rollouts no longer collapse into one index entry.** A continued rollout logs
-  the parent thread as `session_id`, and Codex Desktop writes a *second* `session_meta` line that
-  repeats the parent — the parser kept the last one, so a fork was filed under its parent's id.
-  Two transcripts then shared one id: the second overwrote the first's chunk file while the
-  manifest kept a single row, so the counts described a conversation that was not on disk. A
-  rollout now keeps its own id (from its own `session_meta`, or from the file name for a fork
-  whose name is `parent_own`); titles still resolve through the parent thread. Live: 4 colliding
-  pairs became 4 extra conversations, and every index row now matches its own chunk file.
-
-- **One id can no longer hold two conversations, and a row is only reused when its file is
-  really there.** If two transcripts still resolve to the same id, the newcomer gets a stable,
-  path-derived id and the build reports it (`duplicates` in the CLI and the MCP tool) instead of
-  overwriting the first one. Every index row also stores the byte size of its chunk file, so a
-  file that was replaced by a colliding source is re-chunked from its transcript rather than
-  reused with a count that the disk does not back.
-
-- **Hybrid search no longer ranks worse than plain BM25.** The rank fusion used RRF's classic
-  k=60 — a constant meant for an ensemble of *many* result lists. With only two, it flattened the
-  rank so hard that a document found deep in both lists outranked the top hit of either: a
-  document at rank 20 in both beat a document at rank 1 in one. Measured over 1856 live
-  conversations, hybrid search scored a hit@1 of 0.330 against BM25's 0.596, so the default mode
-  of `conv search` was destroying the stronger retriever. The fusion now uses a small constant and
-  weights the lexical list above the vector one, so a vector-only hit can never push a BM25 hit
-  off the page. Hybrid now ties BM25 on hit@1/hit@5 (0.596/0.798 verbatim, 0.447/0.763
-  paraphrased) instead of trailing it (0.330/0.587 and 0.395/0.684).
-
-- **A deleted conversation now actually leaves the index.** The build treated an empty app list
-  as a filter, so `keyflip conv index` (which passes `apps: []` when no `--app` is given) never
-  took the "full discovery" path and kept the row, the chunk file and the vector of a
-  transcript that was gone from disk. An empty app list is now no filter, so an unfiltered
-  build drops what is no longer there; a filtered build (`--app`, `--limit-sources`) still
-  leaves the rest alone.
-
-### Security
-
-- **Cursor's tool output entered the conversation index verbatim; it is now capped and labelled.**
-  Cursor is the one adapter with nowhere else to keep a tool's payload — it lives in the message —
-  so a `cat` of a large file was embedded as if the assistant had written it, and could fill several
-  chunks. The message is now flagged `machine` and contributes at most 800 characters to the index,
-  prefixed `Tool output:`; the full text is still exported and still searchable by its head, and a
-  conversation that carries the flag re-chunks on its own (its hash changes), so no other source is
-  re-parsed. Every other reader already dropped tool results: they index tool calls by name only,
-  and a turn that held nothing but a tool result is skipped. Measured on this machine: 6 of 801
-  sampled chunks (0.7%) carry any tool marker.
-- **A skill could hide a credential in a dotfile and the install went ahead.** The pre-install scan
-  walked the skill tree with a `name[0] === '.'` skip, so `.env`, `.env.local` and any other hidden
-  file were never read — while `cpSync` copied them into the agent's directory, where the agent
-  reads them. The scan now covers **every** file, binary ones skipped by content, and a hit names
-  the file and the kind of secret (`refusing to install '<name>': it carries a credential
-  (.env: AWS_SECRET_ACCESS_KEY)`) without ever printing the value: both token shapes and
-  `KEY=value` lines whose key looks credential-shaped and whose value has entropy are caught.
-  Placeholder lines (`.env.example`, `${FOO}`, `<your-key>`) are still allowed through.
-- **A skill could put a symlink in an agent's directory that pointed at `~/.ssh`.** Installing used
-  `cpSync(..., {dereference:true})`, which — proved by probe — still copies a leaf symlink **as a
-  link**, with an absolute target back into the source tree; deleting the temp source then left a
-  dangling link, and an absolute link to `/etc` or `~/.ssh` survived verbatim. A skill is now
-  required to be self-contained: any symlink refuses the install, whether it points outside the
-  skill or back inside it. Copying also never carries `.git`, so the tree that lands in the agent's
-  directory is exactly the tree that was scanned.
-- **The manifest could redirect `sync` and `remove` anywhere on disk.** `installed-skills.json` is a
-  file on disk — editable, restorable from a backup, copyable from another machine — and its `dir`
-  was used verbatim, so a poisoned entry turned `keyflip skill sync` into "delete `~/.ssh` and put
-  the skill there". A target is now resolved through keyflip's own table of agent directories, and
-  the manifest's `dir` is only a *label*: an unknown one is reported as `skipped-unknown-target`
-  and nothing is written or deleted. The skill name from the same file is validated too — `remove`
-  accepts only a plain name (`^[A-Za-z0-9][A-Za-z0-9._-]*$`) and refuses the rest, `list` reports
-  such an entry as `unsafe-name` instead of trusting it.
-- **Editing a hidden file in an installed skill looked like an untouched copy.** The per-target
-  SHA-256 covered visible regular files only, so a `.env` or a `.mcp.json` added, changed or
-  removed under an installed skill kept the "ok" state — and `sync` overwrote it as if the user
-  had never touched it. The fingerprint (v2) now covers every file, hidden ones included, and
-  hashes a link by its target string. Manifest rows record `fp`; a row written by an older keyflip
-  (no `fp`, or `fp: 1`) is still read with the old algorithm, so existing installs do not all turn
-  into "edited" on upgrade.
-- **Installing or removing a skill wrote into the user's agents without asking.** `keyflip skill
-  add` fetched a repo and copied it into every detected agent's directory, and `skill remove`
-  deleted across all of them, from a script or an agent with no prompt at all. Both now confirm:
-  on a terminal a `[y/N]` question (printed per target before anything is written), and in a
-  non-interactive run they refuse with "re-run with --yes to confirm." An MCP caller that declines
-  gets `skipped: [{reason: 'not approved'}]` and zero writes. `--dry-run` still needs no approval.
-
-### Changed
-
-- **What the conversation search is worth, measured and published.** The chunking work below shipped on
-  the strength of an intuition ("a chunk that keeps its question should retrieve better"); this entry
-  puts a number on it, and the number says the intuition was **wrong about ranking and right about
-  everything else**. Measured on this machine's live 1,869-conversation / 117,503-chunk index with a
-  frozen set of 84 developer-style queries — written by a local model from a random *message*, never
-  from a chunk, so no chunk boundary is favoured — BM25 scores hit@1 **0.49** / hit@5 **0.83** /
-  MRR **0.63** and the vector list alone **0.24 / 0.43 / 0.32**. On developer transcripts the rare
-  term beats the meaning: hybrid at the shipped 1:0.25 weight lands *exactly* on the BM25 numbers,
-  and every heavier semantic weight is worse (1:0.5 → hit@1 0.46, 1:1 → 0.45, 1:2 → 0.25). So the
-  turn-grouped chunking is ranking-neutral by design — a turn index and a window index differ by one
-  or two queries in 84 — and what it actually buys is the text you get back (the question always
-  travels with the answer) and the duplicate folding: without it **9.3 % of page slots repeat a
-  paragraph the page already showed** (78 of 840 slots over those 84 queries), and folding turns each
-  of those into a named `alsoIn` twin instead of a wasted slot. Vectors cost real CPU — a full
-  scan-and-embed of 117,033 chunks took **2 h 35 min** on this machine (nomic-embed-text) — which is
-  why the index embeds incrementally and the semantic list stays deliberately light. The numbers are
-  published in the README (EN/TR), `docs/USE-CASES` (EN/TR) and the skill, so the claim is checkable
-  instead of folkloric.
-
-- **A chunk is now a question and the answer it got, and a duplicate paragraph fills one result
-  slot.** The indexer packed messages into ~1,400-character windows and flushed as soon as the
-  window filled, so a chunk could open with an `Assistant:` answer whose question sat in the
-  previous chunk: 15,392 of 122,611 chunks (12.6%) on a live index were orphans like that, and a
-  BM25 or vector match on one had no question terms to lean on. Chunking now works in turns — a
-  user message plus everything said before the next question — and only breaks between turns; a
-  turn too long to keep whole is split with overlap and every continuation keeps a short copy of
-  its question. On the same index the orphaned-answer chunks fell to 15 of 117,033 (transcripts
-  that genuinely start with an assistant turn). Forked and resumed sessions repeat earlier turns
-  verbatim (19,389 duplicate chunk hashes on the live index), so `conv search` now shows that
-  text once: the surviving hit lists the other conversations in `alsoIn`, `collapsed` counts the
-  folded copies, and a page of 10 no longer spends 2.2 slots on the same paragraph. Measured on
-  40 frozen paraphrase queries through the shipped search path, lexical quality held (hit@5
-  0.625 → 0.60 and MRR 0.447 → 0.472 — one query either way at n=40; hit@1 0.30 → 0.35 when a
-  hit naming the conversation in `alsoIn` counts, because 16 of the 40 targets are twins of
-  another conversation). The manifest records a chunk scheme, so an existing index re-chunks
-  itself on the next build instead of reusing windows cut the old way — and those new chunks need
-  `keyflip conv index --embed` before semantic/hybrid search has vectors again.
-
-- **Search over a 120k-chunk index is roughly 4× faster.** Lexical BM25 now reads a per-source
-  token sidecar (`tokens/<key>.t32`: per-chunk `len` + `[token hash, tf]`, written with the chunks
-  and derivable from them) instead of re-tokenizing ~150 MB of transcript text per query; snippets
-  are built only for candidates that can reach the page, semantic search hydrates text only for its
-  top hits, and hybrid runs lexical + semantic concurrently. Measured live (1850 conversations,
-  121k chunks): lexical 4.2 s → 1.0 s, semantic minutes → 1.0 s, hybrid 4.2 s → 1.9 s. A missing or
-  torn sidecar falls back to the text path, so an older index stays searchable and re-heals itself.
-
-- **Incremental `keyflip conv index` passes no longer re-parse unchanged transcripts.** A source
-  whose path, mtime and size match its manifest row reuses the row directly, so a no-op build is
-  one `stat()` per source instead of re-reading every conversation (the previous code parsed all
-  1850 of them, ~1 h, only to reuse the result). The post-parse mtime/hash checks remain for
-  anything that did change. The manifest records which id scheme produced each row, so a change
-  to how ids are derived re-parses the sources once instead of keeping ids that no longer belong
-  to their transcript.
-
-- **Semantic search is 2× faster and no longer allocates one object per chunk.** The vector scan
-  read every float with `Buffer.readFloatLE` (~94 million calls on a 120k-chunk index), recomputed
-  the query norm for every chunk, and then sorted all ~120k scored chunks to keep the best 200.
-  It now reads the vector file through a `Float32Array` view, normalizes the query once per
-  dimension, and keeps the best candidates in a bounded min-heap, so one query allocates a few
-  hundred objects instead of 120k. The heap breaks ties by insertion order, which is the order a
-  stable sort produced — two conversations with identical text still come back in index order,
-  not in a random one. Both the lexical and the semantic path also stop hydrating once the page
-  is full: reading a chunk file is a file read plus a JSON parse per line, and most of the top
-  candidates belong to a conversation that is already on the page. Measured live (1856
-  conversations, 122k chunks): semantic 610 ms → 304 ms per query. The ranking is unchanged —
-  the hit lists of 147 live queries (109 verbatim, 38 paraphrased) are identical to before, and
-  BM25 still scores hit@1 0.596 / hit@5 0.798.
-
-### Added
 
 - **Cursor is a first-class conversation source — one chat per composer, from three stores.**
   `keyflip conv` used to reach Cursor only through `keyflip foreign <file>`, where one
@@ -576,6 +405,74 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **What the conversation search is worth, measured and published.** The chunking work below shipped on
+  the strength of an intuition ("a chunk that keeps its question should retrieve better"); this entry
+  puts a number on it, and the number says the intuition was **wrong about ranking and right about
+  everything else**. Measured on this machine's live 1,869-conversation / 117,503-chunk index with a
+  frozen set of 84 developer-style queries — written by a local model from a random *message*, never
+  from a chunk, so no chunk boundary is favoured — BM25 scores hit@1 **0.49** / hit@5 **0.83** /
+  MRR **0.63** and the vector list alone **0.24 / 0.43 / 0.32**. On developer transcripts the rare
+  term beats the meaning: hybrid at the shipped 1:0.25 weight lands *exactly* on the BM25 numbers,
+  and every heavier semantic weight is worse (1:0.5 → hit@1 0.46, 1:1 → 0.45, 1:2 → 0.25). So the
+  turn-grouped chunking is ranking-neutral by design — a turn index and a window index differ by one
+  or two queries in 84 — and what it actually buys is the text you get back (the question always
+  travels with the answer) and the duplicate folding: without it **9.3 % of page slots repeat a
+  paragraph the page already showed** (78 of 840 slots over those 84 queries), and folding turns each
+  of those into a named `alsoIn` twin instead of a wasted slot. Vectors cost real CPU — a full
+  scan-and-embed of 117,033 chunks took **2 h 35 min** on this machine (nomic-embed-text) — which is
+  why the index embeds incrementally and the semantic list stays deliberately light. The numbers are
+  published in the README (EN/TR), `docs/USE-CASES` (EN/TR) and the skill, so the claim is checkable
+  instead of folkloric.
+
+- **A chunk is now a question and the answer it got, and a duplicate paragraph fills one result
+  slot.** The indexer packed messages into ~1,400-character windows and flushed as soon as the
+  window filled, so a chunk could open with an `Assistant:` answer whose question sat in the
+  previous chunk: 15,392 of 122,611 chunks (12.6%) on a live index were orphans like that, and a
+  BM25 or vector match on one had no question terms to lean on. Chunking now works in turns — a
+  user message plus everything said before the next question — and only breaks between turns; a
+  turn too long to keep whole is split with overlap and every continuation keeps a short copy of
+  its question. On the same index the orphaned-answer chunks fell to 15 of 117,033 (transcripts
+  that genuinely start with an assistant turn). Forked and resumed sessions repeat earlier turns
+  verbatim (19,389 duplicate chunk hashes on the live index), so `conv search` now shows that
+  text once: the surviving hit lists the other conversations in `alsoIn`, `collapsed` counts the
+  folded copies, and a page of 10 no longer spends 2.2 slots on the same paragraph. Measured on
+  40 frozen paraphrase queries through the shipped search path, lexical quality held (hit@5
+  0.625 → 0.60 and MRR 0.447 → 0.472 — one query either way at n=40; hit@1 0.30 → 0.35 when a
+  hit naming the conversation in `alsoIn` counts, because 16 of the 40 targets are twins of
+  another conversation). The manifest records a chunk scheme, so an existing index re-chunks
+  itself on the next build instead of reusing windows cut the old way — and those new chunks need
+  `keyflip conv index --embed` before semantic/hybrid search has vectors again.
+
+- **Search over a 120k-chunk index is roughly 4× faster.** Lexical BM25 now reads a per-source
+  token sidecar (`tokens/<key>.t32`: per-chunk `len` + `[token hash, tf]`, written with the chunks
+  and derivable from them) instead of re-tokenizing ~150 MB of transcript text per query; snippets
+  are built only for candidates that can reach the page, semantic search hydrates text only for its
+  top hits, and hybrid runs lexical + semantic concurrently. Measured live (1850 conversations,
+  121k chunks): lexical 4.2 s → 1.0 s, semantic minutes → 1.0 s, hybrid 4.2 s → 1.9 s. A missing or
+  torn sidecar falls back to the text path, so an older index stays searchable and re-heals itself.
+
+- **Incremental `keyflip conv index` passes no longer re-parse unchanged transcripts.** A source
+  whose path, mtime and size match its manifest row reuses the row directly, so a no-op build is
+  one `stat()` per source instead of re-reading every conversation (the previous code parsed all
+  1850 of them, ~1 h, only to reuse the result). The post-parse mtime/hash checks remain for
+  anything that did change. The manifest records which id scheme produced each row, so a change
+  to how ids are derived re-parses the sources once instead of keeping ids that no longer belong
+  to their transcript.
+
+- **Semantic search is 2× faster and no longer allocates one object per chunk.** The vector scan
+  read every float with `Buffer.readFloatLE` (~94 million calls on a 120k-chunk index), recomputed
+  the query norm for every chunk, and then sorted all ~120k scored chunks to keep the best 200.
+  It now reads the vector file through a `Float32Array` view, normalizes the query once per
+  dimension, and keeps the best candidates in a bounded min-heap, so one query allocates a few
+  hundred objects instead of 120k. The heap breaks ties by insertion order, which is the order a
+  stable sort produced — two conversations with identical text still come back in index order,
+  not in a random one. Both the lexical and the semantic path also stop hydrating once the page
+  is full: reading a chunk file is a file read plus a JSON parse per line, and most of the top
+  candidates belong to a conversation that is already on the page. Measured live (1856
+  conversations, 122k chunks): semantic 610 ms → 304 ms per query. The ranking is unchanged —
+  the hit lists of 147 live queries (109 verbatim, 38 paraphrased) are identical to before, and
+  BM25 still scores hit@1 0.596 / hit@5 0.798.
+
 - **`keyflip consolidate` now unions the base Claude Desktop store with every instance clone.**
   Recents (`claude-code-sessions`) and Cowork (`local-agent-mode-sessions`) pointers are merged across
   `~/.keyflip-instances/<tool>/<slug>/User Data/` as well as the base app, so a chat opened in one
@@ -595,6 +492,69 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`keyflip agents` no longer calls an installed tool "not found".** Presence was decided by
+  home-level *memory* roots plus a config file, so a tool that keeps only a login (Kiro, opencode,
+  Command Code) — or whose MCP file appears only after the first `mcpreg enable` — read as absent
+  while `keyflip surfaces` and `mcpreg` saw it. Each registry row now carries an installation
+  footprint (`detect`), a new `installedAgents()` drives the ●/○ mark, and a row with nothing to
+  carry says `installed — nothing to carry here` instead of `not found`; the JSON listing gained
+  `installed`. `presentAgents()` keeps its old meaning ("has memory to carry"), so the migrate
+  paths are unchanged. Live: Kiro, opencode and Command Code now show as installed here.
+
+- **`keyflip surfaces` says how to switch a switchable tool, and stopped denying it can.** The
+  human listing printed only the detection line, so the footer still claimed "Switching other
+  tools is not supported yet" after Command Code got its own group. A switchable row now prints its
+  hint (`↳ keyflip commandcode status | switch <name>`), the footer names the tools that are
+  switchable from the list, and the detect result — including `keyflip_surfaces` over MCP — carries
+  `switchHint` instead of leaving the information inside `note`.
+
+- **`conv search --limit` is honored when the semantic side is missing.** Hybrid runs the lexical
+  retriever wide (50 candidates) so rank fusion has room to work; with no vectors to fuse, that
+  wide list was handed back as the page, so `--limit 3` printed 50 results. The fallback now cuts
+  back to the page that was asked for (live: 3 results for `--limit 3`), and its `collapsed` count
+  only names duplicates that were folded into the hits actually shown.
+
+- **The conversation index can no longer claim chunks or vectors that are not on disk.**
+  An index row copied from a colliding id, or whose chunk file was deleted, is now re-chunked
+  instead of reused; a source with zero chunks on disk is never recorded as embedded (that used to
+  leave a 0-byte vector file and a healthy-looking count); a torn chunk file is reconciled to what
+  the disk actually holds before embedding, and `status` counts a vector only when its file is
+  exactly `dim × count × 4` bytes. The build report gained a `rechunk` count, and `stats.chunks`
+  now always equals the chunk lines on disk.
+
+- **Codex Desktop rollouts no longer collapse into one index entry.** A continued rollout logs
+  the parent thread as `session_id`, and Codex Desktop writes a *second* `session_meta` line that
+  repeats the parent — the parser kept the last one, so a fork was filed under its parent's id.
+  Two transcripts then shared one id: the second overwrote the first's chunk file while the
+  manifest kept a single row, so the counts described a conversation that was not on disk. A
+  rollout now keeps its own id (from its own `session_meta`, or from the file name for a fork
+  whose name is `parent_own`); titles still resolve through the parent thread. Live: 4 colliding
+  pairs became 4 extra conversations, and every index row now matches its own chunk file.
+
+- **One id can no longer hold two conversations, and a row is only reused when its file is
+  really there.** If two transcripts still resolve to the same id, the newcomer gets a stable,
+  path-derived id and the build reports it (`duplicates` in the CLI and the MCP tool) instead of
+  overwriting the first one. Every index row also stores the byte size of its chunk file, so a
+  file that was replaced by a colliding source is re-chunked from its transcript rather than
+  reused with a count that the disk does not back.
+
+- **Hybrid search no longer ranks worse than plain BM25.** The rank fusion used RRF's classic
+  k=60 — a constant meant for an ensemble of *many* result lists. With only two, it flattened the
+  rank so hard that a document found deep in both lists outranked the top hit of either: a
+  document at rank 20 in both beat a document at rank 1 in one. Measured over 1856 live
+  conversations, hybrid search scored a hit@1 of 0.330 against BM25's 0.596, so the default mode
+  of `conv search` was destroying the stronger retriever. The fusion now uses a small constant and
+  weights the lexical list above the vector one, so a vector-only hit can never push a BM25 hit
+  off the page. Hybrid now ties BM25 on hit@1/hit@5 (0.596/0.798 verbatim, 0.447/0.763
+  paraphrased) instead of trailing it (0.330/0.587 and 0.395/0.684).
+
+- **A deleted conversation now actually leaves the index.** The build treated an empty app list
+  as a filter, so `keyflip conv index` (which passes `apps: []` when no `--app` is given) never
+  took the "full discovery" path and kept the row, the chunk file and the vector of a
+  transcript that was gone from disk. An empty app list is now no filter, so an unfiltered
+  build drops what is no longer there; a filtered build (`--app`, `--limit-sources`) still
+  leaves the rest alone.
+
 - **Consolidation no longer drops a session when two accounts use the same `local_*.json` filename.**
   The app names index files by its own local id, and two account folders can legitimately use the same
   name for different transcripts; the old `existsSync` check skipped one of them. keyflip now falls
@@ -611,6 +571,69 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the page rendered but did nothing — no tier list, no Connect button, no issue button. The tier list
   is now injected from the server's own table, and a test **boots the panel script** in a `node:vm`
   sandbox with a small DOM stub, so an undefined global fails a test instead of shipping.
+
+- **`jetbrains-keyflip` builds again, and its tests are green.** The Gradle wrapper binary was never
+  committed, so `./gradlew` could not start; two real errors hid behind that. `gradle.properties`
+  now pins an English JVM locale for the Gradle daemon — the plugin-structure parser uppercases
+  `application` with the default locale, so a tr_TR host read the IDE's own descriptors as
+  `APPLİCATİON` and silently skipped the bundled terminal plugin (its `builtinRegistry-1.xml` cache
+  then kept that gap alive, and both READMEs say to delete the file). `KeyflipConfigurable` now
+  overrides `disposeUIResources()`, the name build 232 gave `disposeUIComponent`. Evidence:
+  `./gradlew test` = 16/16, `./gradlew buildPlugin` = `jetbrains-keyflip-0.3.0.zip` with the
+  terminal `<depends>` intact.
+
+### Security
+
+- **Cursor's tool output entered the conversation index verbatim; it is now capped and labelled.**
+  Cursor is the one adapter with nowhere else to keep a tool's payload — it lives in the message —
+  so a `cat` of a large file was embedded as if the assistant had written it, and could fill several
+  chunks. The message is now flagged `machine` and contributes at most 800 characters to the index,
+  prefixed `Tool output:`; the full text is still exported and still searchable by its head, and a
+  conversation that carries the flag re-chunks on its own (its hash changes), so no other source is
+  re-parsed. Every other reader already dropped tool results: they index tool calls by name only,
+  and a turn that held nothing but a tool result is skipped. Measured on this machine: 6 of 801
+  sampled chunks (0.7%) carry any tool marker.
+
+- **A skill could hide a credential in a dotfile and the install went ahead.** The pre-install scan
+  walked the skill tree with a `name[0] === '.'` skip, so `.env`, `.env.local` and any other hidden
+  file were never read — while `cpSync` copied them into the agent's directory, where the agent
+  reads them. The scan now covers **every** file, binary ones skipped by content, and a hit names
+  the file and the kind of secret (`refusing to install '<name>': it carries a credential
+  (.env: AWS_SECRET_ACCESS_KEY)`) without ever printing the value: both token shapes and
+  `KEY=value` lines whose key looks credential-shaped and whose value has entropy are caught.
+  Placeholder lines (`.env.example`, `${FOO}`, `<your-key>`) are still allowed through.
+
+- **A skill could put a symlink in an agent's directory that pointed at `~/.ssh`.** Installing used
+  `cpSync(..., {dereference:true})`, which — proved by probe — still copies a leaf symlink **as a
+  link**, with an absolute target back into the source tree; deleting the temp source then left a
+  dangling link, and an absolute link to `/etc` or `~/.ssh` survived verbatim. A skill is now
+  required to be self-contained: any symlink refuses the install, whether it points outside the
+  skill or back inside it. Copying also never carries `.git`, so the tree that lands in the agent's
+  directory is exactly the tree that was scanned.
+
+- **The manifest could redirect `sync` and `remove` anywhere on disk.** `installed-skills.json` is a
+  file on disk — editable, restorable from a backup, copyable from another machine — and its `dir`
+  was used verbatim, so a poisoned entry turned `keyflip skill sync` into "delete `~/.ssh` and put
+  the skill there". A target is now resolved through keyflip's own table of agent directories, and
+  the manifest's `dir` is only a *label*: an unknown one is reported as `skipped-unknown-target`
+  and nothing is written or deleted. The skill name from the same file is validated too — `remove`
+  accepts only a plain name (`^[A-Za-z0-9][A-Za-z0-9._-]*$`) and refuses the rest, `list` reports
+  such an entry as `unsafe-name` instead of trusting it.
+
+- **Editing a hidden file in an installed skill looked like an untouched copy.** The per-target
+  SHA-256 covered visible regular files only, so a `.env` or a `.mcp.json` added, changed or
+  removed under an installed skill kept the "ok" state — and `sync` overwrote it as if the user
+  had never touched it. The fingerprint (v2) now covers every file, hidden ones included, and
+  hashes a link by its target string. Manifest rows record `fp`; a row written by an older keyflip
+  (no `fp`, or `fp: 1`) is still read with the old algorithm, so existing installs do not all turn
+  into "edited" on upgrade.
+
+- **Installing or removing a skill wrote into the user's agents without asking.** `keyflip skill
+  add` fetched a repo and copied it into every detected agent's directory, and `skill remove`
+  deleted across all of them, from a script or an agent with no prompt at all. Both now confirm:
+  on a terminal a `[y/N]` question (printed per target before anything is written), and in a
+  non-interactive run they refuse with "re-run with --yes to confirm." An MCP caller that declines
+  gets `skipped: [{reason: 'not approved'}]` and zero writes. `--dry-run` still needs no approval.
 
 ## [1.5.7] - 2026-10-23
 
@@ -1304,7 +1327,8 @@ is now folded into the Tooling section below, under a wrong date.
 
 Earlier history is not recorded in this file.
 
-[Unreleased]: https://github.com/hakkisagdic/keyflip/compare/v1.5.7...HEAD
+[Unreleased]: https://github.com/hakkisagdic/keyflip/compare/v1.6.0...HEAD
+[1.6.0]: https://github.com/hakkisagdic/keyflip/compare/v1.5.7...v1.6.0
 [1.5.7]: https://github.com/hakkisagdic/keyflip/compare/v1.5.6...v1.5.7
 [1.5.2]: https://github.com/hakkisagdic/keyflip/compare/v1.5.0...v1.5.2
 [1.5.0]: https://github.com/hakkisagdic/keyflip/releases/tag/v1.5.0

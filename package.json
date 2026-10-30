@@ -1,14 +1,14 @@
 {
   "name": "keyflip",
-  "version": "1.5.7",
+  "version": "1.6.0",
   "description": "Flip between multiple AI CLI accounts (Anthropic / Claude Code today) — CLI, desktop app and VS Code logins together.",
   "bin": {
     "keyflip": "bin/keyflip.js",
     "kf": "bin/keyflip.js"
   },
   "scripts": {
-    "test": "node --import ./test/setup.js --test",
-    "test:coverage": "node --import ./test/setup.js --test --experimental-test-coverage",
+    "test": "node --import ./test/setup.js --test \"test/*.test.js\" \"issuer/**/*.test.js\"",
+    "test:coverage": "node --import ./test/setup.js --test --experimental-test-coverage \"test/*.test.js\" \"issuer/**/*.test.js\"",
     "lint": "eslint src/ test/ bin/",
     "lint:fix": "eslint --fix src/ test/ bin/",
     "format": "prettier --write \"src/**/*.js\" \"test/**/*.js\" \"bin/**/*.js\"",
