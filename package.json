@@ -7,8 +7,8 @@
     "kf": "bin/keyflip.js"
   },
   "scripts": {
-    "test": "node --import ./test/setup.js --test \"test/*.test.js\" \"issuer/**/*.test.js\"",
-    "test:coverage": "node --import ./test/setup.js --test --experimental-test-coverage \"test/*.test.js\" \"issuer/**/*.test.js\"",
+    "test": "node ./test/run.js",
+    "test:coverage": "node ./test/run.js --experimental-test-coverage",
     "lint": "eslint src/ test/ bin/",
     "lint:fix": "eslint --fix src/ test/ bin/",
     "format": "prettier --write \"src/**/*.js\" \"test/**/*.js\" \"bin/**/*.js\"",
