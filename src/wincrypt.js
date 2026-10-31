@@ -1,25 +1,34 @@
-// Windows app-auth CRYPTO primitives, isolated + injectable so the (hardened) macOS path in
-// appauth.js is untouched. On Windows, Electron/Chromium protects the safeStorage MASTER KEY
-// with DPAPI (stored in "Local State" → `os_crypt.encrypted_key`, "DPAPI"-prefixed) and encrypts
-// values with AES-256-GCM ("v10"/"v11" prefix + 12-byte nonce + ciphertext + 16-byte tag).
-// This module: DPAPI-unprotect (via PowerShell — zero native dep) + GCM value decrypt + master
-// key extraction. The AES-GCM + key-extraction paths are fixture-tested here; wiring this into
-// appauth's account detection is the remaining Windows step (needs a real Windows machine to
-// verify) — see docs/PORTING.md.
+// Windows app-auth & Chromium cookie CRYPTO primitives, isolated + injectable so the
+// (hardened) macOS Keychain path is untouched. On Windows, Electron/Chromium protects the
+// safeStorage/OSCrypt MASTER KEY with DPAPI (stored in "Local State" → `os_crypt.encrypted_key`,
+// "DPAPI"-prefixed) and encrypts values/cookies with AES-256-GCM ("v10"/"v11" prefix + 12-byte
+// nonce + ciphertext + 16-byte tag). Chrome 127+ also introduces "v20" App-Bound Encryption
+// (tied to Chrome's elevated SYSTEM service; detected and surfaced clearly by isAppBoundCookie).
+import fs from 'fs';
 import crypto from 'crypto';
 import * as _exec from './exec.js';
 
-// Decrypt a Chromium/Electron "v10"/"v11" AES-256-GCM value with the 32-byte master key.
-function decryptValue(input, key) {
-  const buf = Buffer.isBuffer(input)
-    ? input
-    : (function () {
-        try {
-          return Buffer.from(String(input), 'base64');
-        } catch (e) {
-          return Buffer.alloc(0);
-        }
-      })();
+function toBuffer(input) {
+  if (Buffer.isBuffer(input)) return input;
+  try {
+    return Buffer.from(String(input), 'base64');
+  } catch (e) {
+    return Buffer.alloc(0);
+  }
+}
+
+// True when every byte of `buf` is printable ASCII (0x20..0x7e).
+function isPrintableAscii(buf) {
+  for (let i = 0; i < buf.length; i++) {
+    if (buf[i] < 0x20 || buf[i] > 0x7e) return false;
+  }
+  return true;
+}
+
+// Raw AES-256-GCM decrypt of a "v10"/"v11" Chromium/Electron blob -> Buffer | null.
+function decryptBytes(input, key) {
+  if (!Buffer.isBuffer(key) || key.length !== 32) return null;
+  const buf = toBuffer(input);
   const prefix = buf.slice(0, 3).toString('latin1');
   if (prefix !== 'v10' && prefix !== 'v11') return null;
   if (buf.length < 3 + 12 + 16) return null;
@@ -29,10 +38,47 @@ function decryptValue(input, key) {
   try {
     const d = crypto.createDecipheriv('aes-256-gcm', key, nonce);
     d.setAuthTag(tag);
-    return Buffer.concat([d.update(ct), d.final()]).toString('utf8');
+    return Buffer.concat([d.update(ct), d.final()]);
   } catch (e) {
     return null;
   }
+}
+
+// Decrypt a Chromium/Electron "v10"/"v11" AES-256-GCM value (UTF-8 JSON/token) with the 32-byte master key.
+function decryptValue(input, key) {
+  const raw = decryptBytes(input, key);
+  return raw ? raw.toString('utf8') : null;
+}
+
+// Chrome 127+ on Windows marks App-Bound Encrypted cookies with a "v20" prefix. Those keys are
+// wrapped by Chrome's SYSTEM elevation service and cannot be decrypted by a regular user process.
+function isAppBoundCookie(input) {
+  const buf = toBuffer(input);
+  return buf.length >= 3 + 12 + 16 && buf.slice(0, 3).toString('latin1') === 'v20';
+}
+
+// Decrypt one Windows Chromium/Electron cookie `encrypted_value` ("v10"/"v11" AES-256-GCM).
+// Chromium 130+ (cookie DB meta >= 24) prepends a 32-byte binary SHA-256(host_key) digest to
+// the cookie plaintext before encrypting:
+//   • If `opts.hostKey` is supplied and the leading 32 bytes match SHA-256(hostKey), strip 32 bytes.
+//   • Otherwise, if the whole decrypted buffer is already printable ASCII (legacy <130 cookie,
+//     including >32-char tokens like `sk-ant-sid01-...`), return it intact without truncating.
+//   • Otherwise, if `raw.length >= 32` and `raw.slice(32)` is printable ASCII (non-ASCII SHA-256
+//     header followed by the ASCII cookie value), strip the 32-byte header.
+function decryptCookie(input, key, opts) {
+  const raw = decryptBytes(input, key);
+  if (!raw) return null;
+  if (raw.length === 0) return '';
+  if (opts && opts.hostKey && raw.length >= 32) {
+    const expected = crypto.createHash('sha256').update(String(opts.hostKey), 'utf8').digest();
+    if (raw.slice(0, 32).equals(expected)) {
+      const rest = raw.slice(32);
+      return isPrintableAscii(rest) ? rest.toString('utf8') : null;
+    }
+  }
+  if (isPrintableAscii(raw)) return raw.toString('utf8');
+  if (raw.length >= 32 && isPrintableAscii(raw.slice(32))) return raw.slice(32).toString('utf8');
+  return null;
 }
 
 // DPAPI CryptUnprotectData (CurrentUser) via PowerShell. Returns the decrypted Buffer or null.
@@ -85,4 +131,16 @@ function masterKey(localStateText, opts) {
   return Buffer.isBuffer(key) && key.length === 32 ? key : null; // a valid 32-byte key, or null
 }
 
-export { decryptValue, dpapiUnprotect, masterKey };
+// Read a Chromium/Electron "Local State" file from disk and extract its 32-byte AES-256 master key.
+function masterKeyFromFile(localStatePath, opts) {
+  if (!localStatePath) return null;
+  let text;
+  try {
+    text = fs.readFileSync(localStatePath, 'utf8');
+  } catch (e) {
+    return null;
+  }
+  return masterKey(text, opts);
+}
+
+export { decryptBytes, decryptValue, decryptCookie, isAppBoundCookie, dpapiUnprotect, masterKey, masterKeyFromFile };

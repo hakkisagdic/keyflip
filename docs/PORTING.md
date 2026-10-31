@@ -18,8 +18,8 @@ before the (device-gated) implementation.
 | CLI credential in OS keychain | ✅ Keychain | ⬜ Credential Manager / DPAPI | ⬜ libsecret (file fallback works) | secret store |
 | Desktop-app login capture/switch | ✅ | ◑ (app exists) | ✖ (no app) | app token + Cookies decrypt |
 | Detect desktop account | ✅ | ◑ | ✖ | `Claude Safe Storage` key |
-| Browser (claude.ai) read / logout / **session snapshot+restore** | ✅ | ⬜ | ⬜ | cookie decrypt |
-| Onboard browser+desktop capture | ✅ | ◑ | ◑ (browser only) | the two rows above |
+| Browser (claude.ai) read / logout / **session snapshot+restore** | ✅ | ✅ (v10/v11; v20 detected) | ⬜ | Linux libsecret |
+| Onboard browser+desktop capture | ✅ | ✅ (fixture-tested) | ◑ (browser only) | Linux libsecret |
 
 ✅ done · ◑ partial/feasible · ⬜ needs work · ✖ not applicable
 
@@ -42,7 +42,10 @@ Support` paths and Keychain service/account.
   path is byte-identical. **Remaining (device-gated):** confirm the exact Local State + token-cache
   locations/field names on a real Windows Claude install. **v20 (app-bound)** still can't be
   user-decrypted → the snapshot/restore fallback (copy encrypted rows verbatim) applies.
-- Cookies DB: `%LOCALAPPDATA%\Google\Chrome\User Data\Default\Network\Cookies` (Brave/Edge analogous).
+- ✅ WIRED (#110): `chat.js`, `chatsession.js`, `browser.js`, `browserswitch.js`, `cli.js`, and MCP browser tools now support **Windows (`win32`)**:
+  - `wincrypt.decryptCookie` decrypts `v10`/`v11` AES-256-GCM cookies and strips Chromium 130+'s 32-byte `SHA-256(host_key)` prefix without truncating long legacy tokens; `wincrypt.isAppBoundCookie` detects Chrome 127+ `v20` App-Bound Encryption and surfaces an explicit diagnostic (`code: 'app-bound-cookies'`).
+  - `browser.catalog(..., { platform: 'win32' })` discovers Chrome, Edge, Brave, and Arc under `%LOCALAPPDATA%` (`<Profile>\Network\Cookies` + multi-profile `Local State`), unprotects `os_crypt.encrypted_key` via PowerShell DPAPI, and manages browser processes via `tasklist` / graceful `taskkill` / `cmd /c start`.
+  - `chatsession.snapshotToCookieRows` replays `.sql` snapshots directly over `sqlite3` stdin (no POSIX `sh -c`).
 
 **Linux (libsecret / kwallet, AES-CBC v11 or v10):**
 - Cookies DB: `~/.config/google-chrome/Default/Cookies` (Chromium `~/.config/chromium`, etc.).

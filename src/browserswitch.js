@@ -22,6 +22,15 @@ import * as _browser from './browser.js';
 import * as profiles from './profiles.js';
 import { run as _run } from './exec.js';
 
+// Resolve the Chromium profile directory that holds `Preferences`:
+// on macOS `Cookies` sits directly in `<Profile>/Cookies`; on Windows Network Service puts it in
+// `<Profile>/Network/Cookies`, while `Preferences` remains in `<Profile>/Preferences`.
+function profileDirOf(b) {
+  if (b && b.profileDir) return b.profileDir;
+  const dir = path.dirname(b.cookies);
+  return path.basename(dir) === 'Network' ? path.dirname(dir) : dir;
+}
+
 // Chromium reopens the previous session after a quit only with restore_on_startup === 1. Anything
 // else (unset = the platform default, 4 = specific pages, 5 = new tab) loses the open tabs.
 function restoresTabs(b, opts) {
@@ -32,7 +41,7 @@ function restoresTabs(b, opts) {
       return fs.readFileSync(p, 'utf8');
     };
   try {
-    const j = JSON.parse(read(path.join(path.dirname(b.cookies), 'Preferences')));
+    const j = JSON.parse(read(path.join(profileDirOf(b), 'Preferences')));
     return !!(j && j.session && j.session.restore_on_startup === 1);
   } catch (e) {
     return false; // unknown → assume tabs would be lost (the safe answer)
@@ -71,12 +80,12 @@ function decide(s) {
 function inspect(ctx, name, b, wantOrg, br, opts) {
   let ck = null;
   try {
-    ck = br.readClaudeCookies(b, {});
+    ck = br.readClaudeCookies(b, { unprotect: opts.dpapi || (ctx && ctx.dpapi), run: opts.run });
   } catch (e) {
     ck = null;
   }
   const sql = br.loadSession(ctx.configDir, name, b);
-  const running = !!br.isRunning(b);
+  const running = !!br.isRunning(b, opts.run);
   const d = decide({
     onTarget: !!(wantOrg && ck && ck.org === wantOrg && signedIn(ck)),
     hasSnapshot: !!sql,
@@ -92,14 +101,20 @@ function targetOrg(ctx, name) {
   return (meta.oauthAccount && meta.oauthAccount.organizationUuid) || null;
 }
 
+function isSupportedPlatform(br, platform) {
+  return br && typeof br.supported === 'function'
+    ? br.supported(platform)
+    : platform === 'darwin' || platform === 'win32';
+}
+
 // The dry-run view of the leg: per browser, what align() WOULD do. Writes nothing, quits nothing.
 // Returns [{ browser, action: 'already'|'skip'|'sync', reason?, quit? }].
 function preview(ctx, name, opts) {
   opts = opts || {};
   const br = opts.browser || _browser;
-  if (ctx.platform !== 'darwin' && !opts.anyPlatform) return [];
+  if (!isSupportedPlatform(br, ctx.platform) && !opts.anyPlatform) return [];
   const wantOrg = targetOrg(ctx, name);
-  const list = opts.installed || br.installed(ctx.home);
+  const list = opts.installed || br.installed(ctx.home, { platform: ctx.platform, localAppData: ctx.localAppData });
   return list.map(function (b) {
     const s = inspect(ctx, name, b, wantOrg, br, opts);
     return Object.assign({ browser: b.name }, s.d);
@@ -120,9 +135,9 @@ async function align(ctx, name, opts) {
       });
     };
   const out = { synced: [], already: [], skipped: [], preserved: [] };
-  if (ctx.platform !== 'darwin' && !opts.anyPlatform) return out;
+  if (!isSupportedPlatform(br, ctx.platform) && !opts.anyPlatform) return out;
   const wantOrg = targetOrg(ctx, name);
-  const list = opts.installed || br.installed(ctx.home);
+  const list = opts.installed || br.installed(ctx.home, { platform: ctx.platform, localAppData: ctx.localAppData });
   // Several profiles of the SAME browser share one process: quit it once, restore every profile,
   // and reopen once at the end — otherwise profile #2 would quit the browser profile #1 reopened.
   const quitDone = {};
@@ -136,7 +151,7 @@ async function align(ctx, name, opts) {
     if (d.action === 'already') {
       // It IS this account and signed in: keep its saved snapshot as fresh as the live one.
       try {
-        br.saveSession(ctx.configDir, name, b, {});
+        br.saveSession(ctx.configDir, name, b, { run: run });
       } catch (e) {
         /* best-effort */
       }
@@ -148,13 +163,13 @@ async function align(ctx, name, opts) {
       continue;
     }
     if (d.quit) {
-      reopen[b.proc] = true;
+      reopen[b.proc] = b;
       if (!quitDone[b.proc]) {
         quitDone[b.proc] = true;
         br.quit(b, run);
-        for (let t = 0; t < 40 && br.isRunning(b); t++) await sleep(250);
+        for (let t = 0; t < 40 && br.isRunning(b, run); t++) await sleep(250);
       }
-      if (br.isRunning(b)) {
+      if (br.isRunning(b, run)) {
         // Never write the Cookies DB of a browser that is still running — it would be overwritten
         // on exit at best and corrupted at worst.
         out.skipped.push({ browser: b.name, reason: 'did-not-quit' });
@@ -165,19 +180,23 @@ async function align(ctx, name, opts) {
     const outgoing = ck && signedIn(ck) ? orgOwner(ctx.configDir, ck.org) : '';
     if (outgoing && outgoing !== name) {
       try {
-        if (br.saveSession(ctx.configDir, outgoing, b, {})) out.preserved.push({ browser: b.name, account: outgoing });
+        if (br.saveSession(ctx.configDir, outgoing, b, { run: run }))
+          out.preserved.push({ browser: b.name, account: outgoing });
       } catch (e) {
         /* best-effort */
       }
     }
-    const r = br.restoreClaudeCookies(b, sql, { force: true });
+    const r = br.restoreClaudeCookies(b, sql, { force: true, run: run });
     if (r && r.ok) out.synced.push(b.name);
     else out.skipped.push({ browser: b.name, reason: 'restore-failed' });
   }
   Object.keys(reopen).forEach(function (proc) {
-    run('open', ['-a', proc]);
+    const b = reopen[proc];
+    if (br && typeof br.reopen === 'function') br.reopen(b, run);
+    else if (ctx.platform === 'win32') run('cmd', ['/c', 'start', '', proc]);
+    else run('open', ['-a', proc]);
   });
   return out;
 }
 
-export { align, preview, decide, restoresTabs, signedIn, orgOwner };
+export { align, preview, decide, restoresTabs, profileDirOf, signedIn, orgOwner };

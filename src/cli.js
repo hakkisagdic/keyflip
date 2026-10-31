@@ -778,7 +778,7 @@ async function cmdSwitch(ctx, rest) {
 
   // The browser leg, shared by every branch below (see browserswitch.js).
   async function browserLeg() {
-    if (ctx.platform !== 'darwin') return null;
+    if (!_browser.supported(ctx.platform)) return null;
     try {
       const res = await _browserswitch.align(ctx, name, { explicit: explicitBrowser });
       if (!JSON_MODE) printBrowserLeg(name, em, res);
@@ -795,7 +795,8 @@ async function cmdSwitch(ctx, rest) {
   if (surfaces.only && !surfaces.cli && !surfaces.app) {
     const res = await browserLeg();
     if (!res || !(res.synced.length || res.already.length)) {
-      if (ctx.platform !== 'darwin') return fail('browser session switching is macOS-only for now.');
+      if (!_browser.supported(ctx.platform))
+        return fail('browser session switching is supported on macOS and Windows only for now.');
       if (res && !res.skipped.length)
         print('No Chromium browser with a claude.ai cookie jar was found — nothing to switch.');
       jsonOut({ switched: null, browser: browserJson(res) });
@@ -949,14 +950,14 @@ async function cmdSwitch(ctx, rest) {
     // bridge won't connect across accounts.
     let browserRes = null;
     if (surfaces.browser) browserRes = await browserLeg();
-    else if (!JSON_MODE && ctx.platform === 'darwin') {
+    else if (!JSON_MODE && _browser.supported(ctx.platform)) {
       try {
         {
           const browser = _browser;
           const meta = profiles.read(ctx.configDir, name) || {};
           const wantOrg = meta.oauthAccount && meta.oauthAccount.organizationUuid;
           if (wantOrg)
-            browser.installed(ctx.home).forEach(function (b) {
+            browser.installed(ctx.home, { platform: ctx.platform }).forEach(function (b) {
               const ck = browser.readClaudeCookies(b, {});
               if (ck && ck.org && ck.org !== wantOrg) {
                 print(
@@ -6098,9 +6099,9 @@ async function cmdChat(ctx, rest) {
   // Reading claude.ai chats decrypts a claude.ai session cookie via the macOS keychain — it is
   // macOS-only for now. Gate on the PLATFORM (not just appDataDir, which is also set on Windows) so
   // Windows/Linux get a clear message instead of a confusing failure deep in the cookie decrypt.
-  if (ctx.platform !== 'darwin')
+  if (ctx.platform !== 'darwin' && ctx.platform !== 'win32')
     return fail(
-      'reading claude.ai Chat is macOS-only for now (Windows/Linux cookie decryption is not wired up yet — see docs/PORTING.md).',
+      'reading claude.ai Chat is supported on macOS and Windows only for now (Linux cookie decryption is not wired up yet — see docs/PORTING.md).',
     );
   const sub = rest[0];
   const flushFirst = rest.indexOf('--flush') !== -1 || rest.indexOf('--restart') !== -1;
@@ -13266,9 +13267,9 @@ async function cmdLogin(ctx, rest) {
   // --fresh: clear the browser's claude.ai session first, so the OAuth page prompts
   // a genuine login as the account you want (OAuth reuses whatever the browser is
   // signed into — otherwise it silently captures THAT account, not the one you meant).
-  if (fresh && ctx.platform === 'darwin') {
+  if (fresh && _browser.supported(ctx.platform)) {
     const browser = _browser;
-    browser.installed(ctx.home).forEach(function (b) {
+    browser.installed(ctx.home, { platform: ctx.platform }).forEach(function (b) {
       const cr = browser.clearClaudeCookies(b, {});
       if (cr.ok) print(style.dim('· cleared ' + b.name + ' claude.ai session (backup: ' + cr.backup + ')'));
       else if (cr.reason === 'browser-running')
@@ -13646,7 +13647,7 @@ async function cmdOnboard(ctx, rest) {
       // Before each account AFTER the first: sign the browser OUT of the previous
       // account (quit it + clear its claude.ai session) so the next sign-in is a
       // fresh login — no manual "switch account" on the page.
-      if (count > 0 && ctx.platform === 'darwin') {
+      if (count > 0 && _browser.supported(ctx.platform)) {
         try {
           const browser = _browser;
           const napMs = function (ms) {
@@ -13655,7 +13656,7 @@ async function cmdOnboard(ctx, rest) {
             });
           };
           let did = false;
-          const list = browser.installed(ctx.home);
+          const list = browser.installed(ctx.home, { platform: ctx.platform });
           for (let i = 0; i < list.length; i++) {
             const b = list[i];
             if (browser.isRunning(b)) {
@@ -13747,7 +13748,7 @@ async function cmdOnboard(ctx, rest) {
 // session so the Claude extension reconnects as it. Quits the browser, writes the
 // stored cookies, reopens. Returns the browsers actually synced. macOS only.
 async function browserSync(ctx, name) {
-  if (ctx.platform !== 'darwin') return [];
+  if (!_browser.supported(ctx.platform)) return [];
   const browser = _browser;
   const napMs = function (ms) {
     return new Promise(function (r) {
@@ -13755,7 +13756,7 @@ async function browserSync(ctx, name) {
     });
   };
   const synced = [];
-  const list = browser.installed(ctx.home);
+  const list = browser.installed(ctx.home, { platform: ctx.platform });
   for (let i = 0; i < list.length; i++) {
     const b = list[i];
     const sql = browser.loadSession(ctx.configDir, name, b);
@@ -13783,7 +13784,7 @@ async function browserSync(ctx, name) {
     const r = browser.restoreClaudeCookies(b, sql, { force: true });
     if (r.ok) {
       synced.push(b.name);
-      if (wasRunning) exec.run('open', ['-a', b.proc]);
+      if (wasRunning) browser.reopen(b, exec.run);
     }
   }
   return synced;
@@ -13856,10 +13857,10 @@ function parseSurfaces(rest) {
 // Best-effort: stash the current browser session under `name` (called after a
 // capture, when the browser IS on that account).
 function saveBrowserSession(ctx, name) {
-  if (ctx.platform !== 'darwin') return;
+  if (!_browser.supported(ctx.platform)) return;
   try {
     const browser = _browser;
-    browser.installed(ctx.home).forEach(function (b) {
+    browser.installed(ctx.home, { platform: ctx.platform }).forEach(function (b) {
       browser.saveSession(ctx.configDir, name, b, {});
     });
   } catch (e) {
@@ -13878,7 +13879,7 @@ function saveBrowserSession(ctx, name) {
 function browserCapture(ctx, name, opts) {
   opts = opts || {};
   const browser = _browser;
-  const installed = opts.installed || browser.installed(ctx.home);
+  const installed = opts.installed || browser.installed(ctx.home, { platform: ctx.platform });
   const read =
     opts.readClaudeCookies ||
     function (b) {
@@ -13945,13 +13946,15 @@ function browserCapture(ctx, name, opts) {
 async function cmdBrowser(ctx, rest) {
   logmod.log('browser invoked');
   const browser = _browser;
-  if (ctx.platform !== 'darwin')
-    return fail('browser session management is macOS-only for now (cookie decryption differs on Windows/Linux).');
+  if (!browser.supported(ctx.platform))
+    return fail(
+      'browser session management is supported on macOS and Windows only for now (Linux cookie decryption is not wired up yet).',
+    );
   const sub = rest[0] && rest[0].indexOf('-') !== 0 ? rest[0] : 'status';
   const bi = rest.indexOf('--browser');
   const only = bi !== -1 ? rest[bi + 1] : null;
   const force = rest.indexOf('--force') !== -1 || rest.indexOf('-y') !== -1;
-  const list = browser.installed(ctx.home).filter(function (b) {
+  const list = browser.installed(ctx.home, { platform: ctx.platform }).filter(function (b) {
     // `--browser chrome` means that browser — every profile it has; a full profile id
     // (`chrome-Profile-2`) narrows it to one.
     return !only || b.id === only || b.id.indexOf(only + '-') === 0;
@@ -15753,9 +15756,9 @@ async function logoutSurfaces(ctx, opts) {
   // Browser: with closeApps, quit each Chromium browser first (so its Cookies DB
   // unlocks), then clear its claude.ai session — the Claude extension logs out with
   // it. Without closeApps we refuse while it runs (clearing a live DB can corrupt it).
-  if (opts.browser && ctx.platform === 'darwin') {
+  if (opts.browser && _browser.supported(ctx.platform)) {
     const browser = _browser;
-    const list = browser.installed(ctx.home);
+    const list = browser.installed(ctx.home, { platform: ctx.platform });
     if (!list.length) print('  ' + style.dim('· no Chromium browser to sign out.'));
     for (let i = 0; i < list.length; i++) {
       const b = list[i];
@@ -15986,10 +15989,10 @@ async function cmdReset(ctx, rest) {
   }
   const n = wipeKeyflipData(ctx);
   // Also sweep keyflip's stray artifacts OUTSIDE configDir (browser Cookies backups).
-  if (ctx.platform === 'darwin') {
+  if (_browser.supported(ctx.platform)) {
     try {
       const browser = _browser;
-      browser.installed(ctx.home).forEach(function (b) {
+      browser.installed(ctx.home, { platform: ctx.platform }).forEach(function (b) {
         try {
           fs.rmSync(b.cookies + '.keyflip-bak', { force: true });
         } catch (e) {
@@ -16157,10 +16160,10 @@ async function cmdList(ctx, rest) {
   // Best-effort, macOS only.
   const browserOrgs = {}; // org uuid -> [browser names]
   let browsersPresent = 0;
-  if (ctx.platform === 'darwin') {
+  if (_browser.supported(ctx.platform)) {
     try {
       const browser = _browser;
-      const inst = browser.installed(ctx.home);
+      const inst = browser.installed(ctx.home, { platform: ctx.platform });
       browsersPresent = inst.length;
       inst.forEach(function (b) {
         const ck = browser.readClaudeCookies(b, {});

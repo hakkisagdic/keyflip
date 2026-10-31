@@ -1,21 +1,16 @@
-// Where a claude.ai SESSION actually lives — the routing layer in front of chat.js.
+// Resolve a claude.ai session cookie from ANY surface on this machine that has one.
 //
-// chat.js was written against one source: the Claude desktop app's Cookies DB. That
-// stopped being enough. Current desktop builds keep their claude.ai `sessionKey` in
-// MEMORY and only persist analytics/Cloudflare cookies, so the app's on-disk jar can
-// look signed-in yet carry no session at all. The browser that logged into claude.ai
-// does persist it (Chrome here), and keyflip already saves per-account snapshots of
-// those cookies as portable SQL (browser-sessions/<account>__<browser>.sql, the
-// encrypted_value bytes verbatim).
+// Why `chat.js` alone wasn't enough: Electron / Chromium keeps session cookies in memory
+// and only flushes them on a clean quit — current Claude desktop builds don't write
+// `sessionKey` to `<appData>/Cookies` at all, so reading only the app's DB failed both
+// for the live account (while the app was open) and for `--as <other>` (the snapshot
+// taken from that DB never had a `sessionKey` either).
 //
-// So a session is looked for, in order, in:
-//   live account   : desktop app DB -> any installed browser's claude.ai cookies
-//   --as <account> : that account's saved BROWSER snapshot (decrypts with that
-//                    browser's own key on THIS machine, touches no browser) ->
-//                    that account's saved desktop-app cookie snapshot
-//
-// Nothing here writes: `keyflip chat --as <account>` reads the other account's cloud
-// history without switching, clearing, or restoring anything.
+// Meanwhile a Chromium browser DOES write `sessionKey`, and keyflip already snapshots
+// those cookies as portable SQL (`browser-sessions/<account>__<browser>.sql`, the
+// `browser sync` feature). Reloading that SQL into a throwaway SQLite file and
+// decrypting with the browser's own Safe Storage / DPAPI key reads ANY captured account's
+// cloud history without switching, clearing, or restoring anything.
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -42,7 +37,7 @@ function snapshotsFor(ctx, account) {
   }
   const rows = [];
   files.forEach(function (f) {
-    const m = new RegExp('^' + account.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '__([a-z]+)\\.sql$').exec(f);
+    const m = new RegExp('^' + account.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '__([a-zA-Z0-9_-]+)\\.sql$').exec(f);
     if (!m) return;
     const p = path.join(dir, f);
     let st = null;
@@ -56,15 +51,6 @@ function snapshotsFor(ctx, account) {
   return rows.sort(function (a, b) {
     return b.mtime - a.mtime;
   });
-}
-
-// The snapshot stores whole INSERT statements. They are written with `.mode insert`,
-// which has NO column list, so the table is rebuilt from the explicit column list if the
-// file has one and otherwise from the live browser's own `cookies` schema (snapshots are
-// machine-bound anyway — they only decrypt with that browser's key on this machine). Then
-// the rows read back exactly like a live cookie DB.
-function shq(s) {
-  return "'" + String(s).replace(/'/g, "'\\''") + "'";
 }
 
 // How old a saved session is, on the user's own clock — a UTC stamp makes a capture from
@@ -99,6 +85,11 @@ function tableSchemaFrom(browserDb, runner) {
   }
 }
 
+// The snapshot stores whole INSERT statements. They are written with `.mode insert`,
+// which has NO column list, so the table is rebuilt from the explicit column list if the
+// file has one and otherwise from the live browser's own `cookies` schema (snapshots are
+// machine-bound anyway — they only decrypt with that browser's key on this machine).
+// Replay passes SQL via stdin directly to `sqlite3` (cross-platform: no POSIX `sh -c`).
 function snapshotToCookieRows(sqlFile, b, runner) {
   let text = '';
   try {
@@ -116,16 +107,16 @@ function snapshotToCookieRows(sqlFile, b, runner) {
   const tmp = path.join(os.tmpdir(), 'keyflip-snap-' + process.pid + '-' + Date.now() + '.db');
   try {
     let r = (runner || run)('sqlite3', [tmp, create]);
-    if (r.code !== 0) return null;
-    r = (runner || run)('sh', ['-c', 'sqlite3 ' + shq(tmp) + ' < ' + shq(sqlFile)]);
-    if (r.code !== 0) return null;
+    if (!r || r.code !== 0) return null;
+    r = (runner || run)('sqlite3', [tmp], text + '\n');
+    if (!r || r.code !== 0) return null;
     r = (runner || run)('sqlite3', [
       '-separator',
       '\x01',
-      'file:' + tmp + '?mode=ro',
+      chat.sqliteRoArg(tmp),
       'SELECT name,quote(encrypted_value) FROM ' + table + " WHERE host_key LIKE '%claude.ai';",
     ]);
-    if (r.code !== 0) return null;
+    if (!r || r.code !== 0) return null;
     return r.stdout;
   } finally {
     try {
@@ -145,16 +136,29 @@ function byId(list, id) {
 function findSession(ctx, opts) {
   opts = opts || {};
   const account = opts.account || null;
-  const browsers = opts.browsers || browser.installed(ctx.home);
+  const unprotect = opts.dpapi || (ctx && ctx.dpapi);
+  const browsers =
+    opts.browsers ||
+    browser.installed(ctx.home, {
+      platform: ctx && ctx.platform,
+      localAppData: (opts && opts.localAppData) || (ctx && ctx.localAppData),
+    });
+  const appBoundBrowsers = [];
   const readCookies =
     opts.readBrowserCookies ||
     function (b) {
-      return browser.readClaudeCookies(b, { run: opts.run });
+      return browser.readClaudeCookies(b, {
+        run: opts.run,
+        unprotect: unprotect,
+        onAppBound: function (br) {
+          appBoundBrowsers.push(br.name);
+        },
+      });
     };
   const keyFor =
     opts.browserKey ||
     function (b) {
-      return browser.safeKey(b, opts.run);
+      return browser.safeKey(b, { run: opts.run, unprotect: unprotect });
     };
 
   if (account) {
@@ -180,14 +184,32 @@ function findSession(ctx, opts) {
           org: parsed.org,
           source: 'saved ' + b.name + " session of '" + account + "' (" + stampLocal(s.mtime) + ')',
         };
-      notes.push('the saved ' + b.name + ' session has no claude.ai login cookie');
+      if (browser.hasAppBoundRows(rows)) {
+        notes.push(
+          'the saved ' + b.name + ' session uses Windows App-Bound Encryption (v20, unreadable outside ' + b.name + ')',
+        );
+      } else {
+        notes.push('the saved ' + b.name + ' session has no claude.ai login cookie');
+      }
     }
     // The desktop app's own snapshot still works on builds that persist it.
     try {
-      const ch = chat.cookieHeader(ctx, { account: account });
+      const ch = chat.cookieHeader(ctx, {
+        account: account,
+        dpapi: unprotect,
+        localStatePath: opts.localStatePath,
+        masterKey: opts.masterKey,
+        run: opts.run,
+      });
       return { cookie: ch.cookie, org: ch.org, source: "saved desktop-app login of '" + account + "'" };
     } catch (e) {
-      if (e && e.code !== 'cookies-not-flushed' && !/no saved desktop-app cookie/.test(String(e.message))) throw e;
+      if (
+        e &&
+        e.code !== 'cookies-not-flushed' &&
+        e.code !== 'app-bound-cookies' &&
+        !/no saved desktop-app cookie/.test(String(e.message))
+      )
+        throw e;
       notes.push('desktop-app snapshot: ' + e.message);
     }
     throw Object.assign(
@@ -209,7 +231,12 @@ function findSession(ctx, opts) {
   // Live account: the app first (unchanged behaviour when it works)...
   let appErr = null;
   try {
-    const ch = chat.cookieHeader(ctx);
+    const ch = chat.cookieHeader(ctx, {
+      dpapi: unprotect,
+      localStatePath: opts.localStatePath,
+      masterKey: opts.masterKey,
+      run: opts.run,
+    });
     return { cookie: ch.cookie, org: ch.org, source: 'the Claude desktop app' };
   } catch (e) {
     appErr = e;
@@ -226,13 +253,29 @@ function findSession(ctx, opts) {
     if (ck && hasSession(ck.cookie))
       return { cookie: ck.cookie, org: ck.org, source: b.name + ' (live browser session)' };
   }
+  const isWin = !!(ctx && ctx.platform === 'win32');
+  const quitHint = isWin ? 'Alt+F4 / File → Exit' : 'Cmd+Q';
+  const appBoundHint = appBoundBrowsers.length
+    ? ' (' +
+      appBoundBrowsers.join(', ') +
+      ' holds Windows v20 App-Bound cookies that cannot be decrypted outside the browser — sign into the Claude desktop app instead)'
+    : '';
   throw Object.assign(
     new Error(
       'no claude.ai session cookie found on this machine — the desktop app has not written one' +
-        (appErr && appErr.code === 'cookies-not-flushed' ? ' (it is held in memory: quit it with Cmd+Q once)' : '') +
-        ' and no installed browser is signed into claude.ai. Open claude.ai in a browser (or use `keyflip chat --flush`), then retry.',
+        (appErr && appErr.code === 'cookies-not-flushed'
+          ? ' (it is held in memory: quit it with ' + quitHint + ' once)'
+          : '') +
+        ' and no installed browser has a readable claude.ai session' +
+        appBoundHint +
+        '. Open claude.ai in a browser (or use `keyflip chat --flush`), then retry.',
     ),
-    { code: 'no-session' },
+    {
+      code:
+        appBoundBrowsers.length && (!appErr || appErr.code !== 'cookies-not-flushed')
+          ? 'app-bound-cookies'
+          : 'no-session',
+    },
   );
 }
 

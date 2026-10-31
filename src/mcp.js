@@ -2299,8 +2299,8 @@ const TOOLS = [
         loginmod.cliLogout(ctx);
         out.push('cli');
       }
-      if (surfaces.indexOf('browser') !== -1 && ctx.platform === 'darwin') {
-        browser.installed(ctx.home).forEach(function (b) {
+      if (surfaces.indexOf('browser') !== -1 && browser.supported(ctx.platform)) {
+        browser.installed(ctx.home, { platform: ctx.platform }).forEach(function (b) {
           const r = browser.clearClaudeCookies(b, {});
           if (r.ok) out.push('browser:' + b.id);
         });
@@ -2400,16 +2400,16 @@ const TOOLS = [
     name: 'keyflip_browser_status',
     title: 'Browser claude.ai account (Chrome extension)',
     description:
-      'macOS only. Which claude.ai account each Chromium browser (Chrome/Brave/Edge/Arc) is signed into, and whether it MATCHES the active CLI/desktop account. The Claude Chrome extension inherits the browser session, so a mismatch means its browser features cannot connect ("user mismatch"). Read-only.',
+      'macOS and Windows. Which claude.ai account each Chromium browser (Chrome/Brave/Edge/Arc) is signed into, and whether it MATCHES the active CLI/desktop account. The Claude Chrome extension inherits the browser session, so a mismatch means its browser features cannot connect ("user mismatch"). Read-only.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
     annotations: RO,
     run: async function (ctx) {
-      if (ctx.platform !== 'darwin') return { supported: false, reason: 'macOS-only' };
+      if (!browser.supported(ctx.platform)) return { supported: false, reason: 'macOS-and-Windows-only' };
       const st = loginmod.parseAuthStatus(
         exec.run('claude', ['auth', 'status'], undefined, { timeoutMs: 8000 }).stdout,
       );
       const activeOrg = st && st.orgId;
-      const browsers = browser.installed(ctx.home).map(function (b) {
+      const browsers = browser.installed(ctx.home, { platform: ctx.platform }).map(function (b) {
         const ck = browser.readClaudeCookies(b, {});
         return {
           id: b.id,
@@ -2426,7 +2426,7 @@ const TOOLS = [
     name: 'keyflip_browser_logout',
     title: 'Clear the browser claude.ai session',
     description:
-      'macOS only. Clears the claude.ai cookies from Chromium browsers so the user can sign in as the right account and the Claude extension reconnects. Backs up each Cookies DB (reversible) and REFUSES while the browser is running (the user must quit it first). Mutating — ask the user, then confirm=true. Optional browserId=chrome|brave|edge|arc.',
+      'macOS and Windows. Clears the claude.ai cookies from Chromium browsers so the user can sign in as the right account and the Claude extension reconnects. Backs up each Cookies DB (reversible) and REFUSES while the browser is running (the user must quit it first). Mutating — ask the user, then confirm=true. Optional browserId=chrome|brave|edge|arc.',
     inputSchema: {
       type: 'object',
       properties: { browserId: { type: 'string' }, confirm: confirmProp.confirm },
@@ -2436,8 +2436,8 @@ const TOOLS = [
     annotations: MUT,
     run: async function (ctx, args) {
       needConfirm(args);
-      if (ctx.platform !== 'darwin') throw new Error('browser logout is macOS-only');
-      const list = browser.installed(ctx.home).filter(function (b) {
+      if (!browser.supported(ctx.platform)) throw new Error('browser logout is supported on macOS and Windows only');
+      const list = browser.installed(ctx.home, { platform: ctx.platform }).filter(function (b) {
         return !args.browserId || b.id === args.browserId;
       });
       if (!list.length) throw new Error('no matching installed browser (chrome|brave|edge|arc)');
@@ -5149,7 +5149,7 @@ const TOOLS = [
     name: 'keyflip_browser_sync',
     title: "Align the browser to an account's saved session",
     description:
-      "macOS only. Restore an account's saved claude.ai browser session (captured during onboard/login) into the browser so the Claude extension reconnects as that account. Quits + reopens the browser. name defaults to the active account. Mutating — ask the user, then confirm=true.",
+      "macOS and Windows. Restore an account's saved claude.ai browser session (captured during onboard/login) into the browser so the Claude extension reconnects as that account. Quits + reopens the browser. name defaults to the active account. Mutating — ask the user, then confirm=true.",
     inputSchema: {
       type: 'object',
       properties: { name: { type: 'string' }, confirm: confirmProp.confirm },
@@ -5159,7 +5159,7 @@ const TOOLS = [
     annotations: MUT,
     run: async function (ctx, args) {
       needConfirm(args);
-      if (ctx.platform !== 'darwin') throw new Error('browser sync is macOS-only');
+      if (!browser.supported(ctx.platform)) throw new Error('browser sync is supported on macOS and Windows only');
       const name = args.name
         ? core.resolveProfile(ctx, String(args.name))
         : (function () {
@@ -5176,7 +5176,7 @@ const TOOLS = [
         });
       };
       const synced = [];
-      const list = browser.installed(ctx.home);
+      const list = browser.installed(ctx.home, { platform: ctx.platform });
       for (let i = 0; i < list.length; i++) {
         const b = list[i];
         const sql = browser.loadSession(ctx.configDir, name, b);
@@ -5192,7 +5192,7 @@ const TOOLS = [
         const r = browser.restoreClaudeCookies(b, sql, { force: true });
         if (r.ok) {
           synced.push(b.name);
-          if (wasRunning) exec.run('open', ['-a', b.proc]);
+          if (wasRunning) browser.reopen(b, exec.run);
         }
       }
       return { synced: synced, account: name };

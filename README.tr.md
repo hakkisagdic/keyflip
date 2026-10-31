@@ -21,9 +21,10 @@ Hesaplarınıza bir kez giriş yapın, sonra tekrar tekrar çıkış/giriş yapm
 > ve Windows'ta** çalışır (Linux'ta resmi masaüstü uygulaması yok). Uygulamanın
 > hesabını otomatik algılamanın artık bir **Windows yolu da var** (DPAPI + AES-GCM,
 > `src/wincrypt.js`, fixture-testli; kesin gerçek-kurulum yolları hâlâ cihazda
-> doğrulama bekliyor). Bir **tarayıcı** çözüyle (uygulamanın ya da claude.ai'a girişli
-> bir tarayıcının) çalışan `keyflip chat` şimdilik **yalnız macOS** — bkz.
-> [docs/PORTING.md](docs/PORTING.md).
+> doğrulama bekliyor). `claude.ai` çerezlerini (Claude Desktop veya Chrome/Edge/Brave/Arc
+> üzerinden) çözen `keyflip chat` ve `keyflip browser` artık **macOS ve Windows'ta**
+> çalışır (DPAPI + AES-256-GCM `v10`/`v11` bağlı ve fixture-testli; Chrome 127+ `v20`
+> App-Bound çerezleri açık yönlendirmeyle algılanır) — bkz. [docs/PORTING.md](docs/PORTING.md).
 
 ---
 

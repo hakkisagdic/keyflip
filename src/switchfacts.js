@@ -14,6 +14,7 @@ import * as chatsession from './chatsession.js';
 import * as oauth from './oauth.js';
 import * as policy from './policy.js';
 import * as verifymod from './verify.js';
+import * as _browser from './browser.js';
 import * as _browserswitch from './browserswitch.js';
 import * as _sessionage from './sessionage.js';
 
@@ -104,7 +105,7 @@ async function collect(ctx, name, opts) {
     opts.surfaces && opts.surfaces.browser === false
       ? null
       : safe(function () {
-          return ctx.platform === 'darwin'
+          return _browser.supported(ctx.platform)
             ? _browserswitch.preview(ctx, name, { explicit: !!opts.explicitBrowser })
             : null;
         }, null);

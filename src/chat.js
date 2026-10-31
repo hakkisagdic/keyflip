@@ -3,7 +3,7 @@
 // saved desktop-app cookie snapshot, see cookieHeader's `account` option).
 // Chat history is SERVER-SIDE, so this calls the (undocumented) claude.ai web API
 // using a claude.ai session cookie, decrypted from a Cookies DB with the Electron
-// safeStorage key.
+// safeStorage key (macOS Keychain PBKDF2+AES-128-CBC, or Windows Local State DPAPI+AES-256-GCM).
 //
 // Caveats (documented for the user): unofficial API that can change; requires a
 // FRESH Cloudflare clearance cookie (cf_clearance/__cf_bm) — it works reliably
@@ -15,21 +15,42 @@ import os from 'os';
 import path from 'path';
 import crypto from 'crypto';
 import { run } from './exec.js';
+import * as _win from './wincrypt.js';
 
-// The Electron safeStorage password (login Keychain), used to decrypt cookies.
+// The Electron safeStorage password (login Keychain), used to decrypt cookies on macOS.
 function safeStoragePassword(ctx) {
   if (ctx && ctx.safeStoragePassword) return ctx.safeStoragePassword;
   const r = run('/usr/bin/security', ['find-generic-password', '-s', 'Claude Safe Storage', '-a', 'Claude Key', '-w']);
   return r.code === 0 ? r.stdout.replace(/\r?\n$/, '') : null;
 }
 
+// Resolve the desktop app's cookie decryption key:
+//   win32  -> 32-byte Buffer (DPAPI-unprotected `os_crypt.encrypted_key` from Local State)
+//   darwin -> string password from Keychain (`Claude Safe Storage`)
+function desktopCookieKey(ctx, opts) {
+  opts = opts || {};
+  if (opts.masterKey && Buffer.isBuffer(opts.masterKey)) return opts.masterKey;
+  if (ctx && Buffer.isBuffer(ctx.masterKey)) return ctx.masterKey;
+  if (ctx && ctx.platform === 'win32') {
+    const lsPath =
+      opts.localStatePath || ctx.localStatePath || (ctx.appDataDir ? path.join(ctx.appDataDir, 'Local State') : null);
+    return _win.masterKeyFromFile(lsPath, {
+      unprotect: opts.dpapi || ctx.dpapi,
+      run: opts.run,
+    });
+  }
+  return safeStoragePassword(ctx);
+}
+
 const BROWSER_UA =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
 
-// Decrypt one Chromium cookie encrypted_value (macOS v10 scheme). Newer Chromium
-// prepends a 32-byte domain hash to the plaintext; strip it if the remainder is
-// printable. Returns null on non-printable/garbage.
-function decryptCookie(encBuf, password) {
+// Decrypt one Chromium cookie `encrypted_value`:
+//   • When `key` is a 32-byte Buffer (Windows DPAPI master key), uses AES-256-GCM (v10/v11).
+//   • When `key` is a string password (macOS Keychain Safe Storage), uses PBKDF2 + AES-128-CBC (v10).
+// Newer Chromium prepends a 32-byte domain hash to the plaintext; strip it when present.
+function decryptCookie(encBuf, password, opts) {
+  if (Buffer.isBuffer(password)) return _win.decryptCookie(encBuf, password, opts);
   try {
     if (encBuf.slice(0, 3).toString() !== 'v10') return null;
     const key = crypto.pbkdf2Sync(password, 'saltysalt', 1003, 16, 'sha1');
@@ -44,15 +65,27 @@ function decryptCookie(encBuf, password) {
   }
 }
 
+// SQLite read-only target: POSIX uses a `file:<tmp>?mode=ro` URI; Windows drive paths (`C:\...`)
+// are passed directly (we already copied to an isolated temp file, and raw backslashes break `file:` URIs).
+function sqliteRoArg(tmpPath) {
+  if (process.platform === 'win32' || /^[A-Za-z]:[\\/]/.test(String(tmpPath))) return tmpPath;
+  return 'file:' + tmpPath + '?mode=ro';
+}
+
 // Which Cookies DB to read for a claude.ai session:
-//   no account          -> the LIVE desktop-app DB
+//   no account          -> the LIVE desktop-app DB (`Network/Cookies` on Windows Electron if present, else `Cookies`)
 //   account: '<name>'   -> that profile's saved snapshot (app/<name>.cookies), so a
-//                          chat can be read WITHOUT switching surfaces. The snapshot
-//                          is only as fresh as the last time that account's app login
-//                          was flushed to disk (a clean quit, or a keyflip switch).
+//                          chat can be read WITHOUT switching surfaces.
 function cookiesDbFor(ctx, opts) {
   const account = opts && opts.account;
-  if (!account) return ctx.appDataDir ? path.join(ctx.appDataDir, 'Cookies') : null;
+  if (!account) {
+    if (!ctx || !ctx.appDataDir) return null;
+    if (ctx.platform === 'win32') {
+      const netCk = path.join(ctx.appDataDir, 'Network', 'Cookies');
+      if (fs.existsSync(netCk)) return netCk;
+    }
+    return path.join(ctx.appDataDir, 'Cookies');
+  }
   const snap = path.join(ctx.configDir, 'app', account + '.cookies');
   if (!fs.existsSync(snap))
     throw new Error(
@@ -68,10 +101,17 @@ function cookiesDbFor(ctx, opts) {
 // Build the claude.ai cookie header from a desktop-app Cookies DB.
 function cookieHeader(ctx, opts) {
   opts = opts || {};
-  const password = safeStoragePassword(ctx);
-  if (!password) throw new Error('cannot read the Electron safeStorage key (Keychain) — is the desktop app installed?');
+  const isWin = !!(ctx && ctx.platform === 'win32');
+  const runner = opts.run || run;
+  const key = desktopCookieKey(ctx, opts);
+  if (!key)
+    throw new Error(
+      isWin
+        ? 'cannot read the Claude desktop master key (Local State / DPAPI) — is the desktop app installed?'
+        : 'cannot read the Electron safeStorage key (Keychain) — is the desktop app installed?',
+    );
   const src = opts.cookiesFile || cookiesDbFor(ctx, opts);
-  if (!src) throw new Error('no Claude desktop app data directory (macOS only)');
+  if (!src) throw new Error('no Claude desktop app data directory (macOS/Windows only)');
   const tmp = path.join(os.tmpdir(), 'keyflip-ck-' + process.pid + '-' + Date.now() + '.db');
   try {
     fs.copyFileSync(src, tmp);
@@ -79,17 +119,26 @@ function cookieHeader(ctx, opts) {
     throw new Error('no desktop Cookies DB at ' + src + ' — sign into the Claude desktop app first');
   }
   try {
-    const r = run('sqlite3', [
+    const r = runner('sqlite3', [
       '-separator',
       '\x01',
-      'file:' + tmp + '?mode=ro',
+      sqliteRoArg(tmp),
       "SELECT name,quote(encrypted_value) FROM cookies WHERE host_key LIKE '%claude.ai';",
     ]);
-    if (r.code !== 0) throw new Error('could not read cookies (sqlite3): ' + (r.stderr || r.code));
+    if (!r || r.code !== 0) {
+      const missingCli = r && r.error && r.error.code === 'ENOENT';
+      throw new Error(
+        'could not read cookies (sqlite3): ' +
+          (missingCli
+            ? 'sqlite3 CLI is not in PATH' + (isWin ? ' (install with: winget install SQLite.SQLite)' : '')
+            : (r && r.stderr) || (r && r.code)),
+      );
+    }
     const pairs = [];
     const names = Object.create(null);
     let org = null;
-    r.stdout
+    let sawAppBound = false;
+    String(r.stdout || '')
       .trim()
       .split('\n')
       .forEach(function (line) {
@@ -97,23 +146,40 @@ function cookieHeader(ctx, opts) {
         if (i === -1) return;
         const name = line.slice(0, i);
         const hex = line.slice(i + 1).replace(/^X'|'$/g, '');
-        const val = decryptCookie(Buffer.from(hex, 'hex'), password);
-        if (val == null) return;
+        const rawBuf = Buffer.from(hex, 'hex');
+        const val = decryptCookie(rawBuf, key);
+        if (val == null) {
+          if (_win.isAppBoundCookie(rawBuf)) sawAppBound = true;
+          return;
+        }
         pairs.push(name + '=' + val);
         names[name] = true;
         if (name === 'lastActiveOrg') org = val;
       });
-    if (!pairs.length) throw new Error('no readable claude.ai cookies (not signed in?)');
+    if (!pairs.length) {
+      if (sawAppBound)
+        throw Object.assign(
+          new Error(
+            'cookies use Windows App-Bound Encryption (v20) and cannot be decrypted by a user process — use the Claude desktop app (v10) or a browser without v20 enforcement',
+          ),
+          { code: 'app-bound-cookies' },
+        );
+      throw new Error('no readable claude.ai cookies (not signed in?)');
+    }
     // Chromium keeps the CURRENT session in memory and only writes it out on a clean
     // quit, so a live app's DB can hold no sessionKey at all. Say what to do about it
     // instead of letting the API answer 403 and looking like a broken login.
-    if (!names.sessionKey && !names.sessionKeyV3)
+    if (!names.sessionKey && !names.sessionKeyV3) {
+      const quitHint = isWin ? '(Alt+F4 / File → Exit)' : '(Cmd+Q)';
       throw Object.assign(
         new Error(
-          'the Claude desktop app has not written its session cookie to disk yet (it is held in memory) — quit the app once (Cmd+Q) and retry, or run `keyflip chat --flush`',
+          'the Claude desktop app has not written its session cookie to disk yet (it is held in memory) — quit the app once ' +
+            quitHint +
+            ' and retry, or run `keyflip chat --flush`',
         ),
         { code: 'cookies-not-flushed' },
       );
+    }
     return { cookie: pairs.join('; '), org: org, names: names };
   } finally {
     try {
@@ -415,7 +481,9 @@ export {
   resolveConversation,
   cookieHeader,
   cookiesDbFor,
+  desktopCookieKey,
   decryptCookie,
+  sqliteRoArg,
   activeOrg,
   headers,
   listLocal,

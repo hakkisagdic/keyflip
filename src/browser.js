@@ -1,65 +1,128 @@
-// Phase 2/3: read and manage the BROWSER's claude.ai session. The Claude Chrome
-// extension has NO login of its own — it inherits the browser's claude.ai cookies.
+// Phase 2/3: Chromium browser claude.ai session inspection + reset + snapshot/restore.
 // The native-messaging bridge rejects the connection ("Invalid token or user
 // mismatch") when the browser's claude.ai account != the active CLI/desktop
 // account. So keyflip must see, and be able to reset, the browser session too.
 //
-// Cookie decryption reuses chat.js's Chromium v10 scheme, but with each BROWSER's
-// own "Safe Storage" Keychain key (Chrome/Brave/Edge/Arc), not Claude's.
+// Cookie decryption reuses chat.js's polymorphic decryptCookie:
+//   • macOS: Keychain `<Browser> Safe Storage` password → PBKDF2 + AES-128-CBC (`v10`).
+//   • Windows: `<User Data>\Local State` `os_crypt.encrypted_key` → DPAPI + AES-256-GCM (`v10`/`v11`).
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { run } from './exec.js';
-import { decryptCookie } from './chat.js';
+import { decryptCookie, sqliteRoArg } from './chat.js';
+import * as _win from './wincrypt.js';
 
-// Known Chromium browsers: default-profile Cookies DB, the macOS login-Keychain
-// service/account that holds their cookie key, and the process name (for the
-// "is it running?" guard before we touch the on-disk Cookies DB).
+function supported(platform) {
+  return platform === 'darwin' || platform === 'win32';
+}
+
+function winLocalAppData(home, opts) {
+  if (opts && opts.localAppData) return opts.localAppData;
+  if (process.env.LOCALAPPDATA) {
+    try {
+      if (!home || path.resolve(home) === path.resolve(os.homedir())) return process.env.LOCALAPPDATA;
+    } catch (e) {
+      /* fall back to home-relative path */
+    }
+  }
+  return path.join(home, 'AppData', 'Local');
+}
+
+// Known Chromium browsers: default-profile Cookies DB, OS key source, and process name.
 //
 // One Chromium profile holds exactly ONE claude.ai account, so a user who wants two
 // accounts live at once needs two profiles. `catalog` therefore expands each browser
 // into one entry per profile it finds in Local State (`Default` keeps the bare id,
 // so existing captures and tests are untouched); the REST of keyflip (snapshot
 // store, switch leg, chat reads) already keys everything by browser id.
-function catalog(home) {
-  const AS = path.join(home, 'Library', 'Application Support');
-  const base = {
-    chrome: {
-      id: 'chrome',
-      name: 'Chrome',
-      dataDir: path.join(AS, 'Google', 'Chrome'),
-      service: 'Chrome Safe Storage',
-      account: 'Chrome',
-      proc: 'Google Chrome',
-    },
-    brave: {
-      id: 'brave',
-      name: 'Brave',
-      dataDir: path.join(AS, 'BraveSoftware', 'Brave-Browser'),
-      service: 'Brave Safe Storage',
-      account: 'Brave',
-      proc: 'Brave Browser',
-    },
-    edge: {
-      id: 'edge',
-      name: 'Edge',
-      dataDir: path.join(AS, 'Microsoft Edge'),
-      service: 'Microsoft Edge Safe Storage',
-      account: 'Microsoft Edge',
-      proc: 'Microsoft Edge',
-    },
-    arc: {
-      id: 'arc',
-      name: 'Arc',
-      dataDir: path.join(AS, 'Arc', 'User Data'),
-      service: 'Arc Safe Storage',
-      account: 'Arc',
-      proc: 'Arc',
-    },
-  };
+//
+// `opts` defaults `platform` to `'darwin'` when omitted so existing unit tests calling
+// `catalog('/Users/x')` behave identically on macOS, Linux, and Windows CI runners;
+// runtime callers pass `{ platform: ctx.platform }`.
+function catalog(home, opts) {
+  const o = typeof opts === 'string' ? { platform: opts } : opts || {};
+  const platform = o.platform || 'darwin';
+  const exists = o.exists || fs.existsSync;
+  let base;
+  if (platform === 'win32') {
+    const LA = winLocalAppData(home, o);
+    const msixArc = path.join(
+      LA,
+      'Packages',
+      'TheBrowserCompany.Arc_ttt1ap7aakyb4',
+      'LocalCache',
+      'Local',
+      'Arc',
+      'User Data',
+    );
+    const plainArc = path.join(LA, 'Arc', 'User Data');
+    base = {
+      chrome: {
+        id: 'chrome',
+        name: 'Chrome',
+        dataDir: path.join(LA, 'Google', 'Chrome', 'User Data'),
+        proc: 'chrome.exe',
+      },
+      brave: {
+        id: 'brave',
+        name: 'Brave',
+        dataDir: path.join(LA, 'BraveSoftware', 'Brave-Browser', 'User Data'),
+        proc: 'brave.exe',
+      },
+      edge: {
+        id: 'edge',
+        name: 'Edge',
+        dataDir: path.join(LA, 'Microsoft', 'Edge', 'User Data'),
+        proc: 'msedge.exe',
+      },
+      arc: {
+        id: 'arc',
+        name: 'Arc',
+        dataDir: exists(msixArc) ? msixArc : plainArc,
+        proc: 'Arc.exe',
+      },
+    };
+  } else {
+    const AS = path.join(home, 'Library', 'Application Support');
+    base = {
+      chrome: {
+        id: 'chrome',
+        name: 'Chrome',
+        dataDir: path.join(AS, 'Google', 'Chrome'),
+        service: 'Chrome Safe Storage',
+        account: 'Chrome',
+        proc: 'Google Chrome',
+      },
+      brave: {
+        id: 'brave',
+        name: 'Brave',
+        dataDir: path.join(AS, 'BraveSoftware', 'Brave-Browser'),
+        service: 'Brave Safe Storage',
+        account: 'Brave',
+        proc: 'Brave Browser',
+      },
+      edge: {
+        id: 'edge',
+        name: 'Edge',
+        dataDir: path.join(AS, 'Microsoft Edge'),
+        service: 'Microsoft Edge Safe Storage',
+        account: 'Microsoft Edge',
+        proc: 'Microsoft Edge',
+      },
+      arc: {
+        id: 'arc',
+        name: 'Arc',
+        dataDir: path.join(AS, 'Arc', 'User Data'),
+        service: 'Arc Safe Storage',
+        account: 'Arc',
+        proc: 'Arc',
+      },
+    };
+  }
   const out = {};
   Object.keys(base).forEach(function (k) {
-    withProfiles(base[k]).forEach(function (entry) {
+    withProfiles(base[k], platform, exists).forEach(function (entry) {
       out[entry.id] = entry;
     });
   });
@@ -69,10 +132,11 @@ function catalog(home) {
 // The local profile directories a Chromium browser has (from Local State's info_cache),
 // `Default` first. A missing/unreadable Local State degrades to `Default` alone — the
 // pre-profile behaviour — so this can never hide a browser that used to be found.
-function withProfiles(b) {
+function withProfiles(b, platform, exists) {
   let labels = {};
+  const localState = path.join(b.dataDir, 'Local State');
   try {
-    const st = JSON.parse(fs.readFileSync(path.join(b.dataDir, 'Local State'), 'utf8'));
+    const st = JSON.parse(fs.readFileSync(localState, 'utf8'));
     labels = (st && st.profile && st.profile.info_cache) || {};
   } catch (e) {
     labels = {}; /* no Local State → just Default */
@@ -90,13 +154,24 @@ function withProfiles(b) {
     const id = i === 0 ? b.id : b.id + '-' + String(p).replace(/[^A-Za-z0-9]+/g, '-');
     // `Default` is commonly named "Person 1"; the human label only disambiguates the others.
     const label = labels[p] && labels[p].name ? labels[p].name : p;
+    const profileDir = path.join(b.dataDir, p);
+    let cookies = path.join(profileDir, 'Cookies');
+    if (platform === 'win32') {
+      const netCookies = path.join(profileDir, 'Network', 'Cookies');
+      // Modern Chromium on Windows keeps Cookies under `<Profile>\Network\Cookies`; fall back to
+      // `<Profile>\Cookies` only when a legacy/flat fixture exists without `Network\Cookies`.
+      cookies = !exists(netCookies) && exists(cookies) ? cookies : netCookies;
+    }
     return {
       id: id,
       name: i === 0 ? b.name : b.name + ' (' + label + ')',
+      platform: platform,
       profile: p,
+      profileDir: profileDir,
       dataDir: b.dataDir,
-      cookies: path.join(b.dataDir, p, 'Cookies'),
-      service: b.service, // every profile of a browser shares its Safe Storage key
+      localState: localState,
+      cookies: cookies,
+      service: b.service, // every profile of a browser shares its Safe Storage / Local State key
       account: b.account,
       proc: b.proc,
     };
@@ -107,7 +182,7 @@ function withProfiles(b) {
 function installed(home, opts) {
   opts = opts || {};
   const exists = opts.exists || fs.existsSync;
-  const all = catalog(home);
+  const all = catalog(home, opts);
   return Object.keys(all)
     .map(function (k) {
       return all[k];
@@ -117,22 +192,73 @@ function installed(home, opts) {
     });
 }
 
-// The browser's cookie-encryption key from the login Keychain (macOS).
-function safeKey(b, runner) {
-  const r = (runner || run)('/usr/bin/security', ['find-generic-password', '-s', b.service, '-a', b.account, '-w']);
+// The browser's cookie-encryption key:
+//   • macOS: login Keychain string password (`security find-generic-password`)
+//   • Windows: 32-byte AES-256 master key Buffer from `<dataDir>\Local State` via DPAPI
+// Second argument accepts either a `runner` function (legacy callers) or `{ run, unprotect }`.
+function safeKey(b, runnerOrOpts) {
+  const opts = typeof runnerOrOpts === 'function' ? { run: runnerOrOpts } : runnerOrOpts || {};
+  const runner = opts.run || run;
+  if (b && b.platform === 'win32') {
+    const lsPath = b.localState || (b.dataDir ? path.join(b.dataDir, 'Local State') : null);
+    return _win.masterKeyFromFile(lsPath, { run: runner, unprotect: opts.unprotect });
+  }
+  const r = runner('/usr/bin/security', ['find-generic-password', '-s', b.service, '-a', b.account, '-w']);
   return r && r.code === 0 ? String(r.stdout).replace(/\r?\n$/, '') : null;
 }
 
 // Is the browser running? Writing its on-disk Cookies DB while it runs is unsafe
 // (Chromium keeps cookies in memory and rewrites on exit), so callers guard on it.
 function isRunning(b, runner) {
-  const r = (runner || run)('/usr/bin/pgrep', ['-x', b.proc]);
+  const execRun = runner || run;
+  if (b && b.platform === 'win32') {
+    const r = execRun('tasklist', ['/FI', 'IMAGENAME eq ' + b.proc, '/NH']);
+    return !!(
+      r &&
+      r.code === 0 &&
+      String(r.stdout || '')
+        .toLowerCase()
+        .indexOf(String(b.proc).toLowerCase()) !== -1
+    );
+  }
+  const r = execRun('/usr/bin/pgrep', ['-x', b.proc]);
   return !!(r && r.code === 0 && String(r.stdout).trim());
 }
 
-// Gracefully quit the browser (macOS) so its Cookies DB unlocks and we can clear it.
+// Gracefully quit the browser so its Cookies DB unlocks and we can clear/restore it.
 function quit(b, runner) {
-  return (runner || run)('/usr/bin/osascript', ['-e', 'tell application "' + b.proc + '" to quit']);
+  const execRun = runner || run;
+  if (b && b.platform === 'win32') {
+    // Graceful WM_CLOSE (no `/F`) so Chromium flushes cookies and preserves session state.
+    return execRun('taskkill', ['/IM', b.proc]);
+  }
+  return execRun('/usr/bin/osascript', ['-e', 'tell application "' + b.proc + '" to quit']);
+}
+
+// Relaunch a browser after a cookie sync.
+function reopen(b, runner) {
+  const execRun = runner || run;
+  if (b && b.platform === 'win32') {
+    return execRun('cmd', ['/c', 'start', '', b.proc]);
+  }
+  return execRun('open', ['-a', b.proc]);
+}
+
+// True if any sqlite `name\x01X'hex'` row carries a Windows `v20` App-Bound Encryption prefix.
+function hasAppBoundRows(stdout) {
+  return String(stdout || '')
+    .trim()
+    .split('\n')
+    .some(function (line) {
+      const i = line.indexOf('\x01');
+      if (i === -1) return false;
+      const hex = line.slice(i + 1).replace(/^X'|'$/g, '');
+      try {
+        return _win.isAppBoundCookie(Buffer.from(hex, 'hex'));
+      } catch (e) {
+        return false;
+      }
+    });
 }
 
 // Read + decrypt this browser's claude.ai cookies. Returns { cookie, org } | null,
@@ -140,7 +266,7 @@ function quit(b, runner) {
 function readClaudeCookies(b, opts) {
   opts = opts || {};
   const runner = opts.run || run;
-  const key = opts.key || safeKey(b, runner);
+  const key = opts.key || safeKey(b, { run: runner, unprotect: opts.unprotect });
   if (!key) return null;
   const tmp = path.join(os.tmpdir(), 'keyflip-bck-' + process.pid + '-' + b.id + '.db');
   try {
@@ -152,11 +278,13 @@ function readClaudeCookies(b, opts) {
     const r = runner('sqlite3', [
       '-separator',
       '\x01',
-      'file:' + tmp + '?mode=ro',
+      sqliteRoArg(tmp),
       "SELECT name,quote(encrypted_value) FROM cookies WHERE host_key LIKE '%claude.ai';",
     ]);
     if (!r || r.code !== 0) return null;
-    return parseCookieRows(r.stdout, key);
+    const parsed = parseCookieRows(r.stdout, key);
+    if (!parsed && opts.onAppBound && hasAppBoundRows(r.stdout)) opts.onAppBound(b);
+    return parsed;
   } finally {
     try {
       fs.rmSync(tmp, { force: true });
@@ -209,7 +337,7 @@ function snapshotClaudeCookies(b, opts) {
     const r = runner('sqlite3', [
       '-cmd',
       '.mode insert cookies',
-      'file:' + tmp + '?mode=ro',
+      sqliteRoArg(tmp),
       "SELECT * FROM cookies WHERE host_key LIKE '%claude.ai';",
     ]);
     if (!r || r.code !== 0) return null;
@@ -296,6 +424,7 @@ function loadSession(configDir, name, b) {
 }
 
 export {
+  supported,
   catalog,
   installed,
   sessionStorePath,
@@ -304,6 +433,8 @@ export {
   safeKey,
   isRunning,
   quit,
+  reopen,
+  hasAppBoundRows,
   readClaudeCookies,
   parseCookieRows,
   clearClaudeCookies,

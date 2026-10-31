@@ -21,9 +21,11 @@ Log in to several accounts once, then hop between them without repeatedly loggin
 > they run on **macOS and Windows** (Linux has no official desktop app).
 > Auto-detecting the app's account now has a **Windows path too** (DPAPI +
 > AES-GCM via `src/wincrypt.js`, fixture-tested; the exact real-install paths
-> still need on-device validation). `keyflip chat`, which decrypts a **browser**
-> cookie (the desktop app's, or a browser signed into claude.ai), is **macOS-only**
-> for now — see [docs/PORTING.md](docs/PORTING.md).
+> still need on-device validation). `keyflip chat` and `keyflip browser` (which
+> decrypt `claude.ai` cookies from Claude Desktop or Chrome/Edge/Brave/Arc) now
+> run on **macOS and Windows** (DPAPI + AES-256-GCM `v10`/`v11` wired and
+> fixture-tested; Chrome 127+ `v20` App-Bound cookies are detected with guidance)
+> — see [docs/PORTING.md](docs/PORTING.md).
 
 ---
 

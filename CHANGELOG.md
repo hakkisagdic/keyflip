@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Windows Chromium & Electron cookie decryption for `keyflip chat` and `keyflip browser` (#110).**
+  Wires `src/wincrypt.js` (DPAPI `Local State` master-key unprotect + `v10`/`v11` AES-256-GCM cookie
+  decryption, including Chromium 130+ 32-byte `SHA-256(host_key)` prefix stripping without
+  truncating legacy tokens) into `chat.js`, `chatsession.js`, `browser.js`, `browserswitch.js`,
+  `switchfacts.js`, the CLI, and the MCP `keyflip_browser_*` tools. Discovers Chrome, Edge, Brave,
+  and Arc profiles under `%LOCALAPPDATA%` (`<Profile>\\Network\\Cookies`), replays `.sql` browser
+  snapshots cross-platform without POSIX `sh`, and detects Chrome 127+ `v20` App-Bound Encryption
+  with actionable guidance.
+
 ## [1.6.1] - 2026-10-31
 
 ### Fixed
