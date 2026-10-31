@@ -68,6 +68,7 @@ function run(home, args, extraEnv) {
         XDG_CONFIG_HOME: path.join(home, '.config'),
         KEYFLIP_CONFIG_DIR: path.join(home, '.config', 'keyflip'), // same tree on every OS
         APPDATA: path.join(home, 'AppData', 'Roaming'),
+        LOCALAPPDATA: path.join(home, 'AppData', 'Local'),
         KEYFLIP_TEST_CLAUDE: 'stopped',
       },
       extraEnv || {},
@@ -240,9 +241,9 @@ test('--only picks the surfaces a switch moves, and rejects anything it does not
   // --only browser with no Chromium jar on this (temp) HOME: explicit, non-zero, nothing written.
   const b4 = snapshotTree(home);
   const br = run(home, ['alice', '--only', 'browser']);
-  if (process.platform === 'darwin') {
+  if (process.platform === 'darwin' || process.platform === 'win32') {
     assert.strictEqual(br.status, 1, br.stdout + br.stderr);
     assert.match(br.stdout, /No Chromium browser with a claude.ai cookie jar/);
-  } else assert.match(br.stderr, /macOS-only/);
+  } else assert.match(br.stderr, /macOS and Windows only/);
   assert.deepStrictEqual(snapshotTree(home), b4);
 });
