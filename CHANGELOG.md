@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.6.1] - 2026-10-31
+
 ### Fixed
 
 - **`keyflip refresh --daemon-start` actually boots instead of crash-looping under `launchd`.**
@@ -23,6 +25,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `surfaces/kiro/.bin/` (the compiled Keychain helper cache) as an `orphan-capture` account named
   `.bin`. `test/profiles.test.js` now derives its reserved-receipt assertion directly from
   `schedule.JOBS`.
+
+- **Cross-platform test runner (`test/run.js`).** `npm test` now discovers `test/*.test.js` and
+  `issuer/{,adapters/}*.test.js` in Node instead of relying on shell/CLI globs, avoiding Gradle's
+  generated HTML report (`jetbrains-keyflip/build/.../report.js`) while staying compatible with
+  Node 20, Node 22, Node 24 and Windows `cmd.exe`.
 
 ## [1.6.0] - 2026-10-30
 
@@ -1344,7 +1351,8 @@ is now folded into the Tooling section below, under a wrong date.
 
 Earlier history is not recorded in this file.
 
-[Unreleased]: https://github.com/hakkisagdic/keyflip/compare/v1.6.0...HEAD
+[Unreleased]: https://github.com/hakkisagdic/keyflip/compare/v1.6.1...HEAD
+[1.6.1]: https://github.com/hakkisagdic/keyflip/compare/v1.6.0...v1.6.1
 [1.6.0]: https://github.com/hakkisagdic/keyflip/compare/v1.5.7...v1.6.0
 [1.5.7]: https://github.com/hakkisagdic/keyflip/compare/v1.5.6...v1.5.7
 [1.5.2]: https://github.com/hakkisagdic/keyflip/compare/v1.5.0...v1.5.2
