@@ -49,6 +49,10 @@ const RESERVED_FILES = [
   'secrets-policy',
   'session-accounts-source',
   'prices-cache',
+  'conv-index-schedule',
+  'refresh-daemon-schedule',
+  'refresh-metrics',
+  'expired-captures',
 ];
 
 function metaPath(dir, name) {

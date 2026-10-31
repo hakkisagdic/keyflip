@@ -19,6 +19,8 @@ const DERIVED = [
   '.usage-cache.json', // cached usage probe
   '.update-check.json', // "new version?" throttle stamp
   'prices-cache.json', // refreshed model price table (cost prices --refresh)
+  'refresh-metrics.json', // daemon tick counters
+  'expired-captures.json', // daemon expired-capture warning marker
   { name: 'logs', dir: true },
 ];
 

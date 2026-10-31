@@ -182,3 +182,41 @@ test('tick warns about expired non-refreshable captures once per set', async fun
   assert.ok(fs.existsSync(marker));
   assert.deepStrictEqual(JSON.parse(fs.readFileSync(marker, 'utf8')), ['deadacct']);
 });
+
+test('bin/keyflip-refresh.js boots cleanly and logs its initial tick', async function () {
+  const { spawn } = await import('node:child_process');
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'kf-daemon-bin-'));
+  const configDir = path.join(home, '.config', 'keyflip');
+  fs.mkdirSync(configDir, { recursive: true });
+  const binPath = path.resolve('bin', 'keyflip-refresh.js');
+  const out = await new Promise(function (resolve, reject) {
+    const child = spawn(process.execPath, [binPath], {
+      env: Object.assign({}, process.env, { HOME: home, KEYFLIP_CONFIG_DIR: configDir, KEYFLIP_VCS: 'off' }),
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let stdout = '';
+    let stderr = '';
+    const timer = setTimeout(function () {
+      child.kill('SIGTERM');
+      reject(new Error('daemon bin timed out; stdout=' + stdout + ' stderr=' + stderr));
+    }, 5000);
+    child.stdout.on('data', function (chunk) {
+      stdout += chunk.toString('utf8');
+      if (stdout.indexOf('[refresh] Starting token refresh daemon') !== -1) {
+        clearTimeout(timer);
+        child.kill('SIGTERM');
+        resolve({ stdout: stdout, stderr: stderr });
+      }
+    });
+    child.stderr.on('data', function (chunk) {
+      stderr += chunk.toString('utf8');
+    });
+    child.on('exit', function (code, sig) {
+      if (sig === 'SIGTERM') return;
+      clearTimeout(timer);
+      reject(new Error('daemon bin exited early (code=' + code + '): ' + stderr));
+    });
+  });
+  assert.match(out.stdout, /Starting token refresh daemon/);
+  assert.strictEqual(out.stderr, '');
+});

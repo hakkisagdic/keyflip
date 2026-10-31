@@ -66,12 +66,20 @@ test('schedule receipts are machine-local and never versioned', function (t) {
     '{"job":"dream","provider":"ollama","at":{"h":3,"m":0}}',
   );
   fs.writeFileSync(path.join(ctx.configDir, 'refresh-schedule.json'), '{"job":"refresh","kind":"launchd"}');
+  fs.writeFileSync(path.join(ctx.configDir, 'refresh-daemon-schedule.json'), '{"job":"daemon","kind":"launchd"}');
+  fs.writeFileSync(path.join(ctx.configDir, 'conv-index-schedule.json'), '{"job":"conv","kind":"launchd"}');
+  fs.writeFileSync(path.join(ctx.configDir, 'refresh-metrics.json'), '{"version":1}');
+  fs.writeFileSync(path.join(ctx.configDir, 'expired-captures.json'), '[]');
   assert.strictEqual(vcs.ensureRepo(ctx), true);
   vcs.autoCommit(ctx, 'install schedules');
   const files = tracked(ctx.configDir);
   assert.ok(files.indexOf('work.json') !== -1, 'accounts are still versioned');
   assert.strictEqual(files.indexOf('dream-schedule.json'), -1, 'the dream receipt stays local');
   assert.strictEqual(files.indexOf('refresh-schedule.json'), -1, 'the refresh receipt stays local');
+  assert.strictEqual(files.indexOf('refresh-daemon-schedule.json'), -1, 'the daemon receipt stays local');
+  assert.strictEqual(files.indexOf('conv-index-schedule.json'), -1, 'the conv receipt stays local');
+  assert.strictEqual(files.indexOf('refresh-metrics.json'), -1, 'daemon metrics stay local');
+  assert.strictEqual(files.indexOf('expired-captures.json'), -1, 'expired-captures marker stays local');
 });
 
 test('autoCommit records a change; log lists it; nothing-to-commit is a no-op', function (t) {

@@ -345,6 +345,7 @@ function collect(ctx) {
     const tdir = path.join(sdir, tool);
     if (!isDir(tdir)) return;
     readdir(tdir).forEach(function (acct) {
+      if (acct.charAt(0) === '.') return; // internal helper dirs (e.g. surfaces/kiro/.bin)
       const adir = path.join(tdir, acct);
       if (!isDir(adir)) return;
       readdir(adir).forEach(function (f) {

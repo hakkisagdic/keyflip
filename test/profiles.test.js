@@ -71,14 +71,18 @@ test('isValidName rejects reserved, traversal, and flag-like names', function ()
 test('a top-level state file is never listed as an account', function () {
   const dir = tmpdir();
   profiles.write(dir, { name: 'alice', email: 'a@x.com' });
-  const stateFiles = [
-    schedule.RECORD_NAME,
-    schedule.REFRESH_RECORD_NAME,
-    secretpolicy.FILE_NAME,
-    // proxy-routes.json is user-authored routing config; it lives at the top
-    // level so it must be reserved or it shows up as an account (#4).
-    proxyroutes.FILE_NAME.replace(/\.json$/, ''),
-  ];
+  const stateFiles = Object.keys(schedule.JOBS)
+    .map(function (k) {
+      return schedule.JOBS[k].record;
+    })
+    .concat([
+      secretpolicy.FILE_NAME,
+      'refresh-metrics.json',
+      'expired-captures.json',
+      // proxy-routes.json is user-authored routing config; it lives at the top
+      // level so it must be reserved or it shows up as an account (#4).
+      proxyroutes.FILE_NAME,
+    ]);
   stateFiles.forEach(function (n) {
     fs.writeFileSync(path.join(dir, n), JSON.stringify({ installedAt: 'now', job: 'nightly' }), { mode: 0o600 });
   });

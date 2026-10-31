@@ -2,7 +2,7 @@
 // keyflip-refresh — background token refresh daemon for keyflip.
 // Runs as a launchd KeepAlive process, checking credential expiry every 5 minutes
 // and proactively refreshing tools that support it (Antigravity, ChatGPT).
-import { createContext } from '../src/ctx.js';
+import { createContext } from '../src/context.js';
 import { startDaemon } from '../src/refresh.js';
 
 const ctx = createContext();

@@ -27,6 +27,10 @@ const GITIGNORE = ['# keyflip: NEVER version secrets — they live in the OS cre
     // loses nothing except the false green.
     'dream-schedule.json',
     'refresh-schedule.json',
+    'refresh-daemon-schedule.json',
+    'conv-index-schedule.json',
+    'refresh-metrics.json',
+    'expired-captures.json',
     'backups/',
     'skill-backups/',
     // B1/B2 archive store: gunzip-able CHAT HISTORY, not config. A transcript can contain anything

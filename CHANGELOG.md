@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`keyflip refresh --daemon-start` actually boots instead of crash-looping under `launchd`.**
+  `bin/keyflip-refresh.js` imported `createContext` from `../src/ctx.js` (the file is
+  `src/context.js`), so `launchd` respawned a failing `ERR_MODULE_NOT_FOUND` process every 10
+  seconds while `daemon-status` saw the loaded label and reported `running`. A spawn test now
+  boots `bin/keyflip-refresh.js` end-to-end.
+
+- **Schedule receipts, daemon metrics and Kiro's `.bin` helper directory no longer masquerade as
+  phantom accounts.** `conv-index-schedule.json`, `refresh-daemon-schedule.json`,
+  `refresh-metrics.json` and `expired-captures.json` live at the top of `<configDir>` and were
+  missing from `profiles.RESERVED_FILES` (and `vcs.js` `.gitignore`), inflating account counts and
+  raising bogus `uncaptured-account` warnings in `keyflip chains`; `chains` also treated
+  `surfaces/kiro/.bin/` (the compiled Keychain helper cache) as an `orphan-capture` account named
+  `.bin`. `test/profiles.test.js` now derives its reserved-receipt assertion directly from
+  `schedule.JOBS`.
+
 ## [1.6.0] - 2026-10-30
 
 ### Added

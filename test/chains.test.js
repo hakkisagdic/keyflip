@@ -573,3 +573,17 @@ test('the MCP surface exposes the map read-only and the chmod only behind confir
   assert.strictEqual(fixed.remaining, 0);
   assert.strictEqual(fs.statSync(path.join(ctx.configDir, 'browser-sessions', 'work__chrome.sql')).mode & 0o777, 0o600);
 });
+
+test('dot-prefixed helper dirs under surfaces/<tool>/ are never reported as orphan accounts', function () {
+  const ctx = mkctx();
+  inRepo(ctx, 'surfaces/kiro/.bin/kfkc', { mode: 0o700, content: 'bin' });
+  inRepo(ctx, 'surfaces/kiro/.bin/kfkc.c', { mode: 0o600, content: '/* c */' });
+  const c = chains.chains(ctx, {});
+  assert.strictEqual(
+    c.accounts.some(function (a) {
+      return a.name === '.bin';
+    }),
+    false,
+  );
+  assert.strictEqual(risksOf(c, 'orphan-capture').length, 0);
+});
