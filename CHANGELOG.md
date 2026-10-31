@@ -18,6 +18,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   snapshots cross-platform without POSIX `sh`, and detects Chrome 127+ `v20` App-Bound Encryption
   with actionable guidance.
 
+### Fixed
+
+- **Managed third-party surface accounts no longer trigger false `orphan-capture` warnings in `keyflip chains`.**
+  Accounts captured under `surfaces/codex/<slug>/`, `surfaces/kiro/<slug>/`, and
+  `surfaces/command-code/<slug>/` carry their own secret-free `meta.json` and are listed by their
+  respective surface commands (`keyflip chatgpt list`, `keyflip kiro list`,
+  `keyflip commandcode list`) even when no Claude `<configDir>/<slug>.json` profile exists.
+  `chains.js` now classifies those `meta.json` files as `identity-metadata` (`secret: false`) and
+  only flags `orphan-capture` when a capture lacks the profile metadata for its own surface.
+
 ## [1.6.1] - 2026-10-31
 
 ### Fixed

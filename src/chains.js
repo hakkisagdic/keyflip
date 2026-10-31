@@ -68,6 +68,14 @@ const KINDS = Object.freeze({
 // A capture of one of these sources competes with every other capture of the same source.
 const SINGLE_TENANT = ['live-credential', 'session-cookie-db', 'browser-cookie-db'];
 
+// Managed third-party surface adapters that keep secret-free account metadata at
+// `surfaces/<tool>/<account>/meta.json` and expose their own `list` / `switch` commands.
+const SURFACE_ADAPTERS = Object.freeze({
+  codex: 'keyflip chatgpt list',
+  kiro: 'keyflip kiro list',
+  'command-code': 'keyflip commandcode list',
+});
+
 const MAX_WALK = 12; // cycle/depth guard for rootOf()
 
 function kindMeta(kind) {
@@ -351,15 +359,18 @@ function collect(ctx) {
       readdir(adir).forEach(function (f) {
         const abs = path.join(adir, f);
         const isDirectory = isDir(abs);
+        const isMeta = !isDirectory && f === 'meta.json' && !!SURFACE_ADAPTERS[tool];
         add({
           id: 'surface:' + tool + '/' + acct + '/' + (isDirectory ? f + '/' : f),
-          kind: isDirectory ? 'surface-dir' : 'surface-file',
+          kind: isMeta ? 'identity-metadata' : isDirectory ? 'surface-dir' : 'surface-file',
           account: acct,
           product: tool,
           abs: abs,
-          note: isDirectory
-            ? 'a whole opaque store copied out of ' + tool + ' — keyflip cannot interpret or renew it'
-            : 'a ' + tool + ' credential captured by keyflip; renewal is whatever ' + tool + ' does with it',
+          note: isMeta
+            ? 'who this ' + tool + ' account is — carries no credential'
+            : isDirectory
+              ? 'a whole opaque store copied out of ' + tool + ' — keyflip cannot interpret or renew it'
+              : 'a ' + tool + ' credential captured by keyflip; renewal is whatever ' + tool + ' does with it',
         });
       });
     });
@@ -589,6 +600,12 @@ function sharedSourceRisks(nodes, map) {
     .filter(Boolean);
 }
 
+function surfaceHasProfile(ctx, n) {
+  if (!n || !n.account || (n.kind !== 'surface-file' && n.kind !== 'surface-dir')) return false;
+  if (!SURFACE_ADAPTERS[n.product]) return false;
+  return statSafe(path.join(ctx.configDir, 'surfaces', n.product, n.account, 'meta.json')).exists;
+}
+
 // A capture whose account keyflip does not know, or an account with nothing captured.
 function coverageRisks(ctx, nodes) {
   const out = [];
@@ -599,7 +616,7 @@ function coverageRisks(ctx, nodes) {
   });
   const orphans = Object.create(null);
   nodes.forEach(function (n) {
-    if (!n.account || known[n.account] || !(n.exists === true)) return;
+    if (!n.account || known[n.account] || surfaceHasProfile(ctx, n) || !(n.exists === true)) return;
     if (!n.secret) return;
     (orphans[n.account] || (orphans[n.account] = [])).push(n.file);
   });

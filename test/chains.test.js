@@ -587,3 +587,36 @@ test('dot-prefixed helper dirs under surfaces/<tool>/ are never reported as orph
   );
   assert.strictEqual(risksOf(c, 'orphan-capture').length, 0);
 });
+
+test('managed surface accounts with meta.json are recognized without a Claude profile, while stray Claude captures still orphan', function () {
+  const ctx = mkctx();
+  inRepo(ctx, 'surfaces/kiro/freeskynet/meta.json', { mode: 0o644, content: '{"name":"freeskynet"}' });
+  inRepo(ctx, 'surfaces/kiro/freeskynet/cli-token.json', { mode: 0o600, content: '{"access_token":"x"}' });
+  inRepo(ctx, 'surfaces/codex/ozgur/meta.json', { mode: 0o600, content: '{"slug":"ozgur"}' });
+  inRepo(ctx, 'surfaces/codex/ozgur/auth.json', { mode: 0o600, content: '{"tokens":{}}' });
+  inRepo(ctx, 'surfaces/command-code/evren/meta.json', { mode: 0o600, content: '{"name":"evren"}' });
+  inRepo(ctx, 'surfaces/command-code/evren/auth.json', { mode: 0o600, content: '{"apiKey":"x"}' });
+
+  const c = chains.chains(ctx, {});
+  assert.strictEqual(
+    risksOf(c, 'orphan-capture').length,
+    0,
+    'meta.json registers each surface account with its own adapter',
+  );
+  assert.strictEqual(
+    risksOf(c, 'loose-mode').length,
+    0,
+    'secret-free meta.json at 0644 is identity-metadata, not a loose secret',
+  );
+  assert.strictEqual(node(c, 'surface:kiro/freeskynet/meta.json').kind, 'identity-metadata');
+  assert.strictEqual(node(c, 'surface:kiro/freeskynet/meta.json').secret, false);
+  assert.strictEqual(account(c, 'freeskynet').present, 1, 'only cli-token.json counts as a held secret');
+
+  // A Claude browser snapshot under the same account slug STILL needs a Claude <configDir>/<name>.json profile.
+  inRepo(ctx, 'browser-sessions/freeskynet__chrome.sql', { mode: 0o600, content: '-- cookies' });
+  const c2 = chains.chains(ctx, {});
+  const orphan = risksOf(c2, 'orphan-capture');
+  assert.strictEqual(orphan.length, 1);
+  assert.strictEqual(orphan[0].file, 'freeskynet');
+  assert.match(orphan[0].detail, /1 capture\(s\)/);
+});
