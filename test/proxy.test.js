@@ -742,3 +742,47 @@ test('routeState and tierState report each account tier and where it came from',
     ['max5x', 'free'],
   );
 });
+
+test('candidates skips disabled accounts and honors per-model-family cooldowns', function () {
+  const ctx = twoAccounts(); // b active, then a
+  core.setProfileEnabled(ctx, 'b', false);
+  const afterDisable = proxy.candidates(ctx, { model: 'claude-opus-4-6' }).map(function (r) {
+    return r.name;
+  });
+  assert.deepStrictEqual(afterDisable, ['a'], 'disabled account b is excluded from proxy candidates');
+
+  core.setProfileEnabled(ctx, 'b', true);
+  breaker.markModelCooldown(ctx, 'b', 'opus', 60000, 'rate_limit', { nowMs: 1000 });
+  const opusCandidates = proxy.candidates(ctx, { model: 'claude-opus-4-6', nowMs: 2000 }).map(function (r) {
+    return r.name;
+  });
+  assert.deepStrictEqual(opusCandidates, ['a'], 'account b is on opus cooldown');
+
+  const sonnetCandidates = proxy.candidates(ctx, { model: 'claude-sonnet-4-6', nowMs: 2000 }).map(function (r) {
+    return r.name;
+  });
+  assert.deepStrictEqual(sonnetCandidates, ['b', 'a'], 'account b is still eligible for sonnet while on opus cooldown');
+});
+
+test('classify detects model_unavailable on 400/404 model not found errors', function () {
+  assert.strictEqual(
+    proxy.classify(
+      404,
+      {},
+      JSON.stringify({ error: { type: 'not_found_error', message: 'model: claude-opus-4-6 not found' } }),
+    ),
+    'model_unavailable',
+  );
+  assert.strictEqual(
+    proxy.classify(400, {}, 'The model does not exist or you do not have access to it'),
+    'model_unavailable',
+  );
+  assert.strictEqual(
+    proxy.classify(
+      400,
+      {},
+      JSON.stringify({ error: { type: 'invalid_request_error', message: 'max_tokens is required' } }),
+    ),
+    'none',
+  );
+});

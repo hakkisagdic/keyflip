@@ -16195,6 +16195,8 @@ async function cmdList(ctx, rest) {
           browsers: web || undefined,
           activeCli: !!e.active,
           activeApp: e.name === appActive,
+          enabled: e.enabled !== false,
+          duplicateOf: e.duplicateOf || null,
           usage: infos ? (infos[e.name] && infos[e.name].usage) || null : undefined,
           usageStatus: infos ? (infos[e.name] && infos[e.name].status) || null : undefined,
         };
@@ -16246,6 +16248,8 @@ async function cmdList(ctx, rest) {
           (anyBrowser ? ' | web ' + (web ? '✓' : '—') : '') +
           ']' +
           usageCol +
+          (e.enabled === false ? '   [disabled]' : '') +
+          (e.duplicateOf ? '   [duplicate of ' + e.duplicateOf + ']' : '') +
           (now.length ? '   ← active: ' + now.join(' + ') : ''),
       );
     });
@@ -16408,6 +16412,82 @@ function cmdRestore(ctx, rest) {
  * @param {string[]} argv - Command-line arguments (without node and script path).
  * @returns {Promise<void>}
  */
+function cmdToggleEnabled(ctx, rest, enabled) {
+  const arg = rest[0];
+  if (!arg) return fail('usage: keyflip ' + (enabled ? 'enable' : 'disable') + ' <name|number>');
+  const name = core.resolveProfile(ctx, arg);
+  if (!name) return fail("no such account: '" + arg + "'");
+  core.setProfileEnabled(ctx, name, enabled);
+  logmod.log((enabled ? 'enabled' : 'disabled') + ' profile ' + name);
+  if (JSON_MODE) {
+    jsonOut({ name: name, enabled: enabled });
+    return;
+  }
+  print(
+    style.ok('✅') +
+      ' ' +
+      name +
+      ' is now ' +
+      (enabled ? 'enabled' : 'disabled (skipped in auto-rotation and proxy failover)') +
+      '.',
+  );
+}
+
+function cmdLaunchCmd(ctx, rest) {
+  const positional = [];
+  let surfaceId = 'claude';
+  let shell = null;
+  let prepare = false;
+  let extraArgs = [];
+  for (let i = 0; i < rest.length; i++) {
+    const a = rest[i];
+    if (a === '--') {
+      extraArgs = rest.slice(i + 1);
+      break;
+    }
+    if (a === '--surface' && rest[i + 1]) {
+      surfaceId = rest[++i];
+    } else if (a.indexOf('--surface=') === 0) {
+      surfaceId = a.slice(10);
+    } else if (a === '--shell' && rest[i + 1]) {
+      shell = rest[++i];
+    } else if (a.indexOf('--shell=') === 0) {
+      shell = a.slice(8);
+    } else if (a === '--prepare') {
+      prepare = true;
+    } else if (a[0] !== '-') {
+      positional.push(a);
+    }
+  }
+  const arg = positional[0];
+  if (!arg)
+    return fail(
+      'usage: keyflip launch-cmd <name|number> [--surface claude|codex|grok|command-code] [--shell posix|powershell] [--prepare]',
+    );
+  const resolved = core.resolveProfile(ctx, arg) || arg;
+  let out;
+  try {
+    out = session.launchCommand(ctx, resolved, {
+      surface: surfaceId,
+      args: extraArgs,
+      prepare: prepare,
+    });
+  } catch (e) {
+    return fail(e && e.message ? e.message : String(e));
+  }
+  if (JSON_MODE) {
+    jsonOut(out);
+    return;
+  }
+  if (shell === 'powershell' || shell === 'pwsh') {
+    print(out.powershell);
+  } else if (shell === 'posix' || shell === 'sh' || shell === 'bash' || shell === 'zsh') {
+    print(out.posix);
+  } else {
+    print(ctx.platform === 'win32' ? out.powershell : out.posix);
+  }
+}
+
 async function main(argv) {
   // Global flags, valid anywhere on the line.
   JSON_MODE = argv.indexOf('--json') !== -1;
@@ -16920,6 +17000,17 @@ async function dispatch(ctx, cmd, rest) {
         return cmdAutoswitch(ctx, rest);
       case 'link':
         return cmdLink(ctx, rest);
+      case 'enable':
+        return withLock(ctx, function () {
+          return cmdToggleEnabled(ctx, rest, true);
+        });
+      case 'disable':
+        return withLock(ctx, function () {
+          return cmdToggleEnabled(ctx, rest, false);
+        });
+      case 'launch-cmd':
+      case 'launch-command':
+        return cmdLaunchCmd(ctx, rest);
       case 'run':
         return cmdRun(ctx, rest);
       case 'export':

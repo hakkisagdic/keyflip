@@ -32,13 +32,20 @@ function saveAs(ctx, name) {
   ctx.store.setProfile(name, blob);
   const cfg = claude.readConfig(ctx.claudeConfigPath) || {};
   const oa = cfg.oauthAccount || {};
-  profiles.write(ctx.configDir, {
+  const prev = profiles.read(ctx.configDir, name) || {};
+  const tomb = profiles.findTombstone(ctx.configDir, oa.emailAddress || '', oa.accountUuid || '');
+  /** @type {any} */
+  const nextMeta = {
     name: name,
     email: oa.emailAddress || '',
     userID: cfg.userID || '',
     oauthAccount: oa,
     savedAt: ctx.now(),
-  });
+  };
+  if (prev.enabled === false) nextMeta.enabled = false;
+  if (typeof prev.tier === 'string') nextMeta.tier = prev.tier;
+  else if (tomb && typeof tomb.tier === 'string') nextMeta.tier = tomb.tier;
+  profiles.write(ctx.configDir, nextMeta);
   return name;
 }
 
@@ -66,21 +73,29 @@ function autoName(ctx, email) {
 }
 
 // "Find & save": detect the logged-in account and store it, auto-naming from the
-// email. If it's already saved (matched by email), refresh its tokens instead.
+// email. If it's already saved (matched by email or accountUuid), refresh its tokens instead.
 function addCurrent(ctx, nameOverride) {
   const email = currentEmail(ctx);
   if (!email) {
     throw new Error('No logged-in account detected (~/.claude.json has no account). Log in in Claude first.');
   }
+  const cfg = claude.readConfig(ctx.claudeConfigPath) || {};
+  const liveUuid = (cfg.oauthAccount && cfg.oauthAccount.accountUuid) || '';
   const existing = profiles.list(ctx.configDir);
   for (let i = 0; i < existing.length; i++) {
-    if (profiles.email(ctx.configDir, existing[i]) === email) {
+    const m = profiles.read(ctx.configDir, existing[i]);
+    const existingUuid = (m && m.oauthAccount && m.oauthAccount.accountUuid) || '';
+    if (
+      profiles.email(ctx.configDir, existing[i]) === email ||
+      (liveUuid && existingUuid && liveUuid === existingUuid)
+    ) {
       saveAs(ctx, existing[i]);
       return { name: existing[i], email: email, refreshed: true };
     }
   }
 
   let name;
+  let reusedTombstone = false;
   if (nameOverride) {
     if (!profiles.isValidName(nameOverride)) {
       throw new Error("invalid profile name: '" + nameOverride + "' (allowed: A-Z a-z 0-9 . _ -)");
@@ -96,10 +111,18 @@ function addCurrent(ctx, nameOverride) {
     }
     name = nameOverride;
   } else {
-    name = autoName(ctx, email);
+    const tomb = profiles.findTombstone(ctx.configDir, email, liveUuid);
+    if (tomb && tomb.name && !profiles.exists(ctx.configDir, tomb.name)) {
+      name = tomb.name;
+      reusedTombstone = true;
+    } else {
+      name = autoName(ctx, email);
+    }
   }
   saveAs(ctx, name);
-  return { name: name, email: email, refreshed: false };
+  const out = { name: name, email: email, refreshed: false };
+  if (reusedTombstone) out.reusedTombstone = true;
+  return out;
 }
 
 // A stored credential must at least be a non-empty string, and if it looks like
@@ -239,16 +262,36 @@ function performSwitch(ctx, name) {
 }
 
 /**
- * List all saved profiles with their index, name, email, and active status.
+ * List all saved profiles with their index, name, email, active status, enabled state, and duplicate info.
  * @param {import('./context.js').KeyflipContext} ctx - Application context.
- * @returns {{ index: number, name: string, email: string, active: boolean }[]} Profile list.
+ * @returns {{ index: number, name: string, email: string, active: boolean, enabled: boolean, duplicateOf: string | null }[]} Profile list.
  */
 function listProfiles(ctx) {
   const cur = currentEmail(ctx);
   return profiles.list(ctx.configDir).map(function (name, i) {
     const email = profiles.email(ctx.configDir, name);
-    return { index: i + 1, name: name, email: email, active: !!email && email === cur };
+    return {
+      index: i + 1,
+      name: name,
+      email: email,
+      active: !!email && email === cur,
+      enabled: profiles.isEnabled(ctx.configDir, name),
+      duplicateOf: profiles.duplicateOf(ctx.configDir, name),
+    };
   });
+}
+
+/**
+ * Enable or disable a profile for automatic rotation and failover proxy routing.
+ * @param {import('./context.js').KeyflipContext} ctx - Application context.
+ * @param {string} name - Profile name.
+ * @param {boolean} enabled - True to enable, false to disable.
+ * @returns {object} Updated profile metadata.
+ */
+function setProfileEnabled(ctx, name, enabled) {
+  const res = profiles.setEnabled(ctx.configDir, name, enabled);
+  _log.log((enabled ? 'enable' : 'disable') + ' -> ' + name);
+  return res;
 }
 
 // Resolve a user argument to a profile name.
@@ -266,11 +309,16 @@ function resolveProfile(ctx, arg) {
 }
 
 /**
- * Remove a profile (credentials and metadata).
+ * Remove a profile (credentials and metadata), recording a non-secret tombstone
+ * so historical attribution and re-add label/tier recovery work seamlessly.
  * @param {import('./context.js').KeyflipContext} ctx - Application context.
  * @param {string} name - Profile name to remove.
  */
 function removeProfile(ctx, name) {
+  const meta = profiles.read(ctx.configDir, name);
+  if (meta) {
+    profiles.recordTombstone(ctx.configDir, meta, typeof ctx.now === 'function' ? ctx.now() : undefined);
+  }
   ctx.store.delProfile(name);
   try {
     ctx.store.delProfile(_longtoken.storeName(name)); // its one-year token, if it had one
@@ -291,6 +339,7 @@ export {
   doSwitch,
   performSwitch,
   listProfiles,
+  setProfileEnabled,
   resolveProfile,
   removeProfile,
 };

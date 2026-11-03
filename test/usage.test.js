@@ -151,3 +151,67 @@ test('pickByStrategy: best picks max headroom; next-available skips exhausted', 
   const noneKnown = { a: { headroom: null }, b: { headroom: null }, c: { headroom: null } };
   assert.strictEqual(usage.pickByStrategy(candidates, noneKnown, 'best'), null);
 });
+
+test('fetchUsageDetailed parses seven_day_opus and seven_day_sonnet and computes model headroom', async function () {
+  const u = await usage.fetchUsage('TOK', {
+    fetch: async function () {
+      return {
+        ok: true,
+        status: 200,
+        json: async function () {
+          return {
+            five_hour: { utilization: 20 },
+            seven_day: { utilization: 30 },
+            seven_day_opus: { utilization: 100, resets_at: '2026-07-05T00:00:00Z' },
+            seven_day_sonnet: { utilization: 40 },
+          };
+        },
+      };
+    },
+  });
+  assert.strictEqual(u.sevenDayOpus.pct, 100);
+  assert.strictEqual(u.sevenDaySonnet.pct, 40);
+  assert.strictEqual(usage.headroom(u), 70);
+  assert.strictEqual(usage.headroomForModel(u, 'claude-opus-4-6'), 0);
+  assert.strictEqual(usage.headroomForModel(u, 'claude-sonnet-4-6'), 60);
+  assert.deepStrictEqual(usage.limitedScopes(u), ['opus']);
+});
+
+test('usageForProfiles retains lastGood across transient 429/error but clears on 401 expired', async function () {
+  const ctx = makeCtx();
+  ctx.store.setProfile('a', blobWithToken('TOK-A'));
+  const NOW = 1800000000000;
+
+  // 1. Healthy fetch populates usage + lastGood
+  const r1 = await usage.usageForProfiles(ctx, ['a'], {
+    fetch: apiFetch(25, 10),
+    nowMs: NOW,
+    cacheTtlMs: 1000,
+  });
+  assert.strictEqual(r1.a.status, 'ok');
+  assert.strictEqual(r1.a.headroom, 75);
+
+  // 2. Transient 429 after cache expiry keeps lastGood
+  const r2 = await usage.usageForProfiles(ctx, ['a'], {
+    fetch: async function () {
+      return { ok: false, status: 429 };
+    },
+    nowMs: NOW + 5000,
+    cacheTtlMs: 1000,
+  });
+  assert.strictEqual(r2.a.status, 'throttled');
+  assert.strictEqual(r2.a.headroom, null);
+  assert.ok(r2.a.lastGood, 'lastGood preserved across 429');
+  assert.strictEqual(usage.headroom(r2.a.lastGood), 75);
+
+  // 3. Authoritative 401 clears lastGood
+  const r3 = await usage.usageForProfiles(ctx, ['a'], {
+    fetch: async function () {
+      return { ok: false, status: 401 };
+    },
+    nowMs: NOW + 10000,
+    cacheTtlMs: 1000,
+  });
+  assert.strictEqual(r3.a.status, 'expired');
+  assert.strictEqual(r3.a.lastGood, null, 'lastGood cleared on 401');
+});

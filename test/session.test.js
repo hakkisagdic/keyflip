@@ -70,6 +70,26 @@ test('sessionEnv sets CLAUDE_CONFIG_DIR and scrubs auth-override vars', function
   assert.strictEqual(se.env.PATH, '/bin');
 });
 
+test('launchCommand builds isolated POSIX and PowerShell launch commands across surfaces', function () {
+  const ctx = seeded();
+  const claudeCmd = session.launchCommand(ctx, 'a', {
+    surface: 'claude',
+    args: ['--model', 'claude-sonnet-4-6'],
+    envOverrides: { CUSTOM_FLAG: '1', EXTRA_SECRET: null },
+  });
+  assert.strictEqual(claudeCmd.configEnv, 'CLAUDE_CONFIG_DIR');
+  assert.match(claudeCmd.posix, /unset ANTHROPIC_API_KEY.*EXTRA_SECRET;/);
+  assert.match(claudeCmd.posix, /CLAUDE_CONFIG_DIR=/);
+  assert.match(claudeCmd.posix, /CUSTOM_FLAG='1'/);
+  assert.match(claudeCmd.posix, /claude$/);
+  assert.match(claudeCmd.powershell, /Remove-Item Env:ANTHROPIC_API_KEY/);
+  assert.match(claudeCmd.powershell, /\$env:CLAUDE_CONFIG_DIR=/);
+
+  const codexCmd = session.launchCommand(ctx, 'work', { surface: 'codex' });
+  assert.strictEqual(codexCmd.configEnv, 'CODEX_HOME');
+  assert.match(codexCmd.posix, /unset OPENAI_API_KEY OPENAI_BASE_URL; CODEX_HOME=.*codex$/);
+});
+
 test('syncBack persists a rotated in-session token to the profile (and only then)', function () {
   const ctx = seeded();
   const dir = session.prepareSession(ctx, 'a', { share: false });

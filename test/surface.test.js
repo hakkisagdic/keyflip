@@ -13,11 +13,26 @@ function write(ctx, rel, data) {
 }
 
 // ---- registry shape ----
-test('SURFACES covers exactly the CONFIG_REGISTRY tools, each with the required shape', function () {
+test('SURFACES covers the registered CLI/IDE tools, each with the required shape', function () {
   const ids = surface.SURFACES.map(function (s) {
     return s.id;
   }).sort();
-  assert.deepStrictEqual(ids, ['aider', 'codex', 'command-code', 'copilot', 'cursor', 'gemini', 'opencode']);
+  assert.deepStrictEqual(ids, [
+    'aider',
+    'amp',
+    'codex',
+    'command-code',
+    'copilot',
+    'cursor',
+    'droid',
+    'gemini',
+    'grok',
+    'hermes',
+    'kilocode',
+    'kimi',
+    'opencode',
+    'qwen',
+  ]);
   surface.SURFACES.forEach(function (s) {
     assert.strictEqual(typeof s.id, 'string');
     assert.strictEqual(typeof s.label, 'string');
@@ -28,6 +43,25 @@ test('SURFACES covers exactly the CONFIG_REGISTRY tools, each with the required 
     assert.strictEqual(s.switchable, s.id === 'command-code', s.id + ' switchable');
   });
   assert.match(surface.get('command-code').switchHint, /keyflip commandcode/);
+});
+
+test('new Traycer-aligned CLI surfaces detect presence without reading secrets', function () {
+  const ctx = makeCtx();
+  write(ctx, '.grok/settings.json', JSON.stringify({ apiKey: 'xai-SECRET' }));
+  write(ctx, '.qwen/oauth_creds.json', JSON.stringify({ access_token: 'qwen-SECRET' }));
+  write(ctx, '.kimi/credentials.json', JSON.stringify({ token: 'kimi-SECRET' }));
+  write(ctx, '.hermes/auth.json', JSON.stringify({ token: 'hermes-SECRET' }));
+  write(ctx, '.factory/auth.json', JSON.stringify({ token: 'droid-SECRET' }));
+  write(ctx, '.local/share/amp/secrets.json', JSON.stringify({ apiKey: 'amp-SECRET' }));
+  write(ctx, '.kilocode/config.json', JSON.stringify({ token: 'kilo-SECRET' }));
+
+  ['grok', 'qwen', 'kimi', 'hermes', 'droid', 'amp', 'kilocode'].forEach(function (id) {
+    const s = surface.detectOne(ctx, id);
+    assert.strictEqual(s.present, true, id + ' present');
+    assert.strictEqual(s.store.exists, true, id + ' store exists');
+    assert.strictEqual(s.store.secret, true, id + ' store secret');
+    assert.doesNotMatch(JSON.stringify(s), /SECRET/, id + ' never leaks secret');
+  });
 });
 
 // ---- absent (pristine home): everything not detected ----

@@ -34,15 +34,19 @@ const RETRYABLE = function (s) {
 };
 
 // Why a response should (or should not) move traffic to the next account (#3):
-//   throttled  — 429 rate limit: waiting or another account both help
-//   billing    — 429 billing/credit/org-disabled: another account would only MASK
-//                a payment problem, so it is surfaced to the client instead
-//   auth       — 401/403: this account needs a re-login, park it for a while
-//   overloaded — 529: Anthropic's own overload, short park
-//   server     — other 5xx: short park
-//   none       — everything else (never retried)
+//   throttled         — 429 rate limit: waiting or another account both help
+//   billing           — 429 billing/credit/org-disabled: another account would only MASK
+//                       a payment problem, so it is surfaced to the client instead
+//   model_unavailable — 400/404 model not found / unavailable: trying the same model on
+//                       another account on the same provider is pointless; jump to modelChain
+//   auth              — 401/403: this account needs a re-login, park it for a while
+//   overloaded        — 529: Anthropic's own overload, short park
+//   server            — other 5xx: short park
+//   none              — everything else (never retried)
 const BILLING_RE =
   /billing|credit balance|insufficient (credit|fund|balance)|payment|spend limit|account[^.]{0,40}(disabled|deactivated|suspended)|organi[sz]ation[^.]{0,40}(disabled|deactivated|suspended)|subscription[^.]{0,40}(expired|inactive|disabled)/i;
+const MODEL_UNAVAILABLE_RE =
+  /model[^.]{0,60}(not[_ ]found|unavailable|does not exist|not supported|deprecated)|not_found_error[^.]{0,60}model/i;
 const COOLDOWN_SUFFIX = {
   billing: 'Quota',
   throttled: 'Throttled',
@@ -92,6 +96,9 @@ function classify(status, headers, body) {
   if (status === 408) return 'throttled';
   if (status === 529) return 'overloaded';
   if (status >= 500 && status <= 599) return 'server';
+  if ((status === 400 || status === 404) && body != null && MODEL_UNAVAILABLE_RE.test(errorText(body))) {
+    return 'model_unavailable';
+  }
   return 'none';
 }
 
@@ -231,7 +238,8 @@ function tierFilterEnabled(ctx) {
 
 // Every account that holds a credential, with its breaker state, tier and (when
 // a model is given) whether that tier can serve it. Ordered per rank(); callers
-// decide what to drop. opts.model turns tier filtering on.
+// decide what to drop. opts.model turns tier filtering and model-scoped cooldowns on.
+// Disabled accounts (`enabled: false`) are skipped unless `opts.includeDisabled` is true.
 function candidateRows(ctx, opts) {
   opts = opts || {};
   const nowMs = opts.nowMs !== undefined ? opts.nowMs : Date.now();
@@ -246,8 +254,10 @@ function candidateRows(ctx, opts) {
   // A provider profile is an API-key endpoint, not a Claude plan: tier rules do
   // not apply, because the endpoint serves whatever its key is allowed to.
   const filterModel = opts.model && !providerActive && tierFilterEnabled(ctx) ? opts.model : null;
+  const reqFamily = opts.model ? tiers.familyOf(opts.model) : null;
   const rows = [];
   core.listProfiles(ctx).forEach(function (e) {
+    if (!opts.includeDisabled && e.enabled === false) return;
     let blob = null;
     let hasKey = providerActive;
     if (!hasKey) {
@@ -260,15 +270,19 @@ function candidateRows(ctx, opts) {
     }
     if (!hasKey) return;
     const cd = breaker.cooldownOf(ctx, e.name, { nowMs: nowMs });
+    const mcd = reqFamily ? breaker.modelCooldownOf(ctx, e.name, reqFamily, { nowMs: nowMs }) : { active: false };
+    const effectiveCoolingMs = Math.max(cd.active ? cd.remainingMs : 0, mcd.active ? mcd.remainingMs : 0);
+    const effectiveKind = cd.active ? cd.kind : mcd.active ? mcd.kind : null;
     const meta = _profiles.read(ctx.configDir, e.name);
     const tier = tiers.resolve(blob, meta);
     const elig = filterModel ? tiers.allows(tier, filterModel) : null;
     rows.push({
       name: e.name,
       active: !!e.active,
+      enabled: e.enabled !== false,
       broken: breaker.state(ctx, e.name, { nowMs: nowMs }) === 'open',
-      coolingMs: cd.active ? cd.remainingMs : 0,
-      cooldownKind: cd.kind,
+      coolingMs: effectiveCoolingMs,
+      cooldownKind: effectiveKind,
       lastUsedAt: (all[e.name] && all[e.name].lastUsedAt) || 0,
       priority: prio.indexOf(e.name),
       tier: tier,
@@ -610,7 +624,11 @@ async function handleRequest(ctx, reqInfo, clientRes, opts) {
         break;
       }
       let body = resp.body != null ? toBuffer(resp.body) : null;
-      const peeked = body == null && resp.status === 429 && resp.res && typeof resp.res.on === 'function';
+      const peeked =
+        body == null &&
+        (resp.status === 429 || resp.status === 400 || resp.status === 404) &&
+        resp.res &&
+        typeof resp.res.on === 'function';
       if (peeked) body = await peekError(resp.res, opts);
       const kind = classify(resp.status, resp.headers, body);
       const retryAfter = retryAfterMs(resp.headers, clock());
@@ -645,16 +663,16 @@ async function handleRequest(ctx, reqInfo, clientRes, opts) {
           route: decision.reason,
         });
       }
-      // `model-chain`: degrade the MODEL on this same account before spending
-      // another account's quota. A model problem is not the account's fault, so
-      // no breaker failure is recorded for a descent that then succeeds; auth
-      // and billing are excluded because a cheaper model cannot fix those.
+      // Traycer per-problem routing (`model_unavailable`) + `model-chain`:
+      // When the model itself is unavailable (`kind === 'model_unavailable'`), trying
+      // another account on the same provider with the same broken model is futile —
+      // jump straight to `routes.modelChain` if configured, or fail fast without
+      // blaming the account's breaker.
       if (
-        fallback === 'model-chain' &&
+        fallback !== 'off' &&
         sameRetry === 0 &&
-        RETRYABLE(resp.status) &&
-        kind !== 'auth' &&
-        kind !== 'billing'
+        (kind === 'model_unavailable' ||
+          (fallback === 'model-chain' && RETRYABLE(resp.status) && kind !== 'auth' && kind !== 'billing'))
       ) {
         const next = nextChainModel(routes.modelChain, currentModel);
         const rewritten = next ? proxyroutes.withModel(upstreamReq.body, next) : null;
@@ -841,7 +859,6 @@ function serve(ctx, opts) {
 
 // Read the cost log and roll up per account/model.
 function stats(ctx) {
-  const rows = history.recordUsage ? [] : [];
   let lines = [];
   try {
     lines = fs
@@ -916,10 +933,10 @@ function routeState(ctx) {
   }
   const rows = candidateRows(ctx, { nowMs: nowMs });
   const accounts = rows.map(function (r) {
-    const cd = breaker.cooldownOf(ctx, r.name, { nowMs: nowMs });
     return {
       name: r.name,
       active: r.active,
+      enabled: r.enabled,
       breaker: r.broken ? 'open' : breaker.state(ctx, r.name, { nowMs: nowMs }),
       coolingSeconds: r.coolingMs ? Math.ceil(r.coolingMs / 1000) : 0,
       cooldownKind: r.cooldownKind,

@@ -1,12 +1,13 @@
 // SURFACE (E1): a universal credential-surface registry — one place that knows how to DETECT
 // (and, later, SWITCH) the active account for EACH supported AI tool, so keyflip can manage more
 // than Claude. v1 ships SAFE, READ-first adapters for the tools keyflip already understands via
-// agents.js CONFIG_REGISTRY (cursor, gemini, codex, copilot, opencode, aider): detect presence and,
-// where the identity lives in a plain NON-SECRET file, read the active account — never decrypting,
-// reading, or moving a secret. Opaque/keychain/secret stores report present + 'switch not supported
-// yet'. Command Code is the exception that has a real adapter: its `keyflip commandcode` group
-// captures/switches ~/.commandcode/auth.json, so the row points there instead of claiming "not
-// supported". Claude itself stays handled by keyflip core; switch() here is a detection-only seam.
+// agents.js CONFIG_REGISTRY (cursor, gemini, codex, copilot, opencode, aider, grok, qwen, kimi,
+// hermes, droid, amp, kilocode): detect presence and, where the identity lives in a plain
+// NON-SECRET file, read the active account — never decrypting, reading, or moving a secret.
+// Opaque/keychain/secret stores report present + 'switch not supported yet'. Command Code is the
+// exception that has a real adapter: its `keyflip commandcode` group captures/switches
+// ~/.commandcode/auth.json, so the row points there instead of claiming "not supported". Claude
+// itself stays handled by keyflip core; switch() here is a detection-only seam.
 import fs from 'fs';
 import path from 'path';
 
@@ -140,6 +141,62 @@ const SPECS = [
     switchable: true,
     switchHint: 'keyflip commandcode status | switch <name>',
   },
+  {
+    id: 'grok',
+    label: 'Grok CLI',
+    kind: 'file',
+    presence: ['.grok', '.grok/settings.json', '.config/grok'],
+    store: { kind: 'file', secret: true, path: '.grok/settings.json' },
+    readIdentity: null,
+  },
+  {
+    id: 'qwen',
+    label: 'Qwen Code',
+    kind: 'file',
+    presence: ['.qwen', '.qwen/settings.json', '.qwen/oauth_creds.json'],
+    store: { kind: 'file', secret: true, path: '.qwen/oauth_creds.json' },
+    readIdentity: null,
+  },
+  {
+    id: 'kimi',
+    label: 'Kimi CLI',
+    kind: 'file',
+    presence: ['.kimi', '.kimi/config.toml', '.kimi/credentials.json'],
+    store: { kind: 'file', secret: true, path: '.kimi/credentials.json' },
+    readIdentity: null,
+  },
+  {
+    id: 'hermes',
+    label: 'Hermes Agent',
+    kind: 'file',
+    presence: ['.hermes', '.hermes/config.yaml', '.hermes/auth.json'],
+    store: { kind: 'file', secret: true, path: '.hermes/auth.json' },
+    readIdentity: null,
+  },
+  {
+    id: 'droid',
+    label: 'Factory Droid',
+    kind: 'file',
+    presence: ['.factory', '.factory/config.json', '.factory/auth.json'],
+    store: { kind: 'file', secret: true, path: '.factory/auth.json' },
+    readIdentity: null,
+  },
+  {
+    id: 'amp',
+    label: 'Sourcegraph Amp',
+    kind: 'file',
+    presence: ['.config/amp', '.config/amp/settings.json', '.local/share/amp/secrets.json'],
+    store: { kind: 'file', secret: true, path: '.local/share/amp/secrets.json' },
+    readIdentity: null,
+  },
+  {
+    id: 'kilocode',
+    label: 'Kilo Code',
+    kind: 'file',
+    presence: ['.kilocode', '.config/kilocode', '.kilocode/config.json'],
+    store: { kind: 'file', secret: true, path: '.kilocode/config.json' },
+    readIdentity: null,
+  },
 ];
 
 function resolveStore(ctx, spec) {
@@ -249,7 +306,7 @@ const mcpTools = [
     name: 'keyflip_surfaces',
     title: "Detect other AI tools' accounts",
     description:
-      'Detect which other AI coding tools (Cursor, Gemini CLI, Codex CLI, GitHub Copilot, opencode, Aider, Command Code) are present on this machine and, where the identity is in a readable NON-SECRET file, which account is active. Read-only: never reads, decrypts, or moves any secret/token. Command Code accounts are switched with the keyflip_commandcode tools; other non-Claude tools are detection-only (Claude itself is managed by the other keyflip tools).',
+      'Detect which other AI coding tools (Cursor, Gemini CLI, Codex CLI, GitHub Copilot, opencode, Aider, Command Code, Grok CLI, Qwen Code, Kimi CLI, Hermes Agent, Factory Droid, Sourcegraph Amp, Kilo Code) are present on this machine and, where the identity is in a readable NON-SECRET file, which account is active. Read-only: never reads, decrypts, or moves any secret/token. Command Code accounts are switched with the keyflip_commandcode tools; other non-Claude tools are detection-only (Claude itself is managed by the other keyflip tools).',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
     annotations: RO,
     run: async function (ctx) {

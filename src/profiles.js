@@ -55,8 +55,14 @@ const RESERVED_FILES = [
   'expired-captures',
 ];
 
+const TOMBSTONES_FILE = '.tombstones.json';
+
 function metaPath(dir, name) {
   return path.join(dir, name + '.json');
+}
+
+function tombstonesPath(dir) {
+  return path.join(dir, TOMBSTONES_FILE);
 }
 
 /**
@@ -88,7 +94,7 @@ function list(dir) {
  * Read profile metadata from disk.
  * @param {string} dir - Config directory path.
  * @param {string} name - Profile name.
- * @returns {{ email?: string, name?: string, userID?: string, oauthAccount?: object, savedAt?: string, schemaVersion?: number } | null} Parsed metadata object or null if not found.
+ * @returns {{ email?: string, name?: string, userID?: string, oauthAccount?: any, savedAt?: string, schemaVersion?: number, enabled?: boolean, tier?: string } | null} Parsed metadata object or null if not found.
  */
 function read(dir, name) {
   try {
@@ -131,6 +137,128 @@ function email(dir, name) {
 }
 
 /**
+ * Whether a profile is enabled for automatic rotation/proxy routing.
+ * Profiles without an explicit `enabled` field default to enabled (true).
+ * @param {string} dir - Config directory path.
+ * @param {string} name - Profile name.
+ * @returns {boolean} True if enabled.
+ */
+function isEnabled(dir, name) {
+  const m = read(dir, name);
+  if (!m) return false;
+  return m.enabled !== false;
+}
+
+/**
+ * Enable or disable a profile without deleting its credentials.
+ * @param {string} dir - Config directory path.
+ * @param {string} name - Profile name.
+ * @param {boolean} enabled - Whether the profile is enabled.
+ * @returns {object} Updated metadata.
+ */
+function setEnabled(dir, name, enabled) {
+  const m = read(dir, name);
+  if (!m) throw new Error("no such profile: '" + name + "'");
+  m.enabled = !!enabled;
+  write(dir, m);
+  return m;
+}
+
+/**
+ * Detect if another profile resolves to the same underlying account (by accountUuid or email).
+ * Returns the canonical (first in sorted order) profile name when `name` is a duplicate, or null.
+ * @param {string} dir - Config directory path.
+ * @param {string} name - Profile name to check.
+ * @returns {string | null} The earlier profile name that shares the same identity, or null.
+ */
+function duplicateOf(dir, name) {
+  const target = read(dir, name);
+  if (!target) return null;
+  const targetUuid = (target.oauthAccount && target.oauthAccount.accountUuid) || '';
+  const targetEmail = (target.email || '').toLowerCase();
+  if (!targetUuid && !targetEmail) return null;
+  const names = list(dir);
+  for (let i = 0; i < names.length; i++) {
+    const other = names[i];
+    if (other === name) break; // only flag later duplicates against the first canonical profile
+    const m = read(dir, other);
+    if (!m) continue;
+    const otherUuid = (m.oauthAccount && m.oauthAccount.accountUuid) || '';
+    const otherEmail = (m.email || '').toLowerCase();
+    if (targetUuid && otherUuid && targetUuid === otherUuid) return other;
+    if (targetEmail && otherEmail && targetEmail === otherEmail) return other;
+  }
+  return null;
+}
+
+/**
+ * Read all profile tombstones (non-secret metadata of removed profiles so labels/tiers
+ * can be restored if the same account is re-added later, and historical attribution survives).
+ * @param {string} dir - Config directory path.
+ * @returns {Array<{ name: string, email: string, accountUuid: string | null, tier: string | null, removedAt: string }>}
+ */
+function listTombstones(dir) {
+  try {
+    const raw = JSON.parse(fs.readFileSync(tombstonesPath(dir), 'utf8'));
+    return Array.isArray(raw) ? raw : [];
+  } catch (e) {
+    return [];
+  }
+}
+
+/**
+ * Record a tombstone when a profile is removed. Never stores any credential or token.
+ * @param {string} dir - Config directory path.
+ * @param {any} meta - Profile metadata being removed.
+ * @param {string} [removedAt] - ISO timestamp.
+ */
+function recordTombstone(dir, meta, removedAt) {
+  if (!meta || !meta.name) return;
+  const emailAddr = String(meta.email || '');
+  const accountUuid = (meta.oauthAccount && meta.oauthAccount.accountUuid) || null;
+  if (!emailAddr && !accountUuid) return;
+  const existing = listTombstones(dir).filter(function (t) {
+    if (!t || typeof t !== 'object') return false;
+    if (accountUuid && t.accountUuid === accountUuid) return false;
+    if (emailAddr && String(t.email || '').toLowerCase() === emailAddr.toLowerCase()) return false;
+    return t.name !== meta.name;
+  });
+  existing.push({
+    name: String(meta.name),
+    email: emailAddr,
+    accountUuid: accountUuid ? String(accountUuid) : null,
+    tier: typeof meta.tier === 'string' ? meta.tier : null,
+    removedAt: removedAt || new Date().toISOString(),
+  });
+  try {
+    atomicWrite(tombstonesPath(dir), JSON.stringify(existing.slice(-100), null, 2), 0o600);
+  } catch (e) {
+    /* best effort */
+  }
+}
+
+/**
+ * Find a tombstone matching an email or accountUuid.
+ * @param {string} dir - Config directory path.
+ * @param {string} [emailAddr] - Email address.
+ * @param {string} [accountUuid] - Account UUID.
+ * @returns {{ name: string, email: string, accountUuid: string | null, tier: string | null, removedAt: string } | null}
+ */
+function findTombstone(dir, emailAddr, accountUuid) {
+  const em = String(emailAddr || '').toLowerCase();
+  const uuid = String(accountUuid || '');
+  if (!em && !uuid) return null;
+  const listAll = listTombstones(dir);
+  for (let i = listAll.length - 1; i >= 0; i--) {
+    const t = listAll[i];
+    if (!t) continue;
+    if (uuid && t.accountUuid && t.accountUuid === uuid) return t;
+    if (em && t.email && String(t.email).toLowerCase() === em) return t;
+  }
+  return null;
+}
+
+/**
  * Validate a profile name against naming rules.
  * @param {string} name - Name to validate.
  * @returns {boolean} True if the name is valid for use as a profile name.
@@ -162,4 +290,22 @@ function sanitizeName(emailAddr) {
   return base || 'account';
 }
 
-export { metaPath, list, read, exists, write, remove, email, isValidName, sanitizeName, NAME_RE, RESERVED_FILES };
+export {
+  metaPath,
+  list,
+  read,
+  exists,
+  write,
+  remove,
+  email,
+  isEnabled,
+  setEnabled,
+  duplicateOf,
+  listTombstones,
+  recordTombstone,
+  findTombstone,
+  isValidName,
+  sanitizeName,
+  NAME_RE,
+  RESERVED_FILES,
+};

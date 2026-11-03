@@ -32,6 +32,14 @@ const REGISTRY = [
   // Command Code: memory is project-level AGENTS.md (travels with the repo); ~/.commandcode holds
   // only login/config. Its MCP servers are carried below.
   { id: 'command-code', label: 'Command Code', roots: [], detect: ['.commandcode'] },
+  // Additional CLI agent surfaces aligned with Traycer's provider model:
+  { id: 'grok', label: 'Grok CLI', roots: ['.grok/GROK.md'], detect: ['.grok', '.config/grok'] },
+  { id: 'qwen', label: 'Qwen Code', roots: ['.qwen/QWEN.md'], detect: ['.qwen'] },
+  { id: 'kimi', label: 'Kimi CLI', roots: ['.kimi/AGENTS.md'], detect: ['.kimi'] },
+  { id: 'hermes', label: 'Hermes Agent', roots: ['.hermes/memories'], detect: ['.hermes'] },
+  { id: 'droid', label: 'Factory Droid', roots: ['.factory/AGENTS.md'], detect: ['.factory'] },
+  { id: 'amp', label: 'Sourcegraph Amp', roots: ['.config/amp/AGENTS.md'], detect: ['.config/amp'] },
+  { id: 'kilocode', label: 'Kilo Code', roots: ['.kilocode/rules'], detect: ['.kilocode', '.config/kilocode'] },
 ];
 // J1 config-tier: per-agent CONFIG files (MCP servers, settings). These CAN hold secrets, so
 // they are ALWAYS run through the secret scanner + redacted before carrying — the structure
@@ -46,6 +54,13 @@ const CONFIG_REGISTRY = [
   { id: 'windsurf', files: ['.codeium/windsurf/mcp_config.json'] },
   { id: 'kiro', files: ['.kiro/settings/mcp.json'] }, // user-level MCP servers
   { id: 'command-code', files: ['.commandcode/mcp.json'] }, // user-level MCP servers
+  { id: 'grok', files: ['.grok/settings.json'] },
+  { id: 'qwen', files: ['.qwen/settings.json'] },
+  { id: 'kimi', files: ['.kimi/config.toml'] },
+  { id: 'hermes', files: ['.hermes/config.yaml'] },
+  { id: 'droid', files: ['.factory/config.json'] },
+  { id: 'amp', files: ['.config/amp/settings.json'] },
+  { id: 'kilocode', files: ['.kilocode/mcp.json'] },
 ];
 const MEM_EXT = ['.md', '.mdc', '.txt'];
 

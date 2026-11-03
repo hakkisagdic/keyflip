@@ -60,6 +60,49 @@ function markCooldown(ctx, name, ms, kind, opts) {
   return e.cooldownUntil || 0;
 }
 
+// Per-model-family cooldown (Traycer model-scoped rate-limit semantics):
+// parks only a specific model family ('opus', 'sonnet', 'haiku') on an account
+// so an account whose Opus quota is exhausted remains eligible for Sonnet.
+function markModelCooldown(ctx, name, family, ms, kind, opts) {
+  if (!family) return 0;
+  opts = opts || {};
+  const fam = String(family).toLowerCase();
+  const now = opts.nowMs !== undefined ? opts.nowMs : Date.now();
+  const until = now + Math.max(0, Number(ms) || 0);
+  const all = readAll(ctx);
+  const e = entry(all, name);
+  if (!e.modelCooldowns || typeof e.modelCooldowns !== 'object') e.modelCooldowns = {};
+  if (!ms) {
+    delete e.modelCooldowns[fam];
+    if (!Object.keys(e.modelCooldowns).length) delete e.modelCooldowns;
+  } else {
+    const prev = e.modelCooldowns[fam];
+    if (!prev || !prev.until || until > prev.until) {
+      e.modelCooldowns[fam] = { until: until, kind: String(kind || 'throttled') };
+    }
+  }
+  writeAll(ctx, all);
+  return (e.modelCooldowns && e.modelCooldowns[fam] && e.modelCooldowns[fam].until) || 0;
+}
+
+function modelCooldownOf(ctx, name, family, opts) {
+  if (!family) return { active: false, remainingMs: 0, until: 0, kind: null, family: null };
+  opts = opts || {};
+  const fam = String(family).toLowerCase();
+  const now = opts.nowMs !== undefined ? opts.nowMs : Date.now();
+  const e = readAll(ctx)[name];
+  const mc = e && e.modelCooldowns && e.modelCooldowns[fam];
+  if (!mc || !mc.until) return { active: false, remainingMs: 0, until: 0, kind: null, family: fam };
+  const remainingMs = Math.max(0, mc.until - now);
+  return {
+    active: remainingMs > 0,
+    remainingMs: remainingMs,
+    until: mc.until,
+    kind: remainingMs > 0 ? mc.kind || 'throttled' : null,
+    family: fam,
+  };
+}
+
 // Effective cooldown: {active, remainingMs, until, kind}. Expired entries read as
 // inactive without writing (a read must never mutate on a status check).
 function cooldownOf(ctx, name, opts) {
@@ -79,9 +122,10 @@ function cooldownOf(ctx, name, opts) {
 function clearCooldown(ctx, name) {
   const all = readAll(ctx);
   if (!all[name]) return false;
-  const had = !!all[name].cooldownUntil;
+  const had = !!(all[name].cooldownUntil || (all[name].modelCooldowns && Object.keys(all[name].modelCooldowns).length));
   delete all[name].cooldownUntil;
   delete all[name].cooldownKind;
+  delete all[name].modelCooldowns;
   if (!all[name].state || all[name].state === 'closed') {
     // a closed entry with nothing else recorded is noise — drop it entirely
     if (!all[name].failures && !all[name].successes && !all[name].lastUsedAt) delete all[name];
@@ -168,7 +212,9 @@ export {
   reset,
   readAll,
   markCooldown,
+  markModelCooldown,
   cooldownOf,
+  modelCooldownOf,
   clearCooldown,
   DEFAULTS,
 };

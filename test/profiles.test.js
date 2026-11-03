@@ -3,10 +3,11 @@ import assert from 'node:assert';
 import fs from 'fs';
 import path from 'path';
 import * as profiles from '../src/profiles.js';
+import * as core from '../src/core.js';
 import * as schedule from '../src/schedule.js';
 import * as secretpolicy from '../src/secretpolicy.js';
 import * as proxyroutes from '../src/proxyroutes.js';
-import { tmpdir } from './helpers.js';
+import { tmpdir, makeCtx, writeClaude } from './helpers.js';
 
 test('write/read/exists/email round-trip', function () {
   const dir = tmpdir();
@@ -102,4 +103,77 @@ test('a top-level state file is never listed as an account', function () {
 
   // An account may not be NAMED after state, either: import/switch paths use isValidName.
   assert.strictEqual(profiles.isValidName('vault'), false, 'a reserved name is not a legal account name');
+});
+
+test('isEnabled and setEnabled toggle profile enabled state without deleting credentials', function () {
+  const ctx = makeCtx();
+  writeClaude(ctx, { oauthAccount: { emailAddress: 'alice@example.com', accountUuid: 'uuid-1' }, userID: 'u1' });
+  ctx.store.setLive(JSON.stringify({ claudeAiOauth: { accessToken: 'TOK-1' } }));
+  core.addCurrent(ctx, 'alice');
+
+  assert.strictEqual(profiles.isEnabled(ctx.configDir, 'alice'), true);
+  core.setProfileEnabled(ctx, 'alice', false);
+  assert.strictEqual(profiles.isEnabled(ctx.configDir, 'alice'), false);
+  const listed = core.listProfiles(ctx);
+  assert.strictEqual(listed[0].enabled, false);
+  assert.ok(ctx.store.getProfile('alice'), 'stored credential remains intact when disabled');
+
+  // Refreshing the profile preserves enabled:false
+  core.saveAs(ctx, 'alice');
+  assert.strictEqual(profiles.isEnabled(ctx.configDir, 'alice'), false);
+
+  core.setProfileEnabled(ctx, 'alice', true);
+  assert.strictEqual(profiles.isEnabled(ctx.configDir, 'alice'), true);
+});
+
+test('duplicateOf detects profiles sharing the same accountUuid or email', function () {
+  const dir = tmpdir();
+  profiles.write(dir, {
+    name: 'primary',
+    email: 'same@example.com',
+    oauthAccount: { emailAddress: 'same@example.com', accountUuid: 'acc-123' },
+  });
+  profiles.write(dir, {
+    name: 'secondary',
+    email: 'alias@example.com',
+    oauthAccount: { emailAddress: 'alias@example.com', accountUuid: 'acc-123' },
+  });
+  profiles.write(dir, {
+    name: 'tertiary',
+    email: 'same@example.com',
+    oauthAccount: { emailAddress: 'same@example.com', accountUuid: 'acc-999' },
+  });
+
+  assert.strictEqual(profiles.duplicateOf(dir, 'primary'), null);
+  assert.strictEqual(profiles.duplicateOf(dir, 'secondary'), 'primary');
+  assert.strictEqual(profiles.duplicateOf(dir, 'tertiary'), 'primary');
+});
+
+test('removeProfile records a non-secret tombstone and addCurrent reuses name + tier on re-add', function () {
+  const ctx = makeCtx();
+  writeClaude(ctx, {
+    oauthAccount: { emailAddress: 'returning@example.com', accountUuid: 'uuid-ret', organizationUuid: 'org-1' },
+    userID: 'u-ret',
+  });
+  ctx.store.setLive(JSON.stringify({ claudeAiOauth: { accessToken: 'SECRET-TOK-RET' } }));
+  core.addCurrent(ctx, 'custom-work-name');
+  const m = profiles.read(ctx.configDir, 'custom-work-name');
+  m.tier = 'max20x';
+  profiles.write(ctx.configDir, m);
+
+  core.removeProfile(ctx, 'custom-work-name');
+  assert.strictEqual(profiles.exists(ctx.configDir, 'custom-work-name'), false);
+  assert.deepStrictEqual(profiles.list(ctx.configDir), [], 'tombstone file is hidden from profiles.list');
+
+  const tombs = profiles.listTombstones(ctx.configDir);
+  assert.strictEqual(tombs.length, 1);
+  assert.strictEqual(tombs[0].name, 'custom-work-name');
+  assert.strictEqual(tombs[0].tier, 'max20x');
+  assert.doesNotMatch(JSON.stringify(tombs), /SECRET-TOK-RET/, 'no secret in tombstones');
+
+  // Re-adding the same account without specifying a name reuses 'custom-work-name' and restores tier
+  const readded = core.addCurrent(ctx);
+  assert.strictEqual(readded.name, 'custom-work-name');
+  assert.strictEqual(readded.reusedTombstone, true);
+  assert.strictEqual(profiles.read(ctx.configDir, 'custom-work-name').tier, 'max20x');
 });

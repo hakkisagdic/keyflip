@@ -61,6 +61,40 @@ test('autoswitch tick switches when the threshold is crossed', async function ()
   assert.strictEqual(core.currentEmail(ctx), 'a@x.com'); // CLI credential swapped
 });
 
+test('autoswitch tick skips disabled accounts', async function () {
+  const ctx = threeAccounts(); // c active
+  core.setProfileEnabled(ctx, 'a', false);
+  const r = await autosw.tick(ctx, {
+    threshold: 90,
+    fetch: usageFetch({ TC: 95, TA: 5, TB: 40 }),
+    nowMs: 1,
+    cacheTtlMs: 0,
+  });
+  assert.strictEqual(r.state, 'switched');
+  assert.strictEqual(r.switchedTo.name, 'b', 'disabled account a was skipped in favor of enabled account b');
+});
+
+test('autoswitch tick automatically switches back when the primary account recovers', async function () {
+  const ctx = twoAccounts(); // b is primary/active
+  // Tick 1: b is at 95% (5% headroom) -> switches to a (10% used = 90% headroom)
+  const r1 = await autosw.tick(ctx, { threshold: 90, fetch: usageFetch({ TB: 95, TA: 10 }), nowMs: 1, cacheTtlMs: 0 });
+  assert.strictEqual(r1.state, 'switched');
+  assert.strictEqual(r1.switchedTo.name, 'a');
+  assert.strictEqual(core.currentEmail(ctx), 'a@x.com');
+
+  // Tick 2: b is still at 85% (15% headroom < 20% recovery floor) -> stays on a
+  const r2 = await autosw.tick(ctx, { threshold: 90, fetch: usageFetch({ TB: 85, TA: 20 }), nowMs: 2, cacheTtlMs: 0 });
+  assert.strictEqual(r2.state, 'below');
+  assert.strictEqual(core.currentEmail(ctx), 'a@x.com');
+
+  // Tick 3: b window resets to 10% utilization (90% headroom >= 20% recovery floor) -> switches back to b!
+  const r3 = await autosw.tick(ctx, { threshold: 90, fetch: usageFetch({ TB: 10, TA: 25 }), nowMs: 3, cacheTtlMs: 0 });
+  assert.strictEqual(r3.state, 'switched-back');
+  assert.strictEqual(r3.switchedTo.name, 'b');
+  assert.strictEqual(core.currentEmail(ctx), 'b@x.com');
+  assert.strictEqual(autosw.readState(ctx), null, 'switch-back state cleared after returning to primary');
+});
+
 test('autoswitch tick reports no-candidate when every alternative is exhausted', async function () {
   const ctx = twoAccounts();
   const r = await autosw.tick(ctx, {
