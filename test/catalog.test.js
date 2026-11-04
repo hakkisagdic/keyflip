@@ -257,3 +257,13 @@ test('CLI: provider add rejects an unknown preset id and a missing base_url', fu
   assert.notStrictEqual(bad.code, 0);
   assert.match(bad.err + bad.out, /--base-url|usage/i);
 });
+
+test('catalog includes harnessrouter UHP aggregator preset', function () {
+  const hr = catalog.get('harnessrouter');
+  assert.ok(hr, 'harnessrouter preset exists');
+  assert.strictEqual(hr.category, 'aggregator');
+  assert.strictEqual(hr.compat, 'openai');
+  assert.strictEqual(hr.authScheme, 'bearer');
+  assert.match(hr.baseUrl, /\/api\/harness\/v1$/);
+  assert.match(hr.docs, /github\.com\/HarnessRouter\/harnessrouter/);
+});

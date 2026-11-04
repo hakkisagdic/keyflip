@@ -93,6 +93,16 @@
       "docs": "https://openrouter.ai/docs"
     },
     {
+      "id": "harnessrouter",
+      "name": "HarnessRouter (Unified Harness Protocol / UHP)",
+      "category": "aggregator",
+      "baseUrl": "http://localhost:3000/api/harness/v1",
+      "compat": "openai",
+      "authScheme": "bearer",
+      "models": { "default": "gpt-5.3-codex" },
+      "docs": "https://github.com/HarnessRouter/harnessrouter"
+    },
+    {
       "id": "openai",
       "name": "OpenAI",
       "category": "global",

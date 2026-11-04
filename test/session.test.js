@@ -88,6 +88,18 @@ test('launchCommand builds isolated POSIX and PowerShell launch commands across 
   const codexCmd = session.launchCommand(ctx, 'work', { surface: 'codex' });
   assert.strictEqual(codexCmd.configEnv, 'CODEX_HOME');
   assert.match(codexCmd.posix, /unset OPENAI_API_KEY OPENAI_BASE_URL; CODEX_HOME=.*codex$/);
+
+  const qwenCmd = session.launchCommand(ctx, 'work', { surface: 'qwen' });
+  assert.strictEqual(qwenCmd.configEnv, 'QWEN_HOME');
+  assert.match(qwenCmd.posix, /QWEN_HOME=.*qwen$/);
+
+  const kimiCmd = session.launchCommand(ctx, 'work', { surface: 'kimi' });
+  assert.strictEqual(kimiCmd.configEnv, 'KIMI_HOME');
+  assert.match(kimiCmd.posix, /KIMI_HOME=.*kimi$/);
+
+  const hermesCmd = session.launchCommand(ctx, 'work', { surface: 'hermes' });
+  assert.strictEqual(hermesCmd.configEnv, 'HERMES_HOME');
+  assert.match(hermesCmd.posix, /HERMES_HOME=.*hermes$/);
 });
 
 test('syncBack persists a rotated in-session token to the profile (and only then)', function () {

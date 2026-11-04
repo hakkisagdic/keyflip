@@ -1472,3 +1472,59 @@ test('MCP conversation tools: the account is reported, labelled, and filterable'
   );
   assert.strictEqual(away[1].result.structuredContent.hits.length, 0, 'the filter runs on the ranked list');
 });
+
+test('MCP: keyflip_enable, keyflip_disable, keyflip_launch_cmd, and keyflip_cli_surface tools', async function () {
+  const ctx = makeCtx();
+  _profiles.write(ctx.configDir, { name: 'work', email: 'w@x.com', accountUuid: 'u1', enabled: true });
+  _profiles.write(ctx.configDir, { name: 'work2', email: 'w@x.com', accountUuid: 'u1', enabled: true });
+
+  await assert.rejects(() => toolByName('keyflip_disable').run(ctx, { name: 'work' }), /confirmation required/);
+  const dis = await toolByName('keyflip_disable').run(ctx, { name: 'work', confirm: true });
+  assert.strictEqual(dis.enabled, false);
+
+  const list = await toolByName('keyflip_list').run(ctx, {});
+  const w = list.accounts.find((a) => a.name === 'work');
+  const w2 = list.accounts.find((a) => a.name === 'work2');
+  assert.strictEqual(w.enabled, false);
+  assert.strictEqual(w2.duplicateOf, 'work');
+
+  const en = await toolByName('keyflip_enable').run(ctx, { name: 'work', confirm: true });
+  assert.strictEqual(en.enabled, true);
+
+  const lcmd = await toolByName('keyflip_launch_cmd').run(ctx, { account: 'work', surface: 'qwen' });
+  assert.strictEqual(lcmd.configEnv, 'QWEN_HOME');
+  assert.match(lcmd.posix, /QWEN_HOME=/);
+
+  // CLI surface tools (grok, qwen, kimi, hermes)
+  fs.mkdirSync(path.join(ctx.home, '.kimi'), { recursive: true });
+  fs.writeFileSync(
+    path.join(ctx.home, '.kimi', 'credentials.json'),
+    JSON.stringify({ token: 'kimi-SECRET', email: 'k@moonshot.ai' }),
+  );
+  const cap = await toolByName('keyflip_cli_surface_capture').run(ctx, {
+    surface: 'kimi',
+    name: 'moon',
+    confirm: true,
+  });
+  assert.strictEqual(cap.account.slug, 'moon');
+
+  const st = await toolByName('keyflip_cli_surface').run(ctx, { surface: 'kimi' });
+  assert.strictEqual(st.signedIn, true);
+  assert.strictEqual(st.accounts.length, 1);
+  assert.doesNotMatch(JSON.stringify(st), /kimi-SECRET/);
+
+  const dry = await toolByName('keyflip_cli_surface_switch').run(ctx, {
+    surface: 'kimi',
+    account: 'moon',
+    dry_run: true,
+    confirm: true,
+  });
+  assert.strictEqual(dry.switch.dryRun, true);
+
+  const rem = await toolByName('keyflip_cli_surface_remove').run(ctx, {
+    surface: 'kimi',
+    account: 'moon',
+    confirm: true,
+  });
+  assert.strictEqual(rem.removed.removed, 'moon');
+});

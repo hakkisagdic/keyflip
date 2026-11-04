@@ -261,3 +261,55 @@ test('G8: --anon masks emails and account/provider names', function () {
   assert.strictEqual(html.indexOf('alice@bigcorp.com'), -1);
   assert.ok(html.indexOf('anonymized') !== -1);
 });
+
+test('panel exposes enabled, duplicateOf, model-scoped quotas, and limitedScopes', function () {
+  const ctx = makeCtx();
+  writeClaude(ctx, { oauthAccount: { emailAddress: 'alice@x.com' }, userID: 'u1' });
+  profiles.write(ctx.configDir, {
+    name: 'work',
+    email: 'alice@x.com',
+    accountUuid: 'uuid-1',
+    enabled: false,
+    oauthAccount: {},
+    savedAt: ctx.now(),
+    active: true,
+  });
+  profiles.write(ctx.configDir, {
+    name: 'work-dup',
+    email: 'alice@x.com',
+    accountUuid: 'uuid-1',
+    enabled: true,
+    oauthAccount: {},
+    savedAt: ctx.now(),
+    active: false,
+  });
+  fs.writeFileSync(
+    path.join(ctx.configDir, '.usage-cache.json'),
+    JSON.stringify({
+      work: {
+        at: 9e15,
+        usage: {
+          fiveHour: { pct: 40 },
+          sevenDay: { pct: 70 },
+          sevenDayOpus: { pct: 100 },
+          sevenDaySonnet: { pct: 25 },
+        },
+      },
+    }),
+  );
+  const st = panel.buildState(ctx);
+  const work = st.accounts.find((a) => a.name === 'work');
+  const dup = st.accounts.find((a) => a.name === 'work-dup');
+  assert.strictEqual(work.enabled, false);
+  assert.strictEqual(work.sevenDayOpusPct, 100);
+  assert.strictEqual(work.sevenDaySonnetPct, 25);
+  assert.deepStrictEqual(work.limitedScopes, ['opus']);
+  assert.strictEqual(dup.duplicateOf, 'work');
+
+  const snap = panel.buildSnapshot(ctx, {});
+  const html = panel.renderSnapshot(snap);
+  assert.match(html, /opus 100%/);
+  assert.match(html, /sonnet 25%/);
+  assert.match(html, /\[disabled\]/);
+  assert.match(html, /\[dup\]/);
+});

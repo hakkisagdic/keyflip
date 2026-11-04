@@ -11,6 +11,7 @@ import * as _sessions from './sessions.js';
 import * as _memory from './memory.js';
 import * as _recall from './recall.js';
 import * as _history from './history.js';
+import * as _usage from './usage.js';
 
 // Aggregate the dashboard state. FAST — reads the cached usage (no network fetch) and bounds
 // the session/keepsake lists. Never throws (a panel must not crash on partial data).
@@ -39,19 +40,29 @@ function buildState(ctx) {
 
   const accounts = safe(function () {
     return core.listProfiles(ctx).map(function (p) {
-      const u = usageCache[p.name] && usageCache[p.name].usage;
+      const entry = usageCache[p.name] || {};
+      const u = entry.usage || (entry.lastGood && entry.lastGood.usage) || null;
       let fiveHour = null,
-        sevenDay = null;
+        sevenDay = null,
+        sevenDayOpus = null,
+        sevenDaySonnet = null;
       if (u) {
         if (u.fiveHour && typeof u.fiveHour.pct === 'number') fiveHour = u.fiveHour.pct;
         if (u.sevenDay && typeof u.sevenDay.pct === 'number') sevenDay = u.sevenDay.pct;
+        if (u.sevenDayOpus && typeof u.sevenDayOpus.pct === 'number') sevenDayOpus = u.sevenDayOpus.pct;
+        if (u.sevenDaySonnet && typeof u.sevenDaySonnet.pct === 'number') sevenDaySonnet = u.sevenDaySonnet.pct;
       }
       return {
         name: p.name,
         email: p.email || null,
         active: !!p.active,
+        enabled: p.enabled !== false,
+        duplicateOf: p.duplicateOf || null,
         fiveHourPct: fiveHour,
         sevenDayPct: sevenDay,
+        sevenDayOpusPct: sevenDayOpus,
+        sevenDaySonnetPct: sevenDaySonnet,
+        limitedScopes: u ? _usage.limitedScopes(u) : [],
         trend: (trendByAccount[p.name] || []).slice(-24),
       };
     });
@@ -218,8 +229,13 @@ function buildSnapshot(ctx, opts) {
       return {
         label: maskEmail(a.email || a.name, i),
         active: a.active,
+        enabled: a.enabled !== false,
+        duplicateOf: opts.anon ? (a.duplicateOf ? 'duplicate' : null) : a.duplicateOf || null,
         fiveHourPct: a.fiveHourPct,
         sevenDayPct: a.sevenDayPct,
+        sevenDayOpusPct: a.sevenDayOpusPct != null ? a.sevenDayOpusPct : null,
+        sevenDaySonnetPct: a.sevenDaySonnetPct != null ? a.sevenDaySonnetPct : null,
+        limitedScopes: Array.isArray(a.limitedScopes) ? a.limitedScopes : [],
         trend: a.trend,
       };
     }),
@@ -250,12 +266,19 @@ function renderSnapshot(snap) {
     (snap.accounts || [])
       .map(function (a) {
         const w = a.fiveHourPct == null ? 0 : Math.min(100, a.fiveHourPct);
+        const modelBits = [];
+        if (a.sevenDayOpusPct != null) modelBits.push('opus ' + pct(a.sevenDayOpusPct));
+        if (a.sevenDaySonnetPct != null) modelBits.push('sonnet ' + pct(a.sevenDaySonnetPct));
+        const tags = [];
+        if (a.enabled === false) tags.push('disabled');
+        if (a.duplicateOf) tags.push('dup');
         return (
           '<div class="card' +
           (a.active ? ' active' : '') +
           '"><div class="email">' +
           esc(a.label) +
           (a.active ? ' ✓' : '') +
+          (tags.length ? ' <span class="badge">[' + esc(tags.join(', ')) + ']</span>' : '') +
           '</div>' +
           '<div class="' +
           barCls(a.fiveHourPct) +
@@ -266,6 +289,7 @@ function renderSnapshot(snap) {
           pct(a.fiveHourPct) +
           '</span><span>7d ' +
           pct(a.sevenDayPct) +
+          (modelBits.length ? ' · ' + esc(modelBits.join(' · ')) : '') +
           '</span></div>' +
           sparkSvg(a.trend) +
           '</div>'
@@ -487,8 +511,10 @@ const SCRIPT = [
   ' document.getElementById("active").textContent=(s.activeEmail||"not logged in")+(s.activeProvider?" → "+s.activeProvider:"");',
   ' document.getElementById("accounts").innerHTML=(s.accounts||[]).map(function(a){',
   '  var use=a.fiveHourPct; var bl=barClass(use); var w=(use==null?0:Math.min(100,use));',
-  '  return "<div class=\\"card"+(a.active?" active":"")+"\\"><div class=\\"email\\">"+esc(a.email||a.name)+(a.active?" ✓":"")+"</div><div class=\\"name\\">"+esc(a.name)+"</div>"+',
-  '   "<div class=\\""+bl+"\\"><i style=\\"width:"+w+"%\\"></i></div><div class=\\"barlabel\\"><span>5h "+pct(a.fiveHourPct)+"</span><span>7d "+pct(a.sevenDayPct)+"</span></div>"+spark(a.trend)+"</div>";',
+  '  var tags=[]; if(a.enabled===false) tags.push("disabled"); if(a.duplicateOf) tags.push("dup:"+a.duplicateOf);',
+  '  var mb=[]; if(a.sevenDayOpusPct!=null) mb.push("opus "+pct(a.sevenDayOpusPct)); if(a.sevenDaySonnetPct!=null) mb.push("sonnet "+pct(a.sevenDaySonnetPct));',
+  '  return "<div class=\\"card"+(a.active?" active":"")+"\\"><div class=\\"email\\">"+esc(a.email||a.name)+(a.active?" ✓":"")+(tags.length?" <span class=badge>["+esc(tags.join(", "))+"]</span>":"")+"</div><div class=\\"name\\">"+esc(a.name)+"</div>"+',
+  '   "<div class=\\""+bl+"\\"><i style=\\"width:"+w+"%\\"></i></div><div class=\\"barlabel\\"><span>5h "+pct(a.fiveHourPct)+"</span><span>7d "+pct(a.sevenDayPct)+(mb.length?" · "+esc(mb.join(" · ")):"")+"</span></div>"+spark(a.trend)+"</div>";',
   ' }).join("")||"<span class=muted>No saved accounts.</span>";',
   ' document.getElementById("providers").innerHTML=(s.providers||[]).map(function(p){return "<span class=\\"chip"+(p.active?" active":"")+"\\">"+esc(p.name)+(p.active?" ●":"")+"</span>";}).join("")||"<span class=muted>No providers.</span>";',
   ' document.getElementById("sessions").innerHTML=(s.sessions||[]).map(function(r){return "<li><div>"+esc((r.sessionId||"").slice(0,8))+" <span class=meta>"+esc(r.cwd||"")+"</span>"+(r.orphan?" <span class=badge>⚠ folder gone</span>":(r.staleCwd?" <span class=meta>(folder gone, still live)</span>":""))+"</div>"+(r.preview?"<div class=meta>"+esc(r.preview)+"</div>":"")+"</li>";}).join("")||"<li class=muted>No sessions.</li>";',
@@ -613,4 +639,5 @@ export {
   renderFleetPage,
   serve,
   serveFleet,
+  loopbackOk,
 };

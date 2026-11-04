@@ -86,6 +86,7 @@ import * as _browserswitch from './browserswitch.js';
 import * as _kiro from './kiro.js';
 import * as _antigravity from './antigravity.js';
 import * as _commandcode from './commandcode.js';
+import * as _clisurfaces from './clisurfaces.js';
 import * as _codex from './codex.js';
 import * as _cfg from './config.js';
 import * as _svc from './autoswitchservice.js';
@@ -14664,6 +14665,202 @@ function cmdCommandCode(ctx, rest) {
   );
 }
 
+// `keyflip <grok|qwen|kimi|hermes> [status|list|capture|switch|backups|restore|remove]` —
+// unified account capture & switch adapter for supported JSON-backed CLI surfaces.
+function cmdCliSurface(ctx, surfaceId, rest) {
+  logmod.log(surfaceId + ' invoked');
+  const spec = _clisurfaces.getSpec(surfaceId);
+  const hasSub = rest[0] && rest[0].indexOf('-') !== 0;
+  const sub = hasSub ? rest[0] : 'status';
+  const args = hasSub ? rest.slice(1) : rest.slice();
+  const positional = args.filter(function (a) {
+    return a && a[0] !== '-';
+  });
+  const has = function (f) {
+    return args.indexOf(f) !== -1;
+  };
+  const force = has('--force') || has('-y');
+  const dryRun = has('--dry-run');
+  const noVerify = has('--no-verify');
+
+  if (sub === 'status' || sub === 'show') {
+    const st = _clisurfaces.status(ctx, surfaceId);
+    print(style.bold(spec.label + ' live session'));
+    if (st.signedIn) {
+      const id = st.identity || {};
+      print(
+        '  ' +
+          style.ok('logged in') +
+          (id.userName ? '  ' + style.bold(id.userName) : '') +
+          (id.userId ? '  ' + style.dim('[' + id.userId + ']') : ''),
+      );
+      print('  file   ' + style.dim(st.file));
+    } else if (st.error) {
+      print('  ' + style.warn('✗') + ' ' + st.file + ' is unreadable (' + st.error + ')');
+    } else {
+      print('  ' + style.dim('signed out') + '  (no ' + st.file + ')');
+    }
+    if (st.cli && st.cli.path) {
+      print(
+        '  bin    ' +
+          st.cli.path +
+          (st.cli.source && st.cli.source !== 'PATH' ? '  ' + style.warn('(' + st.cli.source + ')') : ''),
+      );
+    } else {
+      print('  bin    ' + style.dim(spec.binary + ' not found on PATH'));
+    }
+    if (st.envOverride) {
+      print(
+        '  ' +
+          style.warn('⚠') +
+          ' ' +
+          st.envKey +
+          ' is exported in env — ' +
+          spec.binary +
+          ' may prefer that env var over ' +
+          st.file,
+      );
+    }
+    if (!st.accounts.length) {
+      print('\nNo ' + spec.label + ' accounts saved yet. Run: ' + style.bold('keyflip ' + surfaceId + ' capture'));
+    } else {
+      print('\nSaved ' + spec.label + ' accounts (' + st.accounts.length + '):');
+      st.accounts.forEach(function (a, i) {
+        const active =
+          st.identity &&
+          ((a.userId && st.identity.userId && a.userId === st.identity.userId) ||
+            (a.userName && st.identity.userName && a.userName === st.identity.userName));
+        print(
+          '  ' +
+            (active ? style.ok('*') : ' ') +
+            ' ' +
+            (i + 1) +
+            '. ' +
+            style.bold(a.name) +
+            (a.userName ? '  ' + a.userName : ''),
+        );
+      });
+    }
+    jsonOut(st);
+    return;
+  }
+
+  if (sub === 'list') {
+    const accounts = _clisurfaces.listAccounts(ctx, surfaceId);
+    if (!accounts.length) print('No ' + spec.label + ' accounts saved. Run: keyflip ' + surfaceId + ' capture');
+    else {
+      print('Saved ' + spec.label + ' accounts (' + accounts.length + '):');
+      accounts.forEach(function (a, i) {
+        print('  ' + (i + 1) + '. ' + style.bold(a.name) + '  ' + (a.userName || style.dim('(identity unknown)')));
+        print('       ' + style.dim('captured ' + (a.capturedAt || '?') + ' · ' + (a.bytes || 0) + ' B'));
+      });
+    }
+    jsonOut({ surface: surfaceId, accounts: accounts });
+    return;
+  }
+
+  if (sub === 'capture' || sub === 'save') {
+    const r = _clisurfaces.capture(ctx, surfaceId, { name: positional[0] });
+    print(
+      style.ok('✓') +
+        ' captured ' +
+        spec.label +
+        ' account ' +
+        style.bold(r.slug) +
+        (r.meta.userName ? ' (' + r.meta.userName + ')' : ''),
+    );
+    print(style.dim('  ' + spec.bundleFile + ' lives in ' + r.dir + ' (0600); meta.json holds no secret.'));
+    jsonOut({ surface: surfaceId, account: r.meta });
+    return;
+  }
+
+  if (sub === 'switch' || sub === 'use') {
+    if (!positional[0])
+      return fail('usage: keyflip ' + surfaceId + ' switch <name|number|user> [--dry-run] [--no-verify]');
+    const r = _clisurfaces.switchTo(ctx, surfaceId, positional[0], { dryRun: dryRun, noVerify: noVerify });
+    if (r.dryRun) {
+      print(style.bold(spec.label + ' switch plan (dry run — nothing was written)'));
+      print(
+        '  target: ' +
+          style.bold(r.plan.userName || r.plan.userId || '?') +
+          '  live now: ' +
+          (r.plan.live ? r.plan.live.userName : 'signed out'),
+      );
+      print('  would write ' + r.plan.file + ' (' + r.plan.write.bytes + ' B)');
+      jsonOut({ surface: surfaceId, dryRun: true, plan: r.plan });
+      return;
+    }
+    print(
+      style.ok('✓') +
+        ' switched ' +
+        spec.label +
+        ' to ' +
+        style.bold(r.slug) +
+        (r.identity && r.identity.userName ? ' (' + r.identity.userName + ')' : ''),
+    );
+    if (r.capturedOutgoing) print('  ' + style.dim('saved the outgoing login as ') + style.bold(r.capturedOutgoing));
+    if (r.backup)
+      print('  ' + style.dim('previous ' + spec.bundleFile + ' backed up (' + path.basename(r.backup) + ')'));
+    if (!r.verified) print(style.warn('⚠') + ' identity check skipped (--no-verify).');
+    jsonOut(r);
+    return;
+  }
+
+  if (sub === 'backups') {
+    const list = _clisurfaces.listBackups(ctx, surfaceId);
+    if (!list.length) print('No ' + spec.label + ' backups yet (one is written before every switch/restore).');
+    else {
+      print(spec.label + ' backups (' + list.length + ', newest first):');
+      list.forEach(function (b, i) {
+        print(
+          '  ' +
+            (i + 1) +
+            '. ' +
+            style.bold(b.file) +
+            '  ' +
+            (b.userName || style.dim('unknown')) +
+            '  ' +
+            style.dim(b.bytes + ' B'),
+        );
+      });
+    }
+    jsonOut({ surface: surfaceId, backups: list });
+    return;
+  }
+
+  if (sub === 'restore') {
+    if (!positional[0]) return fail('usage: keyflip ' + surfaceId + ' restore <file|number> [--dry-run]');
+    const r = _clisurfaces.restoreBackup(ctx, surfaceId, positional[0], { dryRun: dryRun, noVerify: noVerify });
+    if (r.dryRun) {
+      print(style.bold(spec.label + ' restore plan (dry run — nothing was written)'));
+      print('  would write ' + r.plan.file + ' (' + r.plan.write.bytes + ' B)');
+      jsonOut({ surface: surfaceId, dryRun: true, plan: r.plan });
+      return;
+    }
+    print(style.ok('✓') + ' restored ' + style.bold(r.restored));
+    jsonOut(r);
+    return;
+  }
+
+  if (sub === 'remove' || sub === 'rm') {
+    if (!positional[0]) return fail('usage: keyflip ' + surfaceId + ' remove <name|number> --force');
+    const r = _clisurfaces.removeAccount(ctx, surfaceId, positional[0], { force: force });
+    print(style.ok('✓') + ' removed ' + spec.label + ' account ' + style.bold(r.removed));
+    jsonOut(r);
+    return;
+  }
+
+  return fail(
+    'unknown ' +
+      surfaceId +
+      " command: '" +
+      sub +
+      "' (status|list|capture|switch|backups|restore|remove). Try `keyflip " +
+      surfaceId +
+      ' status`.',
+  );
+}
+
 // `keyflip antigravity [status|list|capture|switch|remove]` — manage Antigravity (formerly Gemini CLI) accounts.
 // Antigravity stores its OAuth token in the macOS Keychain under service "gemini", account "antigravity".
 async function cmdAntigravity(ctx, rest) {
@@ -16960,6 +17157,15 @@ async function dispatch(ctx, cmd, rest) {
               return cmdCommandCode(ctx, rest);
             })
           : cmdCommandCode(ctx, rest);
+      case 'grok':
+      case 'qwen':
+      case 'kimi':
+      case 'hermes':
+        return ['capture', 'save', 'switch', 'use', 'restore', 'remove', 'rm'].indexOf(rest[0]) !== -1
+          ? withLock(ctx, function () {
+              return cmdCliSurface(ctx, cmd, rest);
+            })
+          : cmdCliSurface(ctx, cmd, rest);
       case 'antigravity':
       case 'agy':
         return ['capture', 'save', 'switch', 'use', 'remove', 'rm'].indexOf(rest[0]) !== -1

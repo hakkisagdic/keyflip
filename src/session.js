@@ -56,6 +56,24 @@ const SURFACE_LAUNCH_SPECS = Object.freeze({
     bin: 'grok',
     unsetVars: Object.freeze(['XAI_API_KEY', 'GROK_API_KEY']),
   }),
+  qwen: Object.freeze({
+    id: 'qwen',
+    configEnv: 'QWEN_HOME',
+    bin: 'qwen',
+    unsetVars: Object.freeze(['DASHSCOPE_API_KEY', 'QWEN_API_KEY', 'OPENAI_API_KEY']),
+  }),
+  kimi: Object.freeze({
+    id: 'kimi',
+    configEnv: 'KIMI_HOME',
+    bin: 'kimi',
+    unsetVars: Object.freeze(['MOONSHOT_API_KEY', 'KIMI_API_KEY']),
+  }),
+  hermes: Object.freeze({
+    id: 'hermes',
+    configEnv: 'HERMES_HOME',
+    bin: 'hermes',
+    unsetVars: Object.freeze(['NOUS_API_KEY', 'OPENROUTER_API_KEY', 'ANTHROPIC_API_KEY', 'OPENAI_API_KEY']),
+  }),
   'command-code': Object.freeze({
     id: 'command-code',
     configEnv: 'COMMAND_CODE_HOME',

@@ -101,6 +101,7 @@ import * as _config from './config.js';
 import * as _codexbar from './codexbar.js';
 import * as _codex from './codex.js';
 import * as _commandcode from './commandcode.js';
+import * as _clisurfaces from './clisurfaces.js';
 import * as _fsutil from './fsutil.js';
 import * as _secretmask from './secretscan.js';
 import * as _conversations from './conversations.js';
@@ -151,11 +152,15 @@ function accountsPayload(ctx, infos) {
       appCaptured: appauth.hasProfile(ctx, e.name),
       activeCli: !!e.active,
       activeApp: e.name === appActive,
+      enabled: e.enabled !== false,
+      duplicateOf: e.duplicateOf || null,
     };
     if (infos && infos[e.name]) {
       out.usage = infos[e.name].usage;
       out.usageStatus = infos[e.name].status;
       out.headroomPct = infos[e.name].headroom;
+      out.limitedScopes = usage.limitedScopes(infos[e.name].usage);
+      out.lastGood = infos[e.name].lastGood || null;
     }
     return out;
   });
@@ -1069,6 +1074,213 @@ const TOOLS = [
       const l = await lock.acquire(ctx.configDir);
       try {
         return { removed: _commandcode.removeAccount(ctx, String(args.account), { force: true }) };
+      } finally {
+        l.release();
+      }
+    },
+  },
+  {
+    name: 'keyflip_enable',
+    title: 'Enable a saved Claude account',
+    description:
+      'Re-enable a disabled Claude account so rotation (next, autoswitch, proxy) includes it again. Mutating — ask the user first, then confirm=true.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Saved account name, 1-based number, or email.' },
+        confirm: confirmProp.confirm,
+      },
+      required: ['name', 'confirm'],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    run: async function (ctx, args) {
+      needConfirm(args);
+      const target = core.resolveProfile(ctx, String(args.name));
+      if (!target) throw new Error("no such account: '" + args.name + "'");
+      const l = await lock.acquire(ctx.configDir);
+      try {
+        return core.setProfileEnabled(ctx, target, true);
+      } finally {
+        l.release();
+      }
+    },
+  },
+  {
+    name: 'keyflip_disable',
+    title: 'Disable a saved Claude account',
+    description:
+      'Disable a saved Claude account so rotation (next, autoswitch, proxy) skips it without deleting its credentials. Mutating — ask the user first, then confirm=true.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Saved account name, 1-based number, or email.' },
+        confirm: confirmProp.confirm,
+      },
+      required: ['name', 'confirm'],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    run: async function (ctx, args) {
+      needConfirm(args);
+      const target = core.resolveProfile(ctx, String(args.name));
+      if (!target) throw new Error("no such account: '" + args.name + "'");
+      const l = await lock.acquire(ctx.configDir);
+      try {
+        return core.setProfileEnabled(ctx, target, false);
+      } finally {
+        l.release();
+      }
+    },
+  },
+  {
+    name: 'keyflip_launch_cmd',
+    title: 'Generate isolated CLI launch command',
+    description:
+      'Build a copy-pasteable shell command that launches a CLI surface (claude, codex, grok, qwen, kimi, hermes, command-code) with isolated profile environment variables (CLAUDE_CONFIG_DIR, CODEX_HOME, GROK_HOME, etc.). Read-only.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        account: { type: 'string', description: 'Profile/account name.' },
+        surface: {
+          type: 'string',
+          enum: ['claude', 'codex', 'grok', 'qwen', 'kimi', 'hermes', 'command-code'],
+          description: 'CLI surface to launch (default: claude).',
+        },
+        args: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Optional extra CLI arguments to append.',
+        },
+      },
+      required: ['account'],
+      additionalProperties: false,
+    },
+    annotations: RO,
+    run: async function (ctx, args) {
+      const surface = (args && args.surface) || 'claude';
+      let account = String(args.account);
+      if (surface === 'claude') {
+        const resolved = core.resolveProfile(ctx, account);
+        if (resolved) account = resolved;
+      }
+      return _session.launchCommand(ctx, account, {
+        surface: surface,
+        args: Array.isArray(args && args.args) ? args.args : [],
+      });
+    },
+  },
+  {
+    name: 'keyflip_cli_surface',
+    title: 'Grok / Qwen / Kimi / Hermes CLI account status',
+    description:
+      'Report the live login and saved captures for Grok CLI (~/.grok/settings.json), Qwen Code (~/.qwen/oauth_creds.json), Kimi CLI (~/.kimi/credentials.json), or Hermes Agent (~/.hermes/auth.json). Omit surface to inspect all four. Read-only; never returns secret values.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        surface: {
+          type: 'string',
+          enum: ['grok', 'qwen', 'kimi', 'hermes'],
+          description: 'CLI surface id (omit to inspect all four).',
+        },
+      },
+      additionalProperties: false,
+    },
+    annotations: RO,
+    run: async function (ctx, args) {
+      if (args && args.surface) {
+        return _clisurfaces.status(ctx, String(args.surface));
+      }
+      const out = {};
+      _clisurfaces.SUPPORTED_IDS.forEach(function (id) {
+        out[id] = _clisurfaces.status(ctx, id);
+      });
+      return { surfaces: out };
+    },
+  },
+  {
+    name: 'keyflip_cli_surface_capture',
+    title: 'Save live Grok / Qwen / Kimi / Hermes CLI login',
+    description:
+      'Copy the live credential bundle for grok, qwen, kimi, or hermes into a 0600 capture under keyflip configDir with secret-free metadata. Ask the user before writing, then confirm=true.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        surface: { type: 'string', enum: ['grok', 'qwen', 'kimi', 'hermes'] },
+        name: { type: 'string', description: 'Optional slug override.' },
+        confirm: confirmProp.confirm,
+      },
+      required: ['surface', 'confirm'],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    run: async function (ctx, args) {
+      needConfirm(args);
+      const l = await lock.acquire(ctx.configDir);
+      try {
+        return {
+          account: _clisurfaces.capture(ctx, String(args.surface), {
+            name: args && args.name ? String(args.name) : undefined,
+          }),
+        };
+      } finally {
+        l.release();
+      }
+    },
+  },
+  {
+    name: 'keyflip_cli_surface_switch',
+    title: 'Switch Grok / Qwen / Kimi / Hermes CLI account',
+    description:
+      'Write a saved capture back to the live credential file for grok, qwen, kimi, or hermes. Captures and backs up the outgoing login first and verifies the written file. Ask the user first, then confirm=true. Set dry_run=true to plan without writing.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        surface: { type: 'string', enum: ['grok', 'qwen', 'kimi', 'hermes'] },
+        account: { type: 'string', description: 'Saved slug, 1-based number, or userName.' },
+        dry_run: { type: 'boolean', description: 'Plan only; write nothing.' },
+        confirm: confirmProp.confirm,
+      },
+      required: ['surface', 'account', 'confirm'],
+      additionalProperties: false,
+    },
+    annotations: MUT,
+    run: async function (ctx, args) {
+      needConfirm(args);
+      if (args.dry_run === true) {
+        return { switch: _clisurfaces.switchTo(ctx, String(args.surface), String(args.account), { dryRun: true }) };
+      }
+      const l = await lock.acquire(ctx.configDir);
+      try {
+        return { switch: _clisurfaces.switchTo(ctx, String(args.surface), String(args.account), {}) };
+      } finally {
+        l.release();
+      }
+    },
+  },
+  {
+    name: 'keyflip_cli_surface_remove',
+    title: 'Delete a saved Grok / Qwen / Kimi / Hermes capture',
+    description:
+      'Remove a saved CLI surface capture from the keyflip config dir. The live credential file is untouched. Ask the user first, then confirm=true.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        surface: { type: 'string', enum: ['grok', 'qwen', 'kimi', 'hermes'] },
+        account: { type: 'string', description: 'Saved slug or 1-based number.' },
+        confirm: confirmProp.confirm,
+      },
+      required: ['surface', 'account', 'confirm'],
+      additionalProperties: false,
+    },
+    annotations: MUT,
+    run: async function (ctx, args) {
+      needConfirm(args);
+      const l = await lock.acquire(ctx.configDir);
+      try {
+        return {
+          removed: _clisurfaces.removeAccount(ctx, String(args.surface), String(args.account), { force: true }),
+        };
       } finally {
         l.release();
       }

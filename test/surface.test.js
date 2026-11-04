@@ -3,6 +3,7 @@ import assert from 'node:assert';
 import fs from 'fs';
 import path from 'path';
 import * as surface from '../src/surface.js';
+import * as clisurfaces from '../src/clisurfaces.js';
 import { makeCtx } from './helpers.js';
 
 function write(ctx, rel, data) {
@@ -39,8 +40,8 @@ test('SURFACES covers the registered CLI/IDE tools, each with the required shape
     assert.ok(['file', 'keychain', 'env'].indexOf(s.kind) !== -1, s.id + ' kind');
     assert.strictEqual(typeof s.detect, 'function');
     assert.strictEqual(typeof s.list, 'function');
-    // Command Code is the one tool with a real adapter here; the rest are read-only projections.
-    assert.strictEqual(s.switchable, s.id === 'command-code', s.id + ' switchable');
+    const switchableIds = ['command-code', 'grok', 'qwen', 'kimi', 'hermes'];
+    assert.strictEqual(s.switchable, switchableIds.indexOf(s.id) !== -1, s.id + ' switchable');
   });
   assert.match(surface.get('command-code').switchHint, /keyflip commandcode/);
 });
@@ -74,7 +75,7 @@ test('pristine home -> every surface present:false, no active account, not switc
     assert.strictEqual(s.activeAccount, null, s.id);
     assert.deepStrictEqual(s.accounts, [], s.id);
     // Switchability is a property of the adapter, not of presence.
-    assert.strictEqual(s.switchable, s.id === 'command-code', s.id);
+    assert.strictEqual(s.switchable, ['command-code', 'grok', 'qwen', 'kimi', 'hermes'].indexOf(s.id) !== -1, s.id);
     assert.strictEqual(s.note, 'not detected', s.id);
   });
 });
@@ -255,4 +256,43 @@ test('keyflip_surfaces MCP tool is read-only and returns detection with no secre
   })[0];
   assert.strictEqual(g.activeAccount, 'me@gmail.com');
   assert.doesNotMatch(JSON.stringify(out), /sk-SECRET/);
+});
+
+// ---- clisurfaces adapter (grok, qwen, kimi, hermes) ----
+test('clisurfaces: capture, switchTo, backups, restore, remove across grok/qwen/kimi/hermes', function () {
+  const ctx = makeCtx();
+  // Seed Grok account A
+  write(ctx, '.grok/settings.json', JSON.stringify({ apiKey: 'xai-SECRET-A', email: 'alice@x.ai', userId: 'u-alice' }));
+  const capA = clisurfaces.capture(ctx, 'grok', { name: 'alice' });
+  assert.strictEqual(capA.slug, 'alice');
+  assert.strictEqual(capA.meta.userName, 'alice@x.ai');
+  assert.doesNotMatch(JSON.stringify(capA.meta), /xai-SECRET-A/);
+
+  // Seed Grok account B live
+  write(ctx, '.grok/settings.json', JSON.stringify({ apiKey: 'xai-SECRET-B', email: 'bob@x.ai', userId: 'u-bob' }));
+  const dry = clisurfaces.switchTo(ctx, 'grok', 'alice', { dryRun: true });
+  assert.strictEqual(dry.dryRun, true);
+  assert.strictEqual(dry.plan.slug, 'alice');
+
+  // Real switch to alice automatically captures outgoing bob and writes a backup
+  const sw = clisurfaces.switchTo(ctx, 'grok', 'alice', {});
+  assert.strictEqual(sw.slug, 'alice');
+  assert.strictEqual(sw.verified, true);
+  assert.ok(sw.capturedOutgoing);
+  assert.ok(sw.backup);
+
+  const st = clisurfaces.status(ctx, 'grok');
+  assert.strictEqual(st.signedIn, true);
+  assert.strictEqual(st.identity.userName, 'alice@x.ai');
+  assert.strictEqual(st.accounts.length, 2);
+  assert.doesNotMatch(JSON.stringify(st), /xai-SECRET/);
+
+  const backups = clisurfaces.listBackups(ctx, 'grok');
+  assert.strictEqual(backups.length, 1);
+  const rest = clisurfaces.restoreBackup(ctx, 'grok', 1, {});
+  assert.strictEqual(rest.verified, true);
+  assert.strictEqual(clisurfaces.status(ctx, 'grok').identity.userName, 'bob@x.ai');
+
+  const rem = clisurfaces.removeAccount(ctx, 'grok', 'alice', { force: true });
+  assert.strictEqual(rem.removed, 'alice');
 });
