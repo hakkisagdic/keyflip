@@ -113,11 +113,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **The release verifying key is embedded, so a real license works the moment it is bought.**
   `src/license.js` carried the placeholder `REPLACE_AT_RELEASE_WITH_ED25519_SPKI_DER_BASE64`, so
-  every shipped client verified _nothing_ until a release patched the key in. The issuer keypair now
+  every shipped client verified *nothing* until a release patched the key in. The issuer keypair now
   exists (private key at `issuer/private/issuer.key`, mode `0600`, gitignored, never printed, logged
   or passed on `argv`) and its **public** half is embedded in `PUBKEY_B64` — a token the issuer signs
   verifies green in an installed keyflip with no code change and no release. The placeholder's
-  fail-closed property did not disappear with it: an _unparseable_ key still makes `verify()` answer
+  fail-closed property did not disappear with it: an *unparseable* key still makes `verify()` answer
   `no-pubkey` and collapses every tier to `free`, and a test now asserts the shipped key really is a
   parseable Ed25519 public key (so a placeholder can never slip back in unnoticed). The keypair's
   private half still needs an **encrypted off-machine backup** — lose it and no license can ever be
@@ -179,7 +179,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   model ids, finite rates in range; a corrupt cache is ignored whole instead of half-applied.
   **Pinning is opt-in and never automatic**: `cost.pricesSha256` (or `--pin <sha256>`) refuses a
   refresh whose sha-256 does not match, and keyflip never pins what it just fetched. `keyflip cost
-prices` reports the source, age, digest and pin state; `--clear` drops the cache. A live row may
+  prices` reports the source, age, digest and pin state; `--clear` drops the cache. A live row may
   raise a rate or add a model the bundle never had, but it never lowers a rate below the bundled
   snapshot (an upstream drop is usually intro pricing or a stale row, and an estimate that
   understates spend is worse than one that overstates it). The new state file is a reserved name
@@ -211,12 +211,12 @@ prices` reports the source, age, digest and pin state; `--clear` drops the cache
   and where it came from, and `keyflip tier <account> <tier|auto>` pins an override in that
   account's existing meta JSON (no new state file) for a vendor string that is missing or wrong.
   When a request's plan is refused by **every** account the proxy answers 503 with the reason and
-  tier detail _before sending anything_ upstream; `proxy explain` lists the skipped accounts, and
+  tier detail *before sending anything* upstream; `proxy explain` lists the skipped accounts, and
   `proxy.tierFilter=false` (new config key) turns the filter off. MCP: `keyflip_tiers` (read-only)
   and `keyflip_tier_set` (confirm-gated).
 
 - **Declarative proxy routing: `proxy-routes.json`, rules, sticky sessions and a model chain.**
-  The failover proxy can now decide _per request_ instead of only reordering accounts.
+  The failover proxy can now decide *per request* instead of only reordering accounts.
   `~/.config/keyflip/proxy-routes.json` (optional; `keyflip proxy routes init` writes a valid
   starter) holds first-match `rules` whose `when` tests `model`, `path`, `header` (name → glob),
   `tokensGt` (a no-dependency ~chars/4 estimate, so "only huge requests" is expressible), `account`
@@ -279,7 +279,7 @@ prices` reports the source, age, digest and pin state; `--clear` drops the cache
   have is never given a directory, and a shared dir (`~/.agents/skills` serves Codex, Warp, Goose,
   Zed and more) is written once. New: `keyflip skill sync` re-applies each skill's recorded source
   (an archive with no re-fetchable origin says so), `keyflip skill list` shows `✓ ok / ✎ edited /
-✗ missing` per target, and `keyflip install-skill` fans the bundled keyflip skill out to the
+  ✗ missing` per target, and `keyflip install-skill` fans the bundled keyflip skill out to the
   other detected agents while Claude keeps its backup + drift check. A manifest
   (`~/.config/keyflip/installed-skills.json`) records a SHA-256 per target, so `sync` never
   overwrites a copy you edited and `remove` deletes nothing keyflip did not write; an existing
@@ -317,7 +317,7 @@ prices` reports the source, age, digest and pin state; `--clear` drops the cache
   **installed** (the file keyflip wrote is there), **loaded** (launchd or cron actually holds it) and
   **lastRun** (when its log last changed) — prints the whole inventory as one line
   (`2 of 4 scheduled — dream: off · refresh: nightly at 04:30 · spoke 9 h ago · daemon: off ·
-conv: every 30 min · spoke 13 min ago`), and warns when a job is installed but not held, or
+  conv: every 30 min · spoke 13 min ago`), and warns when a job is installed but not held, or
   silent past twice the cadence it was
   installed with. A job younger than two cadences is not blamed for silence: its first tick is not
   due. A `KeepAlive` daemon has no cadence, so it is never aged against one — and it is labelled
@@ -433,7 +433,8 @@ conv: every 30 min · spoke 13 min ago`), and warns when a job is installed but 
   a user edit becomes a `… (conflict <ts>).md` copy, a renamed note is removed only while still
   byte-identical, ownership never points at a conflict copy); `transfer` writes a 0600 handoff bundle
   (`conversation.json` + per-target `CONTINUE.md` + README) for claude/codex/kiro/cursor/opencode/windsurf/gemini/copilot/aider/generic and states plainly that no target has a documented import. Exports mask credential-shaped
-  lines by default (`--no-redact` for fidelity), refuse overwrite without `--force`, and writes are 0600. `search`/`context` auto-build the index once on first use.
+  lines by default (`--no-redact` for fidelity), refuse overwrite without `--force`, and writes are
+  0600. `search`/`context` auto-build the index once on first use.
 
 - **MCP: conversation tools.** Read-only `keyflip_conv_list`, `keyflip_conv_show`, `keyflip_conv_search`,
   `keyflip_conv_context` and `keyflip_conv_status` never build the index and mask snippets/context for
@@ -468,10 +469,10 @@ conv: every 30 min · spoke 13 min ago`), and warns when a job is installed but 
   the strength of an intuition ("a chunk that keeps its question should retrieve better"); this entry
   puts a number on it, and the number says the intuition was **wrong about ranking and right about
   everything else**. Measured on this machine's live 1,869-conversation / 117,503-chunk index with a
-  frozen set of 84 developer-style queries — written by a local model from a random _message_, never
+  frozen set of 84 developer-style queries — written by a local model from a random *message*, never
   from a chunk, so no chunk boundary is favoured — BM25 scores hit@1 **0.49** / hit@5 **0.83** /
   MRR **0.63** and the vector list alone **0.24 / 0.43 / 0.32**. On developer transcripts the rare
-  term beats the meaning: hybrid at the shipped 1:0.25 weight lands _exactly_ on the BM25 numbers,
+  term beats the meaning: hybrid at the shipped 1:0.25 weight lands *exactly* on the BM25 numbers,
   and every heavier semantic weight is worse (1:0.5 → hit@1 0.46, 1:1 → 0.45, 1:2 → 0.25). So the
   turn-grouped chunking is ranking-neutral by design — a turn index and a window index differ by one
   or two queries in 84 — and what it actually buys is the text you get back (the question always
@@ -552,7 +553,7 @@ conv: every 30 min · spoke 13 min ago`), and warns when a job is installed but 
 ### Fixed
 
 - **`keyflip agents` no longer calls an installed tool "not found".** Presence was decided by
-  home-level _memory_ roots plus a config file, so a tool that keeps only a login (Kiro, opencode,
+  home-level *memory* roots plus a config file, so a tool that keeps only a login (Kiro, opencode,
   Command Code) — or whose MCP file appears only after the first `mcpreg enable` — read as absent
   while `keyflip surfaces` and `mcpreg` saw it. Each registry row now carries an installation
   footprint (`detect`), a new `installedAgents()` drives the ●/○ mark, and a row with nothing to
@@ -582,7 +583,7 @@ conv: every 30 min · spoke 13 min ago`), and warns when a job is installed but 
   now always equals the chunk lines on disk.
 
 - **Codex Desktop rollouts no longer collapse into one index entry.** A continued rollout logs
-  the parent thread as `session_id`, and Codex Desktop writes a _second_ `session_meta` line that
+  the parent thread as `session_id`, and Codex Desktop writes a *second* `session_meta` line that
   repeats the parent — the parser kept the last one, so a fork was filed under its parent's id.
   Two transcripts then shared one id: the second overwrote the first's chunk file while the
   manifest kept a single row, so the counts described a conversation that was not on disk. A
@@ -598,7 +599,7 @@ conv: every 30 min · spoke 13 min ago`), and warns when a job is installed but 
   reused with a count that the disk does not back.
 
 - **Hybrid search no longer ranks worse than plain BM25.** The rank fusion used RRF's classic
-  k=60 — a constant meant for an ensemble of _many_ result lists. With only two, it flattened the
+  k=60 — a constant meant for an ensemble of *many* result lists. With only two, it flattened the
   rank so hard that a document found deep in both lists outranked the top hit of either: a
   document at rank 20 in both beat a document at rank 1 in one. Measured over 1856 live
   conversations, hybrid search scored a hit@1 of 0.330 against BM25's 0.596, so the default mode
@@ -658,7 +659,7 @@ conv: every 30 min · spoke 13 min ago`), and warns when a job is installed but 
   file were never read — while `cpSync` copied them into the agent's directory, where the agent
   reads them. The scan now covers **every** file, binary ones skipped by content, and a hit names
   the file and the kind of secret (`refusing to install '<name>': it carries a credential
-(.env: AWS_SECRET_ACCESS_KEY)`) without ever printing the value: both token shapes and
+  (.env: AWS_SECRET_ACCESS_KEY)`) without ever printing the value: both token shapes and
   `KEY=value` lines whose key looks credential-shaped and whose value has entropy are caught.
   Placeholder lines (`.env.example`, `${FOO}`, `<your-key>`) are still allowed through.
 
@@ -674,7 +675,7 @@ conv: every 30 min · spoke 13 min ago`), and warns when a job is installed but 
   file on disk — editable, restorable from a backup, copyable from another machine — and its `dir`
   was used verbatim, so a poisoned entry turned `keyflip skill sync` into "delete `~/.ssh` and put
   the skill there". A target is now resolved through keyflip's own table of agent directories, and
-  the manifest's `dir` is only a _label_: an unknown one is reported as `skipped-unknown-target`
+  the manifest's `dir` is only a *label*: an unknown one is reported as `skipped-unknown-target`
   and nothing is written or deleted. The skill name from the same file is validated too — `remove`
   accepts only a plain name (`^[A-Za-z0-9][A-Za-z0-9._-]*$`) and refuses the rest, `list` reports
   such an entry as `unsafe-name` instead of trusting it.
@@ -688,7 +689,7 @@ conv: every 30 min · spoke 13 min ago`), and warns when a job is installed but 
   into "edited" on upgrade.
 
 - **Installing or removing a skill wrote into the user's agents without asking.** `keyflip skill
-add` fetched a repo and copied it into every detected agent's directory, and `skill remove`
+  add` fetched a repo and copied it into every detected agent's directory, and `skill remove`
   deleted across all of them, from a script or an agent with no prompt at all. Both now confirm:
   on a terminal a `[y/N]` question (printed per target before anything is written), and in a
   non-interactive run they refuse with "re-run with --yes to confirm." An MCP caller that declines
@@ -846,7 +847,7 @@ add` fetched a repo and copied it into every detected agent's directory, and `sk
 ### Tooling
 
 - **Live fleet discovery tests (`test/fleet-discovery.test.js`).** Two real `keyflip --json fleet
-discover` processes start at once with separate HOMEs and find each other over actual multicast
+  discover` processes start at once with separate HOMEs and find each other over actual multicast
   (each excludes its own machine id), and `--no-announce` is proven silent while still hearing an
   announcer. The Tailscale fallback runs the production code path with a fake `tailscale`
   executable on PATH (including failure and malformed JSON), because Tailscale is not installed
@@ -943,7 +944,7 @@ discover` processes start at once with separate HOMEs and find each other over a
   current cycle and prints grant − spent per org, labelled as the estimate it is: the true
   balance lives in the Console and no API reads it (`/v1/organizations/balance` 404s), so an
   admin key reads what it can — the money spent — and the plan's grant fills the rest. `api
-orgs` lists the orgs a key can see (the linked one is yours to pick), `api test` fires the
+  orgs` lists the orgs a key can see (the linked one is yours to pick), `api test` fires the
   read once, `api remove` drops key and metadata together. A Team org must be told its grant
   once (`--grant`, it is per seat); `--cycle-day` is the day the credit lands each month
   (default `1`). Individual Console orgs have no Admin API to talk to ("The Admin API is
@@ -966,7 +967,7 @@ orgs` lists the orgs a key can see (the linked one is yours to pick), `api test`
   so the two never confuse each other) and lists who answered. The beacon carries **public identity
   only** — machine id, display name, and the short SHA-256 fingerprint of the Ed25519 signing key —
   never the fleet passphrase, a private key, or a command, so the output is safe to print and gives
-  nothing away. A discovered peer is only _reachable_: acting on one still needs the passphrase, and
+  nothing away. A discovered peer is only *reachable*: acting on one still needs the passphrase, and
   a key is still pinned by TOFU (`fleet keys` / `fleet trust`) after an out-of-band fingerprint
   comparison. A network that blocks multicast degrades to "found nobody" and the shared folder stays
   the fallback. Exposed to agents as `keyflip_fleet_discover`. A hostile datagram can never inject an
@@ -1003,7 +1004,7 @@ orgs` lists the orgs a key can see (the linked one is yours to pick), `api test`
   read) and proposes the account each unassigned session was worked on, with the evidence: `high`
   when the session's whole logged span sits inside one account's window, `medium` when the span is
   thin (no start timestamp, or it opens before the logged history) but all visible time is one
-  account, `low` — and flagged as _spanning_ — when it crosses a switch, in which case the account
+  account, `low` — and flagged as *spanning* — when it crosses a switch, in which case the account
   holding the most logged time is chosen and said so. Nothing is written without `--apply`; an
   account that is no longer a saved profile is reported, never proposed; sessions the user already
   assigned are counted, never proposed over.
@@ -1021,12 +1022,12 @@ orgs` lists the orgs a key can see (the linked one is yours to pick), `api test`
 ### Added
 
 - **`keyflip verify [account] [--usage] [--live]`** — answers "would switching there actually work",
-  which no earlier command did. Every failure of a switch is a _silent_ one: a stored access token
+  which no earlier command did. Every failure of a switch is a *silent* one: a stored access token
   expired 115 days ago, a desktop-app cookie capture whose `sessionKey` expired last month, a
   capture written in a shape the tool refuses to parse. Those all follow successful writes, so exit
   codes cannot catch them — `src/verify.js` re-reads each surface the way its own application does
-  (stored vs **live** credential, the app token cache, the cookie DB's session cookie _and its
-  expiry_, browser capture age) and rolls the account up to ok / warn / fail / none. It reports
+  (stored vs **live** credential, the app token cache, the cookie DB's session cookie *and its
+  expiry*, browser capture age) and rolls the account up to ok / warn / fail / none. It reports
   presence, expiry and age only — never a token or cookie value, and a test asserts that.
 - **`keyflip refresh [account|--all]`** — the same guarded OAuth refresh `switch` already performs,
   now runnable for every saved account at once, so an idle machine can keep all of them alive
@@ -1060,7 +1061,7 @@ orgs` lists the orgs a key can see (the linked one is yours to pick), `api test`
   resolves a provider (`claude` / `ollama` / any OpenAI-compatible `openai` endpoint) from
   `opts > KEYFLIP_LLM_* env > config.json`, and every chore prints
   `distills via <provider> <model> — <cost>` before its first call. An endpoint key is never stored:
-  `llm.key_env` holds the _name_ of an environment variable, read from the process environment at call
+  `llm.key_env` holds the *name* of an environment variable, read from the process environment at call
   time only, so nothing key-shaped can land in the git-versioned state dir, a log line or an error —
   and a value that looks like a key rather than a name is refused by `llm set --key-env`. Provenance
   follows the work: keepsakes record `distillProvider`/`distillModel`, the `dream schedule` receipt
@@ -1068,7 +1069,7 @@ orgs` lists the orgs a key can see (the linked one is yours to pick), `api test`
   warns when a nightly job sits on the subscription, or when the live config diverged from that receipt.
   Over MCP: read-only `keyflip_llm` (with an optional `probe`) and `keyflip_recall {answer:true}`.
 - **`keyflip doctor --history` + `keyflip scrub-history` — a secret you untracked is not a secret you
-  removed.** The old "secrets in git" check only looked at what is tracked _now_, so an account capture
+  removed.** The old "secrets in git" check only looked at what is tracked *now*, so an account capture
   that predated a `.gitignore` rule stayed fully readable from the commit that recorded it, and the
   repair (`git rm --cached`) looked like it had worked. `src/leakscan.js` walks **every blob keyflip
   ever committed** and reports file + secret KIND + blob id + how many commits still hold it — never the
@@ -1102,9 +1103,9 @@ orgs` lists the orgs a key can see (the linked one is yours to pick), `api test`
   scanner switched off), and any value-shaped note. `*` cannot cross a directory, broad rules are printed
   with their **reach** because they also cover anything new at that path, a corrupt policy **fails closed**
   (no rules applied, `policy_error`, every finding still alarming, dropped rules counted), and keepsakes are
-  never silenced — a distilled "my key is sk-ant-…" is text keyflip wrote _about_ the user, not config they
+  never silenced — a distilled "my key is sk-ant-…" is text keyflip wrote *about* the user, not config they
   chose to keep. `secrets-policy.json` is deliberately not a secret path, so it rides along with `keyflip
-backup` and is reversible with `keyflip undo`. Over MCP: read-only `keyflip_secrets_policy` +
+  backup` and is reversible with `keyflip undo`. Over MCP: read-only `keyflip_secrets_policy` +
   confirm-gated `keyflip_secrets_tolerate`, and `keyflip_history_audit` now separates `alarm_count` from
   `tolerated_count` so an agent cannot report a clean repo it merely silenced. Tests assert the scrub still
   contains the tolerated path, that no secret value or absolute keepsake path appears in any payload, and
@@ -1117,19 +1118,19 @@ backup` and is reversible with `keyflip undo`. Over MCP: read-only `keyflip_secr
   uuids, the account each belongs to), never a copy of the conversation. The transcripts stay exactly
   where Claude put them, so nothing duplicates, and a thread that is deleted, corrupted or carried to
   another machine cannot lose a single message — only a name. `create / add / remove / drop / list /
-show / open / where / suggest / mirror / unmirror`, and:
+  show / open / where / suggest / mirror / unmirror`, and:
   - **`threads suggest` finds the fragmentation instead of asking for it.** It groups recent sessions by
     project folder and keeps the folders where **two or more NAMED accounts** worked, minus sessions a
     thread already covers, so the list shrinks as work gets named — and one account plus unassigned
-    sessions is deliberately _not_ reported (that is an account nobody assigned, not a split). An
+    sessions is deliberately *not* reported (that is an account nobody assigned, not a split). An
     unassigned session is never treated as a switch.
   - **Ids you can actually paste.** `suggest` and `list` print 8-char ids; `resolveSessionId()` expands
     a unique prefix to the full id at write time and refuses an ambiguous one, so a thread never stores
     a dead pointer. (This was found by a test, not by review: the CLI used to write the short id
     straight into the pointer file, where it resolved to nothing.)
   - **One merged timeline, honestly labelled.** Turns sort chronologically across members; a member with
-    no timestamps becomes a front _group_ rather than being smuggled between decisions; provenance
-    dividers show `↪ from gmail · session aaaaaaaa`, so the account switch is visible _inside_ the
+    no timestamps becomes a front *group* rather than being smuggled between decisions; provenance
+    dividers show `↪ from gmail · session aaaaaaaa`, so the account switch is visible *inside* the
     conversation; a cloud chat contributes no turns offline and lands in `unavailable` with the
     `keyflip chat get …` command that would. Caps announce themselves (`cappedMembers`,
     `droppedFromStart` — going over `maxTotal` drops the OLDEST end, because the recent tail is what
@@ -1169,7 +1170,7 @@ show / open / where / suggest / mirror / unmirror`, and:
   the moment an account is about to change, and that moment is the menu, not a terminal running
   `keyflip threads list`. The screen is deliberately **read-only**: every thread with its members — which
   named account each belongs to, where its transcript is, how fresh it is, and the exact
-  `cd … && claude --resume …` line that continues it — plus `[s]`, which _looks for_ split work instead of
+  `cd … && claude --resume …` line that continues it — plus `[s]`, which *looks for* split work instead of
   making the user enumerate it, and a header that counts the members which would silently resume as the
   **current** account. It never reads a transcript body, never writes, never spends quota; creating,
   adding and dropping stay CLI/MCP, because naming a task is the user's call. Building it surfaced a real
@@ -1181,12 +1182,12 @@ show / open / where / suggest / mirror / unmirror`, and:
   assertion rather than a comment.
 - **`keyflip chains [account] [--tighten [--apply]]` — what one "login" is actually made of, and who
   can keep it alive.** An account is never one file: it is a live credential plus every copy keyflip
-  has taken from it (an OAuth profile, the desktop app's token cache _and_ its session cookie, a
+  has taken from it (an OAuth profile, the desktop app's token cache *and* its session cookie, a
   browser cookie snapshot, a provider key, a third-party `surfaces/` capture). `src/chains.js` maps
   that graph from **paths and file stats only** — it never reads a secret's content, never spawns
   `security … -w` (a Keychain item is therefore reported `exists: null`, unprobed, rather than
   fetched), and writes nothing into the state repo, so it cannot leave a fingerprint of a value in
-  git. Three failures that were otherwise only visible _after_ a switch misbehaved become plain:
+  git. Three failures that were otherwise only visible *after* a switch misbehaved become plain:
   **renewal** (the app's `oauth:tokenCache` is derived from its `sessionKey` cookie, so the cookie is
   the chain's root and nothing renews it but a human — "switched account opens the onboarding screen"
   while every token blob looks healthy); **staleness** (a capture whose source store has a newer
@@ -1196,7 +1197,7 @@ show / open / where / suggest / mirror / unmirror`, and:
   captures filed under an account with no profile (`keyflip list` can never show them), profiles with
   nothing to restore, and secret files inside the state repo whose mode grants access beyond the
   owner — the one finding class `--tighten --apply` fixes with a re-scan that proves the chmod
-  landed. Modes of stores keyflip does _not_ own are deliberately not flagged: Chrome's own cookie DB
+  landed. Modes of stores keyflip does *not* own are deliberately not flagged: Chrome's own cookie DB
   being 644 is normal, and a permanent warning over it would train everyone to ignore warnings.
   `keyflip doctor` gained a "credential chains" row that only goes red for the fixable exposure.
   Over MCP: read-only `keyflip_chains` and confirm-gated `keyflip_chains_tighten`; both the CLI
@@ -1261,7 +1262,6 @@ show / open / where / suggest / mirror / unmirror`, and:
   walk any directory missing from `SECRET_DIRS`, so the exposure was latent — but on
   the machine where this was found, both backups predate the capture and contain zero
   `surfaces/` files. The backup risk is a code property, not an observed leak.
-
 - Three defects in the new `threads` layer, all found by **running** it rather than reading it:
   - `keyflip threads add <id>` died with `Assignment to constant variable.` on **every id that resolved**
     (`src/cli.js` declared `const member` and then reassigned it to the expanded member). The unit and
@@ -1348,7 +1348,7 @@ is now folded into the Tooling section below, under a wrong date.
 
 ### Fixed
 
-- A saved desktop-app _capture_ is now told apart from a _live login_: `list` marks an app
+- A saved desktop-app *capture* is now told apart from a *live login*: `list` marks an app
   that will open on its sign-in screen, `doctor` gained a desktop-app-session check, and a
   switch that reopens Claude verifies the app came back signed in instead of claiming a
   clean switch.

@@ -156,9 +156,8 @@ keyflip <ad> --no-verify      # ...geçişin sonunda yaptığı geri-okumayı at
 keyflip <ad> --rollback-on-fail  # ...geri-okuma geçişin tutmadığını söylerse önceki hesabı geri koyar
                               # (bilerek açılır: kimlik bilgilerini yeniden yazar)
 keyflip next                  # sıradaki kayıtlı hesaba dön
-keyflip next --strategy best [--model <m>]   # ...veya kalan kotaya göre seç (model-bazlı opus/sonnet boşluğu dahil; ayrıca: next-available)
-keyflip enable <ad|numara> | keyflip disable <ad|numara>   # kimlik bilgilerini silmeden bir hesabı rotasyon ve proxy yönlendirmesi için duraklat/devam ettir
-keyflip provider catalog      # 20 hazır preset (Z.AI, Kimi, DeepSeek, MiniMax, OpenRouter, HarnessRouter, Ollama…)
+keyflip next --strategy best  # ...veya kalan kotaya göre seç (ayrıca: next-available)
+keyflip provider catalog      # hazır presetler (Z.AI, Kimi, DeepSeek, MiniMax, OpenRouter, Ollama…)
 keyflip provider add <id> --key-file -                    # ...bir preset için yalnızca anahtar gerekir
 keyflip provider add <ad> --base-url <url> --key-file -   # ...veya herhangi bir 3. taraf endpoint kaydet
 keyflip provider models <id|ad>   # endpoint gerçekte ne sunuyor? (GET /v1/models)
@@ -183,8 +182,8 @@ keyflip chains [hesap] [--tighten [--apply]]   # bir giriş NEYDEN OLUŞUR: her 
                               # kopyalandı, her parçayı kim yenileyebilir (araç / geçişte keyflip / yeni
                               # yakalama / sadece insan), ve ne bayat, paylaşılmış ya da herkese okunabilir.
                               # Yalnız stat — sırrı hiç okumaz, Keychain'e hiç dokunmaz
-keyflip list [--usage]        # hesaplar ([disabled] / [dup]); --usage 5s/7g + model-bazlı opus/sonnet kullanımını ekler
-keyflip autoswitch [--no-switch-back]   # kullanımı izle; eşikte otomatik değiştir ve birincil hesap toparlanınca geri dön
+keyflip list [--usage]        # hesaplar; --usage her hesabın 5s/7g kullanımını ekler
+keyflip autoswitch            # kullanımı izle; eşikte CLI hesabını otomatik değiştir
 keyflip link [ad|--remove]    # bu dizin ağacını `run` için bir hesaba eşle
 keyflip shell-init <bash|zsh|fish>   # `cd` ile sabitlenmiş hesabı otomatik etkinleştiren shell hook'u yazdır (eval "$(keyflip shell-init zsh)")
 keyflip group [list|tag <hesap> <g…>|untag <hesap> <g>|members <g>]   # hesapları havuzlara etiketle; `next --group <g>` havuz içinde döner
@@ -206,11 +205,9 @@ keyflip config <list|get <k>|set <k> <v>|unset <k>>   # ayarlar için tek doğru
 keyflip ui [--fleet]          # tam ekran TUI: hesaplar · sağlayıcı kullanımı (u) · filo (f) · aranabilir KOMUT PALETİ (p) — hiçbir komutu ezberlemene gerek yok
 keyflip codexbar              # yerel kurulu CodexBar kullanım-monitörüne köprü: izlediği sağlayıcıları keyflip'inkiyle hizala (sır okumaz)
 keyflip brain "<niyet>"       # OPT-IN: düz dili, tek tek onaylayacağın bir keyflip adım planına çevir (Gemini; SADECE önerir, kendi başına çalıştırmaz)
-keyflip surfaces              # bu makinedeki diğer AI araçlarını algıla (Cursor/Gemini/Codex/Copilot/opencode/Aider/Command Code/Grok/Qwen/Kimi/Hermes/Droid/Amp/Kilo Code) — salt-okunur
-keyflip <grok|qwen|kimi|hermes> [status|list|capture|switch|backups|restore|remove]   # dosya tabanlı CLI ajan girişlerini kaydet ve değiştir (0600 + döngüsel yedekler)
+keyflip surfaces              # bu makinedeki diğer AI araçlarını algıla (Cursor/Gemini/Codex/Copilot/opencode/Aider) — salt-okunur
 keyflip license <status|activate <dosya>|deactivate>   # offline plan (Ed25519-imzalı, phone-home yok)
 keyflip run <ad> [-- argümanlar]  # PARALEL oturum: o hesap YALNIZCA bu terminalde
-keyflip launch-cmd <ad> [--surface claude|codex|grok|qwen|kimi|hermes|command-code] [--shell posix|powershell] [--prepare]   # izole shell başlatma tek-satırlık komutunu yazdır
 keyflip add <ad> --token <dosya|->   # ham kimlik bilgisini headless içe aktar
 keyflip mcp [--setup]         # agent'lar için stdio üzerinden MCP sunucusu
 keyflip panel [--open]         # yerel web paneli: hesaplar+kotalar, etkinlik takvimi, memory takımyıldızı, oturumlar
@@ -224,7 +221,7 @@ keyflip migrate export <dosya> # hesap + provider + transkript + memory + config
                               #   altküme seç: --sessions <id,id> / --search T / --newer-than 7d / --only-sessions
                               #   --agents (memory) ve/veya --agent-config (MCP/ayarlar, redakte) ile diğer AI ajanları
                               #   veya --agent-config-secrets ile GERÇEK anahtarları kendi makinelerin arasında taşı (şifrele!)
-keyflip agents                # diğer ajanların memory + config'ini listele (Cursor/Gemini/Codex/Copilot/opencode/Aider/Grok/Qwen/Kimi/Hermes/Droid/Amp/Kilo Code; sırlar redakte edilir)
+keyflip agents                # diğer ajanların memory + config'ini listele (Cursor/Gemini/Codex/Copilot/opencode/Aider; sırlar redakte edilir)
 keyflip settings [show|get <k>|set <k> <v>]   # ~/.claude/settings.json'ı gör/düzenle (`migrate` ile diğer makinelere gider)
 keyflip migrate import <dosya> # bu paketi bu makineyle BİRLEŞTİR (birleşim; --force üzerine yazar)
                               #   dosya paketleri AKIŞ (stream) hâlinde: önce metadata, sonra 128 KiB'lik
@@ -347,9 +344,9 @@ bloğunu yamalar; Claude Code bunu **anında yeniden yükler, yeniden başlatma
 gerekmez.**
 
 ```bash
-keyflip provider catalog        # 20 preset: Z.AI/GLM, Zhipu, Kimi, DeepSeek, MiniMax, Qwen, Ark,
-                                # OpenRouter, HarnessRouter (UHP), OpenAI, Gemini, xAI, Mistral,
-                                # Groq, Together, Fireworks, Anthropic ve yerel Ollama / LM Studio / llama.cpp
+keyflip provider catalog        # 19 preset: Z.AI/GLM, Zhipu, Kimi, DeepSeek, MiniMax, Qwen, Ark,
+                                # OpenRouter, OpenAI, Gemini, xAI, Mistral, Groq, Together,
+                                # Fireworks, Anthropic ve yerel Ollama / LM Studio / llama.cpp
 keyflip provider add zai --key-file -          # bir preset yalnızca anahtar ister (URL katalogdan gelir)
 keyflip provider add benim-gw --from deepseek --key-file -   # preseti kendi adınla kaydet
 keyflip provider add openrouter --base-url https://openrouter.ai/api/v1 --key-file -   # herhangi bir endpoint
@@ -632,42 +629,6 @@ PATH'inde olur; `status` nerede durduğunu ve hangi `fnm use`/`nvm use` ile
 düzeleceğini söyler. Command Code'un
 `~/.commandcode/projects/<slug>/*.jsonl` oturumları da aranabilir — bkz.
 `keyflip conv --app command-code` ve `keyflip foreign --list`.
-
-### Grok CLI, Qwen Code, Kimi CLI ve Hermes Agent (`grok`, `qwen`, `kimi`, `hermes`)
-
-Dört CLI kodlama ajanı daha kimlik bilgilerini `$HOME` altında tek bir JSON dosyasında tutar; keyflip
-bunların tamamını tek bir birleşik adaptör (`src/clisurfaces.js`) üzerinden yönetir:
-
-| Yüzey | CLI komut grubu | Canlı kimlik dosyası | Ortam değişkeni override'ları (`status`'ta uyarılır, `launch-cmd` ile temizlenir) |
-|---|---|---|---|
-| **Grok CLI** | `keyflip grok …` | `~/.grok/settings.json` | `XAI_API_KEY`, `GROK_API_KEY` |
-| **Qwen Code** | `keyflip qwen …` | `~/.qwen/oauth_creds.json` | `DASHSCOPE_API_KEY`, `QWEN_API_KEY`, `OPENAI_API_KEY` |
-| **Kimi CLI** | `keyflip kimi …` | `~/.kimi/credentials.json` | `MOONSHOT_API_KEY`, `KIMI_API_KEY` |
-| **Hermes Agent** | `keyflip hermes …` | `~/.hermes/auth.json` | `NOUS_API_KEY`, `OPENROUTER_API_KEY`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY` |
-
-```bash
-keyflip <grok|qwen|kimi|hermes> status            # canlı giriş, ikili dosya yolu, env-override uyarısı, kayıtlı hesaplar
-keyflip <grok|qwen|kimi|hermes> capture [ad]      # canlı kimlik dosyasını kaydet (0600 + sır içermeyen meta.json)
-keyflip <grok|qwen|kimi|hermes> switch <ad|n|user> [--dry-run] [--no-verify]
-keyflip <grok|qwen|kimi|hermes> list              # kayıtlı hesaplar ve yakalama zaman damgaları
-keyflip <grok|qwen|kimi|hermes> backups           # geçmiş geçiş/geri yüklemelerden döngüsel kopyalar (en yeni 10)
-keyflip <grok|qwen|kimi|hermes> restore <n|dosya> [--dry-run]
-keyflip <grok|qwen|kimi|hermes> remove <ad> --force
-```
-
-Kayıtlar `~/.config/keyflip/surfaces/<surface>/<slug>/<bundleFile>` altında (`0600`, git-ignore
-edilmiş `surfaces/` dizininde), sır içermeyen bir `meta.json` ile birlikte yaşar. Kimlik dosyası
-insan tarafından okunabilir bir e-posta veya kullanıcı adı olmadan yalnızca ham bir API anahtarı ya da
-OAuth token'ı tuttuğunda, keyflip kararlı kimlik olarak tek yönlü bir SHA-256 parmak izi
-(`<surface>:<8-hex>`) türetir — sırrın kendisi asla yazdırılmaz veya `meta.json`'a yazılmaz. Her
-geçiş canlı dosyayı `surfaces/<surface>/.backups/` altına yedekler (en yeni 10 tutulur), kaydedilmemiş
-giden girişi en-iyi-çaba ile otomatik yakalar, hedef dosyayı `0600` kipinde atomik olarak yazar ve
-geri-okumada canlı kimliği doğrular (uyuşmazlıkta geri alır). MCP üzerinden: salt-okunur
-`keyflip_cli_surface` (tek yüzeyi incele veya dördünü birden görmek için `surface`'i boş bırak) ve
-onay-gerektiren `keyflip_cli_surface_capture`, `keyflip_cli_surface_switch`,
-`keyflip_cli_surface_remove`. `keyflip surfaces` ve `keyflip agents` ayrıca **Factory Droid**
-(`~/.factory`), **Sourcegraph Amp** (`~/.config/amp`) ve **Kilo Code** (`~/.kilocode`) araçlarını da
-algılar.
 
 ### Aynı anda birden çok hesap — izole uygulama kopyaları (`instance`, macOS)
 
@@ -1059,7 +1020,7 @@ dışa aktarıma asla ulaşmaz. Kaynaklar salt-okunur; keyflip hiçbir aracın d
 keyflip conv list --app claude,codex --since 7d   # gez: id öneki, uygulama, yaş, mesaj sayısı, başlık
 keyflip conv list --account yahoo                 # yalnızca o hesabın çalıştığı sohbetler
 keyflip conv index                                # bir kez çözümle, parçaları keyflip tutsun (artımlı)
-keyflip conv index --embed                        # + yerel çok dilli embedding (varsayılan Ollama bge-m3; arka plan için --background)
+keyflip conv index --embed                        # + yerel embedding (varsayılan Ollama bge-m3; arka plan için --background)
 keyflip conv index --schedule --interval 30        # kendini güncel tut (macOS'ta launchd, Linux'ta cron)
 keyflip conv search "database migration"          # şimdi BM25; vektörler varsa hibrit
 keyflip conv search "database migration" --account gmail   # …ve yalnızca o hesabın sohbetleri
@@ -1306,24 +1267,13 @@ Failover bilinçli çalışır, ilk hatada körlemesine atlamaz:
 - **Faturalama 429'u hız limiti değildir.** Yanıt gövdesi kredi/faturalama/
   kuruluş-devredışı diyorsa hata sana döner (başka hesabın kotasıyla maskelenmez);
   gerçek hız-limitli 429'lar failover olur.
-- **Türe ve model ailesine göre cooldown.** 429, 401/403, 529 veya 5xx alan hesap
-  `breakers.json` içinde türe özel TTL ile park edilir (`keyflip config`:
+- **Türe göre cooldown.** 429, 401/403, 529 veya 5xx alan hesap `breakers.json`
+  içinde türe özel TTL ile park edilir (`keyflip config`:
   `proxy.cooldownQuotaSeconds`, `…ThrottledSeconds`, `…OverloadedSeconds`,
-  `…AuthSeconds`, `…ServerSeconds`; `0` o türü kapatır). Üst servis **model-kapsamlı
-  bir 429** (`model_unavailable`, ör. Sonnet'te hâlâ boşluk varken haftalık Opus
-  kotasının dolması) döndürdüğünde, keyflip hesapta *yalnızca o model ailesini*
-  (`opus`, `sonnet`, `haiku`) park eder — böylece Sonnet/Haiku trafiği hesabı
-  kullanmaya devam eder ve `modelChain` yapılandırılmışsa proxy başka hesaba
-  failover yapmadan önce **aynı** hesapta sıradaki modele düşer.
-- **Belirlenimci sıra + `enable`/`disable`.** Önce `proxy.priority` (virgüllü
-  hesap adları), sonra aktif hesap, sonra en-az-kullanılan (LRU).
-  `keyflip disable <ad>` ile duraklatılan hesaplar, `keyflip enable <ad>` ile
-  yeniden etkinleştirilene kadar proxy, `keyflip next` ve `autoswitch` tarafından
-  atlanır (saklanan kimlik bilgileri olduğu gibi korunur). Aynı
-  `accountUuid`/`email`'e işaret eden mükerrer profiller `[dup: <canonical>]`
-  olarak işaretlenir ve `keyflip remove`, bir hesabı yeniden eklediğinizde tier
-  override'ını geri yüklemek ve geçmiş oturum atıflarını korumak için sır
-  içermeyen bir mezar taşı (`.tombstones.json`) kaydeder.
+  `…AuthSeconds`, `…ServerSeconds`; `0` o türü kapatır). Park edilen hesap
+  atlanır; hepsi parktaysa en erken açılacak olan bekleme bilgisiyle kullanılır.
+- **Belirlenimci sıra.** Önce `proxy.priority` (virgüllü hesap adları), sonra
+  aktif hesap, sonra en-az-kullanılan (LRU).
 - **Hata ayıklama başlıkları** her yanıtta: `x-keyflip-account`,
   `x-keyflip-attempts`, `x-keyflip-failover`, `x-keyflip-error-class`,
   `x-keyflip-cooldown`, `x-keyflip-model`, `x-keyflip-route`
@@ -1463,14 +1413,9 @@ tahminden daha kötüdür.
 ### Kullanıma göre otomatik geçiş (`autoswitch`)
 
 `keyflip autoswitch --threshold 90 --interval 60 --strategy next-available`
-aktif hesabı (5s, 7g ve model-kapsamlı `sevenDayOpus` / `sevenDaySonnet`
-pencereleri dahil; geçici kullanım-endpoint'i 429'ları `lastGood` değerini korur)
-izler ve kullanım eşiği aşınca **CLI kimliğini otomatik olarak** seçilen etkin
-(enabled) hesaba takas eder — hiçbir şeyi kapatmadan (Claude Code yeni hesabı bir
-sonraki isteğinde alır). Ayrıca özgün birincil hesabı `autoswitch-state.json`
-içine kaydeder ve birincil hesap güvenli boşluğa (`min(95, (100 - threshold) + 10)%`)
-döndüğünde **otomatik olarak geri geçer** (`autoswitch-return`; failover hesabında
-kalmak için `--no-switch-back` verin). Başlangıçta bir kez onay ister (`-y` ile
+aktif hesabı izler ve 5s/7g kullanımı eşiği aşınca **CLI kimliğini otomatik
+olarak** seçilen hesaba takas eder — hiçbir şeyi kapatmadan (Claude Code yeni
+hesabı bir sonraki isteğinde alır). Başlangıçta bir kez onay ister (`-y` ile
 scriptlenebilir) ve masaüstü uygulamasına asla dokunmaz. `keyflip link <ad>`
 ile dizinleri hesaplara sabitleyin: adsız `keyflip run`, en yakın bağlı üst
 dizini kullanır.
@@ -1535,7 +1480,7 @@ migrate + LAN
 `keyflip://` linkleri (`keyflip_share/share_apply`), masaüstü gateway (`keyflip_gateway_*`), MCP-sunucu
 kaydı (`keyflip_mcpreg_*`), dizin pin'leri (`keyflip_link/links`), izole uygulama örnekleri
 (`keyflip_instances`, `keyflip_instance_*`), ortak ChatGPT/Codex girişi
-(`keyflip_chatgpt`, `_chatgpt_capture`, `_chatgpt_switch`, `_chatgpt_refresh`, salt-okunur `_chatgpt_backups`, onay-gerektiren `_chatgpt_restore`), Grok/Qwen/Kimi/Hermes CLI yüzeyleri (`keyflip_cli_surface` salt-okunur, onay-gerektiren `_cli_surface_capture`, `_cli_surface_switch`, `_cli_surface_remove`), hesap `keyflip_enable`/`keyflip_disable`, izole CLI başlatma komutları (`keyflip_launch_cmd`), tanılama
+(`keyflip_chatgpt`, `_chatgpt_capture`, `_chatgpt_switch`, `_chatgpt_refresh`, salt-okunur `_chatgpt_backups`, onay-gerektiren `_chatgpt_restore`), tanılama
 (`keyflip_doctor`, `keyflip_usage_history`), yedekler, skill'ler (`keyflip_skills` ve `keyflip_skill_agents` salt-okunur;
 `keyflip_skill_add`, `keyflip_skill_sync` ve `keyflip_skill_remove` tespit edilen her agent'a, ya da yalnız verdiğin `agents`'a yazar)
 ve failover proxy. Her aracın düzgün JSON Şeması ve
@@ -1558,7 +1503,7 @@ keyflip statusline install    # aktif hesap + kotayı Claude Code promptunda gö
 keyflip install-skill         # paketli skill → ~/.claude/skills/keyflip + diğer tespit edilen agent'lar
 ```
 
-### Paralel oturumlar (`run`, `launch-cmd`)
+### Paralel oturumlar (`run`)
 
 `keyflip run <ad>` Claude Code'u o hesapla **yalnızca geçerli terminalde**
 başlatır — diğer tüm terminaller, masaüstü uygulaması ve VS Code mevcut
@@ -1569,26 +1514,7 @@ geçmişi hesap-başına kalır (`--share-history` ile paylaşılabilir). `--`
 sonrası her şey `claude`'a iletilir (ör. `keyflip run is -- --resume`).
 Oturum token'ı yenilerse keyflip çıkışta profile geri kaydeder.
 
-Hemen başlatmadan (bir terminal çoklayıcı, IDE görevi veya başka bir ajan yüzeyi
-için) **kopyala-yapıştır yapılabilir tek satırlık bir shell komutu** mu gerekiyor?
-`keyflip launch-cmd`, desteklenen 7 CLI yüzeyinin (`claude`, `codex`, `grok`,
-`qwen`, `kimi`, `hermes`, `command-code`) herhangi biri için tam POSIX veya
-PowerShell komutunu yazdırır:
-
-```bash
-keyflip launch-cmd is                                           # POSIX: unset ANTHROPIC_API_KEY …; CLAUDE_CONFIG_DIR='…' claude
-keyflip launch-cmd is --surface codex --shell powershell        # PowerShell: Remove-Item Env:OPENAI_API_KEY …; $env:CODEX_HOME='…'; codex
-keyflip launch-cmd is --surface grok                            # GROK_HOME'u surfaces/grok/is konumuna yönlendirir ve XAI_API_KEY/GROK_API_KEY'i temizler
-keyflip launch-cmd is --prepare                                 # önce Claude oturum dizinini + paylaşılan symlink'leri hazırlar
-```
-
-Üretilen her komut, aracın yapılandırma dizini değişkenini (`CLAUDE_CONFIG_DIR`,
-`CODEX_HOME`, `GROK_HOME`, `QWEN_HOME`, `KIMI_HOME`, `HERMES_HOME`,
-`COMMAND_CODE_HOME`) o hesabın izole dizinine yönlendirir ve ortamdaki API
-anahtarı override'larını açıkça temizler; böylece shell'de kalmış bir anahtar
-izole girişi asla gölgelemez.
-
-> ⚠️ `keyflip run` **önce onay ister** (`-y` ile atlanır): paralel oturumdaki bir token
+> ⚠️ **Önce onay ister** (`-y` ile atlanır): paralel oturumdaki bir token
 > yenilemesi o hesabın refresh token'ını döndürür ve *aynı hesabın diğer canlı
 > kopyalarını* düşürebilir.
 
