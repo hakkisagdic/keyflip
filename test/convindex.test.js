@@ -1627,3 +1627,60 @@ test('a source that shrinks to zero messages removes its row and deletes its orp
     'orphaned token file for emptied source must be deleted',
   );
 });
+
+test('when an emptied source had a colliding id that another source claims in the same build, pendingDeletes does not delete the newly written chunk/token files', async function () {
+  // Round 6 LOW 1:
+  // Two transcripts share a canonical id (e.g. two Codex rollouts with the same session_meta id).
+  // Codex discovery orders newer filenames first, so file2 is scanned first and owns canonicalId
+  // ("codex:" + SHARED) while file1 gets the collision alt id.
+  // When file2 shrinks to 0 messages, it hits the empty-source branch and queues prev.id (canonicalId)
+  // in pendingDeletes; in the same scan, file1 is modified (no longer matching the fast stat shortcut)
+  // so it re-parses and claims canonicalId. At commit time, pendingDeletes must be filtered against
+  // next/claimed so it does NOT delete the chunk and token files just written for file1.
+  const ctx = ctxFor();
+  const dir = path.join(ctx.home, '.codex', 'sessions', '2026', '01', '01');
+  fs.mkdirSync(dir, { recursive: true });
+  const SHARED = '77777777-7777-4777-8777-777777777777';
+  const metaLine = { type: 'session_meta', payload: { id: SHARED, session_id: SHARED, cwd: '/work/codex' } };
+  const turnLine = (text) => ({
+    type: 'response_item',
+    payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: text }] },
+  });
+  const file1 = path.join(dir, 'rollout-2026-01-01T10-00-00-' + SHARED + '.jsonl');
+  const file2 = path.join(dir, 'rollout-2026-01-02T10-00-00-' + SHARED + '.jsonl');
+  fs.writeFileSync(file1, [metaLine, turnLine('First rollout text.')].map((l) => JSON.stringify(l)).join('\n') + '\n');
+  fs.writeFileSync(file2, [metaLine, turnLine('Second rollout text.')].map((l) => JSON.stringify(l)).join('\n') + '\n');
+
+  await convindex.build(ctx, {});
+  const canonicalId = 'codex:' + SHARED;
+  assert.strictEqual(readManifest(ctx).sources[canonicalId].path, file2, 'file2 initially owns canonicalId');
+
+  // Now file2 shrinks to 0 messages, and file1 grows by a turn so it re-parses and claims canonicalId:
+  fs.writeFileSync(file2, JSON.stringify(metaLine) + '\n');
+  fs.writeFileSync(
+    file1,
+    [metaLine, turnLine('First rollout text.'), turnLine('Appended turn so file1 re-parses and claims canonicalId.')]
+      .map((l) => JSON.stringify(l))
+      .join('\n') + '\n',
+  );
+  const future = new Date(Date.now() + 60000);
+  fs.utimesSync(file1, future, future);
+  fs.utimesSync(file2, future, future);
+
+  const r = await convindex.build(ctx, {});
+  assert.strictEqual(r.ok, true);
+  const after = readManifest(ctx);
+  assert.ok(after.sources[canonicalId], 'canonicalId row is now owned by file1');
+  assert.strictEqual(after.sources[canonicalId].path, file1);
+  assert.strictEqual(
+    fs.existsSync(convindex.chunkPath(ctx, canonicalId)),
+    true,
+    "chunk file for canonicalId must NOT be deleted by file2's empty-source pendingDeletes",
+  );
+  assert.strictEqual(
+    fs.existsSync(convindex.tokenPath(ctx, canonicalId)),
+    true,
+    "token sidecar for canonicalId must NOT be deleted by file2's empty-source pendingDeletes",
+  );
+  assert.strictEqual(chunkLineCount(ctx, canonicalId), after.sources[canonicalId].chunks);
+});
