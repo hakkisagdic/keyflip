@@ -19,12 +19,17 @@
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
+import childProcess from 'child_process';
+import { fileURLToPath } from 'url';
 import * as conversations from './conversations.js';
 import * as _convaccounts from './convaccounts.js';
 import * as _bm25 from './bm25.js';
 import * as _embed from './embed.js';
 import * as _secretscan from './secretscan.js';
 import * as _fsutil from './fsutil.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const SCHEMA_VERSION = 1;
 // Bump when the way a conversation id is derived changes. A row written by an older scheme
@@ -45,6 +50,10 @@ const MACHINE_CAP = 800;
 const CHUNK_OVERLAP = 180; // only for a single oversized message
 const EMBED_BATCH = 32;
 const EMBED_MAX_CHARS = 6000;
+// Flush meta.json periodically while embedding so an interrupted or background pass makes
+// every completed conversation immediately searchable instead of waiting for all 2k sources.
+const EMBED_CHECKPOINT_SOURCES = 10;
+const EMBED_CHECKPOINT_MS = 15000;
 
 // Rank fusion between the lexical (BM25) list and the semantic (vector) list.
 //
@@ -69,6 +78,9 @@ function dirOf(ctx) {
 }
 function metaPath(ctx) {
   return path.join(dirOf(ctx), 'meta.json');
+}
+function embedLockPath(ctx) {
+  return path.join(dirOf(ctx), 'embed.lock');
 }
 function chunksDir(ctx) {
   return path.join(dirOf(ctx), 'chunks');
@@ -106,7 +118,11 @@ function readMeta(ctx) {
 }
 
 function writeMeta(ctx, meta) {
-  _fsutil.atomicWrite(metaPath(ctx), JSON.stringify(meta, null, 2) + '\n', 0o600);
+  const replacer = function (k, v) {
+    if (k === '_oldVec' || k === '_oldHashes') return undefined;
+    return v;
+  };
+  _fsutil.atomicWrite(metaPath(ctx), JSON.stringify(meta, replacer, 2) + '\n', 0o600);
 }
 
 function emptyMeta() {
@@ -117,6 +133,107 @@ function emptyMeta() {
     stats: { sources: 0, chunks: 0, messages: 0, bytes: 0 },
     sources: Object.create(null),
   };
+}
+
+// ---- background embedding lock & worker ----------------------------------------------------
+
+function pidAlive(pid) {
+  const n = Number(pid);
+  if (!Number.isInteger(n) || n <= 0) return false;
+  try {
+    process.kill(n, 0);
+    return true;
+  } catch (e) {
+    return e && e.code === 'EPERM';
+  }
+}
+
+function backgroundStatus(ctx) {
+  const file = embedLockPath(ctx);
+  let raw;
+  try {
+    raw = JSON.parse(fs.readFileSync(file, 'utf8'));
+  } catch {
+    return { running: false };
+  }
+  if (!raw || !pidAlive(raw.pid)) {
+    try {
+      fs.rmSync(file, { force: true });
+    } catch {
+      /* best-effort */
+    }
+    return { running: false };
+  }
+  return {
+    running: true,
+    pid: raw.pid,
+    startedAt: raw.startedAt || null,
+    model: raw.model || null,
+    space: raw.space || null,
+    done: raw.done || 0,
+    total: raw.total || 0,
+  };
+}
+
+function writeEmbedLock(ctx, info) {
+  try {
+    _fsutil.atomicWrite(embedLockPath(ctx), JSON.stringify(info) + '\n', 0o600);
+  } catch {
+    /* best-effort */
+  }
+}
+
+function releaseEmbedLock(ctx) {
+  const file = embedLockPath(ctx);
+  try {
+    const cur = JSON.parse(fs.readFileSync(file, 'utf8'));
+    if (cur && cur.pid === process.pid) fs.rmSync(file, { force: true });
+  } catch {
+    /* best-effort */
+  }
+}
+
+// Spawn a detached `keyflip conv index --embed --foreground` worker when embeddings need to be
+// generated or migrated in the background (e.g. after switching the default model to bge-m3).
+// Never spawns inside node:test or when a custom `opts.post` stub is supplied.
+function spawnBackgroundEmbed(ctx, opts) {
+  opts = opts || {};
+  if (opts.post || process.env.NODE_TEST_CONTEXT || (ctx && ctx.env && ctx.env.KEYFLIP_NO_BG_EMBED === '1')) {
+    return { started: false, reason: 'disabled-in-test' };
+  }
+  const bg = backgroundStatus(ctx);
+  if (bg.running) {
+    return { started: false, alreadyRunning: true, pid: bg.pid, model: bg.model };
+  }
+  const binPath = path.resolve(__dirname, '..', 'bin', 'keyflip.js');
+  const args = [binPath, 'conv', 'index', '--embed', '--foreground'];
+  if (opts.apps && opts.apps.length) args.push('--app', opts.apps.join(','));
+  if (opts.limitSources) args.push('--limit-sources', String(opts.limitSources));
+  if (opts.force) args.push('--force');
+  const env = Object.assign({}, process.env, (ctx && ctx.env) || {});
+  if (ctx && ctx.configDir) env.KEYFLIP_DIR = ctx.configDir;
+  if (opts.model) env.KEYFLIP_EMBED_MODEL = opts.model;
+  if (opts.url) env.KEYFLIP_EMBED_URL = opts.url;
+  try {
+    const child = childProcess.spawn(process.execPath, args, {
+      detached: true,
+      stdio: 'ignore',
+      env: env,
+    });
+    child.unref();
+    const space = spaceOf(opts);
+    writeEmbedLock(ctx, {
+      pid: child.pid,
+      startedAt: (ctx && ctx.now && ctx.now()) || new Date().toISOString(),
+      model: space.model,
+      space: space.hash,
+      done: 0,
+      total: 0,
+    });
+    return { started: true, pid: child.pid, model: space.model, space: space.hash };
+  } catch (e) {
+    return { started: false, reason: (e && e.message) || String(e) };
+  }
 }
 
 // ---- chunking ------------------------------------------------------------------------------
@@ -313,9 +430,10 @@ function isLoopback(url) {
   }
 }
 
-function spaceOf(opts) {
-  const url = (opts && opts.url) || _embed.defaultUrl();
-  const model = (opts && opts.model) || _embed.defaultModel();
+function spaceOf(opts, ctx) {
+  const env = (ctx && ctx.env) || process.env || {};
+  const url = (opts && opts.url) || env.KEYFLIP_EMBED_URL || _embed.defaultUrl();
+  const model = (opts && opts.model) || env.KEYFLIP_EMBED_MODEL || _embed.defaultModel();
   return {
     hash: crypto
       .createHash('sha1')
@@ -381,6 +499,10 @@ async function embedSource(ctx, id, chunks, prev, space, opts) {
     } else {
       prefix = 0;
     }
+  } else {
+    // Switching models (e.g. nomic-embed-text 768d -> bge-m3 1024d) starts a new vector space:
+    // never seed `dim` from the previous model's vector metadata.
+    dim = 0;
   }
   const need = chunks.slice(prefix);
   if (!need.length && prefix) {
@@ -535,7 +657,19 @@ async function build(ctx, opts) {
     claimed.set(id, srcPath);
     return id;
   }
-  const space = opts.embed ? spaceOf(opts) : null;
+  const wantEmbed = !!(opts.embed || opts.semantic);
+  const space = wantEmbed ? spaceOf(opts, ctx) : null;
+  if (wantEmbed && opts.background) {
+    // Write lexical chunks synchronously first, then kick off a detached background worker to
+    // generate or migrate embeddings incrementally without blocking the terminal.
+    const lexReport = await build(
+      ctx,
+      Object.assign({}, opts, { embed: false, semantic: false, background: false }),
+    );
+    const bg = spawnBackgroundEmbed(ctx, opts);
+    lexReport.backgroundEmbed = bg;
+    return lexReport;
+  }
   // WHICH ACCOUNT worked on each conversation. The switch timelines and the account lists are
   // read ONCE for the whole pass: placing a row on a timeline is cheap, but re-reading the
   // action log ~1900 times would not be. A reused row is re-attributed too — the transcript
@@ -713,7 +847,24 @@ async function build(ctx, opts) {
     });
   }
 
-  if (space && (opts.embed || opts.semantic)) {
+  function snapshotMeta() {
+    return {
+      schemaVersion: SCHEMA_VERSION,
+      builtAt: (ctx.now && ctx.now()) || new Date().toISOString(),
+      embedding: report.embedding
+        ? {
+            space: report.embedding.space,
+            model: report.embedding.model,
+            host: report.embedding.host,
+            remote: report.embedding.remote,
+          }
+        : meta.embedding || null,
+      stats: countStats(next),
+      sources: next,
+    };
+  }
+
+  if (space && wantEmbed) {
     report.embedding = {
       space: space.hash,
       model: space.model,
@@ -722,81 +873,122 @@ async function build(ctx, opts) {
       error: null,
       sources: 0,
       chunks: 0,
+      remainingSources: 0,
     };
-    const toEmbed = Object.keys(next).filter((id) => {
-      const entry = next[id];
-      const needVec = !entry.vec || entry.vec.space !== space.hash || entry.vec.count !== entry.chunks;
-      return needVec || !vectorFileOk(ctx, id, entry.vec);
-    });
+    // Embed newest conversations first so when the embedding model changes (or on the first
+    // pass), the user's active chats become semantically searchable right away.
+    const candidates = Object.keys(next)
+      .filter((id) => {
+        const entry = next[id];
+        const needVec = !entry.vec || entry.vec.space !== space.hash || entry.vec.count !== entry.chunks;
+        return needVec || !vectorFileOk(ctx, id, entry.vec);
+      })
+      .sort((a, b) => String((next[b] && next[b].updatedAt) || '').localeCompare(String((next[a] && next[a].updatedAt) || '')));
+    const maxEmbed = opts.maxEmbedSources ? Math.max(1, Number(opts.maxEmbedSources)) : candidates.length;
+    const toEmbed = candidates.slice(0, maxEmbed);
+    report.embedding.remainingSources = Math.max(0, candidates.length - toEmbed.length);
+
+    // Flush lexical chunks + sidecars BEFORE the embedding pass starts so BM25/hybrid searches
+    // see new conversations immediately while embeddings run.
+    if (toEmbed.length > 0) writeMeta(ctx, snapshotMeta());
+    const lockStartedAt = (ctx.now && ctx.now()) || new Date().toISOString();
+    if (toEmbed.length > 0) {
+      writeEmbedLock(ctx, {
+        pid: process.pid,
+        startedAt: lockStartedAt,
+        model: space.model,
+        space: space.hash,
+        done: 0,
+        total: candidates.length,
+      });
+    }
     let embedDone = 0;
     let consecutiveFails = 0;
-    for (const id of toEmbed) {
-      const entry = next[id];
-      embedDone++;
-      if (opts.onProgress) opts.onProgress({ phase: 'embed', done: embedDone, total: toEmbed.length, id: id });
-      const chunks = readChunks(chunkPath(ctx, id));
-      // Metadata must never outrun the disk. A missing or torn chunk file used to reach
-      // embedSource as "0 chunks", which wrote a 0-byte vector and still recorded a healthy
-      // source. Trust the chunk file, keep the stats truthful, and clear the content hash so
-      // the next plain build re-parses and rebuilds this source.
-      if (chunks.length !== (entry.chunks || 0)) {
-        entry.chunks = chunks.length;
-        entry.chunkHashes = chunks.map((c) => c.h);
-        entry.hash = null;
-        entry.vec = null;
+    let sinceFlush = 0;
+    let lastFlushMs = Date.now();
+    try {
+      for (const id of toEmbed) {
+        const entry = next[id];
+        embedDone++;
+        if (opts.onProgress) opts.onProgress({ phase: 'embed', done: embedDone, total: toEmbed.length, id: id });
+        const chunks = readChunks(chunkPath(ctx, id));
+        // Metadata must never outrun the disk. A missing or torn chunk file used to reach
+        // embedSource as "0 chunks", which wrote a 0-byte vector and still recorded a healthy
+        // source. Trust the chunk file, keep the stats truthful, and clear the content hash so
+        // the next plain build re-parses and rebuilds this source.
+        if (chunks.length !== (entry.chunks || 0)) {
+          entry.chunks = chunks.length;
+          entry.chunkHashes = chunks.map((c) => c.h);
+          entry.hash = null;
+          entry.vec = null;
+          try {
+            fs.rmSync(vectorPath(ctx, id), { force: true }); // stale: it described other chunks
+          } catch {
+            /* best-effort */
+          }
+          if (chunks.length) writeTokens(ctx, id, chunks);
+          else dropTokens(ctx, id);
+          report.rechunk = (report.rechunk || 0) + 1;
+        }
         try {
-          fs.rmSync(vectorPath(ctx, id), { force: true }); // stale: it described other chunks
-        } catch {
-          /* best-effort */
+          const prev = Object.assign({}, entry, {
+            vec: entry._oldVec || entry.vec,
+            chunkHashes: entry._oldHashes || entry.chunkHashes,
+          });
+          const vec = await embedSource(ctx, id, chunks, prev, space, opts);
+          if (vec) {
+            entry.vec = vec;
+            report.embedded++;
+            report.embedding.sources++;
+            report.embedding.chunks += chunks.length;
+            sinceFlush++;
+            const nowMs = Date.now();
+            if (sinceFlush >= EMBED_CHECKPOINT_SOURCES || nowMs - lastFlushMs >= EMBED_CHECKPOINT_MS) {
+              writeMeta(ctx, snapshotMeta());
+              writeEmbedLock(ctx, {
+                pid: process.pid,
+                startedAt: lockStartedAt,
+                model: space.model,
+                space: space.hash,
+                done: embedDone,
+                total: candidates.length,
+              });
+              sinceFlush = 0;
+              lastFlushMs = nowMs;
+            }
+          }
+        } catch (e) {
+          // One unreadable source must not abandon the sources behind it. Only a streak of
+          // consecutive failures means the endpoint is down: then stop hammering it.
+          consecutiveFails++;
+          report.embedding.errors = (report.embedding.errors || 0) + 1;
+          report.embedding.error = (e && e.message) || String(e);
+          report.ok = false; // embedding is incomplete even if the chunks are fine
+          if (consecutiveFails >= 3) break; // the endpoint is down: stop hammering it
+          continue;
         }
-        if (chunks.length) writeTokens(ctx, id, chunks);
-        else dropTokens(ctx, id);
-        report.rechunk = (report.rechunk || 0) + 1;
+        consecutiveFails = 0;
       }
-      try {
-        const prev = Object.assign({}, entry, {
-          vec: entry._oldVec || entry.vec,
-          chunkHashes: entry._oldHashes || entry.chunkHashes,
-        });
-        const vec = await embedSource(ctx, id, chunks, prev, space, opts);
-        if (vec) {
-          entry.vec = vec;
-          report.embedded++;
-          report.embedding.sources++;
-          report.embedding.chunks += chunks.length;
-        }
-      } catch (e) {
-        // One unreadable source must not abandon the sources behind it. Only a streak of
-        // consecutive failures means the endpoint is down: then stop hammering it.
-        consecutiveFails++;
-        report.embedding.errors = (report.embedding.errors || 0) + 1;
-        report.embedding.error = (e && e.message) || String(e);
-        report.ok = false; // embedding is incomplete even if the chunks are fine
-        if (consecutiveFails >= 3) break; // the endpoint is down: stop hammering it
-        continue;
-      }
-      consecutiveFails = 0;
+    } finally {
+      if (toEmbed.length > 0) releaseEmbedLock(ctx);
     }
+  } else if (
+    !opts.noAutoBackground &&
+    meta.embedding &&
+    meta.embedding.space &&
+    meta.embedding.space !== spaceOf(opts, ctx).hash
+  ) {
+    // A plain `conv index` noticed the configured/default embedding model changed since the
+    // last embed pass: regenerate vectors incrementally in the background.
+    const bg = spawnBackgroundEmbed(ctx, opts);
+    if (bg.started || bg.alreadyRunning) report.backgroundEmbed = bg;
   }
   Object.keys(next).forEach((id) => {
     delete next[id]._oldHashes;
     delete next[id]._oldVec;
   });
 
-  const built = {
-    schemaVersion: SCHEMA_VERSION,
-    builtAt: (ctx.now && ctx.now()) || new Date().toISOString(),
-    embedding: report.embedding
-      ? {
-          space: report.embedding.space,
-          model: report.embedding.model,
-          host: report.embedding.host,
-          remote: report.embedding.remote,
-        }
-      : meta.embedding || null,
-    stats: countStats(next),
-    sources: next,
-  };
+  const built = snapshotMeta();
   writeMeta(ctx, built);
   report.stats = built.stats;
   return report;
@@ -876,27 +1068,51 @@ function catalog(ctx, opts) {
   return { indexed: false, builtAt: null, conversations: rows, stats: null, errors: r.errors };
 }
 
-function status(ctx) {
+function status(ctx, opts) {
   const meta = readMeta(ctx);
   if (!meta) return { exists: false, dir: dirOf(ctx), sources: 0, chunks: 0 };
+  const activeSpace = spaceOf(opts, ctx);
   let vectorSources = 0;
   let vectorChunks = 0;
+  let staleVectorSources = 0;
+  let staleVectorChunks = 0;
+  let staleModel = null;
   Object.keys(meta.sources).forEach((id) => {
     const s = meta.sources[id];
     if (s.vec && vectorFileOk(ctx, id, s.vec)) {
-      vectorSources++;
-      vectorChunks += s.vec.count || 0;
+      if (s.vec.space === activeSpace.hash) {
+        vectorSources++;
+        vectorChunks += s.vec.count || 0;
+      } else {
+        staleVectorSources++;
+        staleVectorChunks += s.vec.count || 0;
+        if (!staleModel && s.vec.model) staleModel = s.vec.model;
+      }
     }
   });
+  const bg = backgroundStatus(ctx);
+  const effectiveEmbedding =
+    vectorChunks > 0 || staleVectorChunks > 0 || meta.embedding
+      ? {
+          space: activeSpace.hash,
+          model: activeSpace.model,
+          host: activeSpace.host,
+          remote: activeSpace.remote,
+        }
+      : null;
   return {
     exists: true,
     dir: dirOf(ctx),
     builtAt: meta.builtAt,
     stats: meta.stats,
-    embedding: meta.embedding,
+    embedding: effectiveEmbedding,
     vectorSources: vectorSources,
     vectorChunks: vectorChunks,
     coverage: meta.stats && meta.stats.chunks ? Math.round((vectorChunks / meta.stats.chunks) * 1000) / 10 : 0,
+    staleVectorSources: staleVectorSources,
+    staleVectorChunks: staleVectorChunks,
+    staleModel: staleModel || (meta.embedding && meta.embedding.space !== activeSpace.hash ? meta.embedding.model : null),
+    backgroundEmbed: bg.running ? bg : null,
   };
 }
 
@@ -1200,7 +1416,7 @@ async function semantic(ctx, query, opts) {
   opts = opts || {};
   const meta = readMeta(ctx);
   if (!meta) return { ok: false, reason: 'no-index', hits: [] };
-  const space = spaceOf(opts);
+  const space = spaceOf(opts, ctx);
   const keys = activeSources(ctx, meta, opts);
   // Do not ask the embedding endpoint for a query vector when no source has one: hybrid search
   // used to spend a network round-trip on every call and then silently rank by BM25 only.
@@ -1208,7 +1424,23 @@ async function semantic(ctx, query, opts) {
     const s = meta.sources[id];
     return s && s.vec && s.vec.space === space.hash && s.vec.dim && fs.existsSync(vectorPath(ctx, id));
   });
-  if (!hasVectors) return { ok: false, reason: 'no-vectors', hits: [] };
+  if (!hasVectors) {
+    // If vectors exist on disk from an older model space, trigger background re-embedding so
+    // the new model's vectors populate without blocking the caller.
+    const hadOldVectors = keys.some((id) => {
+      const s = meta.sources[id];
+      return s && s.vec && s.vec.space && s.vec.space !== space.hash;
+    });
+    if (hadOldVectors) spawnBackgroundEmbed(ctx, opts);
+    return { ok: false, reason: 'no-vectors', hits: [] };
+  }
+  // If a model migration is partially complete, make sure the background worker is running to
+  // finish the remaining sources while we search the already-migrated subset.
+  const hasStaleVectors = keys.some((id) => {
+    const s = meta.sources[id];
+    return s && s.vec && s.vec.space && s.vec.space !== space.hash;
+  });
+  if (hasStaleVectors) spawnBackgroundEmbed(ctx, opts);
   let qv;
   try {
     const got = await _embed.embed([safeForEmbedding(query, space)], opts);
@@ -1393,7 +1625,7 @@ function rrf(lists, limit, perConv, weights) {
 
 async function search(ctx, query, opts) {
   opts = opts || {};
-  const mode = opts.mode || (opts.semantic ? 'semantic' : 'lexical');
+  const mode = opts.mode || (opts.semantic ? 'semantic' : 'hybrid');
   const r = await searchMode(ctx, query, opts, mode);
   if (!opts.account || !r || !r.hits) return r;
   // The account filter runs AFTER the ranking, not before it: the ranking is over the whole
@@ -1505,6 +1737,7 @@ export {
   RRF_WEIGHTS,
   dirOf,
   metaPath,
+  embedLockPath,
   chunkPath,
   vectorPath,
   tokenPath,
@@ -1514,6 +1747,8 @@ export {
   build,
   catalog,
   status,
+  backgroundStatus,
+  spawnBackgroundEmbed,
   parseSince,
   lexical,
   semantic,

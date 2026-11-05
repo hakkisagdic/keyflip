@@ -9,7 +9,7 @@ function defaultUrl() {
   return process.env.KEYFLIP_EMBED_URL || 'http://localhost:11434/api/embed';
 }
 function defaultModel() {
-  return process.env.KEYFLIP_EMBED_MODEL || 'nomic-embed-text';
+  return process.env.KEYFLIP_EMBED_MODEL || 'bge-m3';
 }
 
 function postJson(url, body, timeoutMs) {

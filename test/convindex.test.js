@@ -797,3 +797,72 @@ test('the account filter uses the stored account', async function () {
   const none = convindex.catalog(ctx, { account: 'yahoo' });
   assert.strictEqual(none.conversations.length, 0, 'a row that is not there never matches');
 });
+
+test('when the embedding model changes, vectors regenerate incrementally newest-first across dimension changes', async function () {
+  const ctx = ctxFor();
+  writeClaude(ctx, 'old-chat', [
+    {
+      type: 'user',
+      timestamp: '2026-10-01T10:00:00.000Z',
+      message: { role: 'user', content: 'Older conversation about budget notifications.' },
+    },
+  ]);
+  writeClaude(ctx, 'new-chat', [
+    {
+      type: 'user',
+      timestamp: '2026-10-15T10:00:00.000Z',
+      message: { role: 'user', content: 'Newest conversation about harcama sınırına yaklaşınca bütçe.' },
+    },
+  ]);
+
+  // Initial embedding pass with an older 8-dim model (e.g. nomic-embed-text).
+  const r1 = await convindex.build(ctx, {
+    embed: true,
+    model: 'nomic-embed-text',
+    post: stubPost({ dim: 8 }),
+  });
+  assert.strictEqual(r1.embedded, 2);
+  assert.strictEqual(convindex.status(ctx, { model: 'nomic-embed-text' }).coverage, 100);
+
+  // Switch active model to bge-m3 (16-dim in this stub): coverage for bge-m3 starts at 0%
+  // while staleVectorChunks tracks the 2 old nomic-embed-text vectors on disk.
+  const stBefore = convindex.status(ctx, { model: 'bge-m3' });
+  assert.strictEqual(stBefore.coverage, 0);
+  assert.strictEqual(stBefore.staleVectorSources, 2);
+  assert.strictEqual(stBefore.staleModel, 'nomic-embed-text');
+
+  // Incremental pass capped at 1 source (maxEmbedSources: 1): must embed new-chat first!
+  const r2 = await convindex.build(ctx, {
+    embed: true,
+    model: 'bge-m3',
+    maxEmbedSources: 1,
+    post: stubPost({ dim: 16 }),
+  });
+  assert.strictEqual(r2.embedded, 1);
+  assert.strictEqual(r2.embedding.remainingSources, 1);
+  const metaMid = readManifest(ctx);
+  assert.strictEqual(metaMid.sources['claude:local:new-chat'].vec.model, 'bge-m3');
+  assert.strictEqual(metaMid.sources['claude:local:new-chat'].vec.dim, 16);
+  assert.strictEqual(metaMid.sources['claude:local:old-chat'].vec.model, 'nomic-embed-text');
+
+  // Hybrid search works seamlessly mid-migration (default mode is hybrid when omitted).
+  const hyMid = await convindex.search(ctx, 'harcama bütçe', {
+    model: 'bge-m3',
+    post: stubPost({ dim: 16 }),
+  });
+  assert.strictEqual(hyMid.ok, true);
+  assert.strictEqual(hyMid.mode, 'hybrid');
+  assert.strictEqual(hyMid.semanticCoverage.sources, 1);
+
+  // Second incremental pass finishes the remaining source (old-chat).
+  const r3 = await convindex.build(ctx, {
+    embed: true,
+    model: 'bge-m3',
+    post: stubPost({ dim: 16 }),
+  });
+  assert.strictEqual(r3.embedded, 1);
+  assert.strictEqual(r3.embedding.remainingSources, 0);
+  const stAfter = convindex.status(ctx, { model: 'bge-m3' });
+  assert.strictEqual(stAfter.coverage, 100);
+  assert.strictEqual(stAfter.staleVectorSources, 0);
+});

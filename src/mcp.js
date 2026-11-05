@@ -1892,11 +1892,12 @@ const TOOLS = [
     name: 'keyflip_conv_index',
     title: 'Build/refresh the conversation index',
     description:
-      "Parse every local conversation once into chunk files keyflip owns (configDir/conv-index, never versioned or backed up) so search and RAG context are instant. Incremental: unchanged files are reused by mtime+hash, appended chats reuse their vector prefix. `embed:true` also computes local embeddings (Ollama nomic-embed-text by default, or KEYFLIP_EMBED_URL) — a FIRST full embedding pass over a large corpus takes many minutes and can outlive an MCP request; for that, tell the user to run `keyflip conv index --embed` in a terminal. The report names every store it could not read as a skipped source with a reason and every store that yielded chats but whose -wal could not be replayed under `warnings` — an unreadable history never looks like an empty one. Filter with app/limit_sources for a quick slice. Writes only keyflip's own index; no conversation is modified. Ask the user first, then set confirm=true.",
+      "Parse every local conversation once into chunk files keyflip owns (configDir/conv-index, never versioned or backed up) so search and RAG context are instant. Incremental: unchanged files are reused by mtime+hash, appended chats reuse their vector prefix. `embed:true` also computes local embeddings (Ollama bge-m3 by default, or KEYFLIP_EMBED_URL) — a FIRST full embedding pass over a large corpus takes many minutes and can outlive an MCP request; for that, tell the user to run `keyflip conv index --embed` in a terminal. The report names every store it could not read as a skipped source with a reason and every store that yielded chats but whose -wal could not be replayed under `warnings` — an unreadable history never looks like an empty one. Filter with app/limit_sources for a quick slice. Writes only keyflip's own index; no conversation is modified. Ask the user first, then set confirm=true.",
     inputSchema: {
       type: 'object',
       properties: {
         embed: { type: 'boolean', description: 'Also compute embeddings (needed for semantic/hybrid).' },
+        background: { type: 'boolean', description: 'When embed=true, regenerate vectors incrementally in a detached background worker.' },
         force: { type: 'boolean', description: 'Re-parse even when mtime+size are unchanged.' },
         app: { type: 'string', description: 'Comma-separated app ids for a partial build.' },
         limit_sources: { type: 'integer', description: 'Parse at most N sources (quick slice).' },
@@ -1914,6 +1915,7 @@ const TOOLS = [
         apps: f.apps,
         limitSources: ls,
         embed: !!args.embed,
+        background: !!args.background,
         force: !!args.force,
       });
       const st = _convindex.status(ctx);

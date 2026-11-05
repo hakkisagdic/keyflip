@@ -95,7 +95,8 @@ test('title falls back past a continuation preamble to the first human sentence'
       type: 'user',
       message: { role: 'user', content: 'This session is being continued from a previous conversation.' },
     },
-    { type: 'assistant', message: { role: 'assistant', content: 'Ready.' } },
+    { type: 'assistant', message: { role: 'assistant', content: 'Ready.' },
+    },
     { type: 'user', message: { role: 'user', content: 'Fix the flaky CI job.' } },
   ]);
   const c = loadAll(ctx)[0];
@@ -324,4 +325,30 @@ test('a missing source is a CONV_SOURCE_GONE error, not an empty conversation', 
     () => conversations.loadPath(ctx, gone, {}),
     (e) => e && e.code === 'CONV_SOURCE_GONE',
   );
+});
+
+test('forEachLine streams multi-chunk JSONL and UTF-8 across chunk boundaries (enabling >160 MB sessions)', function () {
+  const ctx = ctxFor();
+  // Build a JSONL larger than 2.5 MB (> 2 x 1 MB read chunks) with Turkish multibyte UTF-8 characters
+  // so chunk boundaries fall mid-line and mid-character.
+  const pad = 'ğüşiöçĞÜŞİÖÇ '.repeat(800); // ~16 KB per turn
+  const lines = [];
+  for (let i = 0; i < 160; i++) {
+    lines.push({
+      type: i % 2 === 0 ? 'user' : 'assistant',
+      timestamp: '2026-10-01T10:00:' + String(i % 60).padStart(2, '0') + '.000Z',
+      cwd: '/work/large',
+      message: {
+        role: i % 2 === 0 ? 'user' : 'assistant',
+        content: 'Turn #' + i + ': ' + pad,
+      },
+    });
+  }
+  const file = writeClaude(ctx, 'huge-sess', lines);
+  assert.ok(fs.statSync(file).size > 2.5 * 1024 * 1024, 'fixture exceeds multiple 1 MB stream chunks');
+  const conv = conversations.loadPath(ctx, file, {});
+  assert.strictEqual(conv.id, 'claude:local:huge-sess');
+  assert.strictEqual(conv.counts.messages, 160);
+  assert.ok(conv.messages[0].text.startsWith('Turn #0: ğüşiöçĞÜŞİÖÇ'));
+  assert.ok(conv.messages[159].text.startsWith('Turn #159: ğüşiöçĞÜŞİÖÇ'));
 });
