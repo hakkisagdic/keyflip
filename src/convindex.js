@@ -1061,7 +1061,7 @@ async function build(ctx, opts) {
       const bytes = conv.messages.reduce((n, m) => n + Buffer.byteLength(m.text || ''), 0);
       if (!conv.messages.length) {
         report.empty++;
-        if (prev && prev.id && !claimed.has(prev.id) && !next[prev.id]) {
+        if (prev && prev.id && !next[prev.id]) {
           removedIds.add(prev.id);
           pendingDeletes.push(prev.id);
           report.removed++;
@@ -1162,11 +1162,11 @@ async function build(ctx, opts) {
   }
 
   // An empty source scanned earlier in this pass may have queued its previous id in
-  // `pendingDeletes` before a colliding transcript later in the same scan claimed that id.
-  // Reconcile `pendingDeletes` and `removedIds` against `next`/`claimed` before committing.
+  // `pendingDeletes` before a colliding transcript later in the same scan wrote to that id.
+  // Reconcile `pendingDeletes` and `removedIds` against `next` before committing.
   for (let i = pendingDeletes.length - 1; i >= 0; i--) {
     const id = pendingDeletes[i];
-    if (next[id] || claimed.has(id)) {
+    if (next[id]) {
       pendingDeletes.splice(i, 1);
       if (removedIds.delete(id) && report.removed > 0) report.removed--;
     }
@@ -1263,7 +1263,7 @@ async function build(ctx, opts) {
       if (ops % 200 === 0 && typeof refreshMetaLock === 'function') refreshMetaLock();
     }
     for (const id of pendingDeletes) {
-      if (next[id] || claimed.has(id)) continue;
+      if (next[id]) continue;
       try {
         fs.rmSync(chunkPath(ctx, id), { force: true });
         fs.rmSync(vectorPath(ctx, id), { force: true });

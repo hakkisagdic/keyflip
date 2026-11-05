@@ -1684,3 +1684,65 @@ test('when an emptied source had a colliding id that another source claims in th
   );
   assert.strictEqual(chunkLineCount(ctx, canonicalId), after.sources[canonicalId].chunks);
 });
+
+test('when an emptied source had an id that another source claims but fails to produce chunks for, the emptied source is still deleted and not resurrected', async function () {
+  // Round 7 LOW 1:
+  // If source A (file2) empties and its prev.id is canonicalId, and source B (file1) claims
+  // canonicalId at line 1071 but fails to produce chunks (e.g. its only message is a tool-only
+  // message with empty text so chunkConversation(conv) returns [] and continues without setting
+  // next[canonicalId]), checking claimed.has(id) would wrongly drop canonicalId from pendingDeletes
+  // and removedIds, causing writeMeta to resurrect the stale row from disk. Only next[id] must be checked.
+  const ctx = ctxFor();
+  const dir1 = path.join(ctx.home, '.claude', 'projects', '-work-proj-a');
+  const dir2 = path.join(ctx.home, '.claude', 'projects', '-work-proj-b');
+  fs.mkdirSync(dir1, { recursive: true });
+  fs.mkdirSync(dir2, { recursive: true });
+  const file1 = path.join(dir1, 'shared-id.jsonl');
+  const file2 = path.join(dir2, 'shared-id.jsonl');
+  const userTurn = (text) => ({ type: 'user', message: { role: 'user', content: text } });
+  const toolOnlyTurn = {
+    type: 'assistant',
+    message: { role: 'assistant', content: [{ type: 'tool_use', name: 'Bash', input: { command: 'ls' } }] },
+  };
+  const now = Date.now();
+  fs.writeFileSync(file1, JSON.stringify(userTurn('First project transcript.')) + '\n');
+  fs.writeFileSync(file2, JSON.stringify(userTurn('Second project transcript.')) + '\n');
+  fs.utimesSync(file1, new Date(now - 20000), new Date(now - 20000));
+  fs.utimesSync(file2, new Date(now - 10000), new Date(now - 10000));
+
+  await convindex.build(ctx, {});
+  const canonicalId = 'claude:local:shared-id';
+  assert.strictEqual(
+    readManifest(ctx).sources[canonicalId].path,
+    file2,
+    'file2 (newer mtime) initially owns canonicalId',
+  );
+  assert.strictEqual(fs.existsSync(convindex.chunkPath(ctx, canonicalId)), true);
+
+  // Now file2 shrinks to 0 messages, while file1 has only a tool_use assistant message (non-empty
+  // conv.messages because tools.length > 0, so it calls claimId(canonicalId, file1), but
+  // chunkConversation(conv) returns [] because m.text is empty, so next[canonicalId] is not set).
+  fs.writeFileSync(file2, '');
+  fs.writeFileSync(file1, JSON.stringify(toolOnlyTurn) + '\n');
+  fs.utimesSync(file2, new Date(now + 20000), new Date(now + 20000));
+  fs.utimesSync(file1, new Date(now + 10000), new Date(now + 10000));
+
+  const r = await convindex.build(ctx, {});
+  assert.strictEqual(r.ok, true);
+  const after = readManifest(ctx);
+  assert.strictEqual(
+    after.sources[canonicalId],
+    undefined,
+    'canonicalId must be removed from meta.json when the claiming source produces no chunks',
+  );
+  assert.strictEqual(
+    fs.existsSync(convindex.chunkPath(ctx, canonicalId)),
+    false,
+    'stale chunk file for canonicalId must be deleted',
+  );
+  assert.strictEqual(
+    fs.existsSync(convindex.tokenPath(ctx, canonicalId)),
+    false,
+    'stale token sidecar for canonicalId must be deleted',
+  );
+});
