@@ -21,7 +21,6 @@ function writeClaude(ctx, id, lines) {
   fs.writeFileSync(file, lines.map((l) => JSON.stringify(l)).join('\n') + '\n');
   return file;
 }
-
 function seed(ctx) {
   writeClaude(ctx, 'db-1', [
     { type: 'user', message: { role: 'user', content: 'How do we run the database migration safely?' } },
@@ -845,8 +844,9 @@ test('when the embedding model changes, vectors regenerate incrementally newest-
   assert.strictEqual(metaMid.sources['claude:local:new-chat'].vec.dim, 16);
   assert.strictEqual(metaMid.sources['claude:local:old-chat'].vec.model, 'nomic-embed-text');
 
-  // Hybrid search works seamlessly mid-migration (default mode is hybrid when omitted).
+  // Hybrid search works seamlessly mid-migration when mode='hybrid' is requested.
   const hyMid = await convindex.search(ctx, 'harcama bütçe', {
+    mode: 'hybrid',
     model: 'bge-m3',
     post: stubPost({ dim: 16 }),
   });
@@ -865,4 +865,165 @@ test('when the embedding model changes, vectors regenerate incrementally newest-
   const stAfter = convindex.status(ctx, { model: 'bge-m3' });
   assert.strictEqual(stAfter.coverage, 100);
   assert.strictEqual(stAfter.staleVectorSources, 0);
+});
+
+test('search() defaults to lexical (pure BM25) when opts.mode is omitted, never hitting the embedding endpoint', async function () {
+  // MEDIUM 3: Library callers that omit opts.mode must get local BM25, not a network call.
+  const ctx = ctxFor();
+  writeClaude(ctx, 'db-1', [
+    { type: 'user', message: { role: 'user', content: 'How do we run the database migration safely?' } },
+  ]);
+  await convindex.build(ctx, { embed: true, post: stubPost({ dim: 8 }) });
+  const counters = { calls: 0 };
+  const res = await convindex.search(ctx, 'database migration', {
+    post: stubPost(counters),
+  });
+  assert.strictEqual(res.ok, true);
+  assert.strictEqual(res.hits.length, 1);
+  assert.strictEqual(counters.calls, 0, 'omitting mode must not call the embedding endpoint');
+});
+
+test('a plain build (no --embed) never spawns a background embedding worker when stored space differs from default', async function () {
+  // MEDIUM 4: Plain `keyflip conv index` (no --embed) must not silently start a detached
+  // embedding worker or trigger hours of GPU/CPU work on upgrade.
+  const ctx = ctxFor();
+  writeClaude(ctx, 'db-1', [
+    { type: 'user', message: { role: 'user', content: 'How do we run the database migration safely?' } },
+  ]);
+  await convindex.build(ctx, { embed: true, model: 'nomic-embed-text', post: stubPost({ dim: 8 }) });
+  const savedNodeTest = process.env.NODE_TEST_CONTEXT;
+  delete process.env.NODE_TEST_CONTEXT;
+  try {
+    const r = await convindex.build(ctx, {
+      model: 'bge-m3',
+      spawn: function () {
+        return { pid: process.ppid, unref: function () {} };
+      },
+    });
+    assert.strictEqual(r.backgroundEmbed, undefined, 'plain build must not trigger backgroundEmbed');
+    assert.strictEqual(fs.existsSync(convindex.embedLockPath(ctx)), false, 'plain build must not create embed.lock');
+  } finally {
+    if (savedNodeTest !== undefined) process.env.NODE_TEST_CONTEXT = savedNodeTest;
+    fs.rmSync(convindex.embedLockPath(ctx), { force: true });
+  }
+});
+
+test('read-only search paths (semantic and search) never spawn a background writer process even when stale vectors exist', async function () {
+  // HIGH 2: Read-only search paths must never start detached writer processes as a side effect.
+  const ctx = ctxFor();
+  writeClaude(ctx, 'old-chat', [
+    { type: 'user', message: { role: 'user', content: 'Older conversation about database migrations.' } },
+  ]);
+  await convindex.build(ctx, { embed: true, model: 'nomic-embed-text', post: stubPost({ dim: 8 }) });
+  let spawnCalls = 0;
+  const customSpawn = function () {
+    spawnCalls++;
+    return { pid: 99999, unref: function () {} };
+  };
+  const savedNodeTest = process.env.NODE_TEST_CONTEXT;
+  delete process.env.NODE_TEST_CONTEXT;
+  try {
+    const sem = await convindex.semantic(ctx, 'database', {
+      model: 'bge-m3',
+      spawn: customSpawn,
+    });
+    assert.strictEqual(sem.ok, false);
+    assert.strictEqual(sem.reason, 'no-vectors');
+    assert.strictEqual(spawnCalls, 0, 'semantic() must never spawn a background worker');
+    assert.strictEqual(fs.existsSync(convindex.embedLockPath(ctx)), false, 'no embed.lock written by search');
+  } finally {
+    if (savedNodeTest !== undefined) process.env.NODE_TEST_CONTEXT = savedNodeTest;
+    fs.rmSync(convindex.embedLockPath(ctx), { force: true });
+  }
+
+  const hy = await convindex.search(ctx, 'database', {
+    mode: 'hybrid',
+    model: 'bge-m3',
+    spawn: customSpawn,
+    post: stubPost({ dim: 16 }),
+  });
+  assert.strictEqual(hy.ok, true);
+  assert.strictEqual(hy.mode, 'lexical');
+  assert.strictEqual(spawnCalls, 0, 'hybrid search() must never spawn a background worker');
+});
+
+test('foreground build({embed:true}) respects an active embed.lock held by another process and never clobbers its lock or vectors', async function () {
+  // HIGH 1 + LOW 3: Mutual exclusion between concurrent index/embed writers.
+  // If a background worker (or another process, e.g. process.ppid) holds embed.lock:
+  // 1) A foreground build({embed:true}) (such as the scheduled 30-min tick) must NOT run a duplicate
+  //    embedding pass, must NOT overwrite embed.lock with its own pid, and must NOT delete embed.lock on exit.
+  // 2) Concurrent meta.json writes must preserve fresh `vec` progress written to disk by the active worker.
+  const ctx = ctxFor();
+  writeClaude(ctx, 'chat-1', [
+    { type: 'user', timestamp: '2026-10-01T10:00:00Z', message: { role: 'user', content: 'First chat text.' } },
+  ]);
+  writeClaude(ctx, 'chat-2', [
+    { type: 'user', timestamp: '2026-10-02T10:00:00Z', message: { role: 'user', content: 'Second chat text.' } },
+  ]);
+  await convindex.build(ctx, {});
+
+  // Simulate an active background worker holding embed.lock under a live external PID (process.ppid).
+  const holderPid = process.ppid && process.ppid !== process.pid ? process.ppid : process.pid;
+  const spCalls = [];
+  const fakeSpawn = function () {
+    spCalls.push(1);
+    return { pid: holderPid, unref: function () {} };
+  };
+  const bg1 = convindex.spawnBackgroundEmbed(ctx, { spawn: fakeSpawn, model: 'bge-m3' });
+  assert.strictEqual(bg1.started, true, 'spawnBackgroundEmbed starts when injectable spawn is provided');
+  assert.strictEqual(bg1.pid, holderPid);
+  assert.strictEqual(spCalls.length, 1);
+
+  // A second concurrent spawnBackgroundEmbed must see the lock and refuse to start a second worker.
+  const bg2 = convindex.spawnBackgroundEmbed(ctx, { spawn: fakeSpawn, model: 'bge-m3' });
+  assert.strictEqual(bg2.started, false);
+  assert.strictEqual(bg2.alreadyRunning, true);
+  assert.strictEqual(bg2.pid, holderPid);
+  assert.strictEqual(spCalls.length, 1, 'must not spawn a second worker while lock is held');
+
+  // Simulate the background worker having finished embedding chat-2 on disk while another build runs.
+  const metaOnDisk = readManifest(ctx);
+  const vecBuf = Buffer.alloc(16 * 4, 1);
+  fs.mkdirSync(path.dirname(convindex.vectorPath(ctx, 'claude:local:chat-2')), { recursive: true });
+  fs.writeFileSync(convindex.vectorPath(ctx, 'claude:local:chat-2'), vecBuf);
+  metaOnDisk.sources['claude:local:chat-2'].vec = {
+    space: bg1.space,
+    dim: 16,
+    count: 1,
+    model: 'bge-m3',
+    host: 'localhost:11434',
+    remote: false,
+  };
+  fs.writeFileSync(convindex.metaPath(ctx), JSON.stringify(metaOnDisk, null, 2));
+
+  // Now run a foreground build({embed:true}) from a different writer (simulate lock held by another live pid):
+  // If holderPid === process.pid (rare), use pid 1 or ppid; on macOS/Linux process.ppid !== process.pid.
+  assert.notStrictEqual(holderPid, process.pid, 'test requires a distinct live holderPid (process.ppid)');
+  const embedCounter = { calls: 0 };
+  const fgReport = await convindex.build(ctx, {
+    embed: true,
+    model: 'bge-m3',
+    post: stubPost(embedCounter),
+  });
+  assert.strictEqual(
+    embedCounter.calls,
+    0,
+    'foreground build must not duplicate embedding work while worker holds embed.lock',
+  );
+  assert.strictEqual(fgReport.embedded, 0);
+  assert.strictEqual(fgReport.embedding.busy, true, 'report.embedding.busy indicates another embed writer is active');
+  assert.strictEqual(fgReport.embedding.busyPid, holderPid);
+
+  // Critical: embed.lock must STILL exist and belong to holderPid after foreground build exits!
+  const stAfterFg = convindex.backgroundStatus(ctx);
+  assert.strictEqual(stAfterFg.running, true, 'foreground build must not delete the background worker lock on exit');
+  assert.strictEqual(stAfterFg.pid, holderPid);
+
+  // Critical: chat-2's vector metadata must still be preserved in meta.json!
+  const metaAfterFg = readManifest(ctx);
+  assert.ok(metaAfterFg.sources['claude:local:chat-2'].vec, 'concurrent build must not clobber worker vec progress');
+  assert.strictEqual(metaAfterFg.sources['claude:local:chat-2'].vec.dim, 16);
+
+  // Clean up simulated lock
+  fs.rmSync(convindex.embedLockPath(ctx), { force: true });
 });

@@ -7981,9 +7981,15 @@ function convReportText(ctx, r) {
   } else if (r.embedding) {
     line +=
       '\n' +
-      (r.embedding.error
-        ? style.warn('Vectors failed: ' + r.embedding.error)
-        : 'Vectors: ' + r.embedded + ' conversation(s) embedded · ' + r.embedding.model + ' @ ' + r.embedding.host);
+      (r.embedding.busy
+        ? style.dim(
+            'Vectors: another embedding pass is already running' +
+              (r.embedding.busyPid ? ' (pid ' + r.embedding.busyPid + ')' : '') +
+              ' — skipped duplicate embed work.',
+          )
+        : r.embedding.error
+          ? style.warn('Vectors failed: ' + r.embedding.error)
+          : 'Vectors: ' + r.embedded + ' conversation(s) embedded · ' + r.embedding.model + ' @ ' + r.embedding.host);
   } else {
     // Embed-less passes must not claim there are no vectors at all: the previous embedding
     // survives, only chunks born in THIS pass are missing theirs.
@@ -8324,15 +8330,19 @@ async function cmdConv(ctx, rest) {
       }
     } else if ((mode === 'semantic' || mode === 'hybrid') && !st.vectorChunks) {
       if (st.staleVectorChunks) {
-        const bg = _convindex.spawnBackgroundEmbed(ctx);
+        const targetModel = (st.embedding && st.embedding.model) || 'bge-m3';
+        const bgRunning = st.backgroundEmbed && st.backgroundEmbed.running;
+        const actionHint = bgRunning
+          ? ' — background migration is running (pid ' + st.backgroundEmbed.pid + ')'
+          : ' — run `ollama pull ' + targetModel + ' && keyflip conv index --embed --background` to migrate vectors';
         if (mode === 'semantic')
           return fail(
             'embedding model changed (' +
               (st.staleModel || 'old') +
               ' -> ' +
-              (st.embedding && st.embedding.model) +
-              ') — regenerating vectors in the background' +
-              (bg.pid ? ' (pid ' + bg.pid + ')' : '') +
+              targetModel +
+              ')' +
+              actionHint +
               '; use --hybrid or --lexical while migration runs.',
           );
         print(
@@ -8340,10 +8350,10 @@ async function cmdConv(ctx, rest) {
             ' embedding model changed (' +
             (st.staleModel || 'old') +
             ' -> ' +
-            (st.embedding && st.embedding.model) +
-            ') — regenerating vectors in the background' +
-            (bg.pid ? ' (pid ' + bg.pid + ')' : '') +
-            '; hybrid ranks lexically until the first batch finishes.',
+            targetModel +
+            ')' +
+            actionHint +
+            '; hybrid ranks lexically until vectors are migrated.',
         );
       } else {
         if (mode === 'semantic')
@@ -8351,7 +8361,8 @@ async function cmdConv(ctx, rest) {
             'no embeddings yet — run `keyflip conv index --embed` (local Ollama by default), or use --lexical.',
           );
         print(
-          style.warn('·') + ' no embeddings yet — hybrid falls back to lexical (`keyflip conv index --embed` fixes it).',
+          style.warn('·') +
+            ' no embeddings yet — hybrid falls back to lexical (`keyflip conv index --embed` fixes it).',
         );
       }
     }

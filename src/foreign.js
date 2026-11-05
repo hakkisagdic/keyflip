@@ -19,6 +19,11 @@ import * as _yamlread from './yamlread.js';
 import * as _walmerge from './walmerge.js';
 import * as _transcript from './transcript.js';
 
+const MAX_FILE_BYTES = 160 * 1024 * 1024;
+const MAX_MESSAGE_CHARS = 200000;
+const MAX_MESSAGES = 20000;
+const MAX_TEXT_BYTES = 256 * 1024 * 1024;
+
 // Best-effort locations of OTHER agents' session stores (relative to $HOME). Existence-gated,
 // so a machine without a given tool simply yields nothing. Paths are NEEDS-VERIFICATION —
 // confirm on a real install; adding/fixing one is a one-line change.
@@ -209,23 +214,38 @@ function detect(filePath, input) {
   }
   if (firstLine[0] === '[') return 'json';
   if (/\.ya?ml$/.test(p) || /workspace\.yaml$/.test(p)) return 'yaml';
-  if (/\.md$/.test(p)) return 'aider';
+  if (/\.md$/.test(p) && /^####\s/m.test(head)) return 'aider';
   return null;
 }
 
 // Aider markdown chat history → unified shape.
 function parseAider(text) {
   const messages = [];
+  let textBytes = 0;
   let cur = null;
+  const pushMsg = function (role, rawText, tools) {
+    if (messages.length >= MAX_MESSAGES || textBytes >= MAX_TEXT_BYTES) return;
+    const t = String(rawText || '')
+      .trim()
+      .slice(0, MAX_MESSAGE_CHARS);
+    if (!t && !(tools && tools.length)) return;
+    const addBytes = Buffer.byteLength(t, 'utf8');
+    if (textBytes + addBytes > MAX_TEXT_BYTES && messages.length > 0) {
+      textBytes = MAX_TEXT_BYTES;
+      return;
+    }
+    textBytes += addBytes;
+    messages.push({ role: role, text: t, tools: tools || [], ts: null });
+  };
   const flush = function () {
-    if (cur && cur.text.trim())
-      messages.push({ role: 'assistant', text: cur.text.trim(), tools: dedupe(cur.tools), ts: null });
+    if (cur && cur.text.trim()) pushMsg('assistant', cur.text, dedupe(cur.tools));
     cur = null;
   };
   eachLine(text, function (line) {
+    if (messages.length >= MAX_MESSAGES || textBytes >= MAX_TEXT_BYTES) return;
     if (/^####\s/.test(line)) {
       flush();
-      messages.push({ role: 'user', text: line.replace(/^####\s+/, '').trim(), tools: [], ts: null });
+      pushMsg('user', line.replace(/^####\s+/, ''), []);
       cur = { text: '', tools: [] };
       return;
     }
@@ -244,7 +264,11 @@ function parseAider(text) {
       return;
     }
     if (!cur) cur = { text: '', tools: [] };
-    cur.text += (cur.text ? '\n' : '') + line;
+    if (cur.text.length < MAX_MESSAGE_CHARS) {
+      const piece = (cur.text ? '\n' : '') + line;
+      const room = MAX_MESSAGE_CHARS - cur.text.length;
+      cur.text += piece.length > room ? piece.slice(0, room) : piece;
+    }
   });
   flush();
   const msgs = messages.filter(function (m) {
@@ -267,10 +291,12 @@ function parseAider(text) {
 // CALL becomes a name in `tools` on the assistant message it belongs to. v3 carries cwd.
 function parseCommandCode(text) {
   const messages = [];
+  let textBytes = 0;
   let sessionId = null;
   let cwd = null;
   eachLine(text, function (line) {
-    if (!line.trim()) return;
+    if (!line || !line.trim()) return;
+    if (messages.length >= MAX_MESSAGES || textBytes >= MAX_TEXT_BYTES) return;
     let rec;
     try {
       rec = JSON.parse(line);
@@ -289,19 +315,27 @@ function parseCommandCode(text) {
     const blocks = Array.isArray(msg.content) ? msg.content : [];
     const ts = rec.timestamp || null;
     const textOfBlocks = function (type) {
-      return blocks
-        .filter(function (b) {
-          return b && b.type === type && typeof b.text === 'string' && b.text.trim();
-        })
-        .map(function (b) {
-          return b.text.trim();
-        })
-        .join('\n')
-        .trim();
+      let out = '';
+      for (let i = 0; i < blocks.length && out.length < MAX_MESSAGE_CHARS; i++) {
+        const b = blocks[i];
+        if (!b || b.type !== type || typeof b.text !== 'string' || !b.text.trim()) continue;
+        const piece = (out ? '\n' : '') + b.text.trim();
+        const room = MAX_MESSAGE_CHARS - out.length;
+        out += piece.length > room ? piece.slice(0, room) : piece;
+      }
+      return out.trim();
     };
     if (role === 'user') {
       const t = textOfBlocks('text');
-      if (t) messages.push({ role: 'user', text: t, tools: [], ts: ts });
+      if (t) {
+        const addBytes = Buffer.byteLength(t, 'utf8');
+        if (textBytes + addBytes > MAX_TEXT_BYTES && messages.length > 0) {
+          textBytes = MAX_TEXT_BYTES;
+          return;
+        }
+        textBytes += addBytes;
+        messages.push({ role: 'user', text: t, tools: [], ts: ts });
+      }
       return;
     }
     if (role === 'assistant') {
@@ -316,7 +350,15 @@ function parseCommandCode(text) {
           })
           .filter(Boolean),
       );
-      if (t || tools.length) messages.push({ role: 'assistant', text: t, tools: tools, ts: ts });
+      if (t || tools.length) {
+        const addBytes = Buffer.byteLength(t, 'utf8');
+        if (textBytes + addBytes > MAX_TEXT_BYTES && messages.length > 0) {
+          textBytes = MAX_TEXT_BYTES;
+          return;
+        }
+        textBytes += addBytes;
+        messages.push({ role: 'assistant', text: t, tools: tools, ts: ts });
+      }
     }
     // role 'tool' / tool_result rows, thinking, images and compaction are payloads, not turns.
   });
@@ -439,8 +481,10 @@ function extractMessages(doc) {
     }
   })(doc);
   const messages = (best || [])
+    .slice(0, MAX_MESSAGES)
     .map(function (x) {
-      const text = typeof x.message === 'string' ? x.message : textOf(x);
+      const raw = typeof x.message === 'string' ? x.message : textOf(x);
+      const text = raw.length > MAX_MESSAGE_CHARS ? raw.slice(0, MAX_MESSAGE_CHARS) : raw;
       return { role: roleOf(x), text: text, tools: [], ts: (x && (x.timestamp || x.time)) || null };
     })
     .filter(function (m) {
@@ -509,8 +553,17 @@ function normalize(filePath, input) {
     if (tool === 'jsonl') return Object.assign({ tool: 'jsonl' }, _transcript.parse(input));
     if (tool === 'commandcode') return Object.assign({ tool: 'command-code' }, parseCommandCode(input));
     if (tool === 'aider') return Object.assign({ tool: 'aider' }, parseAider(input));
-    // Whole-file formats (cursor SQLite, JSON, YAML) fall back to reading the file buffer.
-    input = filePath ? fs.readFileSync(filePath) : Buffer.alloc(0);
+    // Whole-file formats (cursor SQLite, JSON, YAML) fall back to reading the file buffer,
+    // which must enforce the 160 MB whole-file safety cap before allocating.
+    if (filePath) {
+      const st = fs.statSync(filePath);
+      if (st.size > MAX_FILE_BYTES) {
+        throw new Error('source is larger than 160 MB (' + Math.round(st.size / (1024 * 1024)) + ' MB)');
+      }
+      input = fs.readFileSync(filePath);
+    } else {
+      input = Buffer.alloc(0);
+    }
   }
   const buf = asBuffer(input);
   const tool = detect(filePath, buf);
