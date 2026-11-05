@@ -1027,3 +1027,187 @@ test('foreground build({embed:true}) respects an active embed.lock held by anoth
   // Clean up simulated lock
   fs.rmSync(convindex.embedLockPath(ctx), { force: true });
 });
+
+test('concurrent meta.json writers: a worker checkpoint merges newer and added rows from disk and discards vectors for rows modified mid-embed', async function () {
+  // HIGH 1 + NEW MEDIUM 1: While a long-running embedding pass is in flight, a concurrent
+  // lexical build (e.g. a 30-minute scheduled tick) can add new conversations and update existing
+  // conversations in meta.json and on disk. When the embedding worker later checkpoints or finishes
+  // its snapshotMeta() to meta.json:
+  // 1) Newly added rows on disk must NOT disappear.
+  // 2) Rows updated on disk with a newer mtimeMs/hash must NOT revert to the worker's stale hash/chunkHashes.
+  // 3) If a source's chunk file/hash changed on disk while the worker was embedding it, the worker
+  //    must NOT attach a vector computed against new chunks onto the old chunkHashes.
+  const ctx = ctxFor();
+  writeClaude(ctx, 'chat-a', [
+    { type: 'user', timestamp: '2026-10-01T10:00:00Z', message: { role: 'user', content: 'Original chat A content.' } },
+  ]);
+  writeClaude(ctx, 'chat-b', [
+    { type: 'user', timestamp: '2026-10-02T10:00:00Z', message: { role: 'user', content: 'Original chat B content.' } },
+  ]);
+  await convindex.build(ctx, {});
+
+  let midBuildDone = false;
+  const postWithConcurrentLexicalBuild = async function (url, body) {
+    if (!midBuildDone) {
+      midBuildDone = true;
+      // Simulate a concurrent lexical tick running while the worker is mid-embedding:
+      // 1) Modify chat-a with a new turn (newer mtime + new hash + new chunks on disk)
+      const fileA = writeClaude(ctx, 'chat-a', [
+        {
+          type: 'user',
+          timestamp: '2026-10-01T10:00:00Z',
+          message: { role: 'user', content: 'Original chat A content.' },
+        },
+        {
+          type: 'assistant',
+          timestamp: '2026-10-03T10:00:00Z',
+          message: { role: 'assistant', content: 'Appended answer during worker run.' },
+        },
+      ]);
+      const future = new Date(Date.now() + 60000);
+      fs.utimesSync(fileA, future, future);
+      // 2) Add a brand-new conversation chat-c
+      writeClaude(ctx, 'chat-c', [
+        {
+          type: 'user',
+          timestamp: '2026-10-04T10:00:00Z',
+          message: { role: 'user', content: 'Brand new chat C added by concurrent lexical build.' },
+        },
+      ]);
+      // Run the concurrent lexical build (writes updated chat-a and new chat-c to meta.json)
+      await convindex.build(ctx, { embed: false });
+    }
+    const inputs = (body && body.input) || [];
+    return { embeddings: inputs.map(() => new Array(8).fill(0.25)) };
+  };
+
+  await convindex.build(ctx, {
+    embed: true,
+    model: 'bge-m3',
+    post: postWithConcurrentLexicalBuild,
+  });
+
+  const finalMeta = readManifest(ctx);
+  assert.ok(
+    finalMeta.sources['claude:local:chat-c'],
+    'newly added row chat-c from concurrent lexical build must survive worker writeMeta',
+  );
+  assert.strictEqual(
+    finalMeta.sources['claude:local:chat-a'].counts.messages,
+    2,
+    'updated row chat-a from concurrent lexical build must keep its newer 2-message state, not revert to 1',
+  );
+  assert.strictEqual(
+    finalMeta.sources['claude:local:chat-a'].chunks,
+    1,
+    'chat-a still has 1 chunk after the concurrent update',
+  );
+  const diskChunksA = convindex.readChunks(convindex.chunkPath(ctx, 'claude:local:chat-a'));
+  assert.deepStrictEqual(
+    finalMeta.sources['claude:local:chat-a'].chunkHashes,
+    diskChunksA.map((c) => c.h),
+    'chat-a chunkHashes in meta.json match the new chunk file on disk, not the worker start-time snapshot',
+  );
+  assert.strictEqual(
+    finalMeta.sources['claude:local:chat-a'].vec,
+    null,
+    'chat-a changed on disk during the worker run so stale-snapshot vector must not be bound to mismatched chunkHashes',
+  );
+  assert.ok(
+    finalMeta.sources['claude:local:chat-b'].vec && finalMeta.sources['claude:local:chat-b'].vec.dim === 8,
+    'unchanged row chat-b keeps its newly computed vector',
+  );
+});
+
+test('spawnBackgroundEmbed passes KEYFLIP_CONFIG_DIR, and the spawned worker takes over embed.lock under its own pid and releases it on exit', async function () {
+  // LOW 9 + NEW LOW 2 + NEW LOW 3:
+  // 1) spawnBackgroundEmbed must set KEYFLIP_CONFIG_DIR (which createContext reads) in the child env.
+  // 2) When the spawned worker runs build({embed:true}) under its own pid (written to embed.lock by the parent),
+  //    acquireEmbedLock recognizes its own pid, updates progress, embeds the sources, and releases embed.lock on exit.
+  // 3) An expired/stale lock (whose heartbeat/updatedAt is past the stale window) is safely reclaimed without a remove race.
+  const ctx = ctxFor();
+  writeClaude(ctx, 'bg-worker-chat', [
+    {
+      type: 'user',
+      timestamp: '2026-10-05T10:00:00Z',
+      message: { role: 'user', content: 'Background worker takeover test.' },
+    },
+  ]);
+
+  let capturedEnv = null;
+  let capturedArgs = null;
+  // Spawn stub returns process.pid to simulate the child process taking over the lock written for its PID.
+  const fakeSpawn = function (_execPath, args, opts) {
+    capturedArgs = args;
+    capturedEnv = opts && opts.env;
+    return { pid: process.pid, unref: function () {} };
+  };
+
+  // build({embed:true, background:true}) must write lexical index and invoke spawnBackgroundEmbed
+  const bgBuild = await convindex.build(ctx, {
+    embed: true,
+    background: true,
+    model: 'bge-m3',
+    spawn: fakeSpawn,
+  });
+  assert.ok(
+    bgBuild.backgroundEmbed && bgBuild.backgroundEmbed.started,
+    'build({embed:true, background:true}) starts background worker',
+  );
+  assert.strictEqual(
+    capturedEnv && capturedEnv.KEYFLIP_CONFIG_DIR,
+    ctx.configDir,
+    'child env must carry KEYFLIP_CONFIG_DIR',
+  );
+  assert.ok(Array.isArray(capturedArgs) && capturedArgs.indexOf('--foreground') !== -1);
+  assert.strictEqual(fs.existsSync(convindex.embedLockPath(ctx)), true, 'embed.lock exists after spawnBackgroundEmbed');
+
+  // Now the worker itself runs foreground build({embed:true}) with the same PID that embed.lock was reserved for:
+  const workerReport = await convindex.build(ctx, {
+    embed: true,
+    model: 'bge-m3',
+    post: stubPost({ dim: 8 }),
+  });
+  assert.strictEqual(workerReport.embedded, 1, 'worker took over its reserved embed.lock and embedded the source');
+  assert.strictEqual(fs.existsSync(convindex.embedLockPath(ctx)), false, 'worker released embed.lock on completion');
+
+  // Verify stale-lock reclamation when a live PID was reused after the lock expired (updatedAt older than staleMs):
+  const holderPid = process.ppid && process.ppid !== process.pid ? process.ppid : process.pid;
+  fs.writeFileSync(
+    convindex.embedLockPath(ctx),
+    JSON.stringify({
+      pid: holderPid,
+      token: 'stale-token',
+      startedAt: '2020-01-01T00:00:00.000Z',
+      updatedAt: Date.now() - 24 * 3600 * 1000,
+      model: 'bge-m3',
+      space: 'deadbeef',
+    }) + '\n',
+  );
+  assert.strictEqual(
+    convindex.backgroundStatus(ctx).running,
+    false,
+    'a lock whose heartbeat is hours old (PID reuse) is treated as stale, not running forever',
+  );
+
+  // And on POSIX, if a crashed worker PID was immediately reused by an unrelated non-node process (e.g. PID 1),
+  // process identity verification detects PID reuse even when updatedAt is fresh:
+  if (process.platform !== 'win32') {
+    fs.writeFileSync(
+      convindex.embedLockPath(ctx),
+      JSON.stringify({
+        pid: 1,
+        token: 'reused-pid-token',
+        startedAt: new Date().toISOString(),
+        updatedAt: Date.now(),
+        model: 'bge-m3',
+        space: 'deadbeef',
+      }) + '\n',
+    );
+    assert.strictEqual(
+      convindex.backgroundStatus(ctx).running,
+      false,
+      'a lock whose PID now belongs to a non-node process (PID reuse) is reclaimed immediately',
+    );
+  }
+});
