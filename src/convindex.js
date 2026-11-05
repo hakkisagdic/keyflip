@@ -280,6 +280,7 @@ function writeMeta(ctx, meta, opts) {
   const removedIds = opts.removedIds instanceof Set ? opts.removedIds : null;
   const baseline = opts.baseline instanceof Map ? opts.baseline : null;
   const lockRes = withMetaLock(ctx, { timeoutMs: opts.metaLockTimeoutMs }, function () {
+    if (typeof opts.beforeMerge === 'function') opts.beforeMerge();
     const onDisk = readMeta(ctx);
     if (onDisk && onDisk.sources && meta && meta.sources) {
       if (opts.checkpoint === true) {
@@ -321,7 +322,13 @@ function writeMeta(ctx, meta, opts) {
           meta.sources[id] = diskRow;
           return;
         }
-        if (diskRow.vec && diskRow.hash && diskRow.hash === memRow.hash && diskRow.chunks === memRow.chunks) {
+        if (
+          !opts.force &&
+          diskRow.vec &&
+          diskRow.hash &&
+          diskRow.hash === memRow.hash &&
+          diskRow.chunks === memRow.chunks
+        ) {
           if (
             !memRow.vec ||
             (meta.embedding && diskRow.vec.space === meta.embedding.space && memRow.vec.space !== meta.embedding.space)
@@ -923,6 +930,14 @@ async function build(ctx, opts) {
   });
   const next = Object.create(null);
   const removedIds = new Set();
+  const discoveredPaths = new Set();
+  for (const s of sources) {
+    if (s && s.path) discoveredPaths.add(s.path);
+  }
+  const pendingWrites = [];
+  const pendingDeletes = [];
+  const pendingBlankIds = [];
+  const pendingEnsureTokens = [];
   const report = {
     ok: true,
     candidateSources: sources.length,
@@ -1013,7 +1028,7 @@ async function build(ctx, opts) {
         if (id === prev.id) {
           next[prev.id] = Object.assign({}, prev, accounts.fields(prev));
           report.reused++;
-          ensureTokens(ctx, prev.id);
+          pendingEnsureTokens.push(prev.id);
           continue;
         }
         // A collision: reusing the row would point two paths at ONE chunk file. Fall through
@@ -1054,7 +1069,7 @@ async function build(ctx, opts) {
         // written may have been learned (or deleted) since the last pass.
         next[id] = Object.assign({}, had, accounts.fields(conv));
         report.reused++;
-        ensureTokens(ctx, id);
+        pendingEnsureTokens.push(id);
         continue;
       }
       if (!opts.force && sameEntry && had.hash === conv.hash) {
@@ -1073,7 +1088,7 @@ async function build(ctx, opts) {
           accounts.fields(conv),
         );
         report.reused++;
-        ensureTokens(ctx, id);
+        pendingEnsureTokens.push(id);
         continue;
       }
       const chunks = chunkConversation(conv);
@@ -1115,9 +1130,7 @@ async function build(ctx, opts) {
       // Which account worked on it — stated if the user said so, inferred from the switch
       // timeline otherwise (and labelled as an inference).
       Object.assign(entry, accounts.fields(conv));
-      const chunkBytes = writeChunks(ctx, id, chunks);
-      writeTokens(ctx, id, chunks);
-      entry.chunkBytes = chunkBytes;
+      pendingWrites.push({ id: id, chunks: chunks, entry: entry });
       next[id] = entry;
       report.changed++;
       report.indexed++;
@@ -1132,21 +1145,20 @@ async function build(ctx, opts) {
   // otherwise a deleted conversation keeps its row, chunk file and vector forever.
   const full = !(opts.apps && opts.apps.length) && !opts.limitSources;
   if (full) {
+    const claimedPaths = new Set(claimed.values());
     Object.keys(meta.sources).forEach((id) => {
       if (!next[id]) {
         const s = meta.sources[id];
-        // Only treat a source as deleted if its file is actually gone from disk (not merely
-        // added after our discovery snapshot started).
-        if (!s || !s.path || !fs.existsSync(s.path)) {
+        // In a full build, any row from our initial meta snapshot that was not produced by this
+        // scan is removed: either its path was discovered and claimed by a newer id (e.g. an
+        // ID_SCHEME bump or collision resolution), or its path was not in the discovery snapshot
+        // at all. Rows added on disk by a concurrent build after our initial readMeta() are not in
+        // `meta.sources` (and not in `removedIds`), so writeMeta() still preserves them.
+        const supersededOrGone = !s || !s.path || claimedPaths.has(s.path) || !discoveredPaths.has(s.path);
+        if (supersededOrGone) {
           removedIds.add(id);
           report.removed++;
-          try {
-            fs.rmSync(chunkPath(ctx, id), { force: true });
-            fs.rmSync(vectorPath(ctx, id), { force: true });
-          } catch {
-            /* best-effort */
-          }
-          dropTokens(ctx, id);
+          pendingDeletes.push(id);
         }
       }
     });
@@ -1159,17 +1171,43 @@ async function build(ctx, opts) {
       const s = meta.sources[id];
       if (s && !fs.existsSync(chunkPath(ctx, id))) {
         report.rechunk = (report.rechunk || 0) + 1;
-        try {
-          fs.rmSync(vectorPath(ctx, id), { force: true });
-        } catch {
-          /* best-effort */
-        }
+        pendingBlankIds.push(id);
         next[id] = Object.assign({}, s, { chunks: 0, chunkHashes: [], hash: null, vec: null });
-        dropTokens(ctx, id);
         return;
       }
       next[id] = s;
     });
+  }
+
+  let lexicalCommitted = false;
+  function applyPendingLexicalMutations() {
+    if (lexicalCommitted) return;
+    lexicalCommitted = true;
+    for (const id of pendingEnsureTokens) {
+      ensureTokens(ctx, id);
+    }
+    for (const w of pendingWrites) {
+      const chunkBytes = writeChunks(ctx, w.id, w.chunks);
+      writeTokens(ctx, w.id, w.chunks);
+      w.entry.chunkBytes = chunkBytes;
+    }
+    for (const id of pendingDeletes) {
+      try {
+        fs.rmSync(chunkPath(ctx, id), { force: true });
+        fs.rmSync(vectorPath(ctx, id), { force: true });
+      } catch {
+        /* best-effort */
+      }
+      dropTokens(ctx, id);
+    }
+    for (const id of pendingBlankIds) {
+      try {
+        fs.rmSync(vectorPath(ctx, id), { force: true });
+      } catch {
+        /* best-effort */
+      }
+      dropTokens(ctx, id);
+    }
   }
 
   function snapshotMeta() {
@@ -1187,6 +1225,23 @@ async function build(ctx, opts) {
       stats: countStats(next),
       sources: next,
     };
+  }
+
+  // Commit all lexical chunk/token writes, removals, and meta.json under meta.lock BEFORE any
+  // embedding pass. If meta.lock cannot be acquired within the timeout, abort cleanly without
+  // having modified or deleted a single chunk, token, or vector file on disk.
+  const initialMeta = snapshotMeta();
+  const initialWrote = writeMeta(ctx, initialMeta, {
+    force: !!opts.force,
+    beforeMerge: applyPendingLexicalMutations,
+    removedIds: removedIds,
+    metaLockTimeoutMs: opts.metaLockTimeoutMs,
+  });
+  if (!initialWrote) {
+    report.ok = false;
+    report.errors.push({ path: metaPath(ctx), app: 'conv-index', error: 'meta.json write skipped (meta.lock busy)' });
+    report.stats = meta.stats || countStats(meta.sources || {});
+    return report;
   }
 
   let didEmbedPass = false;
@@ -1237,13 +1292,9 @@ async function build(ctx, opts) {
       report.embedding.remainingSources = candidates.length;
     } else if (toEmbed.length > 0) {
       didEmbedPass = true;
-      // Flush lexical chunks + sidecars BEFORE the embedding pass starts so BM25/hybrid searches
-      // see new conversations immediately while embeddings run.
-      const preEmbedMeta = snapshotMeta();
-      writeMeta(ctx, preEmbedMeta, { removedIds: removedIds, metaLockTimeoutMs: opts.metaLockTimeoutMs });
       embedBaseline = new Map();
-      Object.keys(preEmbedMeta.sources).forEach((id) => {
-        const s = preEmbedMeta.sources[id];
+      Object.keys(initialMeta.sources).forEach((id) => {
+        const s = initialMeta.sources[id];
         if (s) embedBaseline.set(id, String(s.hash || '') + ':' + String(s.chunkBytes || 0));
       });
       let embedDone = 0;
@@ -1363,13 +1414,24 @@ async function build(ctx, opts) {
   });
 
   const built = snapshotMeta();
-  writeMeta(ctx, built, {
-    checkpoint: didEmbedPass,
-    baseline: embedBaseline,
-    removedIds: removedIds,
-    metaLockTimeoutMs: opts.metaLockTimeoutMs,
-  });
-  report.stats = built.stats;
+  if (didEmbedPass) {
+    const finalWrote = writeMeta(ctx, built, {
+      checkpoint: true,
+      baseline: embedBaseline,
+      removedIds: removedIds,
+      metaLockTimeoutMs: opts.metaLockTimeoutMs,
+    });
+    if (!finalWrote) {
+      report.ok = false;
+      report.errors.push({ path: metaPath(ctx), app: 'conv-index', error: 'meta.json write skipped (meta.lock busy)' });
+      if (report.embedding && !report.embedding.error) {
+        report.embedding.error = 'meta.json write skipped (meta.lock busy)';
+      }
+    }
+    report.stats = built.stats;
+  } else {
+    report.stats = initialMeta.stats;
+  }
   return report;
 }
 

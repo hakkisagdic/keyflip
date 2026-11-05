@@ -1393,3 +1393,122 @@ test('worker checkpoint does not resurrect a source deleted by a concurrent full
     fs.rmSync(staleLockFile, { force: true });
   }
 });
+
+test('when meta.lock cannot be acquired, build() returns ok:false with an explicit error and does not mutate chunk/token/vector files on disk', async function () {
+  // Round 4 MEDIUM 1:
+  // If meta.lock is held past the wait deadline:
+  // 1) build() must report ok: false with an explicit meta.lock error in report.errors.
+  // 2) Destructive chunk/token/vector writes and deletions must NOT have happened before meta.lock
+  //    was acquired, so existing chunk/vector files on disk never drift apart from meta.json.
+  const ctx = ctxFor();
+  const file1 = writeClaude(ctx, 'drift-chat-1', [
+    {
+      type: 'user',
+      timestamp: '2026-10-01T10:00:00Z',
+      message: { role: 'user', content: 'Original text before lock contention.' },
+    },
+  ]);
+  const file2 = writeClaude(ctx, 'drift-chat-2', [
+    {
+      type: 'user',
+      timestamp: '2026-10-02T10:00:00Z',
+      message: { role: 'user', content: 'Second chat that will be deleted while lock is held.' },
+    },
+  ]);
+  await convindex.build(ctx, { embed: true, model: 'bge-m3', post: stubPost({ dim: 8 }) });
+
+  const id1 = 'claude:local:drift-chat-1';
+  const id2 = 'claude:local:drift-chat-2';
+  const origChunk1 = fs.readFileSync(convindex.chunkPath(ctx, id1), 'utf8');
+  const origChunk2 = fs.readFileSync(convindex.chunkPath(ctx, id2), 'utf8');
+
+  // Modify chat-1 and delete chat-2 while meta.lock is held by an external process:
+  writeClaude(ctx, 'drift-chat-1', [
+    {
+      type: 'user',
+      timestamp: '2026-10-01T10:00:00Z',
+      message: { role: 'user', content: 'MODIFIED text during lock contention.' },
+    },
+  ]);
+  const future = new Date(Date.now() + 60000);
+  fs.utimesSync(file1, future, future);
+  fs.rmSync(file2, { force: true });
+
+  const metaLockFile = path.join(ctx.configDir, 'conv-index', 'meta.lock');
+  const holderPid = process.ppid && process.ppid !== process.pid ? process.ppid : process.pid;
+  fs.writeFileSync(
+    metaLockFile,
+    JSON.stringify({ pid: holderPid, at: Date.now(), token: 'held-during-destructive-ops' }) + '\n',
+  );
+  try {
+    const failedReport = await convindex.build(ctx, { metaLockTimeoutMs: 50 });
+    assert.strictEqual(failedReport.ok, false, 'build() must return ok:false when meta.lock cannot be acquired');
+    assert.ok(
+      failedReport.errors.some((e) => String(e && (e.error || e)).includes('meta.lock')),
+      'report.errors must explain that meta.json write failed due to meta.lock contention',
+    );
+    assert.strictEqual(
+      fs.readFileSync(convindex.chunkPath(ctx, id1), 'utf8'),
+      origChunk1,
+      'chat-1 chunk file on disk must NOT be overwritten when meta.lock was not acquired',
+    );
+    assert.strictEqual(
+      fs.existsSync(convindex.chunkPath(ctx, id2)),
+      true,
+      'chat-2 chunk file on disk must NOT be deleted when meta.lock was not acquired',
+    );
+    assert.strictEqual(fs.readFileSync(convindex.chunkPath(ctx, id2), 'utf8'), origChunk2);
+  } finally {
+    fs.rmSync(metaLockFile, { force: true });
+  }
+});
+
+test('full build removes stale old-id rows when a transcript re-parses under a new id even though its file still exists on disk', async function () {
+  // Round 4 MEDIUM 2:
+  // When a source file still exists on disk, but re-parsing assigns it a different id (e.g. an ID_SCHEME
+  // bump, Codex session_id -> id migration, or collision handling), the old id is no longer produced by
+  // the scan and its path is now owned by the new id. A full build must remove the old id row and its
+  // orphaned chunk/vector/token files instead of keeping both rows forever because fs.existsSync(s.path) is true.
+  const ctx = ctxFor();
+  const file = writeClaude(ctx, 'renamed-id-chat', [
+    {
+      type: 'user',
+      timestamp: '2026-10-01T10:00:00Z',
+      message: { role: 'user', content: 'Chat that used to have an older id.' },
+    },
+  ]);
+  await convindex.build(ctx, { embed: true, model: 'bge-m3', post: stubPost({ dim: 8 }) });
+
+  const newId = 'claude:local:renamed-id-chat';
+  const oldId = 'claude:local:legacy-scheme-id';
+  const meta = readManifest(ctx);
+  const currentEntry = meta.sources[newId];
+  assert.ok(currentEntry);
+
+  // Simulate an index built under an older ID_SCHEME where this exact transcript path was stored under oldId:
+  delete meta.sources[newId];
+  meta.sources[oldId] = Object.assign({}, currentEntry, {
+    id: oldId,
+    scheme: 1,
+  });
+  fs.writeFileSync(convindex.chunkPath(ctx, oldId), fs.readFileSync(convindex.chunkPath(ctx, newId)));
+  fs.rmSync(convindex.chunkPath(ctx, newId), { force: true });
+  fs.writeFileSync(convindex.metaPath(ctx), JSON.stringify(meta, null, 2));
+
+  // Now run a full build: the transcript file still exists at s.path, and re-parses as newId.
+  const r = await convindex.build(ctx, {});
+  assert.strictEqual(r.ok, true);
+  const after = readManifest(ctx);
+  assert.ok(after.sources[newId], 'the new id is indexed');
+  assert.strictEqual(
+    after.sources[oldId],
+    undefined,
+    'the superseded old id row must be removed even though its transcript file still exists on disk',
+  );
+  assert.strictEqual(
+    fs.existsSync(convindex.chunkPath(ctx, oldId)),
+    false,
+    'the superseded old id chunk file must be cleaned up',
+  );
+  assert.strictEqual(after.stats.sources, 1, 'stats.sources must count the conversation once, not twice');
+});
