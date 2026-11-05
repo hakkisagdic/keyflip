@@ -27,3 +27,13 @@ secrets*
 # tests are tracked; the public key is pasted into src/license.js by hand.
 issuer/private/
 issuer/state/
+
+# polyctl: mail is transient; the ledger and reviews are not (polyctl: 8 lines below, d68cfe62428df686)
+agent-mail/*.md
+!agent-mail/README.md
+.polyctl/inbox/
+.polyctl/hold
+.polyctl/sessions.json
+.polyctl/lanes/
+.kiro/settings/mcp.json
+.mcp.json
