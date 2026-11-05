@@ -31,7 +31,7 @@ Log in to several accounts once, then hop between them without repeatedly loggin
 
 ## Why it's safe
 
-- **Your OAuth tokens stay in the OS credential store.** On macOS that's the Keychain; on Linux/Windows it's Claude's own `~/.claude/.credentials.json`. keyflip copies tokens *between* those slots — it adds no new plaintext token file, and this repository contains **no credentials of any kind**.
+- **Your OAuth tokens stay in the OS credential store.** On macOS that's the Keychain; on Linux/Windows it's Claude's own `~/.claude/.credentials.json`. keyflip copies tokens _between_ those slots — it adds no new plaintext token file, and this repository contains **no credentials of any kind**.
 - A switch changes only two things: the live credential slot and the account pointer in `~/.claude.json` (`oauthAccount` + `userID`).
 - Your session history in `~/.claude/projects` is **account-independent** — it shows up under whichever account is active.
 
@@ -124,10 +124,10 @@ Run `keyflip` (or, on macOS/Windows, open the **“Keyflip”** launcher) and pi
 `[t]` opens the **threads** screen: the same task, named, when it is spread over two accounts' sessions
 because quota ran out mid-work. It lists every thread with its members — which account each one belongs
 to, where its transcript is, how fresh it is, and the exact `cd … && claude --resume …` line that would
-continue it — plus `[s]`, which *looks for* split work instead of asking you to remember it. It is
+continue it — plus `[s]`, which _looks for_ split work instead of asking you to remember it. It is
 read-only on purpose: it never reads a transcript body, never writes, never spends quota, and printing a
 thread's name is the only way to change one (`keyflip threads create|add|open …`). An unassigned member
-is flagged with the fix, because a session keyflip cannot attribute would resume as the *current*
+is flagged with the fix, because a session keyflip cannot attribute would resume as the _current_
 account — that is how a task silently fragments.
 
 If Claude / Claude Code is open, keyflip first asks **“Claude will be closed to switch — continue?”** On **yes** it closes Claude, switches, and reopens it (macOS); on **no** it cancels and changes nothing.
@@ -158,9 +158,8 @@ keyflip <name> --no-verify    # ...skip the read-back every switch does by defau
 keyflip <name> --rollback-on-fail  # ...and if that read-back says the switch didn't land a usable
                               # account, put the previous one back (opt-in: it re-writes credentials)
 keyflip next                  # rotate to the next saved account
-keyflip next --strategy best [--model <m>]   # ...or pick by remaining quota (including per-model opus/sonnet headroom; also: next-available)
-keyflip enable <name|number> | keyflip disable <name|number>   # pause/resume an account for rotation & proxy routing without deleting credentials
-keyflip provider catalog      # 20 built-in presets (Z.AI, Kimi, DeepSeek, MiniMax, OpenRouter, HarnessRouter, Ollama…)
+keyflip next --strategy best  # ...or pick by remaining quota (also: next-available)
+keyflip provider catalog      # built-in presets (Z.AI, Kimi, DeepSeek, MiniMax, OpenRouter, Ollama…)
 keyflip provider add <id> --key-file -                    # ...a preset needs only a key
 keyflip provider add <name> --base-url <url> --key-file - # ...or save any 3rd-party endpoint
 keyflip provider models <id|name>   # ask the endpoint what it really serves (GET /v1/models)
@@ -185,8 +184,8 @@ keyflip chains [acct] [--tighten [--apply]]   # what one login is MADE of: which
                               # copied from, who can renew each part (the tool / keyflip on switch / a fresh
                               # capture / only a human), and what is stale, shared or world-readable.
                               # Stats only — it never reads a secret and never queries the Keychain
-keyflip list [--usage]        # accounts ([disabled] / [dup]); --usage adds 5h/7d + per-model opus/sonnet utilization
-keyflip autoswitch [--no-switch-back]   # watch usage; auto-swap at a threshold and return when the primary account recovers
+keyflip list [--usage]        # accounts; --usage adds each one's 5h/7d utilization
+keyflip autoswitch            # watch usage; auto-swap the CLI account at a threshold
 keyflip link [name|--remove]  # map this directory tree to an account for `run`
 keyflip shell-init <bash|zsh|fish>   # print a shell hook so `cd` auto-activates the pinned account (eval "$(keyflip shell-init zsh)")
 keyflip group [list|tag <acct> <g…>|untag <acct> <g>|members <g>]   # tag accounts into pools; `next --group <g>` rotates within one
@@ -208,11 +207,9 @@ keyflip config <list|get <k>|set <k> <v>|unset <k>>   # one validated home for s
 keyflip ui [--fleet]          # full-screen TUI: accounts · provider usage (u) · fleet (f) · a searchable COMMAND PALETTE (p) so nothing has to be memorized
 keyflip codexbar              # bridge to a locally-installed CodexBar usage monitor: align its tracked providers with keyflip's (reads no secrets)
 keyflip brain "<intent>"      # OPT-IN: turn plain language into a proposed plan of keyflip steps you approve one-by-one (Gemini; only PROPOSES, never runs on its own)
-keyflip surfaces              # detect other AI tools on this machine (Cursor/Gemini/Codex/Copilot/opencode/Aider/Command Code/Grok/Qwen/Kimi/Hermes/Droid/Amp/Kilo Code) — read-only
-keyflip <grok|qwen|kimi|hermes> [status|list|capture|switch|backups|restore|remove]   # save & switch file-backed CLI agent logins (0600 + rolling backups)
+keyflip surfaces              # detect other AI tools on this machine (Cursor/Gemini/Codex/Copilot/opencode/Aider) — read-only
 keyflip license <status|activate <file>|deactivate>   # offline plan (Ed25519-signed, no phone-home)
 keyflip run <name> [-- args]  # PARALLEL session: that account in THIS terminal only
-keyflip launch-cmd <name> [--surface claude|codex|grok|qwen|kimi|hermes|command-code] [--shell posix|powershell] [--prepare]   # print an isolated shell launch one-liner
 keyflip add <name> --token <file|->   # headless import of a raw credential
 keyflip mcp [--setup]         # MCP server over stdio so agents can drive keyflip
 keyflip panel [--open]         # local web dashboard: accounts+quotas, activity calendar, memory constellation, sessions
@@ -226,7 +223,7 @@ keyflip migrate export <file> # bundle accounts + providers + transcripts + memo
                               #   select a subset: --sessions <id,id> / --search T / --newer-than 7d / --only-sessions
                               #   add --agents (memory) and/or --agent-config (MCP/settings, redacted) for other AI agents
                               #   or --agent-config-secrets to carry the REAL keys between your own machines (encrypt it!)
-keyflip agents                # list other agents' memory + config keyflip can carry (Cursor/Gemini/Codex/Copilot/opencode/Aider/Grok/Qwen/Kimi/Hermes/Droid/Amp/Kilo Code; secrets redacted)
+keyflip agents                # list other agents' memory + config keyflip can carry (Cursor/Gemini/Codex/Copilot/opencode/Aider; secrets redacted)
 keyflip settings [show|get <k>|set <k> <v>]   # view/edit ~/.claude/settings.json (rides `migrate` to other machines)
 keyflip migrate import <file> # MERGE that bundle into this machine (union; --force overwrites)
                               #   file bundles STREAM (metadata first, then 128 KiB transcript chunks;
@@ -279,7 +276,7 @@ at it from each side. (It refuses to bind a public interface without auth unless
 ### Fleet — adding a machine (pairing, no silent trust)
 
 A machine is **never trusted on first sight**. Publishing into the folder only makes a peer
-*visible* (`pending` on `push`, `unpinned` in `fleet keys`); its commands are ignored until its key
+_visible_ (`pending` on `push`, `unpinned` in `fleet keys`); its commands are ignored until its key
 is pinned. Two ways to pin:
 
 - **`keyflip fleet invite` / `keyflip fleet join <host-id> --code <code>`** — the inviter mints a
@@ -301,7 +298,7 @@ shared folder configured yet, no passphrase. It also **announces this machine** 
 (ON by default; `keyflip fleet announce off` or `--no-announce` opts out). The beacon carries
 **public identity only** (machine id, display name, and the short SHA-256 fingerprint of the Ed25519
 signing key) — never the passphrase, a private key, or a command — so the listing is safe to print.
-A discovered peer is only *reachable*: acting on one still needs the passphrase AND a pinned key
+A discovered peer is only _reachable_: acting on one still needs the passphrase AND a pinned key
 (pair it as above). If multicast finds nobody, `fleet discover` falls back to `tailscale status
 --json` and lists online tailnet peers (marked `[Tailscale]`) — same public-identity rules, useful
 for machines that are never on one LAN. If neither transport finds anyone, it says so and the
@@ -310,7 +307,7 @@ shared folder stays the fallback.
 ### Fleet — origin authentication
 
 The fleet coordinates machines through an **encrypted shared folder**, so the passphrase alone can't
-prove *who* queued a command. Each machine therefore owns an **Ed25519 signing key**: the private key
+prove _who_ queued a command. Each machine therefore owns an **Ed25519 signing key**: the private key
 never leaves the machine (`0600`, never the shared folder, never argv); the public key is published in
 its status. Every queued command is **signed** and bound to its recipient, and a receiver **rejects**
 any command whose signature doesn't verify, is addressed to another machine, or comes from a peer
@@ -341,15 +338,15 @@ most once a day (never blocks a command).
 ### Third-party endpoints — providers (`provider`, `use`)
 
 Accounts are your Anthropic **subscriptions** (OAuth). **Providers** point Claude
-Code at a *different API endpoint* — a relay, a corporate gateway, AWS Bedrock,
+Code at a _different API endpoint_ — a relay, a corporate gateway, AWS Bedrock,
 OpenRouter, anything Anthropic-compatible — by patching the `env` block of
 `~/.claude/settings.json`, which Claude Code **hot-reloads, so no restart is
 needed**.
 
 ```bash
-keyflip provider catalog        # 20 presets: Z.AI/GLM, Zhipu, Kimi, DeepSeek, MiniMax, Qwen, Ark,
-                                # OpenRouter, HarnessRouter (UHP), OpenAI, Gemini, xAI, Mistral,
-                                # Groq, Together, Fireworks, Anthropic and local Ollama / LM Studio / llama.cpp
+keyflip provider catalog        # 19 presets: Z.AI/GLM, Zhipu, Kimi, DeepSeek, MiniMax, Qwen, Ark,
+                                # OpenRouter, OpenAI, Gemini, xAI, Mistral, Groq, Together,
+                                # Fireworks, Anthropic and local Ollama / LM Studio / llama.cpp
 keyflip provider add zai --key-file -          # a preset needs nothing but the key (catalog picks the URL)
 keyflip provider add my-gw --from deepseek --key-file -   # preset under your own name
 keyflip provider add openrouter --base-url https://openrouter.ai/api/v1 --key-file -   # any endpoint
@@ -372,7 +369,7 @@ keyflip doctor                  # health check: secrets-in-git + orphans + versi
   metadata file and never on the command line (read it from stdin/a file).
 - Switching only touches the keys keyflip manages; your own `settings.json`
   (hooks, plugins, model overrides, other env) is preserved, and `provider off`
-  removes *exactly* what was injected.
+  removes _exactly_ what was injected.
 - `keyflip gateway use <provider>` does the same for the Claude **desktop app**
   (restart the app to apply); `keyflip gateway off` restores it.
 
@@ -381,7 +378,7 @@ keyflip doctor                  # health check: secrets-in-git + orphans + versi
 Since 7 Oct 2026 a Claude **Max** or **Team** subscription also carries a monthly
 **Claude Platform (Console) API credit**: Max 5x $100, Max 20x $200, Team per seat
 (capped at $500). The claude.ai account links exactly **one Console organization**
-(claude.ai → Settings → Billing → API credits → *Link organization*); the credit
+(claude.ai → Settings → Billing → API credits → _Link organization_); the credit
 refreshes each billing cycle, never rolls over, and is spent before prepaid funds.
 
 `keyflip api` follows that credit for every account you save:
@@ -401,7 +398,7 @@ keyflip api remove hakkisagdic
   host: `api.anthropic.com`.
 - The Console shows the true remaining balance, but **no API reads it** — so
   `status` reads the Admin **cost report** for the current cycle and subtracts:
-  *the number shown is an estimate* (grant − spent), labelled as one. Plan grants
+  _the number shown is an estimate_ (grant − spent), labelled as one. Plan grants
   are known (`--plan`); a **Team** org must be told its grant once (`--grant`).
 - **Individual orgs have no Admin API at all** ("The Admin API is unavailable for
   individual accounts" — the admin-keys page 404s there), so those accounts run in
@@ -469,9 +466,9 @@ session cookie**. It is **experimental** (undocumented API) and cookie-bound:
 - The session is found for you, and every listing prints where it came from: the
   desktop app's own cookie, else a browser signed into claude.ai (current desktop
   builds keep `sessionKey` in memory and only write analytics cookies, so the app's
-  on-disk jar is often *not* the usable one), else that account's saved snapshot.
+  on-disk jar is often _not_ the usable one), else that account's saved snapshot.
 
-**Consolidation spans the base app *and* its keyflip clones.** Claude Desktop writes
+**Consolidation spans the base app _and_ its keyflip clones.** Claude Desktop writes
 its Recents/Cowork pointers into per-account `<accountUuid>/<orgUuid>/` folders;
 each `keyflip instance` clone carries its own copy under
 `~/.keyflip-instances/<tool>/<slug>/User Data/`. `consolidate` unions every account
@@ -489,7 +486,8 @@ keyed by workspace (`User/workspaceStorage/<hash>/state.vscdb`, plus
 swaps credentials while the local history stays in place. ChatGPT keeps conversations
 server-side per account (like claude.ai Chat) and its local data root
 (`~/Library/Application Support/Codex`) is shared, so there is no per-account chat index to
-merge. keyflip manages ChatGPT's *login* (`keyflip chatgpt`), not its chat history.
+merge. keyflip manages ChatGPT's _login_ (`keyflip chatgpt`), not its chat history.
+
 - `--as <account>` reads ANOTHER saved account's chats from its **captured browser
   session** (`~/.config/keyflip/browser-sessions/<name>__<browser>.sql`, then the
   app snapshot at `app/<name>.cookies`) without switching anything — so you can
@@ -497,7 +495,7 @@ merge. keyflip manages ChatGPT's *login* (`keyflip chatgpt`), not its chat histo
   saved session, sign into claude.ai in a browser as that account and run
   `keyflip browser capture <account>` once (`browser sync` is the opposite — it puts a
   saved session back into the browser). Every keyflip switch also refreshes the login
-  *and cookie* of the account it leaves.
+  _and cookie_ of the account it leaves.
 - One Chromium **profile** holds exactly one claude.ai account, so two accounts need two
   profiles to be live at once. keyflip sees every profile (`Default` stays `chrome`;
   others appear as `chrome-<ProfileDir>`, e.g. `chrome-Profile-2`), captures and restores
@@ -631,41 +629,6 @@ version; `status` reports where it lives and which `fnm use`/`nvm use` fixes it.
 Command Code's `~/.commandcode/projects/<slug>/*.jsonl` sessions are also searchable —
 see `keyflip conv --app command-code` and `keyflip foreign --list`.
 
-### Grok CLI, Qwen Code, Kimi CLI & Hermes Agent (`grok`, `qwen`, `kimi`, `hermes`)
-
-Four more CLI coding agents keep their credentials in a single JSON file under `$HOME`, so keyflip
-manages all of them through one unified adapter (`src/clisurfaces.js`):
-
-| Surface | CLI command group | Live credential file | Env override vars (warned on `status`, scrubbed by `launch-cmd`) |
-|---|---|---|---|
-| **Grok CLI** | `keyflip grok …` | `~/.grok/settings.json` | `XAI_API_KEY`, `GROK_API_KEY` |
-| **Qwen Code** | `keyflip qwen …` | `~/.qwen/oauth_creds.json` | `DASHSCOPE_API_KEY`, `QWEN_API_KEY`, `OPENAI_API_KEY` |
-| **Kimi CLI** | `keyflip kimi …` | `~/.kimi/credentials.json` | `MOONSHOT_API_KEY`, `KIMI_API_KEY` |
-| **Hermes Agent** | `keyflip hermes …` | `~/.hermes/auth.json` | `NOUS_API_KEY`, `OPENROUTER_API_KEY`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY` |
-
-```bash
-keyflip <grok|qwen|kimi|hermes> status            # live login, binary path, env-override warning, saved accounts
-keyflip <grok|qwen|kimi|hermes> capture [name]    # save the live credential file (0600 + secret-free meta.json)
-keyflip <grok|qwen|kimi|hermes> switch <name|n|user> [--dry-run] [--no-verify]
-keyflip <grok|qwen|kimi|hermes> list              # saved accounts and capture timestamps
-keyflip <grok|qwen|kimi|hermes> backups           # rolling snapshots from past switches/restores (newest 10)
-keyflip <grok|qwen|kimi|hermes> restore <n|file> [--dry-run]
-keyflip <grok|qwen|kimi|hermes> remove <name> --force
-```
-
-Captures live in `~/.config/keyflip/surfaces/<surface>/<slug>/<bundleFile>` (`0600`, inside the
-git-ignored `surfaces/` directory) alongside a secret-free `meta.json`. When a credential file
-holds only a raw API key or OAuth token with no human-readable email or username, keyflip derives a
-one-way SHA-256 fingerprint (`<surface>:<8-hex>`) as the stable identity — the secret itself is
-never printed or written to `meta.json`. Every switch backs up the live file under
-`surfaces/<surface>/.backups/` (newest 10 kept), auto-captures an unsaved outgoing login
-best-effort, writes the target file atomically at `0600`, and verifies the live identity on
-read-back (rolling back on mismatch). Over MCP: read-only `keyflip_cli_surface` (inspect one
-surface or omit `surface` to inspect all four) and confirm-gated `keyflip_cli_surface_capture`,
-`keyflip_cli_surface_switch`, and `keyflip_cli_surface_remove`. `keyflip surfaces` and
-`keyflip agents` also detect **Factory Droid** (`~/.factory`), **Sourcegraph Amp**
-(`~/.config/amp`), and **Kilo Code** (`~/.kilocode`).
-
 ### Which model runs the chores (`llm`)
 
 `dream`, `sessions distill` and `recall --answer` are housekeeping, not the work you are paying a
@@ -683,7 +646,7 @@ keyflip llm off                               # back to the default (`claude -p`
 
 - Providers: `claude` (the Claude Code CLI, active-account quota), `ollama` (local, defaults to
   `http://127.0.0.1:11434/v1`), `openai` (any OpenAI-compatible endpoint — a gateway on an API key).
-- **An endpoint key is never stored.** `--key-env` takes the *name* of an environment variable and
+- **An endpoint key is never stored.** `--key-env` takes the _name_ of an environment variable and
   keyflip reads its value from your shell at call time. The state directory is a git repo, so a
   stored key would be a leaked key; a key-shaped value passed to `--key-env` is refused outright.
 - Every chore prints `distills via <provider> <model> — <cost>` **before** it spends anything, and
@@ -723,8 +686,8 @@ keyflip refresh --unschedule
   an fnm-installed `keyflip` would otherwise never be found.
 - `keyflip doctor` has a **token renewal** row: it warns while accounts hold unrenewed tokens and goes
   green once something is scheduled. Over MCP: `keyflip_refresh_schedule` (`action=status|install|
-  remove`, confirm-gated). See `keyflip chains` for the parts of a login that a scheduled refresh
-  *cannot* save — a desktop-app session cookie needs a human, and no timer changes that.
+remove`, confirm-gated). See `keyflip chains` for the parts of a login that a scheduled refresh
+  _cannot_ save — a desktop-app session cookie needs a human, and no timer changes that.
 - **Other tools have their own clocks.** The ChatGPT/Codex access token (~10 days) is rotated by the
   separately installed refresh daemon (`keyflip refresh --daemon-start`, every 5 minutes) within 24
   hours of expiry — never while ChatGPT/Codex runs. `keyflip chatgpt refresh` does it once by hand;
@@ -751,7 +714,7 @@ keyflip doctor --json | jq '.checks[] | select(.name=="background services") | .
 - **Installed** (the file keyflip wrote is there), **loaded** (launchd/cron is actually holding it) and
   **spoke** (when its log last changed) are three different facts, and only the last two mean the job
   is working. `installed + NOT LOADED` is a warning with the exact command that re-installs it.
-- Silence is judged against the cadence the job was *installed* with: an index scheduled every 30
+- Silence is judged against the cadence the job was _installed_ with: an index scheduled every 30
   minutes that has said nothing for a day is failing, while one that was installed ten minutes ago is
   simply not due yet. A `KeepAlive` daemon has no cadence, so it is never blamed for being quiet.
 - A conversation index older than a day with no job to refresh it is its own warning — that index
@@ -798,7 +761,7 @@ keyflip scrub-history --apply     # bundle backup → git-filter-repo → re-sca
 keyflip memory audit [--apply]    # the same scan over keyflip's distilled keepsakes
 ```
 
-- **A report is never a copy.** A finding carries the path, the secret *kind* (`anthropic-api-key`, `jwt`,
+- **A report is never a copy.** A finding carries the path, the secret _kind_ (`anthropic-api-key`, `jwt`,
   `private-key-block`…), the blob id, its size and how many commits still hold it — so the terminal, the
   log file and any agent reading the output stay clean.
 - **A capture under a secret path counts even when its bytes match no known shape**, because a format the
@@ -821,7 +784,7 @@ keyflip memory audit [--apply]    # the same scan over keyflip's distilled keeps
 
 Not every finding is a problem. A free Google AI key, a JWT whose session expired weeks ago, a capture of a
 throwaway account — all genuinely secrets, none worth an alarm. And the same ✗ reprinted on every scan for a
-thing the user already decided is exactly the noise that trains everyone to skim past the finding that *is*
+thing the user already decided is exactly the noise that trains everyone to skim past the finding that _is_
 a problem. `keyflip secrets` is how you say "expected" once, in a file, instead of in every scan.
 
 ```bash
@@ -837,7 +800,7 @@ keyflip secrets untolerate <path>    # the alarm comes back
   means "leave this secret in the past" — that is not a policy, it is a leak with a config file.
 - **A rule names a path and a kind, never a value** — matching on a value would put a fingerprint of the secret
   into the git-versioned state repo. `--note` text is redacted before it is stored, and `secrets-policy.json`
-  itself is *not* a secret path, so it travels with `keyflip backup` and is reversible with `keyflip undo`.
+  itself is _not_ a secret path, so it travels with `keyflip backup` and is reversible with `keyflip undo`.
 - **Refused by design:** an unknown `--kind` (it would silence nothing, and the surviving alarm would look like
   a bug), and a bare `*` with no kind — that is not a policy, that is the scanner being switched off. `*` never
   crosses a directory boundary, and a `*`/trailing-`/` rule is printed with its **reach**, because it also
@@ -845,7 +808,7 @@ keyflip secrets untolerate <path>    # the alarm comes back
 - **It fails closed.** A corrupt or unreadable policy applies no rules, says so, and every finding stays an
   alarm; malformed rules are dropped but counted.
 - **Keepsakes are never silenced.** `memory audit` has no policy: a distilled "my key is sk-ant-…" is text
-  keyflip wrote *about* you, not a file you chose to keep.
+  keyflip wrote _about_ you, not a file you chose to keep.
 - `doctor --history` counts alarms, not findings, and adds a dim line for what your policy silenced — so a
   clean headline can always be explained. Over MCP: `keyflip_secrets_policy` (read-only) and
   `keyflip_secrets_tolerate` (`action=tolerate|untolerate`, confirm-gated).
@@ -853,12 +816,12 @@ keyflip secrets untolerate <path>    # the alarm comes back
 ### What is one login actually made of? (`chains`)
 
 An account is never one file. It is a live credential **plus every copy keyflip has taken from it**:
-an OAuth profile, the desktop app's token cache *and* its session cookie, a browser cookie snapshot, a
+an OAuth profile, the desktop app's token cache _and_ its session cookie, a browser cookie snapshot, a
 provider API key, a third-party capture under `surfaces/`. Those copies form a graph, and three
 properties of that graph decide whether a switch will work — none of which any earlier command could
 see, because each looks at one file while the truth lives in the relationships between them:
 
-- **Renewal.** The app's `oauth:tokenCache` is *derived*: the app re-mints it by calling `/authorize`
+- **Renewal.** The app's `oauth:tokenCache` is _derived_: the app re-mints it by calling `/authorize`
   with its `sessionKey` cookie. So the cookie is the chain's real root, and nothing renews it but a
   human. A token blob can look perfectly healthy while the account behind it is dead — which is
   exactly what "I switched and the app just shows the sign-in screen" is.
@@ -880,7 +843,7 @@ keyflip chains --tighten --apply   # chmod 600 those files, then re-scan as proo
   exists; those locations are reported as `exists: null` (unprobed) instead. And it writes **nothing**
   into the git-versioned state repo, so it cannot leave a fingerprint of a value in history.
 - **Findings, not complaints.** Each risk names its own fix (`re-capture it while that account is
-  logged in`, `keyflip add <name>`, `keyflip chains --tighten`), and `high` items sort first. Only a
+logged in`, `keyflip add <name>`, `keyflip chains --tighten`), and `high` items sort first. Only a
   secret keyflip itself left readable beyond your owner can turn the `doctor` row red — four accounts
   sharing one Chrome profile is structural reality, and a permanent ✗ over it would train you to
   ignore the ✗.
@@ -897,7 +860,7 @@ keyflip chains --tighten --apply   # chmod 600 those files, then re-scan as proo
 
 A quota runs out mid-task, you switch, and the same job is suddenly three objects: a Claude Code
 session under gmail, another under yahoo, and a claude.ai chat nobody can point at. `keyflip threads`
-gives that work **one name**. A thread is a *pointer file*, `~/.config/keyflip/threads/<slug>.json`,
+gives that work **one name**. A thread is a _pointer file_, `~/.config/keyflip/threads/<slug>.json`,
 listing session ids and chat uuids plus the account each belongs to — it is not a container, so
 switching accounts stops fragmenting the work, and `keyflip chat`'s piece-by-piece reach becomes one
 named task.
@@ -915,16 +878,16 @@ keyflip threads drop dugum-acmak -y    # forgets the NAME; every transcript and 
 
 - **Pointers, never copies.** The transcript stays where Claude wrote it. Nothing duplicates, and
   deleting, corrupting or migrating a thread cannot lose a message — only a name. `keyflip threads
-  show --md` prints the merged document without writing anything.
+show --md` prints the merged document without writing anything.
 - **`[t]` in the menu is the same store, read-only.** The account switcher has a threads screen: every
   thread, its members, which account each belongs to, where its transcript is, how fresh it is, and the
-  exact `cd … && claude --resume …` line that continues it — plus `[s]` for split work it can *find*. It
+  exact `cd … && claude --resume …` line that continues it — plus `[s]` for split work it can _find_. It
   never reads a transcript body, never writes, never spends quota; naming and un-naming stay on the CLI,
   because a thread is the one thing an account switch can silently fragment.
 - **It finds the split instead of making you enumerate it.** `suggest` groups recent sessions per
   project folder and reports the folders where **two or more named accounts** worked, minus what a
   thread already covers — so the list shrinks as you name your work. One account plus unassigned
-  sessions is *not* reported: that is an account nobody assigned, not a switch (assign it with
+  sessions is _not_ reported: that is an account nobody assigned, not a switch (assign it with
   `keyflip sessions assign <id> <account>`).
 - **`sessions attribute` guesses the account instead of making you assign every session by hand.** It
   reconstructs your switch timeline from keyflip's own action log (account names + timestamps only —
@@ -1020,7 +983,7 @@ keyflip conv transfer a7dc93d0 --to codex         # a handoff bundle for another
   page — and when no vectors exist, the result is labelled `lexical` with a note, never silently
   "hybrid". `search` builds the index once on first use so the very first query just works.
 - **What the search is actually worth, measured.** A frozen set of 84 developer-style queries (written by
-  a local model from a random *message*, never from a chunk, so no chunk boundary is favoured) over this
+  a local model from a random _message_, never from a chunk, so no chunk boundary is favoured) over this
   machine's 1,869-conversation / 117,503-chunk index: BM25 reaches **hit@1 0.49 · hit@5 0.83 · MRR 0.63**,
   the vector list alone **0.24 · 0.43 · 0.32**. On developer transcripts the rare term beats the meaning,
   so hybrid at the shipped 1:0.25 weight lands exactly on the BM25 numbers, and every heavier semantic
@@ -1139,7 +1102,7 @@ keyflip checkpoint show <id>        # full detail for one checkpoint
 ```
 
 - **Secret-safe:** every text field (summary, provider, git paths, and every value inside the task snapshot) is scanned and redacted before it is hashed or written — API keys and tokens never enter a checkpoint.
-- **Read-only:** `checkpoint show` and the MCP `keyflip_checkpoint_*` tools only *read* a checkpoint. keyflip never runs git or changes your working tree — you decide what to do with the recorded state.
+- **Read-only:** `checkpoint show` and the MCP `keyflip_checkpoint_*` tools only _read_ a checkpoint. keyflip never runs git or changes your working tree — you decide what to do with the recorded state.
 - **Content hash:** each checkpoint carries a `contentHash` (sha256 of its canonical body) for later conflict detection across machines.
 
 MCP: `keyflip_checkpoint_list`, `keyflip_checkpoint_latest` (read-only), `keyflip_checkpoint_create` (mutating — requires confirmation).
@@ -1159,12 +1122,12 @@ The Context Layer can build a shareable `.keyflip/` package for a project. A pri
 what may leave the machine, and **every text field is secret-scanned before it is packed — in every mode**
 (defence in depth): a token or key can never enter the shared context.
 
-| Mode | What ships |
-| --- | --- |
-| `local` | Nothing — never leaves the machine (default). |
-| `git` | Plain in the repo (the repo carries `.keyflip/`). |
-| `encrypted` | Passphrase-sealed (AES-256-GCM) for cloud/WebDAV. |
-| `company` | Raw conversations + source snippets stripped; only approved providers shared. |
+| Mode        | What ships                                                                    |
+| ----------- | ----------------------------------------------------------------------------- |
+| `local`     | Nothing — never leaves the machine (default).                                 |
+| `git`       | Plain in the repo (the repo carries `.keyflip/`).                             |
+| `encrypted` | Passphrase-sealed (AES-256-GCM) for cloud/WebDAV.                             |
+| `company`   | Raw conversations + source snippets stripped; only approved providers shared. |
 
 ```bash
 keyflip context sync status                              # current mode + policy + checkpoint
@@ -1215,23 +1178,13 @@ Failover is deliberate, not first-error-wins:
 - **A billing 429 is not a rate limit.** When the body says credit/billing/
   org-disabled, the error is returned to you instead of being masked by another
   account; rate-limit 429s still fail over.
-- **Per-kind and per-model-family cooldowns.** An account that 429s, 401/403s, 529s
-  or 5xxs is parked in `breakers.json` for a kind-specific TTL (`keyflip config`:
+- **Per-kind cooldowns.** An account that 429s, 401/403s, 529s or 5xxs is parked
+  in `breakers.json` for a kind-specific TTL (`keyflip config`:
   `proxy.cooldownQuotaSeconds`, `…ThrottledSeconds`, `…OverloadedSeconds`,
-  `…AuthSeconds`, `…ServerSeconds`; `0` disables one). When upstream returns a
-  **model-scoped 429** (`model_unavailable`, e.g. weekly Opus quota exhausted while
-  Sonnet still has headroom), keyflip parks *only that model family* (`opus`,
-  `sonnet`, `haiku`) on the account — so Sonnet/Haiku traffic continues to use it,
-  and when `modelChain` is configured the proxy steps down to the next model on the
-  **same** account before failing over.
-- **Deterministic order + `enable`/`disable`.** `proxy.priority` (comma-separated
-  account names) first, then the active account, then least-recently-used. Accounts
-  paused with `keyflip disable <name>` are skipped by the proxy, `keyflip next`,
-  and `autoswitch` until re-enabled with `keyflip enable <name>` (their stored
-  credentials are kept intact). Duplicate profiles pointing at the same
-  `accountUuid`/`email` are flagged as `[dup: <canonical>]`, and `keyflip remove`
-  records a secret-free tombstone (`.tombstones.json`) so re-adding an account
-  restores its tier override and preserves historical session attribution.
+  `…AuthSeconds`, `…ServerSeconds`; `0` disables one). A parked account is skipped;
+  if everything is parked, the one that frees up first is used with a wait.
+- **Deterministic order.** `proxy.priority` (comma-separated account names) first,
+  then the active account, then least-recently-used.
 - **Debug headers** on every proxied response: `x-keyflip-account`,
   `x-keyflip-attempts`, `x-keyflip-failover`, `x-keyflip-error-class`,
   `x-keyflip-cooldown`, `x-keyflip-model`, `x-keyflip-route`
@@ -1283,7 +1236,8 @@ starter). A running proxy reloads it on the **next request** — no restart:
   failure falls back to the rules. The hook is never run by the read-only tools.
 
 An invalid file never breaks the proxy: it is ignored, and `keyflip proxy routes`
-+ `keyflip proxy status` name every problem.
+
+- `keyflip proxy status` name every problem.
 
 ```bash
 keyflip proxy routes                  # the file, its errors, the effective policy
@@ -1369,17 +1323,12 @@ worse than one that overstates it.
 ### Auto-switch on usage (`autoswitch`)
 
 `keyflip autoswitch --threshold 90 --interval 60 --strategy next-available`
-watches the active account (including its 5h, 7d, and model-scoped `sevenDayOpus` /
-`sevenDaySonnet` windows; transient usage-endpoint 429s preserve `lastGood`) and,
-when utilization crosses the threshold, **swaps the CLI credential automatically**
-to the chosen enabled account — without closing anything (Claude Code picks the new
-account up on its next request). It also records the original primary account in
-`autoswitch-state.json` and **automatically switches back** (`autoswitch-return`)
-once the primary recovers to safe headroom (`min(95, (100 - threshold) + 10)%`;
-pass `--no-switch-back` to stay on the failover account). It confirms once at
-start (`-y` for scripts) and never touches the desktop app. Pair with
-`keyflip link <name>` to pin directories to accounts: `keyflip run` with no name
-uses the nearest linked ancestor directory.
+watches the active account and, when its 5h/7d utilization crosses the
+threshold, **swaps the CLI credential automatically** to the chosen account —
+without closing anything (Claude Code picks the new account up on its next
+request). It confirms once at start (`-y` for scripts) and never touches the
+desktop app. Pair with `keyflip link <name>` to pin directories to accounts:
+`keyflip run` with no name uses the nearest linked ancestor directory.
 
 **Run it unattended** so you don't have to keep a terminal open (and so rotation
 actually happens while you work in Claude): `keyflip autoswitch install` registers
@@ -1442,7 +1391,7 @@ confirm-gated), migrate + LAN
 `keyflip://` links (`keyflip_share/share_apply`), desktop gateway (`keyflip_gateway_*`), MCP-server
 registry (`keyflip_mcpreg_*`), directory pins (`keyflip_link/links`), isolated app instances
 (`keyflip_instances`, `keyflip_instance_*`), the shared ChatGPT/Codex login
-(`keyflip_chatgpt`, `_chatgpt_capture`, `_chatgpt_switch`, `_chatgpt_refresh`, read-only `_chatgpt_backups`, confirm-gated `_chatgpt_restore`), Grok/Qwen/Kimi/Hermes CLI surfaces (`keyflip_cli_surface` read-only, confirm-gated `_cli_surface_capture`, `_cli_surface_switch`, `_cli_surface_remove`), account `keyflip_enable`/`keyflip_disable`, isolated CLI launch commands (`keyflip_launch_cmd`), diagnostics
+(`keyflip_chatgpt`, `_chatgpt_capture`, `_chatgpt_switch`, `_chatgpt_refresh`, read-only `_chatgpt_backups`, confirm-gated `_chatgpt_restore`), diagnostics
 (`keyflip_doctor`, `keyflip_usage_history`), backups, skills (`keyflip_skills` and `keyflip_skill_agents` are read-only;
 `keyflip_skill_add`, `keyflip_skill_sync` and `keyflip_skill_remove` write into every detected agent, or only the `agents` you name),
 and the failover proxy. Every tool has a proper JSON Schema and read-only/
@@ -1464,7 +1413,7 @@ keyflip statusline install    # show active account + quota in the Claude Code p
 keyflip install-skill         # bundled skill → ~/.claude/skills/keyflip + other detected agents
 ```
 
-### Parallel sessions (`run`, `launch-cmd`)
+### Parallel sessions (`run`)
 
 `keyflip run <name>` launches Claude Code as that account **in the current
 terminal only** — every other terminal, the desktop app and VS Code keep their
@@ -1475,26 +1424,9 @@ history stays per-account. Everything after `--` is forwarded to `claude`
 (e.g. `keyflip run work -- --resume`). If the session refreshes the token,
 keyflip saves it back to the profile on exit.
 
-Need a **copy-pasteable shell one-liner** (for a terminal multiplexer, an IDE
-task, or another agent surface) without spawning immediately? `keyflip launch-cmd`
-prints the exact POSIX or PowerShell command for any of the 7 supported CLI
-surfaces (`claude`, `codex`, `grok`, `qwen`, `kimi`, `hermes`, `command-code`):
-
-```bash
-keyflip launch-cmd work                                         # POSIX: unset ANTHROPIC_API_KEY …; CLAUDE_CONFIG_DIR='…' claude
-keyflip launch-cmd work --surface codex --shell powershell      # PowerShell: Remove-Item Env:OPENAI_API_KEY …; $env:CODEX_HOME='…'; codex
-keyflip launch-cmd work --surface grok                          # points GROK_HOME at surfaces/grok/work and unsets XAI_API_KEY/GROK_API_KEY
-keyflip launch-cmd work --prepare                               # materialize the Claude session dir + shared symlinks first
-```
-
-Each generated command points the tool's config-dir variable (`CLAUDE_CONFIG_DIR`,
-`CODEX_HOME`, `GROK_HOME`, `QWEN_HOME`, `KIMI_HOME`, `HERMES_HOME`,
-`COMMAND_CODE_HOME`) at that account's isolated directory and explicitly unsets
-ambient API-key overrides so a stray shell key never shadows the isolated login.
-
-> ⚠️ **Asks for confirmation first** on `keyflip run` (skip with `-y`): a token refresh inside a
+> ⚠️ **Asks for confirmation first** (skip with `-y`): a token refresh inside a
 > parallel session rotates that account's refresh token, which can log out
-> *other live copies of the same account*.
+> _other live copies of the same account_.
 
 ### Headless import (`add --token`)
 
@@ -1513,7 +1445,6 @@ account indicator (with 5h/7d quota in the switcher), a QuickPick account switch
 a one-click **Open Dashboard** (`keyflip panel`), and a status view — see its
 [README](vscode-keyflip/README.md) ([TR](vscode-keyflip/README.tr.md)) for local install.
 
-
 ### Seeing all your sessions after a switch (macOS)
 
 The Claude **desktop app** keeps its "Recents" as a per-account index at
@@ -1528,7 +1459,7 @@ and `local-agent-mode-sessions`), so a chat opened in a clone appears everywhere
 Same-name files from different accounts are kept apart by falling back to
 `local_<cliSessionId>.json`; a running clone is skipped (quit it and re-run), and
 `--no-instances` keeps the pass to the base app. It backs up each store first and
-only ever *adds* files (never deletes).
+only ever _adds_ files (never deletes).
 
 > Your `~/.claude/projects` transcripts are account-independent already; this just
 > makes the app's list surface them. **Cloud "Chat" conversations (claude.ai) are
@@ -1536,11 +1467,11 @@ only ever *adds* files (never deletes).
 
 ### Switching the desktop app's login too (macOS, experimental)
 
-The Claude **desktop app** has its own login, separate from the CLI. Its *actual*
+The Claude **desktop app** has its own login, separate from the CLI. Its _actual_
 session is the claude.ai cookie in its `Cookies` DB (the `oauth:tokenCache` blobs
 in `config.json` are just a cache the app re-derives from that cookie on launch).
 keyflip therefore captures and swaps **both** — so `keyflip <name>` can flip the
-CLI *and* the desktop app to the same account, once each account's desktop login
+CLI _and_ the desktop app to the same account, once each account's desktop login
 has been captured.
 
 The desktop app's login is **independent** from the CLI's — they can even be on
@@ -1555,7 +1486,7 @@ the desktop-app login (token + session cookie), so both come up on the chosen
 account — no manual re-login. `config.json` and the cookie DB are backed up first
 (`~/.config/keyflip/backups/`).
 
-A saved *capture* is not the same as a *live login*, and the difference shows: if
+A saved _capture_ is not the same as a _live login_, and the difference shows: if
 claude.ai has rotated or revoked that session since it was captured, the app deletes the
 cookie on launch and opens on its **sign-in screen** — even though its token cache is
 intact and decryptable. Nothing automated can fix that (only a sign-in mints the
@@ -1569,10 +1500,10 @@ back signed out. The fix in every case is one sign-in in the app plus `keyflip a
 One specific and easy-to-blame cause: the app **updated itself**. Squirrel/ShipIt swaps
 the bundle and relaunches the app, and on that relaunch Chromium may not have flushed the
 `claude.ai` session cookie back to disk yet — so the live jar reads as signed out while
-your saved capture is perfectly fine, and it *looks* like logins stopped working with no
+your saved capture is perfectly fine, and it _looks_ like logins stopped working with no
 change on keyflip's side. `keyflip doctor` dates the installed bundle and says so
 ("the app was UPDATED <date> (vX)…) instead of implying a broken capture. `keyflip add
---dry-run` shows what a capture *would* save and whether the app's jar currently holds a
+--dry-run` shows what a capture _would_ save and whether the app's jar currently holds a
 usable session, without writing anything.
 
 > Experimental: it rewrites the app's `config.json` login while the app is closed.
@@ -1580,7 +1511,8 @@ usable session, without writing anything.
 > re-`add` that account. Restore a backup if anything looks off.
 
 > Switching should happen while Claude is closed, or Claude may overwrite the change on exit.
-> - **Interactive** (menu, or `keyflip <name>` in a terminal): if Claude is open you're **asked before it's closed** — answer *no* to cancel.
+>
+> - **Interactive** (menu, or `keyflip <name>` in a terminal): if Claude is open you're **asked before it's closed** — answer _no_ to cancel.
 > - `--restart`: close & reopen Claude without asking (macOS).
 > - `--force`: switch without closing Claude — restart it yourself afterward. If the **desktop app** is running on another account it can rewrite the shared login and undo the swap; `--force` warns you and suggests `--restart`.
 > - `--dry-run`: prints the plan (which surfaces would be written, what blocks it, whether that account can still authenticate) and writes nothing — safe with Claude open.
@@ -1593,7 +1525,7 @@ usable session, without writing anything.
 
 > **macOS only.** These commands clone a macOS `.app` bundle into `~/Library/Application Support`,
 > launch it with `open`, and drive it through AppleScript — none of which exists on Linux/Windows.
-> There they fail early with *"`<Tool>.app` not found at `/Applications/...`"*. Use `keyflip switch`
+> There they fail early with _"`<Tool>.app` not found at `/Applications/...`"_. Use `keyflip switch`
 > instead: credential switching works on every platform; only app clones are macOS-only.
 
 Claude Desktop cookies expire every ~30 days, forcing frequent re-logins. keyflip solves this by creating **isolated app clones** — each runs independently with its own user data directory, so sessions persist indefinitely.
@@ -1626,6 +1558,7 @@ keyflip instance enable-all claude
 **Supported tools:** `claude`, `kiro`, `chatgpt` (verified against installed apps — Claude.app, Kiro.app, ChatGPT.app) and `cursor` (standard path; defined but not present on the verification machine). All are Electron apps, so `--user-data-dir` gives real cookie/session isolation. Adding another tool is one entry in `TOOL_ADAPTERS` (`src/instances.js`).
 
 **Instance location:** `~/.keyflip-instances/<tool>/<account>/` (a short path on purpose: Kiro opens a Unix socket under its user-data dir, and macOS caps those paths at 103 characters — the old `~/Library/Application Support/keyflip-instances` location made every Kiro clone fail with `listen EINVAL`. Existing instances are moved there automatically on first use.)
+
 - `<Tool>.app` — isolated app clone
 - `User Data/` — Chromium user data (cookies, cache, extensions)
 - `Config/` — config directory, passed to the app when the adapter defines a config env (Claude: `CLAUDE_CONFIG_DIR`)
@@ -1636,7 +1569,7 @@ keyflip instance enable-all claude
 
 **Deep link trap avoidance:** When launching a specific instance, keyflip closes ALL other instances of that tool first. This prevents macOS from routing deep links (e.g., `claude://` URLs) to the wrong instance.
 
-**Which logins are actually isolated:** a clone isolates the app's *profile* (cookies,
+**Which logins are actually isolated:** a clone isolates the app's _profile_ (cookies,
 caches, window state), not every credential the tool owns. Claude is the only fully
 clone-isolated tool: its CLI config (`CLAUDE_CONFIG_DIR`) and desktop user data both
 live inside the instance. ChatGPT/Kiro keep their login in a global store
@@ -1649,13 +1582,13 @@ test machine.
 
 **Troubleshooting:**
 
-- *“No instance found for claude/work”* — create it first; the slug is the account name, so `yahoo@gmail.com` and `yahoo` are different slugs. `keyflip instance list` prints the exact `tool/slug` pairs.
-- *“`<Tool>.app` not found at `/Applications/…`”* — keyflip clones the app, it does not download it. Install the base app or choose a tool that is installed.
-- *The clone opens signed out* — `create` copies the app, not a login. Restore the account's saved app session **into that clone**: `keyflip switch <account> --instance claude/<slug>` (the `keyflip <account> --instance …` shorthand works too). A plain `keyflip switch` only touches the base app.
-- *`harden` refuses while the clone is running* — quit it first (`keyflip instance kill claude/<slug>`). A running app owns `config.json` and rewrites it on exit, so writing underneath it would silently revert.
-- *Launching one instance closes the others* — deliberate; two live copies would make macOS route deep links to the wrong one.
-- *`du` reports hundreds of MB per clone* — expected on APFS: untouched blocks are shared physically. Judge real cost with a before/after `df`.
-- *The clone will not launch after `harden` patched `Info.plist`* — current keyflip re-signs the outer bundle
+- _“No instance found for claude/work”_ — create it first; the slug is the account name, so `yahoo@gmail.com` and `yahoo` are different slugs. `keyflip instance list` prints the exact `tool/slug` pairs.
+- _“`<Tool>.app` not found at `/Applications/…`”_ — keyflip clones the app, it does not download it. Install the base app or choose a tool that is installed.
+- _The clone opens signed out_ — `create` copies the app, not a login. Restore the account's saved app session **into that clone**: `keyflip switch <account> --instance claude/<slug>` (the `keyflip <account> --instance …` shorthand works too). A plain `keyflip switch` only touches the base app.
+- _`harden` refuses while the clone is running_ — quit it first (`keyflip instance kill claude/<slug>`). A running app owns `config.json` and rewrites it on exit, so writing underneath it would silently revert.
+- _Launching one instance closes the others_ — deliberate; two live copies would make macOS route deep links to the wrong one.
+- _`du` reports hundreds of MB per clone_ — expected on APFS: untouched blocks are shared physically. Judge real cost with a before/after `df`.
+- _The clone will not launch after `harden` patched `Info.plist`_ — current keyflip re-signs the outer bundle
   ad-hoc immediately after patching and puts the original plist back if signing fails, so this should not
   happen. If a clone created by an older version is stuck, quit it and re-run
   `keyflip instance harden <tool>/<slug>`; as a last resort recreate the clone. Do **not** repair it with
@@ -1672,36 +1605,36 @@ The Claude tooling space is crowded, but most tools do **one** of these jobs;
 keyflip combines them in a single CLI+MCP tool with **no GUI and no always-on
 daemon**, and it's the rare one that also swaps the **desktop app's** login.
 
-| Project | Stars | Type | What it does | keyflip also… |
-|---|---|---|---|---|
-| [farion1231/cc-switch](https://github.com/farion1231/cc-switch) | 112k | Rust/Tauri **GUI** | All-in-one provider + MCP + skills manager for 7 AI CLIs | …does providers/MCP/skills **in CLI+MCP**, plus OAuth account & desktop-app switching |
-| [musistudio/claude-code-router](https://github.com/musistudio/claude-code-router) | 35k | TS router | Routes requests to different models/providers (rules, transformers) | …has a **command-started** failover proxy (not an always-on router) |
-| [Wei-Shaw/claude-relay-service](https://github.com/Wei-Shaw/claude-relay-service) | 12k | Hosted relay | Self-hosted multi-account relay + dashboard | …pools/rotates accounts **locally**, no server to run |
-| [realiti4/claude-swap](https://github.com/realiti4/claude-swap) | 712 | Python CLI | Switch Claude Code **accounts** (our original inspiration) | …+ providers, proxy, desktop app, sessions, MCP |
-| [jolehuit/clother](https://github.com/jolehuit/clother) | 371 | Go CLI | Multi-provider switch | …+ accounts, proxy, sessions, desktop, MCP |
-| [guyskk/claude-code-config-switcher](https://github.com/guyskk/claude-code-config-switcher) | 83 | Go CLI | Provider switch (Kimi/GLM/MiniMax…) | …+ everything above |
-| [Danielmelody/ccconfig](https://github.com/Danielmelody/ccconfig) | 62 | JS CLI | Quick provider switch | …+ everything above |
-| [yaakua/cc-copilot](https://github.com/yaakua/cc-copilot.com) | 56 | TS GUI | Desktop GUI: projects + providers + sessions | …CLI+MCP, agent-drivable |
+| Project                                                                                     | Stars | Type               | What it does                                                        | keyflip also…                                                                         |
+| ------------------------------------------------------------------------------------------- | ----- | ------------------ | ------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| [farion1231/cc-switch](https://github.com/farion1231/cc-switch)                             | 112k  | Rust/Tauri **GUI** | All-in-one provider + MCP + skills manager for 7 AI CLIs            | …does providers/MCP/skills **in CLI+MCP**, plus OAuth account & desktop-app switching |
+| [musistudio/claude-code-router](https://github.com/musistudio/claude-code-router)           | 35k   | TS router          | Routes requests to different models/providers (rules, transformers) | …has a **command-started** failover proxy (not an always-on router)                   |
+| [Wei-Shaw/claude-relay-service](https://github.com/Wei-Shaw/claude-relay-service)           | 12k   | Hosted relay       | Self-hosted multi-account relay + dashboard                         | …pools/rotates accounts **locally**, no server to run                                 |
+| [realiti4/claude-swap](https://github.com/realiti4/claude-swap)                             | 712   | Python CLI         | Switch Claude Code **accounts** (our original inspiration)          | …+ providers, proxy, desktop app, sessions, MCP                                       |
+| [jolehuit/clother](https://github.com/jolehuit/clother)                                     | 371   | Go CLI             | Multi-provider switch                                               | …+ accounts, proxy, sessions, desktop, MCP                                            |
+| [guyskk/claude-code-config-switcher](https://github.com/guyskk/claude-code-config-switcher) | 83    | Go CLI             | Provider switch (Kimi/GLM/MiniMax…)                                 | …+ everything above                                                                   |
+| [Danielmelody/ccconfig](https://github.com/Danielmelody/ccconfig)                           | 62    | JS CLI             | Quick provider switch                                               | …+ everything above                                                                   |
+| [yaakua/cc-copilot](https://github.com/yaakua/cc-copilot.com)                               | 56    | TS GUI             | Desktop GUI: projects + providers + sessions                        | …CLI+MCP, agent-drivable                                                              |
 
 **keyflip's niche:** OAuth **account** switching **+** third-party **provider**
 routing **+** a **failover proxy** **+** **desktop-app** login swap **+**
 session/Cowork/Chat browsing **+** a full **MCP** surface + agent skill — one
 dependency-free tool, tokenless-published with provenance. It's brand new (no
 mindshare yet); the giants above have far more users, and keyflip's desktop-app
-crypto features are macOS-first (see *Platform scope* above).
+crypto features are macOS-first (see _Platform scope_ above).
 
 ---
 
 ## How it works
 
-| Piece | macOS | Linux / Windows |
-|------|-------|-----------------|
-| Live login token | Keychain item `Claude Code-credentials` | `~/.claude/.credentials.json` |
-| Saved profile tokens | Keychain items `keyflip:<name>` | `~/.config/keyflip/creds/<name>.cred` (0600) |
-| Account identity | `oauthAccount` + `userID` in `~/.claude.json` | same |
-| Profile metadata (no secrets) | `~/.config/keyflip/<name>.json` (0600) | same |
+| Piece                         | macOS                                         | Linux / Windows                              |
+| ----------------------------- | --------------------------------------------- | -------------------------------------------- |
+| Live login token              | Keychain item `Claude Code-credentials`       | `~/.claude/.credentials.json`                |
+| Saved profile tokens          | Keychain items `keyflip:<name>`               | `~/.config/keyflip/creds/<name>.cred` (0600) |
+| Account identity              | `oauthAccount` + `userID` in `~/.claude.json` | same                                         |
+| Profile metadata (no secrets) | `~/.config/keyflip/<name>.json` (0600)        | same                                         |
 
-The backend is auto-detected: if a credentials **file** already exists it's used (any OS); otherwise macOS uses the Keychain. A switch copies the saved token into the live slot **and** patches the two fields in `~/.claude.json`. When switching *away*, keyflip first re-saves the current account's (possibly refreshed) token so nothing goes stale — including auto-saving a logged-in account you hadn't saved yet, so its token isn't lost.
+The backend is auto-detected: if a credentials **file** already exists it's used (any OS); otherwise macOS uses the Keychain. A switch copies the saved token into the live slot **and** patches the two fields in `~/.claude.json`. When switching _away_, keyflip first re-saves the current account's (possibly refreshed) token so nothing goes stale — including auto-saving a logged-in account you hadn't saved yet, so its token isn't lost.
 
 ### Security notes
 
@@ -1749,7 +1682,7 @@ git config blame.ignoreRevsFile .git-blame-ignore-revs
 - **Corporate proxy / TLS interception:** token refresh and usage checks hit
   Anthropic over HTTPS with Node's bundled CAs. Behind a MITM proxy, point Node
   at your CA bundle: `export NODE_EXTRA_CA_CERTS=/path/to/corp-ca.pem`.
-- **`[throttled]` in `list --usage`:** the usage *endpoint* throttled that
+- **`[throttled]` in `list --usage`:** the usage _endpoint_ throttled that
   token — it does **not** mean the account is rate-limited. Try again later.
 - **`[expired]`:** the stored token can't authenticate anymore — log that
   account in once and run `keyflip add`.
@@ -1829,4 +1762,4 @@ The `/website` directory contains the project's marketing and documentation site
 
 ---
 
-*Not affiliated with Anthropic. “Claude” and “Claude Code” are trademarks of Anthropic.*
+_Not affiliated with Anthropic. “Claude” and “Claude Code” are trademarks of Anthropic._

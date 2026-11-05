@@ -54,6 +54,10 @@ const EMBED_MAX_CHARS = 6000;
 // every completed conversation immediately searchable instead of waiting for all 2k sources.
 const EMBED_CHECKPOINT_SOURCES = 10;
 const EMBED_CHECKPOINT_MS = 15000;
+// A lock whose heartbeat (`updatedAt` / `startedAt`) has not advanced in 2 hours is treated as
+// abandoned even if its PID was later reused by the OS for an unrelated process.
+const EMBED_LOCK_STALE_MS = 2 * 60 * 60 * 1000;
+const META_LOCK_STALE_MS = 30 * 1000;
 
 // Rank fusion between the lexical (BM25) list and the semantic (vector) list.
 //
@@ -78,6 +82,9 @@ function dirOf(ctx) {
 }
 function metaPath(ctx) {
   return path.join(dirOf(ctx), 'meta.json');
+}
+function metaLockPath(ctx) {
+  return path.join(dirOf(ctx), 'meta.lock');
 }
 function embedLockPath(ctx) {
   return path.join(dirOf(ctx), 'embed.lock');
@@ -117,37 +124,187 @@ function readMeta(ctx) {
   return null;
 }
 
-function writeMeta(ctx, meta) {
-  // Merge vector progress checkpointed concurrently on disk by an active background worker so a
-  // lexical build or overlapping tick never clobbers completed vectors on unchanged sources.
-  const onDisk = readMeta(ctx);
-  if (onDisk && onDisk.sources && meta && meta.sources) {
-    Object.keys(onDisk.sources).forEach((id) => {
-      const diskRow = onDisk.sources[id];
-      const memRow = meta.sources[id];
-      if (
-        diskRow &&
-        memRow &&
-        diskRow.vec &&
-        diskRow.hash &&
-        diskRow.hash === memRow.hash &&
-        diskRow.chunks === memRow.chunks
-      ) {
-        if (
-          !memRow.vec ||
-          (meta.embedding && diskRow.vec.space === meta.embedding.space && memRow.vec.space !== meta.embedding.space)
-        ) {
-          memRow.vec = diskRow.vec;
+function makeLockToken() {
+  return process.pid + '-' + Date.now() + '-' + crypto.randomBytes(6).toString('hex');
+}
+
+function reclaimLockFile(file, expectedRaw) {
+  const claim = file + '.reclaim-' + process.pid + '-' + crypto.randomBytes(4).toString('hex');
+  try {
+    fs.renameSync(file, claim);
+  } catch {
+    return false;
+  }
+  try {
+    if (expectedRaw !== undefined) {
+      let current = null;
+      try {
+        current = fs.readFileSync(claim, 'utf8');
+      } catch {
+        current = null;
+      }
+      if (current !== null && current !== expectedRaw) {
+        // Another process replaced the lock just before our rename; restore it if no new file exists.
+        try {
+          fs.linkSync(claim, file);
+        } catch {
+          /* a newer lock is already in place */
+        }
+        return false;
+      }
+    }
+    return true;
+  } finally {
+    try {
+      fs.rmSync(claim, { force: true });
+    } catch {
+      /* best-effort */
+    }
+  }
+}
+
+function withMetaLock(ctx, fn) {
+  const file = metaLockPath(ctx);
+  try {
+    fs.mkdirSync(dirOf(ctx), { recursive: true });
+  } catch {
+    /* best-effort */
+  }
+  const token = makeLockToken();
+  let acquired = false;
+  for (let i = 0; i < 40; i++) {
+    let fd = null;
+    try {
+      fd = fs.openSync(file, 'wx', 0o600);
+      fs.writeFileSync(fd, JSON.stringify({ pid: process.pid, at: Date.now(), token: token }) + '\n', 'utf8');
+      fs.closeSync(fd);
+      fd = null;
+      acquired = true;
+      break;
+    } catch (e) {
+      if (fd !== null) {
+        try {
+          fs.closeSync(fd);
+        } catch {
+          /* ignore */
         }
       }
-    });
-    if (!meta.embedding && onDisk.embedding) meta.embedding = onDisk.embedding;
+      if (!e || e.code !== 'EEXIST') break;
+      let rawText = null;
+      let cur = null;
+      try {
+        rawText = fs.readFileSync(file, 'utf8');
+        cur = JSON.parse(rawText);
+      } catch {
+        cur = null;
+      }
+      const dead = !cur || !cur.pid || !pidAlive(cur.pid);
+      const stale = cur && Date.now() - Number(cur.at || 0) > META_LOCK_STALE_MS;
+      if (dead || stale) {
+        reclaimLockFile(file, rawText);
+      } else {
+        try {
+          Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5);
+        } catch {
+          /* ignore */
+        }
+      }
+    }
   }
-  const replacer = function (k, v) {
-    if (k === '_oldVec' || k === '_oldHashes') return undefined;
-    return v;
-  };
-  _fsutil.atomicWrite(metaPath(ctx), JSON.stringify(meta, replacer, 2) + '\n', 0o600);
+  try {
+    return fn();
+  } finally {
+    if (acquired) {
+      let rawText = null;
+      try {
+        rawText = fs.readFileSync(file, 'utf8');
+        const cur = JSON.parse(rawText);
+        if (cur && cur.token === token) reclaimLockFile(file, rawText);
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+}
+
+function countStats(sources) {
+  const stats = { sources: 0, chunks: 0, messages: 0, bytes: 0, byApp: Object.create(null) };
+  Object.keys(sources).forEach((id) => {
+    const s = sources[id];
+    stats.sources++;
+    stats.chunks += s.chunks || 0;
+    stats.messages += (s.counts && s.counts.messages) || 0;
+    stats.bytes += s.bytes || 0;
+    const app = s.app || 'other';
+    const a = stats.byApp[app] || (stats.byApp[app] = { sources: 0, chunks: 0, messages: 0, bytes: 0 });
+    a.sources++;
+    a.chunks += s.chunks || 0;
+    a.messages += (s.counts && s.counts.messages) || 0;
+    a.bytes += s.bytes || 0;
+  });
+  return stats;
+}
+
+// Write `meta.json` under a short-lived lock and reconcile concurrent updates from disk:
+//   * Any source added on disk by a concurrent lexical build while an embedding worker was running
+//     is preserved (unless this build explicitly removed it in `opts.removedIds`).
+//   * Any source whose on-disk row is newer (`mtimeMs` greater, or different `hash`/`chunkBytes`
+//     written by a concurrent lexical pass while this writer held an older snapshot) wins over the
+//     stale in-memory row so a worker checkpoint never reverts newly re-parsed chunks.
+//   * Any source whose hash/chunks match on disk and in memory preserves completed `vec` progress.
+function writeMeta(ctx, meta, opts) {
+  opts = opts || {};
+  const removedIds = opts.removedIds instanceof Set ? opts.removedIds : null;
+  withMetaLock(ctx, function () {
+    const onDisk = readMeta(ctx);
+    if (onDisk && onDisk.sources && meta && meta.sources) {
+      Object.keys(onDisk.sources).forEach((id) => {
+        const diskRow = onDisk.sources[id];
+        if (!diskRow) return;
+        const memRow = meta.sources[id];
+        if (!memRow) {
+          // A source absent from `meta.sources` was either explicitly removed during this scan
+          // (its file is gone) or added by a concurrent lexical build after our scan started.
+          if (removedIds && removedIds.has(id)) return;
+          if (fs.existsSync(chunkPath(ctx, id))) {
+            meta.sources[id] = diskRow;
+          }
+          return;
+        }
+        const diskNewerMtime =
+          typeof diskRow.mtimeMs === 'number' && typeof memRow.mtimeMs === 'number' && diskRow.mtimeMs > memRow.mtimeMs;
+        // If this write is an embedding checkpoint (`opts.checkpoint === true`) and a concurrent
+        // lexical build rewrote the source on disk (different hash or chunkBytes), the on-disk
+        // lexical state is authoritative — never overwrite it with the worker's start-time snapshot.
+        const diskSig = String(diskRow.hash || '') + ':' + String(diskRow.chunkBytes || 0);
+        const diskRewrittenDuringCheckpoint =
+          opts.checkpoint === true &&
+          diskRow.hash &&
+          (opts.baseline instanceof Map
+            ? opts.baseline.get(id) !== diskSig
+            : !!memRow.hash && (diskRow.hash !== memRow.hash || diskRow.chunkBytes !== memRow.chunkBytes));
+        if (diskNewerMtime || diskRewrittenDuringCheckpoint) {
+          meta.sources[id] = diskRow;
+          return;
+        }
+        if (diskRow.vec && diskRow.hash && diskRow.hash === memRow.hash && diskRow.chunks === memRow.chunks) {
+          if (
+            !memRow.vec ||
+            (meta.embedding && diskRow.vec.space === meta.embedding.space && memRow.vec.space !== meta.embedding.space)
+          ) {
+            memRow.vec = diskRow.vec;
+          }
+        }
+      });
+      if (!meta.embedding && onDisk.embedding) meta.embedding = onDisk.embedding;
+      meta.stats = countStats(meta.sources);
+    }
+    const replacer = function (k, v) {
+      if (k === '_oldVec' || k === '_oldHashes') return undefined;
+      return v;
+    };
+    _fsutil.atomicWrite(metaPath(ctx), JSON.stringify(meta, replacer, 2) + '\n', 0o600);
+  });
 }
 
 function emptyMeta() {
@@ -173,20 +330,58 @@ function pidAlive(pid) {
   }
 }
 
+function embedLockExpired(raw, staleMs) {
+  if (!raw || typeof raw !== 'object') return true;
+  const maxAge = staleMs > 0 ? staleMs : EMBED_LOCK_STALE_MS;
+  const beat = typeof raw.updatedAt === 'number' ? raw.updatedAt : raw.startedAt ? Date.parse(raw.startedAt) : 0;
+  if (beat > 0 && Date.now() - beat > maxAge) return true;
+  return false;
+}
+
+function embedLockHolderAlive(raw) {
+  if (!raw || !pidAlive(raw.pid) || embedLockExpired(raw)) return false;
+  const pid = Number(raw.pid);
+  if (pid === process.pid || pid === process.ppid) return true;
+  if (process.platform !== 'win32') {
+    try {
+      const ps = childProcess.spawnSync('ps', ['-p', String(pid), '-o', 'comm='], {
+        encoding: 'utf8',
+        timeout: 500,
+      });
+      if (ps && ps.status === 0 && ps.stdout) {
+        const comm = path.basename(ps.stdout.trim()).toLowerCase();
+        const selfComm = path.basename(process.execPath || 'node').toLowerCase();
+        if (comm && comm !== selfComm && !comm.includes('node')) {
+          return false;
+        }
+      }
+    } catch {
+      /* fall through to pidAlive + heartbeat check */
+    }
+  }
+  return true;
+}
+
 function backgroundStatus(ctx) {
   const file = embedLockPath(ctx);
+  let rawText;
   let raw;
   try {
-    raw = JSON.parse(fs.readFileSync(file, 'utf8'));
+    rawText = fs.readFileSync(file, 'utf8');
+    raw = JSON.parse(rawText);
   } catch {
     return { running: false };
   }
-  if (!raw || !pidAlive(raw.pid)) {
-    try {
-      fs.rmSync(file, { force: true });
-    } catch {
-      /* best-effort */
-    }
+  if (!embedLockHolderAlive(raw)) {
+    withMetaLock(ctx, function () {
+      try {
+        if (fs.readFileSync(file, 'utf8') === rawText) {
+          reclaimLockFile(file, rawText);
+        }
+      } catch {
+        /* already removed */
+      }
+    });
     return { running: false };
   }
   return {
@@ -202,62 +397,81 @@ function backgroundStatus(ctx) {
 
 function writeEmbedLock(ctx, info) {
   try {
-    _fsutil.atomicWrite(embedLockPath(ctx), JSON.stringify(info) + '\n', 0o600);
+    const payload = Object.assign({ updatedAt: Date.now() }, info);
+    _fsutil.atomicWrite(embedLockPath(ctx), JSON.stringify(payload) + '\n', 0o600);
   } catch {
     /* best-effort */
   }
 }
 
 // Atomically claim `embed.lock` via O_CREAT|O_EXCL (`wx`) so two concurrent foreground or
-// background embedders never duplicate work or overwrite each other's lock. If the lock file
-// exists and belongs to a dead PID, remove it and retry once; if it belongs to `process.pid`
-// (e.g. a spawned worker taking over the reservation), update it in place.
+// background embedders never duplicate work or overwrite each other's lock. Stale locks (dead
+// PID or heartbeat older than EMBED_LOCK_STALE_MS after PID reuse) are reclaimed via atomic
+// rename + content verification so two racers cannot delete a freshly-acquired lock.
 function acquireEmbedLock(ctx, info) {
-  const file = embedLockPath(ctx);
-  try {
-    fs.mkdirSync(dirOf(ctx), { recursive: true });
-  } catch {
-    /* best-effort */
-  }
-  for (let attempt = 0; attempt < 2; attempt++) {
+  return withMetaLock(ctx, function () {
+    const file = embedLockPath(ctx);
     try {
-      const fd = fs.openSync(file, 'wx', 0o600);
+      fs.mkdirSync(dirOf(ctx), { recursive: true });
+    } catch {
+      /* best-effort */
+    }
+    const token = (info && info.token) || makeLockToken();
+    const payload = Object.assign({ updatedAt: Date.now() }, info, { token: token });
+    for (let attempt = 0; attempt < 3; attempt++) {
+      let fd = null;
       try {
-        fs.writeFileSync(fd, JSON.stringify(info) + '\n', 'utf8');
-      } finally {
-        fs.closeSync(fd);
-      }
-      return { acquired: true };
-    } catch (e) {
-      if (!e || e.code !== 'EEXIST') return { acquired: false, error: e };
-      let cur = null;
-      try {
-        cur = JSON.parse(fs.readFileSync(file, 'utf8'));
-      } catch {
-        cur = null;
-      }
-      if (cur && cur.pid === process.pid) {
-        writeEmbedLock(ctx, info);
-        return { acquired: true };
-      }
-      if (cur && pidAlive(cur.pid)) {
-        return { acquired: false, holder: cur };
-      }
-      try {
-        fs.rmSync(file, { force: true });
-      } catch {
-        return { acquired: false, holder: cur };
+        fd = fs.openSync(file, 'wx', 0o600);
+        try {
+          fs.writeFileSync(fd, JSON.stringify(payload) + '\n', 'utf8');
+        } finally {
+          fs.closeSync(fd);
+          fd = null;
+        }
+        return { acquired: true, token: token };
+      } catch (e) {
+        if (fd !== null) {
+          try {
+            fs.closeSync(fd);
+          } catch {
+            /* ignore */
+          }
+        }
+        if (!e || e.code !== 'EEXIST') return { acquired: false, error: e };
+        let rawText = null;
+        let cur = null;
+        try {
+          rawText = fs.readFileSync(file, 'utf8');
+          cur = JSON.parse(rawText);
+        } catch {
+          cur = null;
+        }
+        if (cur && cur.pid === process.pid) {
+          const keepToken = cur.token || token;
+          writeEmbedLock(ctx, Object.assign({}, payload, { token: keepToken }));
+          return { acquired: true, token: keepToken };
+        }
+        if (embedLockHolderAlive(cur)) {
+          return { acquired: false, holder: cur };
+        }
+        if (!reclaimLockFile(file, rawText)) {
+          return { acquired: false, holder: cur };
+        }
       }
     }
-  }
-  return { acquired: false };
+    return { acquired: false };
+  });
 }
 
-function releaseEmbedLock(ctx) {
+function releaseEmbedLock(ctx, expectedToken) {
   const file = embedLockPath(ctx);
   try {
-    const cur = JSON.parse(fs.readFileSync(file, 'utf8'));
-    if (cur && cur.pid === process.pid) fs.rmSync(file, { force: true });
+    const rawText = fs.readFileSync(file, 'utf8');
+    const cur = JSON.parse(rawText);
+    if (!cur) return;
+    if (expectedToken ? cur.token === expectedToken || cur.pid === process.pid : cur.pid === process.pid) {
+      reclaimLockFile(file, rawText);
+    }
   } catch {
     /* best-effort */
   }
@@ -296,7 +510,10 @@ function spawnBackgroundEmbed(ctx, opts) {
   if (opts.limitSources) args.push('--limit-sources', String(opts.limitSources));
   if (opts.force) args.push('--force');
   const env = Object.assign({}, process.env, (ctx && ctx.env) || {});
-  if (ctx && ctx.configDir) env.KEYFLIP_DIR = ctx.configDir;
+  if (ctx && ctx.configDir) {
+    env.KEYFLIP_CONFIG_DIR = ctx.configDir;
+    env.KEYFLIP_DIR = ctx.configDir;
+  }
   if (opts.model) env.KEYFLIP_EMBED_MODEL = opts.model;
   if (opts.url) env.KEYFLIP_EMBED_URL = opts.url;
   try {
@@ -308,6 +525,7 @@ function spawnBackgroundEmbed(ctx, opts) {
     if (child && typeof child.unref === 'function') child.unref();
     writeEmbedLock(ctx, {
       pid: child.pid,
+      token: lockRes.token,
       startedAt: startedAt,
       model: space.model,
       space: space.hash,
@@ -316,7 +534,7 @@ function spawnBackgroundEmbed(ctx, opts) {
     });
     return { started: true, pid: child.pid, model: space.model, space: space.hash };
   } catch (e) {
-    releaseEmbedLock(ctx);
+    releaseEmbedLock(ctx, lockRes.token);
     return { started: false, reason: (e && e.message) || String(e) };
   }
 }
@@ -658,24 +876,6 @@ async function embedSource(ctx, id, chunks, prev, space, opts) {
 
 // ---- build ---------------------------------------------------------------------------------
 
-function countStats(sources) {
-  const stats = { sources: 0, chunks: 0, messages: 0, bytes: 0, byApp: Object.create(null) };
-  Object.keys(sources).forEach((id) => {
-    const s = sources[id];
-    stats.sources++;
-    stats.chunks += s.chunks || 0;
-    stats.messages += (s.counts && s.counts.messages) || 0;
-    stats.bytes += s.bytes || 0;
-    const app = s.app || 'other';
-    const a = stats.byApp[app] || (stats.byApp[app] = { sources: 0, chunks: 0, messages: 0, bytes: 0 });
-    a.sources++;
-    a.chunks += s.chunks || 0;
-    a.messages += (s.counts && s.counts.messages) || 0;
-    a.bytes += s.bytes || 0;
-  });
-  return stats;
-}
-
 // Parse every source, compare mtime/size (+ content hash after parse), write changed chunk
 // files, and optionally embed them. Returns a report; never mutates a tool's own store.
 async function build(ctx, opts) {
@@ -692,6 +892,7 @@ async function build(ctx, opts) {
     if (s && s.path) byPath[s.path] = s;
   });
   const next = Object.create(null);
+  const removedIds = new Set();
   const report = {
     ok: true,
     candidateSources: sources.length,
@@ -795,7 +996,10 @@ async function build(ctx, opts) {
       const bytes = conv.messages.reduce((n, m) => n + Buffer.byteLength(m.text || ''), 0);
       if (!conv.messages.length) {
         report.empty++;
-        if (prev) report.removed++;
+        if (prev && prev.id) {
+          removedIds.add(prev.id);
+          report.removed++;
+        }
         continue;
       }
       const id = claimId(conv.id, src.path);
@@ -900,14 +1104,20 @@ async function build(ctx, opts) {
   if (full) {
     Object.keys(meta.sources).forEach((id) => {
       if (!next[id]) {
-        report.removed++;
-        try {
-          fs.rmSync(chunkPath(ctx, id), { force: true });
-          fs.rmSync(vectorPath(ctx, id), { force: true });
-        } catch {
-          /* best-effort */
+        const s = meta.sources[id];
+        // Only treat a source as deleted if its file is actually gone from disk (not merely
+        // added after our discovery snapshot started).
+        if (!s || !s.path || !fs.existsSync(s.path)) {
+          removedIds.add(id);
+          report.removed++;
+          try {
+            fs.rmSync(chunkPath(ctx, id), { force: true });
+            fs.rmSync(vectorPath(ctx, id), { force: true });
+          } catch {
+            /* best-effort */
+          }
+          dropTokens(ctx, id);
         }
-        dropTokens(ctx, id);
       }
     });
   } else {
@@ -949,6 +1159,8 @@ async function build(ctx, opts) {
     };
   }
 
+  let didEmbedPass = false;
+  let embedBaseline = null;
   if (space && wantEmbed) {
     report.embedding = {
       space: space.hash,
@@ -994,9 +1206,16 @@ async function build(ctx, opts) {
       report.embedding.busyPid = (lockRes.holder && lockRes.holder.pid) || null;
       report.embedding.remainingSources = candidates.length;
     } else if (toEmbed.length > 0) {
+      didEmbedPass = true;
       // Flush lexical chunks + sidecars BEFORE the embedding pass starts so BM25/hybrid searches
       // see new conversations immediately while embeddings run.
-      writeMeta(ctx, snapshotMeta());
+      const preEmbedMeta = snapshotMeta();
+      writeMeta(ctx, preEmbedMeta, { removedIds: removedIds });
+      embedBaseline = new Map();
+      Object.keys(preEmbedMeta.sources).forEach((id) => {
+        const s = preEmbedMeta.sources[id];
+        if (s) embedBaseline.set(id, String(s.hash || '') + ':' + String(s.chunkBytes || 0));
+      });
       let embedDone = 0;
       let consecutiveFails = 0;
       let sinceFlush = 0;
@@ -1007,13 +1226,26 @@ async function build(ctx, opts) {
           embedDone++;
           if (opts.onProgress) opts.onProgress({ phase: 'embed', done: embedDone, total: toEmbed.length, id: id });
           const chunks = readChunks(chunkPath(ctx, id));
-          // Metadata must never outrun the disk. A missing or torn chunk file used to reach
-          // embedSource as "0 chunks", which wrote a 0-byte vector and still recorded a healthy
-          // source. Trust the chunk file, keep the stats truthful, and clear the content hash so
-          // the next plain build re-parses and rebuilds this source.
-          if (chunks.length !== (entry.chunks || 0)) {
+          const diskHashes = chunks.map((c) => c.h);
+          const hashesMatch =
+            chunks.length === (entry.chunks || 0) &&
+            Array.isArray(entry.chunkHashes) &&
+            entry.chunkHashes.length === diskHashes.length &&
+            diskHashes.every((h, idx) => h === entry.chunkHashes[idx]);
+          // Metadata must never outrun the disk. A missing/torn chunk file — or a chunk file
+          // rewritten by a concurrent lexical build while this embed pass was running — must
+          // reconcile to the actual chunks on disk before embedding.
+          if (!hashesMatch) {
+            const diskMeta = readMeta(ctx);
+            const diskEntry = diskMeta && diskMeta.sources && diskMeta.sources[id];
+            if (diskEntry && diskEntry.hash && diskEntry.hash !== entry.hash) {
+              // A concurrent lexical build updated this conversation on disk: adopt its row
+              // and skip embedding stale hashes so prefix reuse can never mismatch.
+              next[id] = diskEntry;
+              continue;
+            }
             entry.chunks = chunks.length;
-            entry.chunkHashes = chunks.map((c) => c.h);
+            entry.chunkHashes = diskHashes;
             entry.hash = null;
             entry.vec = null;
             try {
@@ -1032,6 +1264,26 @@ async function build(ctx, opts) {
             });
             const vec = await embedSource(ctx, id, chunks, prev, space, opts);
             if (vec) {
+              // Re-check that a concurrent lexical build did not rewrite the chunk file while
+              // the HTTP embedding call was awaiting. If the chunk hashes on disk changed mid-call,
+              // discard this vector so it is never paired with mismatched chunkHashes.
+              const afterChunks = readChunks(chunkPath(ctx, id));
+              const stillMatches =
+                afterChunks.length === diskHashes.length && afterChunks.every((c, idx) => c.h === diskHashes[idx]);
+              if (!stillMatches) {
+                try {
+                  fs.rmSync(vectorPath(ctx, id), { force: true });
+                } catch {
+                  /* best-effort */
+                }
+                const diskMeta = readMeta(ctx);
+                if (diskMeta && diskMeta.sources && diskMeta.sources[id]) {
+                  next[id] = diskMeta.sources[id];
+                } else {
+                  entry.vec = null;
+                }
+                continue;
+              }
               entry.vec = vec;
               report.embedded++;
               report.embedding.sources++;
@@ -1039,9 +1291,10 @@ async function build(ctx, opts) {
               sinceFlush++;
               const nowMs = Date.now();
               if (sinceFlush >= EMBED_CHECKPOINT_SOURCES || nowMs - lastFlushMs >= EMBED_CHECKPOINT_MS) {
-                writeMeta(ctx, snapshotMeta());
+                writeMeta(ctx, snapshotMeta(), { checkpoint: true, baseline: embedBaseline, removedIds: removedIds });
                 writeEmbedLock(ctx, {
                   pid: process.pid,
+                  token: lockRes.token,
                   startedAt: lockStartedAt,
                   model: space.model,
                   space: space.hash,
@@ -1065,7 +1318,7 @@ async function build(ctx, opts) {
           consecutiveFails = 0;
         }
       } finally {
-        releaseEmbedLock(ctx);
+        releaseEmbedLock(ctx, lockRes.token);
       }
     }
   }
@@ -1075,7 +1328,7 @@ async function build(ctx, opts) {
   });
 
   const built = snapshotMeta();
-  writeMeta(ctx, built);
+  writeMeta(ctx, built, { checkpoint: didEmbedPass, baseline: embedBaseline, removedIds: removedIds });
   report.stats = built.stats;
   return report;
 }
@@ -1810,6 +2063,7 @@ export {
   RRF_WEIGHTS,
   dirOf,
   metaPath,
+  metaLockPath,
   embedLockPath,
   chunkPath,
   vectorPath,
