@@ -58,6 +58,7 @@ const EMBED_CHECKPOINT_MS = 15000;
 // abandoned even if its PID was later reused by the OS for an unrelated process.
 const EMBED_LOCK_STALE_MS = 2 * 60 * 60 * 1000;
 const META_LOCK_STALE_MS = 30 * 1000;
+const META_LOCK_WAIT_MS = 5 * 1000;
 
 // Rank fusion between the lexical (BM25) list and the semantic (vector) list.
 //
@@ -163,7 +164,14 @@ function reclaimLockFile(file, expectedRaw) {
   }
 }
 
-function withMetaLock(ctx, fn) {
+function withMetaLock(ctx, opts, fn) {
+  if (typeof opts === 'function') {
+    fn = opts;
+    opts = {};
+  }
+  opts = opts || {};
+  const waitMs = typeof opts.timeoutMs === 'number' && opts.timeoutMs >= 0 ? opts.timeoutMs : META_LOCK_WAIT_MS;
+  const deadline = Date.now() + waitMs;
   const file = metaLockPath(ctx);
   try {
     fs.mkdirSync(dirOf(ctx), { recursive: true });
@@ -172,7 +180,7 @@ function withMetaLock(ctx, fn) {
   }
   const token = makeLockToken();
   let acquired = false;
-  for (let i = 0; i < 40; i++) {
+  while (true) {
     let fd = null;
     try {
       fd = fs.openSync(file, 'wx', 0o600);
@@ -189,40 +197,51 @@ function withMetaLock(ctx, fn) {
           /* ignore */
         }
       }
-      if (!e || e.code !== 'EEXIST') break;
-      let rawText = null;
-      let cur = null;
-      try {
-        rawText = fs.readFileSync(file, 'utf8');
-        cur = JSON.parse(rawText);
-      } catch {
-        cur = null;
-      }
-      const dead = !cur || !cur.pid || !pidAlive(cur.pid);
-      const stale = cur && Date.now() - Number(cur.at || 0) > META_LOCK_STALE_MS;
-      if (dead || stale) {
-        reclaimLockFile(file, rawText);
-      } else {
+      if (!e || e.code !== 'EEXIST') {
+        if (Date.now() >= deadline) break;
         try {
-          Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5);
+          fs.mkdirSync(dirOf(ctx), { recursive: true });
         } catch {
           /* ignore */
         }
+      } else {
+        let rawText = null;
+        let cur = null;
+        try {
+          rawText = fs.readFileSync(file, 'utf8');
+          cur = JSON.parse(rawText);
+        } catch {
+          cur = null;
+        }
+        const dead = !cur || !cur.pid || !pidAlive(cur.pid);
+        const stale = cur && Date.now() - Number(cur.at || 0) > META_LOCK_STALE_MS;
+        if (dead || stale) {
+          reclaimLockFile(file, rawText);
+          continue;
+        }
       }
-    }
-  }
-  try {
-    return fn();
-  } finally {
-    if (acquired) {
-      let rawText = null;
+      if (Date.now() >= deadline) break;
+      const rem = Math.max(1, Math.min(20, deadline - Date.now()));
       try {
-        rawText = fs.readFileSync(file, 'utf8');
-        const cur = JSON.parse(rawText);
-        if (cur && cur.token === token) reclaimLockFile(file, rawText);
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, rem);
       } catch {
         /* ignore */
       }
+    }
+  }
+  // Never run the critical section unlocked: if meta.lock could not be acquired within the
+  // deadline, skip the write rather than risking a lockless overwrite of meta.json.
+  if (!acquired) return { acquired: false, skipped: true };
+  try {
+    return { acquired: true, value: fn() };
+  } finally {
+    let rawText = null;
+    try {
+      rawText = fs.readFileSync(file, 'utf8');
+      const cur = JSON.parse(rawText);
+      if (cur && cur.token === token) reclaimLockFile(file, rawText);
+    } catch {
+      /* ignore */
     }
   }
 }
@@ -245,9 +264,13 @@ function countStats(sources) {
   return stats;
 }
 
-// Write `meta.json` under a short-lived lock and reconcile concurrent updates from disk:
+// Write `meta.json` under `meta.lock` and reconcile concurrent updates from disk:
+//   * Never writes unlocked if `meta.lock` cannot be acquired within the wait window.
 //   * Any source added on disk by a concurrent lexical build while an embedding worker was running
 //     is preserved (unless this build explicitly removed it in `opts.removedIds`).
+//   * Any source deleted by a concurrent full lexical build (present in `opts.baseline`, now absent
+//     from `onDisk.sources` or missing its chunk file on disk) is dropped so a worker checkpoint
+//     never resurrects a deleted conversation.
 //   * Any source whose on-disk row is newer (`mtimeMs` greater, or different `hash`/`chunkBytes`
 //     written by a concurrent lexical pass while this writer held an older snapshot) wins over the
 //     stale in-memory row so a worker checkpoint never reverts newly re-parsed chunks.
@@ -255,9 +278,20 @@ function countStats(sources) {
 function writeMeta(ctx, meta, opts) {
   opts = opts || {};
   const removedIds = opts.removedIds instanceof Set ? opts.removedIds : null;
-  withMetaLock(ctx, function () {
+  const baseline = opts.baseline instanceof Map ? opts.baseline : null;
+  const lockRes = withMetaLock(ctx, { timeoutMs: opts.metaLockTimeoutMs }, function () {
     const onDisk = readMeta(ctx);
     if (onDisk && onDisk.sources && meta && meta.sources) {
+      if (opts.checkpoint === true) {
+        // Drop any source from the worker snapshot that a concurrent full lexical build removed.
+        Object.keys(meta.sources).forEach((id) => {
+          const inOnDisk = !!onDisk.sources[id];
+          const wasInBaseline = baseline ? baseline.has(id) : true;
+          if (!inOnDisk && (wasInBaseline || !fs.existsSync(chunkPath(ctx, id)))) {
+            delete meta.sources[id];
+          }
+        });
+      }
       Object.keys(onDisk.sources).forEach((id) => {
         const diskRow = onDisk.sources[id];
         if (!diskRow) return;
@@ -280,8 +314,8 @@ function writeMeta(ctx, meta, opts) {
         const diskRewrittenDuringCheckpoint =
           opts.checkpoint === true &&
           diskRow.hash &&
-          (opts.baseline instanceof Map
-            ? opts.baseline.get(id) !== diskSig
+          (baseline
+            ? baseline.get(id) !== diskSig
             : !!memRow.hash && (diskRow.hash !== memRow.hash || diskRow.chunkBytes !== memRow.chunkBytes));
         if (diskNewerMtime || diskRewrittenDuringCheckpoint) {
           meta.sources[id] = diskRow;
@@ -305,6 +339,7 @@ function writeMeta(ctx, meta, opts) {
     };
     _fsutil.atomicWrite(metaPath(ctx), JSON.stringify(meta, replacer, 2) + '\n', 0o600);
   });
+  return lockRes.acquired;
 }
 
 function emptyMeta() {
@@ -338,11 +373,13 @@ function embedLockExpired(raw, staleMs) {
   return false;
 }
 
-function embedLockHolderAlive(raw) {
+function embedLockHolderAlive(raw, opts) {
   if (!raw || !pidAlive(raw.pid) || embedLockExpired(raw)) return false;
   const pid = Number(raw.pid);
+  // PID 1 is init/launchd/systemd and can never be a detached keyflip worker.
+  if (pid <= 1) return false;
   if (pid === process.pid || pid === process.ppid) return true;
-  if (process.platform !== 'win32') {
+  if (opts && opts.checkProcess === true && process.platform !== 'win32') {
     try {
       const ps = childProcess.spawnSync('ps', ['-p', String(pid), '-o', 'comm='], {
         encoding: 'utf8',
@@ -362,27 +399,18 @@ function embedLockHolderAlive(raw) {
   return true;
 }
 
+// Purely read-only inspection of `embed.lock`: never creates directories/lock files, never
+// deletes stale locks on disk, and never spawns a child process. Cleanup belongs to writers.
 function backgroundStatus(ctx) {
   const file = embedLockPath(ctx);
-  let rawText;
   let raw;
   try {
-    rawText = fs.readFileSync(file, 'utf8');
-    raw = JSON.parse(rawText);
+    raw = JSON.parse(fs.readFileSync(file, 'utf8'));
   } catch {
     return { running: false };
   }
-  if (!embedLockHolderAlive(raw)) {
-    withMetaLock(ctx, function () {
-      try {
-        if (fs.readFileSync(file, 'utf8') === rawText) {
-          reclaimLockFile(file, rawText);
-        }
-      } catch {
-        /* already removed */
-      }
-    });
-    return { running: false };
+  if (!embedLockHolderAlive(raw, { checkProcess: false })) {
+    return { running: false, stale: true };
   }
   return {
     running: true,
@@ -407,60 +435,62 @@ function writeEmbedLock(ctx, info) {
 // Atomically claim `embed.lock` via O_CREAT|O_EXCL (`wx`) so two concurrent foreground or
 // background embedders never duplicate work or overwrite each other's lock. Stale locks (dead
 // PID or heartbeat older than EMBED_LOCK_STALE_MS after PID reuse) are reclaimed via atomic
-// rename + content verification so two racers cannot delete a freshly-acquired lock.
+// rename + content verification, and any `ps` identity check happens outside `meta.lock`.
 function acquireEmbedLock(ctx, info) {
-  return withMetaLock(ctx, function () {
-    const file = embedLockPath(ctx);
+  const file = embedLockPath(ctx);
+  try {
+    fs.mkdirSync(dirOf(ctx), { recursive: true });
+  } catch {
+    /* best-effort */
+  }
+  const token = (info && info.token) || makeLockToken();
+  const payload = Object.assign({ updatedAt: Date.now() }, info, { token: token });
+  for (let attempt = 0; attempt < 3; attempt++) {
+    let fd = null;
     try {
-      fs.mkdirSync(dirOf(ctx), { recursive: true });
-    } catch {
-      /* best-effort */
-    }
-    const token = (info && info.token) || makeLockToken();
-    const payload = Object.assign({ updatedAt: Date.now() }, info, { token: token });
-    for (let attempt = 0; attempt < 3; attempt++) {
-      let fd = null;
+      fd = fs.openSync(file, 'wx', 0o600);
       try {
-        fd = fs.openSync(file, 'wx', 0o600);
+        fs.writeFileSync(fd, JSON.stringify(payload) + '\n', 'utf8');
+      } finally {
+        fs.closeSync(fd);
+        fd = null;
+      }
+      return { acquired: true, token: token };
+    } catch (e) {
+      if (fd !== null) {
         try {
-          fs.writeFileSync(fd, JSON.stringify(payload) + '\n', 'utf8');
-        } finally {
           fs.closeSync(fd);
-          fd = null;
-        }
-        return { acquired: true, token: token };
-      } catch (e) {
-        if (fd !== null) {
-          try {
-            fs.closeSync(fd);
-          } catch {
-            /* ignore */
-          }
-        }
-        if (!e || e.code !== 'EEXIST') return { acquired: false, error: e };
-        let rawText = null;
-        let cur = null;
-        try {
-          rawText = fs.readFileSync(file, 'utf8');
-          cur = JSON.parse(rawText);
         } catch {
-          cur = null;
-        }
-        if (cur && cur.pid === process.pid) {
-          const keepToken = cur.token || token;
-          writeEmbedLock(ctx, Object.assign({}, payload, { token: keepToken }));
-          return { acquired: true, token: keepToken };
-        }
-        if (embedLockHolderAlive(cur)) {
-          return { acquired: false, holder: cur };
-        }
-        if (!reclaimLockFile(file, rawText)) {
-          return { acquired: false, holder: cur };
+          /* ignore */
         }
       }
+      if (!e || e.code !== 'EEXIST') return { acquired: false, error: e };
+      let rawText = null;
+      let cur = null;
+      try {
+        rawText = fs.readFileSync(file, 'utf8');
+        cur = JSON.parse(rawText);
+      } catch {
+        cur = null;
+      }
+      if (cur && cur.pid === process.pid) {
+        const keepToken = cur.token || token;
+        writeEmbedLock(ctx, Object.assign({}, payload, { token: keepToken }));
+        return { acquired: true, token: keepToken };
+      }
+      // Check process liveness + identity OUTSIDE meta.lock so we never hold meta.lock during spawnSync.
+      if (embedLockHolderAlive(cur, { checkProcess: true })) {
+        return { acquired: false, holder: cur };
+      }
+      const reclaimed = withMetaLock(ctx, function () {
+        return reclaimLockFile(file, rawText);
+      });
+      if (!reclaimed.acquired || !reclaimed.value) {
+        return { acquired: false, holder: cur };
+      }
     }
-    return { acquired: false };
-  });
+  }
+  return { acquired: false };
 }
 
 function releaseEmbedLock(ctx, expectedToken) {
@@ -1210,7 +1240,7 @@ async function build(ctx, opts) {
       // Flush lexical chunks + sidecars BEFORE the embedding pass starts so BM25/hybrid searches
       // see new conversations immediately while embeddings run.
       const preEmbedMeta = snapshotMeta();
-      writeMeta(ctx, preEmbedMeta, { removedIds: removedIds });
+      writeMeta(ctx, preEmbedMeta, { removedIds: removedIds, metaLockTimeoutMs: opts.metaLockTimeoutMs });
       embedBaseline = new Map();
       Object.keys(preEmbedMeta.sources).forEach((id) => {
         const s = preEmbedMeta.sources[id];
@@ -1291,7 +1321,12 @@ async function build(ctx, opts) {
               sinceFlush++;
               const nowMs = Date.now();
               if (sinceFlush >= EMBED_CHECKPOINT_SOURCES || nowMs - lastFlushMs >= EMBED_CHECKPOINT_MS) {
-                writeMeta(ctx, snapshotMeta(), { checkpoint: true, baseline: embedBaseline, removedIds: removedIds });
+                writeMeta(ctx, snapshotMeta(), {
+                  checkpoint: true,
+                  baseline: embedBaseline,
+                  removedIds: removedIds,
+                  metaLockTimeoutMs: opts.metaLockTimeoutMs,
+                });
                 writeEmbedLock(ctx, {
                   pid: process.pid,
                   token: lockRes.token,
@@ -1328,7 +1363,12 @@ async function build(ctx, opts) {
   });
 
   const built = snapshotMeta();
-  writeMeta(ctx, built, { checkpoint: didEmbedPass, baseline: embedBaseline, removedIds: removedIds });
+  writeMeta(ctx, built, {
+    checkpoint: didEmbedPass,
+    baseline: embedBaseline,
+    removedIds: removedIds,
+    metaLockTimeoutMs: opts.metaLockTimeoutMs,
+  });
   report.stats = built.stats;
   return report;
 }

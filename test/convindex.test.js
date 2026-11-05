@@ -1207,7 +1207,189 @@ test('spawnBackgroundEmbed passes KEYFLIP_CONFIG_DIR, and the spawned worker tak
     assert.strictEqual(
       convindex.backgroundStatus(ctx).running,
       false,
-      'a lock whose PID now belongs to a non-node process (PID reuse) is reclaimed immediately',
+      'a lock whose PID now belongs to a non-node process (PID reuse) is reported as not running',
     );
+    const reclaimBuild = await convindex.build(ctx, {
+      embed: true,
+      force: true,
+      model: 'bge-m3',
+      post: stubPost({ dim: 8 }),
+    });
+    assert.strictEqual(reclaimBuild.embedded, 1, 'writer reclaims a lock whose PID belongs to a non-node process');
+  }
+});
+
+test('withMetaLock waits past 200ms contention and never writes unlocked when meta.lock is held', async function () {
+  // Round 3 MEDIUM 1:
+  // 1) A meta.lock held for ~350ms (representing a 100-300ms meta.json merge+write on a 2k-source index)
+  //    must be waited out by a concurrent build instead of timing out at 200ms and writing unlocked.
+  // 2) If meta.lock remains held by a live external process past the wait deadline, writeMeta must
+  //    NOT fall through and clobber meta.json unlocked.
+  const ctx = ctxFor();
+  writeClaude(ctx, 'lock-chat-1', [
+    { type: 'user', timestamp: '2026-10-01T10:00:00Z', message: { role: 'user', content: 'Lock test chat 1.' } },
+  ]);
+  await convindex.build(ctx, {});
+
+  const metaLockFile = path.join(ctx.configDir, 'conv-index', 'meta.lock');
+  const holderPid = process.ppid && process.ppid !== process.pid ? process.ppid : process.pid;
+
+  // Case A: meta.lock is held by a live writer that finishes after 350ms (> 200ms) and writes a new row
+  // just before releasing meta.lock. If the waiting build gave up at 200ms and wrote unlocked while
+  // the holder was still mid-write, the holder or waiter would clobber each other without merging.
+  fs.writeFileSync(metaLockFile, JSON.stringify({ pid: holderPid, at: Date.now(), token: 'holder-350ms' }) + '\n');
+  // Spawn a helper process that sleeps 300ms, writes a new row "claude:local:holder-added" to meta.json,
+  // and removes meta.lock:
+  const chunkFileAdded = convindex.chunkPath(ctx, 'claude:local:holder-added');
+  fs.mkdirSync(path.dirname(chunkFileAdded), { recursive: true });
+  fs.writeFileSync(
+    chunkFileAdded,
+    JSON.stringify({ n: 0, role: 'user', text: 'Added by holder', h: 'h1', len: 3 }) + '\n',
+  );
+
+  const helperScript = [
+    "const fs = require('fs');",
+    'setTimeout(() => {',
+    '  const metaFile = ' + JSON.stringify(convindex.metaPath(ctx)) + ';',
+    '  const lockFile = ' + JSON.stringify(metaLockFile) + ';',
+    "  const m = JSON.parse(fs.readFileSync(metaFile, 'utf8'));",
+    "  m.sources['claude:local:holder-added'] = {",
+    "    id: 'claude:local:holder-added', app: 'claude', chunks: 1, bytes: 15,",
+    "    counts: { messages: 1 }, mtimeMs: Date.now() + 50000, hash: 'holderhash', chunkBytes: 64",
+    '  };',
+    '  fs.writeFileSync(metaFile, JSON.stringify(m, null, 2));',
+    '  fs.rmSync(lockFile, { force: true });',
+    '}, 300);',
+  ].join('\n');
+  const childProcess = await import('child_process');
+  const helper = childProcess.spawn(process.execPath, ['-e', helperScript], { stdio: 'ignore' });
+  // Update meta.lock PID to the live helper PID
+  fs.writeFileSync(metaLockFile, JSON.stringify({ pid: helper.pid, at: Date.now(), token: 'holder-300ms' }) + '\n');
+
+  writeClaude(ctx, 'lock-chat-2', [
+    { type: 'user', timestamp: '2026-10-02T10:00:00Z', message: { role: 'user', content: 'Lock test chat 2.' } },
+  ]);
+  await convindex.build(ctx, {});
+  await new Promise((resolve) => helper.on('exit', resolve));
+
+  const mergedMeta = readManifest(ctx);
+  assert.ok(
+    mergedMeta.sources['claude:local:holder-added'],
+    'build must wait past 300ms for meta.lock holder to finish and merge its row, not write unlocked at 200ms',
+  );
+  assert.ok(mergedMeta.sources['claude:local:lock-chat-2'], 'waiter row is also written');
+
+  // Case B: If meta.lock is held past the wait deadline by a live external process, writeMeta must NEVER write unlocked.
+  const sentinelMeta = readManifest(ctx);
+  sentinelMeta.sentinelProtectedByLock = true;
+  fs.writeFileSync(convindex.metaPath(ctx), JSON.stringify(sentinelMeta, null, 2));
+  fs.writeFileSync(
+    metaLockFile,
+    JSON.stringify({ pid: holderPid, at: Date.now(), token: 'held-past-deadline' }) + '\n',
+  );
+  try {
+    writeClaude(ctx, 'lock-chat-3', [
+      {
+        type: 'user',
+        timestamp: '2026-10-03T10:00:00Z',
+        message: { role: 'user', content: 'Should not write unlocked.' },
+      },
+    ]);
+    await convindex.build(ctx, { metaLockTimeoutMs: 50 });
+    const afterContended = readManifest(ctx);
+    assert.strictEqual(
+      afterContended.sentinelProtectedByLock,
+      true,
+      'meta.json must NEVER be overwritten unlocked when meta.lock cannot be acquired',
+    );
+  } finally {
+    fs.rmSync(metaLockFile, { force: true });
+  }
+});
+
+test('worker checkpoint does not resurrect a source deleted by a concurrent full lexical build, and status() is purely read-only', async function () {
+  // Round 3 LOW 2 + LOW 4:
+  // 1) If a concurrent full lexical build deletes a conversation while an embedding worker is running,
+  //    the worker checkpoint / final writeMeta must NOT resurrect the deleted source row in meta.json.
+  // 2) status() / backgroundStatus() must be strictly read-only: never create meta.lock, never delete
+  //    embed.lock on disk, and never spawn a child process (such as ps).
+  const ctx = ctxFor();
+  const fileDel = writeClaude(ctx, 'to-be-deleted', [
+    {
+      type: 'user',
+      timestamp: '2026-10-01T10:00:00Z',
+      message: { role: 'user', content: 'Conversation that will be deleted.' },
+    },
+  ]);
+  writeClaude(ctx, 'stays-alive', [
+    { type: 'user', timestamp: '2026-10-02T10:00:00Z', message: { role: 'user', content: 'Conversation that stays.' } },
+  ]);
+  await convindex.build(ctx, {});
+
+  let deletedDuringEmbed = false;
+  const postWithConcurrentDelete = async function (_url, body) {
+    if (!deletedDuringEmbed) {
+      deletedDuringEmbed = true;
+      // Delete the transcript file and run a concurrent full lexical build
+      fs.rmSync(fileDel, { force: true });
+      const delBuild = await convindex.build(ctx, { embed: false });
+      assert.strictEqual(delBuild.removed, 1);
+      assert.strictEqual(readManifest(ctx).sources['claude:local:to-be-deleted'], undefined);
+    }
+    const inputs = (body && body.input) || [];
+    return { embeddings: inputs.map(() => new Array(8).fill(0.5)) };
+  };
+
+  await convindex.build(ctx, {
+    embed: true,
+    model: 'bge-m3',
+    post: postWithConcurrentDelete,
+  });
+
+  const afterEmbed = readManifest(ctx);
+  assert.strictEqual(
+    afterEmbed.sources['claude:local:to-be-deleted'],
+    undefined,
+    'worker writeMeta must not resurrect a source whose transcript and chunk file were removed by a concurrent lexical build',
+  );
+  assert.strictEqual(afterEmbed.stats.sources, 1, 'stats.sources must reflect only the surviving conversation');
+
+  // Verify status() and backgroundStatus() are strictly read-only even when a stale embed.lock exists on disk:
+  const staleLockFile = convindex.embedLockPath(ctx);
+  fs.writeFileSync(
+    staleLockFile,
+    JSON.stringify({
+      pid: 999999,
+      token: 'stale-ro-token',
+      startedAt: '2020-01-01T00:00:00.000Z',
+      updatedAt: Date.now() - 24 * 3600 * 1000,
+      model: 'bge-m3',
+      space: 'deadbeef',
+    }) + '\n',
+  );
+  const childProcess = await import('child_process');
+  const origSpawnSync = childProcess.default.spawnSync;
+  let spawnSyncCalls = 0;
+  childProcess.default.spawnSync = function () {
+    spawnSyncCalls++;
+    return origSpawnSync.apply(this, arguments);
+  };
+  try {
+    const st = convindex.status(ctx);
+    assert.strictEqual(st.backgroundEmbed, null, 'status() reports stale embed.lock as not running');
+    assert.strictEqual(
+      fs.existsSync(staleLockFile),
+      true,
+      'read-only status() must NOT unlink embed.lock on disk (cleanup belongs to writers)',
+    );
+    assert.strictEqual(
+      fs.existsSync(path.join(ctx.configDir, 'conv-index', 'meta.lock')),
+      false,
+      'read-only status() must NOT create meta.lock',
+    );
+    assert.strictEqual(spawnSyncCalls, 0, 'read-only status() must NOT spawn a child process (ps)');
+  } finally {
+    childProcess.default.spawnSync = origSpawnSync;
+    fs.rmSync(staleLockFile, { force: true });
   }
 });
