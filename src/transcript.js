@@ -2,8 +2,25 @@
 // document — markdown or a self-contained HTML chat view — for offline review, archiving, or
 // sharing. Zero-dep; tool noise is summarized ("used Read, Bash"), not dumped.
 
+const DEFAULT_MAX_MESSAGE_CHARS = 200000;
+const DEFAULT_MAX_MESSAGES = 20000;
+const DEFAULT_MAX_TEXT_BYTES = 256 * 1024 * 1024;
+
+function makeState(opts) {
+  opts = opts || {};
+  return {
+    messages: [],
+    cwd: null,
+    textBytes: 0,
+    maxMessageChars: opts.maxMessageChars > 0 ? opts.maxMessageChars : DEFAULT_MAX_MESSAGE_CHARS,
+    maxMessages: opts.maxMessages > 0 ? opts.maxMessages : DEFAULT_MAX_MESSAGES,
+    maxTextBytes: opts.maxTextBytes > 0 ? opts.maxTextBytes : DEFAULT_MAX_TEXT_BYTES,
+  };
+}
+
 function feedLine(line, state) {
-  if (!line.trim()) return;
+  if (!line || !line.trim()) return;
+  if (state.messages.length >= state.maxMessages || state.textBytes >= state.maxTextBytes) return;
   let j;
   try {
     j = JSON.parse(line);
@@ -15,20 +32,38 @@ function feedLine(line, state) {
   if (!m || (j.type !== 'user' && j.type !== 'assistant')) return;
   const role = m.role || j.type;
   const c = m.content;
+  const maxChars = state.maxMessageChars;
   let text = '';
   const tools = [];
   if (typeof c === 'string') {
-    text = c;
+    text = c.length > maxChars ? c.slice(0, maxChars) : c;
   } else if (Array.isArray(c)) {
     c.forEach(function (b) {
       if (!b || typeof b !== 'object') return;
-      if (b.type === 'text' && b.text) text += (text ? '\n' : '') + b.text;
-      else if (b.type === 'tool_use' && b.name) tools.push(b.name);
+      if (b.type === 'text' && b.text && text.length < maxChars) {
+        const piece = (text ? '\n' : '') + b.text;
+        const room = maxChars - text.length;
+        text += piece.length > room ? piece.slice(0, room) : piece;
+      } else if (b.type === 'tool_use' && b.name) {
+        tools.push(b.name);
+      }
     });
   }
   text = text.trim();
+  if (text.length > maxChars) text = text.slice(0, maxChars);
   if (!text && !tools.length) return; // pure tool-result turns are noise — skip
-  state.messages.push({ role: role, text: text, tools: tools, ts: typeof j.timestamp === 'string' ? j.timestamp : null });
+  const addBytes = Buffer.byteLength(text, 'utf8');
+  if (state.textBytes + addBytes > state.maxTextBytes && state.messages.length > 0) {
+    state.textBytes = state.maxTextBytes;
+    return;
+  }
+  state.textBytes += addBytes;
+  state.messages.push({
+    role: role,
+    text: text,
+    tools: tools,
+    ts: typeof j.timestamp === 'string' ? j.timestamp : null,
+  });
 }
 
 function finishParse(state) {
@@ -45,11 +80,23 @@ function finishParse(state) {
   return { messages: messages, cwd: state.cwd, counts: counts };
 }
 
+function createParser(opts) {
+  const state = makeState(opts);
+  return {
+    feedLine: function (line) {
+      feedLine(line, state);
+    },
+    finish: function () {
+      return finishParse(state);
+    },
+  };
+}
+
 // Parse a transcript's JSONL into { messages: [{role, text, tools, ts}], cwd, counts }.
 // Accepts either a string/Buffer or a streaming line reader `function (onLine)` so 180 MB+
 // sessions can be parsed line-by-line without allocating a whole-file string.
-function parse(jsonl) {
-  const state = { messages: [], cwd: null };
+function parse(jsonl, opts) {
+  const state = makeState(opts);
   if (typeof jsonl === 'function') {
     jsonl(function (line) {
       feedLine(line, state);
@@ -167,4 +214,4 @@ const HTML_STYLE = [
   '@media(max-width:600px){header{padding:12px 14px}header h1{font-size:15px}main{padding:12px 14px;gap:10px}.msg{padding:10px 12px}footer{padding:12px 14px}}',
 ].join('');
 
-export { parse, toMarkdown, toHtml };
+export { parse, createParser, toMarkdown, toHtml };

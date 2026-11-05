@@ -38,7 +38,13 @@ function postJson(url, body, timeoutMs) {
           if (b.length > 64 * 1024 * 1024) req.destroy(new Error('embed response too large'));
         });
         res.on('end', function () {
-          if (res.statusCode >= 300) return reject(new Error('embed endpoint returned http ' + res.statusCode));
+          if (res.statusCode >= 300) {
+            let hint = '';
+            if (res.statusCode === 404 && body && body.model) {
+              hint = ' (model "' + body.model + '" not found — try `ollama pull ' + body.model + '`)';
+            }
+            return reject(new Error('embed endpoint returned http ' + res.statusCode + hint));
+          }
           try {
             resolve(JSON.parse(b));
           } catch (e) {

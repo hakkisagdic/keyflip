@@ -33,7 +33,7 @@ const MAX_FILE_BYTES = 160 * 1024 * 1024; // whole-file string/decompression cap
 const MAX_STREAM_BYTES = 2 * 1024 * 1024 * 1024; // streaming JSONL safety cap (2 GB)
 const STREAM_CHUNK_BYTES = 1024 * 1024; // 1 MB read buffer for streaming JSONL
 const MAX_LINE_CHARS = 32 * 1024 * 1024; // guard against a single multi-hundred-MB line without newlines
-const MAX_TEXT_BYTES = 256 * 1024 * 1024; // decompressed cap (zstd bomb guard)
+const MAX_TEXT_BYTES = 256 * 1024 * 1024; // decompressed / accumulated text cap (zstd & memory guard)
 const MAX_MESSAGE_CHARS = 200000;
 const MAX_MESSAGES = 20000;
 const SOURCE_BUDGET = 5000;
@@ -75,21 +75,38 @@ function countsOf(messages) {
   };
 }
 
+// Compute the exact SHA-1 of JSON.stringify(messages) incrementally per message so a
+// 20,000-message transcript never allocates one multi-hundred-MB string in V8.
 function convHash(messages) {
-  return crypto.createHash('sha1').update(JSON.stringify(messages)).digest('hex');
+  const h = crypto.createHash('sha1');
+  h.update('[');
+  for (let i = 0; i < messages.length; i++) {
+    if (i > 0) h.update(',');
+    h.update(JSON.stringify(messages[i]));
+  }
+  h.update(']');
+  return h.digest('hex');
 }
 
 function makeConv(fields) {
-  const messages = (fields.messages || [])
-    .map((m) => {
-      if (!m || m.role !== 'user') return m;
-      const text = stripHarness(m.text);
-      if (!text) return null;
-      return { role: m.role, text: text, ts: m.ts || null, tools: m.tools || [] };
-    })
-    .filter(Boolean)
-    .slice(0, MAX_MESSAGES);
-  return {
+  const messages = [];
+  let textBytes = 0;
+  for (const m of fields.messages || []) {
+    if (!m) continue;
+    let item = m;
+    if (m.role === 'user') {
+      const text = cleanMessage(stripHarness(m.text));
+      if (!text) continue;
+      item = { role: m.role, text: text, ts: m.ts || null, tools: m.tools || [] };
+    } else if (typeof m.text === 'string' && m.text.length > MAX_MESSAGE_CHARS) {
+      item = Object.assign({}, m, { text: cleanMessage(m.text) });
+    }
+    const b = Buffer.byteLength(item.text || '', 'utf8');
+    if (messages.length >= MAX_MESSAGES || (textBytes > 0 && textBytes + b > MAX_TEXT_BYTES)) break;
+    textBytes += b;
+    messages.push(item);
+  }
+  const out = {
     schemaVersion: SCHEMA_VERSION,
     id: fields.id,
     app: fields.app,
@@ -108,6 +125,8 @@ function makeConv(fields) {
     },
     hash: convHash(messages),
   };
+  if (fields.warnings && fields.warnings.length) out.warnings = fields.warnings;
+  return out;
 }
 
 // ---- reading / decompression --------------------------------------------------------------
@@ -141,7 +160,10 @@ function readText(file) {
 // and Kiro IDE sessions routinely exceed 160 MB (where reading the whole file into a single V8
 // string either trips MAX_FILE_BYTES or approaches V8's string length limit); chunked reading
 // keeps memory flat while producing the exact same line sequence as `.split('\n')`.
-function forEachLine(file, onLine) {
+function forEachLine(file, onLine, opts) {
+  opts = opts || {};
+  const maxLineChars = opts.maxLineChars > 0 ? opts.maxLineChars : MAX_LINE_CHARS;
+  const onOversized = typeof opts.onOversizedLine === 'function' ? opts.onOversizedLine : null;
   const st = fs.statSync(file);
   if (!st.isFile()) throw new Error('not a file');
   if (st.size > MAX_STREAM_BYTES)
@@ -158,9 +180,10 @@ function forEachLine(file, onLine) {
       let nl = chunk.indexOf('\n');
       if (nl === -1) {
         if (!overflow) {
-          if (rem.length + chunk.length > MAX_LINE_CHARS) {
+          if (rem.length + chunk.length > maxLineChars) {
             rem = '';
             overflow = true;
+            if (onOversized) onOversized();
           } else {
             rem += chunk;
           }
@@ -169,27 +192,31 @@ function forEachLine(file, onLine) {
       }
       if (!overflow) {
         const first = rem + chunk.slice(0, nl);
-        if (first.length <= MAX_LINE_CHARS) onLine(first);
+        if (first.length <= maxLineChars) onLine(first);
+        else if (onOversized) onOversized();
       }
       rem = '';
       overflow = false;
       let start = nl + 1;
       while ((nl = chunk.indexOf('\n', start)) !== -1) {
         const line = chunk.slice(start, nl);
-        if (line.length <= MAX_LINE_CHARS) onLine(line);
+        if (line.length <= maxLineChars) onLine(line);
+        else if (onOversized) onOversized();
         start = nl + 1;
       }
       rem = chunk.slice(start);
-      if (rem.length > MAX_LINE_CHARS) {
+      if (rem.length > maxLineChars) {
         rem = '';
         overflow = true;
+        if (onOversized) onOversized();
       }
     }
     const tail = dec.end();
     if (tail && !overflow) {
-      if (rem.length + tail.length > MAX_LINE_CHARS) {
+      if (rem.length + tail.length > maxLineChars) {
         rem = '';
         overflow = true;
+        if (onOversized) onOversized();
       } else {
         rem += tail;
       }
@@ -211,14 +238,27 @@ function eachLineOf(input, onLine) {
 }
 
 // Return a line-reader function for uncompressed sources, or a decompressed string for `.zst`.
-function readSourceInput(file) {
+function readSourceInput(file, opts, warningsOut) {
   if (/\.zst$/i.test(file)) return readText(file);
   const st = fs.statSync(file);
   if (!st.isFile()) throw new Error('not a file');
   if (st.size > MAX_STREAM_BYTES)
     throw new Error('source is larger than ' + Math.round(MAX_STREAM_BYTES / 1048576) + ' MB');
+  const maxLineChars = opts && opts.maxLineChars > 0 ? opts.maxLineChars : MAX_LINE_CHARS;
   return function (onLine) {
-    forEachLine(file, onLine);
+    let oversizedCount = 0;
+    forEachLine(file, onLine, {
+      maxLineChars: maxLineChars,
+      onOversizedLine: function () {
+        oversizedCount++;
+      },
+    });
+    if (oversizedCount > 0 && Array.isArray(warningsOut)) {
+      warningsOut.push({
+        path: file,
+        error: 'skipped ' + oversizedCount + ' oversized line(s) exceeding ' + maxLineChars + ' chars',
+      });
+    }
   };
 }
 
@@ -316,7 +356,11 @@ function withFallbackTitle(conv, fallback) {
 // ---- Claude Code / Qoder-style message-event JSONL ---------------------------------------
 
 function parseClaudeLocal(text, src, opts) {
-  const parsed = transcript.parse(text);
+  const parsed = transcript.parse(text, {
+    maxMessages: MAX_MESSAGES,
+    maxTextBytes: MAX_TEXT_BYTES,
+    maxMessageChars: MAX_MESSAGE_CHARS,
+  });
   const messages = parsed.messages
     .filter((m) => (m.role === 'user' || m.role === 'assistant') && (m.text || (m.tools && m.tools.length)))
     .map((m) => ({ role: m.role, text: cleanMessage(m.text), ts: m.ts || null, tools: m.tools || [] }))
@@ -419,6 +463,7 @@ function parseCodexRollout(text, src, opts) {
   const titles = (opts && opts.titles) || Object.create(null);
   const metas = [];
   const messages = [];
+  let textBytes = 0;
   let lastTs = null;
   eachLineOf(text, (line) => {
     if (!line.trim()) return;
@@ -433,6 +478,7 @@ function parseCodexRollout(text, src, opts) {
       if (j.timestamp) lastTs = j.timestamp;
       return;
     }
+    if (messages.length >= MAX_MESSAGES || textBytes >= MAX_TEXT_BYTES) return;
     if (j.type !== 'response_item' || !j.payload || j.payload.type !== 'message') return;
     const role = j.payload.role;
     if (role !== 'user' && role !== 'assistant') return;
@@ -442,6 +488,7 @@ function parseCodexRollout(text, src, opts) {
     if (!body) return;
     const prev = messages[messages.length - 1];
     if (prev && prev.role === role && prev.text === body) return; // app + event stream echo
+    textBytes += Buffer.byteLength(body, 'utf8');
     messages.push({ role: role, text: body, ts: j.timestamp || null, tools: [] });
     if (j.timestamp) lastTs = j.timestamp;
   });
@@ -493,7 +540,9 @@ function kiroBlocksText(content) {
 function parseKiroCli(text, src, opts) {
   const meta = kiroSiblingMeta(src.path) || {};
   const messages = [];
+  let textBytes = 0;
   eachLineOf(text, (line) => {
+    if (messages.length >= MAX_MESSAGES || textBytes >= MAX_TEXT_BYTES) return;
     if (!line.trim()) return;
     let j;
     try {
@@ -505,7 +554,10 @@ function parseKiroCli(text, src, opts) {
     if (!d) return;
     if (j.kind === 'Prompt') {
       const body = cleanMessage(kiroBlocksText(d.content));
-      if (body && !isInjected(body)) messages.push({ role: 'user', text: body, ts: d.timestamp || null, tools: [] });
+      if (body && !isInjected(body)) {
+        textBytes += Buffer.byteLength(body, 'utf8');
+        messages.push({ role: 'user', text: body, ts: d.timestamp || null, tools: [] });
+      }
       return;
     }
     if (j.kind === 'AssistantMessage') {
@@ -514,6 +566,7 @@ function parseKiroCli(text, src, opts) {
       const tools = Array.isArray(d.content)
         ? d.content.filter((b) => b && b.kind === 'toolUse').map((b) => (b.data && b.data.name) || 'tool')
         : [];
+      textBytes += Buffer.byteLength(body, 'utf8');
       messages.push({ role: 'assistant', text: body, ts: d.timestamp || null, tools: tools });
     }
   });
@@ -535,7 +588,9 @@ function parseKiroCli(text, src, opts) {
 
 function parseKiroIde(text, src, opts) {
   const messages = [];
+  let textBytes = 0;
   eachLineOf(text, (line) => {
+    if (messages.length >= MAX_MESSAGES || textBytes >= MAX_TEXT_BYTES) return;
     if (!line.trim()) return;
     let j;
     try {
@@ -547,14 +602,20 @@ function parseKiroIde(text, src, opts) {
     if (!p) return;
     if (p.type === 'user') {
       const body = cleanMessage(p.content);
-      if (body && !isInjected(body)) messages.push({ role: 'user', text: body, ts: j.timestamp || null, tools: [] });
+      if (body && !isInjected(body)) {
+        textBytes += Buffer.byteLength(body, 'utf8');
+        messages.push({ role: 'user', text: body, ts: j.timestamp || null, tools: [] });
+      }
       return;
     }
     if (p.type === 'assistant') {
       // Reasoning traces are the agent's scratchpad, not the conversation.
       if (p.operationType === 'Reasoning') return;
       const body = cleanMessage(p.content);
-      if (body) messages.push({ role: 'assistant', text: body, ts: j.timestamp || null, tools: [] });
+      if (body) {
+        textBytes += Buffer.byteLength(body, 'utf8');
+        messages.push({ role: 'assistant', text: body, ts: j.timestamp || null, tools: [] });
+      }
     }
   });
   const meta = src.meta || {};
@@ -609,8 +670,10 @@ function stripGeminiPrompt(text) {
 
 function parseGeminiTranscript(text, src, opts) {
   const messages = [];
+  let textBytes = 0;
   let lastTs = null;
   eachLineOf(text, (line) => {
+    if (messages.length >= MAX_MESSAGES || textBytes >= MAX_TEXT_BYTES) return;
     if (!line.trim()) return;
     let j;
     try {
@@ -625,6 +688,7 @@ function parseGeminiTranscript(text, src, opts) {
     if (j.type === 'USER_INPUT') role = 'user';
     else if (/RESPONSE|ASSISTANT|MODEL_OUTPUT/i.test(j.type)) role = 'assistant';
     if (!role) return;
+    textBytes += Buffer.byteLength(body, 'utf8');
     messages.push({ role: role, text: body, ts: j.created_at || j.timestamp || null, tools: [] });
     if (j.created_at || j.timestamp) lastTs = j.created_at || j.timestamp;
   });
@@ -979,14 +1043,20 @@ function load(ctx, src, opts) {
     src.kind === 'kiro-ide' ||
     src.kind === 'gemini-transcript' ||
     (src.kind === 'foreign' && /\.(jsonl|md)$/i.test(src.path));
-  const input = canStream ? readSourceInput(src.path) : readText(src.path);
-  if (src.kind === 'claude-local') return parseClaudeLocal(input, src, opts);
-  if (src.kind === 'codex-rollout')
-    return parseCodexRollout(input, src, Object.assign({}, opts, { titles: opts.titles || codexTitles(ctx) }));
-  if (src.kind === 'kiro-cli') return parseKiroCli(input, src, opts);
-  if (src.kind === 'kiro-ide') return parseKiroIde(input, src, opts);
-  if (src.kind === 'gemini-transcript') return parseGeminiTranscript(input, src, opts);
-  return parseForeignSource(input, src, opts);
+  const warnings = [];
+  const input = canStream ? readSourceInput(src.path, opts, warnings) : readText(src.path);
+  let conv;
+  if (src.kind === 'claude-local') conv = parseClaudeLocal(input, src, opts);
+  else if (src.kind === 'codex-rollout')
+    conv = parseCodexRollout(input, src, Object.assign({}, opts, { titles: opts.titles || codexTitles(ctx) }));
+  else if (src.kind === 'kiro-cli') conv = parseKiroCli(input, src, opts);
+  else if (src.kind === 'kiro-ide') conv = parseKiroIde(input, src, opts);
+  else if (src.kind === 'gemini-transcript') conv = parseGeminiTranscript(input, src, opts);
+  else conv = parseForeignSource(input, src, opts);
+  if (warnings.length) {
+    conv.warnings = (conv.warnings || []).concat(warnings.map((w) => Object.assign({ app: conv.app }, w)));
+  }
+  return conv;
 }
 
 // Metadata for every source. Parsing is required for honest titles/counts; callers

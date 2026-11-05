@@ -118,6 +118,31 @@ function readMeta(ctx) {
 }
 
 function writeMeta(ctx, meta) {
+  // Merge vector progress checkpointed concurrently on disk by an active background worker so a
+  // lexical build or overlapping tick never clobbers completed vectors on unchanged sources.
+  const onDisk = readMeta(ctx);
+  if (onDisk && onDisk.sources && meta && meta.sources) {
+    Object.keys(onDisk.sources).forEach((id) => {
+      const diskRow = onDisk.sources[id];
+      const memRow = meta.sources[id];
+      if (
+        diskRow &&
+        memRow &&
+        diskRow.vec &&
+        diskRow.hash &&
+        diskRow.hash === memRow.hash &&
+        diskRow.chunks === memRow.chunks
+      ) {
+        if (
+          !memRow.vec ||
+          (meta.embedding && diskRow.vec.space === meta.embedding.space && memRow.vec.space !== meta.embedding.space)
+        ) {
+          memRow.vec = diskRow.vec;
+        }
+      }
+    });
+    if (!meta.embedding && onDisk.embedding) meta.embedding = onDisk.embedding;
+  }
   const replacer = function (k, v) {
     if (k === '_oldVec' || k === '_oldHashes') return undefined;
     return v;
@@ -183,6 +208,51 @@ function writeEmbedLock(ctx, info) {
   }
 }
 
+// Atomically claim `embed.lock` via O_CREAT|O_EXCL (`wx`) so two concurrent foreground or
+// background embedders never duplicate work or overwrite each other's lock. If the lock file
+// exists and belongs to a dead PID, remove it and retry once; if it belongs to `process.pid`
+// (e.g. a spawned worker taking over the reservation), update it in place.
+function acquireEmbedLock(ctx, info) {
+  const file = embedLockPath(ctx);
+  try {
+    fs.mkdirSync(dirOf(ctx), { recursive: true });
+  } catch {
+    /* best-effort */
+  }
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const fd = fs.openSync(file, 'wx', 0o600);
+      try {
+        fs.writeFileSync(fd, JSON.stringify(info) + '\n', 'utf8');
+      } finally {
+        fs.closeSync(fd);
+      }
+      return { acquired: true };
+    } catch (e) {
+      if (!e || e.code !== 'EEXIST') return { acquired: false, error: e };
+      let cur = null;
+      try {
+        cur = JSON.parse(fs.readFileSync(file, 'utf8'));
+      } catch {
+        cur = null;
+      }
+      if (cur && cur.pid === process.pid) {
+        writeEmbedLock(ctx, info);
+        return { acquired: true };
+      }
+      if (cur && pidAlive(cur.pid)) {
+        return { acquired: false, holder: cur };
+      }
+      try {
+        fs.rmSync(file, { force: true });
+      } catch {
+        return { acquired: false, holder: cur };
+      }
+    }
+  }
+  return { acquired: false };
+}
+
 function releaseEmbedLock(ctx) {
   const file = embedLockPath(ctx);
   try {
@@ -193,17 +263,32 @@ function releaseEmbedLock(ctx) {
   }
 }
 
-// Spawn a detached `keyflip conv index --embed --foreground` worker when embeddings need to be
-// generated or migrated in the background (e.g. after switching the default model to bge-m3).
-// Never spawns inside node:test or when a custom `opts.post` stub is supplied.
+// Spawn a detached `keyflip conv index --embed --foreground` worker when explicitly requested
+// (`keyflip conv index --embed --background`). Never spawns inside node:test unless an explicit
+// injectable `opts.spawn` stub is supplied.
 function spawnBackgroundEmbed(ctx, opts) {
   opts = opts || {};
-  if (opts.post || process.env.NODE_TEST_CONTEXT || (ctx && ctx.env && ctx.env.KEYFLIP_NO_BG_EMBED === '1')) {
+  const spawnFn = typeof opts.spawn === 'function' ? opts.spawn : null;
+  if (
+    !spawnFn &&
+    (opts.post || process.env.NODE_TEST_CONTEXT || (ctx && ctx.env && ctx.env.KEYFLIP_NO_BG_EMBED === '1'))
+  ) {
     return { started: false, reason: 'disabled-in-test' };
   }
-  const bg = backgroundStatus(ctx);
-  if (bg.running) {
-    return { started: false, alreadyRunning: true, pid: bg.pid, model: bg.model };
+  const space = spaceOf(opts, ctx);
+  const startedAt = (ctx && ctx.now && ctx.now()) || new Date().toISOString();
+  // Atomically reserve embed.lock BEFORE spawning so two concurrent callers cannot both start a worker.
+  const lockRes = acquireEmbedLock(ctx, {
+    pid: process.pid,
+    startedAt: startedAt,
+    model: space.model,
+    space: space.hash,
+    done: 0,
+    total: 0,
+  });
+  if (!lockRes.acquired) {
+    const holder = lockRes.holder || {};
+    return { started: false, alreadyRunning: true, pid: holder.pid || null, model: holder.model || null };
   }
   const binPath = path.resolve(__dirname, '..', 'bin', 'keyflip.js');
   const args = [binPath, 'conv', 'index', '--embed', '--foreground'];
@@ -215,16 +300,15 @@ function spawnBackgroundEmbed(ctx, opts) {
   if (opts.model) env.KEYFLIP_EMBED_MODEL = opts.model;
   if (opts.url) env.KEYFLIP_EMBED_URL = opts.url;
   try {
-    const child = childProcess.spawn(process.execPath, args, {
+    const child = (spawnFn || childProcess.spawn)(process.execPath, args, {
       detached: true,
       stdio: 'ignore',
       env: env,
     });
-    child.unref();
-    const space = spaceOf(opts);
+    if (child && typeof child.unref === 'function') child.unref();
     writeEmbedLock(ctx, {
       pid: child.pid,
-      startedAt: (ctx && ctx.now && ctx.now()) || new Date().toISOString(),
+      startedAt: startedAt,
       model: space.model,
       space: space.hash,
       done: 0,
@@ -232,6 +316,7 @@ function spawnBackgroundEmbed(ctx, opts) {
     });
     return { started: true, pid: child.pid, model: space.model, space: space.hash };
   } catch (e) {
+    releaseEmbedLock(ctx);
     return { started: false, reason: (e && e.message) || String(e) };
   }
 }
@@ -662,10 +747,7 @@ async function build(ctx, opts) {
   if (wantEmbed && opts.background) {
     // Write lexical chunks synchronously first, then kick off a detached background worker to
     // generate or migrate embeddings incrementally without blocking the terminal.
-    const lexReport = await build(
-      ctx,
-      Object.assign({}, opts, { embed: false, semantic: false, background: false }),
-    );
+    const lexReport = await build(ctx, Object.assign({}, opts, { embed: false, semantic: false, background: false }));
     const bg = spawnBackgroundEmbed(ctx, opts);
     lexReport.backgroundEmbed = bg;
     return lexReport;
@@ -707,6 +789,9 @@ async function build(ctx, opts) {
         // to the full parse so this source gets its own chunk file under the new id.
       }
       const conv = conversations.load(ctx, src, opts);
+      if (Array.isArray(conv.warnings) && conv.warnings.length) {
+        conv.warnings.forEach((w) => report.warnings.push(w));
+      }
       const bytes = conv.messages.reduce((n, m) => n + Buffer.byteLength(m.text || ''), 0);
       if (!conv.messages.length) {
         report.empty++;
@@ -883,105 +968,106 @@ async function build(ctx, opts) {
         const needVec = !entry.vec || entry.vec.space !== space.hash || entry.vec.count !== entry.chunks;
         return needVec || !vectorFileOk(ctx, id, entry.vec);
       })
-      .sort((a, b) => String((next[b] && next[b].updatedAt) || '').localeCompare(String((next[a] && next[a].updatedAt) || '')));
+      .sort((a, b) =>
+        String((next[b] && next[b].updatedAt) || '').localeCompare(String((next[a] && next[a].updatedAt) || '')),
+      );
     const maxEmbed = opts.maxEmbedSources ? Math.max(1, Number(opts.maxEmbedSources)) : candidates.length;
     const toEmbed = candidates.slice(0, maxEmbed);
     report.embedding.remainingSources = Math.max(0, candidates.length - toEmbed.length);
 
-    // Flush lexical chunks + sidecars BEFORE the embedding pass starts so BM25/hybrid searches
-    // see new conversations immediately while embeddings run.
-    if (toEmbed.length > 0) writeMeta(ctx, snapshotMeta());
     const lockStartedAt = (ctx.now && ctx.now()) || new Date().toISOString();
-    if (toEmbed.length > 0) {
-      writeEmbedLock(ctx, {
-        pid: process.pid,
-        startedAt: lockStartedAt,
-        model: space.model,
-        space: space.hash,
-        done: 0,
-        total: candidates.length,
-      });
-    }
-    let embedDone = 0;
-    let consecutiveFails = 0;
-    let sinceFlush = 0;
-    let lastFlushMs = Date.now();
-    try {
-      for (const id of toEmbed) {
-        const entry = next[id];
-        embedDone++;
-        if (opts.onProgress) opts.onProgress({ phase: 'embed', done: embedDone, total: toEmbed.length, id: id });
-        const chunks = readChunks(chunkPath(ctx, id));
-        // Metadata must never outrun the disk. A missing or torn chunk file used to reach
-        // embedSource as "0 chunks", which wrote a 0-byte vector and still recorded a healthy
-        // source. Trust the chunk file, keep the stats truthful, and clear the content hash so
-        // the next plain build re-parses and rebuilds this source.
-        if (chunks.length !== (entry.chunks || 0)) {
-          entry.chunks = chunks.length;
-          entry.chunkHashes = chunks.map((c) => c.h);
-          entry.hash = null;
-          entry.vec = null;
-          try {
-            fs.rmSync(vectorPath(ctx, id), { force: true }); // stale: it described other chunks
-          } catch {
-            /* best-effort */
-          }
-          if (chunks.length) writeTokens(ctx, id, chunks);
-          else dropTokens(ctx, id);
-          report.rechunk = (report.rechunk || 0) + 1;
-        }
-        try {
-          const prev = Object.assign({}, entry, {
-            vec: entry._oldVec || entry.vec,
-            chunkHashes: entry._oldHashes || entry.chunkHashes,
-          });
-          const vec = await embedSource(ctx, id, chunks, prev, space, opts);
-          if (vec) {
-            entry.vec = vec;
-            report.embedded++;
-            report.embedding.sources++;
-            report.embedding.chunks += chunks.length;
-            sinceFlush++;
-            const nowMs = Date.now();
-            if (sinceFlush >= EMBED_CHECKPOINT_SOURCES || nowMs - lastFlushMs >= EMBED_CHECKPOINT_MS) {
-              writeMeta(ctx, snapshotMeta());
-              writeEmbedLock(ctx, {
-                pid: process.pid,
-                startedAt: lockStartedAt,
-                model: space.model,
-                space: space.hash,
-                done: embedDone,
-                total: candidates.length,
-              });
-              sinceFlush = 0;
-              lastFlushMs = nowMs;
+    const lockRes =
+      toEmbed.length > 0
+        ? acquireEmbedLock(ctx, {
+            pid: process.pid,
+            startedAt: lockStartedAt,
+            model: space.model,
+            space: space.hash,
+            done: 0,
+            total: candidates.length,
+          })
+        : { acquired: false, skipped: true };
+    if (toEmbed.length > 0 && !lockRes.acquired) {
+      // Another embed writer (background worker or concurrent tick) holds embed.lock:
+      // do not duplicate embedding work, and never overwrite or delete its lock.
+      report.embedding.busy = true;
+      report.embedding.busyPid = (lockRes.holder && lockRes.holder.pid) || null;
+      report.embedding.remainingSources = candidates.length;
+    } else if (toEmbed.length > 0) {
+      // Flush lexical chunks + sidecars BEFORE the embedding pass starts so BM25/hybrid searches
+      // see new conversations immediately while embeddings run.
+      writeMeta(ctx, snapshotMeta());
+      let embedDone = 0;
+      let consecutiveFails = 0;
+      let sinceFlush = 0;
+      let lastFlushMs = Date.now();
+      try {
+        for (const id of toEmbed) {
+          const entry = next[id];
+          embedDone++;
+          if (opts.onProgress) opts.onProgress({ phase: 'embed', done: embedDone, total: toEmbed.length, id: id });
+          const chunks = readChunks(chunkPath(ctx, id));
+          // Metadata must never outrun the disk. A missing or torn chunk file used to reach
+          // embedSource as "0 chunks", which wrote a 0-byte vector and still recorded a healthy
+          // source. Trust the chunk file, keep the stats truthful, and clear the content hash so
+          // the next plain build re-parses and rebuilds this source.
+          if (chunks.length !== (entry.chunks || 0)) {
+            entry.chunks = chunks.length;
+            entry.chunkHashes = chunks.map((c) => c.h);
+            entry.hash = null;
+            entry.vec = null;
+            try {
+              fs.rmSync(vectorPath(ctx, id), { force: true }); // stale: it described other chunks
+            } catch {
+              /* best-effort */
             }
+            if (chunks.length) writeTokens(ctx, id, chunks);
+            else dropTokens(ctx, id);
+            report.rechunk = (report.rechunk || 0) + 1;
           }
-        } catch (e) {
-          // One unreadable source must not abandon the sources behind it. Only a streak of
-          // consecutive failures means the endpoint is down: then stop hammering it.
-          consecutiveFails++;
-          report.embedding.errors = (report.embedding.errors || 0) + 1;
-          report.embedding.error = (e && e.message) || String(e);
-          report.ok = false; // embedding is incomplete even if the chunks are fine
-          if (consecutiveFails >= 3) break; // the endpoint is down: stop hammering it
-          continue;
+          try {
+            const prev = Object.assign({}, entry, {
+              vec: entry._oldVec || entry.vec,
+              chunkHashes: entry._oldHashes || entry.chunkHashes,
+            });
+            const vec = await embedSource(ctx, id, chunks, prev, space, opts);
+            if (vec) {
+              entry.vec = vec;
+              report.embedded++;
+              report.embedding.sources++;
+              report.embedding.chunks += chunks.length;
+              sinceFlush++;
+              const nowMs = Date.now();
+              if (sinceFlush >= EMBED_CHECKPOINT_SOURCES || nowMs - lastFlushMs >= EMBED_CHECKPOINT_MS) {
+                writeMeta(ctx, snapshotMeta());
+                writeEmbedLock(ctx, {
+                  pid: process.pid,
+                  startedAt: lockStartedAt,
+                  model: space.model,
+                  space: space.hash,
+                  done: embedDone,
+                  total: candidates.length,
+                });
+                sinceFlush = 0;
+                lastFlushMs = nowMs;
+              }
+            }
+          } catch (e) {
+            // One unreadable source must not abandon the sources behind it. Only a streak of
+            // consecutive failures means the endpoint is down: then stop hammering it.
+            consecutiveFails++;
+            report.embedding.errors = (report.embedding.errors || 0) + 1;
+            report.embedding.error = (e && e.message) || String(e);
+            report.ok = false; // embedding is incomplete even if the chunks are fine
+            if (consecutiveFails >= 3) break; // the endpoint is down: stop hammering it
+            continue;
+          }
+          consecutiveFails = 0;
         }
-        consecutiveFails = 0;
+      } finally {
+        releaseEmbedLock(ctx);
       }
-    } finally {
-      if (toEmbed.length > 0) releaseEmbedLock(ctx);
     }
-  } else if (
-    !opts.noAutoBackground &&
-    meta.embedding &&
-    meta.embedding.space &&
-    meta.embedding.space !== spaceOf(opts, ctx).hash
-  ) {
-    // A plain `conv index` noticed the configured/default embedding model changed since the
-    // last embed pass: regenerate vectors incrementally in the background.
-    const bg = spawnBackgroundEmbed(ctx, opts);
-    if (bg.started || bg.alreadyRunning) report.backgroundEmbed = bg;
   }
   Object.keys(next).forEach((id) => {
     delete next[id]._oldHashes;
@@ -1111,7 +1197,8 @@ function status(ctx, opts) {
     coverage: meta.stats && meta.stats.chunks ? Math.round((vectorChunks / meta.stats.chunks) * 1000) / 10 : 0,
     staleVectorSources: staleVectorSources,
     staleVectorChunks: staleVectorChunks,
-    staleModel: staleModel || (meta.embedding && meta.embedding.space !== activeSpace.hash ? meta.embedding.model : null),
+    staleModel:
+      staleModel || (meta.embedding && meta.embedding.space !== activeSpace.hash ? meta.embedding.model : null),
     backgroundEmbed: bg.running ? bg : null,
   };
 }
@@ -1425,22 +1512,8 @@ async function semantic(ctx, query, opts) {
     return s && s.vec && s.vec.space === space.hash && s.vec.dim && fs.existsSync(vectorPath(ctx, id));
   });
   if (!hasVectors) {
-    // If vectors exist on disk from an older model space, trigger background re-embedding so
-    // the new model's vectors populate without blocking the caller.
-    const hadOldVectors = keys.some((id) => {
-      const s = meta.sources[id];
-      return s && s.vec && s.vec.space && s.vec.space !== space.hash;
-    });
-    if (hadOldVectors) spawnBackgroundEmbed(ctx, opts);
     return { ok: false, reason: 'no-vectors', hits: [] };
   }
-  // If a model migration is partially complete, make sure the background worker is running to
-  // finish the remaining sources while we search the already-migrated subset.
-  const hasStaleVectors = keys.some((id) => {
-    const s = meta.sources[id];
-    return s && s.vec && s.vec.space && s.vec.space !== space.hash;
-  });
-  if (hasStaleVectors) spawnBackgroundEmbed(ctx, opts);
   let qv;
   try {
     const got = await _embed.embed([safeForEmbedding(query, space)], opts);
@@ -1625,7 +1698,7 @@ function rrf(lists, limit, perConv, weights) {
 
 async function search(ctx, query, opts) {
   opts = opts || {};
-  const mode = opts.mode || (opts.semantic ? 'semantic' : 'hybrid');
+  const mode = opts.mode || (opts.semantic ? 'semantic' : 'lexical');
   const r = await searchMode(ctx, query, opts, mode);
   if (!opts.account || !r || !r.hits) return r;
   // The account filter runs AFTER the ranking, not before it: the ranking is over the whole
@@ -1748,6 +1821,7 @@ export {
   catalog,
   status,
   backgroundStatus,
+  acquireEmbedLock,
   spawnBackgroundEmbed,
   parseSince,
   lexical,

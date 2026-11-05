@@ -2,10 +2,12 @@
 // ids/prefixes resolvable. Fixtures are synthetic — no real transcripts, no credentials.
 import test from 'node:test';
 import assert from 'node:assert';
+import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import { makeCtx } from './helpers.js';
 import * as conversations from '../src/conversations.js';
+import * as transcript from '../src/transcript.js';
 
 function ctxFor() {
   const ctx = makeCtx();
@@ -95,7 +97,9 @@ test('title falls back past a continuation preamble to the first human sentence'
       type: 'user',
       message: { role: 'user', content: 'This session is being continued from a previous conversation.' },
     },
-    { type: 'assistant', message: { role: 'assistant', content: 'Ready.' },
+    {
+      type: 'assistant',
+      message: { role: 'assistant', content: 'Ready.' },
     },
     { type: 'user', message: { role: 'user', content: 'Fix the flaky CI job.' } },
   ]);
@@ -327,28 +331,140 @@ test('a missing source is a CONV_SOURCE_GONE error, not an empty conversation', 
   );
 });
 
-test('forEachLine streams multi-chunk JSONL and UTF-8 across chunk boundaries (enabling >160 MB sessions)', function () {
-  const ctx = ctxFor();
-  // Build a JSONL larger than 2.5 MB (> 2 x 1 MB read chunks) with Turkish multibyte UTF-8 characters
-  // so chunk boundaries fall mid-line and mid-character.
-  const pad = 'ğüşiöçĞÜŞİÖÇ '.repeat(800); // ~16 KB per turn
-  const lines = [];
-  for (let i = 0; i < 160; i++) {
-    lines.push({
-      type: i % 2 === 0 ? 'user' : 'assistant',
-      timestamp: '2026-10-01T10:00:' + String(i % 60).padStart(2, '0') + '.000Z',
-      cwd: '/work/large',
-      message: {
-        role: i % 2 === 0 ? 'user' : 'assistant',
-        content: 'Turn #' + i + ': ' + pad,
-      },
-    });
+test('transcript.parse and streaming parsers bound per-message text, message count, and total text bytes while convHash streams without full-array JSON.stringify', function () {
+  // MEDIUM 1: transcript.parse must clamp message text at MAX_MESSAGE_CHARS (200k) during feedLine
+  // rather than holding unbounded strings in memory.
+  const hugeText = 'x'.repeat(350000);
+  const parsed = transcript.parse(
+    JSON.stringify({
+      type: 'user',
+      timestamp: '2026-10-01T10:00:00.000Z',
+      message: { role: 'user', content: hugeText },
+    }) + '\n',
+  );
+  assert.strictEqual(parsed.messages.length, 1);
+  assert.strictEqual(parsed.messages[0].text.length, 200000, 'transcript.parse must clamp message text to 200k chars');
+
+  // Streaming parser must also stop accumulating messages past maxMessages / maxTextBytes.
+  const p = transcript.createParser({ maxMessages: 3, maxTextBytes: 500 });
+  for (let i = 0; i < 10; i++) {
+    p.feedLine(
+      JSON.stringify({
+        type: 'user',
+        message: { role: 'user', content: 'turn-' + i + '-' + 'a'.repeat(200) },
+      }),
+    );
   }
-  const file = writeClaude(ctx, 'huge-sess', lines);
-  assert.ok(fs.statSync(file).size > 2.5 * 1024 * 1024, 'fixture exceeds multiple 1 MB stream chunks');
+  const bounded = p.finish();
+  assert.ok(bounded.messages.length <= 3, 'createParser must respect maxMessages during streaming');
+
+  // convHash must match SHA-1(JSON.stringify(messages)) without calling JSON.stringify on the whole array.
+  const ctx = ctxFor();
+  const file = writeClaude(ctx, 'hash-check', [
+    { type: 'user', message: { role: 'user', content: 'First message' } },
+    { type: 'assistant', message: { role: 'assistant', content: 'Second message' } },
+  ]);
   const conv = conversations.loadPath(ctx, file, {});
-  assert.strictEqual(conv.id, 'claude:local:huge-sess');
-  assert.strictEqual(conv.counts.messages, 160);
-  assert.ok(conv.messages[0].text.startsWith('Turn #0: ğüşiöçĞÜŞİÖÇ'));
-  assert.ok(conv.messages[159].text.startsWith('Turn #159: ğüşiöçĞÜŞİÖÇ'));
+  const expected = crypto.createHash('sha1').update(JSON.stringify(conv.messages)).digest('hex');
+  assert.strictEqual(conv.hash, expected);
+});
+
+test('streamed foreign .md fallback enforces the 160 MB MAX_FILE_BYTES cap instead of reading the whole file into memory', function () {
+  // MEDIUM 2: A foreign .md or .jsonl file whose header is not aider/jsonl/commandcode must NOT bypass
+  // the 160 MB whole-file cap via fs.readFileSync(filePath).
+  const ctx = ctxFor();
+  const dir = path.join(ctx.home, '.aider');
+  fs.mkdirSync(dir, { recursive: true });
+  const bigMd = path.join(dir, 'non-aider.md');
+  const fd = fs.openSync(bigMd, 'w');
+  try {
+    // Write a non-Aider header followed by >160 MB (161 MB total)
+    fs.writeSync(fd, Buffer.from('# Plain markdown file that is not an aider header\n\n'));
+    const chunk = Buffer.alloc(16 * 1024 * 1024, 0x61); // 16 MB of 'a'
+    chunk[chunk.length - 1] = 0x0a;
+    for (let i = 0; i < 10; i++) fs.writeSync(fd, chunk);
+    fs.writeSync(fd, Buffer.alloc(2 * 1024 * 1024, 0x61));
+  } finally {
+    fs.closeSync(fd);
+  }
+  try {
+    const size = fs.statSync(bigMd).size;
+    assert.ok(size > 160 * 1024 * 1024);
+    assert.throws(
+      () =>
+        conversations.load(
+          ctx,
+          { kind: 'foreign', app: 'aider', tool: 'aider', surface: 'cli', path: bigMd, size: size, mtimeMs: 0 },
+          {},
+        ),
+      /larger than 160 MB/,
+      'non-streaming foreign fallback must reject files >160 MB',
+    );
+  } finally {
+    fs.rmSync(bigMd, { force: true });
+  }
+});
+
+test('forEachLine records a warning when a line exceeds MAX_LINE_CHARS instead of dropping it silently', function () {
+  // LOW 1: Oversized lines dropped by forEachLine must be surfaced in conv.warnings.
+  const ctx = ctxFor();
+  const file = writeClaude(ctx, 'oversized-line', [
+    { type: 'user', message: { role: 'user', content: 'Normal first turn.' } },
+    { type: 'assistant', message: { role: 'assistant', content: 'X'.repeat(5000) } },
+    { type: 'user', message: { role: 'user', content: 'Normal third turn.' } },
+  ]);
+  const conv = conversations.loadPath(ctx, file, { maxLineChars: 1000 });
+  assert.strictEqual(conv.counts.messages, 2, 'the oversized middle line was skipped');
+  assert.ok(Array.isArray(conv.warnings) && conv.warnings.length === 1, 'warning recorded on conversation');
+  assert.match(conv.warnings[0].error, /oversized line|exceeded/i);
+});
+
+test('forEachLine streams an actual >160 MB JSONL session and UTF-8 across chunk boundaries', function () {
+  // LOW 2: Prove that a session >160 MB (which the old whole-file readText rejected) is streamed
+  // and indexed cleanly with bounded memory.
+  const ctx = ctxFor();
+  const dir = path.join(ctx.home, '.claude', 'projects', '-work-proj');
+  fs.mkdirSync(dir, { recursive: true });
+  const file = path.join(dir, 'over-160mb.jsonl');
+  const fd = fs.openSync(file, 'w');
+  try {
+    const firstLine =
+      JSON.stringify({
+        type: 'user',
+        timestamp: '2026-10-01T10:00:00.000Z',
+        cwd: '/work/large',
+        message: { role: 'user', content: 'Turn #0: ğüşıöçĞÜŞİÖÇ start of >160MB session' },
+      }) + '\n';
+    fs.writeSync(fd, Buffer.from(firstLine, 'utf8'));
+    // Write 161 MB of valid JSONL tool/progress lines (ignored by transcript parser) so the file
+    // genuinely exceeds the 160 MB MAX_FILE_BYTES limit while keeping test execution fast.
+    const fillerLine =
+      JSON.stringify({
+        type: 'progress',
+        data: 'ğüşıöçĞÜŞİÖÇ'.repeat(4000),
+      }) + '\n';
+    const fillerBuf = Buffer.from(fillerLine.repeat(180), 'utf8'); // ~16.5 MB per write
+    for (let i = 0; i < 10; i++) fs.writeSync(fd, fillerBuf);
+    const lastLine =
+      JSON.stringify({
+        type: 'assistant',
+        timestamp: '2026-10-01T10:05:00.000Z',
+        cwd: '/work/large',
+        message: { role: 'assistant', content: 'Turn #last: ğüşıöçĞÜŞİÖÇ end of >160MB session' },
+      }) + '\n';
+    fs.writeSync(fd, Buffer.from(lastLine, 'utf8'));
+  } finally {
+    fs.closeSync(fd);
+  }
+  try {
+    const size = fs.statSync(file).size;
+    assert.ok(size > 160 * 1024 * 1024, 'fixture must be >160 MB, got ' + size);
+    const conv = conversations.loadPath(ctx, file, {});
+    assert.strictEqual(conv.id, 'claude:local:over-160mb');
+    assert.strictEqual(conv.counts.messages, 2);
+    assert.match(conv.messages[0].text, /^Turn #0: ğüşıöçĞÜŞİÖÇ/);
+    assert.match(conv.messages[1].text, /^Turn #last: ğüşıöçĞÜŞİÖÇ/);
+  } finally {
+    fs.rmSync(file, { force: true });
+  }
 });
