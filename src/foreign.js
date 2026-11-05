@@ -148,6 +148,15 @@ function dedupe(a) {
 function asBuffer(input) {
   return Buffer.isBuffer(input) ? input : Buffer.from(String(input == null ? '' : input), 'utf8');
 }
+function eachLine(input, fn) {
+  if (typeof input === 'function') {
+    input(fn);
+    return;
+  }
+  String(input == null ? '' : input)
+    .split('\n')
+    .forEach(fn);
+}
 
 // Detect the source format from filename + a header sniff (works on a Buffer or string).
 function detect(filePath, input) {
@@ -213,32 +222,30 @@ function parseAider(text) {
       messages.push({ role: 'assistant', text: cur.text.trim(), tools: dedupe(cur.tools), ts: null });
     cur = null;
   };
-  String(text == null ? '' : text)
-    .split('\n')
-    .forEach(function (line) {
-      if (/^####\s/.test(line)) {
-        flush();
-        messages.push({ role: 'user', text: line.replace(/^####\s+/, '').trim(), tools: [], ts: null });
-        cur = { text: '', tools: [] };
-        return;
+  eachLine(text, function (line) {
+    if (/^####\s/.test(line)) {
+      flush();
+      messages.push({ role: 'user', text: line.replace(/^####\s+/, '').trim(), tools: [], ts: null });
+      cur = { text: '', tools: [] };
+      return;
+    }
+    if (/^#\s*aider chat started/i.test(line)) {
+      flush();
+      return;
+    }
+    if (/^>\s?/.test(line)) {
+      if (cur) {
+        const s = line.replace(/^>\s?/, '');
+        if (/^Applied edit/i.test(s)) cur.tools.push('edit');
+        else if (/^Commit/i.test(s)) cur.tools.push('commit');
+        else if (/^(Added|Removed)\b/i.test(s)) cur.tools.push('files');
+        else if (/^Running\b/i.test(s)) cur.tools.push('run');
       }
-      if (/^#\s*aider chat started/i.test(line)) {
-        flush();
-        return;
-      }
-      if (/^>\s?/.test(line)) {
-        if (cur) {
-          const s = line.replace(/^>\s?/, '');
-          if (/^Applied edit/i.test(s)) cur.tools.push('edit');
-          else if (/^Commit/i.test(s)) cur.tools.push('commit');
-          else if (/^(Added|Removed)\b/i.test(s)) cur.tools.push('files');
-          else if (/^Running\b/i.test(s)) cur.tools.push('run');
-        }
-        return;
-      }
-      if (!cur) cur = { text: '', tools: [] };
-      cur.text += (cur.text ? '\n' : '') + line;
-    });
+      return;
+    }
+    if (!cur) cur = { text: '', tools: [] };
+    cur.text += (cur.text ? '\n' : '') + line;
+  });
   flush();
   const msgs = messages.filter(function (m) {
     return m.text || m.tools.length;
@@ -262,59 +269,57 @@ function parseCommandCode(text) {
   const messages = [];
   let sessionId = null;
   let cwd = null;
-  String(text == null ? '' : text)
-    .split('\n')
-    .forEach(function (line) {
-      if (!line.trim()) return;
-      let rec;
-      try {
-        rec = JSON.parse(line);
-      } catch (e) {
-        return;
-      }
-      if (!rec || typeof rec !== 'object') return;
-      if (rec.type === 'session') {
-        if (rec.id) sessionId = String(rec.id);
-        if (!cwd && typeof rec.cwd === 'string' && rec.cwd.trim()) cwd = rec.cwd.trim();
-        return;
-      }
-      const msg = rec.type === 'message' && rec.message && typeof rec.message === 'object' ? rec.message : rec;
-      if (rec.sessionId) sessionId = String(rec.sessionId);
-      const role = msg.role;
-      const blocks = Array.isArray(msg.content) ? msg.content : [];
-      const ts = rec.timestamp || null;
-      const textOfBlocks = function (type) {
-        return blocks
+  eachLine(text, function (line) {
+    if (!line.trim()) return;
+    let rec;
+    try {
+      rec = JSON.parse(line);
+    } catch (e) {
+      return;
+    }
+    if (!rec || typeof rec !== 'object') return;
+    if (rec.type === 'session') {
+      if (rec.id) sessionId = String(rec.id);
+      if (!cwd && typeof rec.cwd === 'string' && rec.cwd.trim()) cwd = rec.cwd.trim();
+      return;
+    }
+    const msg = rec.type === 'message' && rec.message && typeof rec.message === 'object' ? rec.message : rec;
+    if (rec.sessionId) sessionId = String(rec.sessionId);
+    const role = msg.role;
+    const blocks = Array.isArray(msg.content) ? msg.content : [];
+    const ts = rec.timestamp || null;
+    const textOfBlocks = function (type) {
+      return blocks
+        .filter(function (b) {
+          return b && b.type === type && typeof b.text === 'string' && b.text.trim();
+        })
+        .map(function (b) {
+          return b.text.trim();
+        })
+        .join('\n')
+        .trim();
+    };
+    if (role === 'user') {
+      const t = textOfBlocks('text');
+      if (t) messages.push({ role: 'user', text: t, tools: [], ts: ts });
+      return;
+    }
+    if (role === 'assistant') {
+      const t = textOfBlocks('text');
+      const tools = dedupe(
+        blocks
           .filter(function (b) {
-            return b && b.type === type && typeof b.text === 'string' && b.text.trim();
+            return b && (b.type === 'tool-call' || b.type === 'tool_use');
           })
           .map(function (b) {
-            return b.text.trim();
+            return b.toolName || b.name || '';
           })
-          .join('\n')
-          .trim();
-      };
-      if (role === 'user') {
-        const t = textOfBlocks('text');
-        if (t) messages.push({ role: 'user', text: t, tools: [], ts: ts });
-        return;
-      }
-      if (role === 'assistant') {
-        const t = textOfBlocks('text');
-        const tools = dedupe(
-          blocks
-            .filter(function (b) {
-              return b && (b.type === 'tool-call' || b.type === 'tool_use');
-            })
-            .map(function (b) {
-              return b.toolName || b.name || '';
-            })
-            .filter(Boolean),
-        );
-        if (t || tools.length) messages.push({ role: 'assistant', text: t, tools: tools, ts: ts });
-      }
-      // role 'tool' / tool_result rows, thinking, images and compaction are payloads, not turns.
-    });
+          .filter(Boolean),
+      );
+      if (t || tools.length) messages.push({ role: 'assistant', text: t, tools: tools, ts: ts });
+    }
+    // role 'tool' / tool_result rows, thinking, images and compaction are payloads, not turns.
+  });
   const msgs = messages.filter(function (m) {
     return m.text || m.tools.length;
   });
@@ -459,7 +464,7 @@ function parseYaml(text) {
   return extractMessages(doc);
 }
 
-// Normalize a foreign session (Buffer or string) into the unified shape. Returns { tool, ... }.
+// Normalize a foreign session (Buffer, string, or line-reader function) into the unified shape. Returns { tool, ... }.
 // A SQLite DB in WAL mode keeps recent writes in a sibling `<db>-wal` file that this zero-dep reader
 // does NOT replay. If that file exists and is non-empty, the latest chats may be missing — surface a
 // warning so the user can quit the app (which checkpoints the WAL into the main DB) and re-run.
@@ -478,7 +483,35 @@ function walNote(filePath) {
   }
   return null;
 }
+function readHeadBuf(filePath, maxBytes) {
+  let fd = -1;
+  try {
+    fd = fs.openSync(filePath, 'r');
+    const buf = Buffer.allocUnsafe(maxBytes || 2048);
+    const n = fs.readSync(fd, buf, 0, buf.length, 0);
+    return buf.subarray(0, n);
+  } catch {
+    return Buffer.alloc(0);
+  } finally {
+    if (fd !== -1) {
+      try {
+        fs.closeSync(fd);
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+}
 function normalize(filePath, input) {
+  if (typeof input === 'function') {
+    const headBuf = filePath ? readHeadBuf(filePath, 2048) : Buffer.alloc(0);
+    const tool = detect(filePath, headBuf);
+    if (tool === 'jsonl') return Object.assign({ tool: 'jsonl' }, _transcript.parse(input));
+    if (tool === 'commandcode') return Object.assign({ tool: 'command-code' }, parseCommandCode(input));
+    if (tool === 'aider') return Object.assign({ tool: 'aider' }, parseAider(input));
+    // Whole-file formats (cursor SQLite, JSON, YAML) fall back to reading the file buffer.
+    input = filePath ? fs.readFileSync(filePath) : Buffer.alloc(0);
+  }
   const buf = asBuffer(input);
   const tool = detect(filePath, buf);
   if (tool === 'cursor') {

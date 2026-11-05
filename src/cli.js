@@ -7753,7 +7753,7 @@ const CONV_USAGE = [
   '       keyflip conv search "<query>" [--hybrid|--semantic|--lexical] [--per-conv N] [--limit N] [--since 7d] [--account <name>]',
   '       keyflip conv context "<query>" [--hybrid] [--budget 12000] [--expand 1]   RAG block for an LLM prompt',
   '       keyflip conv show <id|prefix|title> [--format md|html|json] [--out <file|dir>] [--no-redact]',
-  '       keyflip conv index [--embed] [--force] [--watch] [--interval N]  build/refresh the local retrieval index',
+  '       keyflip conv index [--embed] [--background] [--force] [--watch] [--interval N]  build/refresh the local retrieval index',
   '                                     --watch re-indexes every N minutes (default 30) so search stays current',
   '       keyflip conv index --schedule [--interval N]   keep it current unattended (launchd/cron); --unschedule removes it',
   '       keyflip conv export (--all | <id>) [--obsidian] --out <dir> [--format md|html|json] [--no-redact]',
@@ -7927,12 +7927,14 @@ async function convBuild(ctx, rest, embedDefault) {
   const ls = convInt(rest, '--limit-sources', null, 1, 100000);
   if (!ls.ok) throw new Error(ls.error);
   const embed = embedDefault != null ? embedDefault : rest.indexOf('--embed') !== -1;
+  const background = rest.indexOf('--background') !== -1 && rest.indexOf('--foreground') === -1;
   const t0 = Date.now();
   let lastPct = -1;
   const report = await _convindex.build(ctx, {
     apps: f.apps,
     limitSources: ls.value,
     embed: embed,
+    background: background,
     force: rest.indexOf('--force') !== -1,
     onProgress: function (p) {
       if (JSON_MODE) return;
@@ -7966,7 +7968,17 @@ function convReportText(ctx, r) {
     (s.chunks || 0) +
     ' chunks';
   line += '\n' + style.dim(parts.join(' · ') + ' · ' + fmtBytes(s.bytes || 0) + ' · ' + (r.ms / 1000).toFixed(1) + 's');
-  if (r.embedding) {
+  if (r.backgroundEmbed && (r.backgroundEmbed.started || r.backgroundEmbed.alreadyRunning)) {
+    line +=
+      '\n' +
+      style.dim(
+        'Vectors: regenerating incrementally in the background (pid ' +
+          r.backgroundEmbed.pid +
+          ' · ' +
+          (r.backgroundEmbed.model || 'bge-m3') +
+          ') — check progress with `keyflip conv status`.',
+      );
+  } else if (r.embedding) {
     line +=
       '\n' +
       (r.embedding.error
@@ -8098,7 +8110,7 @@ async function cmdConv(ctx, rest) {
         ' messages',
     );
     print('  ' + (s.chunks || 0) + ' chunks · ' + fmtBytes(s.bytes || 0));
-    if (st.embedding)
+    if (st.embedding) {
       print(
         '  embeddings: ' +
           st.vectorChunks +
@@ -8111,7 +8123,31 @@ async function cmdConv(ctx, rest) {
           ' @ ' +
           st.embedding.host,
       );
-    else print('  embeddings: none — `keyflip conv index --embed` turns on semantic/hybrid search');
+      if (st.staleVectorChunks) {
+        print(
+          '    ' +
+            style.dim(
+              st.staleVectorChunks +
+                ' chunk(s) on disk from previous model (' +
+                (st.staleModel || 'older space') +
+                ') awaiting incremental replacement',
+            ),
+        );
+      }
+      if (st.backgroundEmbed && st.backgroundEmbed.running) {
+        print(
+          '    ' +
+            style.dim(
+              'background re-embedding running (pid ' +
+                st.backgroundEmbed.pid +
+                (st.backgroundEmbed.total
+                  ? ' · ' + st.backgroundEmbed.done + '/' + st.backgroundEmbed.total + ' sources'
+                  : '') +
+                ')',
+            ),
+        );
+      }
+    } else print('  embeddings: none — `keyflip conv index --embed` turns on semantic/hybrid search');
     if (s.byApp) {
       print('  by app:');
       Object.keys(s.byApp)
@@ -8287,13 +8323,37 @@ async function cmdConv(ctx, rest) {
         return fail((e && e.message) || String(e));
       }
     } else if ((mode === 'semantic' || mode === 'hybrid') && !st.vectorChunks) {
-      if (mode === 'semantic')
-        return fail(
-          'no embeddings yet — run `keyflip conv index --embed` (local Ollama by default), or use --lexical.',
+      if (st.staleVectorChunks) {
+        const bg = _convindex.spawnBackgroundEmbed(ctx);
+        if (mode === 'semantic')
+          return fail(
+            'embedding model changed (' +
+              (st.staleModel || 'old') +
+              ' -> ' +
+              (st.embedding && st.embedding.model) +
+              ') — regenerating vectors in the background' +
+              (bg.pid ? ' (pid ' + bg.pid + ')' : '') +
+              '; use --hybrid or --lexical while migration runs.',
+          );
+        print(
+          style.warn('·') +
+            ' embedding model changed (' +
+            (st.staleModel || 'old') +
+            ' -> ' +
+            (st.embedding && st.embedding.model) +
+            ') — regenerating vectors in the background' +
+            (bg.pid ? ' (pid ' + bg.pid + ')' : '') +
+            '; hybrid ranks lexically until the first batch finishes.',
         );
-      print(
-        style.warn('·') + ' no embeddings yet — hybrid falls back to lexical (`keyflip conv index --embed` fixes it).',
-      );
+      } else {
+        if (mode === 'semantic')
+          return fail(
+            'no embeddings yet — run `keyflip conv index --embed` (local Ollama by default), or use --lexical.',
+          );
+        print(
+          style.warn('·') + ' no embeddings yet — hybrid falls back to lexical (`keyflip conv index --embed` fixes it).',
+        );
+      }
     }
     const qopts = {
       mode: mode,

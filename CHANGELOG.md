@@ -9,6 +9,65 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **CLI surface adapters for Grok CLI, Qwen Code, Kimi CLI, and Hermes Agent (`keyflip grok|qwen|kimi|hermes`) + 7 new surface/agent detections.**
+  New `src/clisurfaces.js` provides a unified capture, switch, status, backup, restore, and remove
+  adapter for four file-backed CLI coding agents: **Grok CLI** (`~/.grok/settings.json`), **Qwen
+  Code** (`~/.qwen/oauth_creds.json`), **Kimi CLI** (`~/.kimi/credentials.json`), and **Hermes
+  Agent** (`~/.hermes/auth.json`). Each capture stores the credential bundle at `0600` under
+  `~/.config/keyflip/surfaces/<surface>/<slug>/<bundleFile>` alongside a secret-free `meta.json`
+  (falling back to a one-way SHA-256 fingerprint `<surface>:<8-hex>` when the file holds only a raw
+  API key or token with no email/username). Every switch writes a rolling backup under
+  `.backups/` (newest 10 kept), auto-captures an unsaved outgoing login best-effort, writes the
+  target bytes atomically at `0600`, and verifies the live identity on read-back (rolling back on
+  mismatch). `status` warns when an exported environment variable (`XAI_API_KEY`/`GROK_API_KEY`,
+  `DASHSCOPE_API_KEY`/`QWEN_API_KEY`/`OPENAI_API_KEY`, `MOONSHOT_API_KEY`/`KIMI_API_KEY`,
+  `NOUS_API_KEY`/`OPENROUTER_API_KEY`/`ANTHROPIC_API_KEY`/`OPENAI_API_KEY`) would override the
+  on-disk credential file. `src/surface.js` and `src/agents.js` also detect **Factory Droid**
+  (`~/.factory`), **Sourcegraph Amp** (`~/.config/amp`), and **Kilo Code** (`~/.kilocode`) in
+  `keyflip surfaces` and `keyflip agents`. MCP adds read-only `keyflip_cli_surface` (inspect one
+  surface or all four) and confirm-gated `keyflip_cli_surface_capture`,
+  `keyflip_cli_surface_switch`, and `keyflip_cli_surface_remove`.
+
+- **HarnessRouter preset in the provider catalog (`keyflip provider catalog`, `provider add harnessrouter`).**
+  `src/catalog.json` now ships a built-in `harnessrouter` preset (**HarnessRouter — Unified Harness
+  Protocol / UHP**, category `aggregator`, `http://localhost:3000/api/harness/v1`, `compat: "openai"`,
+  `authScheme: "bearer"`, default model `gpt-5.3-codex`) so local UHP gateways can be registered
+  with `keyflip provider add harnessrouter --key-file -`.
+
+- **Copy-pasteable isolated CLI launch commands (`keyflip launch-cmd`, MCP `keyflip_launch_cmd`).**
+  `session.launchCommand()` and `keyflip launch-cmd <name|number> [--surface claude|codex|grok|qwen|kimi|hermes|command-code] [--shell posix|powershell] [--prepare]`
+  emit a ready-to-run POSIX (`unset …; <ENV>='…' <bin>`) or PowerShell (`Remove-Item Env:…; $env:<ENV>='…'; <bin>`)
+  one-liner that points the target CLI at its isolated profile directory (`CLAUDE_CONFIG_DIR`,
+  `CODEX_HOME`, `GROK_HOME`, `QWEN_HOME`, `KIMI_HOME`, `HERMES_HOME`, `COMMAND_CODE_HOME`) and
+  explicitly unsets ambient API-key override variables without mutating the live terminal login.
+  `--prepare` materializes the Claude session directory and shared symlinks ahead of launch.
+
+- **Profile `enable` / `disable`, duplicate-account detection, and non-secret tombstones.**
+  `keyflip disable <name|number>` pauses a saved Claude account (`enabled: false` in `<name>.json`)
+  so automatic rotation (`keyflip next`, `autoswitch`, and the failover `proxy`) skips it without
+  deleting its credentials; `keyflip enable <name|number>` puts it back in rotation (MCP:
+  confirm-gated `keyflip_enable` and `keyflip_disable`). `profiles.duplicateOf()` detects when
+  multiple saved profiles resolve to the same `accountUuid` or `email` and flags the duplicate in
+  `keyflip list`, `keyflip panel`, and MCP account payloads (`duplicateOf`). Removing a profile
+  (`keyflip remove`) now records a secret-free tombstone in `.tombstones.json` (`name`, `email`,
+  `accountUuid`, `tier`, `removedAt`, capped at 100) so re-adding the same account restores its
+  pinned tier and preserves historical session attribution.
+
+- **Model-scoped quota tracking (`sevenDayOpus`, `sevenDaySonnet`), transient `lastGood` caching, model-scoped proxy cooldowns, and `autoswitch` return-to-primary.**
+  `src/usage.js` now parses `seven_day_opus` (`sevenDayOpus`) and `seven_day_sonnet`
+  (`sevenDaySonnet`) utilization windows alongside `five_hour` and `seven_day`, computes
+  model-specific headroom via `headroomForModel(usage, model)` and exhausted scopes via
+  `limitedScopes(usage)` (`5h`, `7d`, `opus`, `sonnet`), and preserves `lastGood` in
+  `usage-cache.json` across transient usage-endpoint `429` (`throttled`) or network errors.
+  `keyflip list --usage`, `keyflip panel` (live + static snapshot), `keyflip next --strategy best|next-available --model <m>`,
+  and MCP account payloads surface the per-model windows and `limitedScopes`. In `src/breaker.js`
+  and `src/proxy.js`, upstream model-scoped 429s (`model_unavailable`) park only the affected model
+  family (`markModelCooldown` / `modelCooldownOf` for `opus`, `sonnet`, `haiku`) so the account
+  remains routable for other models and automatically steps down `modelChain` on the same account
+  when configured. In `src/autoswitch.js`, failing over records the original primary account in
+  `autoswitch-state.json` and automatically switches back (`autoswitch-return`) once the primary
+  recovers to at least `min(95, (100 - threshold) + 10)%` headroom (`--no-switch-back` opts out).
+
 - **Windows Chromium & Electron cookie decryption for `keyflip chat` and `keyflip browser` (#110).**
   Wires `src/wincrypt.js` (DPAPI `Local State` master-key unprotect + `v10`/`v11` AES-256-GCM cookie
   decryption, including Chromium 130+ 32-byte `SHA-256(host_key)` prefix stripping without
@@ -19,6 +78,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with actionable guidance.
 
 ### Fixed
+
+- **Streaming JSONL conversation indexing (>160 MB) and multilingual `bge-m3` embeddings with incremental background migration.**
+  `src/conversations.js`, `src/transcript.js`, and `src/foreign.js` now stream uncompressed line-based
+  transcripts (Claude Code, Codex rollouts, Kiro CLI/IDE, Gemini JSONL, Command Code, Aider) in 1 MB
+  chunks via `forEachLine()` + `StringDecoder('utf8')` (up to 2 GB per source, 32 MB per line) instead
+  of rejecting transcripts over 160 MB with `source is larger than 160 MB`. `src/embed.js` switches the
+  default local Ollama model from English-centric `nomic-embed-text` to multilingual `bge-m3` (1024d;
+  TR Semantic MRR `0.578 -> 0.875` on 16 TR/EN verbatim+paraphrase queries and `0.786 -> 1.000` on core
+  Turkish queries). `convindex.search()` now defaults to `hybrid` to match the CLI and MCP tools, and
+  when the active embedding model changes, `convindex.build()` / `spawnBackgroundEmbed()` regenerate
+  vectors newest-first, checkpointing `meta.json` every 10 sources (or 15s) and supporting detached
+  background migration (`keyflip conv index --embed --background`).
 
 - **Managed third-party surface accounts no longer trigger false `orphan-capture` warnings in `keyflip chains`.**
   Accounts captured under `surfaces/codex/<slug>/`, `surfaces/kiro/<slug>/`, and

@@ -22,13 +22,17 @@ import os from 'os';
 import path from 'path';
 import crypto from 'crypto';
 import zlib from 'zlib';
+import { StringDecoder } from 'string_decoder';
 import { run } from './exec.js';
 import * as transcript from './transcript.js';
 import * as foreign from './foreign.js';
 import * as cursor from './cursor.js';
 
 const SCHEMA_VERSION = 1;
-const MAX_FILE_BYTES = 160 * 1024 * 1024; // on-disk cap per source (rollouts reach ~140 MB)
+const MAX_FILE_BYTES = 160 * 1024 * 1024; // whole-file string/decompression cap
+const MAX_STREAM_BYTES = 2 * 1024 * 1024 * 1024; // streaming JSONL safety cap (2 GB)
+const STREAM_CHUNK_BYTES = 1024 * 1024; // 1 MB read buffer for streaming JSONL
+const MAX_LINE_CHARS = 32 * 1024 * 1024; // guard against a single multi-hundred-MB line without newlines
 const MAX_TEXT_BYTES = 256 * 1024 * 1024; // decompressed cap (zstd bomb guard)
 const MAX_MESSAGE_CHARS = 200000;
 const MAX_MESSAGES = 20000;
@@ -131,6 +135,91 @@ function readText(file) {
   }
   if (buf.length > MAX_TEXT_BYTES) throw new Error('source expands beyond the safety cap');
   return buf.toString('utf8');
+}
+
+// Stream an uncompressed text/JSONL file line-by-line in 1 MB chunks. Long-running Claude Code
+// and Kiro IDE sessions routinely exceed 160 MB (where reading the whole file into a single V8
+// string either trips MAX_FILE_BYTES or approaches V8's string length limit); chunked reading
+// keeps memory flat while producing the exact same line sequence as `.split('\n')`.
+function forEachLine(file, onLine) {
+  const st = fs.statSync(file);
+  if (!st.isFile()) throw new Error('not a file');
+  if (st.size > MAX_STREAM_BYTES)
+    throw new Error('source is larger than ' + Math.round(MAX_STREAM_BYTES / 1048576) + ' MB');
+  const fd = fs.openSync(file, 'r');
+  const buf = Buffer.allocUnsafe(Math.min(STREAM_CHUNK_BYTES, Math.max(4096, st.size || STREAM_CHUNK_BYTES)));
+  const dec = new StringDecoder('utf8');
+  let rem = '';
+  let overflow = false;
+  try {
+    let n;
+    while ((n = fs.readSync(fd, buf, 0, buf.length, null)) > 0) {
+      const chunk = dec.write(buf.subarray(0, n));
+      let nl = chunk.indexOf('\n');
+      if (nl === -1) {
+        if (!overflow) {
+          if (rem.length + chunk.length > MAX_LINE_CHARS) {
+            rem = '';
+            overflow = true;
+          } else {
+            rem += chunk;
+          }
+        }
+        continue;
+      }
+      if (!overflow) {
+        const first = rem + chunk.slice(0, nl);
+        if (first.length <= MAX_LINE_CHARS) onLine(first);
+      }
+      rem = '';
+      overflow = false;
+      let start = nl + 1;
+      while ((nl = chunk.indexOf('\n', start)) !== -1) {
+        const line = chunk.slice(start, nl);
+        if (line.length <= MAX_LINE_CHARS) onLine(line);
+        start = nl + 1;
+      }
+      rem = chunk.slice(start);
+      if (rem.length > MAX_LINE_CHARS) {
+        rem = '';
+        overflow = true;
+      }
+    }
+    const tail = dec.end();
+    if (tail && !overflow) {
+      if (rem.length + tail.length > MAX_LINE_CHARS) {
+        rem = '';
+        overflow = true;
+      } else {
+        rem += tail;
+      }
+    }
+    if (!overflow && rem) onLine(rem);
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+function eachLineOf(input, onLine) {
+  if (typeof input === 'function') {
+    input(onLine);
+    return;
+  }
+  String(input == null ? '' : input)
+    .split('\n')
+    .forEach(onLine);
+}
+
+// Return a line-reader function for uncompressed sources, or a decompressed string for `.zst`.
+function readSourceInput(file) {
+  if (/\.zst$/i.test(file)) return readText(file);
+  const st = fs.statSync(file);
+  if (!st.isFile()) throw new Error('not a file');
+  if (st.size > MAX_STREAM_BYTES)
+    throw new Error('source is larger than ' + Math.round(MAX_STREAM_BYTES / 1048576) + ' MB');
+  return function (onLine) {
+    forEachLine(file, onLine);
+  };
 }
 
 // User turns wrapped by the host app carry environment/instructions, not conversation.
@@ -264,20 +353,18 @@ function codexTitles(ctx) {
   if (codexTitleCache.file === file && codexTitleCache.mtimeMs === st.mtimeMs) return codexTitleCache.map;
   const map = Object.create(null);
   try {
-    fs.readFileSync(file, 'utf8')
-      .split('\n')
-      .forEach((line) => {
-        if (!line.trim()) return;
-        try {
-          const j = JSON.parse(line);
-          if (j && typeof j.id === 'string' && typeof j.thread_name === 'string' && j.thread_name.trim()) {
-            // Newest record wins; the index is append-only and rewrites titles in place.
-            map[j.id] = j.thread_name.trim();
-          }
-        } catch {
-          /* ignore a torn line */
+    forEachLine(file, (line) => {
+      if (!line.trim()) return;
+      try {
+        const j = JSON.parse(line);
+        if (j && typeof j.id === 'string' && typeof j.thread_name === 'string' && j.thread_name.trim()) {
+          // Newest record wins; the index is append-only and rewrites titles in place.
+          map[j.id] = j.thread_name.trim();
         }
-      });
+      } catch {
+        /* ignore a torn line */
+      }
+    });
   } catch {
     return Object.create(null);
   }
@@ -333,33 +420,31 @@ function parseCodexRollout(text, src, opts) {
   const metas = [];
   const messages = [];
   let lastTs = null;
-  const lines = String(text || '').split('\n');
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    if (!line.trim()) continue;
+  eachLineOf(text, (line) => {
+    if (!line.trim()) return;
     let j;
     try {
       j = JSON.parse(line);
     } catch {
-      continue;
+      return;
     }
     if (j.type === 'session_meta' && j.payload && typeof j.payload === 'object') {
       metas.push(j.payload);
       if (j.timestamp) lastTs = j.timestamp;
-      continue;
+      return;
     }
-    if (j.type !== 'response_item' || !j.payload || j.payload.type !== 'message') continue;
+    if (j.type !== 'response_item' || !j.payload || j.payload.type !== 'message') return;
     const role = j.payload.role;
-    if (role !== 'user' && role !== 'assistant') continue;
+    if (role !== 'user' && role !== 'assistant') return;
     const raw = codexContentText(j.payload.content);
-    if (!raw || isInjected(raw)) continue;
+    if (!raw || isInjected(raw)) return;
     const body = cleanMessage(raw);
-    if (!body) continue;
+    if (!body) return;
     const prev = messages[messages.length - 1];
-    if (prev && prev.role === role && prev.text === body) continue; // app + event stream echo
+    if (prev && prev.role === role && prev.text === body) return; // app + event stream echo
     messages.push({ role: role, text: body, ts: j.timestamp || null, tools: [] });
     if (j.timestamp) lastTs = j.timestamp;
-  }
+  });
   // Resumed/forked threads log `session_id` = the PARENT thread while `id` is this rollout's
   // own thread. Preferring session_id collapsed dozens of distinct rollouts into one index
   // entry (their chunk files overwrote each other). Titles still come from the parent thread.
@@ -408,32 +493,30 @@ function kiroBlocksText(content) {
 function parseKiroCli(text, src, opts) {
   const meta = kiroSiblingMeta(src.path) || {};
   const messages = [];
-  String(text || '')
-    .split('\n')
-    .forEach((line) => {
-      if (!line.trim()) return;
-      let j;
-      try {
-        j = JSON.parse(line);
-      } catch {
-        return;
-      }
-      const d = j && j.data;
-      if (!d) return;
-      if (j.kind === 'Prompt') {
-        const body = cleanMessage(kiroBlocksText(d.content));
-        if (body && !isInjected(body)) messages.push({ role: 'user', text: body, ts: d.timestamp || null, tools: [] });
-        return;
-      }
-      if (j.kind === 'AssistantMessage') {
-        const body = cleanMessage(kiroBlocksText(d.content));
-        if (!body) return;
-        const tools = Array.isArray(d.content)
-          ? d.content.filter((b) => b && b.kind === 'toolUse').map((b) => (b.data && b.data.name) || 'tool')
-          : [];
-        messages.push({ role: 'assistant', text: body, ts: d.timestamp || null, tools: tools });
-      }
-    });
+  eachLineOf(text, (line) => {
+    if (!line.trim()) return;
+    let j;
+    try {
+      j = JSON.parse(line);
+    } catch {
+      return;
+    }
+    const d = j && j.data;
+    if (!d) return;
+    if (j.kind === 'Prompt') {
+      const body = cleanMessage(kiroBlocksText(d.content));
+      if (body && !isInjected(body)) messages.push({ role: 'user', text: body, ts: d.timestamp || null, tools: [] });
+      return;
+    }
+    if (j.kind === 'AssistantMessage') {
+      const body = cleanMessage(kiroBlocksText(d.content));
+      if (!body) return;
+      const tools = Array.isArray(d.content)
+        ? d.content.filter((b) => b && b.kind === 'toolUse').map((b) => (b.data && b.data.name) || 'tool')
+        : [];
+      messages.push({ role: 'assistant', text: body, ts: d.timestamp || null, tools: tools });
+    }
+  });
   const conv = makeConv({
     id: 'kiro:cli:' + (meta.session_id || src.idHint),
     app: 'kiro',
@@ -452,30 +535,28 @@ function parseKiroCli(text, src, opts) {
 
 function parseKiroIde(text, src, opts) {
   const messages = [];
-  String(text || '')
-    .split('\n')
-    .forEach((line) => {
-      if (!line.trim()) return;
-      let j;
-      try {
-        j = JSON.parse(line);
-      } catch {
-        return;
-      }
-      const p = j && j.payload;
-      if (!p) return;
-      if (p.type === 'user') {
-        const body = cleanMessage(p.content);
-        if (body && !isInjected(body)) messages.push({ role: 'user', text: body, ts: j.timestamp || null, tools: [] });
-        return;
-      }
-      if (p.type === 'assistant') {
-        // Reasoning traces are the agent's scratchpad, not the conversation.
-        if (p.operationType === 'Reasoning') return;
-        const body = cleanMessage(p.content);
-        if (body) messages.push({ role: 'assistant', text: body, ts: j.timestamp || null, tools: [] });
-      }
-    });
+  eachLineOf(text, (line) => {
+    if (!line.trim()) return;
+    let j;
+    try {
+      j = JSON.parse(line);
+    } catch {
+      return;
+    }
+    const p = j && j.payload;
+    if (!p) return;
+    if (p.type === 'user') {
+      const body = cleanMessage(p.content);
+      if (body && !isInjected(body)) messages.push({ role: 'user', text: body, ts: j.timestamp || null, tools: [] });
+      return;
+    }
+    if (p.type === 'assistant') {
+      // Reasoning traces are the agent's scratchpad, not the conversation.
+      if (p.operationType === 'Reasoning') return;
+      const body = cleanMessage(p.content);
+      if (body) messages.push({ role: 'assistant', text: body, ts: j.timestamp || null, tools: [] });
+    }
+  });
   const meta = src.meta || {};
   const conv = makeConv({
     id: 'kiro:ide:' + (meta.id || src.idHint),
@@ -529,26 +610,24 @@ function stripGeminiPrompt(text) {
 function parseGeminiTranscript(text, src, opts) {
   const messages = [];
   let lastTs = null;
-  String(text || '')
-    .split('\n')
-    .forEach((line) => {
-      if (!line.trim()) return;
-      let j;
-      try {
-        j = JSON.parse(line);
-      } catch {
-        return;
-      }
-      if (!j || typeof j.type !== 'string') return;
-      const body = cleanMessage(stripGeminiPrompt(geminiText(j.content)));
-      if (!body || isInjected(body)) return;
-      let role = null;
-      if (j.type === 'USER_INPUT') role = 'user';
-      else if (/RESPONSE|ASSISTANT|MODEL_OUTPUT/i.test(j.type)) role = 'assistant';
-      if (!role) return;
-      messages.push({ role: role, text: body, ts: j.created_at || j.timestamp || null, tools: [] });
-      if (j.created_at || j.timestamp) lastTs = j.created_at || j.timestamp;
-    });
+  eachLineOf(text, (line) => {
+    if (!line.trim()) return;
+    let j;
+    try {
+      j = JSON.parse(line);
+    } catch {
+      return;
+    }
+    if (!j || typeof j.type !== 'string') return;
+    const body = cleanMessage(stripGeminiPrompt(geminiText(j.content)));
+    if (!body || isInjected(body)) return;
+    let role = null;
+    if (j.type === 'USER_INPUT') role = 'user';
+    else if (/RESPONSE|ASSISTANT|MODEL_OUTPUT/i.test(j.type)) role = 'assistant';
+    if (!role) return;
+    messages.push({ role: role, text: body, ts: j.created_at || j.timestamp || null, tools: [] });
+    if (j.created_at || j.timestamp) lastTs = j.created_at || j.timestamp;
+  });
   const conv = makeConv({
     id: 'gemini:' + (src.idHint || geminiSessionId(src.path)),
     app: 'gemini',
@@ -891,14 +970,23 @@ function load(ctx, src, opts) {
   // state. The adapter opens them itself, for every one of its three kinds.
   if (src.kind === 'cursor-composer' || src.kind === 'cursor-agent' || src.kind === 'cursor-transcript')
     return parseCursorChat(ctx, src, opts);
-  const text = readText(src.path);
-  if (src.kind === 'claude-local') return parseClaudeLocal(text, src, opts);
+  // Stream uncompressed line-based sources (.jsonl, Aider .md) so sessions >160 MB (e.g. long
+  // Claude Code or Kiro IDE transcripts) parse cleanly without hitting V8's string limit.
+  const canStream =
+    src.kind === 'claude-local' ||
+    src.kind === 'codex-rollout' ||
+    src.kind === 'kiro-cli' ||
+    src.kind === 'kiro-ide' ||
+    src.kind === 'gemini-transcript' ||
+    (src.kind === 'foreign' && /\.(jsonl|md)$/i.test(src.path));
+  const input = canStream ? readSourceInput(src.path) : readText(src.path);
+  if (src.kind === 'claude-local') return parseClaudeLocal(input, src, opts);
   if (src.kind === 'codex-rollout')
-    return parseCodexRollout(text, src, Object.assign({}, opts, { titles: opts.titles || codexTitles(ctx) }));
-  if (src.kind === 'kiro-cli') return parseKiroCli(text, src, opts);
-  if (src.kind === 'kiro-ide') return parseKiroIde(text, src, opts);
-  if (src.kind === 'gemini-transcript') return parseGeminiTranscript(text, src, opts);
-  return parseForeignSource(text, src, opts);
+    return parseCodexRollout(input, src, Object.assign({}, opts, { titles: opts.titles || codexTitles(ctx) }));
+  if (src.kind === 'kiro-cli') return parseKiroCli(input, src, opts);
+  if (src.kind === 'kiro-ide') return parseKiroIde(input, src, opts);
+  if (src.kind === 'gemini-transcript') return parseGeminiTranscript(input, src, opts);
+  return parseForeignSource(input, src, opts);
 }
 
 // Metadata for every source. Parsing is required for honest titles/counts; callers
@@ -999,6 +1087,7 @@ function toParsed(conv) {
 export {
   SCHEMA_VERSION,
   MAX_FILE_BYTES,
+  MAX_STREAM_BYTES,
   MAX_MESSAGE_CHARS,
   discover,
   load,
@@ -1014,6 +1103,7 @@ export {
   codexRoot,
   kiroRoot,
   readText,
+  forEachLine,
   isInjected,
   makeConv,
 };

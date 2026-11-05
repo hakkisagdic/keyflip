@@ -2,40 +2,37 @@
 // document — markdown or a self-contained HTML chat view — for offline review, archiving, or
 // sharing. Zero-dep; tool noise is summarized ("used Read, Bash"), not dumped.
 
-// Parse a transcript's JSONL into { messages: [{role, text, tools, ts}], cwd, counts }.
-function parse(jsonl) {
-  const messages = [];
-  let cwd = null;
-  String(jsonl == null ? '' : jsonl)
-    .split('\n')
-    .forEach(function (line) {
-      if (!line.trim()) return;
-      let j;
-      try {
-        j = JSON.parse(line);
-      } catch (e) {
-        return;
-      }
-      if (!cwd && typeof j.cwd === 'string') cwd = j.cwd;
-      const m = j.message;
-      if (!m || (j.type !== 'user' && j.type !== 'assistant')) return;
-      const role = m.role || j.type;
-      const c = m.content;
-      let text = '';
-      const tools = [];
-      if (typeof c === 'string') {
-        text = c;
-      } else if (Array.isArray(c)) {
-        c.forEach(function (b) {
-          if (!b || typeof b !== 'object') return;
-          if (b.type === 'text' && b.text) text += (text ? '\n' : '') + b.text;
-          else if (b.type === 'tool_use' && b.name) tools.push(b.name);
-        });
-      }
-      text = text.trim();
-      if (!text && !tools.length) return; // pure tool-result turns are noise — skip
-      messages.push({ role: role, text: text, tools: tools, ts: typeof j.timestamp === 'string' ? j.timestamp : null });
+function feedLine(line, state) {
+  if (!line.trim()) return;
+  let j;
+  try {
+    j = JSON.parse(line);
+  } catch (e) {
+    return;
+  }
+  if (!state.cwd && typeof j.cwd === 'string') state.cwd = j.cwd;
+  const m = j.message;
+  if (!m || (j.type !== 'user' && j.type !== 'assistant')) return;
+  const role = m.role || j.type;
+  const c = m.content;
+  let text = '';
+  const tools = [];
+  if (typeof c === 'string') {
+    text = c;
+  } else if (Array.isArray(c)) {
+    c.forEach(function (b) {
+      if (!b || typeof b !== 'object') return;
+      if (b.type === 'text' && b.text) text += (text ? '\n' : '') + b.text;
+      else if (b.type === 'tool_use' && b.name) tools.push(b.name);
     });
+  }
+  text = text.trim();
+  if (!text && !tools.length) return; // pure tool-result turns are noise — skip
+  state.messages.push({ role: role, text: text, tools: tools, ts: typeof j.timestamp === 'string' ? j.timestamp : null });
+}
+
+function finishParse(state) {
+  const messages = state.messages;
   const counts = {
     messages: messages.length,
     user: messages.filter(function (m) {
@@ -45,7 +42,26 @@ function parse(jsonl) {
       return m.role === 'assistant';
     }).length,
   };
-  return { messages: messages, cwd: cwd, counts: counts };
+  return { messages: messages, cwd: state.cwd, counts: counts };
+}
+
+// Parse a transcript's JSONL into { messages: [{role, text, tools, ts}], cwd, counts }.
+// Accepts either a string/Buffer or a streaming line reader `function (onLine)` so 180 MB+
+// sessions can be parsed line-by-line without allocating a whole-file string.
+function parse(jsonl) {
+  const state = { messages: [], cwd: null };
+  if (typeof jsonl === 'function') {
+    jsonl(function (line) {
+      feedLine(line, state);
+    });
+    return finishParse(state);
+  }
+  String(jsonl == null ? '' : jsonl)
+    .split('\n')
+    .forEach(function (line) {
+      feedLine(line, state);
+    });
+  return finishParse(state);
 }
 
 // Untrusted role (a foreign JSONL sets it verbatim) — clamp unknown roles to a sanitized label
