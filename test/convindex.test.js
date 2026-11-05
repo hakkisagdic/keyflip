@@ -1512,3 +1512,118 @@ test('full build removes stale old-id rows when a transcript re-parses under a n
   );
   assert.strictEqual(after.stats.sources, 1, 'stats.sources must count the conversation once, not twice');
 });
+
+test('withMetaLock never steals a meta.lock held by a live process even when its initial timestamp is older than 30s, and stages chunk/token files to temp paths before acquiring meta.lock', async function () {
+  // Round 5 MEDIUM 1:
+  // 1) A meta.lock held by a LIVE process whose initial timestamp is > 30s old must NOT be reclaimed
+  //    as stale while its holder PID is still alive (only dead PIDs or a PID-reuse age > 2h may be reclaimed).
+  // 2) New chunk and token files must be staged to temporary paths before taking meta.lock so the
+  //    critical section inside meta.lock only performs fast renames/deletes + meta.json merge.
+  const ctx = ctxFor();
+  writeClaude(ctx, 'live-lock-chat', [
+    {
+      type: 'user',
+      timestamp: '2026-10-01T10:00:00Z',
+      message: { role: 'user', content: 'Initial chat before live lock test.' },
+    },
+  ]);
+  await convindex.build(ctx, {});
+
+  const sentinelMeta = readManifest(ctx);
+  sentinelMeta.heldByLiveBuilderOver30s = true;
+  fs.writeFileSync(convindex.metaPath(ctx), JSON.stringify(sentinelMeta, null, 2));
+
+  // Simulate a live builder (holderPid) whose meta.lock was acquired 45 seconds ago (> 30s META_LOCK_STALE_MS):
+  const metaLockFile = path.join(ctx.configDir, 'conv-index', 'meta.lock');
+  const holderPid = process.ppid && process.ppid !== process.pid ? process.ppid : process.pid;
+  const lockPayload =
+    JSON.stringify({
+      pid: holderPid,
+      at: Date.now() - 45 * 1000,
+      updatedAt: Date.now() - 45 * 1000,
+      token: 'live-holder-45s',
+    }) + '\n';
+  fs.writeFileSync(metaLockFile, lockPayload);
+
+  try {
+    writeClaude(ctx, 'live-lock-chat-2', [
+      {
+        type: 'user',
+        timestamp: '2026-10-02T10:00:00Z',
+        message: { role: 'user', content: 'Second chat while 45s live lock is held.' },
+      },
+    ]);
+    const r = await convindex.build(ctx, { metaLockTimeoutMs: 60 });
+    assert.strictEqual(
+      r.ok,
+      false,
+      'build must NOT steal a meta.lock held by a live process just because it is 45s old (> 30s)',
+    );
+    assert.strictEqual(
+      fs.readFileSync(metaLockFile, 'utf8'),
+      lockPayload,
+      'the live holder meta.lock file must remain untouched',
+    );
+    assert.strictEqual(
+      readManifest(ctx).heldByLiveBuilderOver30s,
+      true,
+      'meta.json must not be overwritten while the live holder still owns meta.lock',
+    );
+    // And any temporary staged files created before meta.lock acquisition must be cleaned up on abort:
+    const chunkFiles = fs.readdirSync(path.join(ctx.configDir, 'conv-index', 'chunks'));
+    assert.strictEqual(
+      chunkFiles.some((f) => f.includes('.tmp-') || f.includes('.stage-')),
+      false,
+      'no leftover staged temp chunk files after failed meta.lock acquisition',
+    );
+  } finally {
+    fs.rmSync(metaLockFile, { force: true });
+  }
+});
+
+test('a source that shrinks to zero messages removes its row and deletes its orphaned chunk, vector, and token files', async function () {
+  // Round 5 LOW 2:
+  // When a previously indexed conversation is truncated/emptied so it parses to 0 messages,
+  // the empty-source branch in build() must also queue its id in pendingDeletes so its chunk,
+  // vector, and token files are removed from disk instead of leaking as orphans.
+  const ctx = ctxFor();
+  const file = writeClaude(ctx, 'emptied-chat', [
+    {
+      type: 'user',
+      timestamp: '2026-10-01T10:00:00Z',
+      message: { role: 'user', content: 'Conversation that will become empty.' },
+    },
+  ]);
+  await convindex.build(ctx, { embed: true, model: 'bge-m3', post: stubPost({ dim: 8 }) });
+
+  const id = 'claude:local:emptied-chat';
+  assert.strictEqual(fs.existsSync(convindex.chunkPath(ctx, id)), true);
+  assert.strictEqual(fs.existsSync(convindex.vectorPath(ctx, id)), true);
+  assert.strictEqual(fs.existsSync(convindex.tokenPath(ctx, id)), true);
+
+  // Overwrite the transcript file so it still exists on disk but has 0 user/assistant messages:
+  fs.writeFileSync(file, JSON.stringify({ type: 'summary', summary: 'no messages' }) + '\n');
+  const future = new Date(Date.now() + 60000);
+  fs.utimesSync(file, future, future);
+
+  const r = await convindex.build(ctx, {});
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(r.empty, 1);
+  assert.strictEqual(r.removed, 1);
+  assert.strictEqual(readManifest(ctx).sources[id], undefined, 'row is removed from meta.json');
+  assert.strictEqual(
+    fs.existsSync(convindex.chunkPath(ctx, id)),
+    false,
+    'orphaned chunk file for emptied source must be deleted',
+  );
+  assert.strictEqual(
+    fs.existsSync(convindex.vectorPath(ctx, id)),
+    false,
+    'orphaned vector file for emptied source must be deleted',
+  );
+  assert.strictEqual(
+    fs.existsSync(convindex.tokenPath(ctx, id)),
+    false,
+    'orphaned token file for emptied source must be deleted',
+  );
+});

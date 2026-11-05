@@ -179,12 +179,26 @@ function withMetaLock(ctx, opts, fn) {
     /* best-effort */
   }
   const token = makeLockToken();
+  const startedMs = Date.now();
+  function refreshMetaLock() {
+    try {
+      const now = Date.now();
+      _fsutil.atomicWrite(
+        file,
+        JSON.stringify({ pid: process.pid, at: startedMs, updatedAt: now, token: token }) + '\n',
+        0o600,
+      );
+    } catch {
+      /* best-effort */
+    }
+  }
   let acquired = false;
   while (true) {
     let fd = null;
     try {
       fd = fs.openSync(file, 'wx', 0o600);
-      fs.writeFileSync(fd, JSON.stringify({ pid: process.pid, at: Date.now(), token: token }) + '\n', 'utf8');
+      const now = Date.now();
+      fs.writeFileSync(fd, JSON.stringify({ pid: process.pid, at: now, updatedAt: now, token: token }) + '\n', 'utf8');
       fs.closeSync(fd);
       fd = null;
       acquired = true;
@@ -214,8 +228,10 @@ function withMetaLock(ctx, opts, fn) {
           cur = null;
         }
         const dead = !cur || !cur.pid || !pidAlive(cur.pid);
-        const stale = cur && Date.now() - Number(cur.at || 0) > META_LOCK_STALE_MS;
-        if (dead || stale) {
+        const beat = cur ? Number(cur.updatedAt || cur.at || 0) : 0;
+        // Never steal a lock held by a live PID unless its heartbeat is hours old (PID reuse).
+        const pidReusedOrAbandoned = cur && beat > 0 && Date.now() - beat > EMBED_LOCK_STALE_MS;
+        if (dead || pidReusedOrAbandoned) {
           reclaimLockFile(file, rawText);
           continue;
         }
@@ -233,7 +249,7 @@ function withMetaLock(ctx, opts, fn) {
   // deadline, skip the write rather than risking a lockless overwrite of meta.json.
   if (!acquired) return { acquired: false, skipped: true };
   try {
-    return { acquired: true, value: fn() };
+    return { acquired: true, value: fn(refreshMetaLock) };
   } finally {
     let rawText = null;
     try {
@@ -279,8 +295,8 @@ function writeMeta(ctx, meta, opts) {
   opts = opts || {};
   const removedIds = opts.removedIds instanceof Set ? opts.removedIds : null;
   const baseline = opts.baseline instanceof Map ? opts.baseline : null;
-  const lockRes = withMetaLock(ctx, { timeoutMs: opts.metaLockTimeoutMs }, function () {
-    if (typeof opts.beforeMerge === 'function') opts.beforeMerge();
+  const lockRes = withMetaLock(ctx, { timeoutMs: opts.metaLockTimeoutMs }, function (refreshMetaLock) {
+    if (typeof opts.beforeMerge === 'function') opts.beforeMerge(refreshMetaLock);
     const onDisk = readMeta(ctx);
     if (onDisk && onDisk.sources && meta && meta.sources) {
       if (opts.checkpoint === true) {
@@ -725,7 +741,7 @@ function tokensForChunk(text) {
   return { len: toks.length, tf: tf };
 }
 
-function writeTokens(ctx, id, chunks) {
+function encodeTokensBuffer(chunks) {
   const parts = [];
   for (const c of chunks) {
     const { len, tf } = tokensForChunk(c.text);
@@ -740,7 +756,11 @@ function writeTokens(ctx, id, chunks) {
     }
     parts.push(buf);
   }
-  _fsutil.atomicWrite(tokenPath(ctx, id), Buffer.concat(parts), 0o600);
+  return Buffer.concat(parts);
+}
+
+function writeTokens(ctx, id, chunks) {
+  _fsutil.atomicWrite(tokenPath(ctx, id), encodeTokensBuffer(chunks), 0o600);
 }
 
 function dropTokens(ctx, id) {
@@ -1043,6 +1063,7 @@ async function build(ctx, opts) {
         report.empty++;
         if (prev && prev.id) {
           removedIds.add(prev.id);
+          pendingDeletes.push(prev.id);
           report.removed++;
         }
         continue;
@@ -1179,17 +1200,56 @@ async function build(ctx, opts) {
     });
   }
 
+  // Stage all new chunk and token sidecar payloads to temporary files BEFORE acquiring meta.lock
+  // so that tokenization and disk writes do not hold meta.lock; the locked section only performs
+  // fast atomic renames, unlinks, and the meta.json merge.
+  const stageSuffix = '.stage-' + process.pid + '-' + Date.now() + '-' + crypto.randomBytes(4).toString('hex');
+  const stagedRenames = [];
+  for (const id of pendingEnsureTokens) {
+    const targetTok = tokenPath(ctx, id);
+    if (!fs.existsSync(targetTok)) {
+      const existingChunks = readChunks(chunkPath(ctx, id));
+      if (existingChunks.length) {
+        const tmpTok = targetTok + stageSuffix;
+        _fsutil.atomicWrite(tmpTok, encodeTokensBuffer(existingChunks), 0o600);
+        stagedRenames.push({ tmp: tmpTok, dest: targetTok });
+      }
+    }
+  }
+  for (const w of pendingWrites) {
+    const body = w.chunks.map((c) => JSON.stringify(c)).join('\n') + '\n';
+    w.entry.chunkBytes = Buffer.byteLength(body);
+    const targetChunk = chunkPath(ctx, w.id);
+    const tmpChunk = targetChunk + stageSuffix;
+    _fsutil.atomicWrite(tmpChunk, body, 0o600);
+    stagedRenames.push({ tmp: tmpChunk, dest: targetChunk });
+
+    const targetTok = tokenPath(ctx, w.id);
+    const tmpTok = targetTok + stageSuffix;
+    _fsutil.atomicWrite(tmpTok, encodeTokensBuffer(w.chunks), 0o600);
+    stagedRenames.push({ tmp: tmpTok, dest: targetTok });
+  }
+
+  function cleanupStagedFiles() {
+    for (const r of stagedRenames) {
+      try {
+        fs.rmSync(r.tmp, { force: true });
+      } catch {
+        /* best-effort */
+      }
+    }
+  }
+
   let lexicalCommitted = false;
-  function applyPendingLexicalMutations() {
+  function applyPendingLexicalMutations(refreshMetaLock) {
     if (lexicalCommitted) return;
     lexicalCommitted = true;
-    for (const id of pendingEnsureTokens) {
-      ensureTokens(ctx, id);
-    }
-    for (const w of pendingWrites) {
-      const chunkBytes = writeChunks(ctx, w.id, w.chunks);
-      writeTokens(ctx, w.id, w.chunks);
-      w.entry.chunkBytes = chunkBytes;
+    let ops = 0;
+    for (const r of stagedRenames) {
+      fs.mkdirSync(path.dirname(r.dest), { recursive: true });
+      fs.renameSync(r.tmp, r.dest);
+      ops++;
+      if (ops % 200 === 0 && typeof refreshMetaLock === 'function') refreshMetaLock();
     }
     for (const id of pendingDeletes) {
       try {
@@ -1238,6 +1298,7 @@ async function build(ctx, opts) {
     metaLockTimeoutMs: opts.metaLockTimeoutMs,
   });
   if (!initialWrote) {
+    cleanupStagedFiles();
     report.ok = false;
     report.errors.push({ path: metaPath(ctx), app: 'conv-index', error: 'meta.json write skipped (meta.lock busy)' });
     report.stats = meta.stats || countStats(meta.sources || {});
