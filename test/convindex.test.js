@@ -1648,8 +1648,11 @@ test('when an emptied source had a colliding id that another source claims in th
   });
   const file1 = path.join(dir, 'rollout-2026-01-01T10-00-00-' + SHARED + '.jsonl');
   const file2 = path.join(dir, 'rollout-2026-01-02T10-00-00-' + SHARED + '.jsonl');
+  const now = Date.now();
   fs.writeFileSync(file1, [metaLine, turnLine('First rollout text.')].map((l) => JSON.stringify(l)).join('\n') + '\n');
   fs.writeFileSync(file2, [metaLine, turnLine('Second rollout text.')].map((l) => JSON.stringify(l)).join('\n') + '\n');
+  fs.utimesSync(file1, new Date(now - 20000), new Date(now - 20000));
+  fs.utimesSync(file2, new Date(now - 10000), new Date(now - 10000));
 
   await convindex.build(ctx, {});
   const canonicalId = 'codex:' + SHARED;
@@ -1663,9 +1666,8 @@ test('when an emptied source had a colliding id that another source claims in th
       .map((l) => JSON.stringify(l))
       .join('\n') + '\n',
   );
-  const future = new Date(Date.now() + 60000);
-  fs.utimesSync(file1, future, future);
-  fs.utimesSync(file2, future, future);
+  fs.utimesSync(file2, new Date(now + 20000), new Date(now + 20000));
+  fs.utimesSync(file1, new Date(now + 10000), new Date(now + 10000));
 
   const r = await convindex.build(ctx, {});
   assert.strictEqual(r.ok, true);

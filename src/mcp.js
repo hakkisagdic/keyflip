@@ -1897,7 +1897,10 @@ const TOOLS = [
       type: 'object',
       properties: {
         embed: { type: 'boolean', description: 'Also compute embeddings (needed for semantic/hybrid).' },
-        background: { type: 'boolean', description: 'When embed=true, regenerate vectors incrementally in a detached background worker.' },
+        background: {
+          type: 'boolean',
+          description: 'When embed=true, regenerate vectors incrementally in a detached background worker.',
+        },
         force: { type: 'boolean', description: 'Re-parse even when mtime+size are unchanged.' },
         app: { type: 'string', description: 'Comma-separated app ids for a partial build.' },
         limit_sources: { type: 'integer', description: 'Parse at most N sources (quick slice).' },
