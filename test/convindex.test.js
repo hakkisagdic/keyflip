@@ -795,6 +795,35 @@ test('the account filter uses the stored account', async function () {
   assert.strictEqual(only.conversations.length, 2, 'both sit in the gmail window');
   const none = convindex.catalog(ctx, { account: 'yahoo' });
   assert.strictEqual(none.conversations.length, 0, 'a row that is not there never matches');
+
+  // Ensure search({ account, limit }) narrows activeSources BEFORE applying limit so a lower-ranked
+  // account still fills its requested page rather than being dropped post-limit.
+  profiles.write(ctx.configDir, { name: 'yahoo', email: 'y@example.com' });
+  fs.writeFileSync(
+    path.join(logDir, 'keyflip.log'),
+    '2026-10-14T09:00:00.000Z active -> gmail\n2026-10-14T12:00:00.000Z active -> yahoo\n',
+    { mode: 0o600 },
+  );
+  writeClaude(ctx, 'yahoo-db', [
+    {
+      type: 'user',
+      timestamp: '2026-10-14T13:00:00.000Z',
+      message: { role: 'user', content: 'database migration note for yahoo' },
+    },
+  ]);
+  // Give gmail-db a much higher term frequency so it outranks yahoo-db globally
+  writeClaude(ctx, 'db-1', [
+    {
+      type: 'user',
+      timestamp: '2026-10-14T10:00:00.000Z',
+      message: { role: 'user', content: 'database migration database migration database migration plan' },
+    },
+  ]);
+  await convindex.build(ctx, { force: true });
+  const yahooPage = await convindex.search(ctx, 'database migration', { account: 'yahoo', limit: 1 });
+  assert.strictEqual(yahooPage.hits.length, 1, 'account filter before limit fills the page for yahoo');
+  assert.strictEqual(yahooPage.hits[0].id, 'claude:local:yahoo-db');
+  assert.strictEqual(yahooPage.accountFiltered, 'yahoo');
 });
 
 test('when the embedding model changes, vectors regenerate incrementally newest-first across dimension changes', async function () {

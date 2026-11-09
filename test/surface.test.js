@@ -40,7 +40,7 @@ test('SURFACES covers the registered CLI/IDE tools, each with the required shape
     assert.ok(['file', 'keychain', 'env'].indexOf(s.kind) !== -1, s.id + ' kind');
     assert.strictEqual(typeof s.detect, 'function');
     assert.strictEqual(typeof s.list, 'function');
-    const switchableIds = ['command-code', 'grok', 'qwen', 'kimi', 'hermes'];
+    const switchableIds = ['command-code', 'grok', 'qwen', 'kimi', 'hermes', 'droid', 'amp', 'kilocode'];
     assert.strictEqual(s.switchable, switchableIds.indexOf(s.id) !== -1, s.id + ' switchable');
   });
   assert.match(surface.get('command-code').switchHint, /keyflip commandcode/);
@@ -75,7 +75,11 @@ test('pristine home -> every surface present:false, no active account, not switc
     assert.strictEqual(s.activeAccount, null, s.id);
     assert.deepStrictEqual(s.accounts, [], s.id);
     // Switchability is a property of the adapter, not of presence.
-    assert.strictEqual(s.switchable, ['command-code', 'grok', 'qwen', 'kimi', 'hermes'].indexOf(s.id) !== -1, s.id);
+    assert.strictEqual(
+      s.switchable,
+      ['command-code', 'grok', 'qwen', 'kimi', 'hermes', 'droid', 'amp', 'kilocode'].indexOf(s.id) !== -1,
+      s.id,
+    );
     assert.strictEqual(s.note, 'not detected', s.id);
   });
 });
@@ -258,9 +262,10 @@ test('keyflip_surfaces MCP tool is read-only and returns detection with no secre
   assert.doesNotMatch(JSON.stringify(out), /sk-SECRET/);
 });
 
-// ---- clisurfaces adapter (grok, qwen, kimi, hermes) ----
-test('clisurfaces: capture, switchTo, backups, restore, remove across grok/qwen/kimi/hermes', function () {
+// ---- clisurfaces adapter (grok, qwen, kimi, hermes, droid, amp, kilocode) ----
+test('clisurfaces: capture, switchTo, backups, restore, remove across grok/qwen/kimi/hermes/droid/amp/kilocode', function () {
   const ctx = makeCtx();
+  assert.deepStrictEqual(clisurfaces.SUPPORTED_IDS, ['grok', 'qwen', 'kimi', 'hermes', 'droid', 'amp', 'kilocode']);
   // Seed Grok account A
   write(ctx, '.grok/settings.json', JSON.stringify({ apiKey: 'xai-SECRET-A', email: 'alice@x.ai', userId: 'u-alice' }));
   const capA = clisurfaces.capture(ctx, 'grok', { name: 'alice' });
@@ -295,4 +300,20 @@ test('clisurfaces: capture, switchTo, backups, restore, remove across grok/qwen/
 
   const rem = clisurfaces.removeAccount(ctx, 'grok', 'alice', { force: true });
   assert.strictEqual(rem.removed, 'alice');
+
+  // Verify droid, amp, and kilocode capture and status without secret leakage
+  write(ctx, '.factory/auth.json', JSON.stringify({ token: 'droid-SECRET', email: 'dev@factory.ai' }));
+  const capDroid = clisurfaces.capture(ctx, 'droid', { name: 'factory-dev' });
+  assert.strictEqual(capDroid.slug, 'factory-dev');
+  assert.strictEqual(clisurfaces.status(ctx, 'droid').activeAccount, 'factory-dev');
+
+  write(ctx, '.local/share/amp/secrets.json', JSON.stringify({ apiKey: 'amp-SECRET', userName: 'ampuser' }));
+  const capAmp = clisurfaces.capture(ctx, 'amp', {});
+  assert.strictEqual(capAmp.slug, 'ampuser');
+  assert.strictEqual(clisurfaces.status(ctx, 'amp').activeAccount, 'ampuser');
+
+  write(ctx, '.kilocode/config.json', JSON.stringify({ token: 'kilo-SECRET', email: 'kilo@example.com' }));
+  const capKilo = clisurfaces.capture(ctx, 'kilocode', {});
+  assert.strictEqual(capKilo.slug, 'kilo-example.com');
+  assert.strictEqual(clisurfaces.status(ctx, 'kilocode').activeAccount, 'kilo-example.com');
 });

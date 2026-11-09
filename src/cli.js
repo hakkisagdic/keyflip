@@ -16730,7 +16730,7 @@ function cmdLaunchCmd(ctx, rest) {
   const arg = positional[0];
   if (!arg)
     return fail(
-      'usage: keyflip launch-cmd <name|number> [--surface claude|codex|grok|command-code] [--shell posix|powershell] [--prepare]',
+      'usage: keyflip launch-cmd <name|number> [--surface claude|codex|grok|qwen|kimi|hermes|droid|amp|kilocode|command-code] [--shell posix|powershell] [--prepare]',
     );
   const resolved = core.resolveProfile(ctx, arg) || arg;
   let out;
@@ -17232,6 +17232,9 @@ async function dispatch(ctx, cmd, rest) {
       case 'qwen':
       case 'kimi':
       case 'hermes':
+      case 'droid':
+      case 'amp':
+      case 'kilocode':
         return ['capture', 'save', 'switch', 'use', 'restore', 'remove', 'rm'].indexOf(rest[0]) !== -1
           ? withLock(ctx, function () {
               return cmdCliSurface(ctx, cmd, rest);

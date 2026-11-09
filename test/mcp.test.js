@@ -1527,4 +1527,10 @@ test('MCP: keyflip_enable, keyflip_disable, keyflip_launch_cmd, and keyflip_cli_
     confirm: true,
   });
   assert.strictEqual(rem.removed.removed, 'moon');
+
+  // Verify droid/amp/kilocode in launch_cmd and migrate_export agent_ids schema
+  const droidLaunch = await toolByName('keyflip_launch_cmd').run(ctx, { account: 'work', surface: 'droid' });
+  assert.strictEqual(droidLaunch.configEnv, 'FACTORY_HOME');
+  const migSchema = toolByName('keyflip_migrate_export').inputSchema.properties.agent_ids.items.enum;
+  assert.ok(migSchema.includes('droid') && migSchema.includes('amp') && migSchema.includes('kilocode'));
 });

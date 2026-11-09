@@ -5,9 +5,10 @@
 // hermes, droid, amp, kilocode): detect presence and, where the identity lives in a plain
 // NON-SECRET file, read the active account — never decrypting, reading, or moving a secret.
 // Opaque/keychain/secret stores report present + 'switch not supported yet'. Command Code, Grok,
-// Qwen, Kimi, and Hermes have dedicated file-credential adapters (`keyflip commandcode|grok|qwen|kimi|hermes`),
-// so their rows point there instead of claiming "not supported". Claude itself stays handled by
-// keyflip core; switch() here is a detection-only seam.
+// Qwen, Kimi, Hermes, Droid, Amp, and Kilo Code have dedicated file-credential adapters
+// (`keyflip commandcode|grok|qwen|kimi|hermes|droid|amp|kilocode`), so their rows point there
+// instead of claiming "not supported". Claude itself stays handled by keyflip core; switch() here
+// is a detection-only seam.
 import fs from 'fs';
 import path from 'path';
 
@@ -188,6 +189,8 @@ const SPECS = [
     presence: ['.factory', '.factory/config.json', '.factory/auth.json'],
     store: { kind: 'file', secret: true, path: '.factory/auth.json' },
     readIdentity: null,
+    switchable: true,
+    switchHint: 'keyflip droid status | switch <name>',
   },
   {
     id: 'amp',
@@ -196,6 +199,8 @@ const SPECS = [
     presence: ['.config/amp', '.config/amp/settings.json', '.local/share/amp/secrets.json'],
     store: { kind: 'file', secret: true, path: '.local/share/amp/secrets.json' },
     readIdentity: null,
+    switchable: true,
+    switchHint: 'keyflip amp status | switch <name>',
   },
   {
     id: 'kilocode',
@@ -204,6 +209,8 @@ const SPECS = [
     presence: ['.kilocode', '.config/kilocode', '.kilocode/config.json'],
     store: { kind: 'file', secret: true, path: '.kilocode/config.json' },
     readIdentity: null,
+    switchable: true,
+    switchHint: 'keyflip kilocode status | switch <name>',
   },
 ];
 
@@ -296,13 +303,21 @@ function detectOne(ctx, id, opts) {
 }
 
 // The SWITCH SEAM. Detection only: non-Claude surfaces with dedicated adapters own their write
-// paths (`keyflip commandcode|grok|qwen|kimi|hermes`). Claude itself is switched by keyflip core.
+// paths (`keyflip commandcode|grok|qwen|kimi|hermes|droid|amp|kilocode`). Claude itself is switched by keyflip core.
 function switchSurface(ctx, surfaceId, account, opts) {
   if (!get(surfaceId)) throw new Error("unknown surface: '" + surfaceId + "' (see: keyflip surfaces)");
   if (surfaceId === 'command-code') {
     throw new Error('switch Command Code with: keyflip commandcode switch <name> (this registry is read-only)');
   }
-  if (surfaceId === 'grok' || surfaceId === 'qwen' || surfaceId === 'kimi' || surfaceId === 'hermes') {
+  if (
+    surfaceId === 'grok' ||
+    surfaceId === 'qwen' ||
+    surfaceId === 'kimi' ||
+    surfaceId === 'hermes' ||
+    surfaceId === 'droid' ||
+    surfaceId === 'amp' ||
+    surfaceId === 'kilocode'
+  ) {
     throw new Error(
       'switch ' +
         BY_ID[surfaceId].label +
@@ -322,7 +337,7 @@ const mcpTools = [
     name: 'keyflip_surfaces',
     title: "Detect other AI tools' accounts",
     description:
-      'Detect which other AI coding tools (Cursor, Gemini CLI, Codex CLI, GitHub Copilot, opencode, Aider, Command Code, Grok CLI, Qwen Code, Kimi CLI, Hermes Agent, Factory Droid, Sourcegraph Amp, Kilo Code) are present on this machine and, where the identity is in a readable NON-SECRET file, which account is active. Read-only: never reads, decrypts, or moves any secret/token. Command Code, Grok, Qwen, Kimi, and Hermes accounts are switched with their dedicated tools; other non-Claude tools are detection-only (Claude itself is managed by the other keyflip tools).',
+      'Detect which other AI coding tools (Cursor, Gemini CLI, Codex CLI, GitHub Copilot, opencode, Aider, Command Code, Grok CLI, Qwen Code, Kimi CLI, Hermes Agent, Factory Droid, Sourcegraph Amp, Kilo Code) are present on this machine and, where the identity is in a readable NON-SECRET file, which account is active. Read-only: never reads, decrypts, or moves any secret/token. Command Code, Grok, Qwen, Kimi, Hermes, Droid, Amp, and Kilo Code accounts are switched with their dedicated tools; other non-Claude tools are detection-only (Claude itself is managed by the other keyflip tools).',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
     annotations: RO,
     run: async function (ctx) {

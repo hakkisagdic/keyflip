@@ -1,7 +1,8 @@
 // G1: `keyflip panel` — a command-activated LOCAL web dashboard (loopback only, never a
 // daemon; the user starts/stops it). Read-only v1: it aggregates keyflip state (accounts +
-// cached quota, providers, recent sessions, keepsakes) and renders it. Zero-dep (Node http +
-// inline HTML/CSS/JS). No mutation surface → nothing dangerous is exposed over HTTP.
+// cached quota, providers, CLI surfaces, conversation index, recent sessions, keepsakes) and
+// renders it. Zero-dep (Node http + inline HTML/CSS/JS). No mutation surface → nothing
+// dangerous is exposed over HTTP.
 import http from 'http';
 import fs from 'fs';
 import path from 'path';
@@ -12,6 +13,8 @@ import * as _memory from './memory.js';
 import * as _recall from './recall.js';
 import * as _history from './history.js';
 import * as _usage from './usage.js';
+import * as _surface from './surface.js';
+import * as _convindex from './convindex.js';
 
 // Aggregate the dashboard state. FAST — reads the cached usage (no network fetch) and bounds
 // the session/keepsake lists. Never throws (a panel must not crash on partial data).
@@ -104,6 +107,33 @@ function buildState(ctx) {
       });
   }, []);
 
+  const surfaces = safe(function () {
+    return _surface.detectAll(ctx).map(function (s) {
+      return {
+        id: s.id,
+        label: s.label,
+        present: !!s.present,
+        switchable: !!s.switchable,
+        activeAccount: s.activeAccount || null,
+      };
+    });
+  }, []);
+
+  const convIndex = safe(
+    function () {
+      const st = _convindex.status(ctx);
+      return {
+        exists: !!st.exists,
+        sources: st.sources || 0,
+        chunks: st.chunks || 0,
+        vectorChunks: st.vectorChunks || 0,
+        coverage: st.coverage || 0,
+        model: (st.embedding && st.embedding.model) || null,
+      };
+    },
+    { exists: false, sources: 0, chunks: 0, vectorChunks: 0, coverage: 0, model: null },
+  );
+
   return {
     activeEmail: safe(function () {
       return core.currentEmail(ctx);
@@ -111,6 +141,8 @@ function buildState(ctx) {
     activeProvider: active && active.name,
     accounts: accounts,
     providers: providers,
+    surfaces: surfaces,
+    convIndex: convIndex,
     sessions: recent,
     keepsakes: keepsakes,
     activity: safe(
@@ -208,7 +240,8 @@ function buildMemoryGraph(ctx) {
   return { nodes: nodes, edges: edges };
 }
 
-// G8: a SHARE-SAFE snapshot of the dashboard — accounts + quota + activity + providers ONLY.
+// G8: a SHARE-SAFE snapshot of the dashboard — accounts + quota + activity + providers +
+// detected surfaces + conversation index counts ONLY.
 // Deliberately EXCLUDES anything that carries private content (session cwds/previews,
 // keepsakes, the memory constellation's terms). `anon` masks emails + account/provider names.
 function buildSnapshot(ctx, opts) {
@@ -242,6 +275,16 @@ function buildSnapshot(ctx, opts) {
     providers: (s.providers || []).map(function (p, i) {
       return { name: opts.anon ? 'provider ' + (i + 1) : p.name, active: p.active };
     }),
+    surfaces: (s.surfaces || []).map(function (sf) {
+      return {
+        id: sf.id,
+        label: sf.label,
+        present: !!sf.present,
+        switchable: !!sf.switchable,
+        activeAccount: opts.anon ? null : sf.activeAccount || null,
+      };
+    }),
+    convIndex: s.convIndex || { exists: false, sources: 0, chunks: 0, vectorChunks: 0, coverage: 0, model: null },
     activity: s.activity,
     anon: !!opts.anon,
   };
@@ -304,6 +347,32 @@ function renderSnapshot(snap) {
         );
       })
       .join('') || '<span class="muted">No providers.</span>';
+  const surfChips =
+    (snap.surfaces || [])
+      .filter(function (sf) {
+        return sf.present;
+      })
+      .map(function (sf) {
+        return (
+          '<span class="chip' +
+          (sf.switchable ? ' active' : '') +
+          '">' +
+          esc(sf.label) +
+          (sf.activeAccount ? ' (' + esc(sf.activeAccount) + ')' : sf.switchable ? ' ⇄' : '') +
+          '</span>'
+        );
+      })
+      .join('') || '<span class="muted">No other AI tools detected.</span>';
+  const ci = snap.convIndex || {};
+  const ciSummary = ci.exists
+    ? esc(ci.sources || 0) +
+      ' conversations · ' +
+      esc(ci.chunks || 0) +
+      ' chunks · ' +
+      pct(ci.coverage || 0) +
+      ' vector coverage' +
+      (ci.model ? ' (' + esc(ci.model) + ')' : '')
+    : 'Not built yet.';
   const act = snap.activity || { days: [], total: 0, weeks: 26 };
   const when = snap.generatedAt ? String(snap.generatedAt).slice(0, 16).replace('T', ' ') : '';
   return (
@@ -329,6 +398,12 @@ function renderSnapshot(snap) {
     '</section>' +
     '<section><h2>Providers</h2><div class="chips">' +
     chips +
+    '</div></section>' +
+    '<section><h2>Detected AI surfaces</h2><div class="chips">' +
+    surfChips +
+    '</div></section>' +
+    '<section><h2>Conversation index</h2><div class="muted">' +
+    ciSummary +
     '</div></section>' +
     '</main><footer class="muted">Read-only static snapshot · no session content, no secrets.</footer>' +
     '</body></html>'
@@ -461,6 +536,8 @@ function renderPage() {
     '<section><h2>Accounts</h2><div id="accounts" class="grid"></div></section>' +
     '<section><h2>Session activity <span id="activity-total" class="muted"></span></h2><div id="activity"></div></section>' +
     '<section><h2>Providers</h2><div id="providers" class="chips"></div></section>' +
+    '<section><h2>Detected AI surfaces</h2><div id="surfaces" class="chips"></div></section>' +
+    '<section><h2>Conversation index</h2><div id="conv-index" class="muted"></div></section>' +
     '<section><h2>Recent sessions</h2><ul id="sessions" class="list"></ul></section>' +
     '<section><h2>Keepsakes</h2><ul id="keepsakes" class="list"></ul></section>' +
     '<section><h2>Memory constellation</h2><div id="memgraph"></div></section>' +
@@ -517,6 +594,8 @@ const SCRIPT = [
   '   "<div class=\\""+bl+"\\"><i style=\\"width:"+w+"%\\"></i></div><div class=\\"barlabel\\"><span>5h "+pct(a.fiveHourPct)+"</span><span>7d "+pct(a.sevenDayPct)+(mb.length?" · "+esc(mb.join(" · ")):"")+"</span></div>"+spark(a.trend)+"</div>";',
   ' }).join("")||"<span class=muted>No saved accounts.</span>";',
   ' document.getElementById("providers").innerHTML=(s.providers||[]).map(function(p){return "<span class=\\"chip"+(p.active?" active":"")+"\\">"+esc(p.name)+(p.active?" ●":"")+"</span>";}).join("")||"<span class=muted>No providers.</span>";',
+  ' document.getElementById("surfaces").innerHTML=(s.surfaces||[]).filter(function(sf){return sf.present;}).map(function(sf){return "<span class=\\"chip"+(sf.switchable?" active":"")+"\\">"+esc(sf.label)+(sf.activeAccount?" ("+esc(sf.activeAccount)+")":sf.switchable?" ⇄":"")+"</span>";}).join("")||"<span class=muted>No other AI tools detected.</span>";',
+  ' var ci=s.convIndex||{}; document.getElementById("conv-index").innerHTML=ci.exists?(esc(ci.sources||0)+" conversations · "+esc(ci.chunks||0)+" chunks · "+pct(ci.coverage||0)+" vector coverage"+(ci.model?" ("+esc(ci.model)+")":"")):"Not built yet — try <code>keyflip conv index --embed</code>.";',
   ' document.getElementById("sessions").innerHTML=(s.sessions||[]).map(function(r){return "<li><div>"+esc((r.sessionId||"").slice(0,8))+" <span class=meta>"+esc(r.cwd||"")+"</span>"+(r.orphan?" <span class=badge>⚠ folder gone</span>":(r.staleCwd?" <span class=meta>(folder gone, still live)</span>":""))+"</div>"+(r.preview?"<div class=meta>"+esc(r.preview)+"</div>":"")+"</li>";}).join("")||"<li class=muted>No sessions.</li>";',
   ' document.getElementById("keepsakes").innerHTML=(s.keepsakes||[]).map(function(k){return "<li>"+esc(k.key.slice(0,8))+" <span class=meta>"+esc((k.mtime||"").slice(0,16).replace("T"," "))+"</span></li>";}).join("")||"<li class=muted>No keepsakes yet — try <code>keyflip dream --apply</code>.</li>";',
   ' var a=s.activity||{};document.getElementById("activity-total").textContent=a.total?("· "+a.total+" session"+(a.total===1?"":"s")+", last "+(a.weeks||26)+" weeks"):"";',

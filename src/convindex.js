@@ -1660,6 +1660,7 @@ function activeSources(ctx, meta, opts) {
     )
       return;
     if (opts.ids && opts.ids.length && opts.ids.indexOf(id) === -1) return;
+    if (opts.account && !matchesAccount(s, opts.account)) return;
     keys.push(id);
   });
   return keys;
@@ -2129,8 +2130,8 @@ async function search(ctx, query, opts) {
   const mode = opts.mode || (opts.semantic ? 'semantic' : 'lexical');
   const r = await searchMode(ctx, query, opts, mode);
   if (!opts.account || !r || !r.hits) return r;
-  // The account filter runs AFTER the ranking, not before it: the ranking is over the whole
-  // corpus, and filtering first would change what "the best match" even means.
+  // activeSources() already narrows candidate sources to opts.account so the page fills up to
+  // opts.limit; keep the hit-level filter and accountFiltered marker for callers.
   r.hits = r.hits.filter((h) => matchesAccount(h, opts.account));
   r.accountFiltered = opts.account;
   return r;

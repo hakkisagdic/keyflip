@@ -1,8 +1,11 @@
 // Unified capture/switch/status/backup adapter for file-backed CLI agent surfaces:
-//   - grok   (Grok CLI):     ~/.grok/settings.json
-//   - qwen   (Qwen Code):    ~/.qwen/oauth_creds.json
-//   - kimi   (Kimi CLI):     ~/.kimi/credentials.json
-//   - hermes (Hermes Agent): ~/.hermes/auth.json
+//   - grok     (Grok CLI):        ~/.grok/settings.json
+//   - qwen     (Qwen Code):       ~/.qwen/oauth_creds.json
+//   - kimi     (Kimi CLI):        ~/.kimi/credentials.json
+//   - hermes   (Hermes Agent):    ~/.hermes/auth.json
+//   - droid    (Factory Droid):   ~/.factory/auth.json
+//   - amp      (Sourcegraph Amp): ~/.local/share/amp/secrets.json
+//   - kilocode (Kilo Code):       ~/.kilocode/config.json
 //
 // Modeled on src/commandcode.js:
 //   1. Credentials live in <configDir>/surfaces/<surfaceId>/<slug>/<bundleFile> (0600) —
@@ -164,6 +167,33 @@ const ADAPTER_SPECS = Object.freeze({
     authRel: Object.freeze(['.hermes', 'auth.json']),
     bundleFile: 'auth.json',
     envKeys: Object.freeze(['NOUS_API_KEY', 'OPENROUTER_API_KEY', 'ANTHROPIC_API_KEY', 'OPENAI_API_KEY']),
+  }),
+  droid: Object.freeze({
+    id: 'droid',
+    label: 'Factory Droid',
+    bin: 'droid',
+    binary: 'droid',
+    authRel: Object.freeze(['.factory', 'auth.json']),
+    bundleFile: 'auth.json',
+    envKeys: Object.freeze(['FACTORY_API_KEY', 'ANTHROPIC_API_KEY', 'OPENAI_API_KEY']),
+  }),
+  amp: Object.freeze({
+    id: 'amp',
+    label: 'Sourcegraph Amp',
+    bin: 'amp',
+    binary: 'amp',
+    authRel: Object.freeze(['.local', 'share', 'amp', 'secrets.json']),
+    bundleFile: 'secrets.json',
+    envKeys: Object.freeze(['AMP_API_KEY', 'SRC_ACCESS_TOKEN']),
+  }),
+  kilocode: Object.freeze({
+    id: 'kilocode',
+    label: 'Kilo Code',
+    bin: 'kilocode',
+    binary: 'kilocode',
+    authRel: Object.freeze(['.kilocode', 'config.json']),
+    bundleFile: 'config.json',
+    envKeys: Object.freeze(['KILOCODE_API_KEY', 'OPENROUTER_API_KEY', 'ANTHROPIC_API_KEY']),
   }),
 });
 

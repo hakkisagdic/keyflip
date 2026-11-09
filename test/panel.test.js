@@ -312,4 +312,10 @@ test('panel exposes enabled, duplicateOf, model-scoped quotas, and limitedScopes
   assert.match(html, /sonnet 25%/);
   assert.match(html, /\[disabled\]/);
   assert.match(html, /\[dup\]/);
+  assert.ok(Array.isArray(st.surfaces), 'buildState includes surfaces');
+  assert.ok(st.convIndex && typeof st.convIndex.exists === 'boolean', 'buildState includes convIndex');
+  assert.ok(Array.isArray(snap.surfaces), 'buildSnapshot includes surfaces');
+  assert.ok(snap.convIndex && typeof snap.convIndex.exists === 'boolean', 'buildSnapshot includes convIndex');
+  assert.match(html, /Detected AI surfaces/);
+  assert.match(html, /Conversation index/);
 });

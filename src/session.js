@@ -74,6 +74,24 @@ const SURFACE_LAUNCH_SPECS = Object.freeze({
     bin: 'hermes',
     unsetVars: Object.freeze(['NOUS_API_KEY', 'OPENROUTER_API_KEY', 'ANTHROPIC_API_KEY', 'OPENAI_API_KEY']),
   }),
+  droid: Object.freeze({
+    id: 'droid',
+    configEnv: 'FACTORY_HOME',
+    bin: 'droid',
+    unsetVars: Object.freeze(['FACTORY_API_KEY', 'ANTHROPIC_API_KEY', 'OPENAI_API_KEY']),
+  }),
+  amp: Object.freeze({
+    id: 'amp',
+    configEnv: 'AMP_HOME',
+    bin: 'amp',
+    unsetVars: Object.freeze(['AMP_API_KEY', 'SRC_ACCESS_TOKEN']),
+  }),
+  kilocode: Object.freeze({
+    id: 'kilocode',
+    configEnv: 'KILOCODE_HOME',
+    bin: 'kilocode',
+    unsetVars: Object.freeze(['KILOCODE_API_KEY', 'OPENROUTER_API_KEY', 'ANTHROPIC_API_KEY']),
+  }),
   'command-code': Object.freeze({
     id: 'command-code',
     configEnv: 'COMMAND_CODE_HOME',

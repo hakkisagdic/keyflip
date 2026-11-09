@@ -1137,14 +1137,14 @@ const TOOLS = [
     name: 'keyflip_launch_cmd',
     title: 'Generate isolated CLI launch command',
     description:
-      'Build a copy-pasteable shell command that launches a CLI surface (claude, codex, grok, qwen, kimi, hermes, command-code) with isolated profile environment variables (CLAUDE_CONFIG_DIR, CODEX_HOME, GROK_HOME, etc.). Read-only.',
+      'Build a copy-pasteable shell command that launches a CLI surface (claude, codex, grok, qwen, kimi, hermes, droid, amp, kilocode, command-code) with isolated profile environment variables (CLAUDE_CONFIG_DIR, CODEX_HOME, GROK_HOME, FACTORY_HOME, AMP_HOME, KILOCODE_HOME, etc.). Read-only.',
     inputSchema: {
       type: 'object',
       properties: {
         account: { type: 'string', description: 'Profile/account name.' },
         surface: {
           type: 'string',
-          enum: ['claude', 'codex', 'grok', 'qwen', 'kimi', 'hermes', 'command-code'],
+          enum: ['claude', 'codex', 'grok', 'qwen', 'kimi', 'hermes', 'droid', 'amp', 'kilocode', 'command-code'],
           description: 'CLI surface to launch (default: claude).',
         },
         args: {
@@ -1172,16 +1172,16 @@ const TOOLS = [
   },
   {
     name: 'keyflip_cli_surface',
-    title: 'Grok / Qwen / Kimi / Hermes CLI account status',
+    title: 'Grok / Qwen / Kimi / Hermes / Droid / Amp / Kilo Code CLI account status',
     description:
-      'Report the live login and saved captures for Grok CLI (~/.grok/settings.json), Qwen Code (~/.qwen/oauth_creds.json), Kimi CLI (~/.kimi/credentials.json), or Hermes Agent (~/.hermes/auth.json). Omit surface to inspect all four. Read-only; never returns secret values.',
+      'Report the live login and saved captures for Grok CLI (~/.grok/settings.json), Qwen Code (~/.qwen/oauth_creds.json), Kimi CLI (~/.kimi/credentials.json), Hermes Agent (~/.hermes/auth.json), Factory Droid (~/.factory/auth.json), Sourcegraph Amp (~/.local/share/amp/secrets.json), or Kilo Code (~/.kilocode/config.json). Omit surface to inspect all supported CLI surfaces. Read-only; never returns secret values.',
     inputSchema: {
       type: 'object',
       properties: {
         surface: {
           type: 'string',
-          enum: ['grok', 'qwen', 'kimi', 'hermes'],
-          description: 'CLI surface id (omit to inspect all four).',
+          enum: ['grok', 'qwen', 'kimi', 'hermes', 'droid', 'amp', 'kilocode'],
+          description: 'CLI surface id (omit to inspect all supported surfaces).',
         },
       },
       additionalProperties: false,
@@ -1200,13 +1200,13 @@ const TOOLS = [
   },
   {
     name: 'keyflip_cli_surface_capture',
-    title: 'Save live Grok / Qwen / Kimi / Hermes CLI login',
+    title: 'Save live Grok / Qwen / Kimi / Hermes / Droid / Amp / Kilo Code CLI login',
     description:
-      'Copy the live credential bundle for grok, qwen, kimi, or hermes into a 0600 capture under keyflip configDir with secret-free metadata. Ask the user before writing, then confirm=true.',
+      'Copy the live credential bundle for grok, qwen, kimi, hermes, droid, amp, or kilocode into a 0600 capture under keyflip configDir with secret-free metadata. Ask the user before writing, then confirm=true.',
     inputSchema: {
       type: 'object',
       properties: {
-        surface: { type: 'string', enum: ['grok', 'qwen', 'kimi', 'hermes'] },
+        surface: { type: 'string', enum: ['grok', 'qwen', 'kimi', 'hermes', 'droid', 'amp', 'kilocode'] },
         name: { type: 'string', description: 'Optional slug override.' },
         confirm: confirmProp.confirm,
       },
@@ -1230,13 +1230,13 @@ const TOOLS = [
   },
   {
     name: 'keyflip_cli_surface_switch',
-    title: 'Switch Grok / Qwen / Kimi / Hermes CLI account',
+    title: 'Switch Grok / Qwen / Kimi / Hermes / Droid / Amp / Kilo Code CLI account',
     description:
-      'Write a saved capture back to the live credential file for grok, qwen, kimi, or hermes. Captures and backs up the outgoing login first and verifies the written file. Ask the user first, then confirm=true. Set dry_run=true to plan without writing.',
+      'Write a saved capture back to the live credential file for grok, qwen, kimi, hermes, droid, amp, or kilocode. Captures and backs up the outgoing login first and verifies the written file. Ask the user first, then confirm=true. Set dry_run=true to plan without writing.',
     inputSchema: {
       type: 'object',
       properties: {
-        surface: { type: 'string', enum: ['grok', 'qwen', 'kimi', 'hermes'] },
+        surface: { type: 'string', enum: ['grok', 'qwen', 'kimi', 'hermes', 'droid', 'amp', 'kilocode'] },
         account: { type: 'string', description: 'Saved slug, 1-based number, or userName.' },
         dry_run: { type: 'boolean', description: 'Plan only; write nothing.' },
         confirm: confirmProp.confirm,
@@ -1260,13 +1260,13 @@ const TOOLS = [
   },
   {
     name: 'keyflip_cli_surface_remove',
-    title: 'Delete a saved Grok / Qwen / Kimi / Hermes capture',
+    title: 'Delete a saved Grok / Qwen / Kimi / Hermes / Droid / Amp / Kilo Code capture',
     description:
       'Remove a saved CLI surface capture from the keyflip config dir. The live credential file is untouched. Ask the user first, then confirm=true.',
     inputSchema: {
       type: 'object',
       properties: {
-        surface: { type: 'string', enum: ['grok', 'qwen', 'kimi', 'hermes'] },
+        surface: { type: 'string', enum: ['grok', 'qwen', 'kimi', 'hermes', 'droid', 'amp', 'kilocode'] },
         account: { type: 'string', description: 'Saved slug or 1-based number.' },
         confirm: confirmProp.confirm,
       },
@@ -1937,6 +1937,10 @@ const TOOLS = [
         embedding: report.embedding || null,
         stats: st.stats || report.stats || null,
         vectorChunks: st.vectorChunks || 0,
+        staleVectorSources: st.staleVectorSources || 0,
+        staleVectorChunks: st.staleVectorChunks || 0,
+        staleModel: st.staleModel || null,
+        backgroundEmbed: report.backgroundEmbed || st.backgroundEmbed || null,
         coverage: st.coverage || 0,
         errors: (report.errors || []).slice(0, 5),
         // Degraded reads: a store that yielded chats but whose newest writes could not be replayed.
@@ -2694,7 +2698,27 @@ const TOOLS = [
         },
         agent_ids: {
           type: 'array',
-          items: { type: 'string', enum: ['cursor', 'gemini', 'codex', 'copilot', 'opencode', 'aider'] },
+          items: {
+            type: 'string',
+            enum: [
+              'cursor',
+              'gemini',
+              'codex',
+              'copilot',
+              'opencode',
+              'aider',
+              'windsurf',
+              'kiro',
+              'command-code',
+              'grok',
+              'qwen',
+              'kimi',
+              'hermes',
+              'droid',
+              'amp',
+              'kilocode',
+            ],
+          },
           description: 'Limit agents/agent_config to these agent ids (default: all present).',
         },
         confirm: confirmProp.confirm,

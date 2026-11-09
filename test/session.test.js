@@ -100,6 +100,18 @@ test('launchCommand builds isolated POSIX and PowerShell launch commands across 
   const hermesCmd = session.launchCommand(ctx, 'work', { surface: 'hermes' });
   assert.strictEqual(hermesCmd.configEnv, 'HERMES_HOME');
   assert.match(hermesCmd.posix, /HERMES_HOME=.*hermes$/);
+
+  const droidCmd = session.launchCommand(ctx, 'work', { surface: 'droid' });
+  assert.strictEqual(droidCmd.configEnv, 'FACTORY_HOME');
+  assert.match(droidCmd.posix, /FACTORY_HOME=.*droid$/);
+
+  const ampCmd = session.launchCommand(ctx, 'work', { surface: 'amp' });
+  assert.strictEqual(ampCmd.configEnv, 'AMP_HOME');
+  assert.match(ampCmd.posix, /AMP_HOME=.*amp$/);
+
+  const kiloCmd = session.launchCommand(ctx, 'work', { surface: 'kilocode' });
+  assert.strictEqual(kiloCmd.configEnv, 'KILOCODE_HOME');
+  assert.match(kiloCmd.posix, /KILOCODE_HOME=.*kilocode$/);
 });
 
 test('syncBack persists a rotated in-session token to the profile (and only then)', function () {
