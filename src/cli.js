@@ -421,7 +421,7 @@ function usage() {
   print('  keyflip list [--usage]        saved accounts; --usage adds 5h/7d quota per account');
   print('  keyflip remove <name|number>  delete a saved account');
   print('  keyflip autoswitch            watch usage; auto-swap the CLI account at a threshold');
-  print('                                 (--threshold 90 --interval 60 --strategy next-available)');
+  print('                                 (--threshold 95 --interval 60 --strategy next-available)');
   print('  keyflip autoswitch install [--interval 300]   run it UNATTENDED (launchd/cron) — no terminal to keep open');
   print(
     '                                 keyflip autoswitch <status|uninstall|--once>   check/stop the service; --once = one tick',

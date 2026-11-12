@@ -22,7 +22,7 @@ function cpath(ctx) {
 
 test('get returns the schema default when nothing is stored (no file created)', function () {
   const ctx = makeCtx();
-  assert.strictEqual(config.get(ctx, 'autoswitch.threshold'), 90);
+  assert.strictEqual(config.get(ctx, 'autoswitch.threshold'), 95);
   assert.strictEqual(config.get(ctx, 'notify.desktop'), false);
   assert.strictEqual(config.get(ctx, 'autoswitch.strategy'), 'best');
   assert.strictEqual(config.get(ctx, 'ui.color'), true);
@@ -34,7 +34,7 @@ test('getAll merges defaults for every known key and is null-prototype', functio
   const ctx = makeCtx();
   const all = config.getAll(ctx);
   assert.strictEqual(Object.getPrototypeOf(all), null, 'effective map is null-proto');
-  assert.strictEqual(all['autoswitch.threshold'], 90);
+  assert.strictEqual(all['autoswitch.threshold'], 95);
   assert.strictEqual(all['usage.cacheTtlSeconds'], 60);
   // exactly the declared keys, nothing else
   assert.deepStrictEqual(Object.keys(all).sort(), Object.keys(config.describe()).sort());
@@ -51,7 +51,7 @@ test('describe returns a safe COPY — mutating it never touches the live schema
   d['autoswitch.threshold'].default = 999;
   d['autoswitch.strategy'].values.push('bogus');
   const fresh = config.describe();
-  assert.strictEqual(fresh['autoswitch.threshold'].default, 90, 'live default untouched');
+  assert.strictEqual(fresh['autoswitch.threshold'].default, 95, 'live default untouched');
   assert.deepStrictEqual(fresh['autoswitch.strategy'].values, ['best', 'next-available'], 'live enum values untouched');
 });
 

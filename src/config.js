@@ -22,7 +22,7 @@ const CTRL = /[\u0000-\u001f\u007f]/; // control chars (incl. ANSI ESC / newline
 const SCHEMA = Object.create(null);
 SCHEMA['autoswitch.threshold'] = {
   type: 'int',
-  default: 90,
+  default: 95,
   min: 0,
   max: 100,
   help: 'Utilization % at/above which autoswitch rotates to another account.',

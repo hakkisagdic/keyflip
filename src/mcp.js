@@ -3676,7 +3676,10 @@ const TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        threshold: { type: 'number', description: 'Utilization % at which to switch (default 90).' },
+        threshold: {
+          type: 'number',
+          description: 'Utilization % at which to switch (default: config autoswitch.threshold, 95).',
+        },
         confirm: confirmProp.confirm,
       },
       required: ['confirm'],
@@ -3708,7 +3711,11 @@ const TOOLS = [
           }
         },
       };
-      if (args.threshold !== undefined) opts.threshold = args.threshold;
+      // The same defaults as the CLI and the background service: config autoswitch.*.
+      opts.threshold = args.threshold !== undefined ? args.threshold : _config.get(ctx, 'autoswitch.threshold');
+      opts.strategy = _config.get(ctx, 'autoswitch.strategy') || 'next-available';
+      const grp = _config.get(ctx, 'autoswitch.group');
+      if (grp) opts.group = grp;
       return await _autoswitch.tick(ctx, opts);
     },
   },
@@ -3741,7 +3748,7 @@ const TOOLS = [
         home: ctx.home,
         run: ctx.run,
         interval: args.interval,
-        threshold: args.threshold,
+        threshold: args.threshold !== undefined ? args.threshold : _config.get(ctx, 'autoswitch.threshold'),
         strategy: args.strategy,
         group: args.group,
       });

@@ -1412,7 +1412,7 @@ tahminden daha kötüdür.
 
 ### Kullanıma göre otomatik geçiş (`autoswitch`)
 
-`keyflip autoswitch --threshold 90 --interval 60 --strategy next-available`
+`keyflip autoswitch --threshold 95 --interval 60 --strategy next-available`
 aktif hesabı izler ve 5s/7g kullanımı eşiği aşınca **CLI kimliğini otomatik
 olarak** seçilen hesaba takas eder — hiçbir şeyi kapatmadan (Claude Code yeni
 hesabı bir sonraki isteğinde alır). Başlangıçta bir kez onay ister (`-y` ile

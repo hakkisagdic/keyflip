@@ -132,3 +132,30 @@ test('CLI `autoswitch status` on a home without the service says not installed (
   const j = JSON.parse(r.stdout);
   assert.strictEqual(j.autoswitchService.installed, false);
 });
+
+// ---- P3: the switch threshold is 95% everywhere it is not given explicitly ----
+test('P3: the default threshold is 95 in config, the tick, the MCP tool and the service', async function () {
+  const _config = await import('../src/config.js');
+  const ctx = makeCtx({ platform: 'darwin' });
+  assert.strictEqual(_config.get(ctx, 'autoswitch.threshold'), 95);
+  // tick with no threshold: 94% used stays, 95% switches
+  login(ctx, 'a@x.com', 'u1', 'TA');
+  core.addCurrent(ctx);
+  login(ctx, 'b@x.com', 'u2', 'TB');
+  core.addCurrent(ctx);
+  const _autosw = await import('../src/autoswitch.js');
+  const below = await _autosw.tick(ctx, { fetch: usageFetch({ TB: 94, TA: 10 }), nowMs: 1, cacheTtlMs: 0 });
+  assert.strictEqual(below.state, 'below');
+  const over = await _autosw.tick(ctx, { fetch: usageFetch({ TB: 95, TA: 10 }), nowMs: 2, cacheTtlMs: 0 });
+  assert.strictEqual(over.state, 'switched');
+  // the MCP service install writes --threshold 95 when none is given
+  const state = { which: script() };
+  ctx.run = fakeRun(state);
+  await tool('keyflip_autoswitch_service').run(ctx, { action: 'install', confirm: true });
+  const argv = svc.plistArgs(fs.readFileSync(svc.plistPath(ctx.home), 'utf8'));
+  assert.strictEqual(argv[argv.indexOf('--threshold') + 1], '95');
+  // and the MCP tick, without a threshold, uses it too
+  ctx.fetch = usageFetch({ TA: 94, TB: 96 }); // a is active now at 94%; b (the primary) has not recovered
+  const r = await tool('keyflip_autoswitch_tick').run(ctx, { confirm: true });
+  assert.strictEqual(r.state, 'below');
+});

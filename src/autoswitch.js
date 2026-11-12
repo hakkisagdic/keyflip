@@ -16,6 +16,7 @@ import * as _config from './config.js';
 import * as _identity from './identity.js';
 
 const STATE_FILE = '.autoswitch-state.json';
+const DEFAULT_THRESHOLD = 95;
 
 function statePath(ctx) {
   return path.join(ctx.configDir, STATE_FILE);
@@ -48,7 +49,9 @@ function clearState(ctx) {
 
 async function tickInner(ctx, opts, out) {
   opts = opts || {};
-  const threshold = opts.threshold !== undefined ? opts.threshold : 90; // switch at >= N% utilization
+  // Switch at >= N% utilization. 95 (P3): late enough not to waste a window, early enough that the
+  // next account is in place before the current one starts refusing.
+  const threshold = opts.threshold !== undefined ? opts.threshold : DEFAULT_THRESHOLD;
   const strategy = opts.strategy || 'next-available';
   // P2: the active account is the one the LIVE TOKEN belongs to. Resolve it first (offline match,
   // else the profile endpoint once per token), and if ~/.claude.json carries another account's label,
@@ -260,4 +263,4 @@ async function tick(ctx, opts) {
   return r;
 }
 
-export { tick, readState, clearState };
+export { tick, readState, clearState, DEFAULT_THRESHOLD };

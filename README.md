@@ -1320,7 +1320,7 @@ worse than one that overstates it.
 
 ### Auto-switch on usage (`autoswitch`)
 
-`keyflip autoswitch --threshold 90 --interval 60 --strategy next-available`
+`keyflip autoswitch --threshold 95 --interval 60 --strategy next-available`
 watches the active account and, when its 5h/7d utilization crosses the
 threshold, **swaps the CLI credential automatically** to the chosen account —
 without closing anything (Claude Code picks the new account up on its next
