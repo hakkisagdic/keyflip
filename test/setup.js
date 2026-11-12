@@ -15,6 +15,9 @@ const root = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'keyflip-tes
 process.env.TMPDIR = root; // POSIX
 process.env.TEMP = root; // Windows
 process.env.TMP = root;
+// Fixture tokens must never reach Anthropic: the profile endpoint (identity.js) stays offline unless
+// a test injects its own fetch. Inherited by every CLI a test spawns.
+process.env.KEYFLIP_TEST_OFFLINE = '1';
 
 process.on('exit', function () {
   try {

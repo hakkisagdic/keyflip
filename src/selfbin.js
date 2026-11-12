@@ -63,8 +63,29 @@ function nodePath(opts) {
   return realpathOr(opts.execPath || process.execPath, fsx);
 }
 
-// -> { exec, args, script, kind: 'node-script'|'binary', from: 'path'|'checkout' }
+// The keyflip package a script belongs to: { root, name, version } from the nearest package.json
+// (up to three levels up), or null.
+function packageOf(script, fsx) {
+  let d = path.dirname(script);
+  for (let i = 0; i < 3; i++) {
+    try {
+      const j = JSON.parse(fsx.readFileSync(path.join(d, 'package.json'), 'utf8'));
+      if (j && typeof j === 'object') return { root: d, name: j.name || null, version: j.version || null };
+    } catch (e) {
+      /* keep walking */
+    }
+    d = path.dirname(d);
+  }
+  return null;
+}
+
+// -> { exec, args, script, kind: 'node-script'|'binary', from: 'path'|'checkout'|'self', pathCopy? }
 // `args` already carries the script for a node script; callers append their subcommand.
+//
+// When `which keyflip` is ANOTHER keyflip package than the code running this (an older global npm
+// copy next to the checkout being installed from), the job runs THIS code — the code that installs
+// it is the code that was fixed — and `pathCopy` says what the PATH still runs. (The live service
+// once got a stale global copy written back in this way, with none of the fixes it was installed for.)
 function resolveSelf(opts) {
   opts = opts || {};
   const runner = opts.run || run;
@@ -80,14 +101,36 @@ function resolveSelf(opts) {
   let target = hit ? realpathOr(hit, fsx) : null;
   // A `which` hit that still points into a per-shell directory after resolution is unusable later.
   if (target && isEphemeral(target)) target = null;
+  let pathCopy = null;
+  if (target && !opts.preferPath) {
+    const self = realpathOr(opts.selfScript || REPO_SCRIPT, fsx);
+    const tp = packageOf(target, fsx);
+    const sp = packageOf(self, fsx);
+    let selfOk = false;
+    try {
+      fsx.accessSync(self, fs.constants.R_OK);
+      selfOk = !isEphemeral(self);
+    } catch (e) {
+      selfOk = false;
+    }
+    if (selfOk && tp && sp && tp.name === 'keyflip' && sp.name === 'keyflip' && tp.root !== sp.root) {
+      pathCopy = { script: target, root: tp.root, version: tp.version };
+      target = self;
+      from = 'self';
+    }
+  }
   if (!target) {
     target = realpathOr(opts.fallbackScript || REPO_SCRIPT, fsx);
     from = 'checkout';
   }
-  if (from === 'checkout' || isNodeScript(target, fsx)) {
-    return { exec: nodePath(opts), args: [target], script: target, kind: 'node-script', from: from };
+  const extra = pathCopy ? { pathCopy: pathCopy } : {};
+  if (from === 'checkout' || from === 'self' || isNodeScript(target, fsx)) {
+    return Object.assign(
+      { exec: nodePath(opts), args: [target], script: target, kind: 'node-script', from: from },
+      extra,
+    );
   }
-  return { exec: target, args: [], script: null, kind: 'binary', from: from };
+  return Object.assign({ exec: target, args: [], script: null, kind: 'binary', from: from }, extra);
 }
 
 // The full argv for a job: { exec, args } with the subcommand appended.
@@ -137,4 +180,4 @@ function problems(c, opts) {
   return out;
 }
 
-export { resolveSelf, argvFor, nodePath, jobPath, problems, isEphemeral, isNodeScript, REPO_SCRIPT };
+export { resolveSelf, argvFor, nodePath, jobPath, problems, isEphemeral, isNodeScript, packageOf, REPO_SCRIPT };

@@ -11,6 +11,7 @@ import * as provider from '../src/provider.js';
 import * as autosw from '../src/autoswitch.js';
 import * as core from '../src/core.js';
 import * as history from '../src/history.js';
+import * as config from '../src/config.js';
 import { spawnSync } from 'child_process';
 import { fileURLToPath } from 'url';
 
@@ -73,7 +74,7 @@ test('the plan: alias chain gmail API -> agy -> kiro-emu, $25 on the first (paid
   assert.strictEqual(p.alias, 'keyflip-failover');
 });
 
-test('setup: alias, spend cap (adapter + account), scoped key into the store, provider profile', async function () {
+test('setup: alias, spend cap (adapter; the account only on request), scoped key, provider profile', async function () {
   const ctx = makeCtx();
   const cfgPath = keysmithConfig(ctx);
   const state = {};
@@ -107,7 +108,11 @@ test('setup: alias, spend cap (adapter + account), scoped key into the store, pr
   assert.ok(JSON.stringify(r).indexOf(GATEWAY_KEY) === -1, 'the key is in no result');
   const ks = JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
   assert.strictEqual(ks.limits.spend['adapter:claude-api'], 25);
-  assert.strictEqual(ks.limits.spend['account:keyflip:provider__gmail-api'], 25);
+  assert.strictEqual(
+    ks.limits.spend['account:keyflip:provider__gmail-api'],
+    undefined,
+    "the key's whole account is NOT capped by default: other work on that key goes through keysmith too",
+  );
   assert.strictEqual(ks.limits.spend.other, 5, 'existing caps kept');
   assert.deepStrictEqual(ks.auth.keys, ['ks_EXISTING'], 'the rest of the config untouched');
   assert.strictEqual(fs.statSync(cfgPath).mode & 0o777, 0o600, 'mode kept');
@@ -116,6 +121,50 @@ test('setup: alias, spend cap (adapter + account), scoped key into the store, pr
   assert.strictEqual(meta.models.default, 'keyflip-failover');
   assert.strictEqual(meta.models.smallFast, 'keyflip-failover', 'background models go through the alias too');
   assert.strictEqual(r.restartGateway, true);
+});
+
+test('setup caps the whole credential account only when failover.capAccount is set', async function () {
+  const ctx = makeCtx();
+  config.set(ctx, 'failover.capAccount', 'true');
+  const cfgPath = keysmithConfig(ctx);
+  const r = await failover.setup(ctx, {
+    run: fakeKeysmith({}),
+    keysmithConfig: cfgPath,
+    accountOf: () => 'keyflip:provider__gmail-api',
+  });
+  assert.strictEqual(r.ok, true, JSON.stringify(r.steps));
+  const ks = JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
+  assert.strictEqual(ks.limits.spend['account:keyflip:provider__gmail-api'], 25);
+});
+
+test('REGRESSION: setup never replaces a cap keysmith already has (windowed, nested or looser)', async function () {
+  const ctx = makeCtx();
+  const cfgPath = keysmithConfig(ctx);
+  const ks0 = JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
+  // The owner's own budget on that adapter: one total over a window of days (keysmith 1708760).
+  ks0.limits.spend = { other: 5, adapters: { 'claude-api': { usd: 185, since: '2026-11-06', until: '2026-12-09' } } };
+  fs.writeFileSync(cfgPath, JSON.stringify(ks0), { mode: 0o600 });
+  const r = await failover.setup(ctx, { run: fakeKeysmith({}), keysmithConfig: cfgPath, accountOf: () => null });
+  const step = r.steps.find((s) => s.step === 'spend-cap');
+  assert.strictEqual(step.changed, false);
+  assert.strictEqual(step.ok, false, 'a looser cap than $25 is reported, and the failover stays off');
+  assert.ok(
+    /kept the existing cap on adapter:claude-api \(\$185 over 2026-11-06\.\.2026-12-09\)/.test(step.detail),
+    step.detail,
+  );
+  const ks = JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
+  assert.deepStrictEqual(ks.limits.spend.adapters['claude-api'], {
+    usd: 185,
+    since: '2026-11-06',
+    until: '2026-12-09',
+  });
+  assert.strictEqual(ks.limits.spend['adapter:claude-api'], undefined, 'no second, conflicting cap added');
+  // a stricter existing cap is fine as it is
+  ks.limits.spend.adapters['claude-api'] = 10;
+  fs.writeFileSync(cfgPath, JSON.stringify(ks), { mode: 0o600 });
+  const r2 = await failover.setup(ctx, { run: fakeKeysmith({}), keysmithConfig: cfgPath, accountOf: () => null });
+  assert.strictEqual(r2.steps.find((s) => s.step === 'spend-cap').ok, true);
+  assert.strictEqual(JSON.parse(fs.readFileSync(cfgPath, 'utf8')).limits.spend.adapters['claude-api'], 10);
 });
 
 test('setup is idempotent: no second key, cap unchanged', async function () {
@@ -160,11 +209,19 @@ test('a failing keysmith step is reported, not hidden', async function () {
   assert.ok(/unknown adapter/.test(r.steps.find((s) => s.step === 'alias').detail));
 });
 
-function gateway(models, status) {
+// The running gateway: /v1/models, and /v1/keysmith/usage reporting the spend caps it LOADED.
+// spend: rows as keysmith returns them for the scoped key (default: $25 on claude-api).
+function gateway(models, status, spend) {
   const calls = [];
+  const rows =
+    spend !== undefined ? spend : [{ kind: 'adapter', target: 'claude-api', cap: 25, spent: 0, exceeded: false }];
   const f = async (url, opts) => {
     calls.push({ url: url, auth: opts.headers.Authorization });
     if (status) return { ok: false, status: status };
+    if (/\/v1\/keysmith\/usage/.test(url)) {
+      if (rows === null) return { ok: false, status: 404 };
+      return { ok: true, status: 200, json: async () => ({ summary: {}, spend: rows }) };
+    }
     return { ok: true, status: 200, json: async () => ({ data: models.map((id) => ({ id: id })) }) };
   };
   f.calls = calls;
@@ -187,6 +244,37 @@ test('gatewayReady: up + serving the alias; not set up; alias missing; unreachab
     throw new Error('ECONNREFUSED');
   };
   assert.ok(/unreachable/.test((await failover.gatewayReady(ctx, { fetch: down })).reason));
+});
+
+test('REGRESSION: the failover never engages uncapped — the RUNNING gateway must report the cap', async function () {
+  const ctx = makeCtx();
+  await setUp(ctx);
+  // config written, gateway not restarted: it serves the alias but enforces no cap yet
+  const noCap = gateway(['keyflip-failover'], null, []);
+  const r1 = await failover.gatewayReady(ctx, { fetch: noCap });
+  assert.strictEqual(r1.ok, false);
+  assert.ok(/no spend cap of at most \$25 on claude-api/.test(r1.reason), r1.reason);
+  // an older gateway with no usage route: cannot prove the cap -> refuse
+  const r2 = await failover.gatewayReady(ctx, { fetch: gateway(['keyflip-failover'], null, null) });
+  assert.strictEqual(r2.ok, false);
+  assert.ok(/refusing to fail over uncapped/.test(r2.reason));
+  // a looser cap does not count
+  const loose = gateway(['keyflip-failover'], null, [{ kind: 'adapter', target: 'claude-api', cap: 185 }]);
+  assert.strictEqual((await failover.gatewayReady(ctx, { fetch: loose })).ok, false);
+  const log = [];
+  const e = await failover.engage(ctx, { from: 'gmail' }, { fetch: noCap, useProvider: () => log.push('use') });
+  assert.strictEqual(e.ok, false);
+  assert.deepStrictEqual(log, [], 'Claude Code was never pointed at the gateway');
+  assert.strictEqual(failover.state(ctx), null);
+  // the per-tick health check does not re-prove the cap (proven at engage), only that it serves
+  assert.strictEqual((await failover.gatewayReady(ctx, { fetch: noCap, capCheck: false })).ok, true);
+  // a reached cap still engages: keysmith skips the paid leg and the free legs carry on
+  const spent = gateway(['keyflip-failover'], null, [
+    { kind: 'adapter', target: 'claude-api', cap: 25, spent: 25.2, exceeded: true },
+  ]);
+  const ok = await failover.gatewayReady(ctx, { fetch: spent });
+  assert.strictEqual(ok.ok, true);
+  assert.strictEqual(ok.cap.exceeded, true);
 });
 
 test('engage points Claude Code at the gateway, asks Desktop to follow, records it; release undoes it', async function () {
@@ -364,6 +452,185 @@ test('tick: a failover that cannot engage says why and stays no-candidate', asyn
   });
   assert.strictEqual(r.state, 'no-candidate');
   assert.ok(/unreachable/.test(r.failoverError));
+});
+
+// ---- review fixes: never pay on a guess, never stay on a dead gateway, always find the way back ----
+function usageFetchBy(byTok) {
+  // byTok[tok] = number (utilization) | 429 | 401
+  return async (url, opts) => {
+    const tok = opts.headers.Authorization.replace('Bearer ', '');
+    const v = byTok[tok];
+    if (v === 429 || v === 401 || v === undefined)
+      return {
+        ok: false,
+        status: v === undefined ? 401 : v,
+        headers: { get: (h) => (h === 'retry-after' ? '120' : null) },
+      };
+    return {
+      ok: true,
+      status: 200,
+      headers: { get: () => null },
+      json: async () => ({ five_hour: { utilization: v, resets_at: '2027-01-15T08:00:00Z' } }),
+    };
+  };
+}
+function twoAccounts() {
+  const ctx = makeCtx();
+  login(ctx, 'a@x.com', 'u1', 'TA');
+  core.addCurrent(ctx);
+  login(ctx, 'b@x.com', 'u2', 'TB');
+  core.addCurrent(ctx);
+  return ctx; // b is live
+}
+
+test('REGRESSION: an account whose usage is UNKNOWN (429) is not "exhausted" — no paid failover', async function () {
+  const ctx = twoAccounts();
+  const fo = fakeFailover();
+  const r = await autosw.tick(ctx, {
+    threshold: 95,
+    fetch: usageFetchBy({ TB: 99, TA: 429 }),
+    nowMs: Date.parse('2027-01-15T06:00:00Z'),
+    cacheTtlMs: 0,
+    failover: fo.api,
+  });
+  assert.strictEqual(r.state, 'no-candidate');
+  assert.deepStrictEqual(r.unknownCandidates, ['a']);
+  assert.ok(/not engaging the paid failover/.test(r.failoverDeferred));
+  assert.deepStrictEqual(fo.st.log, [], 'engage was never called');
+  // once a's reading says it is out too, the failover engages — and knows when b's window resets
+  let info = null;
+  fo.api.engage = async (i) => {
+    info = i;
+    fo.st.log.push('engage:' + i.from);
+    fo.st.engaged = { engaged: true, recoverAt: i.recoverAt };
+    return { ok: true, state: fo.st.engaged };
+  };
+  const r2 = await autosw.tick(ctx, {
+    threshold: 95,
+    fetch: usageFetchBy({ TB: 99, TA: 98 }),
+    nowMs: Date.parse('2027-01-15T07:00:00Z'),
+    cacheTtlMs: 0,
+    failover: fo.api,
+  });
+  assert.strictEqual(r2.state, 'failover-engaged');
+  assert.strictEqual(info.recoverAt, '2027-01-15T08:00:00.000Z');
+});
+
+test('REGRESSION: a gateway that dies while engaged is left (after one re-check), loudly', async function () {
+  const ctx = twoAccounts();
+  const fo = fakeFailover();
+  fo.st.engaged = { engaged: true };
+  let checks = 0;
+  fo.api.check = async () => {
+    checks++;
+    return { ok: false, reason: 'gateway unreachable at http://127.0.0.1:8787' };
+  };
+  let released = null;
+  fo.api.release = async (i) => {
+    released = i;
+    fo.st.engaged = null;
+    return { ok: true };
+  };
+  const r = await autosw.tick(ctx, {
+    threshold: 95,
+    fetch: usageFetchBy({ TB: 99, TA: 99 }),
+    nowMs: 1,
+    cacheTtlMs: 0,
+    failover: fo.api,
+    sleep: async () => {},
+  });
+  assert.strictEqual(r.state, 'failover-lost');
+  assert.strictEqual(checks, 2, 'one re-check before giving up (a gateway restart takes seconds)');
+  assert.strictEqual(released.lost, true);
+  assert.ok(/stopped answering/.test(released.reason));
+  // a healthy gateway is left alone
+  fo.st.engaged = { engaged: true };
+  fo.api.check = async () => ({ ok: true });
+  const r2 = await autosw.tick(ctx, {
+    threshold: 95,
+    fetch: usageFetchBy({ TB: 99, TA: 99 }),
+    nowMs: 2,
+    cacheTtlMs: 0,
+    failover: fo.api,
+    sleep: async () => {},
+  });
+  assert.strictEqual(r2.state, 'failover');
+});
+
+test('REGRESSION: on the failover with the live token rejected (401), a recovered account still ends it', async function () {
+  const ctx = twoAccounts();
+  const fo = fakeFailover();
+  fo.st.engaged = { engaged: true };
+  const r = await autosw.tick(ctx, {
+    threshold: 95,
+    fetch: usageFetchBy({ TB: 401, TA: 10 }),
+    nowMs: 1,
+    cacheTtlMs: 0,
+    failover: fo.api,
+  });
+  assert.strictEqual(r.state, 'switched');
+  assert.strictEqual(r.switchedTo.name, 'a');
+  assert.deepStrictEqual(fo.st.log, ['release:a']);
+});
+
+test("REGRESSION: on the failover with the usage unreadable, the binding window's reset ends it", async function () {
+  const ctx = twoAccounts();
+  const fo = fakeFailover();
+  fo.st.engaged = { engaged: true, recoverAt: '2027-01-15T08:00:00.000Z' };
+  // b's own token aged out (nothing renews it while Claude Code is on the gateway); a still out
+  ctx.store.setLive(
+    JSON.stringify({ claudeAiOauth: { accessToken: 'TB', expiresAt: Date.parse('2027-01-15T05:00:00Z') } }),
+  );
+  const before = await autosw.tick(ctx, {
+    threshold: 95,
+    fetch: usageFetchBy({ TB: 401, TA: 99 }),
+    nowMs: Date.parse('2027-01-15T07:59:00Z'),
+    cacheTtlMs: 0,
+    failover: fo.api,
+  });
+  assert.strictEqual(before.state, 'failover', 'not before the reset');
+  const after = await autosw.tick(ctx, {
+    threshold: 95,
+    fetch: usageFetchBy({ TB: 401, TA: 99 }),
+    nowMs: Date.parse('2027-01-15T08:00:01Z'),
+    cacheTtlMs: 0,
+    failover: fo.api,
+  });
+  assert.strictEqual(after.state, 'failback');
+  assert.strictEqual(after.basis, 'window-reset');
+  assert.deepStrictEqual(fo.st.log, ['release:b']);
+});
+
+test('a live login the server REJECTS (not merely aged) is left for an account with headroom', async function () {
+  const ctx = twoAccounts();
+  // not aged: no expiresAt in the past -> 401 means the login itself is dead
+  const r = await autosw.tick(ctx, {
+    threshold: 95,
+    fetch: usageFetchBy({ TB: 401, TA: 20 }),
+    nowMs: 1,
+    cacheTtlMs: 0,
+  });
+  assert.strictEqual(r.state, 'switched');
+  assert.strictEqual(r.switchedTo.name, 'a');
+  // an access token past its expiry is Claude Code's to renew: wait, do not switch
+  const ctx2 = twoAccounts();
+  ctx2.store.setLive(JSON.stringify({ claudeAiOauth: { accessToken: 'TB', expiresAt: 1000 } }));
+  const r2 = await autosw.tick(ctx2, {
+    threshold: 95,
+    fetch: usageFetchBy({ TB: 401, TA: 20 }),
+    nowMs: 5000,
+    cacheTtlMs: 0,
+  });
+  assert.strictEqual(r2.state, 'unknown');
+});
+
+test('REGRESSION: MCP keyflip_autoswitch_tick clamps the threshold like the CLI (0 is not "everyone is out")', async function () {
+  const ctx = twoAccounts();
+  ctx.fetch = usageFetchBy({ TB: 5, TA: 5 });
+  const mcp = await import('../src/mcp.js');
+  const t = mcp.TOOLS.find((x) => x.name === 'keyflip_autoswitch_tick');
+  const r = await t.run(ctx, { threshold: 0, confirm: true });
+  assert.strictEqual(r.state, 'below');
 });
 
 // ---- the CLI surface (sandbox HOME; keysmith is not installed there, nothing is reachable) ----

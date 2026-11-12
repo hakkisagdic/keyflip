@@ -753,6 +753,9 @@ async function cmdSwitch(ctx, rest) {
   const name = core.resolveProfile(ctx, arg);
   if (!name) return fail("no such profile: '" + arg + "' (see: keyflip list)");
   const em = profiles.email(ctx.configDir, name);
+  // P2: learn whose login is live (profile endpoint, once per token) BEFORE the outgoing token is
+  // preserved — so it is saved under the account it belongs to, not under the label.
+  if (!dryRun) await core.prepareSwitch(ctx);
 
   // What was live BEFORE anything is written. This snapshot is the only recovery path there is —
   // `keyflip undo` reverts the metadata git repo, never a credential store — so it has to be taken
@@ -1277,6 +1280,7 @@ async function cmdSwitch(ctx, rest) {
 
 // Rotate to the next saved account after the currently active one (wraps around).
 async function cmdNext(ctx, rest) {
+  await core.prepareSwitch(ctx); // P2: the active account (and the token to preserve) by the token
   const list = core.listProfiles(ctx);
   if (list.length < 2) return fail('need at least 2 saved accounts to rotate (see: keyflip add)');
   let idx = -1;
@@ -1427,12 +1431,17 @@ async function cmdImport(ctx, rest) {
 // take the switch lock (they rewrite settings.json and the desktop config) and notify.
 function failoverAdapter(ctx) {
   if (!_failover.plan(ctx).enabled) return undefined;
+  // Moving onto (or off) a PAID API is never silent: the configured sinks, else a macOS banner.
   function note(ev, msg) {
-    return _notify.send(ctx, ev, { message: msg }).catch(function () {});
+    return _desktoprestart.notifyLoud(ctx, ev, msg).catch(function () {});
   }
   return {
     state: function () {
       return _failover.state(ctx);
+    },
+    // Per-tick health while engaged: is the gateway still serving the alias? (The cap was proven at engage.)
+    check: function () {
+      return _failover.gatewayReady(ctx, { capCheck: false });
     },
     engage: function (info) {
       return withLock(ctx, function () {
@@ -1493,6 +1502,19 @@ async function cmdFailover(ctx, rest) {
       '  chain:   ' + p.alias + ' = ' + p.legs.join(' → ') + '   (cap $' + p.capUsd + '/month on ' + p.capAdapter + ')',
     );
     print('  gateway: ' + p.gatewayUrl + ' — ' + (ready.ok ? style.ok('ready') : style.warn(ready.reason)));
+    if (ready.cap)
+      print(
+        '  cap:     $' +
+          ready.cap.cap +
+          ' on ' +
+          ready.cap.kind +
+          ' ' +
+          ready.cap.target +
+          (typeof ready.cap.spent === 'number' ? ', spent $' + ready.cap.spent : '') +
+          (ready.cap.exceeded ? style.warn('  (reached: the paid leg is skipped)') : '') +
+          style.dim('  (reported by the running gateway)'),
+      );
+    if (st && st.recoverAt) print('  back on Claude by ' + st.recoverAt + style.dim(' at the latest (window reset)'));
     return;
   }
   if (sub === 'on' || sub === 'off') {
@@ -1525,8 +1547,9 @@ async function cmdFailover(ctx, rest) {
 }
 
 // Watch the active account and auto-switch the CLI credential at a usage
-// threshold (claude-swap PR #76 / issues #38, #50). The desktop app is never
-// closed; Claude Code picks the new credential up on its next request.
+// threshold (claude-swap PR #76 / issues #38, #50). Claude Code picks the new
+// credential up on its next request; Claude Desktop follows through an idle-only
+// restart (P5); every account known out -> the capped API failover (P4).
 async function cmdAutoswitch(ctx, rest) {
   function numFlag(flag, dflt) {
     const i = rest.indexOf(flag);
@@ -1774,10 +1797,20 @@ async function cmdAutoswitch(ctx, rest) {
     );
     print(
       style.dim(
-        '  It never closes Claude; the swap is picked up on the next request. Stop it: keyflip autoswitch uninstall.',
+        '  Claude Code picks a swap up on its next request; Claude Desktop is restarted to follow it only while idle, with a notification (keyflip config set desktop.autoRestart false to stop that). Stop it all: keyflip autoswitch uninstall.',
       ),
     );
     if (r.exec) print(style.dim('  runs: ' + [r.exec].concat(r.args || []).join(' ')));
+    if (r.pathCopy)
+      print(
+        '  ' +
+          style.warn('⚠ the `keyflip` on your PATH is another copy') +
+          ' (' +
+          r.pathCopy.root +
+          (r.pathCopy.version ? ', ' + r.pathCopy.version : '') +
+          ') — the service runs this one instead. Update the PATH copy so manual commands match: ' +
+          style.bold('npm i -g ' + path.resolve(path.dirname(r.args[0]), '..')),
+      );
     if (r.log) print(style.dim('  log:  ' + r.log + '   (health: keyflip autoswitch status)'));
     logmod.log(
       'autoswitch service installed (interval=' + (r.intervalSec || svcInterval) + ', threshold=' + threshold + ')',
@@ -1807,7 +1840,17 @@ async function cmdAutoswitch(ctx, rest) {
         (group ? ', group: ' + group : '') +
         ').',
     );
-    print('The desktop app is never closed. Stop anytime with Ctrl-C.');
+    print(
+      'Claude Desktop follows a swap through a restart taken only while it is idle, with a notification' +
+        (_cfg.get(ctx, 'desktop.autoRestart') === false ? ' (off: desktop.autoRestart=false)' : '') +
+        '.',
+    );
+    if (_failover.plan(ctx).enabled && _failover.state(ctx) === null)
+      print(
+        style.warn('If every account is known to be over the threshold') +
+          ' and `keyflip failover setup` was done, Claude Code moves onto the PAID API failover (capped).',
+      );
+    print('Stop anytime with Ctrl-C.');
     const ok = await confirm('Start? [y/N] ');
     if (!ok) {
       print('Cancelled.');
@@ -13033,12 +13076,26 @@ async function cmdStatus(ctx, rest) {
   }
   let repaired = null;
   if (id && id.mismatch && id.name && rest.indexOf('--fix') !== -1) {
-    try {
-      repaired = _identity.repairPointer(ctx, id.name);
-      logmod.log('identity: repaired the ~/.claude.json label -> ' + id.name + ' (token said so)');
-      id = await _identity.resolveLive(ctx, { network: false });
-    } catch (e) {
-      repaired = { error: e.message };
+    if (!id.verified) {
+      // Offline, the token only matches keyflip's own store — and that store may be what is wrong.
+      repaired = {
+        error:
+          'not repaired: Anthropic could not confirm whose token this is right now (the offline match may be a damaged saved login) — retry when the profile endpoint answers',
+      };
+    } else {
+      try {
+        // Under the switch lock: a switch landing in between must not be undone by this label write.
+        repaired = await withLock(ctx, function () {
+          return _identity.repairIfMismatched(ctx);
+        });
+        if (repaired && repaired.repaired) {
+          repaired = { name: repaired.to, email: repaired.email };
+          logmod.log('identity: repaired the ~/.claude.json label -> ' + repaired.name + ' (token said so)');
+        } else repaired = null;
+        id = await _identity.resolveLive(ctx, { network: false });
+      } catch (e) {
+        repaired = { error: e.message };
+      }
     }
   }
   const cliEmail = (id && id.email) || core.currentEmail(ctx) || null;
@@ -13081,6 +13138,7 @@ async function cmdStatus(ctx, rest) {
           email: cliEmail,
           name: (id && id.name) || null,
           identitySource: (id && id.source) || null,
+          identityVerified: !!(id && id.verified),
           labelEmail: (id && id.labelEmail) || null,
           labelMismatch: !!(id && id.mismatch),
           wrongCredentialIn: (id && id.wrongCredentialIn) || undefined,
@@ -13147,6 +13205,13 @@ async function cmdStatus(ctx, rest) {
       );
     if (repaired && !repaired.error)
       print('  ' + style.ok('✅') + ' label repaired → ' + (repaired.email || repaired.name));
+    else if (repaired && repaired.error) print('  ' + style.warn('⚠ ' + repaired.error));
+    if (id && id.mismatch && !id.verified)
+      print(
+        style.dim(
+          '  (offline match only: the endpoint has not confirmed it yet, so nothing is repaired automatically)',
+        ),
+      );
     if (id && id.wrongCredentialIn && id.wrongCredentialIn.length)
       print(
         '  ' +

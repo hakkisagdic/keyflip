@@ -230,3 +230,23 @@ test('unsupported platform is handled, not crashed', function () {
   assert.strictEqual(r.kind, 'unsupported');
   assert.strictEqual(r.ok, false);
 });
+
+test('REGRESSION: a PATH keyflip that is ANOTHER (older) keyflip package is not what the job runs', function () {
+  // The live machine: `which keyflip` -> a global npm copy (same version string, none of the fixes),
+  // while the install ran from the fixed checkout. The job must run the code that installed it.
+  const root = fs.realpathSync(tmpHome());
+  const pkg = path.join(root, 'lib', 'node_modules', 'keyflip');
+  fs.mkdirSync(path.join(pkg, 'bin'), { recursive: true });
+  fs.writeFileSync(path.join(pkg, 'package.json'), JSON.stringify({ name: 'keyflip', version: '1.6.1' }));
+  const stale = path.join(pkg, 'bin', 'keyflip.js');
+  fs.writeFileSync(stale, '#!/usr/bin/env node\n', { mode: 0o755 });
+  const c = svc.autoswitchCommand({ run: fakeRunner({ which: stale }), threshold: 95 });
+  const self = fs.realpathSync(path.join(path.dirname(new URL(import.meta.url).pathname), '..', 'bin', 'keyflip.js'));
+  assert.strictEqual(c.args[0], self, 'the running checkout, not the PATH copy');
+  assert.strictEqual(c.pathCopy.root, pkg);
+  assert.strictEqual(c.pathCopy.version, '1.6.1');
+  // a PATH hit that is the SAME package (or not a keyflip package at all) is used as before
+  const same = svc.autoswitchCommand({ run: fakeRunner({ which: self }) });
+  assert.strictEqual(same.args[0], self);
+  assert.strictEqual(same.pathCopy, undefined);
+});

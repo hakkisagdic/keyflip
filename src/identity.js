@@ -11,6 +11,10 @@
 //   2. token-match  — exactly ONE saved profile holds the same access or refresh token (offline)
 //   3. token-profile — the OAuth profile endpoint, asked with the live token (async callers only)
 //   4. label        — ~/.claude.json, flagged as such
+// Only the endpoint's answer is VERIFIED. The offline answers (cache of a keyflip save, exact match)
+// trust keyflip's own store — and the store is exactly what label-based saving damaged (gmail's
+// token saved under yahoo's name), so an offline verdict never repairs a label or names a profile to
+// overwrite. resolveLive asks the endpoint once per token until it has a verified answer.
 // Fingerprints are truncated SHA-256 of a token: never the token, never reversible, never versioned
 // (the cache file is gitignored and skipped by backups).
 import crypto from 'crypto';
@@ -116,6 +120,21 @@ function holdersOf(ctx, live) {
   return out;
 }
 
+// Does profile `name` (normal login or one-year token) still hold the live token?
+function holds(ctx, name, live) {
+  return [name, longtoken.storeName(name)].some(function (storeName) {
+    let b = null;
+    try {
+      b = ctx.store.getProfile(storeName);
+    } catch (e) {
+      b = null;
+    }
+    if (!b) return false;
+    const f = fingerprints(b);
+    return !!((live.access && f.access === live.access) || (live.refresh && f.refresh === live.refresh));
+  });
+}
+
 // An identity from the profile endpoint -> the saved profile it belongs to.
 function profileFor(ctx, id) {
   const names = profiles.list(ctx.configDir);
@@ -148,7 +167,9 @@ function profileFor(ctx, id) {
 // GET /api/oauth/profile with the live token -> { accountUuid, email, org } | { httpStatus }.
 async function fetchProfile(token, opts) {
   opts = opts || {};
-  const doFetch = opts.fetch || (typeof fetch !== 'undefined' ? fetch : null);
+  // The test suite sets KEYFLIP_TEST_OFFLINE so a spawned CLI never sends a fixture token to
+  // Anthropic; tests that exercise the endpoint inject their own fetch.
+  const doFetch = opts.fetch || (typeof fetch !== 'undefined' && !process.env.KEYFLIP_TEST_OFFLINE ? fetch : null);
   if (!doFetch || !token) return { identity: null, httpStatus: null };
   try {
     const res = await doFetch(PROFILE_URL, {
@@ -218,18 +239,38 @@ function liveSync(ctx, opts) {
     r.sharedBy = hit.shared;
     return finish(r, label);
   }
-  if (hit && hit.name && profiles.exists(ctx.configDir, hit.name)) {
+  if (hit && hit.source === 'token-profile' && hit.name && profiles.exists(ctx.configDir, hit.name)) {
     r.name = hit.name;
     r.email = hit.email || profiles.email(ctx.configDir, hit.name) || null;
     r.source = 'token-cache';
+    r.verified = true;
+    if (Array.isArray(hit.wrongIn) && hit.wrongIn.length) r.wrongCredentialIn = hit.wrongIn.slice();
     return finish(r, label);
   }
   if (hit && !hit.name && hit.source === 'token-profile' && hit.email) {
-    // The endpoint named an account keyflip has no profile for.
+    // The endpoint named an account keyflip has no profile for (yet: a profile saved for it since).
+    const named = profileFor(ctx, { accountUuid: hit.accountUuid || null, email: hit.email, org: null });
     r.email = hit.email;
     r.source = 'token-cache';
-    r.unsaved = true;
+    r.verified = true;
+    if (named) r.name = named;
+    else {
+      r.unsaved = true;
+      r.accountUuid = hit.accountUuid || null;
+      r.org = hit.org || null;
+    }
     return finish(r, label);
+  }
+  // An unverified cache entry (a keyflip save) counts only while that profile still holds the token:
+  // then writing the live token there is a no-op, never an overwrite.
+  if (hit && hit.name && hit.source !== 'token-profile' && profiles.exists(ctx.configDir, hit.name)) {
+    if (holds(ctx, hit.name, f)) {
+      r.name = hit.name;
+      r.email = hit.email || profiles.email(ctx.configDir, hit.name) || null;
+      r.source = 'token-cache';
+      r.verified = false;
+      return finish(r, label);
+    }
   }
   if (hit && hit.offlineMiss && nowOf(opts) - (hit.at || 0) < MISS_TTL_MS) {
     if (hit.sharedBy) r.sharedBy = hit.sharedBy;
@@ -240,6 +281,7 @@ function liveSync(ctx, opts) {
     r.name = holders[0];
     r.email = profiles.email(ctx.configDir, holders[0]) || null;
     r.source = 'token-match';
+    r.verified = false;
     if (f.access) {
       cache[f.access] = { name: r.name, email: r.email, source: 'token-match', at: nowOf(opts) };
       writeCache(ctx, cache);
@@ -263,7 +305,9 @@ function liveSync(ctx, opts) {
 async function resolveLive(ctx, opts) {
   opts = opts || {};
   const s = liveSync(ctx, opts);
-  if (s.source !== 'label' || opts.network === false) return s;
+  // A verified answer (the endpoint's, cached by fingerprint) is final; anything else — the label,
+  // or an offline match that trusts keyflip's own store — is checked with the endpoint once.
+  if (s.verified || !s.hasLive || opts.network === false) return s;
   let live = null;
   try {
     live = ctx.store.getLive();
@@ -283,6 +327,11 @@ async function resolveLive(ctx, opts) {
     return Object.assign(s, { endpointStatus: r.httpStatus });
   }
   const name = profileFor(ctx, r.identity);
+  // Every OTHER profile holding this token stores this account's login under its own name — the
+  // damage label-based saving did. Switching "to" one of them would put this account live again.
+  const wrongIn = holdersOf(ctx, f).filter(function (n) {
+    return n !== name;
+  });
   cache[f.access] = {
     name: name,
     email: r.identity.email,
@@ -291,17 +340,17 @@ async function resolveLive(ctx, opts) {
     source: 'token-profile',
     at: nowOf(opts),
   };
+  if (wrongIn.length) cache[f.access].wrongIn = wrongIn;
   writeCache(ctx, cache);
   const label = labelOf(ctx);
-  const out = { name: name, email: r.identity.email, source: 'token-profile', hasLive: true };
-  if (s.sharedBy) {
-    out.sharedBy = s.sharedBy;
-    // The other holders store THIS account's token under their own name.
-    out.wrongCredentialIn = s.sharedBy.filter(function (n) {
-      return n !== name;
-    });
+  const out = { name: name, email: r.identity.email, source: 'token-profile', hasLive: true, verified: true };
+  if (s.sharedBy) out.sharedBy = s.sharedBy;
+  if (wrongIn.length) out.wrongCredentialIn = wrongIn;
+  if (!name) {
+    out.unsaved = true; // a real account keyflip has no profile for
+    out.accountUuid = r.identity.accountUuid;
+    out.org = r.identity.org;
   }
-  if (!name) out.unsaved = true; // a real account keyflip has no profile for
   return finish(out, label);
 }
 
@@ -312,6 +361,14 @@ function noteSaved(ctx, name, blob, opts) {
   if (!f.access) return;
   const cache = readCache(ctx);
   const prev = cache[f.access];
+  if (prev && prev.source === 'token-profile' && !prev.name && prev.email) {
+    // The endpoint named this account before it had a profile; this save is that profile.
+    if (String(profiles.email(ctx.configDir, name) || '').toLowerCase() === String(prev.email).toLowerCase()) {
+      cache[f.access] = Object.assign({}, prev, { name: name });
+      writeCache(ctx, cache);
+    }
+    return;
+  }
   if (prev && prev.source !== 'token-profile' && ((prev.name && prev.name !== name) || prev.shared)) {
     const names = (prev.shared || [prev.name]).filter(function (n) {
       return n && n !== name;
@@ -348,8 +405,36 @@ function repairPointer(ctx, name) {
 function repairIfMismatched(ctx) {
   const id = liveSync(ctx);
   if (!id.mismatch || !id.name) return { repaired: false };
+  // Only the endpoint's answer may rewrite the label: an offline match trusts a store that may itself
+  // hold one account's token under another's name, and would turn a RIGHT label wrong.
+  if (!id.verified) return { repaired: false, unverified: true };
   const r = repairPointer(ctx, id.name);
   return { repaired: true, from: id.labelName || id.labelEmail, to: r.name, email: r.email };
+}
+
+// The account a saved profile's stored token REALLY belongs to, when the profile endpoint has said
+// so and it is another account: profile `name` then holds someone else's login (switching to it
+// would put that account live). null when unknown or when it is `name`'s own.
+function wrongOwnerOf(ctx, name) {
+  let b = null;
+  try {
+    b = ctx.store.getProfile(name);
+  } catch (e) {
+    b = null;
+  }
+  if (!b) return null;
+  const f = fingerprints(b);
+  if (!f.access) return null;
+  const hit = readCache(ctx)[f.access];
+  if (!hit || hit.source !== 'token-profile') return null;
+  if (hit.name && hit.name !== name) return hit.name;
+  if (
+    !hit.name &&
+    hit.email &&
+    String(hit.email).toLowerCase() !== String(profiles.email(ctx.configDir, name) || '').toLowerCase()
+  )
+    return hit.email;
+  return null;
 }
 
 // Accounts whose stored refresh token something is USING right now, so rotating it would log that
@@ -422,6 +507,7 @@ function inUseAccounts(ctx, opts) {
 }
 
 export {
+  wrongOwnerOf,
   inUseAccounts,
   repairIfMismatched,
   liveSync,

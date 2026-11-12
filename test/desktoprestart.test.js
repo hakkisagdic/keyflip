@@ -137,6 +137,100 @@ test('an app that will not quit is left alone: nothing applied, not reopened, st
   assert.ok(dr.readPending(ctx));
 });
 
+test('REGRESSION: an app that will not quit is asked again only after a while, and the user told ONCE', async function () {
+  const ctx = makeCtx();
+  const a = app({ quitWorks: false });
+  const t0 = 1800000000000;
+  dr.request(ctx, { kind: 'gateway-on', target: 'keysmith-failover' }, { nowMs: t0 });
+  const r1 = await dr.processPending(ctx, Object.assign({}, a.deps, { nowMs: t0 }));
+  const r2 = await dr.processPending(ctx, Object.assign({}, a.deps, { nowMs: t0 + 120000 }));
+  const r3 = await dr.processPending(ctx, Object.assign({}, a.deps, { nowMs: t0 + 240000 }));
+  assert.strictEqual(r1.state, 'quit-failed');
+  assert.strictEqual(r2.state, 'deferred');
+  assert.strictEqual(r3.state, 'deferred');
+  assert.strictEqual(a.log.filter((l) => l === 'quit').length, 1, 'one quit attempt, not one per tick');
+  assert.strictEqual(a.log.filter((l) => /^notify:/.test(l)).length, 2, '"restarting" + "did not quit", once');
+  const r4 = await dr.processPending(ctx, Object.assign({}, a.deps, { nowMs: t0 + 31 * 60 * 1000 }));
+  assert.strictEqual(r4.state, 'quit-failed', 'tried again after the back-off');
+});
+
+test('REGRESSION: helpers and keyflip clones are not "the app" — only the main executable is', function () {
+  const ps = [
+    ' 101 /Applications/Claude.app/Contents/MacOS/Claude',
+    ' 102 /Applications/Claude.app/Contents/Frameworks/Claude Helper (Renderer).app/Contents/MacOS/Claude Helper (Renderer) --type=renderer',
+    ' 103 /Users/x/.keyflip-instances/claude/work/Claude.app/Contents/MacOS/Claude --user-data-dir=/Users/x/.keyflip-instances/claude/work/data',
+    ' 104 /Applications/Claude.app/Contents/Resources/app.asar.unpacked/claude-code/claude --resume',
+  ].join('\n');
+  const run = () => ({ code: 0, stdout: ps });
+  const ctx = { platform: 'darwin', instancesBase: '/Users/x/.keyflip-instances' };
+  assert.deepStrictEqual(dr.desktopProcesses(ctx, run), { main: [101], instances: [103] });
+  const quitDone = () => ({ code: 0, stdout: ps.split('\n').slice(1).join('\n') });
+  assert.deepStrictEqual(dr.desktopProcesses(ctx, quitDone).main, [], 'a lingering helper is not a running app');
+});
+
+test('REGRESSION: a pending account restart follows the CLI NOW (retargeted, or dropped), and expires', async function () {
+  const ctx = makeCtx();
+  const a = app();
+  dr.request(ctx, { kind: 'account', target: 'b' }, { nowMs: Date.now() });
+  // the user switched the CLI to "a" by hand since; a has a desktop login -> Desktop follows a
+  const r = await dr.processPending(
+    ctx,
+    Object.assign({}, a.deps, { currentCli: () => 'a', hasDesktopLogin: () => true, desktopAccount: () => null }),
+  );
+  assert.strictEqual(r.state, 'restarted');
+  assert.ok(a.log.includes('apply:account:a:closed'), a.log.join(' | '));
+  assert.ok(!a.log.some((l) => l.indexOf('apply:account:b') === 0), 'the stale target is never applied');
+  // CLI moved to an account with no desktop login: the record is dropped, nothing restarts
+  const b = app();
+  dr.request(ctx, { kind: 'account', target: 'b' }, { nowMs: Date.now() });
+  const r2 = await dr.processPending(
+    ctx,
+    Object.assign({}, b.deps, { currentCli: () => 'c', hasDesktopLogin: () => false }),
+  );
+  assert.strictEqual(r2.state, 'none');
+  assert.ok(!b.log.includes('quit'));
+  assert.strictEqual(dr.readPending(ctx), null);
+  // Desktop is already on the target (a manual switch moved it): no restart
+  const c = app();
+  dr.request(ctx, { kind: 'account', target: 'b' }, { nowMs: Date.now() });
+  const r3 = await dr.processPending(
+    ctx,
+    Object.assign({}, c.deps, { currentCli: () => 'b', desktopAccount: () => 'b' }),
+  );
+  assert.strictEqual(r3.state, 'none');
+  assert.ok(!c.log.includes('quit'));
+  // and an old record is dropped, not replayed
+  const d = app();
+  dr.request(ctx, { kind: 'account', target: 'b' }, { nowMs: 1000 });
+  const r4 = await dr.processPending(ctx, Object.assign({}, d.deps, { nowMs: 1000 + 13 * 3600 * 1000 }));
+  assert.strictEqual(r4.state, 'none');
+  assert.ok(!d.log.includes('quit'));
+});
+
+test('a running keyflip Claude clone defers the restart (quit-by-name could hit the clone)', async function () {
+  const ctx = makeCtx({ platform: 'darwin' });
+  ctx.instancesBase = '/Users/x/.keyflip-instances';
+  const a = app();
+  delete a.deps.isRunning;
+  const ps = [
+    ' 101 /Applications/Claude.app/Contents/MacOS/Claude',
+    ' 103 /Users/x/.keyflip-instances/claude/w/Claude.app/Contents/MacOS/Claude',
+  ].join('\n');
+  a.deps.run = () => ({ code: 0, stdout: ps });
+  a.deps.desktopAccount = () => null;
+  dr.request(ctx, { kind: 'gateway-on', target: 'keysmith-failover' });
+  const saved = process.env.KEYFLIP_TEST_CLAUDE;
+  delete process.env.KEYFLIP_TEST_CLAUDE;
+  try {
+    const r = await dr.processPending(ctx, a.deps);
+    assert.strictEqual(r.state, 'deferred');
+    assert.ok(/keyflip Claude instance is running/.test(r.reason));
+    assert.ok(!a.log.includes('quit'));
+  } finally {
+    if (saved !== undefined) process.env.KEYFLIP_TEST_CLAUDE = saved;
+  }
+});
+
 test('a failed apply still reopens the app, says so, and is not retried every tick', async function () {
   const ctx = makeCtx();
   const a = app({ applyFails: true });
@@ -282,7 +376,10 @@ test('engaging the failover asks Desktop for a gateway-on restart (default path)
   ctx.store.setProfile('provider__keysmith-failover', 'ks_FAKE');
   const provider = await import('../src/provider.js');
   provider.add(ctx, 'keysmith-failover', { baseUrl: 'http://127.0.0.1:8787', models: { default: 'keyflip-failover' } });
-  const fetch = async () => ({ ok: true, status: 200, json: async () => ({ data: [{ id: 'keyflip-failover' }] }) });
+  const fetch = async (url) =>
+    /\/v1\/keysmith\/usage/.test(url)
+      ? { ok: true, status: 200, json: async () => ({ spend: [{ kind: 'adapter', target: 'claude-api', cap: 25 }] }) }
+      : { ok: true, status: 200, json: async () => ({ data: [{ id: 'keyflip-failover' }] }) };
   const e = await failover.engage(ctx, { from: 'b' }, { fetch: fetch, useProvider: () => {} });
   assert.strictEqual(e.ok, true);
   assert.deepStrictEqual(dr.readPending(ctx).actions, [
@@ -302,7 +399,7 @@ test(
     // pending: switch Desktop to an account that has NO saved desktop login -> apply fails, reported
     fs.writeFileSync(
       path.join(cfgDir, dr.PENDING_FILE),
-      JSON.stringify({ actions: [{ kind: 'account', target: 'ghost' }], since: 1 }),
+      JSON.stringify({ actions: [{ kind: 'account', target: 'ghost' }], since: Date.now() }),
     );
     const BIN = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'keyflip.js');
     const r = spawnSync(process.execPath, [BIN, 'autoswitch', '--once', '-y'], {

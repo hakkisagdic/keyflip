@@ -50,7 +50,9 @@ function autoswitchCommand(opts) {
   if (!isNaN(th)) args.push('--threshold', String(Math.min(100, Math.max(50, th))));
   if (opts.strategy === 'best' || opts.strategy === 'next-available') args.push('--strategy', opts.strategy);
   if (opts.group && /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(opts.group)) args.push('--group', opts.group);
-  return selfbin.argvFor(self, args);
+  const c = selfbin.argvFor(self, args);
+  if (self.pathCopy) c.pathCopy = self.pathCopy; // the PATH's `keyflip` is another (older) copy
+  return c;
 }
 
 // Interval in seconds, clamped so a runaway config can't hammer the endpoint (min 60s) or drift
@@ -141,6 +143,7 @@ function installLaunchd(opts) {
     log: logPath(opts.home),
     exec: c.exec,
     args: c.args,
+    pathCopy: c.pathCopy || undefined,
   };
 }
 function uninstallLaunchd(opts) {

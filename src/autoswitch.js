@@ -1,9 +1,10 @@
 // Auto-switch on usage threshold (adopted from claude-swap PR #76 / issues #38,
 // #50): watch the ACTIVE account's utilization and, when it crosses the
 // threshold, swap the CLI credential to another account chosen by strategy.
-// Only the CLI credential is swapped (Claude Code picks it up on its next
+// Only the CLI credential is swapped here (Claude Code picks it up on its next
 // request; the file backend re-reads immediately, the macOS keychain cache is
-// ~30s) — the desktop app is never closed from under the user.
+// ~30s). Claude Desktop follows through desktoprestart.js (idle-only restart),
+// driven by the caller, never by this module.
 import fs from 'fs';
 import path from 'path';
 import * as core from './core.js';
@@ -37,6 +38,38 @@ function writeState(ctx, state) {
   } catch (e) {
     /* best effort */
   }
+}
+
+// The live access token has simply aged past its expiry (Claude Code renews it on its next request),
+// as opposed to a login the server rejects outright.
+function liveTokenAged(ctx, nowMs) {
+  try {
+    const o = JSON.parse(ctx.store.getLive()).claudeAiOauth;
+    return !!(o && typeof o.expiresAt === 'number' && o.expiresAt <= nowMs);
+  } catch (e) {
+    return false;
+  }
+}
+
+// When the windows that put an account over the threshold reset — the moment it has headroom again
+// whether or not its usage can be read then. ISO string or null.
+function recoverAtOf(u, threshold) {
+  if (!u || typeof u !== 'object') return null;
+  let wins = [u.fiveHour, u.sevenDay].filter(Boolean);
+  if (!wins.length) wins = [u.sevenDayOpus, u.sevenDaySonnet].filter(Boolean);
+  let latest = null;
+  wins.forEach(function (w) {
+    if (typeof w.pct !== 'number' || w.pct < threshold) return;
+    const t = w.resetsAt ? Date.parse(w.resetsAt) : NaN;
+    if (!isNaN(t) && (latest === null || t > latest)) latest = t;
+  });
+  return latest === null ? null : new Date(latest).toISOString();
+}
+
+function sleepMs(ms) {
+  return new Promise(function (r) {
+    setTimeout(r, ms);
+  });
 }
 
 function clearState(ctx) {
@@ -111,19 +144,31 @@ async function tickInner(ctx, opts, out) {
   }
   const nowMs = opts.nowMs !== undefined ? opts.nowMs : Date.now();
   const eff = usage.effectiveHeadroom(infos[active.name], nowMs, maxStaleMs);
-  const h = eff.headroom;
-  const basis = eff.basis;
-  const retryAt = (infos[active.name] && infos[active.name].retryAt) || null;
+  const activeInfo = infos[active.name] || null;
+  const activeStatus = (activeInfo && activeInfo.status) || null;
+  let h = eff.headroom;
+  let basis = eff.basis;
+  // A live login the usage endpoint REJECTS (401/403) — and not merely an access token past its expiry,
+  // which Claude Code renews on its next request — cannot serve Claude Code either. It counts as
+  // exhausted, so a working account (or the failover) takes over instead of waiting on it forever.
+  let activeDead = false;
+  if (typeof h !== 'number' && activeStatus === 'expired' && !liveTokenAged(ctx, nowMs)) {
+    h = 0;
+    basis = 'rejected';
+    activeDead = true;
+  }
+  const retryAt = (activeInfo && activeInfo.retryAt) || null;
   // Hysteresis: once away (on another account, or on the API failover), come back only at >= this.
   const recoveryFloor = Math.min(95, margin + 10);
 
-  // P4: the API failover (keysmith) — engaged when every account is over the threshold, released
-  // as soon as a Claude account has recovered. opts.failover = { state, engage, release }.
+  // P4: the API failover (keysmith) — engaged when every account is KNOWN to be over the threshold,
+  // released as soon as a Claude account has recovered (or the gateway stops answering).
+  // opts.failover = { state, engage, release, check? }.
   const fo = opts.failover ? opts.failover.state() : null;
-  async function releaseFailover(to, why) {
+  async function releaseFailover(to, why, extra) {
     if (!fo) return false;
     try {
-      const r = await opts.failover.release({ to: to, reason: why });
+      const r = await opts.failover.release(Object.assign({ to: to, reason: why }, extra || {}));
       return !!(r && r.ok);
     } catch (e) {
       return false;
@@ -137,7 +182,12 @@ async function tickInner(ctx, opts, out) {
     try {
       e = await opts.failover.engage({
         from: active.name,
-        reason: 'usage ' + Math.round(100 - h) + '% >= ' + threshold + '% and no other account below it',
+        reason: activeDead
+          ? 'the live login of ' + active.name + ' is rejected and no other account has headroom'
+          : 'usage ' + Math.round(100 - h) + '% >= ' + threshold + '% and no other account below it',
+        recoverAt: activeDead
+          ? null
+          : recoverAtOf((activeInfo && (activeInfo.usage || activeInfo.lastGood)) || null, threshold),
       });
     } catch (err) {
       e = { ok: false, reason: (err && err.message) || String(err) };
@@ -145,9 +195,42 @@ async function tickInner(ctx, opts, out) {
     if (e && e.ok) return Object.assign(base, { state: 'failover-engaged', failover: e.state || null });
     return Object.assign(base, { failoverError: (e && e.reason) || 'failover unavailable' });
   }
+
+  // While on the failover, the gateway must still be there: Claude Code points at it, so a dead
+  // gateway is a dead Claude Code. One re-check (a restart takes seconds), then back to the account.
+  if (fo && typeof opts.failover.check === 'function') {
+    let ok = null;
+    try {
+      ok = await opts.failover.check();
+      if (!ok || !ok.ok) {
+        await (opts.sleep || sleepMs)(opts.failoverRecheckMs !== undefined ? opts.failoverRecheckMs : 1500);
+        ok = await opts.failover.check();
+      }
+    } catch (e) {
+      ok = { ok: false, reason: (e && e.message) || String(e) };
+    }
+    if (!ok || !ok.ok) {
+      const why = 'the failover gateway stopped answering (' + ((ok && ok.reason) || 'no answer') + ')';
+      const rel = await releaseFailover(active.name, why, { lost: true });
+      return {
+        state: 'failover-lost',
+        active: active,
+        headroom: h,
+        switchedTo: null,
+        reason: why,
+        failoverReleased: rel,
+      };
+    }
+  }
   if (fo && typeof h === 'number' && h >= recoveryFloor) {
     await releaseFailover(active.name, active.name + ' recovered (' + Math.round(h) + '% headroom)');
     return { state: 'failback', active: active, headroom: h, switchedTo: null, basis: basis };
+  }
+  // The window that put the account over has reset: it has headroom now even if its usage cannot be
+  // read (on the failover nothing renews the live token, so the read may keep failing).
+  if (fo && typeof h !== 'number' && fo.recoverAt && Date.parse(fo.recoverAt) <= nowMs) {
+    await releaseFailover(active.name, active.name + "'s usage window reset at " + fo.recoverAt);
+    return { state: 'failback', active: active, headroom: null, switchedTo: null, basis: 'window-reset' };
   }
 
   // Automatic switch-back: if we previously auto-switched away from a primary
@@ -196,25 +279,32 @@ async function tickInner(ctx, opts, out) {
     }
   }
 
-  if (typeof h !== 'number')
-    return {
-      state: 'unknown',
-      active: active,
-      headroom: null,
-      switchedTo: null,
-      usageStatus: (infos[active.name] && infos[active.name].status) || null,
-      retryAt: retryAt,
-      failover: fo || undefined,
-    };
-  // On the failover and recovering, but not past the hysteresis band yet: stay there (no flapping).
-  if (fo && h > margin)
-    return { state: 'failover', active: active, headroom: h, switchedTo: null, basis: basis, failover: fo };
-  if (h > margin) return { state: 'below', active: active, headroom: h, switchedTo: null, basis: basis };
+  const unknownActive = {
+    state: 'unknown',
+    active: active,
+    headroom: null,
+    switchedTo: null,
+    usageStatus: activeStatus,
+    retryAt: retryAt,
+  };
+  if (typeof h !== 'number') {
+    // Not on the failover: never act on a reading we do not have.
+    if (!fo) return unknownActive;
+    // On the failover with the active account unreadable: a RECOVERED other account still ends it.
+  } else {
+    // On the failover and recovering, but not past the hysteresis band yet: stay there (no flapping).
+    if (fo && h > margin)
+      return { state: 'failover', active: active, headroom: h, switchedTo: null, basis: basis, failover: fo };
+    if (h > margin) return { state: 'below', active: active, headroom: h, switchedTo: null, basis: basis };
+  }
 
-  // Threshold crossed — pick a target in rotation order. Only enabled accounts
-  // with a captured CLI credential are candidates: switching to an app-only or
-  // disabled profile wouldn't change the live login or would violate user pause.
+  // Threshold crossed (or failing back) — pick a target in rotation order. Only enabled accounts
+  // with a captured CLI credential are candidates: switching to an app-only or disabled profile
+  // wouldn't change the live login or would violate user pause. A profile whose stored token the
+  // profile endpoint named as ANOTHER account's (P2 damage) is skipped: switching "to" it would put
+  // that other account live.
   let candidates = [];
+  const skipped = [];
   for (let k = 1; k <= list.length; k++) {
     const e = list[(activeIdx + k) % list.length];
     if (e.active) continue;
@@ -225,12 +315,27 @@ async function tickInner(ctx, opts, out) {
     } catch (err) {
       hasCli = false;
     }
-    if (hasCli) candidates.push(e);
+    if (!hasCli) continue;
+    let wrong = null;
+    try {
+      wrong = _identity.wrongOwnerOf(ctx, e.name);
+    } catch (err) {
+      wrong = null;
+    }
+    if (wrong) {
+      skipped.push({ name: e.name, reason: 'its saved login is ' + wrong + "'s token (keyflip login " + e.name + ')' });
+      continue;
+    }
+    candidates.push(e);
   }
+  const extraOut = skipped.length ? { skippedCandidates: skipped } : {};
   // Optional group scoping (config autoswitch.group / --group): rotate only within a tagged pool.
   // Applied BEFORE the usage fetch so out-of-group accounts aren't queried. Preserves rotation order.
   if (opts.group) candidates = _groups.filterProfiles(ctx, candidates, opts.group);
-  if (!candidates.length) return noCandidate();
+  if (!candidates.length) {
+    if (typeof h !== 'number') return Object.assign(unknownActive, { state: 'failover', failover: fo }, extraOut);
+    return noCandidate(extraOut);
+  }
 
   const cinfos = await usage.usageForProfiles(
     ctx,
@@ -266,9 +371,49 @@ async function tickInner(ctx, opts, out) {
     const info = effInfos[c.name];
     return info && typeof info.headroom === 'number' && info.headroom > need && breaker.isAvailable(ctx, c.name, bopts);
   });
-  if (!pool.length) return noCandidate({ basis: basis });
+  if (!pool.length) {
+    if (typeof h !== 'number') return Object.assign(unknownActive, { state: 'failover', failover: fo }, extraOut);
+    // "No account has headroom" must be KNOWN, not assumed: an account whose usage cannot be read
+    // right now (endpoint throttled, lock busy, offline) may be idle — paying for the API while it
+    // sits unused would be the wrong trade. Wait for its reading instead.
+    const unknown = candidates.filter(function (c) {
+      const info = effInfos[c.name];
+      if (!breaker.isAvailable(ctx, c.name, bopts)) return false;
+      if (!info) return true;
+      if (typeof info.headroom === 'number') return false;
+      return ['expired', 'no-creds', 'no-token'].indexOf(info.status) === -1;
+    });
+    if (unknown.length && !fo) {
+      return Object.assign(
+        {
+          state: 'no-candidate',
+          active: active,
+          headroom: h,
+          switchedTo: null,
+          basis: basis,
+          unknownCandidates: unknown.map(function (c) {
+            return c.name;
+          }),
+        },
+        opts.failover
+          ? {
+              failoverDeferred:
+                'not engaging the paid failover while the usage of ' +
+                unknown
+                  .map(function (c) {
+                    return c.name;
+                  })
+                  .join(', ') +
+                ' is unknown',
+            }
+          : {},
+        extraOut,
+      );
+    }
+    return noCandidate(Object.assign({ basis: basis }, extraOut));
+  }
   const picked = usage.pickByStrategy(pool, effInfos, strategy, { model: opts.model }) || pool[0];
-  if (!picked) return noCandidate();
+  if (!picked) return noCandidate(extraOut);
 
   const doSwitch =
     opts.performSwitch ||
@@ -288,22 +433,29 @@ async function tickInner(ctx, opts, out) {
     kind: 'autoswitch',
     from: active.name,
     to: picked.name,
-    reason:
-      'usage ' +
-      Math.round(100 - h) +
-      '% >= threshold ' +
-      threshold +
-      (basis === 'last-good' ? ' (last good reading; endpoint throttled)' : ''),
+    reason: activeDead
+      ? 'the live login of ' + active.name + ' is rejected by Anthropic (401/403)'
+      : typeof h !== 'number'
+        ? 'failing back from the API failover: ' + picked.name + ' has headroom'
+        : 'usage ' +
+          Math.round(100 - h) +
+          '% >= threshold ' +
+          threshold +
+          (basis === 'last-good' ? ' (last good reading; endpoint throttled)' : ''),
   });
-  const res = { state: 'switched', active: active, headroom: h, switchedTo: picked, basis: basis };
+  const res = Object.assign(
+    { state: 'switched', active: active, headroom: h, switchedTo: picked, basis: basis },
+    extraOut,
+  );
   if (await releaseFailover(picked.name, picked.name + ' has headroom')) res.failoverReleased = true;
   return res;
 }
 
 // One watch iteration. Injectable deps for tests (fetch, nowMs, performSwitch, repairLabel). Returns
 //   { state: 'idle'|'no-active'|'below'|'switched'|'switched-back'|'no-candidate'|'unknown'|
-//            'failover-engaged'|'failover'|'failback',
-//     active, headroom, switchedTo, identityRepair?, failoverReleased?, failoverError? }
+//            'failover-engaged'|'failover'|'failback'|'failover-lost',
+//     active, headroom, switchedTo, identityRepair?, failoverReleased?, failoverError?,
+//     failoverDeferred?, unknownCandidates?, skippedCandidates? }
 async function tick(ctx, opts) {
   const side = {};
   const r = await tickInner(ctx, opts || {}, side);
@@ -311,4 +463,4 @@ async function tick(ctx, opts) {
   return r;
 }
 
-export { tick, readState, clearState, DEFAULT_THRESHOLD };
+export { tick, readState, clearState, recoverAtOf, DEFAULT_THRESHOLD };

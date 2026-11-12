@@ -20,6 +20,7 @@ const GITIGNORE = ['# keyflip: NEVER version secrets — they live in the OS cre
     '# rebuildable caches / self-referential snapshots (not versioned)',
     'embeddings.json',
     '.usage-cache.json',
+    '.usage-throttle.json',
     // token fingerprints -> account (P2); never versioned, never backed up
     '.identity-cache.json',
     // per-machine runtime state: a pending Desktop restart (P5), an engaged API failover (P4)

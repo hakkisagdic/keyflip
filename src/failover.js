@@ -64,6 +64,7 @@ function plan(ctx) {
     legs: legs,
     capUsd: capUsd,
     capAdapter: capAdapter,
+    capAccount: cfg(ctx, 'failover.capAccount', false) === true,
     provider: cfg(ctx, 'failover.provider', DEFAULTS.provider),
   };
 }
@@ -85,8 +86,39 @@ function keysmithConfigPath(opts) {
   return path.join(process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config'), 'keysmith', 'config.json');
 }
 
+// A cap keysmith already holds for `target` ('adapter:<id>' / 'account:<name>') in any of the forms
+// it accepts (prefixed, nested adapters/accounts, flat id) -> the raw value, or undefined.
+function existingCap(spend, target) {
+  const i = target.indexOf(':');
+  const kind = target.slice(0, i);
+  const id = target.slice(i + 1);
+  if (spend[target] !== undefined && spend[target] !== null) return spend[target];
+  const nests = kind === 'adapter' ? ['adapters', 'adapter', 'byAdapter'] : ['accounts', 'account', 'byAccount'];
+  for (let n = 0; n < nests.length; n++) {
+    const sub = spend[nests[n]];
+    if (sub && typeof sub === 'object' && !Array.isArray(sub) && sub[id] !== undefined && sub[id] !== null)
+      return sub[id];
+  }
+  if (spend[id] !== undefined && spend[id] !== null) return spend[id];
+  return undefined;
+}
+function capUsdOf(v) {
+  const n = v && typeof v === 'object' ? (v.usd !== undefined ? v.usd : v.cap !== undefined ? v.cap : v.limit) : v;
+  const x = Number(n);
+  return n === null || n === undefined || n === false || n === '' || !isFinite(x) ? null : x;
+}
+function describeCap(v) {
+  const usd = capUsdOf(v);
+  if (usd === null) return 'no cap';
+  return (
+    '$' + usd + (v && typeof v === 'object' && (v.since || v.until) ? ' over ' + v.since + '..' + v.until : '/month')
+  );
+}
+
 // limits.spend in keysmith's config, merged in place (every other key kept, mode kept, atomic).
-// The file holds the gateway's own keys: it is read and rewritten in-process and NEVER printed.
+// A cap already there is NEVER replaced — it may be the owner's own (a windowed total, a budget for
+// other work on that key); it is reported instead, and gatewayReady decides whether it is tight
+// enough. The file holds the gateway's own keys: it is read and rewritten in-process, NEVER printed.
 function ensureSpendCap(p, targets, capUsd) {
   const raw = fs.readFileSync(p, 'utf8');
   const cfgObj = JSON.parse(raw);
@@ -95,13 +127,15 @@ function ensureSpendCap(p, targets, capUsd) {
   const limits = cfgObj.limits && typeof cfgObj.limits === 'object' ? cfgObj.limits : {};
   const spend = limits.spend && typeof limits.spend === 'object' && !Array.isArray(limits.spend) ? limits.spend : {};
   const changed = [];
+  const kept = [];
   targets.forEach(function (t) {
-    if (spend[t] !== capUsd) {
+    const cur = existingCap(spend, t);
+    if (cur === undefined) {
       spend[t] = capUsd;
       changed.push(t);
-    }
+    } else kept.push({ target: t, cap: describeCap(cur), usd: capUsdOf(cur) });
   });
-  if (!changed.length) return { changed: [] };
+  if (!changed.length) return { changed: [], kept: kept };
   limits.spend = spend;
   cfgObj.limits = limits;
   let mode = 0o600;
@@ -111,7 +145,7 @@ function ensureSpendCap(p, targets, capUsd) {
     /* keep 0600 */
   }
   atomicWrite(p, JSON.stringify(cfgObj, null, 2) + '\n', mode);
-  return { changed: changed };
+  return { changed: changed, kept: kept };
 }
 
 // The credential ACCOUNT keysmith meters the first leg's key under — so the cap covers every adapter
@@ -164,7 +198,8 @@ async function setup(ctx, opts) {
   // 2) the spend cap on the paid leg's key
   const cfgPath = keysmithConfigPath(opts);
   const targets = p.capAdapter ? ['adapter:' + p.capAdapter] : [];
-  const acct = p.capAdapter ? await capAccount(cfgPath, p.capAdapter, opts) : null;
+  // The account cap covers EVERY use of that key through keysmith (other jobs too): opt-in only.
+  const acct = p.capAdapter && p.capAccount ? await capAccount(cfgPath, p.capAdapter, opts) : null;
   if (acct) targets.push('account:' + acct);
   if (!targets.length) steps.push({ step: 'spend-cap', ok: false, detail: 'no paid leg to cap' });
   else if (dry)
@@ -176,10 +211,26 @@ async function setup(ctx, opts) {
   else {
     try {
       const r = ensureSpendCap(cfgPath, targets, p.capUsd);
+      const loose = r.kept.filter(function (k) {
+        return k.usd === null || k.usd > p.capUsd;
+      });
+      const parts = [];
+      if (r.changed.length) parts.push('set ' + r.changed.join(', ') + ' = $' + p.capUsd + '/month');
+      r.kept.forEach(function (k) {
+        parts.push('kept the existing cap on ' + k.target + ' (' + k.cap + ')');
+      });
       steps.push({
         step: 'spend-cap',
-        ok: true,
-        detail: (r.changed.length ? 'set ' : 'already ') + targets.join(', ') + ' = $' + p.capUsd + '/month',
+        // An existing cap looser than the failover's is the owner's to change, not keyflip's: the
+        // failover then stays off (gatewayReady) until a cap of at most $capUsd covers the paid leg.
+        ok: loose.length === 0,
+        detail:
+          parts.join('; ') +
+          (loose.length
+            ? ' — looser than the $' +
+              p.capUsd +
+              ' the failover needs; it stays off until the paid leg is capped at that or less'
+            : ''),
         changed: r.changed.length > 0,
       });
     } catch (e) {
@@ -258,7 +309,62 @@ async function setup(ctx, opts) {
   };
 }
 
-// Is the gateway up, does our key work, and does it serve the alias? GET /v1/models.
+// Does the RUNNING gateway enforce a spend cap of at most capUsd on the paid leg? keysmith reads
+// limits at start, so a cap written to its config is not proof; its own usage route is. Asked with
+// the failover's scoped key, which sees exactly the caps on the adapters/accounts it can reach.
+async function capLoaded(p, key, doFetch, opts) {
+  if (!p.capAdapter) return { ok: true, detail: 'no paid leg' };
+  let res;
+  try {
+    res = await doFetch(p.gatewayUrl + '/v1/keysmith/usage?hours=1', {
+      headers: { Authorization: 'Bearer ' + key },
+      signal:
+        typeof AbortSignal !== 'undefined' && AbortSignal.timeout
+          ? AbortSignal.timeout(opts.timeoutMs || 3000)
+          : undefined,
+    });
+  } catch (e) {
+    return { ok: false, reason: 'could not read the spend caps from the gateway' };
+  }
+  if (!res || !res.ok)
+    return {
+      ok: false,
+      reason:
+        'the gateway does not report its spend caps (' +
+        ((res && res.status) || 'no answer') +
+        '); refusing to fail over uncapped',
+    };
+  let j = null;
+  try {
+    j = await res.json();
+  } catch (e) {
+    j = null;
+  }
+  const rows = (j && Array.isArray(j.spend) ? j.spend : []).filter(function (r) {
+    return r && typeof r.cap === 'number' && r.cap <= p.capUsd;
+  });
+  const acct = opts.capAccountName || null;
+  const hit = rows.find(function (r) {
+    return (r.kind === 'adapter' && r.target === p.capAdapter) || (acct && r.kind === 'account' && r.target === acct);
+  });
+  if (!hit)
+    return {
+      ok: false,
+      reason:
+        'the running gateway enforces no spend cap of at most $' +
+        p.capUsd +
+        ' on ' +
+        p.capAdapter +
+        ' (keyflip failover setup, then restart keysmith); refusing to fail over uncapped',
+    };
+  return {
+    ok: true,
+    cap: { kind: hit.kind, target: hit.target, cap: hit.cap, spent: hit.spent, exceeded: !!hit.exceeded },
+  };
+}
+
+// Is the gateway up, does our key work, does it serve the alias — and (unless opts.capCheck is
+// false: the per-tick health check) does it enforce the spend cap? GET /v1/models + the usage route.
 async function gatewayReady(ctx, opts) {
   opts = opts || {};
   const p = opts.plan || plan(ctx);
@@ -288,10 +394,21 @@ async function gatewayReady(ctx, opts) {
     });
     if (ids.indexOf(p.alias) === -1)
       return { ok: false, reason: 'gateway does not serve ' + p.alias + ' yet (restart keysmith)' };
-    return { ok: true };
   } catch (e) {
     return { ok: false, reason: 'gateway unreachable at ' + p.gatewayUrl };
   }
+  if (opts.capCheck === false) return { ok: true };
+  let acct = null;
+  if (p.capAccount && p.capAdapter) {
+    try {
+      acct = await capAccount(keysmithConfigPath(opts), p.capAdapter, opts);
+    } catch (e) {
+      acct = null;
+    }
+  }
+  const c = await capLoaded(p, key, doFetch, { timeoutMs: opts.timeoutMs, capAccountName: acct });
+  if (!c.ok) return { ok: false, reason: c.reason };
+  return { ok: true, cap: c.cap };
 }
 
 function statePath(ctx) {
@@ -314,7 +431,7 @@ async function engage(ctx, info, deps) {
   if (!p.enabled) return { ok: false, reason: 'failover is disabled (failover.enabled=false)' };
   const cur = state(ctx);
   if (cur) return { ok: true, already: true, state: cur };
-  const ready = await gatewayReady(ctx, { plan: p, fetch: deps.fetch });
+  const ready = await gatewayReady(ctx, { plan: p, fetch: deps.fetch, keysmithConfig: deps.keysmithConfig });
   if (!ready.ok) return { ok: false, reason: ready.reason };
   const useProvider =
     deps.useProvider ||
@@ -336,6 +453,10 @@ async function engage(ctx, info, deps) {
     reason: info.reason || 'every Claude account is over the threshold',
     provider: p.provider,
     alias: p.alias,
+    // When the account that ran out has headroom again by the clock (its binding window resets):
+    // the failback that needs no usage reading.
+    recoverAt: info.recoverAt || null,
+    cap: ready.cap || null,
   };
   atomicWrite(statePath(ctx), JSON.stringify(st, null, 2) + '\n', 0o600);
   _history.recordEvent(ctx, { kind: 'failover-engage', from: st.from, to: p.provider, reason: st.reason });
@@ -368,7 +489,11 @@ async function release(ctx, info, deps) {
     function (rec) {
       return ctx.appDataDir ? _desktoprestart.request(ctx, rec, { nowMs: deps.nowMs }) : null;
     };
-  requestDesktop({ kind: 'gateway-off', target: null, reason: 'a Claude account has headroom again' });
+  requestDesktop({
+    kind: 'gateway-off',
+    target: null,
+    reason: info.lost ? 'the failover gateway stopped answering' : 'a Claude account has headroom again',
+  });
   try {
     fs.unlinkSync(statePath(ctx));
   } catch (e) {
@@ -381,7 +506,14 @@ async function release(ctx, info, deps) {
     reason: info.reason || 'recovered',
   });
   if (deps.notify)
-    await deps.notify('switch', 'Back on Claude (' + (info.to || 'your account') + ') — the API failover is off.');
+    await deps.notify(
+      info.lost ? 'quota' : 'switch',
+      info.lost
+        ? 'The API failover gateway stopped answering — Claude Code is back on ' +
+            (info.to || 'your Claude account') +
+            ' (it may still be over its limit).'
+        : 'Back on Claude (' + (info.to || 'your account') + ') — the API failover is off.',
+    );
   return { ok: true };
 }
 
@@ -389,6 +521,7 @@ export {
   plan,
   setup,
   gatewayReady,
+  capLoaded,
   engage,
   release,
   state,

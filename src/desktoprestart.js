@@ -21,10 +21,46 @@ import * as _notify from './notify.js';
 import * as _desktopgw from './desktopgw.js';
 import * as _config from './config.js';
 import * as _log from './log.js';
+import * as _core from './core.js';
+import * as _profiles from './profiles.js';
 
 const PENDING_FILE = '.desktop-restart.json';
 const DEFAULT_QUIET_MS = 60 * 1000;
 const DEFAULT_CPU_BUSY_PCT = 20;
+// A Desktop that refused to quit (an unsaved-changes dialog, a hung renderer) is not asked again
+// every tick: once per this long, and the user is told once.
+const QUIT_RETRY_MS = 30 * 60 * 1000;
+
+// ---- which Claude Desktop processes are up (macOS) -------------------------------------------
+// The MAIN app only: its own executable, not a `Claude Helper`, not a keyflip instance clone
+// (~/.keyflip-instances/claude/<slug>/Claude.app, or anything started with --user-data-dir). Counting
+// helpers or clones as "the app is still running" left a quit Desktop closed and retried forever.
+const MAIN_EXE_RE = /(^|\s)(\S*\/Claude\.app)\/Contents\/MacOS\/Claude(\s|$)/;
+function desktopProcesses(ctx, runner) {
+  const out = { main: [], instances: [] };
+  if (ctx.platform !== 'darwin') return out;
+  const r = (runner || _run)('ps', ['-Axo', 'pid=,command=']);
+  if (!r || r.code !== 0) return null;
+  const inst = ctx.instancesBase ? String(ctx.instancesBase) : null;
+  String(r.stdout || '')
+    .split('\n')
+    .forEach(function (l) {
+      const m = /^\s*([0-9]+)\s+(.*)$/.exec(l);
+      if (!m) return;
+      const cmd = m[2];
+      const exe = MAIN_EXE_RE.exec(cmd);
+      if (!exe) return;
+      const isClone =
+        /--user-data-dir/.test(cmd) ||
+        /[\\/]\.keyflip-instances[\\/]/.test(exe[2]) ||
+        (inst && exe[2].indexOf(inst) === 0);
+      (isClone ? out.instances : out.main).push(parseInt(m[1], 10));
+    });
+  return out;
+}
+function testMode() {
+  return process.env.KEYFLIP_TEST_CLAUDE;
+}
 
 function cfg(ctx, key, dflt) {
   try {
@@ -313,15 +349,81 @@ function request(ctx, action, opts) {
 // Try the pending restart now. deps (all injectable): detector, isRunning, quit, open, notify,
 // waitMs, pollMs, kinds, enabled. -> { state: 'none'|'disabled'|'applied'|'deferred'|'quit-failed'|
 // 'apply-failed'|'restarted', reason?, pending? }
+// The CLI account right now (the account Desktop is meant to follow), by its token. null = unknown.
+function currentCliAccount(ctx) {
+  try {
+    const a = _core.listProfiles(ctx).find(function (e) {
+      return e.active;
+    });
+    return a ? a.name : null;
+  } catch (e) {
+    return null;
+  }
+}
+// The saved profile the desktop app is signed into right now (may read the app's token cache).
+function desktopAccountNow(ctx) {
+  try {
+    const det = _appauth.detectAppAccount(ctx);
+    return det && det.org ? _sessionage.profileForOrg(ctx.configDir, det.org) : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+// A pending record is a promise to make Desktop follow the CLI. Before acting on it, re-check what
+// it promises: it expires; an account action follows the CLI's CURRENT account (a later manual
+// switch retargets it, or drops it when that account has no desktop login). -> rec | null.
+function revalidate(ctx, rec, deps, now) {
+  const maxAgeMs = deps.maxAgeMs !== undefined ? deps.maxAgeMs : cfg(ctx, 'desktop.pendingMaxHours', 12) * 3600 * 1000;
+  if (maxAgeMs > 0 && typeof rec.since === 'number' && now - rec.since > maxAgeMs) {
+    clearPending(ctx);
+    _log.log(
+      'desktop: dropped a pending restart older than ' + Math.round(maxAgeMs / 3600000) + 'h (' + describe(rec) + ')',
+    );
+    return null;
+  }
+  const cli = deps.currentCli ? deps.currentCli(ctx) : currentCliAccount(ctx);
+  let changed = false;
+  const actions = [];
+  rec.actions.forEach(function (a) {
+    if (a.kind !== 'account' || !cli || cli === a.target) {
+      actions.push(a);
+      return;
+    }
+    changed = true;
+    const has = deps.hasDesktopLogin ? deps.hasDesktopLogin(ctx, cli) : _appauth.hasProfile(ctx, cli);
+    if (has) actions.push(Object.assign({}, a, { target: cli, email: _profiles.email(ctx.configDir, cli) || null }));
+  });
+  if (!changed) return rec;
+  if (!actions.length) {
+    clearPending(ctx);
+    _log.log('desktop: dropped a pending account restart (the CLI moved to ' + cli + ', which has no desktop login)');
+    return null;
+  }
+  const next = Object.assign({}, rec, { actions: actions, notified: false });
+  writePending(ctx, next);
+  return next;
+}
+
 async function processPending(ctx, deps) {
   deps = deps || {};
-  const rec = readPending(ctx);
+  const now = deps.nowMs !== undefined ? deps.nowMs : Date.now();
+  let rec = readPending(ctx);
   if (!rec) return { state: 'none' };
+  rec = revalidate(ctx, rec, deps, now);
+  if (!rec) return { state: 'none', dropped: true };
   const enabled = deps.enabled !== undefined ? deps.enabled : cfg(ctx, 'desktop.autoRestart', true);
+  // Live process view (macOS, not under test): the main app vs keyflip clones of it.
+  const procs = function () {
+    if (deps.isRunning || testMode()) return null;
+    return desktopProcesses(ctx, deps.run);
+  };
   const isRunning =
     deps.isRunning ||
     function () {
-      return _appctl.isDesktopAppRunning(ctx.platform);
+      if (testMode() || ctx.platform !== 'darwin') return _appctl.isDesktopAppRunning(ctx.platform);
+      const p = desktopProcesses(ctx, deps.run);
+      return p ? p.main.length > 0 : true; // ps unreadable: assume running, never apply under it
     };
   const quit =
     deps.quit ||
@@ -375,8 +477,18 @@ async function processPending(ctx, deps) {
     }
     return { state: 'disabled', pending: rec };
   }
+  // It refused to quit recently: do not ask again (and do not notify again) before QUIT_RETRY_MS.
+  if (rec.quitFailedAt && now - rec.quitFailedAt < (deps.quitRetryMs !== undefined ? deps.quitRetryMs : QUIT_RETRY_MS))
+    return { state: 'deferred', reason: 'Claude Desktop did not quit last time; retrying later', pending: rec };
+  // A keyflip clone of the app is running: `quit` addresses the app by name and could hit the
+  // clone (another account's window), and the process check could never see "closed". Wait.
+  const pv = procs();
+  const d0 =
+    pv && pv.instances.length
+      ? { busy: true, reason: 'a keyflip Claude instance is running (pid ' + pv.instances.join(', ') + ')' }
+      : null;
   const detector = deps.detector || defaultDetector(ctx, { run: deps.run });
-  const d = detector.check(ctx);
+  const d = d0 || detector.check(ctx);
   if (d.busy) {
     if (!rec.notified) {
       await notify(
@@ -388,7 +500,28 @@ async function processPending(ctx, deps) {
     return { state: 'deferred', reason: d.reason, pending: rec };
   }
 
-  await notify('desktop-restart', 'Restarting Claude Desktop to ' + what + '.');
+  // Already where it should be (a manual switch moved the app too): no restart for that action.
+  const onDesktop = deps.desktopAccount
+    ? deps.desktopAccount(ctx)
+    : ctx.platform === 'darwin' && !testMode()
+      ? desktopAccountNow(ctx)
+      : null;
+  if (onDesktop) {
+    const rest = rec.actions.filter(function (a) {
+      return !(a.kind === 'account' && a.target === onDesktop);
+    });
+    if (rest.length !== rec.actions.length) {
+      if (!rest.length) {
+        clearPending(ctx);
+        _log.log('desktop: already on ' + onDesktop + ' — no restart needed');
+        return { state: 'none', dropped: true };
+      }
+      rec = Object.assign({}, rec, { actions: rest });
+      writePending(ctx, rec);
+    }
+  }
+  const what2 = describe(rec);
+  await notify('desktop-restart', 'Restarting Claude Desktop to ' + what2 + '.');
   quit();
   const waitMs = deps.waitMs !== undefined ? deps.waitMs : 20000;
   const pollMs = deps.pollMs !== undefined ? deps.pollMs : 500;
@@ -398,22 +531,34 @@ async function processPending(ctx, deps) {
     waited += pollMs;
   }
   if (isRunning()) {
-    // It refused to quit (an unsaved-changes dialog, a hung renderer): leave it alone, keep pending.
-    await notify('desktop-restart', 'Claude Desktop did not quit — ' + what + ' is still pending. Quit it with Cmd+Q.');
-    return { state: 'quit-failed', pending: rec };
+    // It refused to quit (an unsaved-changes dialog, a hung renderer): leave it alone, keep pending,
+    // say so ONCE, and do not try again for a while.
+    const failed = Object.assign({}, rec, { quitFailedAt: now, notified: true });
+    try {
+      writePending(ctx, failed);
+    } catch (e) {
+      /* best effort */
+    }
+    await notify(
+      'desktop-restart',
+      'Claude Desktop did not quit — ' +
+        what2 +
+        ' is still pending (next try in 30 min). Quit it with Cmd+Q to apply now.',
+    );
+    return { state: 'quit-failed', pending: failed };
   }
   const a = await apply();
   open(); // reopen whatever happened: the user had it open
   if (a && a.ok === false) {
     await notify(
       'desktop-restart',
-      'Claude Desktop restarted, but could not ' + what + ': ' + (a.reason || 'failed') + '.',
+      'Claude Desktop restarted, but could not ' + what2 + ': ' + (a.reason || 'failed') + '.',
     );
     clearPending(ctx); // retrying a failing apply every tick would restart the app every tick
     return { state: 'apply-failed', reason: a.reason || 'apply failed' };
   }
   clearPending(ctx);
-  _log.log('desktop: restarted to ' + what + ' (idle: ' + d.reason + ')');
+  _log.log('desktop: restarted to ' + what2 + ' (idle: ' + d.reason + ')');
   return { state: 'restarted' };
 }
 
@@ -427,6 +572,8 @@ export {
   processPending,
   readPending,
   clearPending,
+  desktopProcesses,
   KINDS,
   PENDING_FILE,
+  defaultNotify as notifyLoud,
 };

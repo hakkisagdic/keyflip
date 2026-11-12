@@ -2,6 +2,7 @@
 // GET https://api.anthropic.com/api/oauth/usage with the account's Bearer token.
 // Best-effort with a short cache; degraded states are explicit sentinels so the
 // UI can render "?" instead of lying.
+import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import { atomicWrite } from './fsutil.js';
@@ -183,6 +184,41 @@ function cachePath(ctx) {
   return path.join(ctx.configDir, '.usage-cache.json');
 }
 
+// The 429 window also belongs to the TOKEN: the same live login can be asked under two names (the
+// profile autoswitch knows it by, and whatever another caller lists it as), and the endpoint
+// throttles the token. Kept apart from the per-account cache, whose keys other readers treat as
+// account names. Keys are truncated SHA-256 fingerprints — never a token.
+const THROTTLE_FILE = '.usage-throttle.json';
+function tokenFp(token) {
+  return crypto.createHash('sha256').update(String(token)).digest('hex').slice(0, 24);
+}
+function readThrottles(ctx) {
+  const t = Object.create(null);
+  try {
+    const j = JSON.parse(fs.readFileSync(path.join(ctx.configDir, THROTTLE_FILE), 'utf8'));
+    if (j && typeof j === 'object' && !Array.isArray(j)) Object.assign(t, j);
+  } catch (e) {
+    /* none */
+  }
+  return t;
+}
+function writeThrottles(ctx, t, nowMs) {
+  const out = {};
+  Object.keys(t).forEach(function (k) {
+    if (t[k] && typeof t[k].until === 'number' && t[k].until > nowMs) out[k] = t[k];
+  });
+  try {
+    atomicWrite(path.join(ctx.configDir, THROTTLE_FILE), JSON.stringify(out), 0o600);
+  } catch (e) {
+    /* best effort */
+  }
+}
+function quietUntil(w, nowMs) {
+  return w && typeof w.until === 'number' && nowMs < w.until && w.until - nowMs <= RETRY_AFTER_MAX_MS + THROTTLE_MAX_MS
+    ? w.until
+    : null;
+}
+
 // The cache TTL, in ms, defaulting from config (`keyflip config set usage.cacheTtlSeconds N`).
 // Falls back to the built-in 60s if config is unreadable. Callers can still override via opts.cacheTtlMs.
 function cfgTtlMs(ctx) {
@@ -310,6 +346,8 @@ async function usageForProfiles(ctx, names, opts) {
     });
   }
 
+  const tthrottle = readThrottles(ctx);
+  let tthrottleDirty = false;
   try {
     for (let i = 0; i < todo.length; i++) {
       const name = todo[i];
@@ -355,8 +393,29 @@ async function usageForProfiles(ctx, names, opts) {
             limitedScopes: [],
           };
         } else {
-          const r = await fetchUsageDetailed(token, Object.assign({}, opts, { nowMs: nowMs }));
-          if (r.usage) {
+          const tfp = tokenFp(token);
+          const tUntil = quietUntil(tthrottle[tfp], nowMs);
+          // This TOKEN is inside a 429 window opened under another name: do not ask.
+          const r = tUntil
+            ? { usage: null, httpStatus: 'quiet', retryAfterMs: null }
+            : await fetchUsageDetailed(token, Object.assign({}, opts, { nowMs: nowMs }));
+          if (r.httpStatus === 'quiet') {
+            const tw = tthrottle[tfp];
+            throttle = { until: tUntil, strikes: tw.strikes || 1, retryAfterMs: tw.retryAfterMs || null };
+            out[name] = {
+              status: 'throttled',
+              usage: null,
+              headroom: null,
+              lastGood: prevGood,
+              lastGoodAt: prevGoodAt,
+              limitedScopes: limitedScopes(prevGood),
+              retryAt: tUntil,
+            };
+          } else if (r.usage) {
+            if (tthrottle[tfp]) {
+              delete tthrottle[tfp];
+              tthrottleDirty = true;
+            }
             out[name] = {
               status: 'ok',
               usage: r.usage,
@@ -380,9 +439,15 @@ async function usageForProfiles(ctx, names, opts) {
           // account kept working). Report unknown, never auto-skip on it, preserve
           // `lastGood`, and stay quiet for the window the server asked for (or longer).
           else if (r.httpStatus === 429) {
-            const strikes = ((c && c.throttle && c.throttle.strikes) || 0) + 1;
+            const prevStrikes = Math.max(
+              (c && c.throttle && c.throttle.strikes) || 0,
+              (tthrottle[tfp] && tthrottle[tfp].strikes) || 0,
+            );
+            const strikes = prevStrikes + 1;
             const wait = throttleWindowMs(strikes, r.retryAfterMs, ttl);
             throttle = { until: nowMs + wait, strikes: strikes, retryAfterMs: r.retryAfterMs };
+            tthrottle[tfp] = throttle;
+            tthrottleDirty = true;
             out[name] = {
               status: 'throttled',
               usage: null,
@@ -426,6 +491,7 @@ async function usageForProfiles(ctx, names, opts) {
     } catch (e) {
       /* best effort */
     }
+    if (tthrottleDirty) writeThrottles(ctx, tthrottle, nowMs);
   } finally {
     if (held) held.release();
   }
@@ -509,4 +575,5 @@ export {
   USAGE_URL,
   THROTTLE_BASE_MS,
   THROTTLE_MAX_MS,
+  THROTTLE_FILE,
 };

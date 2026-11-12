@@ -92,6 +92,12 @@ function addCurrent(ctx, nameOverride) {
       labelMismatch: true,
     };
   }
+  // The endpoint said this login is an account keyflip has NO profile for, while the label names a
+  // saved one: saving by the label would overwrite that profile with this login.
+  if (!nameOverride && id.verified && id.unsaved && id.labelName) {
+    const saved = captureVerified(ctx, id);
+    if (saved) return { name: saved, email: id.email, refreshed: false, labelMismatch: true };
+  }
   const email = currentEmail(ctx);
   if (!email) {
     throw new Error('No logged-in account detected (~/.claude.json has no account). Log in in Claude first.');
@@ -239,7 +245,21 @@ function refreshCurrent(ctx, targetName) {
     id = null;
   }
   if (id && id.source && id.source !== 'label') {
+    // A real account keyflip has no profile for (the endpoint said so): capture it, or the switch
+    // would overwrite the only copy of that login.
+    if (id.unsaved) {
+      try {
+        captureVerified(ctx, id);
+      } catch (e) {
+        /* non-fatal */
+      }
+      return;
+    }
     if (!id.name || id.name === targetName) return;
+    // An OFFLINE match that contradicts the label proves only that profile `id.name` holds this exact
+    // token already — re-saving it there changes nothing, and saving it under the label could be the
+    // very overwrite P2 exists to stop. Only a verified identity moves a token between names.
+    if (id.mismatch && !id.verified) return;
     try {
       if (id.mismatch)
         ctx.store.setProfile(id.name, ctx.store.getLive()); // credential only; the label is wrong
@@ -269,6 +289,41 @@ function refreshCurrent(ctx, targetName) {
     addCurrent(ctx);
   } catch (e) {
     /* non-fatal */
+  }
+}
+
+// Save a live login the profile endpoint named but no profile holds, under a name derived from the
+// email the ENDPOINT gave (never the label's, which may be another account's). The label's richer
+// metadata is used only when it names this same account.
+function captureVerified(ctx, id) {
+  if (!id || !id.email) return null;
+  const name = autoName(ctx, id.email);
+  const label = claude.currentAccount(claude.readConfig(ctx.claudeConfigPath));
+  if (label && label.email && String(label.email).toLowerCase() === String(id.email).toLowerCase()) {
+    saveAs(ctx, name);
+    return name;
+  }
+  const blob = ctx.store.getLive();
+  if (!blob) return null;
+  ctx.store.setProfile(name, blob);
+  /** @type {any} */
+  const oa = { emailAddress: id.email };
+  if (id.accountUuid) oa.accountUuid = id.accountUuid;
+  if (id.org) oa.organizationUuid = id.org;
+  profiles.write(ctx.configDir, { name: name, email: id.email, userID: '', oauthAccount: oa, savedAt: ctx.now() });
+  _identity.noteSaved(ctx, name, blob);
+  return name;
+}
+
+// Before any switch that can wait for the network: ask the profile endpoint whose login is live
+// (once per token, cached), so the outgoing token is preserved under the account it belongs to and
+// not under whatever ~/.claude.json says. Never throws; offline it changes nothing.
+async function prepareSwitch(ctx, opts) {
+  opts = opts || {};
+  try {
+    return await _identity.resolveLive(ctx, { fetch: opts.fetch || ctx.fetch, timeoutMs: opts.timeoutMs || 4000 });
+  } catch (e) {
+    return null;
   }
 }
 
@@ -391,6 +446,8 @@ export {
   refreshCurrent,
   doSwitch,
   performSwitch,
+  prepareSwitch,
+  captureVerified,
   listProfiles,
   isActive,
   setProfileEnabled,

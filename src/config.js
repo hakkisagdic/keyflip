@@ -53,6 +53,13 @@ SCHEMA['desktop.idleQuietSeconds'] = {
   max: 3600,
   help: 'Claude Desktop counts as idle only if no agent session wrote anything for this long.',
 };
+SCHEMA['desktop.pendingMaxHours'] = {
+  type: 'int',
+  default: 12,
+  min: 0,
+  max: 168,
+  help: 'A pending Claude Desktop restart older than this is dropped instead of applied (0 = never expires).',
+};
 SCHEMA['desktop.cpuBusyPercent'] = {
   type: 'int',
   default: 20,
@@ -86,7 +93,12 @@ SCHEMA['failover.capUsd'] = {
   default: 25,
   min: 0,
   max: 10000,
-  help: 'Monthly USD cap keysmith enforces on the first (paid API) leg and its key.',
+  help: 'Monthly USD cap keysmith enforces on the first (paid API) leg; the failover engages only once the running gateway reports it.',
+};
+SCHEMA['failover.capAccount'] = {
+  type: 'bool',
+  default: false,
+  help: "Also cap the paid leg's whole credential account in keysmith (affects EVERY use of that API key through keysmith, not only the failover).",
 };
 SCHEMA['failover.provider'] = {
   type: 'string',

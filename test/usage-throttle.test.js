@@ -245,3 +245,35 @@ test('autoswitch: an OLD or reset last-good reading is not trusted (never switch
   });
   assert.strictEqual(old.state, 'unknown', 'an hour-old reading is too old');
 });
+
+test('REGRESSION: the 429 window belongs to the TOKEN too — the same login under another name is not asked', async function () {
+  const ctx = makeCtx();
+  ctx.store.setProfile('gmail', blob('TOK-SAME'));
+  ctx.store.setProfile('hakkisagdic', blob('TOK-SAME')); // one login listed under two names
+  let calls = 0;
+  const f = async () => {
+    calls++;
+    return { ok: false, status: 429, headers: { get: (h) => (h === 'retry-after' ? '300' : null) } };
+  };
+  const a = await usage.usageForProfiles(ctx, ['gmail'], { fetch: f, nowMs: NOW, cacheTtlMs: 60000 });
+  assert.strictEqual(a.gmail.status, 'throttled');
+  const b = await usage.usageForProfiles(ctx, ['hakkisagdic'], { fetch: f, nowMs: NOW + 1000, cacheTtlMs: 60000 });
+  assert.strictEqual(b.hakkisagdic.status, 'throttled');
+  assert.strictEqual(b.hakkisagdic.retryAt, NOW + 300000, "the token's window, not a fresh one");
+  assert.strictEqual(calls, 1, 'one request for the token in its window, whatever name asks');
+  const raw = fs.readFileSync(path.join(ctx.configDir, usage.THROTTLE_FILE), 'utf8');
+  assert.ok(raw.indexOf('TOK-SAME') === -1, 'fingerprints only, never the token');
+  // after the window, a good answer closes it
+  const ok = async () => {
+    calls++;
+    return {
+      ok: true,
+      status: 200,
+      headers: { get: () => null },
+      json: async () => ({ five_hour: { utilization: 3 } }),
+    };
+  };
+  const c = await usage.usageForProfiles(ctx, ['hakkisagdic'], { fetch: ok, nowMs: NOW + 301000, cacheTtlMs: 60000 });
+  assert.strictEqual(c.hakkisagdic.status, 'ok');
+  assert.strictEqual(fs.readFileSync(path.join(ctx.configDir, usage.THROTTLE_FILE), 'utf8'), '{}');
+});

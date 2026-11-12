@@ -17,6 +17,7 @@ import * as _mcp from '../src/mcp.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const NOW = 1800000000000;
+const MISS = 11 * 60 * 1000; // past the endpoint-miss back-off
 
 function blob(access, refresh) {
   const o = { accessToken: access };
@@ -158,9 +159,13 @@ test('two profiles holding ONE token: offline refuses to guess; the endpoint nam
   assert.deepStrictEqual(on.wrongCredentialIn, ['yahoo']);
 });
 
-test('repairPointer fixes the label without touching the credential', function () {
+test('repairPointer fixes the label without touching the credential (once the endpoint confirmed it)', async function () {
   const ctx = mislabelled();
   const live = ctx.store.getLive();
+  const off = identity.repairIfMismatched(ctx);
+  assert.strictEqual(off.repaired, false, 'an offline match never rewrites the label');
+  assert.strictEqual(off.unverified, true);
+  await identity.resolveLive(ctx, { fetch: profileEndpoint({ 'TOK-GMAIL-1': 'me@gmail.com' }) });
   const r = identity.repairIfMismatched(ctx);
   assert.strictEqual(r.repaired, true);
   assert.strictEqual(r.to, 'gmail');
@@ -188,7 +193,13 @@ test("autoswitch reads the TOKEN account's usage, repairs the label, and records
       json: async () => ({ five_hour: { utilization: pct } }),
     };
   };
-  const r = await autosw.tick(ctx, { threshold: 95, fetch: usageFetch, nowMs: NOW, cacheTtlMs: 0 });
+  const r = await autosw.tick(ctx, {
+    threshold: 95,
+    fetch: usageFetch,
+    identityFetch: profileEndpoint({ 'TOK-GMAIL-1': 'me@gmail.com' }),
+    nowMs: NOW,
+    cacheTtlMs: 0,
+  });
   assert.strictEqual(r.active.name, 'gmail');
   assert.strictEqual(r.state, 'below');
   assert.strictEqual(r.headroom, 60, "gmail's own usage, read with gmail's token");
@@ -241,9 +252,25 @@ test('CLI `status` shows the token account, warns about the label, and `--fix` r
   const j = JSON.parse(st.stdout);
   assert.strictEqual(j.cli.email, 'me@gmail.com');
   assert.strictEqual(j.cli.labelMismatch, true);
+  assert.strictEqual(j.cli.identityVerified, false, 'offline (the suite never reaches Anthropic)');
   const human = run(['status']);
   assert.ok(/live token belongs to me@gmail\.com/.test(human.stdout), human.stdout);
   assert.ok(/keyflip status --fix/.test(human.stdout));
+  // Unconfirmed, --fix refuses: the offline match trusts a store that may itself be damaged.
+  const refused = run(['status', '--fix', '--json']);
+  assert.strictEqual(JSON.parse(refused.stdout).cli.labelMismatch, true);
+  assert.ok(/not repaired/.test(JSON.parse(refused.stdout).identityRepaired.error));
+  assert.strictEqual(JSON.parse(fs.readFileSync(cj, 'utf8')).oauthAccount.emailAddress, 'me@yahoo.com');
+  // What the profile endpoint answers once, cached by fingerprint (the suite seeds it: no network).
+  const cacheFile = path.join(home, '.config', 'keyflip', identity.CACHE_FILE);
+  const c = JSON.parse(fs.readFileSync(cacheFile, 'utf8'));
+  c[identity.fingerprints(blob('TOK-GMAIL-1', 'RT-GMAIL-1')).access] = {
+    name: 'gmail',
+    email: 'me@gmail.com',
+    source: 'token-profile',
+    at: Date.now(),
+  };
+  fs.writeFileSync(cacheFile, JSON.stringify(c));
   const fixed = run(['status', '--fix', '--json']);
   assert.strictEqual(JSON.parse(fixed.stdout).cli.labelMismatch, false);
   assert.strictEqual(JSON.parse(fs.readFileSync(cj, 'utf8')).oauthAccount.emailAddress, 'me@gmail.com');
@@ -260,4 +287,120 @@ test('REGRESSION: switching to the LABEL\'s account is a real switch, not "alrea
   assert.strictEqual(r.switched.name, 'yahoo');
   assert.strictEqual(JSON.parse(ctx.store.getLive()).claudeAiOauth.accessToken, 'TOK-YAHOO-1');
   assert.strictEqual(JSON.parse(ctx.store.getProfile('gmail')).claudeAiOauth.accessToken, 'TOK-GMAIL-1');
+});
+
+// ---- review fixes (12 Nov): an offline verdict trusts keyflip's own store, which is what was damaged ----
+
+test('REGRESSION: a CLI/MCP switch asks the endpoint first, so a rotated token is never saved under the label', async function () {
+  const ctx = mislabelled();
+  ctx.store.setLive(blob('TOK-GMAIL-2', 'RT-GMAIL-2')); // Claude Code rotated gmail's token; label: yahoo
+  label(ctx, 'me@work.com', 'u-w');
+  ctx.store.setLive(blob('TOK-WORK-1', 'RT-WORK-1'));
+  core.addCurrent(ctx, 'work');
+  ctx.store.setLive(blob('TOK-GMAIL-2', 'RT-GMAIL-2'));
+  label(ctx, 'me@yahoo.com', 'u-y');
+  const calls = [];
+  ctx.fetch = profileEndpoint({ 'TOK-GMAIL-2': 'me@gmail.com' }, calls);
+  const t = _mcp.TOOLS.find((x) => x.name === 'keyflip_switch');
+  const r = await t.run(ctx, { name: 'work', confirm: true });
+  assert.strictEqual(r.switched.name, 'work');
+  assert.strictEqual(calls.length, 1);
+  assert.strictEqual(
+    JSON.parse(ctx.store.getProfile('yahoo')).claudeAiOauth.accessToken,
+    'TOK-YAHOO-1',
+    'yahoo untouched',
+  );
+  assert.strictEqual(
+    JSON.parse(ctx.store.getProfile('gmail')).claudeAiOauth.accessToken,
+    'TOK-GMAIL-2',
+    'gmail kept its rotation',
+  );
+});
+
+test('REGRESSION: a keyflip save made by the label is NOT a verdict — the endpoint still decides, and names the damage', async function () {
+  const ctx = mislabelled();
+  ctx.store.setLive(blob('TOK-GMAIL-2', 'RT-GMAIL-2'));
+  // Offline (endpoint unreachable) a switch can only save by the label, as before: yahoo gets it.
+  core.performSwitch(ctx, 'gmail');
+  core.performSwitch(ctx, 'yahoo'); // gmail's TOK-GMAIL-2 now live again, under the yahoo label
+  const off = identity.liveSync(ctx);
+  assert.strictEqual(off.name, 'yahoo');
+  assert.strictEqual(off.verified, false, 'the cache of a label-based save is not trusted as verified');
+  const calls = [];
+  const on = await identity.resolveLive(ctx, { fetch: profileEndpoint({ 'TOK-GMAIL-2': 'me@gmail.com' }, calls) });
+  assert.strictEqual(calls.length, 1, 'asked, although the cache had an answer');
+  assert.strictEqual(on.name, 'gmail');
+  assert.strictEqual(on.verified, true);
+  assert.strictEqual(on.mismatch, true, 'the 12 Nov live check: labelMismatch must show');
+  assert.deepStrictEqual(on.wrongCredentialIn, ['yahoo']);
+  assert.strictEqual(identity.wrongOwnerOf(ctx, 'yahoo'), 'gmail');
+  assert.strictEqual(identity.wrongOwnerOf(ctx, 'gmail'), null);
+});
+
+test('REGRESSION: one damaged profile + a RIGHT label: the tick never turns the label wrong', async function () {
+  const ctx = machine();
+  ctx.store.setProfile('yahoo', blob('TOK-GMAIL-2', 'RT-GMAIL-2')); // main's damage
+  fs.rmSync(path.join(ctx.configDir, identity.CACHE_FILE), { force: true });
+  ctx.store.setLive(blob('TOK-GMAIL-2', 'RT-GMAIL-2'));
+  label(ctx, 'me@gmail.com', 'u-g'); // the label is right
+  const usageFetch = async () => ({
+    ok: true,
+    status: 200,
+    headers: { get: () => null },
+    json: async () => ({ five_hour: { utilization: 10 } }),
+  });
+  const down = async () => {
+    throw new Error('offline');
+  };
+  const r = await autosw.tick(ctx, {
+    threshold: 95,
+    fetch: usageFetch,
+    identityFetch: down,
+    nowMs: NOW,
+    cacheTtlMs: 0,
+  });
+  assert.ok(!r.identityRepair, 'no repair from an unverified match');
+  assert.strictEqual(core.currentEmail(ctx), 'me@gmail.com', 'the right label stays right');
+  // with the endpoint: gmail, and yahoo is named as holding gmail's login -> never a candidate
+  const r2 = await autosw.tick(ctx, {
+    threshold: 95,
+    fetch: async () => ({
+      ok: true,
+      status: 200,
+      headers: { get: () => null },
+      json: async () => ({ five_hour: { utilization: 99 } }),
+    }),
+    identityFetch: profileEndpoint({ 'TOK-GMAIL-2': 'me@gmail.com' }),
+    nowMs: NOW + MISS,
+    cacheTtlMs: 0,
+  });
+  assert.strictEqual(r2.active.name, 'gmail');
+  assert.strictEqual(r2.state, 'no-candidate');
+  assert.ok(r2.skippedCandidates && r2.skippedCandidates[0].name === 'yahoo', JSON.stringify(r2));
+  assert.strictEqual(core.currentEmail(ctx), 'me@gmail.com');
+});
+
+test('REGRESSION: an unsaved login the endpoint named is captured, never overwritten by a switch', async function () {
+  const ctx = makeCtx();
+  label(ctx, 'me@gmail.com', 'u-g');
+  ctx.store.setLive(blob('TOK-G1', 'RT-G1'));
+  core.addCurrent(ctx, 'gmail');
+  // a NEW account via plain `claude /login`; ~/.claude.json still says gmail (stale)
+  ctx.store.setLive(blob('TOK-N1', 'RT-N1'));
+  const id = await identity.resolveLive(ctx, { fetch: profileEndpoint({ 'TOK-N1': 'new@work.com' }) });
+  assert.strictEqual(id.unsaved, true);
+  core.performSwitch(ctx, 'gmail');
+  const names = profiles.list(ctx.configDir);
+  assert.ok(names.indexOf('new') !== -1, 'the new login got its own profile: ' + names.join(','));
+  assert.strictEqual(JSON.parse(ctx.store.getProfile('new')).claudeAiOauth.accessToken, 'TOK-N1');
+  assert.strictEqual(
+    profiles.email(ctx.configDir, 'new'),
+    'new@work.com',
+    "named by the endpoint's email, not the label's",
+  );
+  assert.strictEqual(JSON.parse(ctx.store.getProfile('gmail')).claudeAiOauth.accessToken, 'TOK-G1', 'gmail untouched');
+  assert.strictEqual(profiles.email(ctx.configDir, 'gmail'), 'me@gmail.com');
+  // and the cache now knows the profile: a later lookup is that profile, not "unsaved"
+  ctx.store.setLive(blob('TOK-N1', 'RT-N1'));
+  assert.strictEqual(identity.liveSync(ctx).name, 'new');
 });

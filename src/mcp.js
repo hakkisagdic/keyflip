@@ -5,9 +5,10 @@
 // structuredContent results.
 //
 // Safety model for agents: mutating tools REQUIRE `confirm: true`, and the tool
-// descriptions instruct the agent to ask the human first. Switching never closes
-// the desktop app from under the user (swap-in-place semantics; Claude Code picks
-// the new credential up on its next request).
+// descriptions instruct the agent to ask the human first. A switch never closes
+// the desktop app from inside this call (swap-in-place semantics; Claude Code picks
+// the new credential up on its next request); Desktop follows through a pending
+// restart that only the autoswitch service takes, while Desktop is idle (P5).
 import readline from 'readline';
 import * as core from './core.js';
 import * as profiles from './profiles.js';
@@ -336,6 +337,7 @@ const TOOLS = [
               email: email,
               name: (id && id.name) || null,
               identitySource: (id && id.source) || null,
+              identityVerified: !!(id && id.verified),
               labelEmail: (id && id.labelEmail) || null,
               labelMismatch: !!(id && id.mismatch),
             }
@@ -592,7 +594,7 @@ const TOOLS = [
     name: 'keyflip_switch',
     title: 'Switch Claude account',
     description:
-      'Switch the active Claude account (CLI credential + desktop-app login) to a saved profile. Other tools have their own flows: keyflip_instances / keyflip_instance_* manage isolated desktop instances for claude, kiro, chatgpt and cursor; keyflip_chatgpt* manage the ONE shared ChatGPT.app/Codex CLI login. The desktop app is NOT closed automatically; a running Claude app picks up the new account on its next request. IMPORTANT: this changes which account is billed and rate-limited. Ask the user before calling, then set confirm=true. Call keyflip_switch_plan FIRST when it is not obvious that the target works — a clean return value has repeatedly hidden a switch that did not produce a usable machine, so this one reads itself back: `verified` says usable now / usable, decaying / NOT usable.',
+      'Switch the active Claude account (CLI credential + desktop-app login) to a saved profile. Other tools have their own flows: keyflip_instances / keyflip_instance_* manage isolated desktop instances for claude, kiro, chatgpt and cursor; keyflip_chatgpt* manage the ONE shared ChatGPT.app/Codex CLI login. This call never closes the desktop app itself: Claude Code picks up the new account on its next request, while Claude Desktop keeps its old login until it restarts — so the switch is RECORDED as a pending Desktop restart, which the autoswitch service (if installed, desktop.autoRestart on) performs later, only while Desktop is idle, with a notification. Tell the user that when asking. IMPORTANT: this changes which account is billed and rate-limited. Ask the user before calling, then set confirm=true. Call keyflip_switch_plan FIRST when it is not obvious that the target works — a clean return value has repeatedly hidden a switch that did not produce a usable machine, so this one reads itself back: `verified` says usable now / usable, decaying / NOT usable.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -615,6 +617,7 @@ const TOOLS = [
       const name = core.resolveProfile(ctx, String(args.name));
       if (!name) throw new Error("no such account: '" + args.name + "' (use keyflip_list)");
       const em = profiles.email(ctx.configDir, name);
+      await core.prepareSwitch(ctx); // P2: whose login is live, by its token, before preserving it
       if (core.isActive(ctx, name)) return { alreadyActive: { name: name, email: em } };
       _policy.enforce(ctx, { cwd: process.cwd(), account: name }); // org policy: agents can't dodge it
       const l = await lock.acquire(ctx.configDir);
@@ -1338,6 +1341,7 @@ const TOOLS = [
       if (args.confirm !== true) {
         throw new Error('confirmation required: ask the user first, then call again with confirm=true');
       }
+      await core.prepareSwitch(ctx); // P2: the active account by its token
       const list = core.listProfiles(ctx);
       if (list.length < 2) throw new Error('need at least 2 saved accounts');
       let idx = -1;
@@ -3687,7 +3691,7 @@ const TOOLS = [
     name: 'keyflip_autoswitch_tick',
     title: 'Evaluate usage once and auto-switch if over threshold',
     description:
-      "Run ONE autoswitch evaluation: check the active account's usage headroom and, if it is at/over the threshold, switch the CLI to the next available account. Returns the decision (state / headroom / switchedTo). Mutating (MAY switch the active account) — ask the user, then confirm=true.",
+      "Run ONE autoswitch evaluation: check the active account's usage headroom and, if it is at/over the threshold (clamped 50..100), switch the CLI to the next available account. If keyflip failover setup was done and EVERY account is known to be over the threshold, it moves Claude Code onto the PAID API failover through keysmith (capped by the running gateway, default $25/month) and back once an account recovers. A switch is recorded as a pending Claude Desktop restart (the autoswitch service performs it later, only while Desktop is idle, with a notification). Returns the decision (state / headroom / switchedTo / failover*). Mutating (MAY switch the active account or engage the paid failover) — tell the user both, ask, then confirm=true.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -3728,11 +3732,18 @@ const TOOLS = [
       };
       // P4: when every account is over the threshold, the keysmith API failover (if set up).
       if (_failover.plan(ctx).enabled && !ctx.noFailover) {
+        // Moving onto (or off) a PAID API is never silent: the configured sinks, else a macOS banner.
+        // ctx.notify is the test injection channel.
+        const loud =
+          ctx.notify ||
+          function (ev, msg) {
+            return _desktoprestart.notifyLoud(ctx, ev, msg, { run: ctx.run }).catch(function () {});
+          };
         const locked = function (fn) {
           return async function (info) {
             const l = await lock.acquire(ctx.configDir);
             try {
-              return await fn(ctx, info, { fetch: ctx.fetch });
+              return await fn(ctx, info, { fetch: ctx.fetch, notify: loud });
             } finally {
               l.release();
             }
@@ -3742,12 +3753,17 @@ const TOOLS = [
           state: function () {
             return _failover.state(ctx);
           },
+          check: function () {
+            return _failover.gatewayReady(ctx, { fetch: ctx.fetch, capCheck: false });
+          },
           engage: locked(_failover.engage),
           release: locked(_failover.release),
         };
       }
-      // The same defaults as the CLI and the background service: config autoswitch.*.
-      opts.threshold = args.threshold !== undefined ? args.threshold : _config.get(ctx, 'autoswitch.threshold');
+      // The same defaults and bounds as the CLI and the background service: config autoswitch.*,
+      // clamped to 50..100 (a threshold of 0 would call every account exhausted and pay for the API).
+      const thRaw = args.threshold !== undefined ? Number(args.threshold) : _config.get(ctx, 'autoswitch.threshold');
+      opts.threshold = Math.min(100, Math.max(50, isNaN(thRaw) ? 95 : thRaw));
       opts.strategy = _config.get(ctx, 'autoswitch.strategy') || 'next-available';
       const grp = _config.get(ctx, 'autoswitch.group');
       if (grp) opts.group = grp;
@@ -3766,7 +3782,7 @@ const TOOLS = [
     name: 'keyflip_autoswitch_service',
     title: 'Run autoswitch unattended (background service)',
     description:
-      'Install/remove/inspect the UNATTENDED autoswitch service (launchd on macOS, cron on Linux) that runs `keyflip autoswitch --once` on an interval — so account rotation happens on its own without a terminal open (the fix for "autoswitch never runs"). action="status" (read) | "install" | "remove". install schedules automatic account switching at the threshold — for install/remove, ask the user, then confirm=true.',
+      'Install/remove/inspect the UNATTENDED autoswitch service (launchd on macOS, cron on Linux) that runs `keyflip autoswitch --once` on an interval — so account rotation happens on its own without a terminal open (the fix for "autoswitch never runs"). action="status" (read) | "install" | "remove". install schedules automatic account switching at the threshold; the service also restarts Claude Desktop (only while idle, with a notification) so it follows a switch, and, once `keyflip failover setup` is done, moves Claude Code onto the paid, capped API failover when every account is known to be out. For install/remove, tell the user all three, ask, then confirm=true.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -6652,7 +6668,7 @@ async function handle(ctx, msg) {
         instructions:
           "Manage the machine's saved Claude accounts. Use keyflip_status/keyflip_list to inspect; " +
           'keyflip_switch/keyflip_next change the active account and REQUIRE confirm=true after asking the user. ' +
-          'Switching is in-place: the desktop app is never closed, and a running Claude Code continues on the new account.',
+          'Switching is in-place: a running Claude Code continues on the new account, and the switch itself never closes the desktop app. Claude Desktop follows only after a restart: the autoswitch service (if installed) restarts it later, only while it is idle, with a notification (config desktop.autoRestart). When every account is out, the autoswitch service may move Claude Code onto the paid API failover (capped; keyflip failover status).',
       });
     }
     case 'ping':
