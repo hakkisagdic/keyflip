@@ -149,6 +149,30 @@ test('Codex rollout: session_meta names the id/cwd and consecutive echoes collap
   assert.strictEqual(c.title, 'Ship the release.');
 });
 
+test('Codex rollout: a UUID in a PARENT directory never becomes the conversation id', function () {
+  // A home under a session-UUID scratch dir (or a worktree named after a session) used to give every
+  // rollout below it that one directory UUID as its id, so they collided.
+  const base = makeCtx().home;
+  const ctx = makeCtx({ home: path.join(base, '33333333-3333-4333-8333-333333333333', 'home') });
+  ctx.env = {};
+  const meta = (sid) => ({
+    type: 'session_meta',
+    timestamp: '2026-01-01T10:00:00.000Z',
+    payload: { session_id: sid, cwd: '/work/codex', originator: 'codex_cli' },
+  });
+  const turn = (text) => ({
+    type: 'response_item',
+    timestamp: '2026-01-01T10:00:01.000Z',
+    payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text }] },
+  });
+  writeCodex(ctx, 'rollout-2026-01-01T10-00-00-aaaa0001.jsonl', [meta('aaaa0001'), turn('One.')]);
+  writeCodex(ctx, 'rollout-2026-01-01T11-00-00-bbbb0002.jsonl', [meta('bbbb0002'), turn('Two.')]);
+  const ids = loadAll(ctx)
+    .map((c) => c.id)
+    .sort();
+  assert.deepStrictEqual(ids, ['codex:aaaa0001', 'codex:bbbb0002']);
+});
+
 test('Codex rollout: a resumed thread keeps its own id, not the parent session_id', function () {
   const ctx = ctxFor();
   const head = (own) => ({

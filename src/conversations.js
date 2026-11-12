@@ -453,7 +453,11 @@ function codexOwnId(metas, src) {
     const v = safeStr(m.id, 120);
     if (v) candidates.push(v);
   }
-  const uuids = String((src && src.path) || '').match(UUID_RE) || [];
+  // The FILE NAME only (rollout-<ts>-<uuid>.jsonl). Scanning the absolute path also picked up any
+  // UUID in a parent directory (a per-session temp dir, a worktree under a session id), and that one
+  // id then became the id of every rollout below it: conversations collided and the index deleted
+  // each other's chunks.
+  const uuids = path.basename(String((src && src.path) || '')).match(UUID_RE) || [];
   for (let i = uuids.length - 1; i >= 0; i--) candidates.push(uuids[i].toLowerCase());
   for (const c of candidates) if (!parents.has(c)) return c;
   return candidates[0] || null;
