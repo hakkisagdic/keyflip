@@ -8,8 +8,8 @@
 //     it keysmith refuses that leg with a 429 and the alias falls through to the next one
 //   - a key scoped to exactly that alias and its legs, stored in keyflip's credential store as the
 //     key of a keyflip provider profile (never printed, never on a command line)
-// Engaging points Claude Code at the alias (settings.json env — hot reload, no restart) and moves
-// Claude Desktop's config to third-party gateway mode (it reads that config when it starts).
+// Engaging points Claude Code at the alias (settings.json env, hot reload, no restart) and asks Claude
+// Desktop to move to third-party gateway mode, applied on a restart taken only while it is idle (P5).
 // Releasing undoes both once a Claude account has headroom again.
 //
 // Every side effect is injectable (run, fetch, keysmith config path, provider/desktop ops) so tests
@@ -22,7 +22,7 @@ import { atomicWrite } from './fsutil.js';
 import * as _provider from './provider.js';
 import * as _config from './config.js';
 import * as _history from './history.js';
-import * as _desktopgw from './desktopgw.js';
+import * as _desktoprestart from './desktoprestart.js';
 
 const STATE_FILE = '.failover-state.json';
 const DEFAULTS = {
@@ -290,11 +290,11 @@ async function engage(ctx, info, deps) {
       return _provider.use(ctx, name);
     };
   useProvider(p.provider); // Claude Code: settings.json env, hot-reloaded
-  // Claude Desktop reads its gateway config at start: it is written now and used from its next start.
+  // Claude Desktop reads its gateway config at start: the change waits for an idle restart (P5).
   const requestDesktop =
     deps.requestDesktop ||
     function (rec) {
-      return ctx.appDataDir ? _desktopgw.use(ctx, rec.target) : null;
+      return ctx.appDataDir ? _desktoprestart.request(ctx, rec, { nowMs: deps.nowMs }) : null;
     };
   requestDesktop({ kind: 'gateway-on', target: p.provider, reason: 'every Claude account is over the threshold' });
   const st = {
@@ -329,8 +329,8 @@ async function release(ctx, info, deps) {
   useOfficial();
   const requestDesktop =
     deps.requestDesktop ||
-    function () {
-      return ctx.appDataDir ? _desktopgw.restore(ctx) : null;
+    function (rec) {
+      return ctx.appDataDir ? _desktoprestart.request(ctx, rec, { nowMs: deps.nowMs }) : null;
     };
   requestDesktop({ kind: 'gateway-off', target: null, reason: 'a Claude account has headroom again' });
   try {

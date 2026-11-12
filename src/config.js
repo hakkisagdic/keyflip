@@ -40,6 +40,26 @@ SCHEMA['autoswitch.maxStaleSeconds'] = {
   max: 21600,
   help: 'While the usage endpoint is throttled, act on the last good reading if it is at most this old (0 = never).',
 };
+// P5: Claude Desktop restarts to pick up a new account/gateway — only while it is idle.
+SCHEMA['desktop.autoRestart'] = {
+  type: 'bool',
+  default: true,
+  help: 'Restart Claude Desktop (when idle, with a notification) so it follows an autoswitch or the API failover.',
+};
+SCHEMA['desktop.idleQuietSeconds'] = {
+  type: 'int',
+  default: 60,
+  min: 10,
+  max: 3600,
+  help: 'Claude Desktop counts as idle only if no agent session wrote anything for this long.',
+};
+SCHEMA['desktop.cpuBusyPercent'] = {
+  type: 'int',
+  default: 20,
+  min: 1,
+  max: 800,
+  help: 'Claude Desktop above this much CPU counts as busy (a reply is probably streaming).',
+};
 // P4: API failover through keysmith when every Claude account is over the threshold.
 SCHEMA['failover.enabled'] = {
   type: 'bool',

@@ -93,6 +93,7 @@ import * as _svc from './autoswitchservice.js';
 import * as _selfbin from './selfbin.js';
 import * as _identity from './identity.js';
 import * as _failover from './failover.js';
+import * as _desktoprestart from './desktoprestart.js';
 import * as _groups from './groups.js';
 import * as _budget from './budget.js';
 import * as _shellhook from './shellhook.js';
@@ -1622,6 +1623,27 @@ async function cmdAutoswitch(ctx, rest) {
       });
   }
 
+  // P5: Claude Desktop follows a CLI switch, and any pending restart (account / gateway) is retried
+  // every tick — taken only while Desktop is idle, always with a notification.
+  async function followDesktop(r) {
+    if (!ctx.appDataDir) return null;
+    const to = r && r.switchedTo;
+    if ((r.state === 'switched' || r.state === 'switched-back') && to && appauth.hasProfile(ctx, to.name))
+      _desktoprestart.request(ctx, { kind: 'account', target: to.name, email: to.email || null, reason: 'autoswitch' });
+    let d = null;
+    try {
+      d = await _desktoprestart.processPending(ctx, {});
+    } catch (e) {
+      d = { state: 'error', reason: (e && e.message) || String(e) };
+    }
+    if (d && d.state !== 'none') {
+      const at = new Date().toTimeString().slice(0, 8);
+      print('[' + at + '] desktop: ' + d.state + (d.reason ? ' — ' + d.reason : ''));
+      logmod.log('autoswitch: desktop ' + d.state + (d.reason ? ' (' + d.reason + ')' : ''));
+    }
+    return d;
+  }
+
   // ---- unattended background SERVICE (launchd StartInterval / cron */N) ----
   const svcSub = rest[0];
   if (svcSub === 'install' || svcSub === 'uninstall' || svcSub === 'status') {
@@ -1629,7 +1651,11 @@ async function cmdAutoswitch(ctx, rest) {
     if (svcSub === 'status') {
       const st = svc.status(ctx, { home: ctx.home, run: ctx.run });
       if (JSON_MODE) {
-        jsonOut({ autoswitchService: st });
+        jsonOut({
+          autoswitchService: st,
+          desktopRestartPending: _desktoprestart.readPending(ctx),
+          failover: _failover.state(ctx),
+        });
         if (st.installed && !st.healthy) process.exitCode = 1;
         return;
       }
@@ -1656,6 +1682,21 @@ async function cmdAutoswitch(ctx, rest) {
         });
         if (st.fix) print('  fix: ' + style.bold(st.fix));
       }
+      const pend = _desktoprestart.readPending(ctx);
+      if (pend)
+        print(
+          '  Claude Desktop restart pending since ' +
+            new Date(pend.since).toTimeString().slice(0, 8) +
+            ': ' +
+            pend.actions
+              .map(function (a) {
+                return a.kind + (a.target ? ' ' + a.target : '');
+              })
+              .join(', ') +
+            style.dim(' (taken when Desktop is idle)'),
+        );
+      const fst = _failover.state(ctx);
+      if (fst) print('  ' + style.warn('API failover ENGAGED') + ' since ' + new Date(fst.at).toISOString());
       if (!st.installed)
         print(
           style.dim(
@@ -1724,6 +1765,7 @@ async function cmdAutoswitch(ctx, rest) {
   if (rest.indexOf('--once') !== -1) {
     const r = await oneTick();
     reportTick(r);
+    await followDesktop(r);
     // Unattended: a failed tick must show up as a non-zero exit in `launchctl list`, not vanish.
     if (r && r.state === 'error') process.exitCode = 1;
     return;
@@ -1759,7 +1801,9 @@ async function cmdAutoswitch(ctx, rest) {
     ),
   );
   for (;;) {
-    reportTick(await oneTick());
+    const r = await oneTick();
+    reportTick(r);
+    await followDesktop(r);
     await sleep(interval * 1000);
   }
 }

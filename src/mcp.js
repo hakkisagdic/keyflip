@@ -51,6 +51,7 @@ import * as _rt from './relaytransfer.js';
 import * as _svc from './autoswitchservice.js';
 import * as _identity from './identity.js';
 import * as _failover from './failover.js';
+import * as _desktoprestart from './desktoprestart.js';
 import * as _agents from './agents.js';
 import _path from 'path';
 import * as _pii from './pii.js';
@@ -3737,7 +3738,15 @@ const TOOLS = [
       opts.strategy = _config.get(ctx, 'autoswitch.strategy') || 'next-available';
       const grp = _config.get(ctx, 'autoswitch.group');
       if (grp) opts.group = grp;
-      return await _autoswitch.tick(ctx, opts);
+      const r = await _autoswitch.tick(ctx, opts);
+      // P5: Claude Desktop follows — but this call may be running INSIDE Desktop, so it only records
+      // the restart; the background service takes it when Desktop is idle.
+      const to = r && r.switchedTo;
+      if (ctx.appDataDir && (r.state === 'switched' || r.state === 'switched-back') && to && appauth.hasProfile(ctx, to.name)) {
+        _desktoprestart.request(ctx, { kind: 'account', target: to.name, email: to.email || null, reason: 'autoswitch' });
+        r.desktopRestart = 'pending (taken by the autoswitch service when Claude Desktop is idle)';
+      }
+      return r;
     },
   },
   {
