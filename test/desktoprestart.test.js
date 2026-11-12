@@ -33,7 +33,10 @@ function app(opts) {
       notify: async (event, msg) => {
         log.push('notify:' + msg);
       },
-      detector: { name: 'fake', check: () => (opts.busy ? { busy: true, reason: opts.busy } : { busy: false, reason: 'idle' }) },
+      detector: {
+        name: 'fake',
+        check: () => (opts.busy ? { busy: true, reason: opts.busy } : { busy: false, reason: 'idle' }),
+      },
       kinds: {
         account: (ctx, target) => {
           log.push('apply:account:' + target + ':' + (running ? 'RUNNING' : 'closed'));
@@ -256,13 +259,21 @@ test('MCP autoswitch tick only RECORDS the Desktop follow-up (it may run inside 
   fs.writeFileSync(path.join(ctx.configDir, 'app', 'a.json'), '{}');
   ctx.fetch = async (url, o) => {
     const tok = o.headers.Authorization.replace('Bearer ', '');
-    return { ok: true, status: 200, headers: { get: () => null }, json: async () => ({ five_hour: { utilization: tok === 'TB' ? 97 : 10 } }) };
+    return {
+      ok: true,
+      status: 200,
+      headers: { get: () => null },
+      json: async () => ({ five_hour: { utilization: tok === 'TB' ? 97 : 10 } }),
+    };
   };
   const t = _mcp.TOOLS.find((x) => x.name === 'keyflip_autoswitch_tick');
   const r = await t.run(ctx, { confirm: true });
   assert.strictEqual(r.state, 'switched');
   assert.ok(/pending/.test(r.desktopRestart));
-  assert.deepStrictEqual(dr.readPending(ctx).actions.map((a) => a.kind + ':' + a.target), ['account:a']);
+  assert.deepStrictEqual(
+    dr.readPending(ctx).actions.map((a) => a.kind + ':' + a.target),
+    ['account:a'],
+  );
 });
 
 test('engaging the failover asks Desktop for a gateway-on restart (default path)', async function () {
@@ -279,29 +290,40 @@ test('engaging the failover asks Desktop for a gateway-on restart (default path)
   ]);
 });
 
-test('CLI `autoswitch --once` takes a pending restart: a closed app is switched in place (macOS layout)', { skip: process.platform !== 'darwin' }, function () {
-  const home = makeCtx().home;
-  fs.mkdirSync(path.join(home, '.claude'), { recursive: true });
-  fs.writeFileSync(path.join(home, '.claude', '.credentials.json'), '{}');
-  const cfgDir = path.join(home, '.config', 'keyflip');
-  fs.mkdirSync(cfgDir, { recursive: true });
-  // pending: switch Desktop to an account that has NO saved desktop login -> apply fails, reported
-  fs.writeFileSync(path.join(cfgDir, dr.PENDING_FILE), JSON.stringify({ actions: [{ kind: 'account', target: 'ghost' }], since: 1 }));
-  const BIN = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'keyflip.js');
-  const r = spawnSync(process.execPath, [BIN, 'autoswitch', '--once', '-y'], {
-    encoding: 'utf8',
-    env: Object.assign({}, process.env, {
-      HOME: home,
-      XDG_CONFIG_HOME: path.join(home, '.config'),
-      KEYFLIP_CONFIG_DIR: cfgDir,
-      KEYFLIP_TEST_CLAUDE: 'stopped', // the app is "closed": nothing is quit or opened
-      KEYFLIP_APP_BUNDLE: path.join(home, 'no-such-Claude.app'),
-    }),
-  });
-  assert.strictEqual(r.status, 0, r.stderr);
-  assert.ok(/desktop: apply-failed — switch to ghost: no saved desktop login/.test(r.stdout), r.stdout);
-  assert.strictEqual(fs.existsSync(path.join(cfgDir, dr.PENDING_FILE)), false, 'a failing apply is not retried forever');
-});
+test(
+  'CLI `autoswitch --once` takes a pending restart: a closed app is switched in place (macOS layout)',
+  { skip: process.platform !== 'darwin' },
+  function () {
+    const home = makeCtx().home;
+    fs.mkdirSync(path.join(home, '.claude'), { recursive: true });
+    fs.writeFileSync(path.join(home, '.claude', '.credentials.json'), '{}');
+    const cfgDir = path.join(home, '.config', 'keyflip');
+    fs.mkdirSync(cfgDir, { recursive: true });
+    // pending: switch Desktop to an account that has NO saved desktop login -> apply fails, reported
+    fs.writeFileSync(
+      path.join(cfgDir, dr.PENDING_FILE),
+      JSON.stringify({ actions: [{ kind: 'account', target: 'ghost' }], since: 1 }),
+    );
+    const BIN = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'keyflip.js');
+    const r = spawnSync(process.execPath, [BIN, 'autoswitch', '--once', '-y'], {
+      encoding: 'utf8',
+      env: Object.assign({}, process.env, {
+        HOME: home,
+        XDG_CONFIG_HOME: path.join(home, '.config'),
+        KEYFLIP_CONFIG_DIR: cfgDir,
+        KEYFLIP_TEST_CLAUDE: 'stopped', // the app is "closed": nothing is quit or opened
+        KEYFLIP_APP_BUNDLE: path.join(home, 'no-such-Claude.app'),
+      }),
+    });
+    assert.strictEqual(r.status, 0, r.stderr);
+    assert.ok(/desktop: apply-failed — switch to ghost: no saved desktop login/.test(r.stdout), r.stdout);
+    assert.strictEqual(
+      fs.existsSync(path.join(cfgDir, dr.PENDING_FILE)),
+      false,
+      'a failing apply is not retried forever',
+    );
+  },
+);
 
 test('MCP keyflip_switch records the Desktop follow-up for an account with a saved desktop login', async function () {
   const ctx = makeCtx({ platform: 'darwin' });
@@ -319,5 +341,8 @@ test('MCP keyflip_switch records the Desktop follow-up for an account with a sav
   const t = _mcp.TOOLS.find((x) => x.name === 'keyflip_switch');
   const r = await t.run(ctx, { name: 'a', confirm: true });
   assert.ok(/pending/.test(r.desktopRestart));
-  assert.deepStrictEqual(dr.readPending(ctx).actions.map((x) => x.target), ['a']);
+  assert.deepStrictEqual(
+    dr.readPending(ctx).actions.map((x) => x.target),
+    ['a'],
+  );
 });

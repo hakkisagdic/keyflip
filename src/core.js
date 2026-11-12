@@ -85,7 +85,12 @@ function addCurrent(ctx, nameOverride) {
   // account being added, whatever a fixture's recycled token says.
   if (!nameOverride && id.mismatch && id.name && id.labelName && id.labelName !== id.name) {
     ctx.store.setProfile(id.name, ctx.store.getLive());
-    return { name: id.name, email: id.email || profiles.email(ctx.configDir, id.name), refreshed: true, labelMismatch: true };
+    return {
+      name: id.name,
+      email: id.email || profiles.email(ctx.configDir, id.name),
+      refreshed: true,
+      labelMismatch: true,
+    };
   }
   const email = currentEmail(ctx);
   if (!email) {
@@ -236,7 +241,8 @@ function refreshCurrent(ctx, targetName) {
   if (id && id.source && id.source !== 'label') {
     if (!id.name || id.name === targetName) return;
     try {
-      if (id.mismatch) ctx.store.setProfile(id.name, ctx.store.getLive()); // credential only; the label is wrong
+      if (id.mismatch)
+        ctx.store.setProfile(id.name, ctx.store.getLive()); // credential only; the label is wrong
       else saveAs(ctx, id.name);
     } catch (e) {
       /* non-fatal */

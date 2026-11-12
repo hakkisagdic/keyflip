@@ -141,7 +141,8 @@ function cpuDetector(opts) {
         .split('\n')
         .forEach(function (l) {
           const m = /^\s*([0-9.]+)\s+(.*)$/.exec(l);
-          if (m && /Claude\.app\/Contents\//.test(m[2]) && !/claude-code|\/claude( |$)/.test(m[2])) sum += parseFloat(m[1]) || 0;
+          if (m && /Claude\.app\/Contents\//.test(m[2]) && !/claude-code|\/claude( |$)/.test(m[2]))
+            sum += parseFloat(m[1]) || 0;
         });
       const lim = opts.cpuBusyPct !== undefined ? opts.cpuBusyPct : DEFAULT_CPU_BUSY_PCT;
       return sum >= lim
@@ -257,7 +258,11 @@ async function defaultNotify(ctx, event, message, opts) {
   // Quitting someone's app is never silent: when no sink is configured, a plain macOS banner.
   if (ctx.platform === 'darwin') {
     const runner = opts.run || _run;
-    const esc = String(message).replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\\/g, '\\\\').replace(/"/g, '\\"').slice(0, 180);
+    const esc = String(message)
+      .replace(/[\u0000-\u001f\u007f]/g, ' ')
+      .replace(/\\/g, '\\\\')
+      .replace(/"/g, '\\"')
+      .slice(0, 180);
     try {
       runner('/usr/bin/osascript', ['-e', 'display notification "' + esc + '" with title "keyflip"'], undefined, {
         timeoutMs: 5000,
@@ -374,7 +379,10 @@ async function processPending(ctx, deps) {
   const d = detector.check(ctx);
   if (d.busy) {
     if (!rec.notified) {
-      await notify('desktop-restart', 'Claude Desktop will restart to ' + what + ' as soon as it is idle (' + d.reason + ').');
+      await notify(
+        'desktop-restart',
+        'Claude Desktop will restart to ' + what + ' as soon as it is idle (' + d.reason + ').',
+      );
       writePending(ctx, Object.assign({}, rec, { notified: true }));
     }
     return { state: 'deferred', reason: d.reason, pending: rec };
@@ -397,7 +405,10 @@ async function processPending(ctx, deps) {
   const a = await apply();
   open(); // reopen whatever happened: the user had it open
   if (a && a.ok === false) {
-    await notify('desktop-restart', 'Claude Desktop restarted, but could not ' + what + ': ' + (a.reason || 'failed') + '.');
+    await notify(
+      'desktop-restart',
+      'Claude Desktop restarted, but could not ' + what + ': ' + (a.reason || 'failed') + '.',
+    );
     clearPending(ctx); // retrying a failing apply every tick would restart the app every tick
     return { state: 'apply-failed', reason: a.reason || 'apply failed' };
   }

@@ -130,7 +130,7 @@ test('P0: an fnm per-shell shim is never the program — the job is <absolute no
   assert.deepStrictEqual(c.args.slice(1, 4), ['autoswitch', '--once', '-y']);
 });
 
-test('P0: a non-.js `#!/usr/bin/env node` file on PATH is run by node, not exec\'d bare', function () {
+test("P0: a non-.js `#!/usr/bin/env node` file on PATH is run by node, not exec'd bare", function () {
   const script = installedScript();
   const c = svc.autoswitchCommand({ run: fakeRunner({ which: script }) });
   assert.strictEqual(c.exec, fs.realpathSync(process.execPath));
@@ -171,7 +171,10 @@ test('P0: status reads launchd\'s last exit — a 127 is BROKEN, not "installed"
   svc.install({ platform: 'darwin' }, { home: home, run: fakeRunner() });
   const broken = svc.status(
     { platform: 'darwin' },
-    { home: home, run: fakeRunner({ launchctl: 'PID\tStatus\tLabel\n-\t127\tcom.keyflip.autoswitch\n-\t0\tcom.other\n' }) },
+    {
+      home: home,
+      run: fakeRunner({ launchctl: 'PID\tStatus\tLabel\n-\t127\tcom.keyflip.autoswitch\n-\t0\tcom.other\n' }),
+    },
   );
   assert.strictEqual(broken.installed, true);
   assert.strictEqual(broken.healthy, false);
@@ -196,9 +199,15 @@ test('P0: status flags an OLD plist whose program is an fnm shim even before it 
   // What was really on disk: the shim exec'd directly.
   fs.writeFileSync(
     svc.plistPath(home),
-    svc.buildPlist({ home: home, command: { exec: f.shim, args: ['autoswitch', '--once', '-y', '--threshold', '100'] } }),
+    svc.buildPlist({
+      home: home,
+      command: { exec: f.shim, args: ['autoswitch', '--once', '-y', '--threshold', '100'] },
+    }),
   );
-  const st = svc.status({ platform: 'darwin' }, { home: home, run: fakeRunner({ launchctl: '-\t0\tcom.keyflip.autoswitch\n' }) });
+  const st = svc.status(
+    { platform: 'darwin' },
+    { home: home, run: fakeRunner({ launchctl: '-\t0\tcom.keyflip.autoswitch\n' }) },
+  );
   assert.strictEqual(st.healthy, false);
   assert.ok(
     st.problems.some(function (p) {

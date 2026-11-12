@@ -36,7 +36,12 @@ function shq(s) {
 // `<absolute node> <absolute keyflip script> autoswitch --once -y …` (or a real native binary).
 function autoswitchCommand(opts) {
   opts = opts || {};
-  const self = selfbin.resolveSelf({ run: opts.run, fs: opts.fs, execPath: opts.execPath, fallbackScript: opts.script });
+  const self = selfbin.resolveSelf({
+    run: opts.run,
+    fs: opts.fs,
+    execPath: opts.execPath,
+    fallbackScript: opts.script,
+  });
   // A scheduled tick is non-interactive: --once does exactly one check, -y skips the confirm.
   // threshold/strategy/group are bounded/whitelisted at the source so they can never carry shell
   // metacharacters into the Linux cron `/bin/sh -c` line.
@@ -266,7 +271,10 @@ function status(ctx, opts) {
       argv = null;
     }
     const out = { kind: 'launchd', installed: true, path: p, log: logPath(opts.home) };
-    const problems = argv && argv.length ? selfbin.problems({ exec: argv[0], args: argv.slice(1) }, { fs: opts.fs }) : ['the plist has no ProgramArguments'];
+    const problems =
+      argv && argv.length
+        ? selfbin.problems({ exec: argv[0], args: argv.slice(1) }, { fs: opts.fs })
+        : ['the plist has no ProgramArguments'];
     out.program = argv ? argv[0] : null;
     out.threshold = argv ? parseInt(argOf(argv, '--threshold'), 10) || null : null;
     out.strategy = argv ? argOf(argv, '--strategy') : null;

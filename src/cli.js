@@ -1481,22 +1481,44 @@ async function cmdFailover(ctx, rest) {
       jsonOut({ failover: { enabled: p.enabled, engaged: !!st, state: st, gateway: ready, plan: p } });
       return;
     }
-    print('API failover: ' + (!p.enabled ? style.warn('disabled') : st ? style.warn('ENGAGED') + ' since ' + new Date(st.at).toISOString() : style.ok('standing by')));
-    print('  chain:   ' + p.alias + ' = ' + p.legs.join(' → ') + '   (cap $' + p.capUsd + '/month on ' + p.capAdapter + ')');
+    print(
+      'API failover: ' +
+        (!p.enabled
+          ? style.warn('disabled')
+          : st
+            ? style.warn('ENGAGED') + ' since ' + new Date(st.at).toISOString()
+            : style.ok('standing by')),
+    );
+    print(
+      '  chain:   ' + p.alias + ' = ' + p.legs.join(' → ') + '   (cap $' + p.capUsd + '/month on ' + p.capAdapter + ')',
+    );
     print('  gateway: ' + p.gatewayUrl + ' — ' + (ready.ok ? style.ok('ready') : style.warn(ready.reason)));
     return;
   }
   if (sub === 'on' || sub === 'off') {
     const fa = failoverAdapter(ctx);
     if (!fa) return fail('the API failover is disabled — keyflip config set failover.enabled true');
-    const r = sub === 'on' ? await fa.engage({ reason: 'turned on by hand' }) : await fa.release({ reason: 'turned off by hand' });
+    const r =
+      sub === 'on'
+        ? await fa.engage({ reason: 'turned on by hand' })
+        : await fa.release({ reason: 'turned off by hand' });
     if (JSON_MODE) {
       jsonOut({ failover: r });
       if (!r.ok) process.exitCode = 1;
       return;
     }
     if (!r.ok) return fail('could not ' + (sub === 'on' ? 'engage' : 'release') + ' the failover: ' + r.reason);
-    print(style.ok('✅') + ' API failover ' + (sub === 'on' ? (r.already ? 'was already on.' : 'on — Claude Code now uses the gateway.') : r.already ? 'was already off.' : 'off — back on your Claude account.'));
+    print(
+      style.ok('✅') +
+        ' API failover ' +
+        (sub === 'on'
+          ? r.already
+            ? 'was already on.'
+            : 'on — Claude Code now uses the gateway.'
+          : r.already
+            ? 'was already off.'
+            : 'off — back on your Claude account.'),
+    );
     return;
   }
   return fail('usage: keyflip failover setup [--dry-run] | status | on | off');
@@ -1558,7 +1580,9 @@ async function cmdAutoswitch(ctx, rest) {
     } else if (r.state === 'below') {
       print('[' + at + '] ' + (r.active.email || r.active.name) + ': ' + Math.round(100 - r.headroom) + '% used — ok');
     } else if (r.state === 'failover-engaged') {
-      print('[' + at + '] ' + style.warn('⇄ every account is over ' + threshold + '% — now on the API failover (keysmith)'));
+      print(
+        '[' + at + '] ' + style.warn('⇄ every account is over ' + threshold + '% — now on the API failover (keysmith)'),
+      );
       logmod.log('autoswitch: failover engaged (from ' + r.active.name + ')');
     } else if (r.state === 'failover') {
       print('[' + at + '] on the API failover — waiting for a Claude account to recover');
@@ -13107,7 +13131,11 @@ async function cmdStatus(ctx, rest) {
           : ''),
     );
     if (id && id.source === 'label' && id.hasLive)
-      print(style.dim('  (CLI account read from the ~/.claude.json label — the token could not be matched to a saved account)'));
+      print(
+        style.dim(
+          '  (CLI account read from the ~/.claude.json label — the token could not be matched to a saved account)',
+        ),
+      );
     if (id && id.mismatch)
       print(
         '  ' +
@@ -13117,7 +13145,8 @@ async function cmdStatus(ctx, rest) {
           '.\n     Fix the label (the login is untouched): ' +
           style.bold('keyflip status --fix'),
       );
-    if (repaired && !repaired.error) print('  ' + style.ok('✅') + ' label repaired → ' + (repaired.email || repaired.name));
+    if (repaired && !repaired.error)
+      print('  ' + style.ok('✅') + ' label repaired → ' + (repaired.email || repaired.name));
     if (id && id.wrongCredentialIn && id.wrongCredentialIn.length)
       print(
         '  ' +

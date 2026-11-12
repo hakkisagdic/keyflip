@@ -73,7 +73,8 @@ function keysmithCommand(opts) {
   opts = opts || {};
   const runner = opts.run || _run;
   const w = runner('which', ['keysmith']);
-  if (w && w.code === 0 && String(w.stdout || '').trim()) return { exec: String(w.stdout).trim().split('\n')[0], args: [] };
+  if (w && w.code === 0 && String(w.stdout || '').trim())
+    return { exec: String(w.stdout).trim().split('\n')[0], args: [] };
   const dir = opts.keysmithDir || process.env.KEYSMITH_DIR || path.join(os.homedir(), 'Projects', 'keysmith');
   return { exec: process.execPath, args: [path.join(dir, 'src', 'cli.js')] };
 }
@@ -89,7 +90,8 @@ function keysmithConfigPath(opts) {
 function ensureSpendCap(p, targets, capUsd) {
   const raw = fs.readFileSync(p, 'utf8');
   const cfgObj = JSON.parse(raw);
-  if (!cfgObj || typeof cfgObj !== 'object' || Array.isArray(cfgObj)) throw new Error('keysmith config is not an object');
+  if (!cfgObj || typeof cfgObj !== 'object' || Array.isArray(cfgObj))
+    throw new Error('keysmith config is not an object');
   const limits = cfgObj.limits && typeof cfgObj.limits === 'object' ? cfgObj.limits : {};
   const spend = limits.spend && typeof limits.spend === 'object' && !Array.isArray(limits.spend) ? limits.spend : {};
   const changed = [];
@@ -150,7 +152,13 @@ async function setup(ctx, opts) {
     steps.push({
       step: 'alias',
       ok: !!(r && r.code === 0),
-      detail: r && r.code === 0 ? p.alias + ' = ' + p.legs.join(' -> ') : 'keysmith alias failed: ' + String((r && (r.stderr || r.stdout)) || '').trim().slice(0, 300),
+      detail:
+        r && r.code === 0
+          ? p.alias + ' = ' + p.legs.join(' -> ')
+          : 'keysmith alias failed: ' +
+            String((r && (r.stderr || r.stdout)) || '')
+              .trim()
+              .slice(0, 300),
     });
   }
   // 2) the spend cap on the paid leg's key
@@ -159,7 +167,12 @@ async function setup(ctx, opts) {
   const acct = p.capAdapter ? await capAccount(cfgPath, p.capAdapter, opts) : null;
   if (acct) targets.push('account:' + acct);
   if (!targets.length) steps.push({ step: 'spend-cap', ok: false, detail: 'no paid leg to cap' });
-  else if (dry) steps.push({ step: 'spend-cap', ok: true, detail: 'would cap ' + targets.join(', ') + ' at $' + p.capUsd + '/month' });
+  else if (dry)
+    steps.push({
+      step: 'spend-cap',
+      ok: true,
+      detail: 'would cap ' + targets.join(', ') + ' at $' + p.capUsd + '/month',
+    });
   else {
     try {
       const r = ensureSpendCap(cfgPath, targets, p.capUsd);
@@ -181,7 +194,8 @@ async function setup(ctx, opts) {
     haveKey = false;
   }
   if (haveKey) steps.push({ step: 'key', ok: true, detail: 'provider ' + p.provider + ' already holds a gateway key' });
-  else if (dry) steps.push({ step: 'key', ok: true, detail: 'would mint a key scoped to alias:' + p.alias + ' and its legs' });
+  else if (dry)
+    steps.push({ step: 'key', ok: true, detail: 'would mint a key scoped to alias:' + p.alias + ' and its legs' });
   else {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kf-failover-'));
     const keyFile = path.join(tmpDir, 'key');
@@ -197,12 +211,20 @@ async function setup(ctx, opts) {
       if (r && r.code === 0 && key) {
         ctx.store.setProfile('provider__' + p.provider, key);
         haveKey = true;
-        steps.push({ step: 'key', ok: true, detail: 'minted a key scoped to alias:' + p.alias + ' (stored, never printed)' });
+        steps.push({
+          step: 'key',
+          ok: true,
+          detail: 'minted a key scoped to alias:' + p.alias + ' (stored, never printed)',
+        });
       } else
         steps.push({
           step: 'key',
           ok: false,
-          detail: 'keysmith key add failed: ' + String((r && (r.stderr || r.stdout)) || '').trim().slice(0, 300),
+          detail:
+            'keysmith key add failed: ' +
+            String((r && (r.stderr || r.stdout)) || '')
+              .trim()
+              .slice(0, 300),
         });
     } finally {
       try {
@@ -214,9 +236,15 @@ async function setup(ctx, opts) {
   }
   // 4) the keyflip provider profile every surface is pointed at
   const models = { default: p.alias, smallFast: p.alias, haiku: p.alias, sonnet: p.alias, opus: p.alias };
-  if (dry) steps.push({ step: 'provider', ok: true, detail: 'would save provider ' + p.provider + ' -> ' + p.gatewayUrl });
+  if (dry)
+    steps.push({ step: 'provider', ok: true, detail: 'would save provider ' + p.provider + ' -> ' + p.gatewayUrl });
   else {
-    _provider.add(ctx, p.provider, { baseUrl: p.gatewayUrl, authScheme: 'bearer', compat: 'anthropic', models: models });
+    _provider.add(ctx, p.provider, {
+      baseUrl: p.gatewayUrl,
+      authScheme: 'bearer',
+      compat: 'anthropic',
+      models: models,
+    });
     steps.push({ step: 'provider', ok: true, detail: p.provider + ' -> ' + p.gatewayUrl + ' (model ' + p.alias + ')' });
   }
   return {
@@ -242,20 +270,24 @@ async function gatewayReady(ctx, opts) {
     key = null;
   }
   if (!key) return { ok: false, reason: 'not set up (keyflip failover setup)' };
-  if (!_provider.exists(ctx, p.provider)) return { ok: false, reason: 'provider ' + p.provider + ' missing (keyflip failover setup)' };
+  if (!_provider.exists(ctx, p.provider))
+    return { ok: false, reason: 'provider ' + p.provider + ' missing (keyflip failover setup)' };
   if (!doFetch) return { ok: false, reason: 'no fetch' };
   try {
     const res = await doFetch(p.gatewayUrl + '/v1/models', {
       headers: { Authorization: 'Bearer ' + key },
       signal:
-        typeof AbortSignal !== 'undefined' && AbortSignal.timeout ? AbortSignal.timeout(opts.timeoutMs || 3000) : undefined,
+        typeof AbortSignal !== 'undefined' && AbortSignal.timeout
+          ? AbortSignal.timeout(opts.timeoutMs || 3000)
+          : undefined,
     });
     if (!res || !res.ok) return { ok: false, reason: 'gateway answered ' + ((res && res.status) || 'nothing') };
     const j = await res.json();
     const ids = ((j && j.data) || []).map(function (m) {
       return m && m.id;
     });
-    if (ids.indexOf(p.alias) === -1) return { ok: false, reason: 'gateway does not serve ' + p.alias + ' yet (restart keysmith)' };
+    if (ids.indexOf(p.alias) === -1)
+      return { ok: false, reason: 'gateway does not serve ' + p.alias + ' yet (restart keysmith)' };
     return { ok: true };
   } catch (e) {
     return { ok: false, reason: 'gateway unreachable at ' + p.gatewayUrl };
@@ -310,7 +342,11 @@ async function engage(ctx, info, deps) {
   if (deps.notify)
     await deps.notify(
       'quota',
-      'All Claude accounts are over the threshold — now on the API failover (' + p.legs.join(' -> ') + ', capped at $' + p.capUsd + '/month).',
+      'All Claude accounts are over the threshold — now on the API failover (' +
+        p.legs.join(' -> ') +
+        ', capped at $' +
+        p.capUsd +
+        '/month).',
     );
   return { ok: true, state: st };
 }
@@ -338,9 +374,27 @@ async function release(ctx, info, deps) {
   } catch (e) {
     /* gone */
   }
-  _history.recordEvent(ctx, { kind: 'failover-release', from: cur.provider, to: info.to || null, reason: info.reason || 'recovered' });
-  if (deps.notify) await deps.notify('switch', 'Back on Claude (' + (info.to || 'your account') + ') — the API failover is off.');
+  _history.recordEvent(ctx, {
+    kind: 'failover-release',
+    from: cur.provider,
+    to: info.to || null,
+    reason: info.reason || 'recovered',
+  });
+  if (deps.notify)
+    await deps.notify('switch', 'Back on Claude (' + (info.to || 'your account') + ') — the API failover is off.');
   return { ok: true };
 }
 
-export { plan, setup, gatewayReady, engage, release, state, ensureSpendCap, keysmithCommand, keysmithConfigPath, DEFAULTS, STATE_FILE };
+export {
+  plan,
+  setup,
+  gatewayReady,
+  engage,
+  release,
+  state,
+  ensureSpendCap,
+  keysmithCommand,
+  keysmithConfigPath,
+  DEFAULTS,
+  STATE_FILE,
+};

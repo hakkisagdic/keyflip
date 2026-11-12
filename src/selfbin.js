@@ -125,7 +125,8 @@ function problems(c, opts) {
       } catch (e) {
         ok = false;
       }
-      if (!ok) out.push(what + ' does not exist or is not ' + (what === 'program' ? 'executable' : 'readable') + ': ' + p);
+      if (!ok)
+        out.push(what + ' does not exist or is not ' + (what === 'program' ? 'executable' : 'readable') + ': ' + p);
     }
   }
   check(prog, 'program');

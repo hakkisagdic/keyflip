@@ -76,7 +76,7 @@ test('the token, not the label, names the live account (offline exact match)', f
   assert.strictEqual(identity.liveSync(ctx).source, 'token-cache');
 });
 
-test('list marks the TOKEN\'s account active, not the label\'s', function () {
+test("list marks the TOKEN's account active, not the label's", function () {
   const ctx = mislabelled();
   const active = core.listProfiles(ctx).filter(function (e) {
     return e.active;
@@ -89,26 +89,24 @@ test('list marks the TOKEN\'s account active, not the label\'s', function () {
   );
 });
 
-test('REGRESSION: switching away saves the live token into ITS account, never into the label\'s', function () {
+test("REGRESSION: switching away saves the live token into ITS account, never into the label's", function () {
   const ctx = mislabelled();
   // Claude Code refreshed gmail's token since capture: the live blob differs from the stored one.
   // The fingerprint cache already knows the previous token; teach it the rotated one via the endpoint.
   ctx.store.setLive(blob('TOK-GMAIL-2', 'RT-GMAIL-2'));
-  return identity
-    .resolveLive(ctx, { fetch: profileEndpoint({ 'TOK-GMAIL-2': 'me@gmail.com' }) })
-    .then(function (id) {
-      assert.strictEqual(id.name, 'gmail');
-      assert.strictEqual(id.source, 'token-profile');
-      const yahooBefore = ctx.store.getProfile('yahoo');
-      core.performSwitch(ctx, 'yahoo');
-      assert.strictEqual(ctx.store.getProfile('yahoo'), yahooBefore, "yahoo's credential untouched");
-      assert.strictEqual(ctx.store.getProfile('gmail'), blob('TOK-GMAIL-2', 'RT-GMAIL-2'), 'gmail got its rotated token');
-      assert.strictEqual(profiles.email(ctx.configDir, 'gmail'), 'me@gmail.com', "gmail's meta not rewritten to yahoo");
-      assert.strictEqual(profiles.email(ctx.configDir, 'yahoo'), 'me@yahoo.com');
-    });
+  return identity.resolveLive(ctx, { fetch: profileEndpoint({ 'TOK-GMAIL-2': 'me@gmail.com' }) }).then(function (id) {
+    assert.strictEqual(id.name, 'gmail');
+    assert.strictEqual(id.source, 'token-profile');
+    const yahooBefore = ctx.store.getProfile('yahoo');
+    core.performSwitch(ctx, 'yahoo');
+    assert.strictEqual(ctx.store.getProfile('yahoo'), yahooBefore, "yahoo's credential untouched");
+    assert.strictEqual(ctx.store.getProfile('gmail'), blob('TOK-GMAIL-2', 'RT-GMAIL-2'), 'gmail got its rotated token');
+    assert.strictEqual(profiles.email(ctx.configDir, 'gmail'), 'me@gmail.com', "gmail's meta not rewritten to yahoo");
+    assert.strictEqual(profiles.email(ctx.configDir, 'yahoo'), 'me@yahoo.com');
+  });
 });
 
-test('`add` on a mislabelled login refreshes the token\'s profile and leaves both metas alone', function () {
+test("`add` on a mislabelled login refreshes the token's profile and leaves both metas alone", function () {
   const ctx = mislabelled();
   ctx.store.setLive(blob('TOK-GMAIL-1', 'RT-GMAIL-3')); // same access token, newer refresh token
   const r = core.addCurrent(ctx);
@@ -167,12 +165,16 @@ test('repairPointer fixes the label without touching the credential', function (
   assert.strictEqual(r.repaired, true);
   assert.strictEqual(r.to, 'gmail');
   assert.strictEqual(core.currentEmail(ctx), 'me@gmail.com');
-  assert.strictEqual(JSON.parse(fs.readFileSync(ctx.claudeConfigPath, 'utf8')).userID, 'u-g', "gmail's userID, not yahoo's");
+  assert.strictEqual(
+    JSON.parse(fs.readFileSync(ctx.claudeConfigPath, 'utf8')).userID,
+    'u-g',
+    "gmail's userID, not yahoo's",
+  );
   assert.strictEqual(ctx.store.getLive(), live);
   assert.strictEqual(identity.repairIfMismatched(ctx).repaired, false, 'idempotent');
 });
 
-test('autoswitch reads the TOKEN account\'s usage, repairs the label, and records it', async function () {
+test("autoswitch reads the TOKEN account's usage, repairs the label, and records it", async function () {
   const ctx = mislabelled();
   const seen = [];
   const usageFetch = async function (url, opts) {

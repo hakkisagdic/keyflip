@@ -66,8 +66,16 @@ SCHEMA['failover.enabled'] = {
   default: true,
   help: 'When every account is over the threshold, move Claude Code/Desktop onto the keysmith API failover (needs `keyflip failover setup`).',
 };
-SCHEMA['failover.gatewayUrl'] = { type: 'string', default: 'http://127.0.0.1:8787', help: 'The keysmith gateway the failover uses.' };
-SCHEMA['failover.alias'] = { type: 'string', default: 'keyflip-failover', help: 'The keysmith alias (model name) the failover routes to.' };
+SCHEMA['failover.gatewayUrl'] = {
+  type: 'string',
+  default: 'http://127.0.0.1:8787',
+  help: 'The keysmith gateway the failover uses.',
+};
+SCHEMA['failover.alias'] = {
+  type: 'string',
+  default: 'keyflip-failover',
+  help: 'The keysmith alias (model name) the failover routes to.',
+};
 SCHEMA['failover.legs'] = {
   type: 'string',
   default: '',
@@ -80,7 +88,11 @@ SCHEMA['failover.capUsd'] = {
   max: 10000,
   help: 'Monthly USD cap keysmith enforces on the first (paid API) leg and its key.',
 };
-SCHEMA['failover.provider'] = { type: 'string', default: 'keysmith-failover', help: 'The keyflip provider profile that points at the gateway.' };
+SCHEMA['failover.provider'] = {
+  type: 'string',
+  default: 'keysmith-failover',
+  help: 'The keyflip provider profile that points at the gateway.',
+};
 SCHEMA['autoswitch.group'] = {
   type: 'string',
   default: '',

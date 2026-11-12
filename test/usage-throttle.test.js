@@ -129,7 +129,12 @@ test('a busy usage lock never turns into a second poll: the caller gets the last
     path.join(ctx.configDir, '.lock-usage'),
     JSON.stringify({ pid: process.ppid || process.pid, at: Date.now(), token: 'other' }),
   );
-  const r = await usage.usageForProfiles(ctx, ['a'], { fetch: f, nowMs: NOW + 5000, cacheTtlMs: 1000, lockTimeoutMs: 50 });
+  const r = await usage.usageForProfiles(ctx, ['a'], {
+    fetch: f,
+    nowMs: NOW + 5000,
+    cacheTtlMs: 1000,
+    lockTimeoutMs: 50,
+  });
   assert.strictEqual(r.a.status, 'pending');
   assert.strictEqual(usage.headroom(r.a.lastGood), 70);
   assert.strictEqual(f.calls.length, 1);
@@ -169,7 +174,9 @@ test('cross-process: N real processes calling `keyflip usage --json` together co
   for (let i = 0; i < 5; i++) {
     runs.push(
       new Promise(function (resolve) {
-        const p = spawn(process.execPath, ['--import', pre, script, ctx.configDir], { stdio: ['ignore', 'pipe', 'pipe'] });
+        const p = spawn(process.execPath, ['--import', pre, script, ctx.configDir], {
+          stdio: ['ignore', 'pipe', 'pipe'],
+        });
         let out = '';
         p.stdout.on('data', (d) => (out += d));
         p.on('close', () => resolve(out));
@@ -213,12 +220,28 @@ test('autoswitch: an OLD or reset last-good reading is not trusted (never switch
   await usage.usageForProfiles(ctx, ['b', 'a'], { fetch: warm, nowMs: NOW, cacheTtlMs: 0 });
   const f = endpoint({ TB: [{ status: 429 }], TA: [{ status: 429 }] });
   // The 5h window reset at NOW+30s: the 97% no longer describes the account.
-  const reset = await autosw.tick(ctx, { threshold: 95, fetch: f, nowMs: NOW + 60000, cacheTtlMs: 0, maxStaleMs: 900000 });
+  const reset = await autosw.tick(ctx, {
+    threshold: 95,
+    fetch: f,
+    nowMs: NOW + 60000,
+    cacheTtlMs: 0,
+    maxStaleMs: 900000,
+  });
   assert.strictEqual(reset.state, 'unknown');
   assert.strictEqual(reset.usageStatus, 'throttled');
   assert.ok(reset.retryAt > NOW + 60000);
   const ctx2 = twoAccounts();
-  await usage.usageForProfiles(ctx2, ['b', 'a'], { fetch: endpoint({ TB: [{ pct: 97 }], TA: [{ pct: 10 }] }), nowMs: NOW, cacheTtlMs: 0 });
-  const old = await autosw.tick(ctx2, { threshold: 95, fetch: f, nowMs: NOW + 3600000, cacheTtlMs: 0, maxStaleMs: 900000 });
+  await usage.usageForProfiles(ctx2, ['b', 'a'], {
+    fetch: endpoint({ TB: [{ pct: 97 }], TA: [{ pct: 10 }] }),
+    nowMs: NOW,
+    cacheTtlMs: 0,
+  });
+  const old = await autosw.tick(ctx2, {
+    threshold: 95,
+    fetch: f,
+    nowMs: NOW + 3600000,
+    cacheTtlMs: 0,
+    maxStaleMs: 900000,
+  });
   assert.strictEqual(old.state, 'unknown', 'an hour-old reading is too old');
 });

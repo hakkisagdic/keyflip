@@ -250,7 +250,10 @@ function liveSync(ctx, opts) {
   // exact damage label-based saving did. Only the endpoint can say which one it really is.
   if (holders.length > 1) r.sharedBy = holders;
   if (f.access) {
-    cache[f.access] = Object.assign({ offlineMiss: true, at: nowOf(opts) }, holders.length > 1 ? { sharedBy: holders } : {});
+    cache[f.access] = Object.assign(
+      { offlineMiss: true, at: nowOf(opts) },
+      holders.length > 1 ? { sharedBy: holders } : {},
+    );
     writeCache(ctx, cache);
   }
   return finish(r, label);
@@ -315,7 +318,12 @@ function noteSaved(ctx, name, blob, opts) {
     });
     cache[f.access] = { shared: names.concat([name]).sort(), at: nowOf(opts) };
   } else if (!prev || prev.source !== 'token-profile') {
-    cache[f.access] = { name: name, email: profiles.email(ctx.configDir, name) || null, source: 'saved', at: nowOf(opts) };
+    cache[f.access] = {
+      name: name,
+      email: profiles.email(ctx.configDir, name) || null,
+      source: 'saved',
+      at: nowOf(opts),
+    };
   }
   writeCache(ctx, cache);
 }

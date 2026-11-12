@@ -13,7 +13,9 @@ import * as identity from '../src/identity.js';
 
 const BIN = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'keyflip.js');
 function blob(tok) {
-  return JSON.stringify({ claudeAiOauth: { accessToken: 'AT-' + tok, refreshToken: 'RT-' + tok, expiresAt: Date.now() + 30 * 86400000 } });
+  return JSON.stringify({
+    claudeAiOauth: { accessToken: 'AT-' + tok, refreshToken: 'RT-' + tok, expiresAt: Date.now() + 30 * 86400000 },
+  });
 }
 
 test('inUseAccounts: the live login (token and label), holders of the live token, running parallel sessions', function () {
@@ -63,7 +65,10 @@ function run(h, args) {
 }
 function loginAs(h, email, uid, b) {
   fs.writeFileSync(path.join(h, '.claude', '.credentials.json'), b);
-  fs.writeFileSync(path.join(h, '.claude.json'), JSON.stringify({ oauthAccount: { emailAddress: email }, userID: uid }));
+  fs.writeFileSync(
+    path.join(h, '.claude.json'),
+    JSON.stringify({ oauthAccount: { emailAddress: email }, userID: uid }),
+  );
 }
 
 test('CLI `refresh --all` with Claude running refreshes every account EXCEPT the live one', function () {

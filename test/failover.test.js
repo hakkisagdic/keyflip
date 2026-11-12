@@ -26,7 +26,12 @@ function keysmithConfig(ctx) {
         host: '127.0.0.1',
         port: 8787,
         auth: { keys: ['ks_EXISTING'] },
-        adapters: { 'claude-api': { kind: 'http', apiKey: '{exec:/usr/bin/security find-generic-password -s keyflip:provider__gmail-api -w}' } },
+        adapters: {
+          'claude-api': {
+            kind: 'http',
+            apiKey: '{exec:/usr/bin/security find-generic-password -s keyflip:provider__gmail-api -w}',
+          },
+        },
         limits: { spend: { other: 5 } },
       },
       null,
@@ -47,13 +52,21 @@ function fakeKeysmith(state) {
       fs.writeFileSync(out, GATEWAY_KEY + '\n', { mode: 0o600 });
       return { code: 0, stdout: 'added (written to file)' };
     }
-    return { code: state.aliasFails && sub[0] === 'alias' ? 1 : 0, stdout: '', stderr: state.aliasFails ? 'unknown adapter' : '' };
+    return {
+      code: state.aliasFails && sub[0] === 'alias' ? 1 : 0,
+      stdout: '',
+      stderr: state.aliasFails ? 'unknown adapter' : '',
+    };
   };
 }
 
 test('the plan: alias chain gmail API -> agy -> kiro-emu, $25 on the first (paid) leg', function () {
   const p = failover.plan(makeCtx());
-  assert.deepStrictEqual(p.legs, ['claude-api/claude-opus-5-5', 'agy/claude-opus-5-5-medium', 'kiro-emu/claude-opus-5.5']);
+  assert.deepStrictEqual(p.legs, [
+    'claude-api/claude-opus-5-5',
+    'agy/claude-opus-5-5-medium',
+    'kiro-emu/claude-opus-5.5',
+  ]);
   assert.strictEqual(p.capUsd, 25);
   assert.strictEqual(p.capAdapter, 'claude-api');
   assert.strictEqual(p.gatewayUrl, 'http://127.0.0.1:8787');
@@ -83,7 +96,12 @@ test('setup: alias, spend cap (adapter + account), scoped key into the store, pr
   ]);
   const keyAdd = state.calls.find((c) => c[2] === 'key');
   const allow = keyAdd[keyAdd.indexOf('--allow') + 1].split(',');
-  assert.deepStrictEqual(allow, ['alias:keyflip-failover', 'claude-api/claude-opus-5-5', 'agy/claude-opus-5-5-medium', 'kiro-emu/claude-opus-5.5']);
+  assert.deepStrictEqual(allow, [
+    'alias:keyflip-failover',
+    'claude-api/claude-opus-5-5',
+    'agy/claude-opus-5-5-medium',
+    'kiro-emu/claude-opus-5.5',
+  ]);
   assert.ok(keyAdd.indexOf('--out') !== -1, 'the key comes back through a file, never stdout');
   assert.strictEqual(ctx.store.getProfile('provider__keysmith-failover'), GATEWAY_KEY);
   assert.ok(JSON.stringify(r).indexOf(GATEWAY_KEY) === -1, 'the key is in no result');
@@ -116,7 +134,12 @@ test('setup --dry-run writes nothing and runs nothing but `which`', async functi
   const cfgPath = keysmithConfig(ctx);
   const before = fs.readFileSync(cfgPath, 'utf8');
   const state = {};
-  const r = await failover.setup(ctx, { run: fakeKeysmith(state), keysmithConfig: cfgPath, dryRun: true, accountOf: () => null });
+  const r = await failover.setup(ctx, {
+    run: fakeKeysmith(state),
+    keysmithConfig: cfgPath,
+    dryRun: true,
+    accountOf: () => null,
+  });
   assert.strictEqual(r.ok, true);
   assert.deepStrictEqual(
     state.calls.map((c) => c[0]),
@@ -128,7 +151,11 @@ test('setup --dry-run writes nothing and runs nothing but `which`', async functi
 
 test('a failing keysmith step is reported, not hidden', async function () {
   const ctx = makeCtx();
-  const r = await failover.setup(ctx, { run: fakeKeysmith({ aliasFails: true }), keysmithConfig: keysmithConfig(ctx), accountOf: () => null });
+  const r = await failover.setup(ctx, {
+    run: fakeKeysmith({ aliasFails: true }),
+    keysmithConfig: keysmithConfig(ctx),
+    accountOf: () => null,
+  });
   assert.strictEqual(r.ok, false);
   assert.ok(/unknown adapter/.test(r.steps.find((s) => s.step === 'alias').detail));
 });
@@ -191,7 +218,11 @@ test('engage refuses when the gateway is not ready, and changes nothing', async 
   const ctx = makeCtx();
   await setUp(ctx);
   const log = [];
-  const r = await failover.engage(ctx, {}, { fetch: gateway([], 502), useProvider: () => log.push('use'), requestDesktop: () => log.push('d') });
+  const r = await failover.engage(
+    ctx,
+    {},
+    { fetch: gateway([], 502), useProvider: () => log.push('use'), requestDesktop: () => log.push('d') },
+  );
   assert.strictEqual(r.ok, false);
   assert.ok(/502/.test(r.reason));
   assert.deepStrictEqual(log, []);
@@ -207,7 +238,12 @@ function usageFetch(pct) {
   return async (url, opts) => {
     const tok = opts.headers.Authorization.replace('Bearer ', '');
     if (pct[tok] === undefined) return { ok: false, status: 401, headers: { get: () => null } };
-    return { ok: true, status: 200, headers: { get: () => null }, json: async () => ({ five_hour: { utilization: pct[tok] } }) };
+    return {
+      ok: true,
+      status: 200,
+      headers: { get: () => null },
+      json: async () => ({ five_hour: { utilization: pct[tok] } }),
+    };
   };
 }
 function fakeFailover() {
@@ -237,18 +273,42 @@ test('tick: every account over the threshold -> failover engaged instead of wait
   login(ctx, 'b@x.com', 'u2', 'TB');
   core.addCurrent(ctx);
   const fo = fakeFailover();
-  const r = await autosw.tick(ctx, { threshold: 95, fetch: usageFetch({ TB: 99, TA: 97 }), nowMs: 1, cacheTtlMs: 0, failover: fo.api });
+  const r = await autosw.tick(ctx, {
+    threshold: 95,
+    fetch: usageFetch({ TB: 99, TA: 97 }),
+    nowMs: 1,
+    cacheTtlMs: 0,
+    failover: fo.api,
+  });
   assert.strictEqual(r.state, 'failover-engaged');
   assert.deepStrictEqual(fo.st.log, ['engage:b']);
   // still exhausted next tick: stays on failover, engages nothing new
-  const r2 = await autosw.tick(ctx, { threshold: 95, fetch: usageFetch({ TB: 99, TA: 97 }), nowMs: 2, cacheTtlMs: 0, failover: fo.api });
+  const r2 = await autosw.tick(ctx, {
+    threshold: 95,
+    fetch: usageFetch({ TB: 99, TA: 97 }),
+    nowMs: 2,
+    cacheTtlMs: 0,
+    failover: fo.api,
+  });
   assert.strictEqual(r2.state, 'failover');
   assert.deepStrictEqual(fo.st.log, ['engage:b']);
   // b drops to 90%: under the threshold but inside the hysteresis band -> still on failover (no flapping)
-  const r3 = await autosw.tick(ctx, { threshold: 95, fetch: usageFetch({ TB: 90, TA: 97 }), nowMs: 3, cacheTtlMs: 0, failover: fo.api });
+  const r3 = await autosw.tick(ctx, {
+    threshold: 95,
+    fetch: usageFetch({ TB: 90, TA: 97 }),
+    nowMs: 3,
+    cacheTtlMs: 0,
+    failover: fo.api,
+  });
   assert.strictEqual(r3.state, 'failover');
   // b's window resets -> back to Claude
-  const r4 = await autosw.tick(ctx, { threshold: 95, fetch: usageFetch({ TB: 10, TA: 97 }), nowMs: 4, cacheTtlMs: 0, failover: fo.api });
+  const r4 = await autosw.tick(ctx, {
+    threshold: 95,
+    fetch: usageFetch({ TB: 10, TA: 97 }),
+    nowMs: 4,
+    cacheTtlMs: 0,
+    failover: fo.api,
+  });
   assert.strictEqual(r4.state, 'failback');
   assert.deepStrictEqual(fo.st.log, ['engage:b', 'release:b']);
 });
@@ -261,7 +321,13 @@ test('tick: on failover, another account recovering means switch to it AND relea
   core.addCurrent(ctx);
   const fo = fakeFailover();
   fo.st.engaged = { engaged: true };
-  const r = await autosw.tick(ctx, { threshold: 95, fetch: usageFetch({ TB: 99, TA: 20 }), nowMs: 1, cacheTtlMs: 0, failover: fo.api });
+  const r = await autosw.tick(ctx, {
+    threshold: 95,
+    fetch: usageFetch({ TB: 99, TA: 20 }),
+    nowMs: 1,
+    cacheTtlMs: 0,
+    failover: fo.api,
+  });
   assert.strictEqual(r.state, 'switched');
   assert.strictEqual(r.switchedTo.name, 'a');
   assert.strictEqual(r.failoverReleased, true);
@@ -284,8 +350,18 @@ test('tick: a failover that cannot engage says why and stays no-candidate', asyn
   core.addCurrent(ctx);
   login(ctx, 'b@x.com', 'u2', 'TB');
   core.addCurrent(ctx);
-  const api = { state: () => null, engage: async () => ({ ok: false, reason: 'gateway unreachable at http://127.0.0.1:8787' }), release: async () => ({ ok: true }) };
-  const r = await autosw.tick(ctx, { threshold: 95, fetch: usageFetch({ TB: 99, TA: 97 }), nowMs: 1, cacheTtlMs: 0, failover: api });
+  const api = {
+    state: () => null,
+    engage: async () => ({ ok: false, reason: 'gateway unreachable at http://127.0.0.1:8787' }),
+    release: async () => ({ ok: true }),
+  };
+  const r = await autosw.tick(ctx, {
+    threshold: 95,
+    fetch: usageFetch({ TB: 99, TA: 97 }),
+    nowMs: 1,
+    cacheTtlMs: 0,
+    failover: api,
+  });
   assert.strictEqual(r.state, 'no-candidate');
   assert.ok(/unreachable/.test(r.failoverError));
 });

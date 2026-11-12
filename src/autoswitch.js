@@ -207,7 +207,8 @@ async function tickInner(ctx, opts, out) {
       failover: fo || undefined,
     };
   // On the failover and recovering, but not past the hysteresis band yet: stay there (no flapping).
-  if (fo && h > margin) return { state: 'failover', active: active, headroom: h, switchedTo: null, basis: basis, failover: fo };
+  if (fo && h > margin)
+    return { state: 'failover', active: active, headroom: h, switchedTo: null, basis: basis, failover: fo };
   if (h > margin) return { state: 'below', active: active, headroom: h, switchedTo: null, basis: basis };
 
   // Threshold crossed — pick a target in rotation order. Only enabled accounts
@@ -263,9 +264,7 @@ async function tickInner(ctx, opts, out) {
   const need = fo ? recoveryFloor - 0.0001 : margin;
   const pool = candidates.filter(function (c) {
     const info = effInfos[c.name];
-    return (
-      info && typeof info.headroom === 'number' && info.headroom > need && breaker.isAvailable(ctx, c.name, bopts)
-    );
+    return info && typeof info.headroom === 'number' && info.headroom > need && breaker.isAvailable(ctx, c.name, bopts);
   });
   if (!pool.length) return noCandidate({ basis: basis });
   const picked = usage.pickByStrategy(pool, effInfos, strategy, { model: opts.model }) || pool[0];
@@ -290,7 +289,11 @@ async function tickInner(ctx, opts, out) {
     from: active.name,
     to: picked.name,
     reason:
-      'usage ' + Math.round(100 - h) + '% >= threshold ' + threshold + (basis === 'last-good' ? ' (last good reading; endpoint throttled)' : ''),
+      'usage ' +
+      Math.round(100 - h) +
+      '% >= threshold ' +
+      threshold +
+      (basis === 'last-good' ? ' (last good reading; endpoint throttled)' : ''),
   });
   const res = { state: 'switched', active: active, headroom: h, switchedTo: picked, basis: basis };
   if (await releaseFailover(picked.name, picked.name + ' has headroom')) res.failoverReleased = true;

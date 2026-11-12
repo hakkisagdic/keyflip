@@ -822,7 +822,13 @@ function autoswitchService(ctx, add, opts) {
   } catch (e) {
     return add('autoswitch service', 'warn', 'unreadable: ' + (e && e.message));
   }
-  if (!st.installed) return add('autoswitch service', 'warn', 'not installed — nothing rotates accounts at the threshold', 'keyflip autoswitch install');
+  if (!st.installed)
+    return add(
+      'autoswitch service',
+      'warn',
+      'not installed — nothing rotates accounts at the threshold',
+      'keyflip autoswitch install',
+    );
   if (st.kind !== 'launchd') return add('autoswitch service', true, 'installed (' + st.kind + ')');
   // Without a runner, launchd's view is unknown: judge the plist alone.
   const problems = (st.problems || []).filter(function (p) {

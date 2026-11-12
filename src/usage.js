@@ -335,11 +335,25 @@ async function usageForProfiles(ctx, names, opts) {
         }
       }
       if (!blob) {
-        out[name] = { status: 'no-creds', usage: null, headroom: null, lastGood: null, lastGoodAt: null, limitedScopes: [] };
+        out[name] = {
+          status: 'no-creds',
+          usage: null,
+          headroom: null,
+          lastGood: null,
+          lastGoodAt: null,
+          limitedScopes: [],
+        };
       } else {
         const token = accessTokenOf(blob);
         if (!token) {
-          out[name] = { status: 'no-token', usage: null, headroom: null, lastGood: null, lastGoodAt: null, limitedScopes: [] };
+          out[name] = {
+            status: 'no-token',
+            usage: null,
+            headroom: null,
+            lastGood: null,
+            lastGoodAt: null,
+            limitedScopes: [],
+          };
         } else {
           const r = await fetchUsageDetailed(token, Object.assign({}, opts, { nowMs: nowMs }));
           if (r.usage) {
@@ -352,7 +366,14 @@ async function usageForProfiles(ctx, names, opts) {
               limitedScopes: limitedScopes(r.usage),
             };
           } else if (r.httpStatus === 401 || r.httpStatus === 403) {
-            out[name] = { status: 'expired', usage: null, headroom: null, lastGood: null, lastGoodAt: null, limitedScopes: [] };
+            out[name] = {
+              status: 'expired',
+              usage: null,
+              headroom: null,
+              lastGood: null,
+              lastGoodAt: null,
+              limitedScopes: [],
+            };
           }
           // 429 here means the USAGE ENDPOINT throttled this token — it does NOT
           // prove the account's inference is rate-limited (verified live: a 429
@@ -430,7 +451,9 @@ function effectiveHeadroom(info, nowMs, maxStaleMs) {
   });
   if (reset) return { headroom: null, basis: null, usage: null };
   const h = headroom(lg);
-  return typeof h === 'number' ? { headroom: h, basis: 'last-good', usage: lg, ageMs: age } : { headroom: null, basis: null, usage: null };
+  return typeof h === 'number'
+    ? { headroom: h, basis: 'last-good', usage: lg, ageMs: age }
+    : { headroom: null, basis: null, usage: null };
 }
 
 // Rotation strategies over the non-active candidates (in rotation order):
