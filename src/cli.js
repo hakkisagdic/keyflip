@@ -90,6 +90,7 @@ import * as _clisurfaces from './clisurfaces.js';
 import * as _codex from './codex.js';
 import * as _cfg from './config.js';
 import * as _svc from './autoswitchservice.js';
+import * as _selfbin from './selfbin.js';
 import * as _groups from './groups.js';
 import * as _budget from './budget.js';
 import * as _shellhook from './shellhook.js';
@@ -1499,27 +1500,46 @@ async function cmdAutoswitch(ctx, rest) {
   if (svcSub === 'install' || svcSub === 'uninstall' || svcSub === 'status') {
     const svc = _svc;
     if (svcSub === 'status') {
-      const st = svc.status(ctx, { home: ctx.home });
+      const st = svc.status(ctx, { home: ctx.home, run: ctx.run });
       if (JSON_MODE) {
         jsonOut({ autoswitchService: st });
+        if (st.installed && !st.healthy) process.exitCode = 1;
         return;
       }
+      // "installed" is not "working": a job that exits 127 every run used to read as installed.
       print(
         'Autoswitch service: ' +
-          (st.installed
-            ? style.ok('installed') + ' (' + st.kind + (st.path ? ', ' + st.path : '') + ')'
-            : style.warn('not installed')),
+          (!st.installed
+            ? style.warn('not installed')
+            : st.healthy
+              ? style.ok('running') + ' (' + st.kind + (st.path ? ', ' + st.path : '') + ')'
+              : style.err('installed but BROKEN') + ' (' + st.kind + (st.path ? ', ' + st.path : '') + ')'),
       );
+      if (st.installed && st.kind === 'launchd') {
+        print(
+          style.dim(
+            '  last exit: ' +
+              (st.lastExit === null ? 'not run yet' : st.lastExit + ' — ' + st.lastExitMeaning) +
+              (st.threshold ? ' · threshold ' + st.threshold + '%' : '') +
+              (st.log ? ' · log ' + st.log : ''),
+          ),
+        );
+        (st.problems || []).forEach(function (p) {
+          print('  ' + style.warn('✗') + ' ' + p);
+        });
+        if (st.fix) print('  fix: ' + style.bold(st.fix));
+      }
       if (!st.installed)
         print(
           style.dim(
             '  Install: keyflip autoswitch install [--interval 300] [--threshold N] [--strategy best|next-available] [--group G]',
           ),
         );
+      if (st.installed && !st.healthy) process.exitCode = 1;
       return;
     }
     if (svcSub === 'uninstall') {
-      const r = svc.uninstall(ctx, { home: ctx.home });
+      const r = svc.uninstall(ctx, { home: ctx.home, run: ctx.run });
       if (JSON_MODE) {
         jsonOut({ autoswitchService: r });
         return;
@@ -1532,6 +1552,7 @@ async function cmdAutoswitch(ctx, rest) {
     const svcInterval = Math.min(21600, Math.max(60, numFlag('--interval', 300)));
     const r = svc.install(ctx, {
       home: ctx.home,
+      run: ctx.run,
       interval: svcInterval,
       threshold: threshold,
       strategy: strategy,
@@ -1542,7 +1563,12 @@ async function cmdAutoswitch(ctx, rest) {
       return;
     }
     if (r.kind === 'unsupported') return fail('the autoswitch service is macOS/Linux-only for now');
-    if (!r.ok) return fail('could not install the autoswitch service' + (r.detail ? ': ' + r.detail : ''));
+    if (!r.ok)
+      return fail(
+        'could not install the autoswitch service' +
+          (r.reason === 'unrunnable' ? ' — the command it would run cannot run unattended' : '') +
+          (r.detail ? ': ' + r.detail : ''),
+      );
     print(
       style.ok('✅') +
         ' autoswitch runs unattended now — every ' +
@@ -1559,6 +1585,8 @@ async function cmdAutoswitch(ctx, rest) {
         '  It never closes Claude; the swap is picked up on the next request. Stop it: keyflip autoswitch uninstall.',
       ),
     );
+    if (r.exec) print(style.dim('  runs: ' + [r.exec].concat(r.args || []).join(' ')));
+    if (r.log) print(style.dim('  log:  ' + r.log + '   (health: keyflip autoswitch status)'));
     logmod.log(
       'autoswitch service installed (interval=' + (r.intervalSec || svcInterval) + ', threshold=' + threshold + ')',
     );
@@ -1567,7 +1595,10 @@ async function cmdAutoswitch(ctx, rest) {
 
   // ---- one-shot tick (what the scheduled service runs): check once, act, exit ----
   if (rest.indexOf('--once') !== -1) {
-    reportTick(await oneTick());
+    const r = await oneTick();
+    reportTick(r);
+    // Unattended: a failed tick must show up as a non-zero exit in `launchctl list`, not vanish.
+    if (r && r.state === 'error') process.exitCode = 1;
     return;
   }
 
@@ -7439,10 +7470,16 @@ async function cmdSessionsDistill(ctx, rest) {
 // G3: a status line for Claude Code — shows the active account (+ provider, + cached quota)
 // right in the prompt. `keyflip statusline` (no args) EMITS the line (Claude calls it, so it
 // must be fast + never throw + read no network). install/uninstall wire it into settings.json.
+// Absolute, like every unattended command: Claude Desktop starts Claude Code without the login
+// shell's PATH, and under fnm a bare `keyflip` is a per-shell shim that is gone tomorrow.
 function statuslineCommand() {
-  const w = exec.run('which', ['keyflip']);
-  if (w && w.code === 0 && String(w.stdout).trim()) return 'keyflip statusline';
-  return process.execPath + ' ' + path.join(__dirname, '..', 'bin', 'keyflip.js') + ' statusline';
+  const c = _selfbin.argvFor(_selfbin.resolveSelf({}), ['statusline']);
+  return [c.exec]
+    .concat(c.args)
+    .map(function (a) {
+      return /^[A-Za-z0-9_@%+=:,./-]+$/.test(a) ? a : "'" + a.replace(/'/g, "'\\''") + "'";
+    })
+    .join(' ');
 }
 function statuslineInstall(ctx, on) {
   const settingsmod = _settingsmod;

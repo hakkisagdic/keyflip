@@ -7,6 +7,7 @@ import path from 'path';
 import os from 'os';
 import { run } from './exec.js';
 import { atomicWrite } from './fsutil.js';
+import * as selfbin from './selfbin.js';
 import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -26,23 +27,20 @@ const CONV_CRON_MARK = '# keyflip-conv-index (managed by keyflip)';
 // allowed, so one flag means the same thing on macOS and Linux.
 const CONV_INTERVALS = [5, 10, 15, 30, 60, 120, 180, 360, 720, 1440];
 
-// Where the keyflip binary is: the installed `keyflip`, else this checkout. Injectable runner so
-// tests never shell out. Returns the resolved path UNCHANGED — how to run it is argvFor's call alone.
+// Where the keyflip binary is and how to run it: selfbin.js resolves `which keyflip` through its
+// symlinks (an fnm per-shell shim is a `#!/usr/bin/env node` script in a directory that vanishes
+// with its shell), so a job is `<absolute node> <absolute script> …`, or a real native binary run
+// directly. Injectable runner so tests never shell out.
 function keyflipBin(opts) {
   opts = opts || {};
-  const runner = opts.run || run;
-  let bin = null;
-  const w = runner('which', ['keyflip']);
-  if (w && w.code === 0 && String(w.stdout).trim()) bin = String(w.stdout).trim();
-  if (!bin) bin = path.join(__dirname, '..', 'bin', 'keyflip.js');
-  return bin;
+  return selfbin.resolveSelf({ run: opts.run, fs: opts.fs, execPath: opts.execPath });
 }
-// ONE decision, made on the resolved script path: a `.js` bin must be run BY node, with the script
-// itself as the first argument; a real installed binary is executed directly. Splitting this test
-// across two functions is exactly how a scheduled job once launched `node refresh --all` with no
-// script at all — the second check looked at the already-transformed value and never saw the path.
-function argvFor(bin, args) {
-  return bin.slice(-3) === '.js' ? { exec: process.execPath, args: [bin].concat(args) } : { exec: bin, args: args };
+// ONE decision, made on the resolved target: a node script is run BY node, with the script itself
+// as the first argument; a real installed binary is executed directly. Splitting this test across
+// two functions is exactly how a scheduled job once launched `node refresh --all` with no script at
+// all — the second check looked at the already-transformed value and never saw the path.
+function argvFor(resolved, args) {
+  return selfbin.argvFor(resolved, args);
 }
 
 // The command that runs the nightly dream —

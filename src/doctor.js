@@ -12,6 +12,7 @@ import * as _sessions from './sessions.js';
 import * as _appauth from './appauth.js';
 import * as _llm from './llm.js';
 import * as _schedule from './schedule.js';
+import * as _autosvc from './autoswitchservice.js';
 import * as _convindex from './convindex.js';
 import * as _leakscan from './leakscan.js';
 import * as _chains from './chains.js';
@@ -89,6 +90,7 @@ async function diagnose(ctx, opts) {
   choreProvider(ctx, add);
   tokenRenewalCheck(ctx, add);
   backgroundServices(ctx, add, opts);
+  autoswitchService(ctx, add, opts);
   settingsJson(ctx, add);
 
   const active = provider.readActive(ctx);
@@ -800,6 +802,43 @@ function tokenRenewalCheck(ctx, add) {
 // So doctor names each job, says whether the system is holding it, and says when it last produced
 // output. The whole inventory rides along in `extra` so `--json` and the MCP tool get the structure,
 // not just the line.
+// The unattended autoswitch job. It once exited 127 on every run for days (an fnm shim exec'd
+// without node) while every surface called it "installed", so doctor reads what launchd will run
+// and what it last returned. launchd is asked only when the caller handed over a runner (the same
+// hermetic-test rule as backgroundServices).
+function autoswitchService(ctx, add, opts) {
+  opts = opts || {};
+  if (ctx.platform !== 'darwin' && ctx.platform !== 'linux') return;
+  let st;
+  try {
+    st = _autosvc.status(ctx, {
+      home: opts.home || ctx.home,
+      run:
+        opts.run ||
+        function () {
+          return { code: 1, stdout: '' };
+        },
+    });
+  } catch (e) {
+    return add('autoswitch service', 'warn', 'unreadable: ' + (e && e.message));
+  }
+  if (!st.installed) return add('autoswitch service', 'warn', 'not installed — nothing rotates accounts at the threshold', 'keyflip autoswitch install');
+  if (st.kind !== 'launchd') return add('autoswitch service', true, 'installed (' + st.kind + ')');
+  // Without a runner, launchd's view is unknown: judge the plist alone.
+  const problems = (st.problems || []).filter(function (p) {
+    return opts.run || !/launchd has not loaded|last run failed/.test(p);
+  });
+  add(
+    'autoswitch service',
+    problems.length ? false : true,
+    problems.length
+      ? problems.join('; ')
+      : 'ok' + (st.lastExit === 0 ? ' (last exit 0)' : '') + (st.threshold ? ', threshold ' + st.threshold + '%' : ''),
+    problems.length ? 'keyflip autoswitch install' : undefined,
+    { lastExit: st.lastExit, program: st.program },
+  );
+}
+
 function backgroundServices(ctx, add, opts) {
   opts = opts || {};
   // The clock contract in this project is an ISO STRING (ctx.now()), so it must be parsed before any

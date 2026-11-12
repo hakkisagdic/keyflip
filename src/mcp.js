@@ -3667,8 +3667,10 @@ const TOOLS = [
     annotations: MUT,
     run: async function (ctx, args) {
       needConfirm(args);
-      // Mirror the CLI: lock ONLY the switch, not the (network) usage evaluation.
+      // Mirror the CLI: lock ONLY the switch, not the (network) usage evaluation. ctx.fetch is the
+      // test injection channel (unset in production -> global fetch).
       const opts = {
+        fetch: ctx.fetch,
         performSwitch: function (name) {
           return (async function () {
             const l = await lock.acquire(ctx.configDir);
@@ -3705,11 +3707,13 @@ const TOOLS = [
     annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
     run: async function (ctx, args) {
       const svc = _svc;
-      if (args.action === 'status') return { autoswitchService: svc.status(ctx, { home: ctx.home }) };
+      // ctx.run: the injection channel for tests (unset in production -> the real launchctl/crontab).
+      if (args.action === 'status') return { autoswitchService: svc.status(ctx, { home: ctx.home, run: ctx.run }) };
       needConfirm(args);
-      if (args.action === 'remove') return { removed: svc.uninstall(ctx, { home: ctx.home }) };
+      if (args.action === 'remove') return { removed: svc.uninstall(ctx, { home: ctx.home, run: ctx.run }) };
       const r = svc.install(ctx, {
         home: ctx.home,
+        run: ctx.run,
         interval: args.interval,
         threshold: args.threshold,
         strategy: args.strategy,
