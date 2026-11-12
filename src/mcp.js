@@ -50,6 +50,7 @@ import * as _fleet from './fleet.js';
 import * as _rt from './relaytransfer.js';
 import * as _svc from './autoswitchservice.js';
 import * as _identity from './identity.js';
+import * as _failover from './failover.js';
 import * as _agents from './agents.js';
 import _path from 'path';
 import * as _pii from './pii.js';
@@ -3711,6 +3712,26 @@ const TOOLS = [
           }
         },
       };
+      // P4: when every account is over the threshold, the keysmith API failover (if set up).
+      if (_failover.plan(ctx).enabled && !ctx.noFailover) {
+        const locked = function (fn) {
+          return async function (info) {
+            const l = await lock.acquire(ctx.configDir);
+            try {
+              return await fn(ctx, info, { fetch: ctx.fetch });
+            } finally {
+              l.release();
+            }
+          };
+        };
+        opts.failover = {
+          state: function () {
+            return _failover.state(ctx);
+          },
+          engage: locked(_failover.engage),
+          release: locked(_failover.release),
+        };
+      }
       // The same defaults as the CLI and the background service: config autoswitch.*.
       opts.threshold = args.threshold !== undefined ? args.threshold : _config.get(ctx, 'autoswitch.threshold');
       opts.strategy = _config.get(ctx, 'autoswitch.strategy') || 'next-available';

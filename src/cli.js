@@ -92,6 +92,7 @@ import * as _cfg from './config.js';
 import * as _svc from './autoswitchservice.js';
 import * as _selfbin from './selfbin.js';
 import * as _identity from './identity.js';
+import * as _failover from './failover.js';
 import * as _groups from './groups.js';
 import * as _budget from './budget.js';
 import * as _shellhook from './shellhook.js';
@@ -423,6 +424,8 @@ function usage() {
   print('  keyflip autoswitch            watch usage; auto-swap the CLI account at a threshold');
   print('                                 (--threshold 95 --interval 60 --strategy next-available)');
   print('  keyflip autoswitch install [--interval 300]   run it UNATTENDED (launchd/cron) — no terminal to keep open');
+  print('  keyflip failover setup|status|on|off   when EVERY account is over the threshold, keep working on the API');
+  print('                                 through keysmith (gmail API → agy → kiro-emu, $25/month cap on the API key)');
   print(
     '                                 keyflip autoswitch <status|uninstall|--once>   check/stop the service; --once = one tick',
   );
@@ -1419,6 +1422,85 @@ async function cmdImport(ctx, rest) {
   logmod.log('import: ' + r.imported.length + ' account(s)');
 }
 
+// The P4 API failover as the autoswitch tick sees it: { state, engage, release }. Engage/release
+// take the switch lock (they rewrite settings.json and the desktop config) and notify.
+function failoverAdapter(ctx) {
+  if (!_failover.plan(ctx).enabled) return undefined;
+  function note(ev, msg) {
+    return _notify.send(ctx, ev, { message: msg }).catch(function () {});
+  }
+  return {
+    state: function () {
+      return _failover.state(ctx);
+    },
+    engage: function (info) {
+      return withLock(ctx, function () {
+        return _failover.engage(ctx, info, { notify: note });
+      });
+    },
+    release: function (info) {
+      return withLock(ctx, function () {
+        return _failover.release(ctx, info, { notify: note });
+      });
+    },
+  };
+}
+
+// `keyflip failover setup [--dry-run] | status | on | off` — the keysmith API failover (P4).
+async function cmdFailover(ctx, rest) {
+  const sub = rest[0] || 'status';
+  if (sub === 'setup') {
+    const dry = rest.indexOf('--dry-run') !== -1;
+    const r = await withLock(ctx, function () {
+      return _failover.setup(ctx, { run: ctx.run, dryRun: dry });
+    });
+    if (JSON_MODE) {
+      jsonOut({ failoverSetup: { ok: r.ok, steps: r.steps, restartGateway: r.restartGateway } });
+      if (!r.ok) process.exitCode = 1;
+      return;
+    }
+    print((dry ? 'Failover setup (dry run — nothing changed):' : 'Failover setup:') + ' ' + r.plan.legs.join(' → '));
+    r.steps.forEach(function (s) {
+      print('  ' + (s.ok ? style.ok('✓') : style.err('✗')) + ' ' + s.step + ': ' + s.detail);
+    });
+    if (r.restartGateway)
+      print(
+        style.dim(
+          '  keysmith reads aliases and spend caps at start — restart it: launchctl kickstart -k gui/$UID/dev.keysmith.gateway',
+        ),
+      );
+    if (!r.ok) process.exitCode = 1;
+    return;
+  }
+  if (sub === 'status') {
+    const p = _failover.plan(ctx);
+    const st = _failover.state(ctx);
+    const ready = await _failover.gatewayReady(ctx, { plan: p });
+    if (JSON_MODE) {
+      jsonOut({ failover: { enabled: p.enabled, engaged: !!st, state: st, gateway: ready, plan: p } });
+      return;
+    }
+    print('API failover: ' + (!p.enabled ? style.warn('disabled') : st ? style.warn('ENGAGED') + ' since ' + new Date(st.at).toISOString() : style.ok('standing by')));
+    print('  chain:   ' + p.alias + ' = ' + p.legs.join(' → ') + '   (cap $' + p.capUsd + '/month on ' + p.capAdapter + ')');
+    print('  gateway: ' + p.gatewayUrl + ' — ' + (ready.ok ? style.ok('ready') : style.warn(ready.reason)));
+    return;
+  }
+  if (sub === 'on' || sub === 'off') {
+    const fa = failoverAdapter(ctx);
+    if (!fa) return fail('the API failover is disabled — keyflip config set failover.enabled true');
+    const r = sub === 'on' ? await fa.engage({ reason: 'turned on by hand' }) : await fa.release({ reason: 'turned off by hand' });
+    if (JSON_MODE) {
+      jsonOut({ failover: r });
+      if (!r.ok) process.exitCode = 1;
+      return;
+    }
+    if (!r.ok) return fail('could not ' + (sub === 'on' ? 'engage' : 'release') + ' the failover: ' + r.reason);
+    print(style.ok('✅') + ' API failover ' + (sub === 'on' ? (r.already ? 'was already on.' : 'on — Claude Code now uses the gateway.') : r.already ? 'was already off.' : 'off — back on your Claude account.'));
+    return;
+  }
+  return fail('usage: keyflip failover setup [--dry-run] | status | on | off');
+}
+
 // Watch the active account and auto-switch the CLI credential at a usage
 // threshold (claude-swap PR #76 / issues #38, #50). The desktop app is never
 // closed; Claude Code picks the new credential up on its next request.
@@ -1474,8 +1556,22 @@ async function cmdAutoswitch(ctx, rest) {
         .catch(function () {});
     } else if (r.state === 'below') {
       print('[' + at + '] ' + (r.active.email || r.active.name) + ': ' + Math.round(100 - r.headroom) + '% used — ok');
+    } else if (r.state === 'failover-engaged') {
+      print('[' + at + '] ' + style.warn('⇄ every account is over ' + threshold + '% — now on the API failover (keysmith)'));
+      logmod.log('autoswitch: failover engaged (from ' + r.active.name + ')');
+    } else if (r.state === 'failover') {
+      print('[' + at + '] on the API failover — waiting for a Claude account to recover');
+    } else if (r.state === 'failback') {
+      print('[' + at + '] ' + style.ok('⇄ back on Claude: ') + (r.active.email || r.active.name) + ' recovered');
+      logmod.log('autoswitch: failover released (' + r.active.name + ' recovered)');
     } else if (r.state === 'no-candidate') {
-      print('[' + at + '] ' + style.warn('threshold crossed but no other account is available'));
+      print(
+        '[' +
+          at +
+          '] ' +
+          style.warn('threshold crossed but no other account is available') +
+          (r.failoverError ? style.dim(' — API failover not available: ' + r.failoverError) : ''),
+      );
       _notify
         .send(ctx, 'quota', {
           account: (r.active && r.active.name) || null,
@@ -1519,6 +1615,7 @@ async function cmdAutoswitch(ctx, rest) {
             return _identity.repairIfMismatched(ctx);
           });
         },
+        failover: failoverAdapter(ctx),
       })
       .catch(function (e) {
         return { state: 'error', error: (e && e.message) || String(e) };
@@ -16929,6 +17026,7 @@ async function main(argv) {
     'mcp',
     'run',
     'autoswitch',
+    'failover',
     'install-skill',
     'statusline',
     'send',
@@ -17392,6 +17490,8 @@ async function dispatch(ctx, cmd, rest) {
         return cmdInstallSkill(ctx, rest);
       case 'autoswitch':
         return cmdAutoswitch(ctx, rest);
+      case 'failover':
+        return cmdFailover(ctx, rest);
       case 'link':
         return cmdLink(ctx, rest);
       case 'enable':

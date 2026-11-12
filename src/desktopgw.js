@@ -68,9 +68,14 @@ function use(ctx, name) {
           inferenceGatewayBaseUrl: meta.baseUrl,
           inferenceGatewayApiKey: key || '',
           inferenceGatewayAuthScheme: meta.authScheme === 'api-key' ? 'api-key' : 'bearer',
-          inferenceModels: Object.keys(meta.models || {}).map(function (k) {
-            return meta.models[k];
-          }),
+          // One entry per model: a failover provider maps every role to the same alias.
+          inferenceModels: Object.keys(meta.models || {})
+            .map(function (k) {
+              return meta.models[k];
+            })
+            .filter(function (m, i, all) {
+              return m && all.indexOf(m) === i;
+            }),
           managedBy: 'keyflip',
         },
         0o600,

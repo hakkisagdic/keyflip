@@ -40,6 +40,27 @@ SCHEMA['autoswitch.maxStaleSeconds'] = {
   max: 21600,
   help: 'While the usage endpoint is throttled, act on the last good reading if it is at most this old (0 = never).',
 };
+// P4: API failover through keysmith when every Claude account is over the threshold.
+SCHEMA['failover.enabled'] = {
+  type: 'bool',
+  default: true,
+  help: 'When every account is over the threshold, move Claude Code/Desktop onto the keysmith API failover (needs `keyflip failover setup`).',
+};
+SCHEMA['failover.gatewayUrl'] = { type: 'string', default: 'http://127.0.0.1:8787', help: 'The keysmith gateway the failover uses.' };
+SCHEMA['failover.alias'] = { type: 'string', default: 'keyflip-failover', help: 'The keysmith alias (model name) the failover routes to.' };
+SCHEMA['failover.legs'] = {
+  type: 'string',
+  default: '',
+  help: 'Comma-separated alias legs, in order (empty = claude-api/claude-opus-5-5, agy/claude-opus-5-5-medium, kiro-emu/claude-opus-5.5).',
+};
+SCHEMA['failover.capUsd'] = {
+  type: 'int',
+  default: 25,
+  min: 0,
+  max: 10000,
+  help: 'Monthly USD cap keysmith enforces on the first (paid API) leg and its key.',
+};
+SCHEMA['failover.provider'] = { type: 'string', default: 'keysmith-failover', help: 'The keyflip provider profile that points at the gateway.' };
 SCHEMA['autoswitch.group'] = {
   type: 'string',
   default: '',

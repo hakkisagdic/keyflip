@@ -106,6 +106,7 @@ const CMD_FEATURE = Object.assign(Object.create(null), {
   budget: 'budget',
   notify: 'notify',
   autoswitch: 'autoswitch',
+  failover: 'autoswitch',
   route: 'router',
   cache: 'router',
   post: 'notify',

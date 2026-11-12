@@ -114,6 +114,41 @@ async function tickInner(ctx, opts, out) {
   const h = eff.headroom;
   const basis = eff.basis;
   const retryAt = (infos[active.name] && infos[active.name].retryAt) || null;
+  // Hysteresis: once away (on another account, or on the API failover), come back only at >= this.
+  const recoveryFloor = Math.min(95, margin + 10);
+
+  // P4: the API failover (keysmith) — engaged when every account is over the threshold, released
+  // as soon as a Claude account has recovered. opts.failover = { state, engage, release }.
+  const fo = opts.failover ? opts.failover.state() : null;
+  async function releaseFailover(to, why) {
+    if (!fo) return false;
+    try {
+      const r = await opts.failover.release({ to: to, reason: why });
+      return !!(r && r.ok);
+    } catch (e) {
+      return false;
+    }
+  }
+  async function noCandidate(extra) {
+    const base = Object.assign({ state: 'no-candidate', active: active, headroom: h, switchedTo: null }, extra || {});
+    if (!opts.failover) return base;
+    if (fo) return Object.assign(base, { state: 'failover', failover: fo });
+    let e;
+    try {
+      e = await opts.failover.engage({
+        from: active.name,
+        reason: 'usage ' + Math.round(100 - h) + '% >= ' + threshold + '% and no other account below it',
+      });
+    } catch (err) {
+      e = { ok: false, reason: (err && err.message) || String(err) };
+    }
+    if (e && e.ok) return Object.assign(base, { state: 'failover-engaged', failover: e.state || null });
+    return Object.assign(base, { failoverError: (e && e.reason) || 'failover unavailable' });
+  }
+  if (fo && typeof h === 'number' && h >= recoveryFloor) {
+    await releaseFailover(active.name, active.name + ' recovered (' + Math.round(h) + '% headroom)');
+    return { state: 'failback', active: active, headroom: h, switchedTo: null, basis: basis };
+  }
 
   // Automatic switch-back: if we previously auto-switched away from a primary
   // account and that primary account is enabled, healthy, and has recovered
@@ -137,7 +172,6 @@ async function tickInner(ctx, opts, out) {
         cacheTtlMs: opts.cacheTtlMs,
       });
       const pinfo = pinfos[primaryProfile.name];
-      const recoveryFloor = Math.min(95, margin + 10);
       if (pinfo && pinfo.status === 'ok' && typeof pinfo.headroom === 'number' && pinfo.headroom >= recoveryFloor) {
         const doSwitchBack =
           opts.performSwitch ||
@@ -153,7 +187,10 @@ async function tickInner(ctx, opts, out) {
             to: primaryProfile.name,
             reason: 'primary recovered (' + Math.round(pinfo.headroom) + '% headroom)',
           });
-          return { state: 'switched-back', active: active, headroom: h, switchedTo: primaryProfile };
+          const rel = await releaseFailover(primaryProfile.name, 'primary recovered');
+          const back = { state: 'switched-back', active: active, headroom: h, switchedTo: primaryProfile };
+          if (rel) back.failoverReleased = true;
+          return back;
         }
       }
     }
@@ -167,7 +204,10 @@ async function tickInner(ctx, opts, out) {
       switchedTo: null,
       usageStatus: (infos[active.name] && infos[active.name].status) || null,
       retryAt: retryAt,
+      failover: fo || undefined,
     };
+  // On the failover and recovering, but not past the hysteresis band yet: stay there (no flapping).
+  if (fo && h > margin) return { state: 'failover', active: active, headroom: h, switchedTo: null, basis: basis, failover: fo };
   if (h > margin) return { state: 'below', active: active, headroom: h, switchedTo: null, basis: basis };
 
   // Threshold crossed — pick a target in rotation order. Only enabled accounts
@@ -189,7 +229,7 @@ async function tickInner(ctx, opts, out) {
   // Optional group scoping (config autoswitch.group / --group): rotate only within a tagged pool.
   // Applied BEFORE the usage fetch so out-of-group accounts aren't queried. Preserves rotation order.
   if (opts.group) candidates = _groups.filterProfiles(ctx, candidates, opts.group);
-  if (!candidates.length) return { state: 'no-candidate', active: active, headroom: h, switchedTo: null };
+  if (!candidates.length) return noCandidate();
 
   const cinfos = await usage.usageForProfiles(
     ctx,
@@ -219,15 +259,17 @@ async function tickInner(ctx, opts, out) {
     const e = usage.effectiveHeadroom(info, nowMs, maxStaleMs);
     effInfos[c.name] = info ? Object.assign({}, info, { headroom: e.headroom, usage: info.usage || e.usage }) : info;
   });
+  // Leaving the failover takes a RECOVERED account (hysteresis), not one just under the threshold.
+  const need = fo ? recoveryFloor - 0.0001 : margin;
   const pool = candidates.filter(function (c) {
     const info = effInfos[c.name];
     return (
-      info && typeof info.headroom === 'number' && info.headroom > margin && breaker.isAvailable(ctx, c.name, bopts)
+      info && typeof info.headroom === 'number' && info.headroom > need && breaker.isAvailable(ctx, c.name, bopts)
     );
   });
-  if (!pool.length) return { state: 'no-candidate', active: active, headroom: h, switchedTo: null, basis: basis };
+  if (!pool.length) return noCandidate({ basis: basis });
   const picked = usage.pickByStrategy(pool, effInfos, strategy, { model: opts.model }) || pool[0];
-  if (!picked) return { state: 'no-candidate', active: active, headroom: h, switchedTo: null };
+  if (!picked) return noCandidate();
 
   const doSwitch =
     opts.performSwitch ||
@@ -237,7 +279,7 @@ async function tickInner(ctx, opts, out) {
   const did = await doSwitch(picked.name);
   // If nothing actually swapped (no CLI credential), report it rather than
   // claiming a switch — prevents the caller from looping on a phantom success.
-  if (did && did.cli === false) return { state: 'no-candidate', active: active, headroom: h, switchedTo: null };
+  if (did && did.cli === false) return noCandidate();
   writeState(ctx, {
     primary: st && st.primary ? st.primary : active.name,
     switchedTo: picked.name,
@@ -250,12 +292,15 @@ async function tickInner(ctx, opts, out) {
     reason:
       'usage ' + Math.round(100 - h) + '% >= threshold ' + threshold + (basis === 'last-good' ? ' (last good reading; endpoint throttled)' : ''),
   });
-  return { state: 'switched', active: active, headroom: h, switchedTo: picked, basis: basis };
+  const res = { state: 'switched', active: active, headroom: h, switchedTo: picked, basis: basis };
+  if (await releaseFailover(picked.name, picked.name + ' has headroom')) res.failoverReleased = true;
+  return res;
 }
 
 // One watch iteration. Injectable deps for tests (fetch, nowMs, performSwitch, repairLabel). Returns
-//   { state: 'idle'|'no-active'|'below'|'switched'|'switched-back'|'no-candidate'|'unknown',
-//     active, headroom, switchedTo, identityRepair? }
+//   { state: 'idle'|'no-active'|'below'|'switched'|'switched-back'|'no-candidate'|'unknown'|
+//            'failover-engaged'|'failover'|'failback',
+//     active, headroom, switchedTo, identityRepair?, failoverReleased?, failoverError? }
 async function tick(ctx, opts) {
   const side = {};
   const r = await tickInner(ctx, opts || {}, side);

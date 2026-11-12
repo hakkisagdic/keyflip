@@ -451,8 +451,15 @@ const CATALOG = [
     group: 'orchestration',
     safe: false,
     usage:
-      'keyflip autoswitch [--threshold 90 --interval 60 --strategy next-available] | install | status | uninstall | --once',
+      'keyflip autoswitch [--threshold 95 --interval 60 --strategy next-available] | install | status | uninstall | --once',
     desc: 'Watch usage and auto-swap the CLI account at a threshold.',
+  },
+  {
+    name: 'failover',
+    group: 'orchestration',
+    safe: false,
+    usage: 'keyflip failover setup [--dry-run] | status | on | off',
+    desc: 'API failover through keysmith (gmail API -> agy -> kiro-emu, monthly $ cap) when every Claude account is over the threshold.',
   },
   {
     name: 'run',
