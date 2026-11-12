@@ -49,6 +49,7 @@ import * as _chatsession from './chatsession.js';
 import * as _fleet from './fleet.js';
 import * as _rt from './relaytransfer.js';
 import * as _svc from './autoswitchservice.js';
+import * as _identity from './identity.js';
 import * as _agents from './agents.js';
 import _path from 'path';
 import * as _pii from './pii.js';
@@ -313,13 +314,30 @@ const TOOLS = [
   {
     name: 'keyflip_status',
     title: 'Active Claude account',
-    description: 'Which Claude account is active on each surface (Claude Code CLI and the desktop app). Read-only.',
+    description:
+      'Which Claude account is active on each surface (Claude Code CLI and the desktop app). The CLI account is identified by its live token (identitySource token-cache / token-match / token-profile); the ~/.claude.json label is only a fallback (identitySource label), and labelMismatch=true means the label names another account. Read-only.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
-    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: true },
     run: async function (ctx) {
       const appName = ctx.appDataDir ? appauth.activeProfileName(ctx) : null;
+      // The CLI account is the one the live TOKEN belongs to; the ~/.claude.json label is a fallback.
+      let id = null;
+      try {
+        id = await _identity.resolveLive(ctx, { fetch: ctx.fetch });
+      } catch (e) {
+        id = null;
+      }
+      const email = (id && id.email) || core.currentEmail(ctx) || null;
       return {
-        cli: core.currentEmail(ctx) ? { email: core.currentEmail(ctx) } : null,
+        cli: email
+          ? {
+              email: email,
+              name: (id && id.name) || null,
+              identitySource: (id && id.source) || null,
+              labelEmail: (id && id.labelEmail) || null,
+              labelMismatch: !!(id && id.mismatch),
+            }
+          : null,
         app: appName ? { name: appName, email: profiles.email(ctx.configDir, appName) || null } : null,
       };
     },
@@ -3680,6 +3698,14 @@ const TOOLS = [
               l.release();
             }
           })();
+        },
+        repairLabel: async function () {
+          const l = await lock.acquire(ctx.configDir);
+          try {
+            return _identity.repairIfMismatched(ctx);
+          } finally {
+            l.release();
+          }
         },
       };
       if (args.threshold !== undefined) opts.threshold = args.threshold;

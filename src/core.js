@@ -6,6 +6,7 @@ import * as profiles from './profiles.js';
 import * as _stores from './stores/index.js';
 import * as _log from './log.js';
 import * as _longtoken from './longtoken.js';
+import * as _identity from './identity.js';
 
 /**
  * Get the email of the currently logged-in Claude account.
@@ -30,6 +31,7 @@ function saveAs(ctx, name) {
   const blob = ctx.store.getLive();
   if (!blob) throw new Error('No live Claude session found. Log in first (Claude /login).');
   ctx.store.setProfile(name, blob);
+  _identity.noteSaved(ctx, name, blob);
   const cfg = claude.readConfig(ctx.claudeConfigPath) || {};
   const oa = cfg.oauthAccount || {};
   const prev = profiles.read(ctx.configDir, name) || {};
@@ -75,6 +77,16 @@ function autoName(ctx, email) {
 // "Find & save": detect the logged-in account and store it, auto-naming from the
 // email. If it's already saved (matched by email or accountUuid), refresh its tokens instead.
 function addCurrent(ctx, nameOverride) {
+  // The TOKEN decides which saved account this login is. When it belongs to a saved profile but
+  // ~/.claude.json carries another account's label, refresh THAT profile's credential and leave
+  // both metas alone — saving it under the label is how one account's token ended up in another's.
+  const id = _identity.liveSync(ctx);
+  // Only when the label names ANOTHER SAVED account: a label naming an unsaved email is a new
+  // account being added, whatever a fixture's recycled token says.
+  if (!nameOverride && id.mismatch && id.name && id.labelName && id.labelName !== id.name) {
+    ctx.store.setProfile(id.name, ctx.store.getLive());
+    return { name: id.name, email: id.email || profiles.email(ctx.configDir, id.name), refreshed: true, labelMismatch: true };
+  }
   const email = currentEmail(ctx);
   if (!email) {
     throw new Error('No logged-in account detected (~/.claude.json has no account). Log in in Claude first.');
@@ -213,6 +225,24 @@ function applyProfile(ctx, name) {
 //  - if it already has a matching profile, re-save it there;
 //  - otherwise auto-save it under a derived name so it is never lost.
 function refreshCurrent(ctx, targetName) {
+  // Token first: the live credential is saved under the profile it BELONGS to. Only when the token
+  // is unknown (no exact match, nothing cached) does the label decide, as before.
+  let id = null;
+  try {
+    id = _identity.liveSync(ctx);
+  } catch (e) {
+    id = null;
+  }
+  if (id && id.source && id.source !== 'label') {
+    if (!id.name || id.name === targetName) return;
+    try {
+      if (id.mismatch) ctx.store.setProfile(id.name, ctx.store.getLive()); // credential only; the label is wrong
+      else saveAs(ctx, id.name);
+    } catch (e) {
+      /* non-fatal */
+    }
+    return;
+  }
   const cur = currentEmail(ctx);
   if (!cur) return;
   const names = profiles.list(ctx.configDir);
@@ -268,13 +298,22 @@ function performSwitch(ctx, name) {
  */
 function listProfiles(ctx) {
   const cur = currentEmail(ctx);
+  // The active row is the account the LIVE TOKEN belongs to (offline: cache or exact match); the
+  // ~/.claude.json label decides only when the token is unknown.
+  let byToken = null;
+  try {
+    const id = _identity.liveSync(ctx);
+    if (id.source && id.source !== 'label') byToken = id.name || '';
+  } catch (e) {
+    byToken = null;
+  }
   return profiles.list(ctx.configDir).map(function (name, i) {
     const email = profiles.email(ctx.configDir, name);
     return {
       index: i + 1,
       name: name,
       email: email,
-      active: !!email && email === cur,
+      active: byToken !== null ? name === byToken : !!email && email === cur,
       enabled: profiles.isEnabled(ctx.configDir, name),
       duplicateOf: profiles.duplicateOf(ctx.configDir, name),
     };

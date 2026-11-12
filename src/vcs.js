@@ -20,6 +20,8 @@ const GITIGNORE = ['# keyflip: NEVER version secrets — they live in the OS cre
     '# rebuildable caches / self-referential snapshots (not versioned)',
     'embeddings.json',
     '.usage-cache.json',
+    // token fingerprints -> account (P2); never versioned, never backed up
+    '.identity-cache.json',
     // #36/#40: a schedule receipt describes the launchd/cron job on THIS machine. Versioned, it
     // follows the repo to a second machine (`migrate`) or comes back from `restore`, and doctor —
     // which reads the receipt as "the schedule keyflip agreed to" — reports a nightly job that does

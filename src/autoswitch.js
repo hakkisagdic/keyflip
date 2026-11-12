@@ -13,6 +13,7 @@ import * as history from './history.js';
 import * as _groups from './groups.js';
 import * as fsutil from './fsutil.js';
 import * as _config from './config.js';
+import * as _identity from './identity.js';
 
 const STATE_FILE = '.autoswitch-state.json';
 
@@ -45,13 +46,35 @@ function clearState(ctx) {
   }
 }
 
-// One watch iteration. Injectable deps for tests. Returns
-//   { state: 'idle'|'no-active'|'below'|'switched'|'switched-back'|'no-candidate'|'unknown',
-//     active, headroom, switchedTo }
-async function tick(ctx, opts) {
+async function tickInner(ctx, opts, out) {
   opts = opts || {};
   const threshold = opts.threshold !== undefined ? opts.threshold : 90; // switch at >= N% utilization
   const strategy = opts.strategy || 'next-available';
+  // P2: the active account is the one the LIVE TOKEN belongs to. Resolve it first (offline match,
+  // else the profile endpoint once per token), and if ~/.claude.json carries another account's label,
+  // repair the label — under the switch lock when the caller provides one.
+  if (opts.resolveIdentity !== false) {
+    try {
+      await _identity.resolveLive(ctx, { fetch: opts.identityFetch || opts.fetch, nowMs: opts.nowMs });
+      const doRepair =
+        opts.repairLabel ||
+        function () {
+          return _identity.repairIfMismatched(ctx);
+        };
+      const rep = await doRepair();
+      if (rep && rep.repaired) {
+        out.identityRepair = rep;
+        history.recordEvent(ctx, {
+          kind: 'identity-repair',
+          from: rep.from || null,
+          to: rep.to,
+          reason: 'the live token belongs to ' + rep.to + '; the ~/.claude.json label said ' + (rep.from || 'nothing'),
+        });
+      }
+    } catch (e) {
+      /* identity stays label-based for this tick */
+    }
+  }
   const list = core.listProfiles(ctx);
   let activeIdx = -1;
   list.forEach(function (e, i) {
@@ -225,6 +248,16 @@ async function tick(ctx, opts) {
       'usage ' + Math.round(100 - h) + '% >= threshold ' + threshold + (basis === 'last-good' ? ' (last good reading; endpoint throttled)' : ''),
   });
   return { state: 'switched', active: active, headroom: h, switchedTo: picked, basis: basis };
+}
+
+// One watch iteration. Injectable deps for tests (fetch, nowMs, performSwitch, repairLabel). Returns
+//   { state: 'idle'|'no-active'|'below'|'switched'|'switched-back'|'no-candidate'|'unknown',
+//     active, headroom, switchedTo, identityRepair? }
+async function tick(ctx, opts) {
+  const side = {};
+  const r = await tickInner(ctx, opts || {}, side);
+  if (side.identityRepair) r.identityRepair = side.identityRepair;
+  return r;
 }
 
 export { tick, readState, clearState };

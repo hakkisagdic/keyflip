@@ -91,6 +91,7 @@ import * as _codex from './codex.js';
 import * as _cfg from './config.js';
 import * as _svc from './autoswitchservice.js';
 import * as _selfbin from './selfbin.js';
+import * as _identity from './identity.js';
 import * as _groups from './groups.js';
 import * as _budget from './budget.js';
 import * as _shellhook from './shellhook.js';
@@ -1442,6 +1443,18 @@ async function cmdAutoswitch(ctx, rest) {
   // One tick's print + opt-in notify, shared by the foreground loop and the scheduled `--once` run.
   function reportTick(r) {
     const at = new Date().toTimeString().slice(0, 8);
+    if (r && r.identityRepair)
+      print(
+        '[' +
+          at +
+          '] ' +
+          style.warn('identity: ') +
+          'the live token is ' +
+          (r.identityRepair.email || r.identityRepair.to) +
+          ' — repaired the ~/.claude.json label (was ' +
+          (r.identityRepair.from || 'none') +
+          ')',
+      );
     if (r.state === 'switched') {
       print(
         '[' +
@@ -1499,6 +1512,11 @@ async function cmdAutoswitch(ctx, rest) {
         performSwitch: function (name) {
           return withLock(ctx, function () {
             return core.performSwitch(ctx, name);
+          });
+        },
+        repairLabel: function () {
+          return withLock(ctx, function () {
+            return _identity.repairIfMismatched(ctx);
           });
         },
       })
@@ -12838,8 +12856,27 @@ async function cmdUpgrade(ctx) {
 }
 
 // One-line answer to "which account am I on?" (both surfaces).
-function cmdStatus(ctx) {
-  const cliEmail = core.currentEmail(ctx) || null;
+async function cmdStatus(ctx, rest) {
+  rest = rest || [];
+  // P2: the CLI account is the one the LIVE TOKEN belongs to. ~/.claude.json's label is only the
+  // fallback, and a label that disagrees with the token is reported (and fixed with --fix).
+  let id = null;
+  try {
+    id = await _identity.resolveLive(ctx, {});
+  } catch (e) {
+    id = null;
+  }
+  let repaired = null;
+  if (id && id.mismatch && id.name && rest.indexOf('--fix') !== -1) {
+    try {
+      repaired = _identity.repairPointer(ctx, id.name);
+      logmod.log('identity: repaired the ~/.claude.json label -> ' + id.name + ' (token said so)');
+      id = await _identity.resolveLive(ctx, { network: false });
+    } catch (e) {
+      repaired = { error: e.message };
+    }
+  }
+  const cliEmail = (id && id.email) || core.currentEmail(ctx) || null;
   // One detection pass (may prompt the Keychain once) → match a saved profile by org,
   // and keep the raw detection so an UNSAVED account still shows an email/org, not "unknown".
   let appName = null,
@@ -12874,7 +12911,17 @@ function cmdStatus(ctx) {
     }
   }
   jsonOut({
-    cli: cliEmail ? { email: cliEmail } : null,
+    cli: cliEmail
+      ? {
+          email: cliEmail,
+          name: (id && id.name) || null,
+          identitySource: (id && id.source) || null,
+          labelEmail: (id && id.labelEmail) || null,
+          labelMismatch: !!(id && id.mismatch),
+          wrongCredentialIn: (id && id.wrongCredentialIn) || undefined,
+        }
+      : null,
+    identityRepaired: repaired || undefined,
     app: appName
       ? { name: appName, email: appEmail }
       : appLabel
@@ -12918,6 +12965,27 @@ function cmdStatus(ctx) {
               : '')
           : ''),
     );
+    if (id && id.source === 'label' && id.hasLive)
+      print(style.dim('  (CLI account read from the ~/.claude.json label — the token could not be matched to a saved account)'));
+    if (id && id.mismatch)
+      print(
+        '  ' +
+          style.warn('⚠ the live token belongs to ' + (id.email || id.name)) +
+          ', but ~/.claude.json is labelled ' +
+          (id.labelEmail || '(none)') +
+          '.\n     Fix the label (the login is untouched): ' +
+          style.bold('keyflip status --fix'),
+      );
+    if (repaired && !repaired.error) print('  ' + style.ok('✅') + ' label repaired → ' + (repaired.email || repaired.name));
+    if (id && id.wrongCredentialIn && id.wrongCredentialIn.length)
+      print(
+        '  ' +
+          style.warn('⚠ the saved login of ' + id.wrongCredentialIn.join(', ')) +
+          ' is actually ' +
+          (id.email || id.name) +
+          "'s token. Sign that account in again: " +
+          style.bold('keyflip login ' + id.wrongCredentialIn[0]),
+      );
     if (activeProvider) print('Endpoint: provider "' + activeProvider.name + '" (overrides the account for API calls)');
   }
 }
@@ -16922,7 +16990,7 @@ async function dispatch(ctx, cmd, rest) {
       case 'list':
         return cmdList(ctx, rest);
       case 'status':
-        return cmdStatus(ctx);
+        return cmdStatus(ctx, rest);
       case 'next':
         return withLock(ctx, function () {
           return cmdNext(ctx, rest);
