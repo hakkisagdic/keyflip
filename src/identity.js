@@ -17,6 +17,11 @@
 // overwrite. resolveLive asks the endpoint once per token until it has a verified answer.
 // Fingerprints are truncated SHA-256 of a token: never the token, never reversible, never versioned
 // (the cache file is gitignored and skipped by backups).
+//
+// The endpoint needs the `user:profile` scope. An inference-only token (`keyflip login --long-lived`,
+// `claude setup-token`: scope `user:inference`) gets a 403 there every time, so it is not asked at
+// all and the answer stays offline. For that case the owner has `keyflip status --fix --force`
+// (repairForced): it accepts a fingerprint match to the account's LOGIN capture, never anything weaker.
 import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
@@ -26,6 +31,7 @@ import * as longtoken from './longtoken.js';
 import { atomicWrite } from './fsutil.js';
 
 const PROFILE_URL = 'https://api.anthropic.com/api/oauth/profile';
+const PROFILE_SCOPE = 'user:profile';
 const OAUTH_BETA_HEADER = 'oauth-2025-04-20';
 const CACHE_FILE = '.identity-cache.json';
 const CACHE_MAX = 64;
@@ -52,6 +58,21 @@ function fp(s) {
 function fingerprints(blob) {
   const o = oauthOf(blob);
   return { access: o ? fp(o.accessToken) : null, refresh: o ? fp(o.refreshToken) : null };
+}
+// The scopes a credential was granted (metadata, not a secret), or null when it does not say.
+function scopesOf(blob) {
+  const o = oauthOf(blob);
+  return o && Array.isArray(o.scopes)
+    ? o.scopes.filter(function (s) {
+        return typeof s === 'string';
+      })
+    : null;
+}
+// Can the profile endpoint answer for this credential? Only with `user:profile`; a credential that
+// does not list its scopes is asked as before.
+function canAskProfile(blob) {
+  const s = scopesOf(blob);
+  return !s || s.indexOf(PROFILE_SCOPE) !== -1;
 }
 
 function cachePath(ctx) {
@@ -317,6 +338,8 @@ async function resolveLive(ctx, opts) {
   const o = oauthOf(live);
   const f = fingerprints(live);
   if (!o || !o.accessToken || !f.access) return s;
+  // An inference-only token gets a 403 from the profile endpoint by design: asking is a wasted request.
+  if (!canAskProfile(live)) return Object.assign(s, { profileScope: false, scopes: scopesOf(live) });
   const cache = readCache(ctx);
   const prev = cache[f.access];
   if (prev && prev.endpointMiss && nowOf(opts) - (prev.at || 0) < MISS_TTL_MS) return s;
@@ -410,6 +433,91 @@ function repairIfMismatched(ctx) {
   if (!id.verified) return { repaired: false, unverified: true };
   const r = repairPointer(ctx, id.name);
   return { repaired: true, from: id.labelName || id.labelEmail, to: r.name, email: r.email };
+}
+
+// The saved profiles whose LOGIN capture holds the live token. `longlived__<name>` is written only by
+// `keyflip login <name> --long-lived`, and that login refuses a token the OAuth exchange names as
+// anyone but <name> — unlike the normal slot, which label-based saving could fill with another
+// account's login (the 12 Nov damage). -> [{ name, slot }]
+function loginCapturesOf(ctx, live) {
+  const out = [];
+  if (!live.access && !live.refresh) return out;
+  profiles.list(ctx.configDir).forEach(function (n) {
+    const slot = longtoken.storeName(n);
+    let b = null;
+    try {
+      b = ctx.store.getProfile(slot);
+    } catch (e) {
+      b = null;
+    }
+    if (!b) return;
+    const f = fingerprints(b);
+    if ((live.access && f.access === live.access) || (live.refresh && f.refresh === live.refresh))
+      out.push({ name: n, slot: slot });
+  });
+  return out;
+}
+
+// `keyflip status --fix --force` — the owner's override for when the profile endpoint cannot say whose
+// the live token is (an inference-only token gets a 403 there by design). The label is rewritten only
+// to the ONE profile whose login capture holds the live token, and never against an endpoint answer.
+// The credential is not touched. Only the CLI calls this, on an explicit --fix --force: no tick, MCP
+// tool or switch does. -> { repaired, forced, from, fromEmail, to, email, evidence } | { repaired: false, reason }
+function repairForced(ctx) {
+  let live = null;
+  try {
+    live = ctx.store.getLive();
+  } catch (e) {
+    return { repaired: false, reason: 'the credential store could not be read (keychain locked?)' };
+  }
+  if (!live) return { repaired: false, reason: 'no live login' };
+  const f = fingerprints(live);
+  if (!f.access && !f.refresh) return { repaired: false, reason: 'the live credential is not an OAuth login' };
+  const id = liveSync(ctx);
+  const caps = loginCapturesOf(ctx, f);
+  if (!caps.length)
+    return {
+      repaired: false,
+      reason:
+        "the live token is no saved account's login capture (keyflip login <name> --long-lived), so nothing proves whose it is",
+    };
+  if (caps.length > 1)
+    return {
+      repaired: false,
+      reason:
+        'the live token is the login capture of ' +
+        caps
+          .map(function (c) {
+            return c.name;
+          })
+          .join(' and ') +
+        ' — ambiguous, nothing repaired',
+    };
+  const name = caps[0].name;
+  if (id.verified && (id.unsaved || (id.name && id.name !== name)))
+    return {
+      repaired: false,
+      reason: 'the profile endpoint named ' + (id.name || id.email) + ', not ' + name + ' — refusing to override it',
+    };
+  const meta = profiles.read(ctx.configDir, name) || {};
+  const oaEmail = meta.oauthAccount && meta.oauthAccount.emailAddress;
+  const email = meta.email || oaEmail || '';
+  if (!email || (oaEmail && meta.email && String(oaEmail).toLowerCase() !== String(meta.email).toLowerCase()))
+    return { repaired: false, reason: "profile '" + name + "' does not name one account (its email fields disagree)" };
+  const label = labelOf(ctx);
+  const evidence = { slot: caps[0].slot, fingerprint: String(f.access || f.refresh).slice(0, 8) };
+  if (label.email && String(label.email).toLowerCase() === String(email).toLowerCase())
+    return { repaired: false, already: true, to: name, email: email, evidence: evidence };
+  const r = repairPointer(ctx, name);
+  return {
+    repaired: true,
+    forced: true,
+    from: label.name || label.email,
+    fromEmail: label.email,
+    to: r.name,
+    email: r.email,
+    evidence: evidence,
+  };
 }
 
 // The account a saved profile's stored token REALLY belongs to, when the profile endpoint has said
@@ -510,6 +618,10 @@ export {
   wrongOwnerOf,
   inUseAccounts,
   repairIfMismatched,
+  repairForced,
+  loginCapturesOf,
+  scopesOf,
+  canAskProfile,
   liveSync,
   resolveLive,
   noteSaved,
@@ -519,5 +631,6 @@ export {
   fetchProfile,
   labelOf,
   PROFILE_URL,
+  PROFILE_SCOPE,
   CACHE_FILE,
 };

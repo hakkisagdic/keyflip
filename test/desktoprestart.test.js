@@ -375,12 +375,19 @@ test('engaging the failover asks Desktop for a gateway-on restart (default path)
   ctx.appDataDir = path.join(ctx.home, 'AppData');
   ctx.store.setProfile('provider__keysmith-failover', 'ks_FAKE');
   const provider = await import('../src/provider.js');
-  provider.add(ctx, 'keysmith-failover', { baseUrl: 'http://127.0.0.1:8787', models: { default: 'keyflip-failover' } });
+  provider.add(ctx, 'keysmith-failover', { baseUrl: 'http://127.0.0.1:8787', models: { default: 'claude-failover' } });
+  // keysmith's own alias and its paid leg (keyflip reads them from keysmith's config, never writes them)
+  const ksc = path.join(ctx.home, 'keysmith.json');
+  fs.writeFileSync(ksc, JSON.stringify({ aliases: { 'claude-failover': ['claude-failover-api/m', 'agy/m'] } }));
   const fetch = async (url) =>
     /\/v1\/keysmith\/usage/.test(url)
-      ? { ok: true, status: 200, json: async () => ({ spend: [{ kind: 'adapter', target: 'claude-api', cap: 25 }] }) }
-      : { ok: true, status: 200, json: async () => ({ data: [{ id: 'keyflip-failover' }] }) };
-  const e = await failover.engage(ctx, { from: 'b' }, { fetch: fetch, useProvider: () => {} });
+      ? {
+          ok: true,
+          status: 200,
+          json: async () => ({ spend: [{ kind: 'adapter', target: 'claude-failover-api', cap: 25 }] }),
+        }
+      : { ok: true, status: 200, json: async () => ({ data: [{ id: 'claude-failover' }] }) };
+  const e = await failover.engage(ctx, { from: 'b' }, { fetch: fetch, keysmithConfig: ksc, useProvider: () => {} });
   assert.strictEqual(e.ok, true);
   assert.deepStrictEqual(dr.readPending(ctx).actions, [
     { kind: 'gateway-on', target: 'keysmith-failover', reason: 'every Claude account is over the threshold' },

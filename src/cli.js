@@ -1469,7 +1469,12 @@ async function cmdFailover(ctx, rest) {
       if (!r.ok) process.exitCode = 1;
       return;
     }
-    print((dry ? 'Failover setup (dry run — nothing changed):' : 'Failover setup:') + ' ' + r.plan.legs.join(' → '));
+    print(
+      (dry ? 'Failover setup (dry run — nothing changed):' : 'Failover setup:') +
+        ' keysmith alias ' +
+        r.plan.alias +
+        (r.plan.legs ? ' = ' + r.plan.legs.join(' → ') : ''),
+    );
     r.steps.forEach(function (s) {
       print('  ' + (s.ok ? style.ok('✓') : style.err('✗')) + ' ' + s.step + ': ' + s.detail);
     });
@@ -1483,7 +1488,7 @@ async function cmdFailover(ctx, rest) {
     return;
   }
   if (sub === 'status') {
-    const p = _failover.plan(ctx);
+    const p = _failover.resolvePlan(ctx, {});
     const st = _failover.state(ctx);
     const ready = await _failover.gatewayReady(ctx, { plan: p });
     if (JSON_MODE) {
@@ -1499,19 +1504,28 @@ async function cmdFailover(ctx, rest) {
             : style.ok('standing by')),
     );
     print(
-      '  chain:   ' + p.alias + ' = ' + p.legs.join(' → ') + '   (cap $' + p.capUsd + '/month on ' + p.capAdapter + ')',
+      '  chain:   ' +
+        p.alias +
+        (p.legs ? ' = ' + p.legs.join(' → ') : ' — ' + style.warn(p.aliasError || 'unknown')) +
+        style.dim("   (keysmith's alias; the failover accepts a cap of at most $" + p.capUsd + ' on the paid leg)'),
     );
     print('  gateway: ' + p.gatewayUrl + ' — ' + (ready.ok ? style.ok('ready') : style.warn(ready.reason)));
     if (ready.cap)
       print(
-        '  cap:     $' +
-          ready.cap.cap +
+        '  cap:     ' +
+          _failover.capText(ready.cap) +
           ' on ' +
           ready.cap.kind +
           ' ' +
           ready.cap.target +
-          (typeof ready.cap.spent === 'number' ? ', spent $' + ready.cap.spent : '') +
-          (ready.cap.exceeded ? style.warn('  (reached: the paid leg is skipped)') : '') +
+          (typeof ready.cap.spent === 'number' ? ', spent through this key $' + ready.cap.spent : '') +
+          (ready.cap.exceeded
+            ? style.warn(
+                ready.cap.windowStatus && ready.cap.windowStatus !== 'exceeded'
+                  ? '  (window ' + ready.cap.windowStatus + ': the paid leg is skipped)'
+                  : '  (reached: the paid leg is skipped)',
+              )
+            : '') +
           style.dim('  (reported by the running gateway)'),
       );
     if (st && st.recoverAt) print('  back on Claude by ' + st.recoverAt + style.dim(' at the latest (window reset)'));
@@ -7762,10 +7776,25 @@ function statuslineInstall(ctx, on) {
 function cmdStatusline(ctx, rest) {
   if (rest[0] === 'install') return statuslineInstall(ctx, true);
   if (rest[0] === 'uninstall' || rest[0] === 'remove') return statuslineInstall(ctx, false);
-  // EMIT the line (called by Claude Code). Fast, cache-only, never throws.
+  // EMIT the line (called by Claude Code). Fast, offline, never throws. The account is the one the
+  // LIVE TOKEN belongs to (P2: the fingerprint cache, then an exact match in the store), like
+  // `keyflip status` — the ~/.claude.json label is only the fallback, and it is marked as such. On
+  // 12 Nov the label said yahoo while gmail's token was live, and the line showed yahoo and its quota.
   let line = '⚡ keyflip';
   try {
-    const email = core.currentEmail(ctx) || 'not logged in';
+    let id = null;
+    try {
+      id = _identity.liveSync(ctx);
+    } catch (e) {
+      id = null;
+    }
+    const byToken = !!(id && id.source && id.source !== 'label');
+    let name = byToken ? id.name || null : null;
+    let email = byToken ? id.email || (name ? profiles.email(ctx.configDir, name) : null) : null;
+    if (!email) {
+      email = (id && id.labelEmail) || core.currentEmail(ctx) || null;
+      name = (id && id.labelName) || null;
+    }
     let prov = null;
     try {
       const a = provider.readActive(ctx);
@@ -7776,10 +7805,10 @@ function cmdStatusline(ctx, rest) {
     let quota = '';
     try {
       const cache = JSON.parse(fs.readFileSync(path.join(ctx.configDir, '.usage-cache.json'), 'utf8'));
-      let name = null;
-      profiles.list(ctx.configDir).forEach(function (n) {
-        if (!name && profiles.email(ctx.configDir, n) === email) name = n;
-      });
+      if (!name && email)
+        profiles.list(ctx.configDir).forEach(function (n) {
+          if (!name && profiles.email(ctx.configDir, n) === email) name = n;
+        });
       const u = name && cache && cache[name] && cache[name].usage;
       if (u) {
         const hs = [];
@@ -7790,7 +7819,10 @@ function cmdStatusline(ctx, rest) {
     } catch (e) {
       /* no cache — omit quota */
     }
-    line = '⚡ ' + email + (prov ? ' → ' + prov : '') + quota;
+    // Unresolved (no live token match): the label's account, marked. Resolved but the label names
+    // another account: flagged, the fix is `keyflip status --fix`.
+    const mark = !email ? '' : !byToken && id && id.hasLive ? ' (label?)' : id && id.mismatch ? ' ⚠ label≠token' : '';
+    line = '⚡ ' + (email || 'not logged in') + mark + (prov ? ' → ' + prov : '') + quota;
   } catch (e) {
     /* keep the fallback */
   }
@@ -13068,19 +13100,71 @@ async function cmdStatus(ctx, rest) {
   rest = rest || [];
   // P2: the CLI account is the one the LIVE TOKEN belongs to. ~/.claude.json's label is only the
   // fallback, and a label that disagrees with the token is reported (and fixed with --fix).
+  const fix = rest.indexOf('--fix') !== -1;
+  const force = rest.indexOf('--force') !== -1;
+  if (force && !fix) return fail('--force only goes with --fix:  keyflip status --fix --force');
   let id = null;
   try {
     id = await _identity.resolveLive(ctx, {});
   } catch (e) {
     id = null;
   }
+  // An inference-only live token: the profile endpoint cannot answer for it (it needs user:profile).
+  const scopeOnly = id && id.profileScope === false ? { scopes: id.scopes || [] } : null;
   let repaired = null;
-  if (id && id.mismatch && id.name && rest.indexOf('--fix') !== -1) {
+  if (fix && force) {
+    // The owner's override when the endpoint cannot answer: accepted only on a fingerprint match to
+    // the account's LOGIN capture (identity.repairForced). Explicit only — no tick or MCP tool does it.
+    try {
+      const fr = await withLock(ctx, function () {
+        return _identity.repairForced(ctx);
+      });
+      if (fr && fr.repaired) {
+        repaired = {
+          name: fr.to,
+          email: fr.email,
+          forced: true,
+          from: fr.fromEmail || fr.from || null,
+          evidence: fr.evidence,
+        };
+        logmod.log(
+          'identity: FORCED label repair (status --fix --force) ' +
+            (fr.fromEmail || fr.from || '(none)') +
+            ' -> ' +
+            fr.to +
+            ' <' +
+            fr.email +
+            '>: the live token (fp ' +
+            fr.evidence.fingerprint +
+            ') is the login capture ' +
+            fr.evidence.slot +
+            '; profile endpoint not used' +
+            (scopeOnly ? ' (token scopes: ' + scopeOnly.scopes.join(' ') + ', no user:profile)' : '') +
+            '; credential untouched',
+        );
+        history.recordEvent(ctx, {
+          kind: 'identity-repair',
+          from: fr.from || null,
+          to: fr.to,
+          reason: 'forced by the owner (status --fix --force): the live token is the login capture ' + fr.evidence.slot,
+        });
+      } else if (fr && fr.already) repaired = null;
+      else repaired = { error: 'not repaired: ' + ((fr && fr.reason) || 'unknown') };
+      id = await _identity.resolveLive(ctx, { network: false });
+    } catch (e) {
+      repaired = { error: e.message };
+    }
+  } else if (id && id.mismatch && id.name && fix) {
     if (!id.verified) {
       // Offline, the token only matches keyflip's own store — and that store may be what is wrong.
       repaired = {
-        error:
-          'not repaired: Anthropic could not confirm whose token this is right now (the offline match may be a damaged saved login) — retry when the profile endpoint answers',
+        error: scopeOnly
+          ? 'not repaired: the live token is inference-only (scopes: ' +
+            scopeOnly.scopes.join(' ') +
+            ') and the profile endpoint answers 403 to it by design. If it is the token `keyflip login ' +
+            id.name +
+            ' --long-lived` captured, accept that capture: keyflip status --fix --force'
+          : 'not repaired: Anthropic could not confirm whose token this is right now (the offline match may be a damaged saved login) — retry when the profile endpoint answers',
       };
     } else {
       try {
@@ -13142,6 +13226,9 @@ async function cmdStatus(ctx, rest) {
           labelEmail: (id && id.labelEmail) || null,
           labelMismatch: !!(id && id.mismatch),
           wrongCredentialIn: (id && id.wrongCredentialIn) || undefined,
+          // Scopes are metadata, never the token: why the profile endpoint cannot confirm this login.
+          tokenScopes: scopeOnly ? scopeOnly.scopes : undefined,
+          profileEndpoint: scopeOnly ? 'no-profile-scope' : undefined,
         }
       : null,
     identityRepaired: repaired || undefined,
@@ -13201,15 +13288,33 @@ async function cmdStatus(ctx, rest) {
           ', but ~/.claude.json is labelled ' +
           (id.labelEmail || '(none)') +
           '.\n     Fix the label (the login is untouched): ' +
-          style.bold('keyflip status --fix'),
+          style.bold(scopeOnly && !id.verified ? 'keyflip status --fix --force' : 'keyflip status --fix'),
       );
     if (repaired && !repaired.error)
-      print('  ' + style.ok('✅') + ' label repaired → ' + (repaired.email || repaired.name));
+      print(
+        '  ' +
+          style.ok('✅') +
+          ' label repaired → ' +
+          (repaired.email || repaired.name) +
+          (repaired.forced
+            ? style.dim(
+                '  (forced: the live token is the login capture ' +
+                  repaired.evidence.slot +
+                  '; logged in ' +
+                  path.join(ctx.configDir, 'logs', 'keyflip.log') +
+                  ')',
+              )
+            : ''),
+      );
     else if (repaired && repaired.error) print('  ' + style.warn('⚠ ' + repaired.error));
     if (id && id.mismatch && !id.verified)
       print(
         style.dim(
-          '  (offline match only: the endpoint has not confirmed it yet, so nothing is repaired automatically)',
+          scopeOnly
+            ? '  (offline match only: the live token is inference-only (' +
+                scopeOnly.scopes.join(' ') +
+                '), so the profile endpoint cannot confirm it — it answers 403 without user:profile. --fix --force accepts a match to the login capture.)'
+            : '  (offline match only: the endpoint has not confirmed it yet, so nothing is repaired automatically)',
         ),
       );
     if (id && id.wrongCredentialIn && id.wrongCredentialIn.length)

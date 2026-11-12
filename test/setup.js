@@ -18,6 +18,9 @@ process.env.TMP = root;
 // Fixture tokens must never reach Anthropic: the profile endpoint (identity.js) stays offline unless
 // a test injects its own fetch. Inherited by every CLI a test spawns.
 process.env.KEYFLIP_TEST_OFFLINE = '1';
+// The failover reads keysmith's config (its alias and caps): never the machine's real one. A test
+// that needs one passes its own file (opts.keysmithConfig / KEYSMITH_CONFIG for a spawned CLI).
+process.env.KEYSMITH_CONFIG = path.join(root, 'no-keysmith', 'config.json');
 
 process.on('exit', function () {
   try {

@@ -1,6 +1,8 @@
-// P4: API failover through keysmith — alias chain gmail API -> agy -> kiro-emu, a 25 USD monthly
-// cap on the gmail promo key. keysmith is never run: a fake runner stands in for its CLI, a temp
-// file for its config, a fake fetch for its gateway. No real key, keychain, settings or app.
+// P4: API failover through keysmith. keysmith OWNS the failover: its alias `claude-failover`
+// (gmail API key -> kiro-emu -> agy) and the spend cap on the paid first leg (25 USD over a window).
+// keyflip only reads them, mints a scoped key and engages once the running gateway reports the cap;
+// it never creates an alias or writes a cap. keysmith is never run: a fake runner stands in for its
+// CLI, a temp file for its config, a fake fetch for its gateway. No real key, keychain, settings or app.
 import test from 'node:test';
 import assert from 'node:assert';
 import fs from 'fs';
@@ -11,35 +13,30 @@ import * as provider from '../src/provider.js';
 import * as autosw from '../src/autoswitch.js';
 import * as core from '../src/core.js';
 import * as history from '../src/history.js';
-import * as config from '../src/config.js';
 import { spawnSync } from 'child_process';
 import { fileURLToPath } from 'url';
 
 const GATEWAY_KEY = 'ks_FAKE_GATEWAY_KEY_FOR_TESTS';
+const LEGS = ['claude-failover-api/claude-opus-5-5', 'kiro-emu/claude-opus-5.5', 'agy/claude-sonnet-5-5-low'];
 
-function keysmithConfig(ctx) {
+// keysmith's config as it is on the machine since 12 Nov: the failover alias, its own adapter for the
+// gmail key, a windowed 25 USD cap on it — and claude-api, which the failover must leave alone.
+function keysmithConfig(ctx, edit) {
   const p = path.join(ctx.home, 'keysmith', 'config.json');
   fs.mkdirSync(path.dirname(p), { recursive: true });
-  fs.writeFileSync(
-    p,
-    JSON.stringify(
-      {
-        host: '127.0.0.1',
-        port: 8787,
-        auth: { keys: ['ks_EXISTING'] },
-        adapters: {
-          'claude-api': {
-            kind: 'http',
-            apiKey: '{exec:/usr/bin/security find-generic-password -s keyflip:provider__gmail-api -w}',
-          },
-        },
-        limits: { spend: { other: 5 } },
-      },
-      null,
-      2,
-    ),
-    { mode: 0o600 },
-  );
+  const c = {
+    host: '127.0.0.1',
+    port: 8787,
+    auth: { keys: ['ks_EXISTING'] },
+    adapters: {
+      'claude-api': { kind: 'http', apiKey: '{exec:/usr/bin/security find-generic-password -s gmail-api -w}' },
+      'claude-failover-api': { kind: 'http', apiKey: '{exec:/usr/bin/security find-generic-password -s gmail-api -w}' },
+    },
+    aliases: { chat: ['agy/gemini-4-argon-high'], 'claude-failover': LEGS.slice() },
+    limits: { spend: { 'claude-failover-api': { usd: 25, since: '2026-11-12', until: '2026-12-09' }, other: 5 } },
+  };
+  if (edit) edit(c);
+  fs.writeFileSync(p, JSON.stringify(c, null, 2), { mode: 0o600 });
   return p;
 }
 // Plays keysmith's CLI: records argv; `key add … --out F` writes a key into F like the real one.
@@ -49,136 +46,29 @@ function fakeKeysmith(state) {
     if (cmd === 'which') return { code: 1, stdout: '' };
     const sub = args.slice(1);
     if (sub[0] === 'key' && sub[1] === 'add') {
+      if (state.keyFails) return { code: 1, stdout: '', stderr: 'unknown pattern' };
       const out = sub[sub.indexOf('--out') + 1];
       fs.writeFileSync(out, GATEWAY_KEY + '\n', { mode: 0o600 });
       return { code: 0, stdout: 'added (written to file)' };
     }
-    return {
-      code: state.aliasFails && sub[0] === 'alias' ? 1 : 0,
-      stdout: '',
-      stderr: state.aliasFails ? 'unknown adapter' : '',
-    };
+    return { code: 0, stdout: '', stderr: '' };
   };
 }
 
-test('the plan: alias chain gmail API -> agy -> kiro-emu, $25 on the first (paid) leg', function () {
-  const p = failover.plan(makeCtx());
-  assert.deepStrictEqual(p.legs, [
-    'claude-api/claude-opus-5-5',
-    'agy/claude-opus-5-5-medium',
-    'kiro-emu/claude-opus-5.5',
-  ]);
+test('the plan: keysmith alias claude-failover, legs and paid leg read from keysmith, at most $25', function () {
+  const ctx = makeCtx();
+  const p = failover.plan(ctx);
+  assert.strictEqual(p.alias, 'claude-failover');
   assert.strictEqual(p.capUsd, 25);
-  assert.strictEqual(p.capAdapter, 'claude-api');
   assert.strictEqual(p.gatewayUrl, 'http://127.0.0.1:8787');
-  assert.strictEqual(p.alias, 'keyflip-failover');
+  assert.strictEqual(p.legs, null, 'keyflip has no legs of its own');
+  const rp = failover.resolvePlan(ctx, { keysmithConfig: keysmithConfig(ctx) });
+  assert.deepStrictEqual(rp.legs, LEGS);
+  assert.strictEqual(rp.capAdapter, 'claude-failover-api');
+  assert.deepStrictEqual(rp.configCap, { usd: 25, text: '$25 over 2026-11-12..2026-12-09' });
 });
 
-test('setup: alias, spend cap (adapter; the account only on request), scoped key, provider profile', async function () {
-  const ctx = makeCtx();
-  const cfgPath = keysmithConfig(ctx);
-  const state = {};
-  const r = await failover.setup(ctx, {
-    run: fakeKeysmith(state),
-    keysmithConfig: cfgPath,
-    keysmithDir: '/opt/keysmith',
-    accountOf: () => 'keyflip:provider__gmail-api',
-  });
-  assert.strictEqual(r.ok, true, JSON.stringify(r.steps));
-  const alias = state.calls.find((c) => c[2] === 'alias');
-  assert.deepStrictEqual(alias, [
-    process.execPath,
-    '/opt/keysmith/src/cli.js',
-    'alias',
-    'keyflip-failover',
-    'claude-api/claude-opus-5-5',
-    'agy/claude-opus-5-5-medium',
-    'kiro-emu/claude-opus-5.5',
-  ]);
-  const keyAdd = state.calls.find((c) => c[2] === 'key');
-  const allow = keyAdd[keyAdd.indexOf('--allow') + 1].split(',');
-  assert.deepStrictEqual(allow, [
-    'alias:keyflip-failover',
-    'claude-api/claude-opus-5-5',
-    'agy/claude-opus-5-5-medium',
-    'kiro-emu/claude-opus-5.5',
-  ]);
-  assert.ok(keyAdd.indexOf('--out') !== -1, 'the key comes back through a file, never stdout');
-  assert.strictEqual(ctx.store.getProfile('provider__keysmith-failover'), GATEWAY_KEY);
-  assert.ok(JSON.stringify(r).indexOf(GATEWAY_KEY) === -1, 'the key is in no result');
-  const ks = JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
-  assert.strictEqual(ks.limits.spend['adapter:claude-api'], 25);
-  assert.strictEqual(
-    ks.limits.spend['account:keyflip:provider__gmail-api'],
-    undefined,
-    "the key's whole account is NOT capped by default: other work on that key goes through keysmith too",
-  );
-  assert.strictEqual(ks.limits.spend.other, 5, 'existing caps kept');
-  assert.deepStrictEqual(ks.auth.keys, ['ks_EXISTING'], 'the rest of the config untouched');
-  assert.strictEqual(fs.statSync(cfgPath).mode & 0o777, 0o600, 'mode kept');
-  const meta = provider.read(ctx, 'keysmith-failover');
-  assert.strictEqual(meta.baseUrl, 'http://127.0.0.1:8787');
-  assert.strictEqual(meta.models.default, 'keyflip-failover');
-  assert.strictEqual(meta.models.smallFast, 'keyflip-failover', 'background models go through the alias too');
-  assert.strictEqual(r.restartGateway, true);
-});
-
-test('setup caps the whole credential account only when failover.capAccount is set', async function () {
-  const ctx = makeCtx();
-  config.set(ctx, 'failover.capAccount', 'true');
-  const cfgPath = keysmithConfig(ctx);
-  const r = await failover.setup(ctx, {
-    run: fakeKeysmith({}),
-    keysmithConfig: cfgPath,
-    accountOf: () => 'keyflip:provider__gmail-api',
-  });
-  assert.strictEqual(r.ok, true, JSON.stringify(r.steps));
-  const ks = JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
-  assert.strictEqual(ks.limits.spend['account:keyflip:provider__gmail-api'], 25);
-});
-
-test('REGRESSION: setup never replaces a cap keysmith already has (windowed, nested or looser)', async function () {
-  const ctx = makeCtx();
-  const cfgPath = keysmithConfig(ctx);
-  const ks0 = JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
-  // The owner's own budget on that adapter: one total over a window of days (keysmith 1708760).
-  ks0.limits.spend = { other: 5, adapters: { 'claude-api': { usd: 185, since: '2026-11-06', until: '2026-12-09' } } };
-  fs.writeFileSync(cfgPath, JSON.stringify(ks0), { mode: 0o600 });
-  const r = await failover.setup(ctx, { run: fakeKeysmith({}), keysmithConfig: cfgPath, accountOf: () => null });
-  const step = r.steps.find((s) => s.step === 'spend-cap');
-  assert.strictEqual(step.changed, false);
-  assert.strictEqual(step.ok, false, 'a looser cap than $25 is reported, and the failover stays off');
-  assert.ok(
-    /kept the existing cap on adapter:claude-api \(\$185 over 2026-11-06\.\.2026-12-09\)/.test(step.detail),
-    step.detail,
-  );
-  const ks = JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
-  assert.deepStrictEqual(ks.limits.spend.adapters['claude-api'], {
-    usd: 185,
-    since: '2026-11-06',
-    until: '2026-12-09',
-  });
-  assert.strictEqual(ks.limits.spend['adapter:claude-api'], undefined, 'no second, conflicting cap added');
-  // a stricter existing cap is fine as it is
-  ks.limits.spend.adapters['claude-api'] = 10;
-  fs.writeFileSync(cfgPath, JSON.stringify(ks), { mode: 0o600 });
-  const r2 = await failover.setup(ctx, { run: fakeKeysmith({}), keysmithConfig: cfgPath, accountOf: () => null });
-  assert.strictEqual(r2.steps.find((s) => s.step === 'spend-cap').ok, true);
-  assert.strictEqual(JSON.parse(fs.readFileSync(cfgPath, 'utf8')).limits.spend.adapters['claude-api'], 10);
-});
-
-test('setup is idempotent: no second key, cap unchanged', async function () {
-  const ctx = makeCtx();
-  const cfgPath = keysmithConfig(ctx);
-  const s1 = {};
-  await failover.setup(ctx, { run: fakeKeysmith(s1), keysmithConfig: cfgPath, accountOf: () => null });
-  const s2 = {};
-  const r = await failover.setup(ctx, { run: fakeKeysmith(s2), keysmithConfig: cfgPath, accountOf: () => null });
-  assert.ok(!s2.calls.some((c) => c.indexOf('key') !== -1 && c.indexOf('add') !== -1), 'no second key minted');
-  assert.strictEqual(r.steps.find((s) => s.step === 'spend-cap').changed, false);
-});
-
-test('setup --dry-run writes nothing and runs nothing but `which`', async function () {
+test('setup: checks keysmith alias + cap (never edits them), mints a scoped key, saves the provider', async function () {
   const ctx = makeCtx();
   const cfgPath = keysmithConfig(ctx);
   const before = fs.readFileSync(cfgPath, 'utf8');
@@ -186,35 +76,133 @@ test('setup --dry-run writes nothing and runs nothing but `which`', async functi
   const r = await failover.setup(ctx, {
     run: fakeKeysmith(state),
     keysmithConfig: cfgPath,
-    dryRun: true,
-    accountOf: () => null,
+    keysmithDir: '/opt/keysmith',
   });
-  assert.strictEqual(r.ok, true);
+  assert.strictEqual(r.ok, true, JSON.stringify(r.steps));
   assert.deepStrictEqual(
-    state.calls.map((c) => c[0]),
-    ['which'],
+    r.steps.map((s) => s.step),
+    ['alias', 'spend-cap', 'key', 'provider'],
   );
+  assert.ok(/claude-failover = claude-failover-api\/claude-opus-5-5 -> kiro-emu/.test(r.steps[0].detail));
+  assert.ok(/\$25 over 2026-11-12\.\.2026-12-09/.test(r.steps[1].detail), r.steps[1].detail);
+  // keysmith ran exactly once: the key. No `alias`, nothing else.
+  const ks = state.calls.filter((c) => c[0] !== 'which');
+  assert.strictEqual(ks.length, 1);
+  assert.deepStrictEqual(ks[0].slice(0, 5), [
+    process.execPath,
+    '/opt/keysmith/src/cli.js',
+    'key',
+    'add',
+    'keyflip-failover',
+  ]);
+  assert.ok(!state.calls.some((c) => c.indexOf('alias') !== -1), 'no alias created or changed');
+  const allow = ks[0][ks[0].indexOf('--allow') + 1].split(',');
+  assert.deepStrictEqual(allow, ['alias:claude-failover'].concat(LEGS));
+  assert.ok(
+    !allow.some((a) => a === 'claude-api' || a.indexOf('claude-api/') === 0),
+    'the key cannot reach claude-api',
+  );
+  assert.ok(ks[0].indexOf('--out') !== -1, 'the key comes back through a file, never stdout');
+  assert.strictEqual(ctx.store.getProfile('provider__keysmith-failover'), GATEWAY_KEY);
+  assert.ok(JSON.stringify(r).indexOf(GATEWAY_KEY) === -1, 'the key is in no result');
+  assert.strictEqual(fs.readFileSync(cfgPath, 'utf8'), before, "keysmith's config is not touched (caps, aliases)");
+  const meta = provider.read(ctx, 'keysmith-failover');
+  assert.strictEqual(meta.baseUrl, 'http://127.0.0.1:8787');
+  assert.strictEqual(meta.models.default, 'claude-failover');
+  assert.strictEqual(meta.models.smallFast, 'claude-failover', 'background models go through the alias too');
+  assert.strictEqual(provider.readActive(ctx), null, 'saved, not put in use');
+  assert.strictEqual(r.restartGateway, false, 'nothing keysmith reads at start changed');
+});
+
+test('REGRESSION: setup never creates the alias — a keysmith without claude-failover fails the setup', async function () {
+  const ctx = makeCtx();
+  const cfgPath = keysmithConfig(ctx, (c) => delete c.aliases['claude-failover']);
+  const before = fs.readFileSync(cfgPath, 'utf8');
+  const state = {};
+  const r = await failover.setup(ctx, { run: fakeKeysmith(state), keysmithConfig: cfgPath });
+  assert.strictEqual(r.ok, false);
+  assert.ok(/keysmith has no alias claude-failover/.test(r.steps[0].detail), r.steps[0].detail);
+  assert.ok(!(state.calls || []).some((c) => c[0] !== 'which'), 'keysmith never run');
+  assert.strictEqual(fs.readFileSync(cfgPath, 'utf8'), before);
+  assert.strictEqual(ctx.store.getProfile('provider__keysmith-failover'), null, 'no key minted');
+  assert.strictEqual(provider.exists(ctx, 'keysmith-failover'), false);
+  const none = await failover.setup(makeCtx(), { run: fakeKeysmith({}), keysmithConfig: '/nonexistent/keysmith.json' });
+  assert.strictEqual(none.ok, false);
+  assert.ok(/could not read the keysmith config/.test(none.steps[0].detail));
+});
+
+test('REGRESSION: setup never writes a cap — a missing or looser one is reported and the failover stays off', async function () {
+  for (const edit of [
+    (c) => delete c.limits.spend['claude-failover-api'],
+    (c) => (c.limits.spend['claude-failover-api'] = { usd: 185, since: '2026-11-06', until: '2026-12-09' }),
+  ]) {
+    const ctx = makeCtx();
+    const cfgPath = keysmithConfig(ctx, edit);
+    const before = fs.readFileSync(cfgPath, 'utf8');
+    const r = await failover.setup(ctx, { run: fakeKeysmith({}), keysmithConfig: cfgPath });
+    const step = r.steps.find((s) => s.step === 'spend-cap');
+    assert.strictEqual(step.ok, false, step.detail);
+    assert.ok(/keyflip never writes caps|looser than the \$25/.test(step.detail), step.detail);
+    assert.strictEqual(r.ok, false);
+    assert.strictEqual(fs.readFileSync(cfgPath, 'utf8'), before, 'no cap added or replaced');
+  }
+  // a stricter cap, nested the other way keysmith accepts, is fine as it is
+  const ctx = makeCtx();
+  const cfgPath = keysmithConfig(ctx, (c) => (c.limits.spend = { adapters: { 'claude-failover-api': 10 } }));
+  const r = await failover.setup(ctx, { run: fakeKeysmith({}), keysmithConfig: cfgPath });
+  assert.strictEqual(r.steps.find((s) => s.step === 'spend-cap').ok, true);
+});
+
+test('setup is idempotent: no second key', async function () {
+  const ctx = makeCtx();
+  const cfgPath = keysmithConfig(ctx);
+  await failover.setup(ctx, { run: fakeKeysmith({}), keysmithConfig: cfgPath });
+  const s2 = {};
+  const r = await failover.setup(ctx, { run: fakeKeysmith(s2), keysmithConfig: cfgPath });
+  assert.strictEqual(r.ok, true);
+  assert.ok(!(s2.calls || []).some((c) => c.indexOf('key') !== -1 && c.indexOf('add') !== -1), 'no second key minted');
+});
+
+test('setup --dry-run writes nothing and runs nothing', async function () {
+  const ctx = makeCtx();
+  const cfgPath = keysmithConfig(ctx);
+  const before = fs.readFileSync(cfgPath, 'utf8');
+  const state = {};
+  const r = await failover.setup(ctx, { run: fakeKeysmith(state), keysmithConfig: cfgPath, dryRun: true });
+  assert.strictEqual(r.ok, true);
+  assert.deepStrictEqual(state.calls || [], []);
   assert.strictEqual(fs.readFileSync(cfgPath, 'utf8'), before);
   assert.strictEqual(provider.exists(ctx, 'keysmith-failover'), false);
+  assert.strictEqual(ctx.store.getProfile('provider__keysmith-failover'), null);
 });
 
 test('a failing keysmith step is reported, not hidden', async function () {
   const ctx = makeCtx();
-  const r = await failover.setup(ctx, {
-    run: fakeKeysmith({ aliasFails: true }),
-    keysmithConfig: keysmithConfig(ctx),
-    accountOf: () => null,
-  });
+  const r = await failover.setup(ctx, { run: fakeKeysmith({ keyFails: true }), keysmithConfig: keysmithConfig(ctx) });
   assert.strictEqual(r.ok, false);
-  assert.ok(/unknown adapter/.test(r.steps.find((s) => s.step === 'alias').detail));
+  assert.ok(/unknown pattern/.test(r.steps.find((s) => s.step === 'key').detail));
 });
 
-// The running gateway: /v1/models, and /v1/keysmith/usage reporting the spend caps it LOADED.
-// spend: rows as keysmith returns them for the scoped key (default: $25 on claude-api).
+// The running gateway: /v1/models, and /v1/keysmith/usage reporting the spend caps it LOADED, as
+// keysmith returns them to the scoped key (spent = that key's own share). Default: the windowed $25.
 function gateway(models, status, spend) {
   const calls = [];
   const rows =
-    spend !== undefined ? spend : [{ kind: 'adapter', target: 'claude-api', cap: 25, spent: 0, exceeded: false }];
+    spend !== undefined
+      ? spend
+      : [
+          {
+            kind: 'adapter',
+            target: 'claude-failover-api',
+            spent: 0,
+            cap: 25,
+            exceeded: false,
+            window: { since: '2026-11-12', until: '2026-12-09' },
+            windowStatus: 'open',
+            month: null,
+            resetAt: null,
+          },
+        ];
   const f = async (url, opts) => {
     calls.push({ url: url, auth: opts.headers.Authorization });
     if (status) return { ok: false, status: status };
@@ -228,71 +216,104 @@ function gateway(models, status, spend) {
   return f;
 }
 async function setUp(ctx) {
-  await failover.setup(ctx, { run: fakeKeysmith({}), keysmithConfig: keysmithConfig(ctx), accountOf: () => null });
+  const cfgPath = keysmithConfig(ctx);
+  await failover.setup(ctx, { run: fakeKeysmith({}), keysmithConfig: cfgPath });
+  return cfgPath;
 }
 
-test('gatewayReady: up + serving the alias; not set up; alias missing; unreachable', async function () {
+test('gatewayReady: up + serving the alias + the cap; not set up; alias missing; unreachable', async function () {
   const ctx = makeCtx();
-  assert.ok(/not set up/.test((await failover.gatewayReady(ctx, { fetch: gateway(['keyflip-failover']) })).reason));
-  await setUp(ctx);
-  const f = gateway(['keyflip-failover', 'chat']);
-  assert.strictEqual((await failover.gatewayReady(ctx, { fetch: f })).ok, true);
+  assert.ok(/not set up/.test((await failover.gatewayReady(ctx, { fetch: gateway(['claude-failover']) })).reason));
+  const ksc = await setUp(ctx);
+  const f = gateway(['claude-failover', 'chat']);
+  const ok = await failover.gatewayReady(ctx, { fetch: f, keysmithConfig: ksc });
+  assert.strictEqual(ok.ok, true, ok.reason);
+  assert.deepStrictEqual(ok.cap, {
+    kind: 'adapter',
+    target: 'claude-failover-api',
+    cap: 25,
+    spent: 0,
+    exceeded: false,
+    window: { since: '2026-11-12', until: '2026-12-09' },
+    windowStatus: 'open',
+  });
+  assert.strictEqual(failover.capText(ok.cap), '$25 over 2026-11-12..2026-12-09');
   assert.strictEqual(f.calls[0].url, 'http://127.0.0.1:8787/v1/models');
   assert.strictEqual(f.calls[0].auth, 'Bearer ' + GATEWAY_KEY);
-  assert.ok(/restart keysmith/.test((await failover.gatewayReady(ctx, { fetch: gateway(['chat']) })).reason));
+  const noAlias = await failover.gatewayReady(ctx, { fetch: gateway(['chat']), keysmithConfig: ksc });
+  assert.ok(/does not serve claude-failover/.test(noAlias.reason));
   const down = async () => {
     throw new Error('ECONNREFUSED');
   };
-  assert.ok(/unreachable/.test((await failover.gatewayReady(ctx, { fetch: down })).reason));
+  assert.ok(/unreachable/.test((await failover.gatewayReady(ctx, { fetch: down, keysmithConfig: ksc })).reason));
 });
 
 test('REGRESSION: the failover never engages uncapped — the RUNNING gateway must report the cap', async function () {
   const ctx = makeCtx();
-  await setUp(ctx);
-  // config written, gateway not restarted: it serves the alias but enforces no cap yet
-  const noCap = gateway(['keyflip-failover'], null, []);
-  const r1 = await failover.gatewayReady(ctx, { fetch: noCap });
+  const ksc = await setUp(ctx);
+  // the config holds the cap, but the running gateway does not enforce one
+  const noCap = gateway(['claude-failover'], null, []);
+  const r1 = await failover.gatewayReady(ctx, { fetch: noCap, keysmithConfig: ksc });
   assert.strictEqual(r1.ok, false);
-  assert.ok(/no spend cap of at most \$25 on claude-api/.test(r1.reason), r1.reason);
+  assert.ok(/no spend cap of at most \$25 on claude-failover-api/.test(r1.reason), r1.reason);
   // an older gateway with no usage route: cannot prove the cap -> refuse
-  const r2 = await failover.gatewayReady(ctx, { fetch: gateway(['keyflip-failover'], null, null) });
+  const r2 = await failover.gatewayReady(ctx, { fetch: gateway(['claude-failover'], null, null), keysmithConfig: ksc });
   assert.strictEqual(r2.ok, false);
   assert.ok(/refusing to fail over uncapped/.test(r2.reason));
-  // a looser cap does not count
-  const loose = gateway(['keyflip-failover'], null, [{ kind: 'adapter', target: 'claude-api', cap: 185 }]);
-  assert.strictEqual((await failover.gatewayReady(ctx, { fetch: loose })).ok, false);
+  // a looser cap, or a cap on another adapter (claude-api), does not count
+  for (const rows of [
+    [{ kind: 'adapter', target: 'claude-failover-api', cap: 185 }],
+    [{ kind: 'adapter', target: 'claude-api', cap: 25 }],
+  ])
+    assert.strictEqual(
+      (await failover.gatewayReady(ctx, { fetch: gateway(['claude-failover'], null, rows), keysmithConfig: ksc })).ok,
+      false,
+    );
+  // the legs unknown (keysmith config unreadable): no paid leg to check -> refuse
+  const blind = await failover.gatewayReady(ctx, {
+    fetch: gateway(['claude-failover']),
+    keysmithConfig: '/nonexistent',
+  });
+  assert.strictEqual(blind.ok, false);
   const log = [];
-  const e = await failover.engage(ctx, { from: 'gmail' }, { fetch: noCap, useProvider: () => log.push('use') });
+  const e = await failover.engage(
+    ctx,
+    { from: 'gmail' },
+    { fetch: noCap, keysmithConfig: ksc, useProvider: () => log.push('use') },
+  );
   assert.strictEqual(e.ok, false);
   assert.deepStrictEqual(log, [], 'Claude Code was never pointed at the gateway');
   assert.strictEqual(failover.state(ctx), null);
   // the per-tick health check does not re-prove the cap (proven at engage), only that it serves
   assert.strictEqual((await failover.gatewayReady(ctx, { fetch: noCap, capCheck: false })).ok, true);
   // a reached cap still engages: keysmith skips the paid leg and the free legs carry on
-  const spent = gateway(['keyflip-failover'], null, [
-    { kind: 'adapter', target: 'claude-api', cap: 25, spent: 25.2, exceeded: true },
+  const spent = gateway(['claude-failover'], null, [
+    { kind: 'adapter', target: 'claude-failover-api', cap: 25, spent: 25.2, exceeded: true },
   ]);
-  const ok = await failover.gatewayReady(ctx, { fetch: spent });
+  const ok = await failover.gatewayReady(ctx, { fetch: spent, keysmithConfig: ksc });
   assert.strictEqual(ok.ok, true);
   assert.strictEqual(ok.cap.exceeded, true);
 });
 
 test('engage points Claude Code at the gateway, asks Desktop to follow, records it; release undoes it', async function () {
   const ctx = makeCtx();
-  await setUp(ctx);
+  const ksc = await setUp(ctx);
   const log = [];
   const deps = {
-    fetch: gateway(['keyflip-failover']),
+    fetch: gateway(['claude-failover']),
+    keysmithConfig: ksc,
     useProvider: (n) => log.push('use:' + n),
     useOfficial: () => log.push('official'),
     requestDesktop: (rec) => log.push('desktop:' + rec.kind),
     notify: async (ev, msg) => log.push('notify:' + ev + ':' + msg),
   };
   const e = await failover.engage(ctx, { from: 'gmail' }, deps);
-  assert.strictEqual(e.ok, true);
+  assert.strictEqual(e.ok, true, e.reason);
   assert.ok(failover.state(ctx).engaged);
+  assert.strictEqual(failover.state(ctx).alias, 'claude-failover');
+  assert.strictEqual(failover.state(ctx).cap.cap, 25);
   assert.deepStrictEqual(log.slice(0, 2), ['use:keysmith-failover', 'desktop:gateway-on']);
-  assert.ok(/capped at \$25/.test(log[2]));
+  assert.ok(/capped at \$25 over 2026-11-12\.\.2026-12-09 by keysmith/.test(log[2]), log[2]);
   assert.strictEqual((await failover.engage(ctx, {}, deps)).already, true, 'engaging twice is a no-op');
   const r = await failover.release(ctx, { to: 'yahoo' }, deps);
   assert.strictEqual(r.ok, true);
@@ -304,12 +325,17 @@ test('engage points Claude Code at the gateway, asks Desktop to follow, records 
 
 test('engage refuses when the gateway is not ready, and changes nothing', async function () {
   const ctx = makeCtx();
-  await setUp(ctx);
+  const ksc = await setUp(ctx);
   const log = [];
   const r = await failover.engage(
     ctx,
     {},
-    { fetch: gateway([], 502), useProvider: () => log.push('use'), requestDesktop: () => log.push('d') },
+    {
+      fetch: gateway([], 502),
+      keysmithConfig: ksc,
+      useProvider: () => log.push('use'),
+      requestDesktop: () => log.push('d'),
+    },
   );
   assert.strictEqual(r.ok, false);
   assert.ok(/502/.test(r.reason));
@@ -635,7 +661,7 @@ test('REGRESSION: MCP keyflip_autoswitch_tick clamps the threshold like the CLI 
 
 // ---- the CLI surface (sandbox HOME; keysmith is not installed there, nothing is reachable) ----
 const BIN = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'keyflip.js');
-function cli(home, args) {
+function cli(home, args, ksConfig) {
   return spawnSync(process.execPath, [BIN].concat(args), {
     encoding: 'utf8',
     env: Object.assign({}, process.env, {
@@ -644,7 +670,7 @@ function cli(home, args) {
       XDG_CONFIG_HOME: path.join(home, '.config'),
       KEYFLIP_CONFIG_DIR: path.join(home, '.config', 'keyflip'),
       KEYSMITH_DIR: path.join(home, 'no-keysmith'),
-      KEYSMITH_CONFIG: path.join(home, 'no-keysmith', 'config.json'),
+      KEYSMITH_CONFIG: ksConfig || path.join(home, 'no-keysmith', 'config.json'),
       KEYFLIP_TEST_CLAUDE: 'stopped',
       KEYFLIP_APP_BUNDLE: path.join(home, 'no-such-Claude.app'),
       PATH: path.dirname(process.execPath) + ':/usr/bin:/bin',
@@ -659,12 +685,31 @@ test('CLI `failover status` and `failover setup --dry-run` (nothing set up, noth
   assert.strictEqual(j.engaged, false);
   assert.strictEqual(j.gateway.ok, false);
   assert.ok(/not set up/.test(j.gateway.reason));
-  const dry = cli(home, ['failover', 'setup', '--dry-run', '--json']);
+  assert.strictEqual(j.plan.alias, 'claude-failover');
+  assert.ok(
+    /could not read the keysmith config/.test(j.plan.aliasError),
+    'no keysmith: the legs are unknown, not invented',
+  );
+  // No keysmith config: setup stops at the alias, which it never creates.
+  const blind = cli(home, ['failover', 'setup', '--dry-run', '--json']);
+  assert.strictEqual(blind.status, 1);
+  assert.deepStrictEqual(
+    JSON.parse(blind.stdout).failoverSetup.steps.map((s) => s.step),
+    ['alias'],
+  );
+  // With keysmith's alias and cap in place, the dry run walks every step and touches nothing.
+  const ksc = keysmithConfig({ home: home });
+  const before = fs.readFileSync(ksc, 'utf8');
+  const dry = cli(home, ['failover', 'setup', '--dry-run', '--json'], ksc);
   assert.strictEqual(dry.status, 0, dry.stderr);
   const d = JSON.parse(dry.stdout).failoverSetup;
   assert.deepStrictEqual(
     d.steps.map((s) => s.step),
     ['alias', 'spend-cap', 'key', 'provider'],
   );
+  assert.strictEqual(d.restartGateway, false);
+  assert.strictEqual(fs.readFileSync(ksc, 'utf8'), before);
   assert.ok(!fs.existsSync(path.join(home, '.config', 'keyflip', 'providers', 'keysmith-failover.json')));
+  const human = cli(home, ['failover', 'status'], ksc).stdout;
+  assert.ok(/chain:\s+claude-failover = claude-failover-api\/claude-opus-5-5 → kiro-emu/.test(human), human);
 });

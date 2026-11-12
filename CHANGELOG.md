@@ -20,6 +20,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **P2 follow-up: an inference-only live token, the status line, and the keysmith-owned failover.**
+  The profile endpoint needs the `user:profile` scope, so a one-year `login --long-lived` token got a
+  403 every time and its wrong label could never be repaired. Such a token is no longer sent there;
+  `keyflip status --fix --force` relabels on a fingerprint match to the account's login capture
+  (`longlived__<name>`) only, with an audit line, and nothing runs it automatically. `keyflip
+  statusline` names the account by token, like `status`. `keyflip failover` now uses keysmith's own
+  `claude-failover` alias and the cap keysmith enforces on its paid leg: it never creates an alias or
+  writes a cap (`failover.legs` and `failover.capAccount` are gone).
+
 - **Streaming JSONL conversation indexing (>160 MB) and multilingual `bge-m3` embeddings with opt-in background migration.**
   `src/conversations.js`, `src/transcript.js`, and `src/foreign.js` now stream uncompressed line-based
   transcripts (Claude Code, Codex rollouts, Kiro CLI/IDE, Gemini JSONL, Command Code, Aider) in 1 MB

@@ -1934,7 +1934,10 @@ const TOOLS = [
       type: 'object',
       properties: {
         embed: { type: 'boolean', description: 'Also compute embeddings (needed for semantic/hybrid).' },
-        background: { type: 'boolean', description: 'When embed=true, regenerate vectors incrementally in a detached background worker.' },
+        background: {
+          type: 'boolean',
+          description: 'When embed=true, regenerate vectors incrementally in a detached background worker.',
+        },
         force: { type: 'boolean', description: 'Re-parse even when mtime+size are unchanged.' },
         app: { type: 'string', description: 'Comma-separated app ids for a partial build.' },
         limit_sources: { type: 'integer', description: 'Parse at most N sources (quick slice).' },
@@ -3691,7 +3694,7 @@ const TOOLS = [
     name: 'keyflip_autoswitch_tick',
     title: 'Evaluate usage once and auto-switch if over threshold',
     description:
-      "Run ONE autoswitch evaluation: check the active account's usage headroom and, if it is at/over the threshold (clamped 50..100), switch the CLI to the next available account. If keyflip failover setup was done and EVERY account is known to be over the threshold, it moves Claude Code onto the PAID API failover through keysmith (capped by the running gateway, default $25/month) and back once an account recovers. A switch is recorded as a pending Claude Desktop restart (the autoswitch service performs it later, only while Desktop is idle, with a notification). Returns the decision (state / headroom / switchedTo / failover*). Mutating (MAY switch the active account or engage the paid failover) — tell the user both, ask, then confirm=true.",
+      "Run ONE autoswitch evaluation: check the active account's usage headroom and, if it is at/over the threshold (clamped 50..100), switch the CLI to the next available account. If keyflip failover setup was done and EVERY account is known to be over the threshold, it moves Claude Code onto the PAID API failover through keysmith (keysmith's alias claude-failover; its paid leg capped by the running gateway, at most $25 by default) and back once an account recovers. A switch is recorded as a pending Claude Desktop restart (the autoswitch service performs it later, only while Desktop is idle, with a notification). Returns the decision (state / headroom / switchedTo / failover*). Mutating (MAY switch the active account or engage the paid failover) — tell the user both, ask, then confirm=true.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -3771,8 +3774,18 @@ const TOOLS = [
       // P5: Claude Desktop follows — but this call may be running INSIDE Desktop, so it only records
       // the restart; the background service takes it when Desktop is idle.
       const to = r && r.switchedTo;
-      if (ctx.appDataDir && (r.state === 'switched' || r.state === 'switched-back') && to && appauth.hasProfile(ctx, to.name)) {
-        _desktoprestart.request(ctx, { kind: 'account', target: to.name, email: to.email || null, reason: 'autoswitch' });
+      if (
+        ctx.appDataDir &&
+        (r.state === 'switched' || r.state === 'switched-back') &&
+        to &&
+        appauth.hasProfile(ctx, to.name)
+      ) {
+        _desktoprestart.request(ctx, {
+          kind: 'account',
+          target: to.name,
+          email: to.email || null,
+          reason: 'autoswitch',
+        });
         r.desktopRestart = 'pending (taken by the autoswitch service when Claude Desktop is idle)';
       }
       return r;

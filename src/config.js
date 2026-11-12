@@ -80,25 +80,15 @@ SCHEMA['failover.gatewayUrl'] = {
 };
 SCHEMA['failover.alias'] = {
   type: 'string',
-  default: 'keyflip-failover',
-  help: 'The keysmith alias (model name) the failover routes to.',
-};
-SCHEMA['failover.legs'] = {
-  type: 'string',
-  default: '',
-  help: 'Comma-separated alias legs, in order (empty = claude-api/claude-opus-5-5, agy/claude-opus-5-5-medium, kiro-emu/claude-opus-5.5).',
+  default: 'claude-failover',
+  help: 'The keysmith alias (model name) the failover routes to. keysmith defines it and its legs; keyflip never creates or edits it.',
 };
 SCHEMA['failover.capUsd'] = {
   type: 'int',
   default: 25,
   min: 0,
   max: 10000,
-  help: 'Monthly USD cap keysmith enforces on the first (paid API) leg; the failover engages only once the running gateway reports it.',
-};
-SCHEMA['failover.capAccount'] = {
-  type: 'bool',
-  default: false,
-  help: "Also cap the paid leg's whole credential account in keysmith (affects EVERY use of that API key through keysmith, not only the failover).",
+  help: "The largest USD spend cap on the alias's first (paid API) leg the failover accepts. keysmith sets and enforces the cap (limits.spend, monthly or over a window); the failover engages only once the running gateway reports one at or below this.",
 };
 SCHEMA['failover.provider'] = {
   type: 'string',

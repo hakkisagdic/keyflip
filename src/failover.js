@@ -1,13 +1,14 @@
 // P4: when EVERY Claude account is over the threshold, keep working — on the API, through keysmith.
 //
-// keysmith (a separate tool) runs an OpenAI/Anthropic-compatible gateway on 127.0.0.1:8787. keyflip
-// only CONFIGURES and CALLS it, never edits its code:
-//   - an alias chain, tried in order while nothing has reached the client:
-//       claude-api (the gmail promo API key)  ->  agy  ->  kiro-emu
-//   - a monthly spend cap on the gmail promo key (keysmith `limits.spend`, default 25 USD): past
-//     it keysmith refuses that leg with a 429 and the alias falls through to the next one
-//   - a key scoped to exactly that alias and its legs, stored in keyflip's credential store as the
-//     key of a keyflip provider profile (never printed, never on a command line)
+// keysmith (a separate tool) runs an OpenAI/Anthropic-compatible gateway on 127.0.0.1:8787 and OWNS
+// the failover: its alias `claude-failover` (gmail API key -> kiro-emu -> agy on this machine) and the
+// spend cap on the paid first leg (keysmith `limits.spend`, e.g. 25 USD over 12 Nov..9 Dec), past
+// which the gateway refuses that leg and the alias falls through. keyflip USES that alias, it does
+// not define one: it never creates or edits an alias and never writes a cap. It only
+//   - reads the alias's legs and the paid leg's cap (keysmith's config, in-process, never printed),
+//   - mints a key scoped to exactly that alias and its legs, kept in keyflip's credential store as
+//     the key of a keyflip provider profile (never printed, never on a command line),
+//   - engages only once the RUNNING gateway reports a cap of at most failover.capUsd on that leg.
 // Engaging points Claude Code at the alias (settings.json env, hot reload, no restart) and asks Claude
 // Desktop to move to third-party gateway mode, applied on a restart taken only while it is idle (P5).
 // Releasing undoes both once a Claude account has headroom again.
@@ -27,10 +28,10 @@ import * as _desktoprestart from './desktoprestart.js';
 const STATE_FILE = '.failover-state.json';
 const DEFAULTS = {
   gatewayUrl: 'http://127.0.0.1:8787',
-  alias: 'keyflip-failover',
-  legs: ['claude-api/claude-opus-5-5', 'agy/claude-opus-5-5-medium', 'kiro-emu/claude-opus-5.5'],
+  alias: 'claude-failover',
   capUsd: 25,
   provider: 'keysmith-failover',
+  keyLabel: 'keyflip-failover',
 };
 
 function cfg(ctx, key, dflt) {
@@ -42,30 +43,18 @@ function cfg(ctx, key, dflt) {
   }
 }
 
-// The plan, from config (failover.*) over the defaults. Pure: reads config only.
+// The plan, from config (failover.*) over the defaults. Pure: reads keyflip's config only. The legs
+// are keysmith's (aliasLegs); `capUsd` is the most the failover accepts on the paid leg, not a cap
+// keyflip sets.
 function plan(ctx) {
-  const legsRaw = cfg(ctx, 'failover.legs', '');
-  const legs = legsRaw
-    ? String(legsRaw)
-        .split(',')
-        .map(function (s) {
-          return s.trim();
-        })
-        .filter(Boolean)
-    : DEFAULTS.legs.slice();
-  const alias = cfg(ctx, 'failover.alias', DEFAULTS.alias);
-  const capUsd = cfg(ctx, 'failover.capUsd', DEFAULTS.capUsd);
-  // The first leg is the paid API key: that is what the spend cap guards.
-  const capAdapter = legs.length ? legs[0].split('/')[0] : null;
   return {
     enabled: cfg(ctx, 'failover.enabled', true) !== false,
     gatewayUrl: String(cfg(ctx, 'failover.gatewayUrl', DEFAULTS.gatewayUrl)).replace(/\/+$/, ''),
-    alias: alias,
-    legs: legs,
-    capUsd: capUsd,
-    capAdapter: capAdapter,
-    capAccount: cfg(ctx, 'failover.capAccount', false) === true,
+    alias: cfg(ctx, 'failover.alias', DEFAULTS.alias),
+    capUsd: cfg(ctx, 'failover.capUsd', DEFAULTS.capUsd),
     provider: cfg(ctx, 'failover.provider', DEFAULTS.provider),
+    legs: null,
+    capAdapter: null,
   };
 }
 
@@ -85,21 +74,39 @@ function keysmithConfigPath(opts) {
   if (process.env.KEYSMITH_CONFIG) return process.env.KEYSMITH_CONFIG;
   return path.join(process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config'), 'keysmith', 'config.json');
 }
+// keysmith's config holds the gateway's own keys: it is parsed in-process for the alias and the caps
+// and NEVER printed or written by keyflip.
+function readKeysmithConfig(opts) {
+  const p = keysmithConfigPath(opts);
+  let j;
+  try {
+    j = JSON.parse(fs.readFileSync(p, 'utf8'));
+  } catch (e) {
+    return { error: 'could not read the keysmith config (' + p + '): ' + (e.code || e.message) };
+  }
+  if (!j || typeof j !== 'object' || Array.isArray(j)) return { error: 'the keysmith config is not an object' };
+  return { config: j };
+}
 
-// A cap keysmith already holds for `target` ('adapter:<id>' / 'account:<name>') in any of the forms
-// it accepts (prefixed, nested adapters/accounts, flat id) -> the raw value, or undefined.
-function existingCap(spend, target) {
-  const i = target.indexOf(':');
-  const kind = target.slice(0, i);
-  const id = target.slice(i + 1);
-  if (spend[target] !== undefined && spend[target] !== null) return spend[target];
-  const nests = kind === 'adapter' ? ['adapters', 'adapter', 'byAdapter'] : ['accounts', 'account', 'byAccount'];
+// A cap keysmith holds for an adapter, in any of the forms it accepts (prefixed, nested, flat id)
+// -> the raw value, or undefined.
+function existingCap(spend, adapterId) {
+  if (!spend || typeof spend !== 'object') return undefined;
+  const pre = spend['adapter:' + adapterId];
+  if (pre !== undefined && pre !== null) return pre;
+  const nests = ['adapters', 'adapter', 'byAdapter'];
   for (let n = 0; n < nests.length; n++) {
     const sub = spend[nests[n]];
-    if (sub && typeof sub === 'object' && !Array.isArray(sub) && sub[id] !== undefined && sub[id] !== null)
-      return sub[id];
+    if (
+      sub &&
+      typeof sub === 'object' &&
+      !Array.isArray(sub) &&
+      sub[adapterId] !== undefined &&
+      sub[adapterId] !== null
+    )
+      return sub[adapterId];
   }
-  if (spend[id] !== undefined && spend[id] !== null) return spend[id];
+  if (spend[adapterId] !== undefined && spend[adapterId] !== null) return spend[adapterId];
   return undefined;
 }
 function capUsdOf(v) {
@@ -110,133 +117,95 @@ function capUsdOf(v) {
 function describeCap(v) {
   const usd = capUsdOf(v);
   if (usd === null) return 'no cap';
-  return (
-    '$' + usd + (v && typeof v === 'object' && (v.since || v.until) ? ' over ' + v.since + '..' + v.until : '/month')
-  );
+  const w = v && typeof v === 'object' && (v.since || v.until) ? v : null;
+  return '$' + usd + (w ? ' over ' + (w.since || '…') + '..' + (w.until || '…') : '/month');
 }
 
-// limits.spend in keysmith's config, merged in place (every other key kept, mode kept, atomic).
-// A cap already there is NEVER replaced — it may be the owner's own (a windowed total, a budget for
-// other work on that key); it is reported instead, and gatewayReady decides whether it is tight
-// enough. The file holds the gateway's own keys: it is read and rewritten in-process, NEVER printed.
-function ensureSpendCap(p, targets, capUsd) {
-  const raw = fs.readFileSync(p, 'utf8');
-  const cfgObj = JSON.parse(raw);
-  if (!cfgObj || typeof cfgObj !== 'object' || Array.isArray(cfgObj))
-    throw new Error('keysmith config is not an object');
-  const limits = cfgObj.limits && typeof cfgObj.limits === 'object' ? cfgObj.limits : {};
-  const spend = limits.spend && typeof limits.spend === 'object' && !Array.isArray(limits.spend) ? limits.spend : {};
-  const changed = [];
-  const kept = [];
-  targets.forEach(function (t) {
-    const cur = existingCap(spend, t);
-    if (cur === undefined) {
-      spend[t] = capUsd;
-      changed.push(t);
-    } else kept.push({ target: t, cap: describeCap(cur), usd: capUsdOf(cur) });
-  });
-  if (!changed.length) return { changed: [], kept: kept };
-  limits.spend = spend;
-  cfgObj.limits = limits;
-  let mode = 0o600;
-  try {
-    mode = fs.statSync(p).mode & 0o777;
-  } catch (e) {
-    /* keep 0600 */
+// The alias keysmith serves, read from its config: its legs in order, the paid first leg's adapter
+// and the cap keysmith holds on it. -> { legs, capAdapter, cap: { usd, text } | null } | { error }
+function aliasLegs(p, opts) {
+  const r = readKeysmithConfig(opts);
+  if (r.error) return { error: r.error };
+  const aliases = r.config.aliases && typeof r.config.aliases === 'object' ? r.config.aliases : {};
+  const raw = aliases[p.alias];
+  const legs = (Array.isArray(raw) ? raw : raw && Array.isArray(raw.legs) ? raw.legs : [])
+    .map(function (s) {
+      return typeof s === 'string' ? s.trim() : '';
+    })
+    .filter(Boolean);
+  if (!legs.length)
+    return {
+      error:
+        'keysmith has no alias ' +
+        p.alias +
+        " — keyflip uses the gateway's own failover alias and does not create one (keysmith alias " +
+        p.alias +
+        ' <leg>…)',
+    };
+  const capAdapter = legs[0].split('/')[0];
+  const spend = r.config.limits && typeof r.config.limits === 'object' ? r.config.limits.spend : null;
+  const c = existingCap(spend, capAdapter);
+  return {
+    legs: legs,
+    capAdapter: capAdapter,
+    cap: c === undefined ? null : { usd: capUsdOf(c), text: describeCap(c) },
+  };
+}
+
+// plan() + the alias as keysmith defines it. Never throws: a keysmith that cannot be read leaves
+// legs null and says why in `aliasError`.
+function resolvePlan(ctx, opts) {
+  const p = plan(ctx);
+  const a = aliasLegs(p, opts);
+  if (a.error) p.aliasError = a.error;
+  else {
+    p.legs = a.legs;
+    p.capAdapter = a.capAdapter;
+    p.configCap = a.cap;
   }
-  atomicWrite(p, JSON.stringify(cfgObj, null, 2) + '\n', mode);
-  return { changed: changed, kept: kept };
+  return p;
 }
 
-// The credential ACCOUNT keysmith meters the first leg's key under — so the cap covers every adapter
-// sharing that key, not only this alias's leg. Asked from keysmith's own code (same derivation the
-// gateway uses); null when it cannot be told, and the adapter cap still applies.
-async function capAccount(p, adapterId, opts) {
-  opts = opts || {};
-  if (opts.accountOf) return opts.accountOf(adapterId);
-  try {
-    const ks = JSON.parse(fs.readFileSync(p, 'utf8'));
-    const a = ks && ks.adapters && ks.adapters[adapterId];
-    if (!a) return null;
-    const dir = opts.keysmithDir || process.env.KEYSMITH_DIR || path.join(os.homedir(), 'Projects', 'keysmith');
-    const mod = await import(path.join(dir, 'src', 'usage.js'));
-    const acct = typeof mod.credentialAccount === 'function' ? mod.credentialAccount(a) : null;
-    return typeof acct === 'string' && acct && acct !== 'exec' ? acct : null;
-  } catch (e) {
-    return null;
-  }
-}
-
-// `keyflip failover setup`: alias, spend cap, scoped key, provider profile. Idempotent.
-// -> { ok, steps: [{ step, ok, detail }], restartGateway: bool }
+// `keyflip failover setup`: check keysmith's alias and cap (read-only), mint the scoped key, save the
+// provider profile. Idempotent; changes nothing in keysmith but adding that one key (which the
+// gateway picks up without a restart).
+// -> { ok, steps: [{ step, ok, detail }], plan, restartGateway: false }
 async function setup(ctx, opts) {
   opts = opts || {};
   const runner = opts.run || _run;
-  const p = plan(ctx);
-  const ks = keysmithCommand({ run: runner, keysmithDir: opts.keysmithDir });
+  const p = resolvePlan(ctx, opts);
   const steps = [];
   const dry = !!opts.dryRun;
-  function ksRun(args) {
-    return runner(ks.exec, ks.args.concat(args), undefined, { timeoutMs: 30000 });
+  // 1) the alias: keysmith's, as it is
+  if (p.aliasError) {
+    steps.push({ step: 'alias', ok: false, detail: p.aliasError });
+    return { ok: false, steps: steps, plan: p, restartGateway: false };
   }
-  // 1) the alias chain
-  if (dry) steps.push({ step: 'alias', ok: true, detail: 'would set ' + p.alias + ' = ' + p.legs.join(' -> ') });
-  else {
-    const r = ksRun(['alias', p.alias].concat(p.legs));
-    steps.push({
-      step: 'alias',
-      ok: !!(r && r.code === 0),
-      detail:
-        r && r.code === 0
-          ? p.alias + ' = ' + p.legs.join(' -> ')
-          : 'keysmith alias failed: ' +
-            String((r && (r.stderr || r.stdout)) || '')
-              .trim()
-              .slice(0, 300),
-    });
-  }
-  // 2) the spend cap on the paid leg's key
-  const cfgPath = keysmithConfigPath(opts);
-  const targets = p.capAdapter ? ['adapter:' + p.capAdapter] : [];
-  // The account cap covers EVERY use of that key through keysmith (other jobs too): opt-in only.
-  const acct = p.capAdapter && p.capAccount ? await capAccount(cfgPath, p.capAdapter, opts) : null;
-  if (acct) targets.push('account:' + acct);
-  if (!targets.length) steps.push({ step: 'spend-cap', ok: false, detail: 'no paid leg to cap' });
-  else if (dry)
-    steps.push({
-      step: 'spend-cap',
-      ok: true,
-      detail: 'would cap ' + targets.join(', ') + ' at $' + p.capUsd + '/month',
-    });
-  else {
-    try {
-      const r = ensureSpendCap(cfgPath, targets, p.capUsd);
-      const loose = r.kept.filter(function (k) {
-        return k.usd === null || k.usd > p.capUsd;
-      });
-      const parts = [];
-      if (r.changed.length) parts.push('set ' + r.changed.join(', ') + ' = $' + p.capUsd + '/month');
-      r.kept.forEach(function (k) {
-        parts.push('kept the existing cap on ' + k.target + ' (' + k.cap + ')');
-      });
-      steps.push({
-        step: 'spend-cap',
-        // An existing cap looser than the failover's is the owner's to change, not keyflip's: the
-        // failover then stays off (gatewayReady) until a cap of at most $capUsd covers the paid leg.
-        ok: loose.length === 0,
-        detail:
-          parts.join('; ') +
-          (loose.length
-            ? ' — looser than the $' +
-              p.capUsd +
-              ' the failover needs; it stays off until the paid leg is capped at that or less'
-            : ''),
-        changed: r.changed.length > 0,
-      });
-    } catch (e) {
-      steps.push({ step: 'spend-cap', ok: false, detail: 'could not write ' + cfgPath + ': ' + e.message });
-    }
-  }
+  steps.push({
+    step: 'alias',
+    ok: true,
+    detail: p.alias + ' = ' + p.legs.join(' -> ') + " (keysmith's own; keyflip does not change it)",
+  });
+  // 2) the cap on the paid leg: keysmith's to set, keyflip only checks it
+  const cap = p.configCap;
+  const capOk = !!(cap && cap.usd !== null && cap.usd <= p.capUsd);
+  steps.push({
+    step: 'spend-cap',
+    ok: capOk,
+    detail: !cap
+      ? 'keysmith holds no spend cap on ' +
+        p.capAdapter +
+        ' — the failover stays off until keysmith caps it at $' +
+        p.capUsd +
+        ' or less (keyflip never writes caps)'
+      : 'keysmith caps ' +
+        p.capAdapter +
+        ' at ' +
+        cap.text +
+        (capOk
+          ? ' (enforced by the gateway; keyflip never writes caps)'
+          : ' — looser than the $' + p.capUsd + ' the failover accepts; it stays off until keysmith caps it tighter'),
+  });
   // 3) a key scoped to the alias and its legs, handed over through a 0600 file, kept in the store
   let haveKey = false;
   try {
@@ -244,15 +213,20 @@ async function setup(ctx, opts) {
   } catch (e) {
     haveKey = false;
   }
+  const allow = ['alias:' + p.alias].concat(p.legs).join(',');
   if (haveKey) steps.push({ step: 'key', ok: true, detail: 'provider ' + p.provider + ' already holds a gateway key' });
-  else if (dry)
-    steps.push({ step: 'key', ok: true, detail: 'would mint a key scoped to alias:' + p.alias + ' and its legs' });
+  else if (dry) steps.push({ step: 'key', ok: true, detail: 'would mint a key scoped to ' + allow });
   else {
+    const ks = keysmithCommand({ run: runner, keysmithDir: opts.keysmithDir });
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kf-failover-'));
     const keyFile = path.join(tmpDir, 'key');
     try {
-      const allow = ['alias:' + p.alias].concat(p.legs).join(',');
-      const r = ksRun(['key', 'add', 'keyflip-failover', '--allow', allow, '--out', keyFile]);
+      const r = runner(
+        ks.exec,
+        ks.args.concat(['key', 'add', DEFAULTS.keyLabel, '--allow', allow, '--out', keyFile]),
+        undefined,
+        { timeoutMs: 30000 },
+      );
       let key = null;
       try {
         key = fs.readFileSync(keyFile, 'utf8').trim();
@@ -261,11 +235,10 @@ async function setup(ctx, opts) {
       }
       if (r && r.code === 0 && key) {
         ctx.store.setProfile('provider__' + p.provider, key);
-        haveKey = true;
         steps.push({
           step: 'key',
           ok: true,
-          detail: 'minted a key scoped to alias:' + p.alias + ' (stored, never printed)',
+          detail: 'minted a key scoped to ' + allow + ' (stored, never printed)',
         });
       } else
         steps.push({
@@ -285,7 +258,7 @@ async function setup(ctx, opts) {
       }
     }
   }
-  // 4) the keyflip provider profile every surface is pointed at
+  // 4) the keyflip provider profile every surface is pointed at (saved, NOT activated)
   const models = { default: p.alias, smallFast: p.alias, haiku: p.alias, sonnet: p.alias, opus: p.alias };
   if (dry)
     steps.push({ step: 'provider', ok: true, detail: 'would save provider ' + p.provider + ' -> ' + p.gatewayUrl });
@@ -296,7 +269,11 @@ async function setup(ctx, opts) {
       compat: 'anthropic',
       models: models,
     });
-    steps.push({ step: 'provider', ok: true, detail: p.provider + ' -> ' + p.gatewayUrl + ' (model ' + p.alias + ')' });
+    steps.push({
+      step: 'provider',
+      ok: true,
+      detail: p.provider + ' -> ' + p.gatewayUrl + ' (model ' + p.alias + '; saved, not in use)',
+    });
   }
   return {
     ok: steps.every(function (s) {
@@ -304,16 +281,17 @@ async function setup(ctx, opts) {
     }),
     steps: steps,
     plan: p,
-    // keysmith reads aliases and limits once, at start: the running gateway needs a restart.
-    restartGateway: !dry,
+    // Nothing keysmith reads at start was changed; a new key is picked up by the running gateway.
+    restartGateway: false,
   };
 }
 
-// Does the RUNNING gateway enforce a spend cap of at most capUsd on the paid leg? keysmith reads
-// limits at start, so a cap written to its config is not proof; its own usage route is. Asked with
-// the failover's scoped key, which sees exactly the caps on the adapters/accounts it can reach.
+// Does the RUNNING gateway enforce a spend cap of at most capUsd on the paid leg? A cap in keysmith's
+// config is not proof (it reads limits at start); its own usage route is. Asked with the failover's
+// scoped key, which sees exactly the caps on the adapters it can reach — and its OWN spend under them.
 async function capLoaded(p, key, doFetch, opts) {
-  if (!p.capAdapter) return { ok: true, detail: 'no paid leg' };
+  opts = opts || {};
+  if (!p.capAdapter) return { ok: false, reason: p.aliasError || 'the alias has no paid leg to check' };
   let res;
   try {
     res = await doFetch(p.gatewayUrl + '/v1/keysmith/usage?hours=1', {
@@ -340,12 +318,8 @@ async function capLoaded(p, key, doFetch, opts) {
   } catch (e) {
     j = null;
   }
-  const rows = (j && Array.isArray(j.spend) ? j.spend : []).filter(function (r) {
-    return r && typeof r.cap === 'number' && r.cap <= p.capUsd;
-  });
-  const acct = opts.capAccountName || null;
-  const hit = rows.find(function (r) {
-    return (r.kind === 'adapter' && r.target === p.capAdapter) || (acct && r.kind === 'account' && r.target === acct);
+  const hit = (j && Array.isArray(j.spend) ? j.spend : []).find(function (r) {
+    return r && r.kind === 'adapter' && r.target === p.capAdapter && typeof r.cap === 'number' && r.cap <= p.capUsd;
   });
   if (!hit)
     return {
@@ -355,19 +329,19 @@ async function capLoaded(p, key, doFetch, opts) {
         p.capUsd +
         ' on ' +
         p.capAdapter +
-        ' (keyflip failover setup, then restart keysmith); refusing to fail over uncapped',
+        ' (set it in keysmith and restart it); refusing to fail over uncapped',
     };
-  return {
-    ok: true,
-    cap: { kind: hit.kind, target: hit.target, cap: hit.cap, spent: hit.spent, exceeded: !!hit.exceeded },
-  };
+  const cap = { kind: hit.kind, target: hit.target, cap: hit.cap, spent: hit.spent, exceeded: !!hit.exceeded };
+  if (hit.window && typeof hit.window === 'object') cap.window = { since: hit.window.since, until: hit.window.until };
+  if (hit.windowStatus) cap.windowStatus = hit.windowStatus;
+  return { ok: true, cap: cap };
 }
 
 // Is the gateway up, does our key work, does it serve the alias — and (unless opts.capCheck is
 // false: the per-tick health check) does it enforce the spend cap? GET /v1/models + the usage route.
 async function gatewayReady(ctx, opts) {
   opts = opts || {};
-  const p = opts.plan || plan(ctx);
+  const p = opts.plan || resolvePlan(ctx, opts);
   const doFetch = opts.fetch || (typeof fetch !== 'undefined' ? fetch : null);
   let key = null;
   try {
@@ -393,22 +367,20 @@ async function gatewayReady(ctx, opts) {
       return m && m.id;
     });
     if (ids.indexOf(p.alias) === -1)
-      return { ok: false, reason: 'gateway does not serve ' + p.alias + ' yet (restart keysmith)' };
+      return { ok: false, reason: 'gateway does not serve ' + p.alias + ' to the failover key' };
   } catch (e) {
     return { ok: false, reason: 'gateway unreachable at ' + p.gatewayUrl };
   }
   if (opts.capCheck === false) return { ok: true };
-  let acct = null;
-  if (p.capAccount && p.capAdapter) {
-    try {
-      acct = await capAccount(keysmithConfigPath(opts), p.capAdapter, opts);
-    } catch (e) {
-      acct = null;
-    }
-  }
-  const c = await capLoaded(p, key, doFetch, { timeoutMs: opts.timeoutMs, capAccountName: acct });
+  const c = await capLoaded(p, key, doFetch, { timeoutMs: opts.timeoutMs });
   if (!c.ok) return { ok: false, reason: c.reason };
   return { ok: true, cap: c.cap };
+}
+
+// "$25 over 2026-11-12..2026-12-09" / "$25/month" for a cap the gateway reported.
+function capText(cap) {
+  if (!cap || typeof cap.cap !== 'number') return null;
+  return '$' + cap.cap + (cap.window ? ' over ' + cap.window.since + '..' + cap.window.until : '/month');
 }
 
 function statePath(ctx) {
@@ -431,7 +403,8 @@ async function engage(ctx, info, deps) {
   if (!p.enabled) return { ok: false, reason: 'failover is disabled (failover.enabled=false)' };
   const cur = state(ctx);
   if (cur) return { ok: true, already: true, state: cur };
-  const ready = await gatewayReady(ctx, { plan: p, fetch: deps.fetch, keysmithConfig: deps.keysmithConfig });
+  const rp = resolvePlan(ctx, { keysmithConfig: deps.keysmithConfig });
+  const ready = await gatewayReady(ctx, { plan: rp, fetch: deps.fetch });
   if (!ready.ok) return { ok: false, reason: ready.reason };
   const useProvider =
     deps.useProvider ||
@@ -464,10 +437,12 @@ async function engage(ctx, info, deps) {
     await deps.notify(
       'quota',
       'All Claude accounts are over the threshold — now on the API failover (' +
-        p.legs.join(' -> ') +
-        ', capped at $' +
-        p.capUsd +
-        '/month).',
+        rp.alias +
+        ': ' +
+        (rp.legs || []).join(' -> ') +
+        ', paid leg capped at ' +
+        (capText(ready.cap) || '$' + p.capUsd) +
+        ' by keysmith).',
     );
   return { ok: true, state: st };
 }
@@ -519,13 +494,15 @@ async function release(ctx, info, deps) {
 
 export {
   plan,
+  resolvePlan,
+  aliasLegs,
   setup,
   gatewayReady,
   capLoaded,
+  capText,
   engage,
   release,
   state,
-  ensureSpendCap,
   keysmithCommand,
   keysmithConfigPath,
   DEFAULTS,
