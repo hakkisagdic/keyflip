@@ -302,3 +302,22 @@ test('CLI `autoswitch --once` takes a pending restart: a closed app is switched 
   assert.ok(/desktop: apply-failed — switch to ghost: no saved desktop login/.test(r.stdout), r.stdout);
   assert.strictEqual(fs.existsSync(path.join(cfgDir, dr.PENDING_FILE)), false, 'a failing apply is not retried forever');
 });
+
+test('MCP keyflip_switch records the Desktop follow-up for an account with a saved desktop login', async function () {
+  const ctx = makeCtx({ platform: 'darwin' });
+  ctx.appDataDir = path.join(ctx.home, 'AppData');
+  const login = (email, uid, tok) => {
+    writeClaude(ctx, { oauthAccount: { emailAddress: email }, userID: uid });
+    ctx.store.setLive(JSON.stringify({ claudeAiOauth: { accessToken: tok } }));
+  };
+  login('a@x.com', 'u1', 'TA');
+  core.addCurrent(ctx);
+  login('b@x.com', 'u2', 'TB');
+  core.addCurrent(ctx);
+  fs.mkdirSync(path.join(ctx.configDir, 'app'), { recursive: true });
+  fs.writeFileSync(path.join(ctx.configDir, 'app', 'a.json'), '{}');
+  const t = _mcp.TOOLS.find((x) => x.name === 'keyflip_switch');
+  const r = await t.run(ctx, { name: 'a', confirm: true });
+  assert.ok(/pending/.test(r.desktopRestart));
+  assert.deepStrictEqual(dr.readPending(ctx).actions.map((x) => x.target), ['a']);
+});

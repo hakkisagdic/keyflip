@@ -247,3 +247,15 @@ test('CLI `status` shows the token account, warns about the label, and `--fix` r
   assert.strictEqual(JSON.parse(fs.readFileSync(cj, 'utf8')).oauthAccount.emailAddress, 'me@gmail.com');
   assert.strictEqual(fs.readFileSync(cred, 'utf8'), blob('TOK-GMAIL-1', 'RT-GMAIL-1'), 'the login itself untouched');
 });
+
+test('REGRESSION: switching to the LABEL\'s account is a real switch, not "already active"', async function () {
+  const ctx = mislabelled(); // gmail's token live, label yahoo
+  assert.strictEqual(core.isActive(ctx, 'gmail'), true);
+  assert.strictEqual(core.isActive(ctx, 'yahoo'), false, 'the label alone does not make yahoo active');
+  const t = _mcp.TOOLS.find((x) => x.name === 'keyflip_switch');
+  const r = await t.run(ctx, { name: 'yahoo', confirm: true });
+  assert.ok(!r.alreadyActive, 'not short-circuited by the stale label');
+  assert.strictEqual(r.switched.name, 'yahoo');
+  assert.strictEqual(JSON.parse(ctx.store.getLive()).claudeAiOauth.accessToken, 'TOK-YAHOO-1');
+  assert.strictEqual(JSON.parse(ctx.store.getProfile('gmail')).claudeAiOauth.accessToken, 'TOK-GMAIL-1');
+});

@@ -320,6 +320,14 @@ function listProfiles(ctx) {
   });
 }
 
+// Is `name` the account the live CLI login belongs to? By token when the token is known, else by
+// label (listProfiles' rule). A label that names another account must never make a switch a no-op.
+function isActive(ctx, name) {
+  return listProfiles(ctx).some(function (e) {
+    return e.name === name && e.active;
+  });
+}
+
 /**
  * Enable or disable a profile for automatic rotation and failover proxy routing.
  * @param {import('./context.js').KeyflipContext} ctx - Application context.
@@ -378,6 +386,7 @@ export {
   doSwitch,
   performSwitch,
   listProfiles,
+  isActive,
   setProfileEnabled,
   resolveProfile,
   removeProfile,

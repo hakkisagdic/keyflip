@@ -615,7 +615,7 @@ const TOOLS = [
       const name = core.resolveProfile(ctx, String(args.name));
       if (!name) throw new Error("no such account: '" + args.name + "' (use keyflip_list)");
       const em = profiles.email(ctx.configDir, name);
-      if (em && em === core.currentEmail(ctx)) return { alreadyActive: { name: name, email: em } };
+      if (core.isActive(ctx, name)) return { alreadyActive: { name: name, email: em } };
       _policy.enforce(ctx, { cwd: process.cwd(), account: name }); // org policy: agents can't dodge it
       const l = await lock.acquire(ctx.configDir);
       let did;
@@ -645,6 +645,18 @@ const TOOLS = [
         cliEmail = core.currentEmail(ctx) || null;
       } catch (e) {
         cliEmail = null;
+      }
+      // P5: the desktop app keeps its old login until it restarts. Record the follow-up; the
+      // autoswitch service takes it when Desktop is idle (never from here — this call may be
+      // running inside Desktop).
+      let desktopRestart = null;
+      if (ctx.appDataDir && appauth.hasProfile(ctx, name)) {
+        try {
+          _desktoprestart.request(ctx, { kind: 'account', target: name, email: em || null, reason: 'keyflip_switch' });
+          desktopRestart = 'pending: Claude Desktop restarts onto this account when it is idle (autoswitch service)';
+        } catch (e) {
+          desktopRestart = null;
+        }
       }
 
       // Smart suggestions: check what the agent should offer after a switch
@@ -757,6 +769,7 @@ const TOOLS = [
         verified: verified,
         cliEmailAfterSwitch: cliEmail,
         note: 'Desktop apps not touched; running AI tools apply the new account on their next request.',
+        desktopRestart: desktopRestart || undefined,
         suggestions: suggestions.length > 0 ? suggestions : undefined,
         autoConsolidate: consolidateRan ? true : undefined, // Signal that consolidate ran automatically
       };
@@ -3174,7 +3187,7 @@ const TOOLS = [
       const name = core.resolveProfile(ctx, String(args.name));
       if (!name) throw new Error("no such account: '" + args.name + "' (use keyflip_list)");
       const em = profiles.email(ctx.configDir, name);
-      if (!args.force && em && em === core.currentEmail(ctx)) {
+      if (!args.force && ((em && em === core.currentEmail(ctx)) || core.isActive(ctx, name))) {
         const live = appctl.claudeInstances(ctx.home);
         if (live.length)
           throw new Error(

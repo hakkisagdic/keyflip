@@ -889,13 +889,13 @@ async function cmdSwitch(ctx, rest) {
   // --only cli (optionally with browser): the CLI credential moves in place; the desktop app is
   // neither closed nor re-logged.
   const onlyCli = !!(surfaces.only && surfaces.cli && !surfaces.app);
-  if (onlyCli && em && em === core.currentEmail(ctx)) {
+  if (onlyCli && core.isActive(ctx, name)) {
     print("The CLI is already on '" + em + "'.");
     const res = surfaces.browser ? await browserLeg() : null;
     jsonOut({ alreadyActive: { name: name, email: em }, browser: browserJson(res) });
     return;
   }
-  if (em && em === core.currentEmail(ctx) && !onlyCli) {
+  if (core.isActive(ctx, name) && !onlyCli) {
     // "Already active" has to mean EVERY surface. The desktop app keeps its own
     // independent login, so a hand sign-in inside the app moves only the app while
     // the CLI still reads as active — that is a real pending switch, not a no-op. Same for the
@@ -17170,7 +17170,7 @@ async function dispatch(ctx, cmd, rest) {
           if (!n) return fail("no such account: '" + (rest[0] || '') + "'");
           // Never yank the account live Claude sessions are using out from under them.
           const em = profiles.email(ctx.configDir, n);
-          if (em && em === core.currentEmail(ctx) && rest.indexOf('--force') === -1) {
+          if (((em && em === core.currentEmail(ctx)) || core.isActive(ctx, n)) && rest.indexOf('--force') === -1) {
             const live = appctl.claudeInstances(ctx.home);
             if (live.length) {
               return fail(
