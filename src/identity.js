@@ -344,7 +344,77 @@ function repairIfMismatched(ctx) {
   return { repaired: true, from: id.labelName || id.labelEmail, to: r.name, email: r.email };
 }
 
+// Accounts whose stored refresh token something is USING right now, so rotating it would log that
+// thing out: the live login (by token AND by label — both, when they disagree), any saved profile
+// holding the live token, and accounts with a running parallel session (`keyflip run`, which
+// gives each its own CLAUDE_CONFIG_DIR under <configDir>/sessions/<name>/).
+// -> { names: [...], why: { name: reason } }
+function inUseAccounts(ctx, opts) {
+  opts = opts || {};
+  const alive =
+    opts.pidAlive ||
+    function (pid) {
+      try {
+        process.kill(pid, 0);
+        return true;
+      } catch (e) {
+        return !!(e && e.code === 'EPERM');
+      }
+    };
+  const why = Object.create(null);
+  let id = null;
+  try {
+    id = liveSync(ctx, opts);
+  } catch (e) {
+    id = null;
+  }
+  if (id && id.name) why[id.name] = 'the live login';
+  if (id && id.labelName && !why[id.labelName]) why[id.labelName] = 'the live login (by its label)';
+  (id && id.sharedBy ? id.sharedBy : []).forEach(function (n) {
+    if (!why[n]) why[n] = 'holds the live token';
+  });
+  let live = null;
+  try {
+    live = ctx.store.getLive();
+  } catch (e) {
+    live = null;
+  }
+  if (live) {
+    holdersOf(ctx, fingerprints(live)).forEach(function (n) {
+      if (!why[n]) why[n] = 'holds the live token';
+    });
+  }
+  const base = path.join(ctx.configDir, 'sessions');
+  let dirs = [];
+  try {
+    dirs = fs.readdirSync(base);
+  } catch (e) {
+    dirs = [];
+  }
+  dirs.forEach(function (n) {
+    if (why[n] || !profiles.exists(ctx.configDir, n)) return;
+    let files = [];
+    try {
+      files = fs.readdirSync(path.join(base, n, 'sessions'));
+    } catch (e) {
+      return;
+    }
+    const running = files.some(function (f) {
+      if (!/^[0-9]+\.json$/.test(f)) return false;
+      try {
+        const j = JSON.parse(fs.readFileSync(path.join(base, n, 'sessions', f), 'utf8'));
+        return !!(j && j.pid && alive(j.pid));
+      } catch (e) {
+        return false;
+      }
+    });
+    if (running) why[n] = 'a parallel session (keyflip run) is using it';
+  });
+  return { names: Object.keys(why), why: why };
+}
+
 export {
+  inUseAccounts,
   repairIfMismatched,
   liveSync,
   resolveLive,

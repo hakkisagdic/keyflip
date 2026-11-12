@@ -15855,13 +15855,28 @@ async function cmdRefresh(ctx, rest) {
     );
   const running = appctl.isClaudeRunning(ctx.platform);
   const instances = appctl.claudeInstances(ctx.home);
+  // A running Claude holds ONE account's refresh token — the live one (plus any parallel session's).
+  // Every other stored token belongs to nobody but keyflip, so it is refreshed anyway: refusing all of
+  // them whenever anything ran (this machine always runs agents) let the yahoo login die on 3 Nov.
+  let held = { names: [], why: {} };
   if (running || instances.length) {
+    try {
+      held = _identity.inUseAccounts(ctx);
+    } catch (e) {
+      held = { names: names.slice(), why: {} }; // cannot tell what is in use: refresh nothing
+    }
+    names = names.filter(function (n) {
+      return held.names.indexOf(n) === -1;
+    });
+  }
+  if ((running || instances.length) && !names.length) {
     // A refusal must be readable by a machine too: this is the branch the nightly job takes whenever
     // the user works late, and "exit 0 + prose" is how a no-op gets mistaken for a renewal.
     if (asJson) {
       jsonOut({
         refreshed: [],
         refused: running ? 'claude-code-running' : 'claude-instances-active',
+        heldBack: held.names,
         instances: instances.length,
         changed: false,
       });
@@ -15876,6 +15891,18 @@ async function cmdRefresh(ctx, rest) {
     print(style.dim('  nothing was changed. Run this when the CLI is idle (or it will happen on the next switch).'));
     return 0;
   }
+  if (held.names.length && !asJson)
+    print(
+      style.dim(
+        '  Claude is running — leaving ' +
+          held.names
+            .map(function (n) {
+              return n + ' (' + (held.why[n] || 'in use') + ')';
+            })
+            .join(', ') +
+          ' alone; refreshing the others.',
+      ),
+    );
   const results = [];
   for (let i = 0; i < names.length; i++) {
     const r = await oauth.maybeRefreshProfile(ctx, names[i], {
@@ -15890,7 +15917,7 @@ async function cmdRefresh(ctx, rest) {
     logmod.log('oauth refresh --all ' + names[i] + ': ' + r.status);
   }
   if (asJson) {
-    jsonOut({ refreshed: results });
+    jsonOut(held.names.length ? { refreshed: results, heldBack: held.names } : { refreshed: results });
     return 0;
   }
   const glyph = {
