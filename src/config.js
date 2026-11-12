@@ -33,6 +33,13 @@ SCHEMA['autoswitch.strategy'] = {
   default: 'best',
   help: 'How autoswitch chooses the next account (most headroom vs. first available).',
 };
+SCHEMA['autoswitch.maxStaleSeconds'] = {
+  type: 'int',
+  default: 900,
+  min: 0,
+  max: 21600,
+  help: 'While the usage endpoint is throttled, act on the last good reading if it is at most this old (0 = never).',
+};
 SCHEMA['autoswitch.group'] = {
   type: 'string',
   default: '',

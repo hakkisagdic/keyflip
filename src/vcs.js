@@ -38,6 +38,8 @@ const GITIGNORE = ['# keyflip: NEVER version secrets — they live in the OS cre
     // carry between machines. Reversible either way — `keyflip sessions unarchive` reads the files.
     'archive/',
     '# transient runtime junk',
+    '.lock',
+    '.lock-*',
     '*.pid',
     '*.sock',
     'sockets/',

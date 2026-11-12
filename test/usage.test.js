@@ -204,12 +204,12 @@ test('usageForProfiles retains lastGood across transient 429/error but clears on
   assert.ok(r2.a.lastGood, 'lastGood preserved across 429');
   assert.strictEqual(usage.headroom(r2.a.lastGood), 75);
 
-  // 3. Authoritative 401 clears lastGood
+  // 3. Authoritative 401 clears lastGood (asked once the 429's quiet window has passed)
   const r3 = await usage.usageForProfiles(ctx, ['a'], {
     fetch: async function () {
       return { ok: false, status: 401 };
     },
-    nowMs: NOW + 10000,
+    nowMs: NOW + 5000 + usage.THROTTLE_BASE_MS + 1,
     cacheTtlMs: 1000,
   });
   assert.strictEqual(r3.a.status, 'expired');

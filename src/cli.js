@@ -1471,7 +1471,19 @@ async function cmdAutoswitch(ctx, rest) {
         })
         .catch(function () {});
     } else if (r.state === 'unknown') {
-      print('[' + at + '] usage unknown (endpoint throttled or offline) — waiting');
+      // The usage endpoint's quiet window is shared machine-wide: nobody asks again before retryAt.
+      print(
+        '[' +
+          at +
+          '] usage unknown (' +
+          (r.usageStatus === 'throttled'
+            ? 'usage endpoint throttled' +
+              (r.retryAt ? ', next check after ' + new Date(r.retryAt).toTimeString().slice(0, 8) : '')
+            : r.usageStatus === 'pending'
+              ? 'another keyflip is reading usage right now'
+              : 'endpoint offline or unreadable') +
+          ') — waiting',
+      );
     } else if (r.state === 'no-active') {
       print('[' + at + '] no active CLI account — waiting');
     } else if (r.state === 'error') {

@@ -12,6 +12,7 @@ import * as breaker from './breaker.js';
 import * as history from './history.js';
 import * as _groups from './groups.js';
 import * as fsutil from './fsutil.js';
+import * as _config from './config.js';
 
 const STATE_FILE = '.autoswitch-state.json';
 
@@ -73,7 +74,20 @@ async function tick(ctx, opts) {
     liveFor: active.name,
     recordHistory: true,
   });
-  const h = infos[active.name] ? infos[active.name].headroom : null;
+  // While the endpoint is throttled, a RECENT last-good reading still decides (usage.effectiveHeadroom).
+  let maxStaleMs = opts.maxStaleMs;
+  if (maxStaleMs === undefined) {
+    try {
+      maxStaleMs = _config.get(ctx, 'autoswitch.maxStaleSeconds') * 1000;
+    } catch (e) {
+      maxStaleMs = 900 * 1000;
+    }
+  }
+  const nowMs = opts.nowMs !== undefined ? opts.nowMs : Date.now();
+  const eff = usage.effectiveHeadroom(infos[active.name], nowMs, maxStaleMs);
+  const h = eff.headroom;
+  const basis = eff.basis;
+  const retryAt = (infos[active.name] && infos[active.name].retryAt) || null;
 
   // Automatic switch-back: if we previously auto-switched away from a primary
   // account and that primary account is enabled, healthy, and has recovered
@@ -119,8 +133,16 @@ async function tick(ctx, opts) {
     }
   }
 
-  if (typeof h !== 'number') return { state: 'unknown', active: active, headroom: null, switchedTo: null };
-  if (h > margin) return { state: 'below', active: active, headroom: h, switchedTo: null };
+  if (typeof h !== 'number')
+    return {
+      state: 'unknown',
+      active: active,
+      headroom: null,
+      switchedTo: null,
+      usageStatus: (infos[active.name] && infos[active.name].status) || null,
+      retryAt: retryAt,
+    };
+  if (h > margin) return { state: 'below', active: active, headroom: h, switchedTo: null, basis: basis };
 
   // Threshold crossed — pick a target in rotation order. Only enabled accounts
   // with a captured CLI credential are candidates: switching to an app-only or
@@ -164,14 +186,21 @@ async function tick(ctx, opts) {
   });
   // Only rotate to an account we KNOW is below the threshold AND whose breaker is
   // not open (recently-failing accounts are skipped until their recovery window).
-  const pool = candidates.filter(function (c) {
+  // A throttled candidate with a recent last-good reading is judged on that reading, like the active one.
+  const effInfos = {};
+  candidates.forEach(function (c) {
     const info = cinfos[c.name];
+    const e = usage.effectiveHeadroom(info, nowMs, maxStaleMs);
+    effInfos[c.name] = info ? Object.assign({}, info, { headroom: e.headroom, usage: info.usage || e.usage }) : info;
+  });
+  const pool = candidates.filter(function (c) {
+    const info = effInfos[c.name];
     return (
       info && typeof info.headroom === 'number' && info.headroom > margin && breaker.isAvailable(ctx, c.name, bopts)
     );
   });
-  if (!pool.length) return { state: 'no-candidate', active: active, headroom: h, switchedTo: null };
-  const picked = usage.pickByStrategy(pool, cinfos, strategy, { model: opts.model }) || pool[0];
+  if (!pool.length) return { state: 'no-candidate', active: active, headroom: h, switchedTo: null, basis: basis };
+  const picked = usage.pickByStrategy(pool, effInfos, strategy, { model: opts.model }) || pool[0];
   if (!picked) return { state: 'no-candidate', active: active, headroom: h, switchedTo: null };
 
   const doSwitch =
@@ -192,9 +221,10 @@ async function tick(ctx, opts) {
     kind: 'autoswitch',
     from: active.name,
     to: picked.name,
-    reason: 'usage ' + Math.round(100 - h) + '% >= threshold ' + threshold,
+    reason:
+      'usage ' + Math.round(100 - h) + '% >= threshold ' + threshold + (basis === 'last-good' ? ' (last good reading; endpoint throttled)' : ''),
   });
-  return { state: 'switched', active: active, headroom: h, switchedTo: picked };
+  return { state: 'switched', active: active, headroom: h, switchedTo: picked, basis: basis };
 }
 
 export { tick, readState, clearState };
