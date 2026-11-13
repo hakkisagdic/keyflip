@@ -29,6 +29,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   one 31 s deadline covers the whole check, so `failover status` with the gateway down returns within
   31 s and an engaged tick waits at most ~64 s on the gateway. The reason says what happened, e.g.
   `gateway unreachable at <url> (timed out after 15 s, 2 tries)`.
+- **Proactive 15-minute token refresh for every inactive Claude OAuth account (`src/tokenkeeper.js`, `src/oauth.js`, `src/schedule.js`).**
+  Claude OAuth access tokens expire after ~8 hours, so the old once-a-day 04:30 schedule with a 5-minute
+  buffer left inactive accounts (`usageStatus: expired`) unusable for autoswitch and failover. Added a
+  shared guarded refresh core (`refreshDue` / `refreshAccount`) used across `keyflip refresh`, MCP
+  `keyflip_refresh`, switch pre-refresh (`refreshIfNeeded`), and `usageForProfiles` (on-demand 401/403
+  refresh-and-retry for non-live accounts). Refreshes any stored OAuth profile within the configurable
+  60-minute lead window (`refresh.leadMinutes`, `5..240`), never touches the live credential
+  (`setLive`) or any account held by `inUseAccounts` / sharing the live refresh-token fingerprint,
+  serializes with switches via the cross-process lock, verifies atomic persistence with read-back
+  retries, tracks per-account backoff and state in `refresh-state.json`, and alerts once per failure
+  state via `notify` (`token-refresh`) and macOS desktop notifications. Updated `com.keyflip.refresh`
+  to run `keyflip refresh --all --due` every 15 minutes (`StartInterval` 900s + `RunAtLoad`, cron
+  `*/15 * * * *`) and surfaced per-account token expiry and last refresh status in `status`, `list`,
+  `doctor`, and MCP tools.
 
 - **P2 follow-up: an inference-only live token, the status line, and the keysmith-owned failover.**
   The profile endpoint needs the `user:profile` scope, so a one-year `login --long-lived` token got a

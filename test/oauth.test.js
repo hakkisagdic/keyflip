@@ -10,7 +10,9 @@ function blobExpiring() {
   });
 }
 function blobFresh() {
-  return JSON.stringify({ claudeAiOauth: { accessToken: 'OK', refreshToken: 'RT-1', expiresAt: NOW + 3600000 } });
+  return JSON.stringify({
+    claudeAiOauth: { accessToken: 'OK', refreshToken: 'RT-1', expiresAt: NOW + 3 * 3600000 },
+  });
 }
 function okFetch(calls) {
   return async function (url, opts) {
@@ -63,18 +65,29 @@ test('maybeRefreshProfile refreshes an expiring profile and persists it', async 
   assert.strictEqual(JSON.parse(ctx.store.getProfile('alice')).claudeAiOauth.accessToken, 'NEW');
 });
 
-test('maybeRefreshProfile skips when a live instance owns the credential', async function () {
+test('maybeRefreshProfile skips the held live credential while refreshing an unheld account', async function () {
   const ctx = makeCtx();
   ctx.store.setProfile('alice', blobExpiring());
+  ctx.store.setLive(blobExpiring());
+  ctx.store.setProfile(
+    'bob',
+    JSON.stringify({
+      claudeAiOauth: { accessToken: 'BOB-OLD', refreshToken: 'RT-BOB', expiresAt: NOW + 60000, scopes: ['a'] },
+    }),
+  );
   const r = await oauth.maybeRefreshProfile(ctx, 'alice', {
     fetch: okFetch([]),
     nowMs: NOW,
-    instances: function () {
-      return [{ pid: 1 }];
-    },
   });
   assert.strictEqual(r.status, 'skipped');
   assert.strictEqual(JSON.parse(ctx.store.getProfile('alice')).claudeAiOauth.accessToken, 'OLD');
+
+  const rBob = await oauth.maybeRefreshProfile(ctx, 'bob', {
+    fetch: okFetch([]),
+    nowMs: NOW,
+  });
+  assert.strictEqual(rBob.status, 'refreshed');
+  assert.strictEqual(JSON.parse(ctx.store.getProfile('bob')).claudeAiOauth.accessToken, 'NEW');
 });
 
 test('maybeRefreshProfile reports persist-failed when the rotated blob cannot be saved', async function () {

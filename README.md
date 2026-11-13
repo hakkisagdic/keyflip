@@ -660,33 +660,34 @@ keyflip llm off                               # back to the default (`claude -p`
 
 ### Nothing expires on its own (`refresh --schedule`)
 
-An Anthropic OAuth token lives about six days, and it expires on the **calendar** — not on the day you
-happen to switch. That gap is why a switch can "succeed" and still open a sign-in screen: the stored
-token died quietly weeks earlier, and `keyflip refresh` only works while the credential is idle. So the
-repair is scheduled rather than remembered:
+A Claude OAuth access token lives about **eight hours**, so an inactive account expires between switches
+unless something renews its refresh grant ahead of time. The scheduled refresh keeps every inactive
+saved account alive so usage checks, autoswitch, and failover never hit a dead token:
 
 ```bash
-keyflip refresh --schedule                      # launchd (macOS) / crontab (Linux), default 04:30
-keyflip refresh --schedule --at 05:15
-keyflip refresh --schedule-status               # what runs, when, and where its output lands
+keyflip refresh --schedule                      # launchd (macOS, every 15m + RunAtLoad) / crontab (Linux, */15)
+keyflip refresh --schedule-status               # installed, loaded, interval, last run, per-account results
 keyflip refresh --unschedule
+keyflip config set refresh.leadMinutes 60       # lead window (5..240 minutes, default 60)
 ```
 
-- It runs `keyflip refresh --all`: every saved account's token is renewed while nothing is using it. It
-  calls **no model and spends no quota** — unlike the nightly `dream`, which is why it has its own
-  launchd label, its own crontab marker and its own receipt file. The two jobs never overwrite
-  each other, and 04:30 is deliberately not the dream's 03:00.
-- **If a Claude session is live, the run changes nothing.** Rotating a refresh token under a session
-  that still holds it logs a surface out, so the job declines and waits for the next idle night; in
-  `--json` that refusal is `{refused, changed:false}` rather than a paragraph behind an exit 0.
-- Its output goes to `~/Library/Logs/refresh-keyflip.log` and the plist sets `AbandonProcessGroup`, so
-  the job can be read after it ran and its detached children are not killed at exit. launchd's `PATH`
-  is `/usr/bin:/bin:/usr/sbin:/sbin`, so the schedule stores an absolute interpreter + script path —
-  an fnm-installed `keyflip` would otherwise never be found.
-- `keyflip doctor` has a **token renewal** row: it warns while accounts hold unrenewed tokens and goes
-  green once something is scheduled. Over MCP: `keyflip_refresh_schedule` (`action=status|install|
-  remove`, confirm-gated). See `keyflip chains` for the parts of a login that a scheduled refresh
-  *cannot* save — a desktop-app session cookie needs a human, and no timer changes that.
+- **What is refreshed and how often:** `com.keyflip.refresh` runs `keyflip refresh --all --due` every
+  **15 minutes** (and immediately on login/wake via `RunAtLoad`). Any saved OAuth profile whose access
+  token is expired or within the lead window (default **60 minutes**, configurable via
+  `refresh.leadMinutes`) is refreshed and its rotated refresh token is verified on read-back. Accounts
+  with `--long-lived` inference tokens (no refresh token) are reported as `long-lived` and never call
+  the token endpoint. It calls **no model and spends no quota**.
+- **What is never touched:** The live login (`Claude Code-credentials` / `setLive`), any profile sharing
+  the live refresh token's fingerprint, and any account currently held by a running session
+  (`inUseAccounts`) are **never** modified (`held`), while all other saved accounts are refreshed even
+  when Claude Code is running. Each account refresh serializes with `keyflip switch` under the
+  cross-process lock and re-reads the stored blob after acquiring the lock.
+- **How failures retry and alert:** Transient errors (`429`, `5xx`, network timeouts) retry twice within
+  a run and back off exponentially (`5, 10, 20, 40, 60` min in `refresh-state.json`, overridden after
+  5 minutes once a token is already expired). A rejected refresh token (`400/401 invalid_grant` ->
+  `dead`), a storage verification failure (`persist-failed`), or the 3rd consecutive transient failure
+  sends a de-duplicated `token-refresh` notification (including a macOS desktop banner with
+  `keyflip login <name>`) and is flagged by `keyflip doctor`, `keyflip status`, and `keyflip list`.
 - **Other tools have their own clocks.** The ChatGPT/Codex access token (~10 days) is rotated by the
   separately installed refresh daemon (`keyflip refresh --daemon-start`, every 5 minutes) within 24
   hours of expiry — never while ChatGPT/Codex runs. `keyflip chatgpt refresh` does it once by hand;

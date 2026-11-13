@@ -62,7 +62,7 @@ function dreamCommand(opts) {
 // itself (it refuses to rotate a token something is holding), so a badly-timed run changes nothing
 // instead of logging someone out.
 function refreshCommand(opts) {
-  return argvFor(keyflipBin(opts), ['refresh', '--all']);
+  return argvFor(keyflipBin(opts), ['refresh', '--all', '--due']);
 }
 
 // Background refresh daemon: runs continuously as a KeepAlive process, checking expiry every 5 min
@@ -112,7 +112,9 @@ const JOBS = {
     label: REFRESH_LABEL,
     cronMark: REFRESH_CRON_MARK,
     record: 'refresh-schedule.json',
-    at: '04:30',
+    at: null,
+    interval: 15,
+    runAtLoad: true,
     command: refreshCommand,
     llm: false,
     install: 'keyflip refresh --schedule',
@@ -227,7 +229,9 @@ function buildPlist(opts) {
     '    <key>StandardErrorPath</key><string>' +
     log +
     '</string>\n' +
-    '    <key>RunAtLoad</key><false/>\n  </dict>\n</plist>\n'
+    '    <key>RunAtLoad</key><' +
+    (job.runAtLoad ? 'true' : 'false') +
+    '/>\n  </dict>\n</plist>\n'
   );
 }
 function installLaunchd(opts) {
@@ -242,7 +246,13 @@ function installLaunchd(opts) {
   }
   runner('launchctl', ['unload', p]); // idempotent: drop any prior copy
   const r = runner('launchctl', ['load', p]);
-  return { ok: !r || r.code === 0, path: p, when: whenOf(opts), log: logPath(opts.home, opts) };
+  return {
+    ok: !r || r.code === 0,
+    path: p,
+    when: whenOf(opts),
+    interval: intervalOf(opts),
+    log: logPath(opts.home, opts),
+  };
 }
 function uninstallLaunchd(opts) {
   opts = opts || {};
@@ -293,7 +303,7 @@ function installCron(opts) {
     });
   kept.push(cronLine(opts));
   const r = runner('crontab', ['-'], kept.join('\n') + '\n');
-  return { ok: !!(r && r.code === 0), when: whenOf(opts) };
+  return { ok: !!(r && r.code === 0), when: whenOf(opts), interval: intervalOf(opts) };
 }
 function uninstallCron(opts) {
   opts = opts || {};
@@ -332,6 +342,42 @@ function lastRunAt(logPathStr) {
   } catch (e) {
     return null; // no log at all: the job has never written anything
   }
+}
+
+function refreshStateLastRunAt(ctx, opts) {
+  const dir = (opts && opts.configDir) || (ctx && ctx.configDir);
+  if (!dir) return null;
+  try {
+    const raw = JSON.parse(fs.readFileSync(path.join(dir, 'refresh-state.json'), 'utf8'));
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+    let latestMs = 0;
+    let latestIso = null;
+    if (raw._meta && typeof raw._meta.lastRunAt === 'string') {
+      const ms = Date.parse(raw._meta.lastRunAt);
+      if (ms > latestMs) {
+        latestMs = ms;
+        latestIso = raw._meta.lastRunAt;
+      }
+    }
+    Object.keys(raw).forEach(function (k) {
+      if (k === '_meta') return;
+      const at = raw[k] && raw[k].lastAttemptAt;
+      const ms = typeof at === 'string' ? Date.parse(at) : 0;
+      if (ms > latestMs) {
+        latestMs = ms;
+        latestIso = at;
+      }
+    });
+    return latestIso;
+  } catch (e) {
+    return null;
+  }
+}
+
+function pickNewerIso(a, b) {
+  if (!a) return b || null;
+  if (!b) return a || null;
+  return Date.parse(b) > Date.parse(a) ? b : a;
 }
 
 // ---- platform dispatch ----
@@ -453,6 +499,8 @@ function inventory(ctx, opts) {
 
 function install(ctx, opts) {
   opts = Object.assign({}, opts);
+  if (!opts.home && ctx && ctx.home) opts.home = ctx.home;
+  if (!opts.run && ctx && ctx.run) opts.run = ctx.run;
   const job = jobOf(opts);
   const r =
     ctx.platform === 'darwin'
@@ -484,6 +532,8 @@ function install(ctx, opts) {
 }
 function uninstall(ctx, opts) {
   opts = Object.assign({}, opts);
+  if (!opts.home && ctx && ctx.home) opts.home = ctx.home;
+  if (!opts.run && ctx && ctx.run) opts.run = ctx.run;
   let r;
   if (ctx.platform === 'darwin') r = Object.assign({ kind: 'launchd' }, uninstallLaunchd(opts));
   else if (ctx.platform === 'linux') r = Object.assign({ kind: 'cron' }, uninstallCron(opts));
@@ -492,7 +542,9 @@ function uninstall(ctx, opts) {
   return r;
 }
 function status(ctx, opts) {
-  opts = opts || {};
+  opts = Object.assign({}, opts);
+  if (!opts.home && ctx && ctx.home) opts.home = ctx.home;
+  if (!opts.run && ctx && ctx.run) opts.run = ctx.run;
   const runner = opts.run || run;
   // `askSystem: false` answers from keyflip's own files and spawns NOTHING — for callers that must
   // stay hermetic (a test suite, anything without a shell). `loaded` is then null, meaning "not
@@ -500,10 +552,41 @@ function status(ctx, opts) {
   const ask = opts.askSystem !== false;
   const job = jobOf(opts);
   const rec = readRecord(ctx, opts);
+  const recOutdated = job.name === 'refresh' && Boolean(rec && (!rec.interval || rec.at));
+  const defaultEveryMin =
+    job.name === 'refresh'
+      ? recOutdated
+        ? null
+        : (rec && rec.interval) || null
+      : job.interval
+        ? rec && rec.interval
+          ? rec.interval
+          : job.interval
+        : null;
+  const stateRun = job.name === 'refresh' ? refreshStateLastRunAt(ctx, opts) : null;
   if (ctx.platform === 'darwin') {
     const p = plistPath(opts.home, opts);
     const installed = fs.existsSync(p);
     const log = logPath(opts.home, opts);
+    let plistText = '';
+    if (installed) {
+      try {
+        plistText = fs.readFileSync(p, 'utf8');
+      } catch (e) {
+        plistText = '';
+      }
+    }
+    let outdated = Boolean(recOutdated);
+    let everyMin = defaultEveryMin;
+    if (job.name === 'refresh') {
+      const plistOutdated =
+        installed &&
+        (plistText.indexOf('StartCalendarInterval') !== -1 || plistText.indexOf('<key>StartInterval</key>') === -1);
+      outdated = Boolean(recOutdated || plistOutdated);
+      const m = /<key>StartInterval<\/key>\s*<integer>(\d+)<\/integer>/.exec(plistText);
+      const plistMin = m ? Math.round(parseInt(m[1], 10) / 60) : null;
+      everyMin = outdated ? null : (rec && rec.interval) || plistMin || null;
+    }
     return {
       kind: 'launchd',
       job: job.name,
@@ -511,14 +594,28 @@ function status(ctx, opts) {
       // A plist on disk and a job launchd will fire are two different facts, and only the second
       // one means the thing is actually being kept current.
       loaded: !ask ? null : installed ? launchdLoaded(job.label, runner) : false,
-      lastRun: lastRunAt(log),
+      interval: everyMin,
+      outdated: outdated,
+      lastRun: pickNewerIso(lastRunAt(log), stateRun),
       path: p,
       log: log,
       recorded: rec,
     };
   }
   if (ctx.platform === 'linux') {
-    const installed = ask && readCron(runner).indexOf(job.cronMark) !== -1;
+    const cronText = ask ? readCron(runner) : '';
+    const installed = ask && cronText.indexOf(job.cronMark) !== -1;
+    let cronOutdated = false;
+    let cronMin = null;
+    if (job.name === 'refresh' && installed) {
+      const line = cronText.split('\n').find(function (l) {
+        return l.indexOf(job.cronMark) !== -1;
+      });
+      const m = line && /^\*\/(\d+)\s/.exec(line.trim());
+      if (m) cronMin = parseInt(m[1], 10);
+      else cronOutdated = true;
+    }
+    const outdated = Boolean(recOutdated || cronOutdated);
     return {
       kind: 'cron',
       job: job.name,
@@ -526,11 +623,22 @@ function status(ctx, opts) {
       // cron has no separate registry: a line in the table IS the loaded state. There is no log path
       // to age, so lastRun stays null rather than claiming a job never ran.
       loaded: installed,
-      lastRun: null,
+      interval: job.name === 'refresh' ? (outdated ? null : (rec && rec.interval) || cronMin || null) : defaultEveryMin,
+      outdated: outdated,
+      lastRun: stateRun,
       recorded: rec,
     };
   }
-  return { kind: 'unsupported', job: job.name, installed: false, loaded: null, lastRun: null, recorded: rec };
+  return {
+    kind: 'unsupported',
+    job: job.name,
+    installed: false,
+    loaded: null,
+    interval: defaultEveryMin,
+    outdated: Boolean(recOutdated),
+    lastRun: stateRun,
+    recorded: rec,
+  };
 }
 
 export {

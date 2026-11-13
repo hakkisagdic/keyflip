@@ -20,7 +20,7 @@ try {
 }
 
 // The events keyflip knows how to emit; a user may enable arbitrary extra names.
-const KNOWN_EVENTS = ['quota', 'switch', 'fleet-reply'];
+const KNOWN_EVENTS = ['quota', 'switch', 'fleet-reply', 'token-refresh'];
 // A sane event token: alnum start, then [a-z0-9._-], bounded. Keeps the list tidy
 // and render-safe (an event name can reach an osascript string / a JSON body).
 const EVENT_RE = /^[a-z0-9][a-z0-9._-]{0,63}$/i;
@@ -145,6 +145,25 @@ function asAppleScript(s) {
 function summarize(event, payload) {
   if (payload && typeof payload === 'object' && !Array.isArray(payload)) {
     if (typeof payload.message === 'string' && payload.message) return payload.message;
+    if (event === 'token-refresh' && payload.account) {
+      if (payload.status === 'recovered' || payload.result === 'recovered') {
+        return 'keyflip: ' + payload.account + ' token refresh recovered';
+      }
+      const detail =
+        payload.result === 'dead' || payload.kind === 'dead'
+          ? 'refresh token rejected'
+          : payload.result === 'persist-failed'
+            ? 'could not save refreshed token'
+            : payload.reason || payload.error || 'transient error';
+      return (
+        'keyflip: ' +
+        payload.account +
+        ' token could not be refreshed (' +
+        detail +
+        ') — run: keyflip login ' +
+        payload.account
+      );
+    }
     const parts = [];
     Object.keys(payload).forEach(function (k) {
       const v = payload[k];
@@ -164,18 +183,19 @@ function summarize(event, payload) {
 //   - desktop: a macOS `osascript` banner via opts.run || exec.run
 // Returns { sent, event, at, channels[, reason] }. `sent` is true if ANY channel
 // delivered. opts.force bypasses the enabled-list check (used by test()).
+// opts.forceDesktop always fires a macOS desktop banner even if notify.json is unconfigured.
 async function send(ctx, event, payload, opts) {
   opts = opts || {};
   event = String(event == null ? '' : event);
   const cfg = getConfig(ctx);
-  if (!opts.force && !isEnabled(cfg, event))
-    return { sent: false, event: event, reason: 'event-disabled', channels: [] };
+  const eventOn = Boolean(opts.force || isEnabled(cfg, event));
+  if (!eventOn && !opts.forceDesktop) return { sent: false, event: event, reason: 'event-disabled', channels: [] };
   const at = ctx.now();
   const safe = stripSecrets(payload); // NEVER send the raw payload past this point
   const channels = [];
 
   // --- webhook ---
-  if (cfg.webhook) {
+  if (eventOn && cfg.webhook) {
     const doFetch = opts.fetch || (typeof fetch !== 'undefined' ? fetch : null);
     if (!doFetch) channels.push({ channel: 'webhook', ok: false, reason: 'no-fetch' });
     else {
@@ -204,10 +224,12 @@ async function send(ctx, event, payload, opts) {
   }
 
   // --- desktop (macOS only) ---
-  if (cfg.desktop) {
+  if ((eventOn && cfg.desktop) || opts.forceDesktop) {
     if (ctx.platform !== 'darwin') channels.push({ channel: 'desktop', ok: false, reason: 'not-macos' });
-    else {
-      const runner = opts.run || _exec.run;
+    else if (!opts.run && !ctx.run && process.env.KEYFLIP_TEST_OFFLINE === '1') {
+      channels.push({ channel: 'desktop', ok: false, reason: 'test-offline' });
+    } else {
+      const runner = opts.run || ctx.run || _exec.run;
       try {
         const script =
           'display notification "' +
@@ -247,6 +269,7 @@ export {
   setConfig,
   send,
   test,
+  summarize,
   isEnabled,
   stripSecrets,
   sanitizeWebhook,

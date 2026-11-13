@@ -36,6 +36,7 @@ const GITIGNORE = ['# keyflip: NEVER version secrets — they live in the OS cre
     'refresh-daemon-schedule.json',
     'conv-index-schedule.json',
     'refresh-metrics.json',
+    'refresh-state.json',
     'expired-captures.json',
     'backups/',
     'skill-backups/',

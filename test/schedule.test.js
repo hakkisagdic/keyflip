@@ -155,20 +155,21 @@ test('cronLine coerces a malicious days value to a bounded integer (no shell inj
 // between switches. These tests pin the thing that makes two jobs safe: each one has its own label,
 // marker, receipt and plist path, so installing/removing one can never clobber the other, and a
 // refresh schedule can never silently turn into a dream schedule.
-test('the refresh job has its own label, marker, receipt and default hour', function () {
+test('the refresh job has its own label, marker, receipt and default cadence', function () {
   assert.strictEqual(schedule.REFRESH_LABEL, 'com.keyflip.refresh');
   assert.notStrictEqual(schedule.REFRESH_LABEL, schedule.LABEL);
   assert.notStrictEqual(schedule.REFRESH_CRON_MARK, schedule.CRON_MARK);
   assert.notStrictEqual(schedule.REFRESH_RECORD_NAME, schedule.RECORD_NAME);
-  assert.deepStrictEqual(schedule.whenOf({ job: 'refresh' }), { h: 4, m: 30 });
+  assert.strictEqual(schedule.whenOf({ job: 'refresh' }), null);
+  assert.strictEqual(schedule.intervalOf({ job: 'refresh' }), 15);
   assert.deepStrictEqual(schedule.whenOf({ job: 'dream' }), { h: 3, m: 0 });
   // A job-less call is a dream call: every call site written before #36 keeps its meaning.
   assert.deepStrictEqual(schedule.whenOf({}), { h: 3, m: 0 });
   assert.strictEqual(schedule.jobOf({}).name, 'dream');
   assert.strictEqual(schedule.jobOf({ job: 'nonsense' }).name, 'dream', 'an unknown job cannot invent a schedule');
   const line = schedule.cronLine({ job: 'refresh', run: fakeRunner([], {}) });
-  assert.ok(/refresh --all/.test(line), line);
-  assert.ok(/^30 4 \* \* \* /.test(line), 'its default hour is its own: ' + line);
+  assert.ok(/refresh --all --due/.test(line), line);
+  assert.ok(/^\*\/15 \* \* \* \* /.test(line), 'its default cadence is every 15m: ' + line);
   assert.ok(line.indexOf(schedule.REFRESH_CRON_MARK) !== -1);
   assert.strictEqual(line.indexOf('dream'), -1, 'a refresh schedule must not quietly be a dream schedule');
 });
@@ -189,7 +190,7 @@ test('the refresh command line is a fixed argv — nothing from opts can ride in
       return { code: 0, stdout: '/usr/local/bin/keyflip\n' };
     },
   });
-  assert.deepStrictEqual(cmd.args, ['refresh', '--all']);
+  assert.deepStrictEqual(cmd.args, ['refresh', '--all', '--due']);
 });
 
 test('every scheduled job declares AbandonProcessGroup and its own log paths', function () {
@@ -302,7 +303,7 @@ test('ProgramArguments are the full command: a .js bin is run as `node <script> 
   // 1) An installed binary: executed directly, argv is only the job.
   const installed = fakeRunner([], {}); // returns /usr/local/bin/keyflip for `which`
   const a = plistArgs(schedule.buildPlist({ job: 'refresh', run: installed }));
-  assert.deepStrictEqual(a, ['/usr/local/bin/keyflip', 'refresh', '--all']);
+  assert.deepStrictEqual(a, ['/usr/local/bin/keyflip', 'refresh', '--all', '--due']);
   const d = plistArgs(schedule.buildPlist({ job: 'dream', days: 21, run: installed }));
   assert.deepStrictEqual(d, ['/usr/local/bin/keyflip', 'dream', '--apply', '--older-than', '21d']);
   // 2) No installed keyflip (the dev checkout): node + THE SCRIPT + the job. The script must survive.
@@ -313,12 +314,12 @@ test('ProgramArguments are the full command: a .js bin is run as `node <script> 
   const r = plistArgs(schedule.buildPlist({ job: 'refresh', run: noKeyflip }));
   assert.strictEqual(r[0], process.execPath, 'run by node');
   assert.strictEqual(r[1], repoBin, 'the keyflip script is argv[1] — without it this job cannot run');
-  assert.deepStrictEqual(r.slice(2), ['refresh', '--all']);
+  assert.deepStrictEqual(r.slice(2), ['refresh', '--all', '--due']);
   const dm = plistArgs(schedule.buildPlist({ job: 'dream', run: noKeyflip }));
   assert.strictEqual(dm[1], repoBin, 'the dream fallback carries the script too');
   // 3) The Linux line is the same command, shell-joined.
   const cl = schedule.cronLine({ job: 'refresh', run: noKeyflip });
-  assert.ok(cl.indexOf(process.execPath + ' ' + repoBin + ' refresh --all') !== -1, cl);
+  assert.ok(cl.indexOf(process.execPath + ' ' + repoBin + ' refresh --all --due') !== -1, cl);
 });
 
 // The conversation index is refreshed on an INTERVAL, not at a wall-clock time: search must find
@@ -498,7 +499,8 @@ test('the inventory is every schedulable job, with what it is for and how to ins
 test('hhmm normalizes both shapes a schedule can be recorded in', function () {
   assert.strictEqual(schedule.hhmm({ at: { h: 4, m: 5 } }, schedule.JOBS.refresh), '04:05', 'a parsed receipt');
   assert.strictEqual(schedule.hhmm({ at: { h: 23, m: 0 } }, schedule.JOBS.dream), '23:00');
-  assert.strictEqual(schedule.hhmm(null, schedule.JOBS.refresh), '04:30', 'else the job default');
+  assert.strictEqual(schedule.hhmm(null, schedule.JOBS.dream), '03:00', 'else the job default');
+  assert.strictEqual(schedule.hhmm(null, schedule.JOBS.refresh), null, 'an interval job has no wall-clock hour');
   assert.strictEqual(schedule.hhmm(null, schedule.JOBS.daemon), null, 'and a daemon has none');
 });
 

@@ -277,11 +277,11 @@ test('MCP tools: status/list read state; switch requires confirm and then switch
 
 test('MCP preflight: switch_plan/verify are read-only, refresh gates on confirm, and no secret leaks', async function () {
   // A blob verify.js can honestly read: expiry + a refresh token are what it inspects (never values).
-  const mk = function (access, minsLeft) {
+  const mk = function (access, minsLeft, rt) {
     return JSON.stringify({
       claudeAiOauth: {
         accessToken: access,
-        refreshToken: 'RT-DO-NOT-LEAK',
+        refreshToken: rt || 'RT-DO-NOT-LEAK',
         expiresAt: Date.now() + minsLeft * 60000,
         scopes: ['user:inference'],
         subscriptionType: 'max',
@@ -292,7 +292,7 @@ test('MCP preflight: switch_plan/verify are read-only, refresh gates on confirm,
   const home = mkhome();
   fs.writeFileSync(path.join(home, '.claude', '.credentials.json'), mk('AT-ALICE-SECRET', 43200)); // 30 days
   cliRun(home, ['add']); // alice (active)
-  fs.writeFileSync(path.join(home, '.claude', '.credentials.json'), mk('AT-BOB-SECRET', 2880));
+  fs.writeFileSync(path.join(home, '.claude', '.credentials.json'), mk('AT-BOB-SECRET', 2880, 'RT-BOB-DO-NOT-LEAK'));
   fs.writeFileSync(
     path.join(home, '.claude.json'),
     JSON.stringify({ oauthAccount: { emailAddress: 'bob@example.com' }, userID: 'u2' }),
@@ -351,13 +351,13 @@ test('MCP preflight: switch_plan/verify are read-only, refresh gates on confirm,
         jsonrpc: '2.0',
         id: 6,
         method: 'tools/call',
-        params: { name: 'keyflip_refresh', arguments: { account: 'alice', confirm: false } },
+        params: { name: 'keyflip_refresh', arguments: { account: 'bob', confirm: false } },
       },
       {
         jsonrpc: '2.0',
         id: 7,
         method: 'tools/call',
-        params: { name: 'keyflip_refresh', arguments: { account: 'alice', confirm: true } },
+        params: { name: 'keyflip_refresh', arguments: { account: 'bob', confirm: true } },
       },
     ],
     [1, 2, 3, 4, 5, 6, 7],
@@ -427,7 +427,7 @@ test('MCP preflight: switch_plan/verify are read-only, refresh gates on confirm,
 
   // And no tool result — text or structured — may carry a credential value.
   const all = JSON.stringify([sc3, sc5, got[7].result.structuredContent]);
-  ['AT-ALICE-SECRET', 'AT-BOB-SECRET', 'RT-DO-NOT-LEAK'].forEach(function (secret) {
+  ['AT-ALICE-SECRET', 'AT-BOB-SECRET', 'RT-DO-NOT-LEAK', 'RT-BOB-DO-NOT-LEAK'].forEach(function (secret) {
     assert.ok(all.indexOf(secret) === -1, 'a tool result leaked a credential value');
   });
 });

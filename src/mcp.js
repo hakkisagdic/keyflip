@@ -142,6 +142,7 @@ try {
 
 function accountsPayload(ctx, infos) {
   const appActive = ctx.appDataDir ? appauth.activeProfileName(ctx) : null;
+  const refreshState = oauth.readRefreshState(ctx);
   return core.listProfiles(ctx).map(function (e) {
     let cli = null;
     try {
@@ -149,6 +150,10 @@ function accountsPayload(ctx, infos) {
     } catch (err) {
       cli = null;
     }
+    const tok = oauth.tokenStatusForAccount(ctx, e.name, {
+      isLive: !!e.active,
+      refreshState: refreshState,
+    });
     const out = {
       name: e.name,
       email: e.email || null,
@@ -158,6 +163,9 @@ function accountsPayload(ctx, infos) {
       activeApp: e.name === appActive,
       enabled: e.enabled !== false,
       duplicateOf: e.duplicateOf || null,
+      tokenExpiresAt: tok.tokenExpiresAt,
+      tokenKind: tok.tokenKind,
+      lastRefresh: tok.lastRefresh,
     };
     if (infos && infos[e.name]) {
       out.usage = infos[e.name].usage;
@@ -331,6 +339,7 @@ const TOOLS = [
         id = null;
       }
       const email = (id && id.email) || core.currentEmail(ctx) || null;
+      const tok = oauth.tokenStatusForAccount(ctx, (id && id.name) || null, { isLive: true });
       return {
         cli: email
           ? {
@@ -340,8 +349,14 @@ const TOOLS = [
               identityVerified: !!(id && id.verified),
               labelEmail: (id && id.labelEmail) || null,
               labelMismatch: !!(id && id.mismatch),
+              tokenExpiresAt: tok.tokenExpiresAt,
+              tokenKind: tok.tokenKind,
+              lastRefresh: tok.lastRefresh,
             }
           : null,
+        tokenExpiresAt: tok.tokenExpiresAt,
+        tokenKind: tok.tokenKind,
+        lastRefresh: tok.lastRefresh,
         app: appName ? { name: appName, email: profiles.email(ctx.configDir, appName) || null } : null,
       };
     },
@@ -863,20 +878,13 @@ const TOOLS = [
         names = [hit];
       }
       if (!names.length) return { refreshed: [], note: 'no saved account to refresh' };
-      const out = [];
-      for (let i = 0; i < names.length; i++) {
-        const n = names[i];
-        // The same guard the CLI uses: never rotate a token a live session is holding.
-        const r = await oauth.maybeRefreshProfile(ctx, n, {
-          isRunning: function () {
-            return appctl.isClaudeRunning(ctx.platform);
-          },
-          instances: function () {
-            return appctl.claudeInstances(ctx.home);
-          },
-        });
-        out.push({ account: n, status: r.status });
-      }
+      const res = await oauth.refreshDue(ctx, {
+        accounts: names,
+        fetch: ctx.fetch,
+      });
+      const out = res.results.map(function (r) {
+        return { account: r.account, status: r.status };
+      });
       logmod.log(
         'mcp refresh -> ' +
           out
@@ -885,7 +893,11 @@ const TOOLS = [
             })
             .join(', '),
       );
-      return { refreshed: out };
+      return {
+        refreshed: out,
+        results: res.results,
+        heldBack: res.heldBack,
+      };
     },
   },
   {
@@ -5755,14 +5767,15 @@ const TOOLS = [
   },
   {
     name: 'keyflip_refresh_schedule',
-    title: 'Schedule the nightly token refresh',
+    title: 'Schedule background token refresh',
     description:
-      'Install/remove/inspect a schedule (launchd on macOS, cron on Linux) that runs `keyflip refresh --all` unattended nightly, so stored OAuth tokens are renewed before they expire rather than discovered dead at switch time. action="status" (read) | "install" | "remove". It rotates tokens for every saved account but calls NO model and spends no quota; while a Claude session is live each run declines to change anything. For install/remove, ask the user, then confirm=true.',
+      'Install/remove/inspect a schedule (launchd on macOS every 15m with RunAtLoad, cron */15 on Linux) that runs `keyflip refresh --all --due` unattended, so stored OAuth tokens are renewed before they expire rather than discovered dead at switch time. action="status" (read) | "install" | "remove". It rotates expiring tokens for every inactive saved account while leaving the live login alone; it calls NO model and spends no quota. For install/remove, ask the user, then confirm=true.',
     inputSchema: {
       type: 'object',
       properties: {
         action: { type: 'string', enum: ['status', 'install', 'remove'] },
-        at: { type: 'string', description: 'HH:MM, default 04:30 (deliberately not the dream hour)' },
+        at: { type: 'string', description: 'Deprecated (refresh now runs every 15 minutes)' },
+        interval: { type: 'integer', description: 'Cadence in minutes, default 15' },
         confirm: confirmProp.confirm,
       },
       required: ['action', 'confirm'],
@@ -5774,7 +5787,7 @@ const TOOLS = [
       if (args.action === 'status') return { schedule: schedule.status(ctx, { job: 'refresh' }) };
       needConfirm(args);
       if (args.action === 'remove') return { removed: schedule.uninstall(ctx, { job: 'refresh' }) };
-      const r = schedule.install(ctx, { job: 'refresh', at: args.at || '04:30' });
+      const r = schedule.install(ctx, { job: 'refresh', interval: args.interval || 15 });
       if (!r.ok) throw new Error('could not schedule: ' + (r.reason || r.detail || 'unknown'));
       return { scheduled: r, spendsQuota: false };
     },

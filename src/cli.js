@@ -407,11 +407,12 @@ function usage() {
   print('  keyflip status                which account each surface is on (CLI + desktop app)');
   print('  keyflip verify [acct] [--usage|--live]  would switching there WORK right now? reads each');
   print('                                 surface back the way its own app does (token/cookie expiry, capture age)');
-  print('  keyflip refresh [acct|--all]  revive stored OAuth tokens while no Claude is running them');
-  print('                                 (run it on a schedule, not at switch time)');
-  print('  keyflip refresh --schedule [--at 04:30] | --unschedule | --schedule-status');
-  print('                                 put `refresh --all` on a nightly timer (launchd/cron): tokens');
-  print('                                 expire on the calendar, not on the day you happen to switch');
+  print('  keyflip refresh [acct|--all] [--due]   revive stored OAuth tokens while no Claude is holding them');
+  print('                                 (--due is accepted; --all only contacts the token endpoint for accounts');
+  print('                                 that are due within refresh.leadMinutes, default 60m)');
+  print('  keyflip refresh --schedule | --unschedule | --schedule-status');
+  print('                                 put `refresh --all --due` on a 15-min timer (launchd/cron): tokens');
+  print('                                 expire (~8 h) on the calendar, not on the day you happen to switch');
   print('  keyflip refresh --daemon-start | --daemon-stop | --daemon-status');
   print('                                 run a continuous background daemon that checks expiry every 5 min;');
   print(
@@ -932,18 +933,14 @@ async function cmdSwitch(ctx, rest) {
   const manage = appctl.canManageApp(ctx.platform);
 
   async function refreshIfNeeded() {
-    const r = await oauth.maybeRefreshProfile(ctx, name, {
-      isRunning: function () {
-        return appctl.isClaudeRunning(ctx.platform);
-      },
-      instances: function () {
-        return appctl.claudeInstances(ctx.home);
-      },
+    const r = await oauth.refreshAccount(ctx, name, {
+      lockHeld: true,
+      forSwitch: true,
     });
     if (r.status === 'refreshed') print('  ↳ refreshed the saved OAuth token (was expiring).');
-    else if (r.status === 'long-lived')
+    else if (r.status === 'long-lived' && !r.notRefreshable)
       print("  ↳ the saved login is dead — handing the CLI this account's one-year token instead (inference-only).");
-    else if (r.status === 'refresh-failed')
+    else if (r.status === 'dead' || r.status === 'transient' || r.status === 'refresh-failed')
       print('  ⚠️ the saved token is expiring and could not be refreshed — you may be asked to log in.');
     else if (r.status === 'persist-failed') {
       print('  ⚠️ token refreshed but could NOT be saved — the stored refresh token is now STALE.');
@@ -1185,7 +1182,7 @@ async function cmdSwitch(ctx, rest) {
   if ((running && force) || onlyCli) {
     if (onlyCli && !ctx.store.getProfile(name))
       return fail("no saved CLI login for '" + name + "' — log in with Claude Code, then `keyflip add " + name + '`.');
-    if (onlyCli && !running) await refreshIfNeeded();
+    await refreshIfNeeded();
     const did = core.performSwitch(ctx, name);
     if (!did.cli) print("  ↳ CLI login for this profile isn't captured — nothing to swap for the CLI.");
     print(
@@ -1258,6 +1255,7 @@ async function cmdSwitch(ctx, rest) {
   // App is open but we cannot auto-close it (Linux/Windows).
   if (running && !manage) {
     if (autoYes) {
+      await refreshIfNeeded();
       const did = core.performSwitch(ctx, name);
       print(style.ok('✅') + ' Switched to: ' + (em || name) + '. Restart Claude Code to apply.');
       await emitSwitched(did, null, null);
@@ -13216,6 +13214,7 @@ async function cmdStatus(ctx, rest) {
       staleSt = null;
     }
   }
+  const tokInfo = oauth.tokenStatusForAccount(ctx, (id && id.name) || null, { isLive: true });
   jsonOut({
     cli: cliEmail
       ? {
@@ -13229,8 +13228,14 @@ async function cmdStatus(ctx, rest) {
           // Scopes are metadata, never the token: why the profile endpoint cannot confirm this login.
           tokenScopes: scopeOnly ? scopeOnly.scopes : undefined,
           profileEndpoint: scopeOnly ? 'no-profile-scope' : undefined,
+          tokenExpiresAt: tokInfo.tokenExpiresAt,
+          tokenKind: tokInfo.tokenKind,
+          lastRefresh: tokInfo.lastRefresh,
         }
       : null,
+    tokenExpiresAt: tokInfo.tokenExpiresAt,
+    tokenKind: tokInfo.tokenKind,
+    lastRefresh: tokInfo.lastRefresh,
     identityRepaired: repaired || undefined,
     app: appName
       ? { name: appName, email: appEmail }
@@ -13275,6 +13280,9 @@ async function cmdStatus(ctx, rest) {
               : '')
           : ''),
     );
+    if (cliEmail || tokInfo.tokenKind !== 'none') {
+      print('  ' + oauth.formatTokenStatusLine(tokInfo));
+    }
     if (id && id.source === 'label' && id.hasLive)
       print(
         style.dim(
@@ -15783,20 +15791,32 @@ async function cmdChatGPT(ctx, rest) {
   );
 }
 
-// `keyflip refresh [--all] [--json]` — revive stored OAuth tokens BEFORE you need them.
+// `keyflip refresh [<account>|--all] [--due] [--json]` — revive stored OAuth tokens BEFORE you need them.
+// `--due` is accepted; `--all` only contacts the token endpoint for accounts that are due within
+// `refresh.leadMinutes` (default 60 min).
 // Switching is the wrong time to discover a token died: Anthropic rotates the refresh token on every
 // use, so a capture that sat unused while the live session kept refreshing is now stale, and the
 // only repair is either a refresh (which needs the credential to be idle) or a human login. This runs
 // the same guarded refresh keyflip already does inside `switch`, but for every saved account at once,
-// so an idle night can keep all of them alive.
+// so a 15-min timer can keep all of them alive.
 async function cmdRefresh(ctx, rest) {
   // `main()` consumes the global `--json` before the command ever sees `rest`, so reading it off
   // `rest` here was always false — `keyflip refresh --all --json` printed human prose. JSON_MODE is
   // the only truth.
   const asJson = JSON_MODE;
-  // #36: `--schedule [--at HH:MM]` / `--unschedule` / `--schedule-status` put this on the same
-  // nightly timer as `dream` (launchd on macOS, cron on Linux), so a 6-day token cannot expire
-  // while nobody is thinking about it. These are FLAGS, not subcommands: the first positional
+  if (rest.indexOf('--help') !== -1 || rest.indexOf('-h') !== -1 || rest[0] === 'help') {
+    print('usage: keyflip refresh [<account>|--all] [--due] [--json]');
+    print('       keyflip refresh --schedule [-y] | --unschedule | --schedule-status');
+    print('       keyflip refresh --daemon-start | --daemon-stop | --daemon-status | --metrics');
+    print('');
+    print('  --due is accepted; --all only contacts the token endpoint for accounts that are due');
+    print('  (expiring within the lead time configured by `refresh.leadMinutes`, default 60 min).');
+    print('  Accounts currently in use (the live login or active instances) are held back.');
+    return;
+  }
+  // #36: `--schedule` / `--unschedule` / `--schedule-status` put this on a 15-minute timer
+  // (launchd StartInterval 900s + RunAtLoad on macOS, */15 cron on Linux), so an ~8 h token cannot
+  // expire while nobody is thinking about it. These are FLAGS, not subcommands: the first positional
   // argument here is an account name resolved by `core.resolveProfile`, so a bare `schedule`
   // would silently turn into "no saved account 'schedule'".
   const sched = rest.indexOf('--schedule') !== -1;
@@ -15811,79 +15831,125 @@ async function cmdRefresh(ctx, rest) {
 
   if (schedStatus) {
     const st = _schedule.status(ctx, { job: 'refresh' });
+    const rawState = oauth.readRefreshState(ctx);
+    const stateAccounts = {};
+    Object.keys(rawState).forEach(function (k) {
+      if (k !== '_meta') stateAccounts[k] = rawState[k];
+    });
+    const lastRunIso = st.lastRun || oauth.lastRefreshRunAt(ctx) || null;
+    const lastRunMs = lastRunIso ? Date.parse(lastRunIso) : 0;
+    const isStale = Boolean(st.installed && (!lastRunMs || Date.now() - lastRunMs > 3600000));
+    const outdated = Boolean(st.outdated);
+    const intervalMin = outdated ? null : st.interval || (st.recorded && st.recorded.interval) || null;
     if (asJson) {
-      jsonOut({ refreshSchedule: st });
+      jsonOut({
+        refreshSchedule: Object.assign({}, st, {
+          interval: intervalMin,
+          outdated: outdated,
+          lastRun: lastRunIso,
+          staleWarning: isStale,
+          accounts: stateAccounts,
+        }),
+      });
       return;
     }
     print(
-      'Nightly token refresh: ' +
+      'Token refresh schedule: ' +
         (st.installed
           ? style.ok('scheduled') + ' (' + st.kind + (st.path ? ', ' + st.path : '') + ')'
           : style.warn('not scheduled')),
     );
-    if (st.installed) {
-      const at = st.recorded && st.recorded.at;
-      print(
-        '  ' +
-          style.dim(
-            'runs `keyflip refresh --all` daily at ' +
-              (at ? String(at.h).padStart(2, '0') + ':' + String(at.m).padStart(2, '0') : 'its default hour'),
-          ),
-      );
+    if (st.installed || outdated) {
+      if (outdated) {
+        print(
+          '  ' +
+            style.warn(
+              '⚠ warning: refresh job is the old nightly schedule (tokens live ~8 h) — fix: keyflip refresh --schedule -y',
+            ),
+        );
+      } else if (intervalMin) {
+        print(
+          '  ' +
+            style.dim(
+              'runs `keyflip refresh --all --due` every ' +
+                intervalMin +
+                ' min (loaded: ' +
+                (st.loaded === true ? 'yes' : st.loaded === false ? 'NO' : 'n/a') +
+                ')',
+            ),
+        );
+      }
+      print('  last run: ' + (lastRunIso || 'never'));
+      if (isStale) {
+        print(
+          '  ' +
+            style.warn(
+              '⚠ warning: last refresh run is ' +
+                (lastRunIso ? 'older than 1h (' + lastRunIso + ')' : 'missing (never ran)') +
+                ' — re-run `keyflip refresh --schedule -y` to repair.',
+            ),
+        );
+      }
       scheduleHealthLines(st).forEach(function (l) {
         print('  ' + l);
       });
-      print(
-        style.dim(
-          '  While a Claude session is live the run refuses to rotate anything: it changes nothing and waits for the next idle night.',
-        ),
-      );
+    }
+    const acctNames = Object.keys(stateAccounts);
+    if (acctNames.length) {
+      print('  per-account last results:');
+      acctNames.forEach(function (n) {
+        const entry = stateAccounts[n];
+        print(
+          '    ' +
+            style.bold(n) +
+            ': ' +
+            (entry.lastResult || 'unknown') +
+            (entry.lastAttemptAt ? ' at ' + entry.lastAttemptAt : '') +
+            (entry.lastError ? ' (' + entry.lastError + ')' : ''),
+        );
+      });
     }
     return;
   }
   if (unsched) {
     const r = _schedule.uninstall(ctx, { job: 'refresh' });
     if (!r.ok && r.kind === 'unsupported') return fail('scheduling is macOS/Linux-only for now.');
-    print(style.ok('✅') + ' nightly token refresh ' + (r.existed === false ? 'was not scheduled.' : 'unscheduled.'));
+    print(style.ok('✅') + ' token refresh ' + (r.existed === false ? 'was not scheduled.' : 'unscheduled.'));
     jsonOut({ refreshSchedule: { installed: false } });
     return;
   }
   if (sched) {
-    const ai = rest.indexOf('--at');
-    const at = ai !== -1 ? rest[ai + 1] : '04:30';
     if (!profiles.list(ctx.configDir).length)
       print(
         style.warn('·') + ' there are no saved accounts yet — the job has nothing to refresh until you capture one.',
       );
     print(
       'This installs a ' +
-        (ctx.platform === 'darwin' ? 'launchd agent' : 'crontab entry') +
+        (ctx.platform === 'darwin' ? 'launchd agent (StartInterval 900s + RunAtLoad)' : 'crontab entry (*/15)') +
         ' that runs ' +
-        style.bold('keyflip refresh --all') +
-        ' daily at ' +
-        at +
-        '.',
+        style.bold('keyflip refresh --all --due') +
+        ' every 15 minutes.',
     );
     print(
       style.dim(
-        '  It rotates stored OAuth tokens for every account while nothing is using them. It calls no model and spends no quota.',
+        '  It rotates expiring stored OAuth tokens for every inactive account while leaving the live login alone. It calls no model and spends no quota.',
       ),
     );
     print(style.dim('  Remove with: keyflip refresh --unschedule.'));
     if (rest.indexOf('-y') === -1 && rest.indexOf('--force') === -1) {
       if (!process.stdin.isTTY) return fail('re-run with -y to confirm.');
-      if (!(await confirm('Install the nightly token-refresh schedule? [y/N] '))) {
+      if (!(await confirm('Install the 15-minute token-refresh schedule? [y/N] '))) {
         print('Cancelled.');
         return;
       }
     }
-    const r = _schedule.install(ctx, { job: 'refresh', at: at });
+    const r = _schedule.install(ctx, { job: 'refresh', interval: 15 });
     if (!r.ok) return fail('could not schedule: ' + (r.reason || r.detail || 'unknown'));
     print(
       style.ok('✅') +
-        ' scheduled nightly token refresh at ' +
-        at +
-        ' (' +
+        ' scheduled token refresh every ' +
+        r.interval +
+        'm (' +
         r.kind +
         '). ' +
         style.dim('Status: keyflip refresh --schedule-status'),
@@ -15892,7 +15958,7 @@ async function cmdRefresh(ctx, rest) {
       print(
         style.dim('  It logs to ' + r.log + ' — an unattended job you cannot read after it ran cannot be debugged.'),
       );
-    jsonOut({ refreshSchedule: { installed: true, at: at, kind: r.kind, log: r.log || null } });
+    jsonOut({ refreshSchedule: { installed: true, interval: r.interval, kind: r.kind, log: r.log || null } });
     return;
   }
 
@@ -16054,28 +16120,19 @@ async function cmdRefresh(ctx, rest) {
     );
   const running = appctl.isClaudeRunning(ctx.platform);
   const instances = appctl.claudeInstances(ctx.home);
-  // A running Claude holds ONE account's refresh token — the live one (plus any parallel session's).
-  // Every other stored token belongs to nobody but keyflip, so it is refreshed anyway: refusing all of
-  // them whenever anything ran (this machine always runs agents) let the yahoo login die on 3 Nov.
-  let held = { names: [], why: {} };
-  if (running || instances.length) {
-    try {
-      held = _identity.inUseAccounts(ctx);
-    } catch (e) {
-      held = { names: names.slice(), why: {} }; // cannot tell what is in use: refresh nothing
-    }
-    names = names.filter(function (n) {
-      return held.names.indexOf(n) === -1;
-    });
-  }
-  if ((running || instances.length) && !names.length) {
-    // A refusal must be readable by a machine too: this is the branch the nightly job takes whenever
-    // the user works late, and "exit 0 + prose" is how a no-op gets mistaken for a renewal.
+  const out = await oauth.refreshDue(ctx, { accounts: names, recordRun: true });
+  const nonHeldCompact = out.refreshed.map(function (r) {
+    return { account: r.account, status: r.status };
+  });
+  if ((running || instances.length) && !out.refreshed.length) {
+    // A refusal must be readable by a machine too: when only the live account is saved (or every
+    // requested account is held), report the refusal explicitly.
     if (asJson) {
       jsonOut({
         refreshed: [],
         refused: running ? 'claude-code-running' : 'claude-instances-active',
-        heldBack: held.names,
+        heldBack: out.heldBack,
+        results: out.results,
         instances: instances.length,
         changed: false,
       });
@@ -16087,59 +16144,96 @@ async function cmdRefresh(ctx, rest) {
         (running ? 'Claude Code is running on this machine' : instances.length + ' Claude instance(s) active') +
         ' — refreshing now would rotate a token something is still using.',
     );
+    out.results.forEach(function (r) {
+      if (r.status === 'held') {
+        print(
+          '   ' +
+            style.dim('—') +
+            ' ' +
+            style.bold(r.account) +
+            ' — held (' +
+            (r.reason || 'the live login') +
+            ', left alone)',
+        );
+      }
+    });
     print(style.dim('  nothing was changed. Run this when the CLI is idle (or it will happen on the next switch).'));
     return 0;
   }
-  if (held.names.length && !asJson)
+  if (out.heldBack.length && !asJson)
     print(
       style.dim(
         '  Claude is running — leaving ' +
-          held.names
+          out.heldBack
             .map(function (n) {
-              return n + ' (' + (held.why[n] || 'in use') + ')';
+              return n + ' (' + (out.heldWhy[n] || 'in use') + ')';
             })
             .join(', ') +
           ' alone; refreshing the others.',
       ),
     );
-  const results = [];
-  for (let i = 0; i < names.length; i++) {
-    const r = await oauth.maybeRefreshProfile(ctx, names[i], {
-      isRunning: function () {
-        return false;
-      },
-      instances: function () {
-        return [];
-      },
-    });
-    results.push({ account: names[i], status: r.status });
-    logmod.log('oauth refresh --all ' + names[i] + ': ' + r.status);
-  }
+  const bad = out.results.filter(function (r) {
+    return r.status === 'dead' || r.status === 'persist-failed' || r.status === 'refresh-failed';
+  });
+  const exitCode = bad.length ? 1 : 0;
+  if (exitCode !== 0) process.exitCode = exitCode;
   if (asJson) {
-    jsonOut(held.names.length ? { refreshed: results, heldBack: held.names } : { refreshed: results });
-    return 0;
+    jsonOut(
+      out.heldBack.length
+        ? { refreshed: nonHeldCompact, heldBack: out.heldBack, results: out.results }
+        : { refreshed: nonHeldCompact, results: out.results },
+    );
+    return exitCode;
   }
   const glyph = {
     refreshed: style.ok('✓'),
     fresh: style.ok('✓'),
+    held: style.dim('—'),
     skipped: style.dim('—'),
     'long-lived': style.ok('✓'),
+    busy: style.warn('·'),
+    transient: style.warn('!'),
+    dead: style.err('✗'),
     'refresh-failed': style.err('✗'),
     'persist-failed': style.err('✗'),
   };
-  const text = {
-    refreshed: 'token was expiring — refreshed and saved (the rotated refresh token is stored)',
-    fresh: 'token still valid, nothing to do',
-    skipped: 'no credential stored for this account',
-    'long-lived': 'normal login is dead, but its one-year --long-lived token covers the CLI (inference-only)',
-    'refresh-failed': 'COULD NOT REFRESH — this account needs a real login (or: keyflip login <name> --long-lived)',
-    'persist-failed': 'refreshed but NOT saved — the stored refresh token is now STALE, re-capture it',
-  };
-  results.forEach(function (r) {
-    print('   ' + (glyph[r.status] || ' ') + ' ' + style.bold(r.account) + ' — ' + text[r.status]);
-  });
-  const bad = results.filter(function (r) {
-    return r.status === 'refresh-failed' || r.status === 'persist-failed';
+  function describeResult(r) {
+    if (r.status === 'refreshed') {
+      return 'refreshed — token was expiring, refreshed and saved (the rotated refresh token is stored)';
+    }
+    if (r.status === 'fresh') {
+      const expIn =
+        typeof r.expiresInMs === 'number' ? ' (expires in ' + oauth.formatExpiresIn(r.expiresInMs) + ')' : '';
+      return 'fresh' + expIn + ' — token still valid, nothing to do';
+    }
+    if (r.status === 'held') {
+      return 'held (' + (r.reason || 'the live login') + ', left alone)';
+    }
+    if (r.status === 'long-lived') {
+      return r.notRefreshable
+        ? 'long-lived / not-refreshable — no refresh token stored'
+        : 'long-lived — one-year --long-lived token covers the CLI (no refresh needed)';
+    }
+    if (r.status === 'busy') {
+      return 'busy — lock held by another keyflip process, skipped this round';
+    }
+    if (r.status === 'dead' || r.status === 'refresh-failed') {
+      return (
+        'dead — refresh token rejected' + (r.error ? ' (' + r.error + ')' : '') + ' — run: keyflip login ' + r.account
+      );
+    }
+    if (r.status === 'transient') {
+      return 'transient — temporary failure' + (r.error ? ' (' + r.error + ')' : '') + ', will retry';
+    }
+    if (r.status === 'persist-failed') {
+      return (
+        'persist-failed — refreshed but NOT saved; stored refresh token is now STALE — run: keyflip login ' + r.account
+      );
+    }
+    return 'skipped — no credential stored for this account';
+  }
+  out.results.forEach(function (r) {
+    print('   ' + (glyph[r.status] || ' ') + ' ' + style.bold(r.account) + ' — ' + describeResult(r));
   });
   print('');
   print(
@@ -16154,7 +16248,7 @@ async function cmdRefresh(ctx, rest) {
           '. Verify with: keyflip verify'
       : style.ok('Every stored token is alive or was refreshed.') + '  Details: keyflip verify',
   );
-  return 0;
+  return exitCode;
 }
 
 // `keyflip verify [account] [--usage] [--live] [--json]` — read every captured surface back the way
@@ -16933,10 +17027,15 @@ async function cmdList(ctx, rest) {
     return org && browserOrgs[org] ? browserOrgs[org] : null;
   }
 
+  const refreshState = oauth.readRefreshState(ctx);
   if (JSON_MODE) {
     jsonOut({
       accounts: list.map(function (e) {
         const web = browserFor(e.name);
+        const tok = oauth.tokenStatusForAccount(ctx, e.name, {
+          isLive: !!e.active,
+          refreshState: refreshState,
+        });
         return {
           index: e.index,
           name: e.name,
@@ -16951,6 +17050,9 @@ async function cmdList(ctx, rest) {
           duplicateOf: e.duplicateOf || null,
           usage: infos ? (infos[e.name] && infos[e.name].usage) || null : undefined,
           usageStatus: infos ? (infos[e.name] && infos[e.name].status) || null : undefined,
+          tokenExpiresAt: tok.tokenExpiresAt,
+          tokenKind: tok.tokenKind,
+          lastRefresh: tok.lastRefresh,
         };
       }),
       activeCli: core.currentEmail(ctx) || null,
@@ -16977,6 +17079,10 @@ async function cmdList(ctx, rest) {
       const cli = capturedCliSafe(ctx, e.name);
       const app = appauth.hasProfile(ctx, e.name);
       const web = browserFor(e.name);
+      const tok = oauth.tokenStatusForAccount(ctx, e.name, {
+        isLive: !!e.active,
+        refreshState: refreshState,
+      });
       const now = [];
       if (e.active) now.push('CLI');
       if (e.name === appActive) now.push('app');
@@ -17000,6 +17106,8 @@ async function cmdList(ctx, rest) {
           (anyBrowser ? ' | web ' + (web ? '✓' : '—') : '') +
           ']' +
           usageCol +
+          '   ' +
+          oauth.formatTokenStatusLine(tok) +
           (e.enabled === false ? '   [disabled]' : '') +
           (e.duplicateOf ? '   [duplicate of ' + e.duplicateOf + ']' : '') +
           (now.length ? '   ← active: ' + now.join(' + ') : ''),

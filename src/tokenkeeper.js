@@ -1,0 +1,25 @@
+// Shared, guarded OAuth tokenkeeper core — re-exports the refresh engine and state helpers
+// from src/oauth.js so callers can import either `src/tokenkeeper.js` or `src/oauth.js`.
+export {
+  isExpiring,
+  isDue,
+  leadMinutesOf,
+  refreshBlob,
+  refreshBlobDetailed,
+  maybeRefreshProfile,
+  refreshDue,
+  refreshAccount,
+  readRefreshState,
+  writeRefreshState,
+  refreshStatePath,
+  lastRefreshRunAt,
+  tokenStatusForAccount,
+  formatTokenStatusLine,
+  formatDurationCompact,
+  formatExpiresIn,
+  OAUTH_TOKEN_URL,
+  OAUTH_CLIENT_ID,
+  EXPIRY_BUFFER_MS,
+  DEFAULT_LEAD_MINUTES,
+  REFRESH_STATE_FILE,
+} from './oauth.js';

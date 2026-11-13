@@ -360,12 +360,12 @@ test('doctor: nothing renews the stored tokens until the refresh job is schedule
   assert.strictEqual(find((await doctor.diagnose(ctx)).checks, 'token renewal').ok, 'warn');
   schedule.writeRecord(
     ctx,
-    { installedAt: '2026-01-01T00:00:00.000Z', job: 'refresh', kind: 'cron', at: { h: 4, m: 30 } },
+    { installedAt: new Date().toISOString(), job: 'refresh', kind: 'cron', interval: 15 },
     { job: 'refresh' },
   );
   const good = find((await doctor.diagnose(ctx)).checks, 'token renewal');
   assert.strictEqual(good.ok, true);
-  assert.match(good.detail, /renewed nightly at 04:30/);
+  assert.match(good.detail, /renewed every 15 min/);
   assert.strictEqual(good.fix, undefined, 'a green row needs no fix');
   assert.strictEqual(fs.existsSync(path.join(ctx.configDir, schedule.RECORD_NAME)), true, 'the dream receipt survived');
 });

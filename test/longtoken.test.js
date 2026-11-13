@@ -238,6 +238,10 @@ test('removeProfile also deletes the one-year token', function () {
 
 test('maybeRefreshProfile reports long-lived instead of failing when the fallback covers it', async function () {
   const ctx = makeCtx();
+  // Even while another account ('b') is the live session, maybeRefreshProfile checks 'a' via refreshAccount
+  writeClaude(ctx, { oauthAccount: { emailAddress: 'b@x.io' }, userID: 'u-b' });
+  ctx.store.setLive(full({ at: 'B-LIVE', rt: 'B-RT' }));
+  seedAccount(ctx, 'b', 'b@x.io', full({ at: 'B-LIVE', rt: 'B-RT' }));
   seedAccount(ctx, 'a', 'a@x.io', full({ exp: NOW - DAY, rt: '' }));
   assert.strictEqual((await oauth.maybeRefreshProfile(ctx, 'a', { nowMs: NOW })).status, 'refresh-failed');
   ctx.store.setProfile(longtoken.storeName('a'), ll());

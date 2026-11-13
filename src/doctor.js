@@ -22,6 +22,7 @@ import * as _threads from './threads.js';
 import * as _sessionage from './sessionage.js';
 import * as _instances from './instances.js';
 import * as _codex from './codex.js';
+import * as _oauth from './oauth.js';
 
 async function probe(url, opts) {
   opts = opts || {};
@@ -88,7 +89,7 @@ async function diagnose(ctx, opts) {
   emptyProjectsCheck(ctx, add);
   quotaPressure(ctx, add);
   choreProvider(ctx, add);
-  tokenRenewalCheck(ctx, add);
+  tokenRenewalCheck(ctx, add, opts);
   backgroundServices(ctx, add, opts);
   autoswitchService(ctx, add, opts);
   settingsJson(ctx, add);
@@ -760,39 +761,88 @@ function choreProvider(ctx, add) {
 // RECEIPT (written by `install`, inside the state dir) rather than of ~/Library — doctor must stay
 // offline, hermetic and reproducible in a test, and a receipt-free schedule is not a schedule keyflip
 // agreed to anyway.
-function tokenRenewalCheck(ctx, add) {
+function tokenRenewalCheck(ctx, add, opts) {
+  opts = opts || {};
   let accounts = [];
   try {
     accounts = _profiles.list(ctx.configDir);
   } catch (e) {
     accounts = [];
   }
-  if (!accounts.length) return; // nothing stored, nothing to renew
+  const rState = _oauth.readRefreshState(ctx);
+  const failedAccounts = [];
+  Object.keys(rState).forEach(function (k) {
+    if (k === '_meta') return;
+    const st = rState[k];
+    if (st && (st.lastResult === 'dead' || st.lastResult === 'persist-failed')) {
+      failedAccounts.push({ account: k, result: st.lastResult, error: st.lastError });
+    }
+  });
+  if (!accounts.length && !failedAccounts.length) return; // nothing stored, nothing to renew
+
   let rec = null;
   try {
     rec = _schedule.readRecord(ctx, { job: 'refresh' });
   } catch (e) {
     rec = null;
   }
-  if (rec) {
-    const at = rec.at;
-    return add(
-      'token renewal',
-      true,
-      accounts.length +
-        ' account(s), renewed nightly' +
-        (at ? ' at ' + String(at.h).padStart(2, '0') + ':' + String(at.m).padStart(2, '0') : '') +
-        ' (' +
-        rec.kind +
-        ')',
-    );
+  let schedSt = null;
+  try {
+    schedSt = _schedule.status(ctx, {
+      job: 'refresh',
+      home: opts.home || ctx.home,
+      run: opts.run,
+      askSystem: !!opts.run,
+    });
+  } catch (e) {
+    schedSt = null;
   }
-  add(
-    'token renewal',
-    'warn',
-    accounts.length + ' saved account(s) and nothing renews their tokens',
-    'keyflip refresh --schedule — an unused token expires (~6 days) and only a human sign-in revives it (or a one-year token: keyflip login <name> --long-lived); `keyflip verify` shows which are already dead',
-  );
+
+  const rawNow = opts.now ? opts.now() : ctx.now ? ctx.now() : Date.now();
+  const now = typeof rawNow === 'string' ? Date.parse(rawNow) : Number(rawNow);
+  const issues = [];
+  const fixes = [];
+
+  if (failedAccounts.length) {
+    failedAccounts.forEach(function (f) {
+      issues.push(f.account + ' refresh ' + f.result + (f.error ? ' (' + f.error + ')' : ''));
+      fixes.push('keyflip login ' + f.account);
+    });
+  }
+
+  const installed = opts.run ? Boolean(schedSt && schedSt.installed) : Boolean(rec || (schedSt && schedSt.installed));
+  const outdated = Boolean((schedSt && schedSt.outdated) || (rec && (!rec.interval || rec.at)));
+  const interval = outdated ? null : (schedSt && schedSt.interval) || (rec && rec.interval) || null;
+  if (!installed) {
+    issues.push(accounts.length + ' saved account(s) and nothing renews their tokens');
+    fixes.push(
+      'keyflip refresh --schedule — an unused token expires (~8 h) and only a human sign-in revives it (or a one-year token: keyflip login <name> --long-lived); `keyflip verify` shows which are already dead',
+    );
+  } else if (outdated || !interval) {
+    issues.push('refresh job is the old nightly schedule (tokens live ~8 h)');
+    fixes.push('keyflip refresh --schedule -y');
+  } else {
+    if (schedSt && schedSt.kind === 'launchd' && schedSt.loaded === false) {
+      issues.push('refresh job is installed but not loaded by launchd');
+      fixes.push('keyflip refresh --schedule');
+    }
+    const lastRunIso = (schedSt && schedSt.lastRun) || _oauth.lastRefreshRunAt(ctx);
+    if (lastRunIso) {
+      const ageMs = now - Date.parse(lastRunIso);
+      if (Number.isFinite(ageMs) && ageMs > 3600 * 1000) {
+        issues.push('last refresh run is ' + humanAge(ageMs) + ' old (> 1 h)');
+        if (fixes.indexOf('keyflip refresh --schedule') === -1) fixes.push('keyflip refresh --schedule');
+      }
+    }
+  }
+
+  if (issues.length) {
+    const severity = failedAccounts.length ? false : 'warn';
+    return add('token renewal', severity, issues.join('; '), fixes.join(' · '));
+  }
+
+  const kind = (rec && rec.kind) || (schedSt && schedSt.kind) || 'launchd';
+  add('token renewal', true, accounts.length + ' account(s), renewed every ' + interval + ' min (' + kind + ')');
 }
 
 // WHICH BACKGROUND SERVICES EXIST, AND ARE THEY ACTUALLY RUNNING?

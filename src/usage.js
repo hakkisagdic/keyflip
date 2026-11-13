@@ -10,6 +10,7 @@ import * as _config from './config.js';
 import * as _history from './history.js';
 import * as _tiers from './tiers.js';
 import * as _lock from './lock.js';
+import * as _oauth from './oauth.js';
 
 const USAGE_URL = 'https://api.anthropic.com/api/oauth/usage';
 const OAUTH_BETA_HEADER = 'oauth-2025-04-20';
@@ -393,12 +394,57 @@ async function usageForProfiles(ctx, names, opts) {
             limitedScopes: [],
           };
         } else {
-          const tfp = tokenFp(token);
+          let tfp = tokenFp(token);
           const tUntil = quietUntil(tthrottle[tfp], nowMs);
           // This TOKEN is inside a 429 window opened under another name: do not ask.
-          const r = tUntil
+          let r = tUntil
             ? { usage: null, httpStatus: 'quiet', retryAfterMs: null }
             : await fetchUsageDetailed(token, Object.assign({}, opts, { nowMs: nowMs }));
+          // If a non-live account gets 401/403 and its stored blob is expired/due with a refresh token,
+          // refresh that one account via the shared core and retry the usage read once.
+          if (
+            (r.httpStatus === 401 || r.httpStatus === 403) &&
+            !(opts.liveFor && opts.liveFor === name) &&
+            _oauth.isDue(blob, nowMs, _oauth.leadMinutesOf(ctx, opts))
+          ) {
+            const refreshFn = typeof opts.refreshAccount === 'function' ? opts.refreshAccount : _oauth.refreshAccount;
+            const refreshEnabled =
+              opts.refreshOnExpired === false
+                ? false
+                : Boolean(
+                    typeof opts.refreshAccount === 'function' ||
+                    typeof opts.refreshFetch === 'function' ||
+                    opts.refreshOnExpired === true ||
+                    !process.env.KEYFLIP_TEST_OFFLINE,
+                  );
+            if (refreshEnabled) {
+              let refRes = null;
+              try {
+                refRes = await refreshFn(ctx, name, {
+                  nowMs: nowMs,
+                  fetch: opts.refreshFetch,
+                });
+              } catch (e) {
+                refRes = null;
+              }
+              let refreshedBlob = null;
+              try {
+                refreshedBlob = ctx.store.getProfile(name);
+              } catch (e) {
+                refreshedBlob = null;
+              }
+              if ((!refreshedBlob || refreshedBlob === blob) && refRes && typeof refRes.blob === 'string') {
+                refreshedBlob = refRes.blob;
+              }
+              const newToken =
+                (refreshedBlob && accessTokenOf(refreshedBlob)) ||
+                (refRes && typeof refRes.accessToken === 'string' ? refRes.accessToken : null);
+              if (newToken && newToken !== token) {
+                tfp = tokenFp(newToken);
+                r = await fetchUsageDetailed(newToken, Object.assign({}, opts, { nowMs: nowMs }));
+              }
+            }
+          }
           if (r.httpStatus === 'quiet') {
             const tw = tthrottle[tfp];
             throttle = { until: tUntil, strikes: tw.strikes || 1, retryAfterMs: tw.retryAfterMs || null };

@@ -67,6 +67,13 @@ SCHEMA['desktop.cpuBusyPercent'] = {
   max: 800,
   help: 'Claude Desktop above this much CPU counts as busy (a reply is probably streaming).',
 };
+SCHEMA['refresh.leadMinutes'] = {
+  type: 'int',
+  default: 60,
+  min: 5,
+  max: 240,
+  help: 'Refresh stored OAuth access tokens this many minutes before they expire (5..240).',
+};
 // P4: API failover through keysmith when every Claude account is over the threshold.
 SCHEMA['failover.enabled'] = {
   type: 'bool',
