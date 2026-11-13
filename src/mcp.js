@@ -3768,6 +3768,13 @@ const TOOLS = [
           state: function () {
             return _failover.state(ctx);
           },
+          notify: loud,
+          markLost: function (at) {
+            return _failover.markLost(ctx, at);
+          },
+          clearLost: function () {
+            return _failover.clearLost(ctx);
+          },
           check: function () {
             return _failover.gatewayReady(ctx, { fetch: ctx.fetch, capCheck: false });
           },
@@ -3838,6 +3845,51 @@ const TOOLS = [
       });
       if (!r.ok) throw new Error('could not install the autoswitch service: ' + (r.reason || r.detail || 'unknown'));
       return { installed: r };
+    },
+  },
+  {
+    name: 'keyflip_failover',
+    title: 'Inspect or toggle the API failover (status / on / off)',
+    description:
+      'Inspect or manually engage/release the keysmith API failover (`keyflip failover status|on|off`). action="status" is read-only; action="on" engages the failover immediately with manual=true (sticky: autoswitch will not auto-release it); action="off" releases the failover back to your Claude account and updates .live-since.json. For on/off, ask the user first, then pass confirm=true.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', enum: ['status', 'on', 'off'] },
+        confirm: confirmProp.confirm,
+      },
+      required: ['action'],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    run: async function (ctx, args) {
+      const action = (args && args.action) || 'status';
+      if (action === 'status') {
+        const p = _failover.resolvePlan(ctx, { keysmithConfig: ctx.keysmithConfig });
+        const st = _failover.state(ctx);
+        const ready = await _failover.gatewayReady(ctx, { plan: p, fetch: ctx.fetch });
+        return { failover: { enabled: p.enabled, engaged: !!st, state: st, gateway: ready, plan: p } };
+      }
+      if (action !== 'on' && action !== 'off') {
+        throw new Error("invalid action '" + action + "' — use: status | on | off");
+      }
+      needConfirm(args);
+      const loud =
+        ctx.notify ||
+        function (ev, msg) {
+          return _desktoprestart.notifyLoud(ctx, ev, msg, { run: ctx.run }).catch(function () {});
+        };
+      const l = await lock.acquire(ctx.configDir);
+      try {
+        const deps = { fetch: ctx.fetch, keysmithConfig: ctx.keysmithConfig, notify: loud };
+        const r =
+          action === 'on'
+            ? await _failover.engage(ctx, { manual: true, reason: 'turned on by hand' }, deps)
+            : await _failover.release(ctx, { reason: 'turned off by hand' }, deps);
+        return { failover: r };
+      } finally {
+        l.release();
+      }
     },
   },
 

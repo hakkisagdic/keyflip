@@ -512,6 +512,16 @@ function fakeFailover() {
     st: st,
     api: {
       state: () => st.engaged,
+      markLost: (at) => {
+        if (!st.engaged) return null;
+        if (!st.engaged.lostSince) st.engaged.lostSince = at;
+        return st.engaged;
+      },
+      clearLost: () => {
+        if (!st.engaged) return null;
+        delete st.engaged.lostSince;
+        return st.engaged;
+      },
       engage: async (info) => {
         st.log.push('engage:' + info.from);
         st.engaged = { engaged: true };
@@ -688,7 +698,7 @@ test('REGRESSION: an account whose usage is UNKNOWN (429) is not "exhausted" —
   assert.strictEqual(info.recoverAt, '2027-01-15T08:00:00.000Z');
 });
 
-test('REGRESSION: a gateway that dies while engaged is left (after one re-check), loudly', async function () {
+test('REGRESSION: a gateway that dies while engaged is held through the grace period (3 retries), then released loudly', async function () {
   const ctx = twoAccounts();
   const fo = fakeFailover();
   fo.st.engaged = { engaged: true };
@@ -703,30 +713,68 @@ test('REGRESSION: a gateway that dies while engaged is left (after one re-check)
     fo.st.engaged = null;
     return { ok: true };
   };
+  const sleeps = [];
+  const notes = [];
+  const t0 = Date.parse('2026-11-12T10:00:00Z');
   const r = await autosw.tick(ctx, {
     threshold: 95,
     fetch: usageFetchBy({ TB: 99, TA: 99 }),
-    nowMs: 1,
+    nowMs: t0,
+    cacheTtlMs: 0,
+    failover: fo.api,
+    sleep: async (ms) => sleeps.push(ms),
+    notify: async (ev, msg) => notes.push({ ev, msg }),
+  });
+  assert.strictEqual(r.state, 'failover-degraded');
+  assert.strictEqual(checks, 4, 'initial check + 3 retries before entering degraded grace');
+  assert.deepStrictEqual(sleeps, [2000, 5000, 10000]);
+  assert.strictEqual(released, null, 'release is NOT called on first outage tick');
+  assert.strictEqual(fo.st.engaged.lostSince, new Date(t0).toISOString());
+  assert.strictEqual(notes.length, 1, 'notify called once on outage start');
+  assert.ok(/holding the failover for up to 5 min/.test(notes[0].msg), notes[0].msg);
+
+  // next tick within grace (2 min later) and still failing -> degraded, no second notify
+  const rWithin = await autosw.tick(ctx, {
+    threshold: 95,
+    fetch: usageFetchBy({ TB: 99, TA: 99 }),
+    nowMs: t0 + 120 * 1000,
     cacheTtlMs: 0,
     failover: fo.api,
     sleep: async () => {},
+    notify: async (ev, msg) => notes.push({ ev, msg }),
   });
-  assert.strictEqual(r.state, 'failover-lost');
-  assert.strictEqual(checks, 2, 'one re-check before giving up (a gateway restart takes seconds)');
+  assert.strictEqual(rWithin.state, 'failover-degraded');
+  assert.strictEqual(released, null);
+  assert.strictEqual(notes.length, 1, 'no second notify within the same outage');
+
+  // tick after grace (5 min + 1 s later) -> release({ lost: true })
+  const rLost = await autosw.tick(ctx, {
+    threshold: 95,
+    fetch: usageFetchBy({ TB: 99, TA: 99 }),
+    nowMs: t0 + 301 * 1000,
+    cacheTtlMs: 0,
+    failover: fo.api,
+    sleep: async () => {},
+    notify: async (ev, msg) => notes.push({ ev, msg }),
+  });
+  assert.strictEqual(rLost.state, 'failover-lost');
   assert.strictEqual(released.lost, true);
   assert.ok(/stopped answering/.test(released.reason));
-  // a healthy gateway is left alone
-  fo.st.engaged = { engaged: true };
+
+  // a passing check clears lostSince
+  fo.st.engaged = { engaged: true, lostSince: new Date(t0).toISOString() };
   fo.api.check = async () => ({ ok: true });
   const r2 = await autosw.tick(ctx, {
     threshold: 95,
     fetch: usageFetchBy({ TB: 99, TA: 99 }),
-    nowMs: 2,
+    nowMs: t0 + 400 * 1000,
     cacheTtlMs: 0,
     failover: fo.api,
     sleep: async () => {},
   });
   assert.strictEqual(r2.state, 'failover');
+  assert.strictEqual(r2.gatewayBack, true);
+  assert.strictEqual(fo.st.engaged.lostSince, undefined);
 });
 
 test('REGRESSION: on the failover with the live token rejected (401), a recovered account still ends it', async function () {

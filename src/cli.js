@@ -93,6 +93,7 @@ import * as _svc from './autoswitchservice.js';
 import * as _selfbin from './selfbin.js';
 import * as _identity from './identity.js';
 import * as _failover from './failover.js';
+import * as _limitsignal from './limitsignal.js';
 import * as _desktoprestart from './desktoprestart.js';
 import * as _groups from './groups.js';
 import * as _budget from './budget.js';
@@ -1437,21 +1438,76 @@ function failoverAdapter(ctx) {
     state: function () {
       return _failover.state(ctx);
     },
+    notify: note,
+    markLost: function (at) {
+      return _failover.markLost(ctx, at);
+    },
+    clearLost: function () {
+      return _failover.clearLost(ctx);
+    },
     // Per-tick health while engaged: is the gateway still serving the alias? (The cap was proven at engage.)
     check: function () {
-      return _failover.gatewayReady(ctx, { capCheck: false });
+      return _failover.gatewayReady(ctx, { fetch: ctx.fetch, capCheck: false });
     },
     engage: function (info) {
       return withLock(ctx, function () {
-        return _failover.engage(ctx, info, { notify: note });
+        return _failover.engage(ctx, info, {
+          fetch: ctx.fetch,
+          keysmithConfig: ctx.keysmithConfig,
+          nowMs: ctx.nowMs,
+          notify: note,
+        });
       });
     },
     release: function (info) {
       return withLock(ctx, function () {
-        return _failover.release(ctx, info, { notify: note });
+        return _failover.release(ctx, info, { nowMs: ctx.nowMs, notify: note });
       });
     },
   };
+}
+
+function formatAutoswitchTickLine(r, opts) {
+  opts = opts || {};
+  const at = opts.at || new Date().toTimeString().slice(0, 8);
+  const threshold = opts.threshold !== undefined ? opts.threshold : 95;
+  if (r && r.limitHit) {
+    const head = _limitsignal.formatLimitHitHeadline(r.limitHit, { timeZone: opts.timeZone });
+    if (r.state === 'failover-engaged') {
+      return '[' + at + '] ' + head + ' — no account with headroom — API failover engaged';
+    }
+    if (r.state === 'switched' && r.switchedTo) {
+      return '[' + at + '] ' + head + ' — switched to ' + (r.switchedTo.name || r.switchedTo.email);
+    }
+    if (r.state === 'no-candidate') {
+      return (
+        '[' +
+        at +
+        '] ' +
+        head +
+        ' — no account with headroom' +
+        (r.failoverError ? ' — API failover not available: ' + r.failoverError : '')
+      );
+    }
+  }
+  if (!r) return '';
+  if (r.state === 'failover-engaged') {
+    return '[' + at + '] ⇄ every account is over ' + threshold + '% — now on the API failover (keysmith)';
+  }
+  if (r.state === 'switched' && r.switchedTo) {
+    return (
+      '[' +
+      at +
+      '] ⇄ switched: ' +
+      ((r.active && (r.active.email || r.active.name)) || '') +
+      ' → ' +
+      (r.switchedTo.email || r.switchedTo.name) +
+      ' (usage crossed ' +
+      threshold +
+      '%)'
+    );
+  }
+  return '';
 }
 
 // `keyflip failover setup [--dry-run] | status | on | off` — the keysmith API failover (P4).
@@ -1498,7 +1554,14 @@ async function cmdFailover(ctx, rest) {
         (!p.enabled
           ? style.warn('disabled')
           : st
-            ? style.warn('ENGAGED') + ' since ' + new Date(st.at).toISOString()
+            ? style.warn(
+                'ENGAGED (' +
+                  (st.manual ? 'manual' : 'automatic: ' + (st.reason || 'every Claude account is over the threshold')) +
+                  ')',
+              ) +
+              ' since ' +
+              new Date(st.at).toISOString() +
+              (st.recoverAt ? ' (recoverAt ' + st.recoverAt + ')' : '')
             : style.ok('standing by')),
     );
     print(
@@ -1531,10 +1594,17 @@ async function cmdFailover(ctx, rest) {
   }
   if (sub === 'on' || sub === 'off') {
     const fa = failoverAdapter(ctx);
-    if (!fa) return fail('the API failover is disabled — keyflip config set failover.enabled true');
+    if (!fa) {
+      if (JSON_MODE) {
+        jsonOut({ failover: { ok: false, reason: 'failover is disabled (failover.enabled=false)' } });
+        process.exitCode = 1;
+        return;
+      }
+      return fail('the API failover is disabled — keyflip config set failover.enabled true');
+    }
     const r =
       sub === 'on'
-        ? await fa.engage({ reason: 'turned on by hand' })
+        ? await fa.engage({ manual: true, reason: 'turned on by hand' })
         : await fa.release({ reason: 'turned off by hand' });
     if (JSON_MODE) {
       jsonOut({ failover: r });
@@ -1595,19 +1665,30 @@ async function cmdAutoswitch(ctx, rest) {
           (r.identityRepair.from || 'none') +
           ')',
       );
+    if (r && r.gatewayBack) {
+      print('[' + at + '] ' + style.ok('gateway back'));
+      logmod.log('autoswitch: gateway back');
+    }
+    if (r && r.limitSignalIgnored) {
+      print('[' + at + '] ' + r.limitSignalIgnored);
+    }
     if (r.state === 'switched') {
-      print(
-        '[' +
-          at +
-          '] ' +
-          style.ok('⇄ switched: ') +
-          (r.active.email || r.active.name) +
-          ' → ' +
-          (r.switchedTo.email || r.switchedTo.name) +
-          ' (usage crossed ' +
-          threshold +
-          '%)',
-      );
+      if (r.limitHit) {
+        print(formatAutoswitchTickLine(r, { at: at, threshold: threshold, timeZone: ctx.timeZone }));
+      } else {
+        print(
+          '[' +
+            at +
+            '] ' +
+            style.ok('⇄ switched: ') +
+            (r.active.email || r.active.name) +
+            ' → ' +
+            (r.switchedTo.email || r.switchedTo.name) +
+            ' (usage crossed ' +
+            threshold +
+            '%)',
+        );
+      }
       logmod.log('autoswitch: ' + r.active.name + ' -> ' + r.switchedTo.name);
       _notify
         .send(ctx, 'switch', { from: r.active.name, to: r.switchedTo.name, reason: 'autoswitch', threshold: threshold })
@@ -1615,23 +1696,52 @@ async function cmdAutoswitch(ctx, rest) {
     } else if (r.state === 'below') {
       print('[' + at + '] ' + (r.active.email || r.active.name) + ': ' + Math.round(100 - r.headroom) + '% used — ok');
     } else if (r.state === 'failover-engaged') {
-      print(
-        '[' + at + '] ' + style.warn('⇄ every account is over ' + threshold + '% — now on the API failover (keysmith)'),
-      );
+      if (r.limitHit) {
+        print(formatAutoswitchTickLine(r, { at: at, threshold: threshold, timeZone: ctx.timeZone }));
+      } else {
+        print(
+          '[' +
+            at +
+            '] ' +
+            style.warn('⇄ every account is over ' + threshold + '% — now on the API failover (keysmith)'),
+        );
+      }
       logmod.log('autoswitch: failover engaged (from ' + r.active.name + ')');
     } else if (r.state === 'failover') {
       print('[' + at + '] on the API failover — waiting for a Claude account to recover');
-    } else if (r.state === 'failback') {
-      print('[' + at + '] ' + style.ok('⇄ back on Claude: ') + (r.active.email || r.active.name) + ' recovered');
-      logmod.log('autoswitch: failover released (' + r.active.name + ' recovered)');
-    } else if (r.state === 'no-candidate') {
+    } else if (r.state === 'failover-degraded') {
       print(
         '[' +
           at +
           '] ' +
-          style.warn('threshold crossed but no other account is available') +
-          (r.failoverError ? style.dim(' — API failover not available: ' + r.failoverError) : ''),
+          style.warn('failover gateway not answering — holding the failover (' + (r.reason || 'degraded') + ')'),
       );
+      logmod.log('autoswitch: failover degraded (' + (r.reason || 'no answer') + ')');
+    } else if (r.state === 'failover-lost') {
+      print(
+        '[' +
+          at +
+          '] ' +
+          style.err(
+            'failover gateway lost — released back to ' + ((r.active && (r.active.email || r.active.name)) || 'Claude'),
+          ),
+      );
+      logmod.log('autoswitch: failover lost (' + (r.reason || 'no answer') + ')');
+    } else if (r.state === 'failback') {
+      print('[' + at + '] ' + style.ok('⇄ back on Claude: ') + (r.active.email || r.active.name) + ' recovered');
+      logmod.log('autoswitch: failover released (' + r.active.name + ' recovered)');
+    } else if (r.state === 'no-candidate') {
+      if (r.limitHit) {
+        print(formatAutoswitchTickLine(r, { at: at, threshold: threshold, timeZone: ctx.timeZone }));
+      } else {
+        print(
+          '[' +
+            at +
+            '] ' +
+            style.warn('threshold crossed but no other account is available') +
+            (r.failoverError ? style.dim(' — API failover not available: ' + r.failoverError) : ''),
+        );
+      }
       _notify
         .send(ctx, 'quota', {
           account: (r.active && r.active.name) || null,
@@ -1665,6 +1775,9 @@ async function cmdAutoswitch(ctx, rest) {
         threshold: threshold,
         strategy: strategy,
         group: group || undefined,
+        fetch: ctx.fetch,
+        nowMs: ctx.nowMs,
+        timeZone: ctx.timeZone,
         performSwitch: function (name) {
           return withLock(ctx, function () {
             return core.performSwitch(ctx, name);
@@ -18266,4 +18379,6 @@ export {
   preserveOutgoingAppLogin,
   browserCapture,
   verifyAppRelogin,
+  formatAutoswitchTickLine,
+  cmdAutoswitch,
 };

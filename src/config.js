@@ -102,6 +102,20 @@ SCHEMA['failover.provider'] = {
   default: 'keysmith-failover',
   help: 'The keyflip provider profile that points at the gateway.',
 };
+SCHEMA['failover.limitSignalMinutes'] = {
+  type: 'int',
+  default: 15,
+  min: 1,
+  max: 120,
+  help: 'How far back (in minutes) to scan Claude Code transcripts for a subscription rate-limit hit.',
+};
+SCHEMA['failover.lostGraceSeconds'] = {
+  type: 'int',
+  default: 300,
+  min: 30,
+  max: 1800,
+  help: 'How long (in seconds) to hold an engaged failover when the gateway stops answering before releasing it.',
+};
 SCHEMA['autoswitch.group'] = {
   type: 'string',
   default: '',

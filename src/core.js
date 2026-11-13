@@ -7,6 +7,7 @@ import * as _stores from './stores/index.js';
 import * as _log from './log.js';
 import * as _longtoken from './longtoken.js';
 import * as _identity from './identity.js';
+import * as _livesince from './livesince.js';
 
 /**
  * Get the email of the currently logged-in Claude account.
@@ -336,14 +337,17 @@ function doSwitch(ctx, name) {
  * Switch to a named profile, preserving the current account first.
  * @param {import('./context.js').KeyflipContext} ctx - Application context.
  * @param {string} name - Profile name to switch to.
+ * @param {object} [opts] - Optional switch options.
  * @returns {{ cli: boolean }} Whether the CLI login was switched.
  */
-function performSwitch(ctx, name) {
+function performSwitch(ctx, name, opts) {
   // getProfile still throws on a locked keychain (that must not read as "no CLI login"); a profile
   // whose only CLI credential is a `--long-lived` token still counts as having one.
   const hasCli = !!ctx.store.getProfile(name) || !!_longtoken.pick(ctx.store, name).blob;
-  if (hasCli) doSwitch(ctx, name);
-  else refreshCurrent(ctx, name); // still preserve the current CLI account's tokens
+  if (hasCli) {
+    doSwitch(ctx, name);
+    _livesince.writeLiveSince(ctx, opts);
+  } else refreshCurrent(ctx, name); // still preserve the current CLI account's tokens
   // The ONE canonical "this account is now live" record. Switches reach here from the CLI, the
   // menu, the TUI, MCP, fleet and autoswitch; each caller adds its own flavour of message, so a
   // reader that wants the full timeline (attrib.js) must not have to know all of them. Written

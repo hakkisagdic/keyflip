@@ -24,6 +24,8 @@ import * as _provider from './provider.js';
 import * as _config from './config.js';
 import * as _history from './history.js';
 import * as _desktoprestart from './desktoprestart.js';
+import * as _log from './log.js';
+import { writeLiveSince } from './livesince.js';
 
 const STATE_FILE = '.failover-state.json';
 const DEFAULTS = {
@@ -459,6 +461,34 @@ function state(ctx) {
   }
 }
 
+function markLost(ctx, at) {
+  if (!ctx || !ctx.configDir) return null;
+  const cur = state(ctx);
+  if (!cur) return null;
+  const iso =
+    typeof at === 'number' && isFinite(at)
+      ? new Date(at).toISOString()
+      : typeof at === 'string' && at
+        ? at
+        : new Date().toISOString();
+  if (!cur.lostSince) {
+    cur.lostSince = iso;
+    atomicWrite(statePath(ctx), JSON.stringify(cur, null, 2) + '\n', 0o600);
+  }
+  return cur;
+}
+
+function clearLost(ctx) {
+  const cur = state(ctx);
+  if (!cur) return null;
+  if (cur.lostSince) {
+    delete cur.lostSince;
+    atomicWrite(statePath(ctx), JSON.stringify(cur, null, 2) + '\n', 0o600);
+    _log.log('gateway back');
+  }
+  return cur;
+}
+
 // Move onto the API failover. deps: fetch, nowMs, useProvider, requestDesktop, notify.
 async function engage(ctx, info, deps) {
   deps = deps || {};
@@ -466,7 +496,14 @@ async function engage(ctx, info, deps) {
   const p = plan(ctx);
   if (!p.enabled) return { ok: false, reason: 'failover is disabled (failover.enabled=false)' };
   const cur = state(ctx);
-  if (cur) return { ok: true, already: true, state: cur };
+  if (cur) {
+    if (info.manual && !cur.manual) {
+      cur.manual = true;
+      if (info.reason) cur.reason = info.reason;
+      atomicWrite(statePath(ctx), JSON.stringify(cur, null, 2) + '\n', 0o600);
+    }
+    return { ok: true, already: true, state: cur };
+  }
   const rp = resolvePlan(ctx, { keysmithConfig: deps.keysmithConfig });
   const ready = await gatewayReady(ctx, { plan: rp, fetch: deps.fetch });
   if (!ready.ok) return { ok: false, reason: ready.reason };
@@ -488,6 +525,7 @@ async function engage(ctx, info, deps) {
     at: deps.nowMs !== undefined ? deps.nowMs : Date.now(),
     from: info.from || null,
     reason: info.reason || 'every Claude account is over the threshold',
+    manual: !!info.manual,
     provider: p.provider,
     alias: p.alias,
     // When the account that ran out has headroom again by the clock (its binding window resets):
@@ -515,8 +553,12 @@ async function engage(ctx, info, deps) {
 async function release(ctx, info, deps) {
   deps = deps || {};
   info = info || {};
+  const liveMarkerOpts = { nowMs: deps.nowMs !== undefined ? deps.nowMs : info.nowMs };
   const cur = state(ctx);
-  if (!cur) return { ok: true, already: true };
+  if (!cur) {
+    writeLiveSince(ctx, liveMarkerOpts);
+    return { ok: true, already: true };
+  }
   const useOfficial =
     deps.useOfficial ||
     function () {
@@ -538,6 +580,7 @@ async function release(ctx, info, deps) {
   } catch (e) {
     /* gone */
   }
+  writeLiveSince(ctx, liveMarkerOpts);
   _history.recordEvent(ctx, {
     kind: 'failover-release',
     from: cur.provider,
@@ -567,6 +610,8 @@ export {
   engage,
   release,
   state,
+  markLost,
+  clearLost,
   keysmithCommand,
   keysmithConfigPath,
   DEFAULTS,

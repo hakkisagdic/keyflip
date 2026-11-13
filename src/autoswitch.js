@@ -15,6 +15,8 @@ import * as _groups from './groups.js';
 import * as fsutil from './fsutil.js';
 import * as _config from './config.js';
 import * as _identity from './identity.js';
+import * as _limitsignal from './limitsignal.js';
+import * as _log from './log.js';
 
 const STATE_FILE = '.autoswitch-state.json';
 const DEFAULT_THRESHOLD = 95;
@@ -78,6 +80,43 @@ function clearState(ctx) {
   } catch (e) {
     /* ignore */
   }
+}
+
+// H4: If the active account's usage reading for this tick is status 'ok' and fresh
+// (eff.basis === 'live', not served from a stale/last-good cache) and the window named
+// by the hit's kind (five_hour -> fiveHour, seven_day -> sevenDay, seven_day_opus -> sevenDayOpus;
+// unknown kind -> both) is below the threshold, ignore the hit and return the log message.
+function freshReadingOverrulesHit(activeInfo, eff, hit, threshold) {
+  if (!activeInfo || activeInfo.status !== 'ok' || !activeInfo.usage) return null;
+  if (!eff || eff.basis !== 'live') return null;
+  const u = activeInfo.usage;
+  const kind = (hit && hit.kind) || 'unknown';
+  if (kind === 'five_hour' || kind === 'seven_day' || kind === 'seven_day_opus') {
+    const prop = kind === 'five_hour' ? 'fiveHour' : kind === 'seven_day' ? 'sevenDay' : 'sevenDayOpus';
+    const w = u[prop];
+    if (w && typeof w.pct === 'number' && w.pct < threshold) {
+      return 'limit signal ignored: a fresh reading shows ' + Math.round(w.pct) + '% (' + kind + ')';
+    }
+    return null;
+  }
+  const present = [
+    { name: 'five_hour', w: u.fiveHour },
+    { name: 'seven_day', w: u.sevenDay },
+  ].filter(function (x) {
+    return x.w && typeof x.w.pct === 'number';
+  });
+  if (
+    present.length &&
+    present.every(function (x) {
+      return x.w.pct < threshold;
+    })
+  ) {
+    const picked = present.reduce(function (a, b) {
+      return b.w.pct > a.w.pct ? b : a;
+    });
+    return 'limit signal ignored: a fresh reading shows ' + Math.round(picked.w.pct) + '% (' + picked.name + ')';
+  }
+  return null;
 }
 
 async function tickInner(ctx, opts, out) {
@@ -163,8 +202,39 @@ async function tickInner(ctx, opts, out) {
 
   // P4: the API failover (keysmith) — engaged when every account is KNOWN to be over the threshold,
   // released as soon as a Claude account has recovered (or the gateway stops answering).
-  // opts.failover = { state, engage, release, check? }.
+  // opts.failover = { state, engage, release, check?, markLost?, clearLost? }.
   const fo = opts.failover ? opts.failover.state() : null;
+  let limitHit = null;
+  if (!fo && !activeDead && opts.limitSignal !== false) {
+    const sigFn = typeof opts.limitSignal === 'function' ? opts.limitSignal : _limitsignal.recentLimitHit;
+    try {
+      const hit = await sigFn(ctx, {
+        nowMs: opts.nowMs,
+        activeAccount: active.name,
+        claudeDir: opts.claudeDir,
+        appAccount: opts.appAccount,
+      });
+      if (hit && hit.at) {
+        const ignoredMsg = freshReadingOverrulesHit(activeInfo, eff, hit, threshold);
+        if (ignoredMsg) {
+          _log.log(ignoredMsg);
+          out.limitSignalIgnored = ignoredMsg;
+        } else {
+          h = 0;
+          basis = 'limit-signal';
+          limitHit = { at: hit.at, resetsAt: hit.resetsAt || null, kind: hit.kind || 'unknown' };
+          if (limitHit.resetsAt) {
+            const resetMs = Date.parse(limitHit.resetsAt);
+            if (isFinite(resetMs) && resetMs > nowMs) {
+              breaker.markCooldown(ctx, active.name, resetMs - nowMs, 'quota', bopts);
+            }
+          }
+        }
+      }
+    } catch (e) {
+      /* broken limitSignal never breaks tick */
+    }
+  }
   async function releaseFailover(to, why, extra) {
     if (!fo) return false;
     try {
@@ -175,19 +245,27 @@ async function tickInner(ctx, opts, out) {
     }
   }
   async function noCandidate(extra) {
-    const base = Object.assign({ state: 'no-candidate', active: active, headroom: h, switchedTo: null }, extra || {});
+    const base = Object.assign(
+      { state: 'no-candidate', active: active, headroom: h, switchedTo: null },
+      limitHit ? { basis: basis, limitHit: limitHit } : {},
+      extra || {},
+    );
     if (!opts.failover) return base;
     if (fo) return Object.assign(base, { state: 'failover', failover: fo });
     let e;
     try {
       e = await opts.failover.engage({
         from: active.name,
-        reason: activeDead
-          ? 'the live login of ' + active.name + ' is rejected and no other account has headroom'
-          : 'usage ' + Math.round(100 - h) + '% >= ' + threshold + '% and no other account below it',
-        recoverAt: activeDead
-          ? null
-          : recoverAtOf((activeInfo && (activeInfo.usage || activeInfo.lastGood)) || null, threshold),
+        reason: limitHit
+          ? _limitsignal.formatLimitHitReason(limitHit, { timeZone: opts.timeZone })
+          : activeDead
+            ? 'the live login of ' + active.name + ' is rejected and no other account has headroom'
+            : 'usage ' + Math.round(100 - h) + '% >= ' + threshold + '% and no other account below it',
+        recoverAt: limitHit
+          ? limitHit.resetsAt
+          : activeDead
+            ? null
+            : recoverAtOf((activeInfo && (activeInfo.usage || activeInfo.lastGood)) || null, threshold),
       });
     } catch (err) {
       e = { ok: false, reason: (err && err.message) || String(err) };
@@ -197,30 +275,104 @@ async function tickInner(ctx, opts, out) {
   }
 
   // While on the failover, the gateway must still be there: Claude Code points at it, so a dead
-  // gateway is a dead Claude Code. One re-check (a restart takes seconds), then back to the account.
+  // gateway is a dead Claude Code. Retry up to 3 times within the tick (2 s, 5 s, 10 s), then hold
+  // the failover in a degraded state for failover.lostGraceSeconds before releasing it.
   if (fo && typeof opts.failover.check === 'function') {
-    let ok = null;
-    try {
-      ok = await opts.failover.check();
-      if (!ok || !ok.ok) {
-        await (opts.sleep || sleepMs)(opts.failoverRecheckMs !== undefined ? opts.failoverRecheckMs : 1500);
-        ok = await opts.failover.check();
+    const existingLostSince = (fo && fo.lostSince) || null;
+    const runCheck = async function () {
+      try {
+        const r = await opts.failover.check();
+        return r && typeof r === 'object' ? r : { ok: !!r };
+      } catch (e) {
+        return { ok: false, reason: (e && e.message) || String(e) };
       }
-    } catch (e) {
-      ok = { ok: false, reason: (e && e.message) || String(e) };
+    };
+    const firstPause = opts.failoverRecheckMs !== undefined ? opts.failoverRecheckMs : 2000;
+    const pauses = [firstPause, 5000, 10000];
+    let ok = await runCheck();
+    for (let i = 0; i < pauses.length && (!ok || !ok.ok); i++) {
+      await (opts.sleep || sleepMs)(pauses[i]);
+      ok = await runCheck();
     }
-    if (!ok || !ok.ok) {
+    if (ok && ok.ok) {
+      if (existingLostSince) {
+        delete fo.lostSince;
+        if (typeof opts.failover.clearLost === 'function') opts.failover.clearLost();
+        else _log.log('gateway back');
+        out.gatewayBack = true;
+      }
+    } else {
       const why = 'the failover gateway stopped answering (' + ((ok && ok.reason) || 'no answer') + ')';
-      const rel = await releaseFailover(active.name, why, { lost: true });
+      let graceSec = 300;
+      if (typeof opts.lostGraceSeconds === 'number' && opts.lostGraceSeconds > 0) {
+        graceSec = opts.lostGraceSeconds;
+      } else {
+        try {
+          const cfgGrace = Number(_config.get(ctx, 'failover.lostGraceSeconds'));
+          if (isFinite(cfgGrace) && cfgGrace > 0) graceSec = cfgGrace;
+        } catch (e) {
+          graceSec = 300;
+        }
+      }
+      if (!existingLostSince) {
+        const lostSince = new Date(nowMs).toISOString();
+        fo.lostSince = lostSince;
+        if (typeof opts.failover.markLost === 'function') opts.failover.markLost(lostSince);
+        const notifyFn =
+          typeof opts.notify === 'function'
+            ? opts.notify
+            : opts.failover && typeof opts.failover.notify === 'function'
+              ? opts.failover.notify
+              : null;
+        if (notifyFn) {
+          const mins = Math.max(1, Math.round(graceSec / 60));
+          try {
+            await notifyFn(
+              'quota',
+              'The failover gateway is not answering — holding the failover for up to ' + mins + ' min',
+            );
+          } catch (e) {
+            /* notify never breaks tick */
+          }
+        }
+        return {
+          state: 'failover-degraded',
+          active: active,
+          headroom: h,
+          switchedTo: null,
+          reason: why,
+          lostSince: lostSince,
+          failover: fo,
+        };
+      }
+      const lostMs = Date.parse(existingLostSince);
+      if (isFinite(lostMs) && nowMs - lostMs >= graceSec * 1000) {
+        delete fo.lostSince;
+        const rel = await releaseFailover(active.name, why, { lost: true });
+        return {
+          state: 'failover-lost',
+          active: active,
+          headroom: h,
+          switchedTo: null,
+          reason: why,
+          failoverReleased: rel,
+        };
+      }
       return {
-        state: 'failover-lost',
+        state: 'failover-degraded',
         active: active,
         headroom: h,
         switchedTo: null,
         reason: why,
-        failoverReleased: rel,
+        lostSince: existingLostSince,
+        failover: fo,
       };
     }
+  }
+  // A manual engage (`keyflip failover on`) never auto-releases: only `keyflip failover off` or a
+  // lost gateway past the grace period above ends it.
+  if (fo && fo.manual) {
+    return { state: 'failover', active: active, headroom: h, switchedTo: null, basis: basis, failover: fo };
   }
   if (fo && typeof h === 'number' && h >= recoveryFloor) {
     await releaseFailover(active.name, active.name + ' recovered (' + Math.round(h) + '% headroom)');
@@ -395,6 +547,7 @@ async function tickInner(ctx, opts, out) {
             return c.name;
           }),
         },
+        limitHit ? { limitHit: limitHit } : {},
         opts.failover
           ? {
               failoverDeferred:
@@ -433,18 +586,21 @@ async function tickInner(ctx, opts, out) {
     kind: 'autoswitch',
     from: active.name,
     to: picked.name,
-    reason: activeDead
-      ? 'the live login of ' + active.name + ' is rejected by Anthropic (401/403)'
-      : typeof h !== 'number'
-        ? 'failing back from the API failover: ' + picked.name + ' has headroom'
-        : 'usage ' +
-          Math.round(100 - h) +
-          '% >= threshold ' +
-          threshold +
-          (basis === 'last-good' ? ' (last good reading; endpoint throttled)' : ''),
+    reason: limitHit
+      ? _limitsignal.formatLimitHitHeadline(limitHit, { timeZone: opts.timeZone })
+      : activeDead
+        ? 'the live login of ' + active.name + ' is rejected by Anthropic (401/403)'
+        : typeof h !== 'number'
+          ? 'failing back from the API failover: ' + picked.name + ' has headroom'
+          : 'usage ' +
+            Math.round(100 - h) +
+            '% >= threshold ' +
+            threshold +
+            (basis === 'last-good' ? ' (last good reading; endpoint throttled)' : ''),
   });
   const res = Object.assign(
     { state: 'switched', active: active, headroom: h, switchedTo: picked, basis: basis },
+    limitHit ? { limitHit: limitHit } : {},
     extraOut,
   );
   if (await releaseFailover(picked.name, picked.name + ' has headroom')) res.failoverReleased = true;
@@ -453,13 +609,16 @@ async function tickInner(ctx, opts, out) {
 
 // One watch iteration. Injectable deps for tests (fetch, nowMs, performSwitch, repairLabel). Returns
 //   { state: 'idle'|'no-active'|'below'|'switched'|'switched-back'|'no-candidate'|'unknown'|
-//            'failover-engaged'|'failover'|'failback'|'failover-lost',
+//            'failover-engaged'|'failover'|'failback'|'failover-degraded'|'failover-lost',
 //     active, headroom, switchedTo, identityRepair?, failoverReleased?, failoverError?,
-//     failoverDeferred?, unknownCandidates?, skippedCandidates? }
+//     failoverDeferred?, unknownCandidates?, skippedCandidates?, limitHit?, limitSignalIgnored?,
+//     lostSince?, gatewayBack? }
 async function tick(ctx, opts) {
   const side = {};
   const r = await tickInner(ctx, opts || {}, side);
   if (side.identityRepair) r.identityRepair = side.identityRepair;
+  if (side.gatewayBack) r.gatewayBack = true;
+  if (side.limitSignalIgnored) r.limitSignalIgnored = side.limitSignalIgnored;
   return r;
 }
 

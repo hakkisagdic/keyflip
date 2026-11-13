@@ -19,7 +19,7 @@ const SKIP = secretpaths.SECRET_DIRS.concat(['backups', 'logs', 'skill-backups',
 // Runtime state of the autoswitch service (a pending Desktop restart, an engaged failover) is
 // volatile too: restoring a stale one would replay a restart or re-engage a paid API.
 const VOLATILE_FILE =
-  /^\.lock|^\.usage-cache\.json$|^\.usage-throttle\.json$|^\.identity-cache\.json$|^\.update-check\.json$|^\.desktop-restart\.json$|^\.failover-state\.json$|^\.autoswitch-state\.json$|^refresh-state\.json$/i;
+  /^\.lock|^\.usage-cache\.json$|^\.usage-throttle\.json$|^\.identity-cache\.json$|^\.update-check\.json$|^\.desktop-restart\.json$|^\.failover-state\.json$|^\.live-since\.json$|^\.autoswitch-state\.json$|^refresh-state\.json$/i;
 function skipFile(name) {
   return VOLATILE_FILE.test(name) || secretpaths.isSecretFile(name);
 }

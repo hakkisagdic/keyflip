@@ -13,13 +13,15 @@ function makeCtx(overrides) {
   overrides = overrides || {};
   const home = overrides.home || tmpdir();
   const configDir = path.join(home, '.config', 'keyflip');
+  const claudeDir = overrides.claudeDir || path.join(home, '.claude');
   const claudeConfigPath = path.join(home, '.claude.json');
-  const credsFilePath = path.join(home, '.claude', '.credentials.json');
+  const credsFilePath = path.join(claudeDir, '.credentials.json');
   fs.mkdirSync(configDir, { recursive: true });
   return {
     home: home,
     platform: overrides.platform || 'linux',
     configDir: configDir,
+    claudeDir: claudeDir,
     claudeConfigPath: claudeConfigPath,
     credsFilePath: credsFilePath,
     account: 'tester',

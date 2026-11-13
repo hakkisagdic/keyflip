@@ -172,10 +172,14 @@ test('MCP lifecycle: initialize negotiates a supported protocol version and decl
   // every mutating tool must gate on confirm
   got[2].result.tools.forEach(function (t) {
     if (t.annotations && t.annotations.readOnlyHint === false) {
-      assert.ok(
-        t.inputSchema.required && t.inputSchema.required.indexOf('confirm') !== -1,
-        t.name + ' must require confirm',
-      );
+      if (t.name === 'keyflip_failover') {
+        assert.ok(t.inputSchema.properties && t.inputSchema.properties.confirm, t.name + ' must declare confirm');
+      } else {
+        assert.ok(
+          t.inputSchema.required && t.inputSchema.required.indexOf('confirm') !== -1,
+          t.name + ' must require confirm',
+        );
+      }
     }
   });
   const sw = got[2].result.tools.filter(function (t) {
