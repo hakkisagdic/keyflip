@@ -16,6 +16,8 @@ import * as provider from './provider.js';
 import * as history from './history.js';
 import * as _cost from './cost.js';
 import * as prices from './prices.js';
+import * as budget from './budget.js';
+import * as license from './license.js';
 import * as proxyroutes from './proxyroutes.js';
 import * as tiers from './tiers.js';
 import * as _profiles from './profiles.js';
@@ -441,7 +443,7 @@ function extractUsage(buf) {
 // Append one metered request to the cost log. costUSD is computed HERE, at the
 // per-request level, so the 200K long-context premium and fast mode are priced
 // on the request that incurred them (see cost.costBreakdown).
-function recordCost(ctx, account, u) {
+function recordCost(ctx, account, u, vkey) {
   if (!u) return;
   const b = _cost.costBreakdown({
     model: u.model,
@@ -468,11 +470,19 @@ function recordCost(ctx, account, u) {
         fast: u.fast === true,
         longContext: b.longContext.applied,
         costUSD: b.totalUSD,
+        vkey: vkey ? vkey.slice(0, 7) + '...' : undefined,
       }) + '\n',
       { mode: 0o600 },
     );
   } catch (e) {
     /* */
+  }
+  if (vkey && b.totalUSD > 0) {
+    try {
+      budget.recordVirtualKeySpend(ctx, vkey, { model: u.model, costUsd: b.totalUSD });
+    } catch (e) {
+      /* best effort */
+    }
   }
 }
 
@@ -484,6 +494,7 @@ function httpForward(up, reqInfo) {
     const headers = Object.assign({}, reqInfo.headers);
     delete headers['authorization'];
     delete headers['x-api-key'];
+    delete headers['x-keyflip-virtual-key'];
     delete headers['host'];
     if (up.authVal) headers[up.authKey] = up.authVal;
     if (up.authKey === 'authorization')
@@ -554,6 +565,17 @@ async function handleRequest(ctx, reqInfo, clientRes, opts) {
     headers: reqInfo.headers || {},
     user: userKey,
   };
+  const vkey = budget.extractVirtualKeyFromHeaders(reqInfo.headers);
+  if (vkey) {
+    const vkCheck = budget.checkVirtualKey(ctx, vkey, { model: facts.model, nowMs: clock() });
+    if (!vkCheck.allowed) {
+      const errStatus = vkCheck.status || 429;
+      const errBody = JSON.stringify({ error: { type: vkCheck.code, message: vkCheck.reason } });
+      clientRes.writeHead(errStatus, { 'content-type': 'application/json' });
+      clientRes.end(errBody);
+      return { status: errStatus, error: vkCheck.code, reason: vkCheck.reason };
+    }
+  }
   const routed = proxyroutes.applyTransforms(reqInfo, routes);
   let upstreamReq = routed.info;
 
@@ -661,6 +683,7 @@ async function handleRequest(ctx, reqInfo, clientRes, opts) {
           bodyOverride: peeked ? body : null,
           model: currentModel,
           route: decision.reason,
+          vkey: vkey,
         });
       }
       // Traycer per-problem routing (`model_unavailable`) + `model-chain`:
@@ -726,6 +749,7 @@ async function handleRequest(ctx, reqInfo, clientRes, opts) {
         bodyOverride: peeked ? body : null,
         model: currentModel,
         route: decision.reason,
+        vkey: vkey,
       });
     }
   }
@@ -754,7 +778,7 @@ function commit(ctx, resp, clientRes, info) {
   if (payload != null) {
     // buffered (tests / small JSON / a peeked error body)
     clientRes.end(payload);
-    recordCost(ctx, info.acct, extractUsage(toBuffer(payload)));
+    recordCost(ctx, info.acct, extractUsage(toBuffer(payload)), info.vkey);
   } else {
     // stream, teeing for accounting
     const chunks = [];
@@ -770,7 +794,7 @@ function commit(ctx, resp, clientRes, info) {
     });
     upstream.on('end', function () {
       clientRes.end();
-      recordCost(ctx, info.acct, extractUsage(Buffer.concat(chunks)));
+      recordCost(ctx, info.acct, extractUsage(Buffer.concat(chunks)), info.vkey);
     });
     upstream.on('error', function () {
       try {
@@ -786,6 +810,14 @@ function commit(ctx, resp, clientRes, info) {
         /* */
       }
     });
+  }
+  try {
+    license.recordUsage(ctx, {
+      requests: 1,
+      failoversSaved: info.failed && info.failed.length && resp.status < 400 ? 1 : 0,
+    });
+  } catch (e) {
+    /* best effort */
   }
   const out = { status: resp.status, account: info.acct, attempts: info.attempts, route: info.route || null };
   if (info.model) out.model = info.model;

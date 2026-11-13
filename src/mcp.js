@@ -3890,6 +3890,109 @@ const TOOLS = [
     },
   },
   {
+    name: 'keyflip_budget_vkey_list',
+    title: 'List virtual keys and USD/TRY spend budgets',
+    description:
+      'List all virtual keys (vk_...) with their USD/TRY spend caps, per-model budgets, RPM limits, and active temporary boosts. Never returns raw secret keys. Read-only.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    annotations: RO,
+    run: async function (ctx) {
+      return { virtualKeys: _budget.listVirtualKeys(ctx) };
+    },
+  },
+  {
+    name: 'keyflip_budget_vkey_create',
+    title: 'Create a virtual key with USD/model budget & RPM limit',
+    description:
+      'Create a virtual key (vk_...) that agents or developers can pass in Authorization: Bearer vk_... or x-keyflip-virtual-key to enforce USD spend ceilings, model allowlists, and RPM limits without exposing raw upstream credentials. Mutating — ask the user first, then confirm=true.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        label: { type: 'string' },
+        max_budget_usd: { type: 'number' },
+        rpm_limit: { type: 'number' },
+        allowed_models: { type: 'array', items: { type: 'string' } },
+        model_budgets: { type: 'object' },
+        confirm: confirmProp.confirm,
+      },
+      required: ['label', 'confirm'],
+      additionalProperties: false,
+    },
+    annotations: MUT,
+    run: async function (ctx, args) {
+      needConfirm(args);
+      const l = await lock.acquire(ctx.configDir);
+      try {
+        return {
+          virtualKey: _budget.createVirtualKey(ctx, {
+            label: args.label,
+            maxBudgetUsd: args.max_budget_usd,
+            rpmLimit: args.rpm_limit,
+            allowedModels: args.allowed_models,
+            modelBudgets: args.model_budgets,
+          }),
+        };
+      } finally {
+        l.release();
+      }
+    },
+  },
+  {
+    name: 'keyflip_budget_vkey_revoke',
+    title: 'Revoke a virtual key',
+    description: 'Revoke a virtual key by id, label, or key value so proxy requests using it are rejected with 403. Mutating — ask the user first, then confirm=true.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id_or_label: { type: 'string' },
+        confirm: confirmProp.confirm,
+      },
+      required: ['id_or_label', 'confirm'],
+      additionalProperties: false,
+    },
+    annotations: MUT,
+    run: async function (ctx, args) {
+      needConfirm(args);
+      const l = await lock.acquire(ctx.configDir);
+      try {
+        return { revoked: _budget.revokeVirtualKey(ctx, args.id_or_label) };
+      } finally {
+        l.release();
+      }
+    },
+  },
+  {
+    name: 'keyflip_budget_vkey_boost',
+    title: 'Temporarily boost a virtual key budget',
+    description: 'Grant an expiring temporary USD budget boost (tempBoostUsd) to a virtual key so an urgent sprint or deploy is not blocked when the base budget is reached. Mutating — ask the user first, then confirm=true.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id_or_label: { type: 'string' },
+        amount_usd: { type: 'number' },
+        duration_minutes: { type: 'number' },
+        confirm: confirmProp.confirm,
+      },
+      required: ['id_or_label', 'amount_usd', 'confirm'],
+      additionalProperties: false,
+    },
+    annotations: MUT,
+    run: async function (ctx, args) {
+      needConfirm(args);
+      const l = await lock.acquire(ctx.configDir);
+      try {
+        return {
+          boosted: _budget.boostVirtualKeyBudget(ctx, args.id_or_label, {
+            amountUsd: args.amount_usd,
+            durationMinutes: args.duration_minutes,
+          }),
+        };
+      } finally {
+        l.release();
+      }
+    },
+  },
+  {
     name: 'keyflip_import_env',
     title: 'Import providers from a .env / environment',
     description:

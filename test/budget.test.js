@@ -1,14 +1,12 @@
-// BUDGET: per-account usage ceilings + breach/near-breach alerts. Everything is
-// hermetic — makeCtx gives a temp configDir; we write .usage-cache.json directly
-// (the module only READS it) so no network/time is ever touched.
+// BUDGET: per-account usage ceilings + breach/near-breach alerts + Virtual Keys (vk_...).
 import test from 'node:test';
 import assert from 'node:assert';
 import fs from 'fs';
 import path from 'path';
 import * as budget from '../src/budget.js';
+import * as proxy from '../src/proxy.js';
 import { makeCtx } from './helpers.js';
 
-// Write the usage cache the way usage.js does: { name: { at, status, usage } }.
 function writeCache(ctx, byName) {
   const obj = {};
   Object.keys(byName).forEach(function (name) {
@@ -79,7 +77,6 @@ test('setLimit rejects out-of-range / non-number ceilings', function () {
       budget.setLimit(ctx, 'work', { fiveHourPct: bad });
     });
   });
-  // nothing was written for the rejected values
   assert.ok(!('work' in budget.get(ctx)));
 });
 
@@ -128,8 +125,8 @@ test('limitsFor merges defaults under per-account overrides', function () {
   budget.setLimit(ctx, '*', { fiveHourPct: 50, sevenDayPct: 60 });
   budget.setLimit(ctx, 'work', { fiveHourPct: 90 });
   const eff = budget.limitsFor(ctx, 'work');
-  assert.strictEqual(eff.fiveHourPct, 90); // override
-  assert.strictEqual(eff.sevenDayPct, 60); // inherited default
+  assert.strictEqual(eff.fiveHourPct, 90);
+  assert.strictEqual(eff.sevenDayPct, 60);
 });
 
 // ---- evaluate ---------------------------------------------------------------
@@ -159,13 +156,11 @@ test('evaluate flags a breach when pct >= limit', function () {
 test('evaluate flags a warn within WARN_MARGIN, silent below it', function () {
   const ctx = makeCtx();
   budget.setLimit(ctx, 'work', { fiveHourPct: 80 });
-  // 72 -> within margin (>= 70) -> warn
   writeCache(ctx, { work: { fiveHour: 72 } });
   let rows = budget.evaluate(ctx);
   assert.strictEqual(rows.length, 1);
   assert.strictEqual(rows[0].level, 'warn');
   assert.strictEqual(rows[0].breached, false);
-  // 69 -> below margin -> nothing
   writeCache(ctx, { work: { fiveHour: 69 } });
   assert.deepStrictEqual(budget.evaluate(ctx), []);
 });
@@ -175,7 +170,7 @@ test('evaluate boundary: pct === limit is breach, pct === limit-margin is warn',
   budget.setLimit(ctx, 'work', { fiveHourPct: 80 });
   writeCache(ctx, { work: { fiveHour: 80 } });
   assert.strictEqual(budget.evaluate(ctx)[0].level, 'breach');
-  writeCache(ctx, { work: { fiveHour: 70 } }); // exactly limit - WARN_MARGIN
+  writeCache(ctx, { work: { fiveHour: 70 } });
   assert.strictEqual(budget.evaluate(ctx)[0].level, 'warn');
   writeCache(ctx, { work: { fiveHour: 69.9 } });
   assert.deepStrictEqual(budget.evaluate(ctx), []);
@@ -184,7 +179,7 @@ test('evaluate boundary: pct === limit is breach, pct === limit-margin is warn',
 test('evaluate skips windows with no cached usage', function () {
   const ctx = makeCtx();
   budget.setLimit(ctx, 'work', { fiveHourPct: 80, sevenDayPct: 80 });
-  writeCache(ctx, { work: { fiveHour: 95 } }); // sevenDay absent
+  writeCache(ctx, { work: { fiveHour: 95 } });
   const rows = budget.evaluate(ctx);
   assert.strictEqual(rows.length, 1);
   assert.strictEqual(rows[0].metric, 'fiveHour');
@@ -211,7 +206,7 @@ test('per-account ceiling overrides the default for that account', function () {
   const ctx = makeCtx();
   budget.setLimit(ctx, '*', { fiveHourPct: 50 });
   budget.setLimit(ctx, 'work', { fiveHourPct: 95 });
-  writeCache(ctx, { work: { fiveHour: 60 } }); // over default 50, under own 95
+  writeCache(ctx, { work: { fiveHour: 60 } });
   assert.deepStrictEqual(budget.evaluate(ctx), []);
 });
 
@@ -219,9 +214,9 @@ test('evaluate orders breaches before warns, then by pct desc', function () {
   const ctx = makeCtx();
   budget.setLimit(ctx, '*', { fiveHourPct: 80 });
   writeCache(ctx, {
-    a: { fiveHour: 100 }, // breach
-    b: { fiveHour: 85 }, // breach (lower pct)
-    c: { fiveHour: 75 }, // warn
+    a: { fiveHour: 100 },
+    b: { fiveHour: 85 },
+    c: { fiveHour: 75 },
   });
   const rows = budget.evaluate(ctx);
   assert.deepStrictEqual(
@@ -251,7 +246,7 @@ test('status combines ceilings, current usage, defaults and alerts', function ()
     return a.name === 'work';
   });
   assert.strictEqual(work.limits.fiveHourPct, 80);
-  assert.strictEqual(work.limits.sevenDayPct, 95); // inherited
+  assert.strictEqual(work.limits.sevenDayPct, 95);
   assert.strictEqual(work.usage.fiveHour, 88);
   assert.strictEqual(work.usage.sevenDay, 40);
   assert.strictEqual(work.alerts.length, 1);
@@ -262,7 +257,6 @@ test('status combines ceilings, current usage, defaults and alerts', function ()
 test('status usage is null when a window has no cached sample', function () {
   const ctx = makeCtx();
   budget.setLimit(ctx, 'work', { fiveHourPct: 80 });
-  // no cache written at all
   const s = budget.status(ctx);
   const work = s.accounts.find(function (a) {
     return a.name === 'work';
@@ -287,14 +281,11 @@ test('setLimit REFUSES to clobber a corrupt budget.json', function () {
   assert.throws(function () {
     budget.setLimit(ctx, 'work', { fiveHourPct: 50 });
   }, /not valid JSON|JSON/);
-  // the corrupt bytes are still there, untouched
   assert.strictEqual(fs.readFileSync(budget.budgetPath(ctx), 'utf8'), '{ not json');
 });
 
 test('a tampered budget.json with a real __proto__ key cannot pollute', function () {
   const ctx = makeCtx();
-  // A raw literal so the key is genuinely present (an object literal would instead
-  // set the prototype and JSON.stringify would drop it).
   writeBudgetRaw(ctx, '{"__proto__":{"fiveHourPct":1},"constructor":{"fiveHourPct":2},"work":{"fiveHourPct":80}}');
   const cfg = budget.get(ctx);
   assert.strictEqual(Object.getPrototypeOf(cfg), null, 'config is a null-proto object');
@@ -313,12 +304,11 @@ test('evaluate tolerates a corrupt usage cache (no alerts)', function () {
 test('evaluate ignores junk / hostile cache entries', function () {
   const ctx = makeCtx();
   budget.setLimit(ctx, '*', { fiveHourPct: 1 });
-  // Raw literal so "__proto__" is a real key, not prototype-setting sugar.
   const raw =
     '{"__proto__":{"usage":{"fiveHour":{"pct":99}}},' +
     '"scalar":5,' +
-    '"work":{"usage":{"fiveHour":{"pct":"nope"}}},' + // non-numeric pct -> ignored
-    '"home":{"usage":{"fiveHour":{"pct":50}}}}'; // legit -> breach
+    '"work":{"usage":{"fiveHour":{"pct":"nope"}}},' +
+    '"home":{"usage":{"fiveHour":{"pct":50}}}}';
   fs.writeFileSync(path.join(ctx.configDir, '.usage-cache.json'), raw);
   const rows = budget.evaluate(ctx);
   assert.strictEqual({}.usage, undefined, 'no prototype pollution from cache');
@@ -335,4 +325,118 @@ test('budget.json is written as clean JSON (no prototype leakage on round-trip)'
   budget.setLimit(ctx, 'work', { fiveHourPct: 80 });
   const parsed = JSON.parse(fs.readFileSync(budget.budgetPath(ctx), 'utf8'));
   assert.deepStrictEqual(parsed, { work: { fiveHourPct: 80 } });
+});
+
+// ---- Virtual Keys (vk_...) + USD/TRY Budget + RPM + tempBoost ---------------
+
+test('createVirtualKey, checkVirtualKey, recordVirtualKeySpend, and boostVirtualKeyBudget work end-to-end', function () {
+  const ctx = makeCtx({ now: '2026-11-13T10:00:00.000Z' });
+  const vk = budget.createVirtualKey(ctx, {
+    label: 'ci-agent',
+    maxBudgetUsd: 2.0,
+    rpmLimit: 2,
+    allowedModels: ['claude-sonnet-*'],
+    modelBudgets: { 'claude-sonnet-4-6': 1.5 },
+  });
+  assert.ok(vk.key.startsWith('vk_'));
+  assert.strictEqual(vk.label, 'ci-agent');
+  assert.strictEqual(vk.maxBudgetUsd, 2.0);
+  assert.ok(vk.maxBudgetTry > 60);
+
+  // List hides raw key by default
+  const listed = budget.listVirtualKeys(ctx);
+  assert.strictEqual(listed.length, 1);
+  assert.strictEqual(listed[0].key, undefined);
+  assert.ok(listed[0].maskedKey.startsWith('vk_'));
+
+  // Disallowed model -> 403
+  const badModel = budget.checkVirtualKey(ctx, vk.key, {
+    model: 'claude-opus-4-6',
+    nowMs: Date.parse('2026-11-13T10:00:01Z'),
+  });
+  assert.strictEqual(badModel.allowed, false);
+  assert.strictEqual(badModel.status, 403);
+  assert.strictEqual(badModel.code, 'model_not_allowed');
+
+  // Allowed model, RPM = 2: first two pass, third in same minute fails with 429
+  const c1 = budget.checkVirtualKey(ctx, vk.key, {
+    model: 'claude-sonnet-4-6',
+    nowMs: Date.parse('2026-11-13T10:00:02Z'),
+  });
+  assert.strictEqual(c1.allowed, true);
+  const c2 = budget.checkVirtualKey(ctx, vk.key, {
+    model: 'claude-sonnet-4-6',
+    nowMs: Date.parse('2026-11-13T10:00:10Z'),
+  });
+  assert.strictEqual(c2.allowed, true);
+  const c3 = budget.checkVirtualKey(ctx, vk.key, {
+    model: 'claude-sonnet-4-6',
+    nowMs: Date.parse('2026-11-13T10:00:20Z'),
+  });
+  assert.strictEqual(c3.allowed, false);
+  assert.strictEqual(c3.status, 429);
+  assert.strictEqual(c3.code, 'rpm_limit_exceeded');
+
+  // Record spend exceeding total budget ($2.00) -> 429 budget_exceeded
+  budget.recordVirtualKeySpend(ctx, vk.key, { model: 'claude-sonnet-4-6', costUsd: 2.1 });
+  const overBudget = budget.checkVirtualKey(ctx, vk.key, {
+    model: 'claude-sonnet-4-6',
+    nowMs: Date.parse('2026-11-13T10:02:00Z'),
+  });
+  assert.strictEqual(overBudget.allowed, false);
+  assert.strictEqual(overBudget.status, 429);
+  assert.strictEqual(overBudget.code, 'budget_exceeded');
+
+  // Temporary boost (+$5.00 for 60 min) lifts total ceiling to $7.00
+  const boosted = budget.boostVirtualKeyBudget(ctx, 'ci-agent', { amountUsd: 5.0, durationMinutes: 60 });
+  assert.strictEqual(boosted.boostActive, true);
+  assert.strictEqual(boosted.effectiveBudgetUsd, 7.0);
+
+  // Revoke key -> 403 virtual_key_revoked
+  budget.revokeVirtualKey(ctx, vk.id);
+  const revCheck = budget.checkVirtualKey(ctx, vk.key, {
+    model: 'claude-sonnet-4-6',
+    nowMs: Date.parse('2026-11-13T10:03:00Z'),
+  });
+  assert.strictEqual(revCheck.allowed, false);
+  assert.strictEqual(revCheck.status, 403);
+  assert.strictEqual(revCheck.code, 'virtual_key_revoked');
+});
+
+test('proxy.handleRequest enforces Virtual Key budget before upstream call', async function () {
+  const ctx = makeCtx();
+  const vk = budget.createVirtualKey(ctx, { label: 'capped-agent', maxBudgetUsd: 0.5 });
+  budget.recordVirtualKeySpend(ctx, vk.key, { model: 'claude-sonnet-4-6', costUsd: 0.6 });
+
+  let upstreamCalled = false;
+  let statusSent = null;
+  let bodySent = '';
+  const fakeRes = {
+    writeHead(s) {
+      statusSent = s;
+    },
+    end(b) {
+      bodySent = String(b || '');
+    },
+  };
+  const r = await proxy.handleRequest(
+    ctx,
+    {
+      method: 'POST',
+      path: '/v1/messages',
+      headers: { authorization: 'Bearer ' + vk.key },
+      body: Buffer.from(JSON.stringify({ model: 'claude-sonnet-4-6', messages: [] })),
+    },
+    fakeRes,
+    {
+      forward: async () => {
+        upstreamCalled = true;
+        return { status: 200, headers: {}, body: Buffer.from('{}') };
+      },
+    },
+  );
+  assert.strictEqual(upstreamCalled, false, 'upstream must not be called when virtual key budget is exceeded');
+  assert.strictEqual(statusSent, 429);
+  assert.strictEqual(r.error, 'budget_exceeded');
+  assert.ok(bodySent.includes('budget_exceeded'));
 });

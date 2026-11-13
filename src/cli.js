@@ -1830,8 +1830,129 @@ function cmdBudget(ctx, rest) {
       print(existed ? '🗑  cleared budget for ' + name : 'no budget set for ' + name);
       return;
     }
+    case 'vkey':
+    case 'virtual-key': {
+      const action = args[0] || 'list';
+      const vargs = args.slice(1);
+      const flagVal = function (flag) {
+        const idx = vargs.indexOf(flag);
+        return idx !== -1 && vargs[idx + 1] ? vargs[idx + 1] : undefined;
+      };
+      if (action === 'list') {
+        const keys = budget.listVirtualKeys(ctx);
+        if (JSON_MODE) {
+          jsonOut({ virtualKeys: keys });
+          return;
+        }
+        if (!keys.length) {
+          print('No virtual keys — create one:  keyflip budget vkey create --label agent-1 --max-usd 10 --rpm 30');
+          return;
+        }
+        keys.forEach(function (k) {
+          print(
+            style.bold(k.label) +
+              '  [' +
+              k.id +
+              ' · ' +
+              k.maskedKey +
+              ' · ' +
+              k.status +
+              ']  spent $' +
+              k.spentUsd.toFixed(4) +
+              (k.effectiveBudgetUsd != null ? ' / $' + k.effectiveBudgetUsd.toFixed(2) : '') +
+              (k.rpmLimit ? '  rpm ' + k.rpmLimit : '') +
+              (k.boostActive ? '  ⚡ +$' + k.tempBoostUsd.toFixed(2) + ' boost' : ''),
+          );
+        });
+        return;
+      }
+      if (action === 'create') {
+        const label =
+          flagVal('--label') ||
+          flagVal('--name') ||
+          vargs.filter(function (a) {
+            return a.indexOf('-') !== 0;
+          })[0];
+        if (!label) return fail('usage: keyflip budget vkey create --label <name> [--max-usd N] [--rpm N] [--models a,b]');
+        const maxUsd = flagVal('--max-usd') !== undefined ? Number(flagVal('--max-usd')) : undefined;
+        const rpm = flagVal('--rpm') !== undefined ? Number(flagVal('--rpm')) : undefined;
+        const models = flagVal('--models');
+        let created;
+        try {
+          created = budget.createVirtualKey(ctx, {
+            label: label,
+            maxBudgetUsd: maxUsd,
+            rpmLimit: rpm,
+            allowedModels: models,
+          });
+        } catch (e) {
+          return fail(e.message);
+        }
+        if (JSON_MODE) {
+          jsonOut({ virtualKey: created });
+          return;
+        }
+        print(
+          style.ok('✅') +
+            ' created virtual key ' +
+            style.bold(created.label) +
+            ': ' +
+            created.key +
+            (created.maxBudgetUsd != null ? '  (budget $' + created.maxBudgetUsd.toFixed(2) + ')' : ''),
+        );
+        return;
+      }
+      if (action === 'revoke') {
+        const targetKey = vargs.filter(function (a) {
+          return a.indexOf('-') !== 0;
+        })[0];
+        if (!targetKey) return fail('usage: keyflip budget vkey revoke <id|label|vk_...>');
+        let revoked;
+        try {
+          revoked = budget.revokeVirtualKey(ctx, targetKey);
+        } catch (e) {
+          return fail(e.message);
+        }
+        if (JSON_MODE) {
+          jsonOut({ revoked: revoked });
+          return;
+        }
+        print(style.ok('✅') + ' revoked virtual key ' + revoked.label + ' (' + revoked.id + ')');
+        return;
+      }
+      if (action === 'boost') {
+        const targetKey = vargs.filter(function (a) {
+          return a.indexOf('-') !== 0;
+        })[0];
+        const usd = flagVal('--usd') !== undefined ? Number(flagVal('--usd')) : undefined;
+        const mins = flagVal('--minutes') !== undefined ? Number(flagVal('--minutes')) : 60;
+        if (!targetKey || usd === undefined)
+          return fail('usage: keyflip budget vkey boost <id|label> --usd <N> [--minutes 60]');
+        let boosted;
+        try {
+          boosted = budget.boostVirtualKeyBudget(ctx, targetKey, { amountUsd: usd, durationMinutes: mins });
+        } catch (e) {
+          return fail(e.message);
+        }
+        if (JSON_MODE) {
+          jsonOut({ boosted: boosted });
+          return;
+        }
+        print(
+          style.ok('✅') +
+            ' boosted ' +
+            boosted.label +
+            ' by +$' +
+            boosted.tempBoostUsd.toFixed(2) +
+            ' until ' +
+            boosted.boostExpiresAt,
+        );
+        return;
+      }
+      return fail('unknown: keyflip budget vkey ' + action + ' (use: list | create | revoke | boost)');
+    }
     default:
-      return fail('unknown: keyflip budget ' + sub + ' (use: status | set | clear)');
+      return fail('unknown: keyflip budget ' + sub + ' (use: status | set | clear | vkey)');
   }
 }
 
