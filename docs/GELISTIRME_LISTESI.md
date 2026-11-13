@@ -14,7 +14,7 @@
 | Kod | İş Kalemi | Matris Karşılığı | Gelir | Değer | Efor | Skor | Öncelik | Durum |
 |---|---|---|---|---|---|---|---|---|
 | **P0-1** | `keyflip license` Tam Yaşam Döngüsü: 14 Günlük Deneme (`trial`), Ek Süre (`graceDays`), Koltuk (`seats`), Yerel Kullanım/ROI Defteri ve Web Panel Lisans Kartı | Çevrimdışı İmzalı Lisans + Deneme + Grace Period + Kullanım Ölçümü (Kısmi) | 10 | 10 | 2 | **50.0** | **P0** | [x] Tamamlandı |
-| **P0-2** | `issuer/` iyzico + MoR Fatura Defteri (`invoices.jsonl`), TL/USD Paket Katalogu (`plans`) ve Sipariş/Vergi Mutabakatı | Türkiye Yerel Ödeme iyzico/PayTR + Fatura Kaydı (Kısmi) | 10 | 9 | 2 | **45.0** | **P0** | [ ] Bekliyor |
+| **P0-2** | `issuer/` iyzico + MoR Fatura Defteri (`invoices.jsonl`), TL/USD Paket Katalogu (`plans`) ve Sipariş/Vergi Mutabakatı | Türkiye Yerel Ödeme iyzico/PayTR + Fatura Kaydı (Kısmi) | 10 | 9 | 2 | **45.0** | **P0** | [x] Tamamlandı |
 | **P0-3** | Sanal Anahtarlar (`Virtual Keys` — `vk_...`), Anahtar/Model Bazlı USD/TL Harcama Bütçesi, RPM/TPM Limiti ve Geçici Bütçe Artışı (`tempBoost`) | Sanal Anahtarlar + USD/TL Bütçe & RPM/TPM Limiti (Yok) | 9 | 10 | 2 | **45.0** | **P0** | [ ] Bekliyor |
 | **P1-1** | Proxy Üzerinde Gerçek Zamanlı Giden (Outbound) PII & Sır Maskeleme / Engelleme Guardrail'i (`src/proxy.js` + `src/policy.js`) | Canlı Proxy Outbound PII & Sır Guardrail (Kısmi) | 9 | 9 | 2 | **40.5** | **P1** | [ ] Bekliyor |
 | **P1-2** | Normalize/Semantik Yanıt Önbelleği + Kazanılan USD/TL & Token Tasarruf Sayacı (`src/router.js`) | Semantik Yanıt Önbelleği + Maliyet Tasarruf Raporu (Kısmi) | 8 | 9 | 2 | **36.0** | **P1** | [ ] Bekliyor |
@@ -40,7 +40,7 @@
 
 ---
 
-### [ ] P0-2 — `issuer/` iyzico + MoR Fatura Defteri (`invoices.jsonl`), TL/USD Paket Katalogu (`plans`) ve Sipariş/Vergi Mutabakatı
+### [x] P0-2 — `issuer/` iyzico + MoR Fatura Defteri (`invoices.jsonl`), TL/USD Paket Katalogu (`plans`) ve Sipariş/Vergi Mutabakatı
 - **Matris Karşılığı:** *Türkiye Yerel Ödeme (iyzico / PayTR, TL + Taksit, e-Fatura Uyumlu Fatura Kaydı) (Kısmi → Var)*
 - **Tahmini Efor:** 2 birim (Orta)
 - **Bağımlılık:** P0-1 (`issuer/config.js`, `issuer/store.js`, `issuer/server.js`, `issuer/admin.js`, `issuer/adapters/iyzico.js`)

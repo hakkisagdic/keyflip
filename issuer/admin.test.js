@@ -1,22 +1,7 @@
 'use strict';
 // ISSUER / admin.test.js — zero-dep (node:test + node:assert) coverage for the
 // admin panel: the bearer-token gate, the issue / reissue / revoke paths, the
-// lookup + list filters, and the event log view.
-//
-// What it proves:
-//   * With NO token configured the panel is DISABLED (503) — it fails closed.
-//   * A wrong/missing token is 401; the right token is accepted.
-//   * Issuing returns a token ONCE and the token is NEVER persisted (the store
-//     file and the event log contain no token-shaped string).
-//   * The minted token verifies GREEN in src/license.js when that module's
-//     public key is set to our throwaway keypair — a real cross-check of the
-//     crypto contract, not a self-test.
-//   * Revoke marks the record; a second revoke is 409; reissue mints a NEW
-//     license and supersedes the old one.
-//   * Bad input (tier / email / months) is rejected with 400 and mints nothing.
-//
-// Isolation: a throwaway Ed25519 keypair, an injected signer, and a temp dir.
-// No real issuer key on disk, no network.
+// lookup + list filters, invoices + revenue summary, and the event log view.
 
 const { test } = require('node:test');
 const assert = require('node:assert');
@@ -28,10 +13,9 @@ const path = require('node:path');
 const vm = require('node:vm');
 
 const { createAdmin } = require('./admin');
-const { LicenseStore, EventLog } = require('./store');
+const { LicenseStore, InvoiceStore, EventLog } = require('./store');
 const license = require('../src/license');
 
-// ---- helpers ------------------------------------------------------------------
 function tmpDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'kf-admin-'));
 }
@@ -42,7 +26,6 @@ function makeKeypair() {
   return { publicKey, privateKey, spkiB64 };
 }
 
-// Drive a request through the admin handler without opening a port.
 function request(handler, method, urlPath, opts) {
   opts = opts || {};
   return new Promise((resolve, reject) => {
@@ -79,32 +62,26 @@ function bearer(token) {
   return { authorization: 'Bearer ' + token, 'content-type': 'application/json' };
 }
 
-// Build an admin with a throwaway signer + temp storage.
 function makeAdmin(opts) {
   opts = opts || {};
   const dir = tmpDir();
   const kp = makeKeypair();
   const store = new LicenseStore({ file: path.join(dir, 'licenses.json') });
   const events = new EventLog({ file: path.join(dir, 'events.jsonl') });
+  const invoices = new InvoiceStore({ file: path.join(dir, 'invoices.jsonl') });
   const sign = require('./sign');
   const admin = createAdmin({
     token: opts.token === undefined ? 'test-token' : opts.token,
     store,
     events,
+    invoices,
     signLicense: (payload) => sign.signLicense(payload, kp.privateKey),
     log: () => {},
   });
-  return { admin, dir, kp, store, events };
+  return { admin, dir, kp, store, events, invoices };
 }
 
-// ---- tests --------------------------------------------------------------------
-
 test('the panel PAGE boots: its script has no undefined globals', () => {
-  // The panel is one inline <script>. If it references a name that does not
-  // exist in the browser, the whole IIFE dies at that line and the page renders
-  // but does NOTHING (no tier list, no Connect button, no issue button). That
-  // is invisible to an HTTP-level test, so we actually BOOT the script in a
-  // node:vm sandbox with a tiny DOM stub and assert it runs clean.
   const html = require('./admin').PANEL_HTML;
   const m = /<script>([\s\S]*?)<\/script>/.exec(html);
   assert.ok(m, 'the panel must contain exactly one inline script');
@@ -140,13 +117,10 @@ test('the panel PAGE boots: its script has no undefined globals', () => {
     console,
   };
   vm.createContext(sandbox);
-  // A ReferenceError here means the page would be dead in a real browser.
   vm.runInContext(m[1], sandbox, { filename: 'panel.js' });
 
-  // The tier dropdown is filled from the server's own tier table.
   const options = getEl('tier').children.map((o) => o.value);
   assert.deepStrictEqual(options, ['pro', 'team', 'enterprise']);
-  // The buttons are wired (the page would be inert otherwise).
   assert.strictEqual(typeof getEl('connect').onclick, 'function');
   assert.strictEqual(typeof getEl('issue').onclick, 'function');
   assert.strictEqual(typeof getEl('refresh').onclick, 'function');
@@ -187,7 +161,6 @@ test('issuing returns a token once and never persists it', async () => {
   assert.strictEqual(r.json.email, 'buyer@example.com');
   assert.ok(r.json.expiry);
 
-  // The token must not be on disk anywhere the issuer writes.
   const files = fs.readdirSync(dir);
   for (const f of files) {
     const raw = fs.readFileSync(path.join(dir, f), 'utf8');
@@ -197,21 +170,23 @@ test('issuing returns a token once and never persists it', async () => {
   assert.ok(files.indexOf('events.jsonl') !== -1);
 });
 
-test('the minted token verifies green in src/license.js', async () => {
+test('the minted token verifies green in src/license.js (including multi-seat)', async () => {
   const { admin, kp } = makeAdmin();
   const r = await request(admin.handler, 'POST', '/admin/api/licenses', {
     headers: bearer('test-token'),
-    body: JSON.stringify({ email: 'a@b.co', tier: 'team', months: 3 }),
+    body: JSON.stringify({ email: 'a@b.co', tier: 'team', months: 3, seats: 5 }),
   });
   assert.strictEqual(r.status, 201);
+  assert.strictEqual(r.json.seats, 5);
   license.setPublicKey(kp.spkiB64);
   try {
     const v = license.verify(r.json.token);
     assert.strictEqual(v.valid, true, 'license.js must accept the minted token: ' + v.reason);
     assert.strictEqual(v.tier, 'team');
+    assert.strictEqual(v.seats, 5);
     assert.strictEqual(v.email, 'a@b.co');
   } finally {
-    license.setPublicKey(license.PUBKEY_B64); // restore the shipped release key
+    license.setPublicKey(license.PUBKEY_B64);
   }
 });
 
@@ -300,7 +275,6 @@ test('reissue mints a new license and supersedes the old one', async () => {
   assert.ok(re.json.token);
   assert.strictEqual(store.get(oldId).status, 'superseded');
   assert.strictEqual(store.get(oldId).supersededBy, re.json.licenseId);
-  // The reissued token is a genuine license too.
   license.setPublicKey(kp.spkiB64);
   try {
     assert.strictEqual(license.verify(re.json.token).valid, true);
@@ -324,6 +298,45 @@ test('the event log view shows what happened', async () => {
   const kinds = r.json.events.map((e) => e.event);
   assert.ok(kinds.indexOf('license.issued') !== -1);
   assert.ok(kinds.indexOf('license.revoked') !== -1);
+});
+
+test('GET /admin/api/invoices and /admin/api/plans return TRY and USD summaries', async () => {
+  const { admin } = makeAdmin();
+  await request(admin.handler, 'POST', '/admin/api/licenses', {
+    headers: bearer('test-token'),
+    body: JSON.stringify({
+      email: 'tr@firma.com.tr',
+      tier: 'pro',
+      months: 12,
+      seats: 1,
+      amount: 2900,
+      currency: 'TRY',
+      provider: 'iyzico',
+    }),
+  });
+  await request(admin.handler, 'POST', '/admin/api/licenses', {
+    headers: bearer('test-token'),
+    body: JSON.stringify({
+      email: 'us@corp.io',
+      tier: 'team',
+      months: 12,
+      seats: 5,
+      amount: 1200,
+      currency: 'USD',
+      provider: 'lemonsqueezy',
+    }),
+  });
+  const invRes = await request(admin.handler, 'GET', '/admin/api/invoices', { headers: bearer('test-token') });
+  assert.strictEqual(invRes.status, 200);
+  assert.strictEqual(invRes.json.count, 2);
+  assert.strictEqual(invRes.json.summary.totalsByCurrency.TRY.net, 2900);
+  assert.strictEqual(invRes.json.summary.totalsByCurrency.USD.net, 1200);
+
+  const plansRes = await request(admin.handler, 'GET', '/admin/api/plans', { headers: bearer('test-token') });
+  assert.strictEqual(plansRes.status, 200);
+  assert.ok(Array.isArray(plansRes.json.plans));
+  assert.ok(plansRes.json.plans.some((p) => p.currency === 'TRY'));
+  assert.ok(plansRes.json.plans.some((p) => p.currency === 'USD'));
 });
 
 test('an unknown admin path is 404, not a stack trace', async () => {

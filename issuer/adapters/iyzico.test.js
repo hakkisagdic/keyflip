@@ -9,9 +9,6 @@ const iyzico = require('./iyzico');
 
 const SECRET = 'sandbox-qaIiLIxhjMgx3LSKIVvp6j17NunHOFtD';
 
-// Recompute the adapter's Direct-format signed string + hex signature so the test
-// is an independent oracle (not a copy of the module's internals beyond the doc'd
-// contract: secretKey is both the HMAC key AND the data prefix).
 function signDirect(body) {
   const data =
     SECRET +
@@ -45,7 +42,6 @@ test('uppercase hex header still verifies (case-insensitive hex)', () => {
 test('wrong signature is rejected', () => {
   const body = directBody();
   const raw = Buffer.from(JSON.stringify(body), 'utf8');
-  // Correct length, wrong content: flip the last hex nibble.
   const good = signDirect(body);
   const bad = good.slice(0, -1) + (good.slice(-1) === '0' ? '1' : '0');
   const r = iyzico.verifyWebhook(raw, { 'x-iyz-signature-v3': bad }, SECRET);
@@ -100,6 +96,25 @@ test('parseEvent maps a successful payment to purchase with orderId', () => {
   const ev = iyzico.parseEvent(Buffer.from(JSON.stringify(body), 'utf8'));
   assert.strictEqual(ev.type, 'purchase');
   assert.strictEqual(ev.orderId, 'order-777');
+});
+
+test('parseEvent extracts paidPrice, currency, basketId, and seats', () => {
+  const body = Object.assign(directBody(), {
+    paidPrice: '3950.00',
+    currency: 'TRY',
+    basketId: 'iyzico_team_monthly',
+    seats: 5,
+    buyerEmail: 'ekip@sirket.com.tr',
+  });
+  const ev = iyzico.parseEvent(Buffer.from(JSON.stringify(body), 'utf8'));
+  assert.strictEqual(ev.type, 'purchase');
+  assert.strictEqual(ev.amount, 3950);
+  assert.strictEqual(ev.currency, 'TRY');
+  assert.strictEqual(ev.basketId, 'iyzico_team_monthly');
+  assert.strictEqual(ev.product, 'iyzico_team_monthly');
+  assert.strictEqual(ev.seats, 5);
+  assert.strictEqual(ev.email, 'ekip@sirket.com.tr');
+  assert.strictEqual(ev.countryCode, 'TR');
 });
 
 test('parseEvent maps a refund/cancel event to refund', () => {

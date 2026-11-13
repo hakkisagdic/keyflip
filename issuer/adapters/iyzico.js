@@ -15,30 +15,6 @@
 //   * We verify over the EXACT raw request bytes the server received. We JSON.parse
 //     a COPY only to read fields for reconstructing the signed string; we never
 //     re-serialize the body and hash that.
-//
-// SIGNATURE SCHEME (X-IYZ-SIGNATURE-V3, the only version iyzico still supports):
-//   iyzico's *webhook* V3 signature is HMAC-SHA256, HEX-encoded (lowercase), where
-//   the account secretKey is used BOTH as the HMAC key AND as the first component
-//   of the concatenated (separator-less) data string:
-//
-//     Direct (non-3DS / 3DS callback) payload:
-//       data = secretKey + iyziEventType + paymentId + paymentConversationId + status
-//     HPP (hosted checkout, `token` present) payload:
-//       data = secretKey + iyziEventType + iyziPaymentId + token + paymentConversationId + status
-//     signature = HEX( HMAC_SHA256(key = secretKey, data) )
-//
-//   Docs: https://docs.iyzico.com/en/advanced/webhook  (EN)
-//         https://docs.iyzico.com/ek-servisler/webhook  (TR)
-//
-//   NEEDS-VERIFICATION: iyzico publishes TWO distinct V3 constructions and the docs
-//   are inconsistent about them. The response/API signature (see
-//   https://docs.iyzico.com/en/advanced/response-signature-validation ) uses ':'
-//   separators and does NOT prepend the secretKey. The WEBHOOK signature (what we
-//   verify here) prepends the secretKey with no separators, per the webhook page.
-//   Confirm against a REAL sandbox notification before go-live; if a live payload
-//   fails, try (a) the ':'-joined form and (b) omitting the secretKey prefix. The
-//   `opts.separator` and `opts.prependSecret` knobs below let you flip either
-//   without a code change.
 
 const crypto = require('crypto');
 
@@ -60,13 +36,10 @@ function safeEqualHex(aHex, bHex) {
   } catch (e) {
     return false;
   }
-  // A non-hex header decodes to a short/empty buffer; length guard rejects it.
   if (a.length === 0 || a.length !== b.length) return false;
   return crypto.timingSafeEqual(a, b);
 }
 
-// Coerce a payload field to the exact string that went into the signature. iyzico
-// sends numbers as JSON numbers sometimes; String() reproduces the canonical form.
 function field(v) {
   return v == null ? '' : String(v);
 }
@@ -79,7 +52,6 @@ function signedData(secret, body, opts) {
   const sep = opts.separator == null ? '' : String(opts.separator);
   const parts = [];
   if (Object.prototype.hasOwnProperty.call(body, 'token') && body.token != null && body.token !== '') {
-    // HPP / hosted-checkout notification.
     parts.push(
       field(body.iyziEventType),
       field(body.iyziPaymentId),
@@ -88,7 +60,6 @@ function signedData(secret, body, opts) {
       field(body.status),
     );
   } else {
-    // Direct API (non-3DS / 3DS) notification.
     parts.push(field(body.iyziEventType), field(body.paymentId), field(body.paymentConversationId), field(body.status));
   }
   return prepend + parts.join(sep);
@@ -103,18 +74,35 @@ function parseBody(rawBody) {
 }
 
 // Map an iyziEventType (+status) to our coarse business event kind.
-// iyzico event types include PAYMENT_API / THREE_DS_AUTH / BALANCE_UPDATED (money
-// in) and cancel/refund families (money out). We key off substrings so new but
-// similarly-named events still classify sensibly.
 function eventKind(body) {
   const t = String((body && body.iyziEventType) || '').toUpperCase();
   const status = String((body && body.status) || '').toUpperCase();
   if (/REFUND|CANCEL|CHARGEBACK/.test(t)) return 'refund';
-  // A payment-family event only counts as a purchase when it actually succeeded.
   if (/PAYMENT|THREE_DS|BALANCE|CHECKOUT|SETTLE/.test(t)) {
     return status === 'SUCCESS' ? 'purchase' : 'other';
   }
   return 'other';
+}
+
+function extractAmount(body) {
+  const raw = body.paidPrice != null ? body.paidPrice : body.price != null ? body.price : body.amount;
+  if (raw == null || raw === '') return null;
+  const num = Number(raw);
+  return Number.isFinite(num) && num >= 0 ? num : null;
+}
+
+function extractCurrency(body, amount) {
+  if (body.currency != null && String(body.currency).trim() !== '') {
+    return String(body.currency).trim().toUpperCase();
+  }
+  return amount != null ? 'TRY' : null;
+}
+
+function extractSeats(body) {
+  const raw = body.seats != null ? body.seats : body.seatCount;
+  if (raw == null) return 1;
+  const n = Number(raw);
+  return Number.isInteger(n) && n > 0 ? n : 1;
 }
 
 module.exports = {
@@ -134,17 +122,36 @@ module.exports = {
     return { ok: true };
   },
 
-  // Extract the business event AFTER verification. orderId is the merchant's own
-  // conversation id (paymentConversationId, falling back to conversationId); we
-  // surface any email/product the payload carries (iyzico's core notification does
-  // not always include them — callers may look them up by orderId).
+  // Extract the business event AFTER verification. Surfaces email, product/basketId,
+  // orderId, amount (paidPrice/price), currency (TRY/USD), seats, and countryCode.
   parseEvent: function (rawBody /*, headers */) {
     const body = parseBody(rawBody);
     if (!body || typeof body !== 'object' || Array.isArray(body)) return null;
+    const basketId = body.basketId != null ? String(body.basketId) : null;
+    const product =
+      body.product != null
+        ? String(body.product)
+        : body.productName != null
+          ? String(body.productName)
+          : basketId;
+    const amount = extractAmount(body);
+    const currency = extractCurrency(body, amount);
+    const seats = extractSeats(body);
+    const countryCode =
+      body.countryCode != null
+        ? String(body.countryCode).toUpperCase()
+        : body.buyerCountry != null
+          ? String(body.buyerCountry).toUpperCase()
+          : 'TR';
     return {
       type: eventKind(body),
       email: body.email != null ? String(body.email) : body.buyerEmail != null ? String(body.buyerEmail) : null,
-      product: body.product != null ? String(body.product) : body.productName != null ? String(body.productName) : null,
+      product: product,
+      basketId: basketId,
+      amount: amount,
+      currency: currency,
+      seats: seats,
+      countryCode: countryCode,
       orderId:
         body.paymentConversationId != null
           ? String(body.paymentConversationId)

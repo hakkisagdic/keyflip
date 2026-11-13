@@ -7,7 +7,8 @@
 //   This is the single place that turns the owner-edited issuer.config.json into
 //   answers the license-issuing HTTP server needs at request time:
 //     * which payment PROVIDER serves a buyer from a given region,
-//     * what TIER + duration a given provider product/price id grants,
+//     * what TIER + duration + seats + price a given provider product/price id grants,
+//     * the official TL (TRY) and USD plans catalog,
 //     * the NAME of the environment variable that carries a provider's webhook
 //       signing secret (so the server can read process.env at request time).
 //
@@ -18,9 +19,6 @@
 //     server reads process.env[name] itself, at request time, and keeps the
 //     value out of config, logs, argv, and git.
 //   * The config file itself holds NO secrets — only ids, tiers, and routing.
-//     Validation below rejects anything that looks like a leaked secret shape
-//     is out of scope, but we do keep the file to a strict, known schema so a
-//     malformed/hostile config fails loudly instead of silently misrouting.
 // ============================================================================
 
 const fs = require('fs');
@@ -34,20 +32,118 @@ const KNOWN_PROVIDERS = ['iyzico', 'paytr', 'lemonsqueezy', 'stripe'];
 // (free is not a purchasable product tier, so it is intentionally excluded).
 const KNOWN_TIERS = ['pro', 'team'];
 
+// Currencies supported by the pricing catalog and invoice ledger.
+const KNOWN_CURRENCIES = ['TRY', 'USD'];
+
+// Official TL + USD pricing catalog (single source of truth for checkout & docs).
+const PLANS_CATALOG = [
+  {
+    id: 'pro-monthly-try',
+    tier: 'pro',
+    months: 1,
+    seats: 1,
+    amount: 290,
+    currency: 'TRY',
+    region: 'TR',
+    provider: 'iyzico',
+    taxMode: 'domestic-vat-20pct',
+    label: 'keyflip Pro — Aylık (TL)',
+  },
+  {
+    id: 'pro-yearly-try',
+    tier: 'pro',
+    months: 12,
+    seats: 1,
+    amount: 2900,
+    currency: 'TRY',
+    region: 'TR',
+    provider: 'iyzico',
+    taxMode: 'domestic-vat-20pct',
+    label: 'keyflip Pro — Yıllık (TL, 2 ay bedava)',
+  },
+  {
+    id: 'team-monthly-try',
+    tier: 'team',
+    months: 1,
+    seats: 5,
+    amount: 3950,
+    currency: 'TRY',
+    region: 'TR',
+    provider: 'iyzico',
+    taxMode: 'domestic-vat-20pct',
+    label: 'keyflip Team — Aylık (5 Koltuk, TL)',
+  },
+  {
+    id: 'team-yearly-try',
+    tier: 'team',
+    months: 12,
+    seats: 5,
+    amount: 39500,
+    currency: 'TRY',
+    region: 'TR',
+    provider: 'iyzico',
+    taxMode: 'domestic-vat-20pct',
+    label: 'keyflip Team — Yıllık (5 Koltuk, TL, 2 ay bedava)',
+  },
+  {
+    id: 'pro-monthly-usd',
+    tier: 'pro',
+    months: 1,
+    seats: 1,
+    amount: 9,
+    currency: 'USD',
+    region: 'default',
+    provider: 'lemonsqueezy',
+    taxMode: 'export-exempt-0pct',
+    label: 'keyflip Pro — Monthly (USD)',
+  },
+  {
+    id: 'pro-yearly-usd',
+    tier: 'pro',
+    months: 12,
+    seats: 1,
+    amount: 90,
+    currency: 'USD',
+    region: 'default',
+    provider: 'lemonsqueezy',
+    taxMode: 'export-exempt-0pct',
+    label: 'keyflip Pro — Yearly (USD, 2 months free)',
+  },
+  {
+    id: 'team-monthly-usd',
+    tier: 'team',
+    months: 1,
+    seats: 5,
+    amount: 120,
+    currency: 'USD',
+    region: 'default',
+    provider: 'lemonsqueezy',
+    taxMode: 'export-exempt-0pct',
+    label: 'keyflip Team — Monthly (5 Seats, USD)',
+  },
+  {
+    id: 'team-yearly-usd',
+    tier: 'team',
+    months: 12,
+    seats: 5,
+    amount: 1200,
+    currency: 'USD',
+    region: 'default',
+    provider: 'lemonsqueezy',
+    taxMode: 'export-exempt-0pct',
+    label: 'keyflip Team — Yearly (5 Seats, USD, 2 months free)',
+  },
+];
+
 // A product id that still carries this prefix is the OWNER'S FILL-IN SLOT, not a
 // real product: it is the placeholder that ships in issuer.config.json until the
-// owner signs up with a PSP and pastes the real product/price id in. A payment
-// provider can never send such an id, and — more importantly — an unfilled slot
-// must never be treated as "this purchase grants tier X". tierForProduct()
-// therefore refuses placeholders (fail closed), and pendingProducts() lists them
-// so the issuer can say out loud that it is not ready to sell yet.
+// owner signs up with a PSP and pastes the real product/price id in.
 const PLACEHOLDER_PREFIX = 'REPLACE_';
 
 // Provider id -> the NAME(s) of the env var(s) holding its webhook signing
 // secret. A single-secret provider maps to one string; PayTR authenticates with
 // a merchant key + salt pair, so it maps to an array of two names. NOTE: these
-// are NAMES ONLY — never the values. Null-proto so a hostile provider id such as
-// '__proto__' can never inherit a truthy entry.
+// are NAMES ONLY — never the values.
 const SECRET_ENV = Object.assign(Object.create(null), {
   stripe: 'STRIPE_WEBHOOK_SECRET',
   lemonsqueezy: 'LEMONSQUEEZY_WEBHOOK_SECRET',
@@ -113,7 +209,7 @@ function validateConfig(raw) {
     }
   });
 
-  // products: object mapping provider product/price id -> { tier, months }.
+  // products: object mapping provider product/price id -> { tier, months, seats?, amount?, currency? }.
   const products = raw.products;
   if (!isPlainObject(products)) throw fail('"products" must be an object');
   Object.keys(products).forEach(function (id) {
@@ -124,6 +220,15 @@ function validateConfig(raw) {
     }
     if (!Number.isInteger(entry.months) || entry.months <= 0) {
       throw fail('"products.' + id + '.months" must be a positive integer');
+    }
+    if (entry.seats !== undefined && (!Number.isInteger(entry.seats) || entry.seats <= 0)) {
+      throw fail('"products.' + id + '.seats" must be a positive integer when provided');
+    }
+    if (entry.amount !== undefined && (typeof entry.amount !== 'number' || !Number.isFinite(entry.amount) || entry.amount < 0)) {
+      throw fail('"products.' + id + '.amount" must be a non-negative number when provided');
+    }
+    if (entry.currency !== undefined && KNOWN_CURRENCIES.indexOf(entry.currency) === -1) {
+      throw fail('"products.' + id + '.currency" must be one of ' + KNOWN_CURRENCIES.join(', '));
     }
   });
 
@@ -157,9 +262,7 @@ function loadConfig(configPath) {
 
 // ---- resolvers --------------------------------------------------------------
 // providerForRegion(cfg, regionCode) -> provider id. Exact region match wins;
-// otherwise the required regionRouting.default fallback. Region lookup is via
-// hasOwnProperty so a code like "default" or "__proto__" can never resolve
-// through the prototype chain or be confused with the fallback key.
+// otherwise the required regionRouting.default fallback.
 function providerForRegion(cfg, regionCode) {
   const routing = (cfg && cfg.regionRouting) || {};
   const code = regionCode == null ? '' : String(regionCode);
@@ -169,11 +272,17 @@ function providerForRegion(cfg, regionCode) {
   return routing.default;
 }
 
-// tierForProduct(cfg, providerProductId) -> { tier, months } | null. Null for
-// an unknown id so the caller can reject an unrecognized purchase rather than
-// mint an arbitrary license. Own-property check guards against prototype keys.
-// A PLACEHOLDER id (the owner's unfilled slot) also resolves to null: it is not
-// a product yet, so it must never grant a tier.
+// plansForRegion(regionCode) -> plans from PLANS_CATALOG matching regionCode
+// ('TR' -> TRY plans; anything else -> USD plans; null/undefined -> all plans).
+function plansForRegion(regionCode) {
+  if (!regionCode) return PLANS_CATALOG.map((p) => Object.assign({}, p));
+  const code = String(regionCode).toUpperCase();
+  const targetCurrency = code === 'TR' ? 'TRY' : 'USD';
+  return PLANS_CATALOG.filter((p) => p.currency === targetCurrency).map((p) => Object.assign({}, p));
+}
+
+// tierForProduct(cfg, providerProductId) -> { tier, months, seats?, amount?, currency? } | null.
+// Null for an unknown id or a PLACEHOLDER id.
 function tierForProduct(cfg, providerProductId) {
   const products = (cfg && cfg.products) || {};
   const id = providerProductId == null ? '' : String(providerProductId);
@@ -181,7 +290,11 @@ function tierForProduct(cfg, providerProductId) {
   if (isPlaceholderId(id)) return null;
   const entry = products[id];
   if (!isPlainObject(entry)) return null;
-  return { tier: entry.tier, months: entry.months };
+  const out = { tier: entry.tier, months: entry.months };
+  if (entry.seats !== undefined) out.seats = entry.seats;
+  if (entry.amount !== undefined) out.amount = entry.amount;
+  if (entry.currency !== undefined) out.currency = entry.currency;
+  return out;
 }
 
 // isPlaceholderId(id) -> true when the id is still an unfilled owner slot.
@@ -189,8 +302,7 @@ function isPlaceholderId(id) {
   return String(id == null ? '' : id).indexOf(PLACEHOLDER_PREFIX) === 0;
 }
 
-// pendingProducts(cfg) -> the sorted ids that are still placeholders. Empty
-// array == the config is fully filled in and the issuer can map real purchases.
+// pendingProducts(cfg) -> the sorted ids that are still placeholders.
 function pendingProducts(cfg) {
   const products = (cfg && cfg.products) || {};
   return Object.keys(products).filter(isPlaceholderId).sort();
@@ -202,13 +314,11 @@ function configIsReady(cfg) {
 }
 
 // secretEnvFor(providerId) -> ENV VAR NAME (string) or NAMES (array, for PayTR),
-// or null for an unknown provider. Returns only the NAME(s); the value is read
-// from process.env by the server at request time and never handled here.
+// or null for an unknown provider.
 function secretEnvFor(providerId) {
   const id = providerId == null ? '' : String(providerId);
   if (!Object.prototype.hasOwnProperty.call(SECRET_ENV, id)) return null;
   const v = SECRET_ENV[id];
-  // Hand back a fresh array so a caller can't mutate the shared table.
   return Array.isArray(v) ? v.slice() : v;
 }
 
@@ -216,6 +326,7 @@ module.exports = {
   loadConfig: loadConfig,
   validateConfig: validateConfig,
   providerForRegion: providerForRegion,
+  plansForRegion: plansForRegion,
   tierForProduct: tierForProduct,
   isPlaceholderId: isPlaceholderId,
   pendingProducts: pendingProducts,
@@ -223,6 +334,8 @@ module.exports = {
   secretEnvFor: secretEnvFor,
   KNOWN_PROVIDERS: KNOWN_PROVIDERS,
   KNOWN_TIERS: KNOWN_TIERS,
+  KNOWN_CURRENCIES: KNOWN_CURRENCIES,
+  PLANS_CATALOG: PLANS_CATALOG,
   PLACEHOLDER_PREFIX: PLACEHOLDER_PREFIX,
   DEFAULT_CONFIG_PATH: DEFAULT_CONFIG_PATH,
 };

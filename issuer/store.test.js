@@ -1,17 +1,6 @@
 'use strict';
 // ISSUER / store.test.js — zero-dep (node:test + node:assert) coverage for the
-// issuer's bookkeeping: the license store and the event log.
-//
-// What it proves:
-//   * A record NEVER holds a token — the store's create() has no token argument
-//     at all, and the persisted file contains no base64url token material.
-//   * The store survives a restart (a second store reads the file back).
-//   * list() filters by email / tier / status / free text, newest first.
-//   * revoke() marks a record and is idempotent-ish (a second revoke is
-//     reported, not silently accepted).
-//   * supersede() links old -> new and downgrades the old record's status.
-//   * The event log appends JSONL and reads the tail back; a torn line is
-//     skipped rather than poisoning the whole read.
+// issuer's bookkeeping: the license store, invoice ledger, and the event log.
 
 const { test } = require('node:test');
 const assert = require('node:assert');
@@ -19,7 +8,16 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const { LicenseStore, EventLog, normalizeEmail, newLicenseId } = require('./store');
+const {
+  LicenseStore,
+  InvoiceStore,
+  EventLog,
+  normalizeEmail,
+  newLicenseId,
+  resolveTaxMode,
+  listInvoices,
+  revenueSummary,
+} = require('./store');
 
 function tmpDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'kf-store-'));
@@ -33,7 +31,6 @@ test('a record never holds a token', () => {
   assert.ok(rec.licenseId);
   assert.strictEqual(rec.token, undefined);
   const raw = fs.readFileSync(file, 'utf8');
-  // A token is `base64url(payload).base64url(sig)` — look for that shape.
   assert.ok(!/[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{40,}/.test(raw), 'no token-shaped string in the store file');
 });
 
@@ -41,12 +38,13 @@ test('the store survives a restart', () => {
   const dir = tmpDir();
   const file = path.join(dir, 'licenses.json');
   const a = new LicenseStore({ file });
-  const rec = a.create({ email: 'x@y.co', tier: 'team', months: 1 });
+  const rec = a.create({ email: 'x@y.co', tier: 'team', months: 1, seats: 5 });
   const b = new LicenseStore({ file });
   const back = b.get(rec.licenseId);
   assert.ok(back);
   assert.strictEqual(back.email, 'x@y.co');
   assert.strictEqual(back.tier, 'team');
+  assert.strictEqual(back.seats, 5);
   assert.strictEqual(back.status, 'active');
 });
 
@@ -134,4 +132,73 @@ test('license ids are unique and prefixed', () => {
     assert.ok(!seen.has(id));
     seen.add(id);
   }
+});
+
+test('InvoiceStore records TRY and USD purchases, refunds, tax modes, and survives restart', () => {
+  const dir = tmpDir();
+  const file = path.join(dir, 'invoices.jsonl');
+  const inv = new InvoiceStore({ file });
+
+  assert.strictEqual(resolveTaxMode('iyzico', 'TR', 'TRY'), 'domestic-vat-20pct');
+  assert.strictEqual(resolveTaxMode('lemonsqueezy', 'US', 'USD'), 'export-exempt-0pct');
+
+  const trInv = inv.recordPurchase({
+    orderId: 'ord_tr_1',
+    provider: 'iyzico',
+    email: 'tr@firma.com.tr',
+    tier: 'pro',
+    seats: 1,
+    months: 12,
+    amount: 2900,
+    currency: 'TRY',
+    countryCode: 'TR',
+  });
+  assert.ok(trInv.invoiceId.startsWith('inv_'));
+  assert.strictEqual(trInv.taxMode, 'domestic-vat-20pct');
+  assert.strictEqual(trInv.currency, 'TRY');
+  assert.strictEqual(trInv.status, 'paid');
+
+  const intlInv = inv.recordPurchase({
+    orderId: 'ord_intl_1',
+    provider: 'lemonsqueezy',
+    email: 'dev@global.io',
+    tier: 'team',
+    seats: 5,
+    months: 12,
+    amount: 1200,
+    currency: 'USD',
+    countryCode: 'US',
+  });
+  assert.strictEqual(intlInv.taxMode, 'export-exempt-0pct');
+  assert.strictEqual(intlInv.seats, 5);
+
+  const trInv2 = inv.recordPurchase({
+    orderId: 'ord_tr_2',
+    provider: 'iyzico',
+    email: 'iade@firma.com.tr',
+    tier: 'pro',
+    seats: 1,
+    months: 1,
+    amount: 290,
+    currency: 'TRY',
+    countryCode: 'TR',
+  });
+  const ref = inv.recordRefund(trInv2.orderId, 'customer cancellation');
+  assert.strictEqual(ref.ok, true);
+  assert.strictEqual(ref.invoice.status, 'refunded');
+
+  // Reload from disk and verify revenueSummary
+  const reloaded = new InvoiceStore({ file });
+  const all = listInvoices(reloaded, {});
+  assert.strictEqual(all.length, 3);
+
+  const summary = revenueSummary(reloaded);
+  assert.strictEqual(summary.totalInvoices, 3);
+  assert.strictEqual(summary.totalsByCurrency.TRY.paid, 2900);
+  assert.strictEqual(summary.totalsByCurrency.TRY.refunded, 290);
+  assert.strictEqual(summary.totalsByCurrency.TRY.net, 2900);
+  assert.strictEqual(summary.totalsByCurrency.USD.paid, 1200);
+  assert.strictEqual(summary.totalsByCurrency.USD.net, 1200);
+  assert.strictEqual(summary.byTaxMode['domestic-vat-20pct'].netTry, 2900);
+  assert.strictEqual(summary.byTaxMode['export-exempt-0pct'].netUsd, 1200);
 });

@@ -1,43 +1,33 @@
 'use strict';
 // ISSUER / admin.js — the operator's panel: issue, reissue, revoke, look up a
-// license, and read the webhook event log.
+// license, inspect invoices/revenue (TRY & USD), and read the webhook event log.
 //
 // SHAPE: a zero-dependency node:http handler that serves BOTH
 //   * a JSON API under /admin/api/*  (scriptable: curl, CI, your own tooling)
 //   * a tiny single-page UI at /admin  (no build step, no framework, no CDN)
-// The UI is a thin client over the very same API — there is no privileged path
-// that the API cannot do, and no hidden back door.
 //
 // SECURITY (load-bearing — read before editing):
 //   * EVERY /admin request needs `Authorization: Bearer <token>`. The token
 //     comes from KEYFLIP_ISSUER_ADMIN_TOKEN (env) — never argv, never a file in
-//     the repo, never a query string (query strings end up in logs). When the
-//     env var is unset the panel is DISABLED and answers 503: fail closed, not
-//     "open because I forgot to configure it".
-//   * The token is compared in constant time (crypto.timingSafeEqual) over
-//     equal-length buffers, so a wrong token cannot be discovered byte by byte.
-//   * A minted license TOKEN is returned in the response EXACTLY ONCE (that
-//     response IS the delivery channel to the customer) and is never written to
-//     disk, never logged, never put in the event log. See store.js.
-//   * The panel binds on the issuer's own 127.0.0.1 by default; put it behind
-//     your reverse proxy / VPN if you expose it.
+//     the repo, never a query string. When unset the panel answers 503.
+//   * Constant-time comparison via crypto.timingSafeEqual.
+//   * A minted license TOKEN is returned in the response EXACTLY ONCE and is
+//     never written to disk, never logged, never put in the event/invoice log.
 
 const crypto = require('crypto');
 const path = require('path');
-const { LicenseStore, EventLog, TIERS, normalizeEmail } = require('./store');
+const { LicenseStore, InvoiceStore, EventLog, TIERS, normalizeEmail } = require('./store');
+const { PLANS_CATALOG } = require('./config');
 
-const MAX_BODY_BYTES = 1 << 16; // 64 KiB — an issue request is tiny.
+const MAX_BODY_BYTES = 1 << 16; // 64 KiB
 const ADMIN_TOKEN_ENV = 'KEYFLIP_ISSUER_ADMIN_TOKEN';
 
-// Constant-time bearer check. Returns false for anything that is not exactly
-// the configured token.
 function tokenMatches(expected, presented) {
   if (!expected) return false;
   if (!presented) return false;
   const a = Buffer.from(String(expected), 'utf8');
   const b = Buffer.from(String(presented), 'utf8');
   if (a.length !== b.length) {
-    // Still burn a comparison so a length mismatch is not obviously faster.
     try {
       crypto.timingSafeEqual(a, a);
     } catch {
@@ -48,7 +38,6 @@ function tokenMatches(expected, presented) {
   return crypto.timingSafeEqual(a, b);
 }
 
-// Extract the bearer token from the Authorization header.
 function bearerFrom(req) {
   const h = req.headers && (req.headers.authorization || req.headers.Authorization);
   if (!h || typeof h !== 'string') return null;
@@ -109,9 +98,6 @@ function readBody(req, limit) {
 }
 
 // ---- the panel page ------------------------------------------------------------
-// Deliberately plain: one file, no CDN, no build. It stores the admin token in
-// memory only (a page reload asks again) and talks to /admin/api/* with the
-// Authorization header.
 const PANEL_HTML_TEMPLATE = `<!doctype html>
 <html lang="en">
 <head>
@@ -123,7 +109,7 @@ const PANEL_HTML_TEMPLATE = `<!doctype html>
   :root { color-scheme: light dark; --fg:#1b1b1f; --mut:#6b6b76; --line:#d9d9e0; --bg:#fbfbfd; --card:#fff; --accent:#3b5bdb; --bad:#c92a2a; --ok:#2b8a3e; }
   @media (prefers-color-scheme: dark) { :root { --fg:#e9e9ef; --mut:#9a9aa6; --line:#2e2e36; --bg:#131317; --card:#1b1b21; --accent:#748ffc; --bad:#ff8787; --ok:#69db7c; } }
   * { box-sizing: border-box; }
-  body { margin:0; padding:2rem 1rem; background:var(--bg); color:var(--fg); font:15px/1.5 ui-sans-serif,-apple-system,Segoe UI,Roboto,sans-serif; }
+  body { margin:0; padding:2rem 1rem; background:var(--bg); color:var(--fg); font:15px/1.5 ui-sans-serif,-apple-system,Segoe UI,Roboto,sans-serif; font-variant-numeric:tabular-nums; }
   main { max-width: 60rem; margin: 0 auto; }
   h1 { font-size:1.35rem; margin:0 0 .25rem; }
   h2 { font-size:1rem; margin:2rem 0 .6rem; letter-spacing:.02em; text-transform:uppercase; color:var(--mut); }
@@ -133,7 +119,7 @@ const PANEL_HTML_TEMPLATE = `<!doctype html>
   button { cursor:pointer; }
   button.primary { background:var(--accent); color:#fff; border-color:transparent; }
   button.danger { color:var(--bad); }
-  table { width:100%; border-collapse:collapse; font-size:.9rem; }
+  table { width:100%; border-collapse:collapse; font-size:.9rem; font-variant-numeric:tabular-nums; }
   th, td { text-align:left; padding:.45rem .5rem; border-bottom:1px solid var(--line); vertical-align:top; }
   th { color:var(--mut); font-weight:600; font-size:.78rem; text-transform:uppercase; letter-spacing:.04em; }
   code { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:.85em; }
@@ -186,9 +172,6 @@ const PANEL_HTML_TEMPLATE = `<!doctype html>
 </main>
 <script>
 (function () {
-  // The tier list is INJECTED from the server's own TIERS table (issuer/store.js),
-  // so the dropdown and the API can never drift apart — and so the page has no
-  // undefined globals (an undefined one kills the whole script at boot).
   var TIERS = __TIERS_JSON__;
   var token = '';
   var $ = function (id) { return document.getElementById(id); };
@@ -239,7 +222,7 @@ const PANEL_HTML_TEMPLATE = `<!doctype html>
         cell(tr, r.tier);
         cell(tr, r.issuedAt);
         cell(tr, r.expiry || 'never');
-        var st = cell(tr, r.status, 's-' + r.status);
+        cell(tr, r.status, 's-' + r.status);
         var acts = document.createElement('td');
         var re = document.createElement('button');
         re.textContent = 'Reissue';
@@ -311,21 +294,12 @@ const PANEL_HTML_TEMPLATE = `<!doctype html>
 </html>
 `;
 
-// Resolve the placeholder with the server's own tier table. The replacement is
-// done with a FUNCTION so a '$' inside the value could never be read as a
-// replacement pattern.
 const PANEL_HTML = PANEL_HTML_TEMPLATE.replace('__TIERS_JSON__', function () {
   return JSON.stringify(TIERS);
 });
 
 // ---- factory --------------------------------------------------------------------
-// createAdmin(deps) -> { handler, store, events, TOKEN_ENV }
-//   token          — the admin bearer token (default: process.env[ADMIN_TOKEN_ENV])
-//   store          — a LicenseStore (default: on disk under issuer/state/)
-//   events         — an EventLog
-//   signLicense    — (payload) -> token   (default: issuer/sign.js with the real key)
-//   now            — () -> ISO string
-//   log            — structured, secret-free logger
+// createAdmin(deps) -> { handler, store, invoices, events, TOKEN_ENV }
 function createAdmin(deps) {
   deps = deps || {};
   const token = deps.token !== undefined ? deps.token : process.env[ADMIN_TOKEN_ENV];
@@ -346,10 +320,16 @@ function createAdmin(deps) {
       file: deps.eventLogFile || path.join(__dirname, 'state', 'events.jsonl'),
       now: now,
     });
+  const invoices =
+    deps.invoices !== undefined
+      ? deps.invoices
+      : new InvoiceStore({
+          file: deps.invoiceFile || null,
+          now: now,
+        });
   const signLicense =
     deps.signLicense ||
     function (payload) {
-      // Lazily required so tests can load this module with no key on disk.
       const sign = require('./sign');
       return sign.signLicense(payload, sign.loadPrivateKey());
     };
@@ -374,15 +354,18 @@ function createAdmin(deps) {
       expiry: rec.expiry,
       issued: rec.issuedAt,
     };
+    if (rec.seats && rec.seats > 1) payload.seats = rec.seats;
     return signLicense(payload);
   }
 
   async function handleApi(req, res, pathname, query) {
-    // POST /admin/api/licenses          -> issue
+    // GET  /admin/api/licenses[?email=&tier=&status=&q=&limit=]
+    // POST /admin/api/licenses
+    // GET  /admin/api/licenses/:id
     // POST /admin/api/licenses/:id/revoke
     // POST /admin/api/licenses/:id/reissue
-    // GET  /admin/api/licenses[?email=&tier=&status=&q=&limit=]
-    // GET  /admin/api/licenses/:id
+    // GET  /admin/api/invoices[?provider=&currency=&status=&taxMode=&q=&limit=]
+    // GET  /admin/api/plans
     // GET  /admin/api/events?limit=
     if (pathname === '/admin/api/licenses' && req.method === 'GET') {
       const list = store.list({
@@ -393,6 +376,28 @@ function createAdmin(deps) {
         limit: query.get('limit') || undefined,
       });
       sendJson(res, 200, { licenses: list, count: list.length });
+      return;
+    }
+
+    if (pathname === '/admin/api/invoices' && req.method === 'GET') {
+      const list = invoices
+        ? invoices.list({
+            provider: query.get('provider') || undefined,
+            currency: query.get('currency') || undefined,
+            status: query.get('status') || undefined,
+            taxMode: query.get('taxMode') || undefined,
+            email: query.get('email') || undefined,
+            q: query.get('q') || undefined,
+            limit: query.get('limit') || undefined,
+          })
+        : [];
+      const summary = invoices ? invoices.revenueSummary() : null;
+      sendJson(res, 200, { invoices: list, count: list.length, summary: summary });
+      return;
+    }
+
+    if (pathname === '/admin/api/plans' && req.method === 'GET') {
+      sendJson(res, 200, { plans: PLANS_CATALOG });
       return;
     }
 
@@ -419,16 +424,35 @@ function createAdmin(deps) {
         sendJson(res, 400, { error: 'months must be between 1 and 120' });
         return;
       }
-      const rec = store.create({ email: email, tier: tier, months: months, source: 'admin' });
+      const seats = body.seats != null ? Number(body.seats) : 1;
+      if (!Number.isInteger(seats) || seats < 1 || seats > 1000) {
+        sendJson(res, 400, { error: 'seats must be an integer between 1 and 1000' });
+        return;
+      }
+      const rec = store.create({ email: email, tier: tier, months: months, seats: seats, source: 'admin' });
       let tok;
       try {
         tok = mint(rec);
       } catch {
-        // Minting failed: drop the record so no half-issued license is recorded.
         store.revoke(rec.licenseId, 'mint failed');
         log({ evt: 'admin.issue', status: 500, licenseId: rec.licenseId, reason: 'sign-failed' });
         sendJson(res, 500, { error: 'minting failed' });
         return;
+      }
+      if (invoices && body.amount != null && Number.isFinite(Number(body.amount))) {
+        invoices.recordPurchase({
+          orderId: body.orderId || 'admin_' + rec.licenseId,
+          licenseId: rec.licenseId,
+          provider: body.provider || 'admin',
+          email: rec.email,
+          tier: rec.tier,
+          seats: rec.seats,
+          months: rec.months,
+          amount: Number(body.amount),
+          currency: body.currency || 'TRY',
+          countryCode: body.countryCode || (body.currency === 'USD' ? 'INTL' : 'TR'),
+          issuedAt: rec.issuedAt,
+        });
       }
       events.append({
         event: 'license.issued',
@@ -436,14 +460,15 @@ function createAdmin(deps) {
         licenseId: rec.licenseId,
         email: rec.email,
         tier: rec.tier,
+        seats: rec.seats,
         note: 'issued from admin panel',
       });
       log({ evt: 'admin.issue', status: 200, licenseId: rec.licenseId, tier: rec.tier });
-      // The token is returned ONCE, in this response, and is never stored.
       sendJson(res, 201, {
         licenseId: rec.licenseId,
         email: rec.email,
         tier: rec.tier,
+        seats: rec.seats,
         issuedAt: rec.issuedAt,
         expiry: rec.expiry,
         token: tok,
@@ -493,12 +518,10 @@ function createAdmin(deps) {
         sendJson(res, 200, r.record);
         return;
       }
-      // reissue: a NEW license for the same customer, superseding the old one.
-      // The old token still works until it expires — that is the honest limit of
-      // an offline license, so the reissue is the enforcement mechanism.
       const fresh = store.create({
         email: rec.email,
         tier: rec.tier,
+        seats: rec.seats || 1,
         months: Number.isFinite(Number(body.months)) && Number(body.months) > 0 ? Number(body.months) : rec.months,
         source: 'admin',
         supersedes: id,
@@ -524,6 +547,7 @@ function createAdmin(deps) {
         licenseId: fresh.licenseId,
         email: fresh.email,
         tier: fresh.tier,
+        seats: fresh.seats,
         issuedAt: fresh.issuedAt,
         expiry: fresh.expiry,
         supersedes: id,
@@ -552,9 +576,6 @@ function createAdmin(deps) {
     const pathname = parsed.pathname;
 
     if (pathname === '/admin' || pathname === '/admin/' || pathname === '/admin/index.html') {
-      // The page itself is public (it contains no data); every API call it makes
-      // needs the bearer token. Serving HTML without auth keeps the panel
-      // reachable through a proxy that only forwards the path.
       sendHtml(res, 200, PANEL_HTML);
       return;
     }
@@ -565,7 +586,6 @@ function createAdmin(deps) {
     }
 
     if (!token) {
-      // Fail closed: no configured token => the panel does not exist.
       sendJson(res, 503, { error: 'admin panel disabled (set ' + ADMIN_TOKEN_ENV + ')' });
       return;
     }
@@ -579,7 +599,14 @@ function createAdmin(deps) {
     });
   };
 
-  return { handler: handler, store: store, events: events, TOKEN_ENV: ADMIN_TOKEN_ENV, panelHtml: PANEL_HTML };
+  return {
+    handler: handler,
+    store: store,
+    invoices: invoices,
+    events: events,
+    TOKEN_ENV: ADMIN_TOKEN_ENV,
+    panelHtml: PANEL_HTML,
+  };
 }
 
 module.exports = {

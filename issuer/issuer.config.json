@@ -11,18 +11,22 @@
     "default": "lemonsqueezy"
   },
   "products": {
-    "REPLACE_lemonsqueezy_pro_monthly": { "tier": "pro", "months": 1 },
-    "REPLACE_lemonsqueezy_pro_yearly": { "tier": "pro", "months": 12 },
-    "REPLACE_lemonsqueezy_team_yearly": { "tier": "team", "months": 12 },
-    "REPLACE_stripe_pro_monthly": { "tier": "pro", "months": 1 },
-    "REPLACE_stripe_pro_yearly": { "tier": "pro", "months": 12 },
-    "REPLACE_stripe_team_yearly": { "tier": "team", "months": 12 },
-    "REPLACE_iyzico_pro_monthly": { "tier": "pro", "months": 1 },
-    "REPLACE_iyzico_pro_yearly": { "tier": "pro", "months": 12 },
-    "REPLACE_iyzico_team_yearly": { "tier": "team", "months": 12 },
-    "REPLACE_paytr_pro_monthly": { "tier": "pro", "months": 1 },
-    "REPLACE_paytr_pro_yearly": { "tier": "pro", "months": 12 },
-    "REPLACE_paytr_team_yearly": { "tier": "team", "months": 12 }
+    "REPLACE_lemonsqueezy_pro_monthly": { "tier": "pro", "months": 1, "seats": 1, "amount": 9, "currency": "USD" },
+    "REPLACE_lemonsqueezy_pro_yearly": { "tier": "pro", "months": 12, "seats": 1, "amount": 90, "currency": "USD" },
+    "REPLACE_lemonsqueezy_team_monthly": { "tier": "team", "months": 1, "seats": 5, "amount": 120, "currency": "USD" },
+    "REPLACE_lemonsqueezy_team_yearly": { "tier": "team", "months": 12, "seats": 5, "amount": 1200, "currency": "USD" },
+    "REPLACE_stripe_pro_monthly": { "tier": "pro", "months": 1, "seats": 1, "amount": 9, "currency": "USD" },
+    "REPLACE_stripe_pro_yearly": { "tier": "pro", "months": 12, "seats": 1, "amount": 90, "currency": "USD" },
+    "REPLACE_stripe_team_monthly": { "tier": "team", "months": 1, "seats": 5, "amount": 120, "currency": "USD" },
+    "REPLACE_stripe_team_yearly": { "tier": "team", "months": 12, "seats": 5, "amount": 1200, "currency": "USD" },
+    "REPLACE_iyzico_pro_monthly": { "tier": "pro", "months": 1, "seats": 1, "amount": 290, "currency": "TRY" },
+    "REPLACE_iyzico_pro_yearly": { "tier": "pro", "months": 12, "seats": 1, "amount": 2900, "currency": "TRY" },
+    "REPLACE_iyzico_team_monthly": { "tier": "team", "months": 1, "seats": 5, "amount": 3950, "currency": "TRY" },
+    "REPLACE_iyzico_team_yearly": { "tier": "team", "months": 12, "seats": 5, "amount": 39500, "currency": "TRY" },
+    "REPLACE_paytr_pro_monthly": { "tier": "pro", "months": 1, "seats": 1, "amount": 290, "currency": "TRY" },
+    "REPLACE_paytr_pro_yearly": { "tier": "pro", "months": 12, "seats": 1, "amount": 2900, "currency": "TRY" },
+    "REPLACE_paytr_team_monthly": { "tier": "team", "months": 1, "seats": 5, "amount": 3950, "currency": "TRY" },
+    "REPLACE_paytr_team_yearly": { "tier": "team", "months": 12, "seats": 5, "amount": 39500, "currency": "TRY" }
   },
   "licenseTtlDaysDefault": 400
 }

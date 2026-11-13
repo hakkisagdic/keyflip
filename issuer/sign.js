@@ -3,14 +3,15 @@
 // A token is `base64url(canonicalJSON) . base64url(ed25519Signature)` and MUST
 // verify green in src/license.js verify() when that file's PUBKEY_B64 is the
 // matching public key. The canonical payload here is byte-for-byte identical to
-// src/license.js canonicalPayload() (fixed key order: email, expiry, issued, tier).
+// src/license.js canonicalPayload() (fixed key order: email, expiry, issued,
+// tier, optional seats, optional trial).
 //
 // SECURITY (read before running):
 //   * The signing key is read ONLY from issuer/private/issuer.key (0600). It is
 //     NEVER accepted on argv, never printed, never logged. A leaked key forges any
 //     license, so keep it off git and out of shell history.
-//   * CLI takes only license CONTENT flags (--tier/--email/--expiry/--issued); the
-//     key path is fixed, not user-supplied, so it can't be pointed at a file whose
+//   * CLI takes only license CONTENT flags (--tier/--email/--expiry/--issued/--seats/--trial);
+//     the key path is fixed, not user-supplied, so it can't be pointed at a file whose
 //     bytes then leak into logs.
 const fs = require('fs');
 const path = require('path');
@@ -22,16 +23,22 @@ function b64uEnc(buf) {
 }
 
 // EXACT canonical bytes that get signed. Must equal src/license.js canonicalPayload():
-// keys in alphabetical order (email, expiry, issued, tier); email/issued/tier coerce
-// to '' when null/undefined, expiry coerces to null when null/undefined else String.
+// keys in order (email, expiry, issued, tier, optional seats, optional trial).
 function canonicalPayload(p) {
   p = p || {};
-  return JSON.stringify({
+  const obj = {
     email: p.email == null ? '' : String(p.email),
     expiry: p.expiry == null ? null : String(p.expiry),
     issued: p.issued == null ? '' : String(p.issued),
     tier: p.tier == null ? '' : String(p.tier),
-  });
+  };
+  if (p.seats != null && Number.isInteger(Number(p.seats)) && Number(p.seats) > 0) {
+    obj.seats = Number(p.seats);
+  }
+  if (p.trial === true) {
+    obj.trial = true;
+  }
+  return JSON.stringify(obj);
 }
 
 // Default location of the issuer private key. KEYFLIP_ISSUER_KEY (a path, not a
@@ -60,7 +67,7 @@ function loadPrivateKey(keyPath) {
   return crypto.createPrivateKey({ key: raw, format: 'der', type: 'pkcs8' });
 }
 
-// signLicense({tier,email,expiry,issued}, privateKey) -> token string.
+// signLicense({tier,email,expiry,issued,seats?,trial?}, privateKey) -> token string.
 // privateKey may be a KeyObject, a PEM/DER string, or a Buffer; anything non-object
 // is coerced via createPrivateKey. Pure Ed25519 (algorithm = null).
 function signLicense(fields, privateKey) {
@@ -70,6 +77,8 @@ function signLicense(fields, privateKey) {
     email: fields.email,
     expiry: fields.expiry,
     issued: fields.issued,
+    seats: fields.seats,
+    trial: fields.trial,
   });
   const key =
     privateKey && typeof privateKey === 'object' && !Buffer.isBuffer(privateKey)
@@ -99,7 +108,7 @@ function parseFlags(argv) {
   return out;
 }
 
-// `node issuer/sign.js --tier pro --email a@b.co [--expiry ISO] [--issued ISO]`
+// `node issuer/sign.js --tier pro --email a@b.co [--expiry ISO] [--issued ISO] [--seats N] [--trial]`
 // Reads the key from issuer/private/issuer.key (NEVER from argv) and prints only
 // the token. --expiry omitted => perpetual (null). --issued omitted => now.
 function main(argv) {
@@ -124,6 +133,8 @@ function main(argv) {
       email: typeof f.email === 'string' ? f.email : '',
       expiry: typeof f.expiry === 'string' ? f.expiry : null,
       issued: typeof f.issued === 'string' ? f.issued : new Date().toISOString(),
+      seats: f.seats != null ? Number(f.seats) : undefined,
+      trial: f.trial === true || f.trial === 'true',
     },
     key,
   );

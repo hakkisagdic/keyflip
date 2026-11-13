@@ -1,38 +1,17 @@
 'use strict';
 // ISSUER / server.js — the PSP webhook receiver that MINTS keyflip licenses.
 //
-// Role: a tiny zero-dependency node:http server that a payment provider (Stripe,
-// Paddle, LemonSqueezy, Gumroad, …) calls when a purchase completes. For each
+// Role: a tiny zero-dependency node:http server that a payment provider (iyzico,
+// PayTR, LemonSqueezy, Stripe, …) calls when a purchase completes. For each
 // webhook it:
 //   1. captures the EXACT raw request bytes (never JSON.parse before verifying),
 //   2. resolves the provider's adapter (issuer/adapters/<provider>.js),
 //   3. verifies the signature with the provider secret from process.env,
 //   4. parses the business event, maps product -> tier (config.js),
 //   5. MINTS an Ed25519-signed license (sign.js -> loadPrivateKey) exactly once
-//      per orderId (idempotency ledger), and
+//      per orderId (idempotency ledger) and records the non-secret invoice in
+//      invoices.jsonl (when an InvoiceStore is configured), and
 //   6. answers 200 {issued:true, tier} without ever leaking the token.
-//
-// SECURITY NOTES (load-bearing — read before editing):
-//   * The issuer PRIVATE key never appears here: signing is delegated to sign.js,
-//     which reads issuer/private/issuer.key (0600). This module never reads,
-//     logs, or serialises the key or any minted token. The token is handed to an
-//     out-of-band delivery stub (deliverLicense) and is otherwise discarded.
-//   * Provider webhook secrets come ONLY from process.env (never argv, never
-//     disk, never logs). We resolve them by a fixed env-var name per provider.
-//   * The RAW body is verified BEFORE parsing so a forged/tampered payload can
-//     never reach the minting path. verifyWebhook returning ok=false => 401 and
-//     absolutely no side effects.
-//   * :provider is validated against a strict allowlist charset so it can never
-//     traverse the filesystem when resolving the adapter module.
-//   * The persisted ledger (issuer/state/ledger.json, 0600) stores only
-//     non-secret metadata (orderId, tier, email, timestamps) — NEVER the token —
-//     so a leaked ledger file can't unlock anything.
-//   * Binds 127.0.0.1 by default (put a TLS-terminating reverse proxy in front);
-//     PORT comes from env.
-//
-// Everything is dependency-injectable (createIssuer(deps)) so tests exercise the
-// router/idempotency/verification wiring with stub adapters + a throwaway signer,
-// with no real provider crypto and no real private key on disk.
 
 const http = require('http');
 const path = require('path');
@@ -41,13 +20,10 @@ const fs = require('fs');
 const DEFAULT_HOST = '127.0.0.1';
 const MAX_BODY_BYTES = 1 << 20; // 1 MiB — webhooks are small; reject anything larger.
 
-// Strict provider-name charset: lowercase letters, digits, dash, underscore. This
-// is what stops `/webhook/..%2f..%2fetc` from ever resolving to an arbitrary file.
+// Strict provider-name charset: lowercase letters, digits, dash, underscore.
 const PROVIDER_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 
-// Env-var name that holds a given provider's webhook signing secret, e.g.
-// 'stripe' -> 'STRIPE_WEBHOOK_SECRET'. Kept deterministic so ops can wire it once.
-// (Fallback only — config.js secretEnvFor is authoritative in production.)
+// Env-var name that holds a given provider's webhook signing secret.
 function secretEnvName(provider) {
   return (
     String(provider)
@@ -56,30 +32,21 @@ function secretEnvName(provider) {
   );
 }
 
-// Add N calendar months to an ISO timestamp, returning an ISO string. Used to
-// turn a plan's `months` into a concrete license expiry. Clamps overflow days
-// (e.g. Jan 31 + 1mo -> Feb 28/29) the way Date arithmetic naturally would after
-// normalising, so we never produce a surprising next-month date.
+// Add N calendar months to an ISO timestamp, returning an ISO string.
 function addMonths(iso, months) {
   const d = new Date(iso);
   if (isNaN(d.getTime())) return null;
   const day = d.getUTCDate();
   d.setUTCMonth(d.getUTCMonth() + months);
-  // If the day rolled over into the following month, clamp back to month-end.
   if (d.getUTCDate() < day) d.setUTCDate(0);
   return d.toISOString();
 }
 
 // ---- default (production) dependency implementations -------------------------
-// All of these are LAZY: required only when actually invoked, so this module
-// loads (and its tests run) with stub injections even if a sibling module is
-// momentarily absent. They are wired to the REAL sign.js / config.js APIs.
-
-// Module + parsed-config caches (built once, on first use).
-let _cfgMod = null; // the config.js module
-let _cfgData = null; // the loaded/validated config object
-let _signMod = null; // the sign.js module
-let _privKey = null; // the issuer Ed25519 private KeyObject (never logged/serialised)
+let _cfgMod = null;
+let _cfgData = null;
+let _signMod = null;
+let _privKey = null;
 
 function cfgMod() {
   return _cfgMod || (_cfgMod = require('./config'));
@@ -100,7 +67,6 @@ function privKey() {
 function defaultResolveAdapter(provider) {
   if (!PROVIDER_RE.test(provider)) return null;
   const file = path.join(__dirname, 'adapters', provider + '.js');
-  // Defence in depth: the resolved path must stay inside the adapters dir.
   const adaptersDir = path.join(__dirname, 'adapters') + path.sep;
   if (!file.startsWith(adaptersDir)) return null;
   let mod;
@@ -113,50 +79,36 @@ function defaultResolveAdapter(provider) {
   return mod;
 }
 
-// The signing secret for a provider, read from the environment ONLY. config.js
-// owns the provider->env-var-NAME mapping (never the value). Some providers
-// (PayTR) declare several env vars; the FIRST is the HMAC key we hand to the
-// adapter as `secret`, and the adapter reads any companion secret (e.g. salt)
-// from process.env itself.
+// The signing secret for a provider, read from the environment ONLY.
 function defaultSecretForProvider(provider) {
   let name;
   try {
     name = cfgMod().secretEnvFor(provider);
   } catch (e) {
     name = secretEnvName(provider);
-  } // fall back to the deterministic name
+  }
   if (!name) return undefined;
   const primary = Array.isArray(name) ? name[0] : name;
   return process.env[primary];
 }
 
-// product -> { tier, months } via issuer/config.js (null for an unknown product,
-// so an unrecognised purchase is rejected rather than granted an arbitrary tier).
+// product -> { tier, months, seats?, amount?, currency? } via issuer/config.js.
 function defaultProductToTier(product) {
   const r = cfgMod().tierForProduct(cfgData(), product);
   return r && r.tier ? r : null;
 }
 
-// Mint a license token via issuer/sign.js using the issuer private key, which is
-// loaded once from issuer/private/issuer.key (0600) and kept only as an in-memory
-// KeyObject — never logged, serialised, or handed out.
+// Mint a license token via issuer/sign.js using the issuer private key.
 function defaultSignLicense(payload) {
   return signMod().signLicense(payload, privKey());
 }
 
-// Out-of-band delivery of the freshly minted token (email/store). Deliberately a
-// stub: NEVER log the token; a real implementation queues an email or persists to
-// a secrets store the buyer can pull from.
+// Out-of-band delivery of the freshly minted token (email/store).
 function defaultDeliverLicense(/* record, token */) {
-  // TODO(delivery): email the token to record.email / drop into a secure outbox.
-  // Intentionally a no-op that ignores the token so it never reaches a log sink.
   return;
 }
 
 // ---- ledger (idempotency) ----------------------------------------------------
-// In-memory Map keyed by orderId, optionally mirrored to a 0600 JSON file so a
-// restart still refuses to double-issue. The file holds NO token — metadata only.
-
 function loadLedgerFile(file, ledger) {
   if (!file) return;
   let raw;
@@ -164,13 +116,13 @@ function loadLedgerFile(file, ledger) {
     raw = fs.readFileSync(file, 'utf8');
   } catch (e) {
     return;
-  } // absent => empty
+  }
   let arr;
   try {
     arr = JSON.parse(raw);
   } catch (e) {
     return;
-  } // corrupt => start fresh (fail closed to empty)
+  }
   if (!Array.isArray(arr)) return;
   for (const rec of arr) {
     if (rec && typeof rec.orderId === 'string') ledger.set(rec.orderId, rec);
@@ -181,11 +133,11 @@ function persistLedgerFile(file, ledger) {
   if (!file) return;
   const arr = [];
   for (const rec of ledger.values()) {
-    // Whitelist non-secret fields only — never persist a token.
     arr.push({
       orderId: rec.orderId,
       provider: rec.provider,
       tier: rec.tier,
+      seats: rec.seats || 1,
       email: rec.email,
       issuedAt: rec.issuedAt,
     });
@@ -207,8 +159,6 @@ function sendJson(res, status, obj) {
   res.end(body);
 }
 
-// Collect the raw request body as a Buffer, enforcing a hard size cap. Resolves
-// with the exact bytes — no decoding, no parsing.
 function readRawBody(req, limit) {
   return new Promise(function (resolve, reject) {
     const chunks = [];
@@ -241,16 +191,6 @@ function readRawBody(req, limit) {
 }
 
 // ---- issuer factory ----------------------------------------------------------
-// createIssuer(deps) -> { server, handler, ledger }. Inject any of:
-//   resolveAdapter(provider) -> adapter | null
-//   secretForProvider(provider) -> secret | undefined
-//   productToTier(product) -> tier | null
-//   signLicense(payload) -> token string
-//   deliverLicense(record, token) -> void   (out-of-band; must not log token)
-//   expiryFor(tier) -> ISO expiry string | null
-//   now() -> ISO string     ledgerFile -> path | null     ledger -> Map     log -> fn
-//   admin -> an admin handler (issuer/admin.js) mounted at /admin
-//   events -> an EventLog (issuer/store.js) that records what each webhook did
 function createIssuer(deps) {
   deps = deps || {};
   const resolveAdapter = deps.resolveAdapter || defaultResolveAdapter;
@@ -262,7 +202,7 @@ function createIssuer(deps) {
     deps.expiryFor ||
     function () {
       return null;
-    }; // perpetual by default
+    };
   const now =
     deps.now ||
     function () {
@@ -270,21 +210,19 @@ function createIssuer(deps) {
     };
   const ledgerFile = deps.ledgerFile || null;
   const ledger = deps.ledger || new Map();
-  // Optional admin panel (issuer/admin.js) and event log (issuer/store.js).
-  // Both are absent by default so the webhook router keeps working standalone.
   const admin = deps.admin || null;
   const events = deps.events || null;
+  const invoices = deps.invoices || null;
 
-  // Record what a webhook did — never the token, never the raw body.
   function recordEvent(evt) {
     if (!events || typeof events.append !== 'function') return;
     try {
       events.append(evt);
     } catch (e) {
-      /* the log is for humans; the ledger is for correctness */
+      /* best effort */
     }
   }
-  // Structured, secret-free logger. Only ever receives non-sensitive fields.
+
   const log =
     deps.log ||
     function (obj) {
@@ -311,7 +249,6 @@ function createIssuer(deps) {
 
     const secret = secretForProvider(provider);
     if (!secret) {
-      // Misconfiguration, not the caller's fault — but never mint without a secret.
       log({ evt: 'webhook', provider: provider, status: 500, reason: 'no-secret-configured' });
       sendJson(res, 500, { error: 'issuer misconfigured' });
       return;
@@ -330,7 +267,7 @@ function createIssuer(deps) {
       return;
     }
 
-    // 2) Authenticity check. node lowercases header keys already.
+    // 2) Authenticity check.
     let v;
     try {
       v = adapter.verifyWebhook(rawBody, req.headers, secret);
@@ -338,15 +275,13 @@ function createIssuer(deps) {
       v = { ok: false, reason: 'verify-threw' };
     }
     if (!v || v.ok !== true) {
-      // Do NOT log the reason at info if it might echo secret material; adapters
-      // return only coarse reasons, so this is safe and useful.
       log({ evt: 'webhook', provider: provider, status: 401, reason: (v && v.reason) || 'unverified' });
       recordEvent({ event: 'webhook.rejected', provider: provider, note: (v && v.reason) || 'unverified' });
       sendJson(res, 401, { error: 'signature verification failed' });
-      return; // 401 and absolutely nothing else.
+      return;
     }
 
-    // 3) Parse the business event (only now that it's authentic).
+    // 3) Parse the business event.
     let event;
     try {
       event = adapter.parseEvent(rawBody, req.headers);
@@ -359,10 +294,20 @@ function createIssuer(deps) {
     }
 
     if (event.type !== 'purchase') {
-      // Refunds/other are acknowledged but mint nothing here (refund handling is
-      // a separate concern). Ack so the PSP stops retrying.
+      if (event.type === 'refund' && event.orderId && invoices && typeof invoices.recordRefund === 'function') {
+        try {
+          invoices.recordRefund(event.orderId, 'webhook refund from ' + provider);
+        } catch (e) {
+          /* best effort */
+        }
+      }
       log({ evt: 'webhook', provider: provider, status: 200, type: event.type, issued: false });
-      recordEvent({ event: 'webhook.other', provider: provider, note: event.type || 'other' });
+      recordEvent({
+        event: 'webhook.other',
+        provider: provider,
+        orderId: event.orderId || undefined,
+        note: event.type || 'other',
+      });
       sendJson(res, 200, { issued: false, type: event.type || 'other' });
       return;
     }
@@ -396,15 +341,10 @@ function createIssuer(deps) {
       return;
     }
 
-    // 5) product -> tier. The mapper may return a bare tier string (test stubs)
-    // or a { tier, months } record (config.js). months (when a positive number)
-    // drives the expiry; otherwise expiryFor(tier) decides (perpetual by default).
+    // 5) product -> tier.
     const mapped = productToTier(event.product);
     const tier = mapped && typeof mapped === 'object' ? mapped.tier : mapped;
     if (!tier) {
-      // The product id is NOT a secret (it is a public catalogue id), and naming
-      // it is what makes this actionable: the operator can paste it straight
-      // into issuer.config.json. Bounded so a hostile id cannot bloat the log.
       const product = String(event.product == null ? '' : event.product).slice(0, 200);
       log({ evt: 'webhook', provider: provider, status: 422, orderId: orderId, reason: 'unmapped-product' });
       recordEvent({
@@ -417,9 +357,15 @@ function createIssuer(deps) {
       return;
     }
     const months = mapped && typeof mapped === 'object' ? mapped.months : undefined;
+    const mappedSeats = mapped && typeof mapped === 'object' && mapped.seats ? mapped.seats : undefined;
+    const seats =
+      Number.isInteger(Number(event.seats)) && Number(event.seats) > 1
+        ? Number(event.seats)
+        : Number.isInteger(Number(mappedSeats)) && Number(mappedSeats) > 1
+          ? Number(mappedSeats)
+          : 1;
 
-    // 6) MINT exactly once. The token is handed straight to delivery and never
-    // stored in the ledger or logged.
+    // 6) MINT exactly once.
     const issuedAt = now();
     const expiry = typeof months === 'number' && months > 0 ? addMonths(issuedAt, months) : expiryFor(tier);
     const payload = {
@@ -428,18 +374,25 @@ function createIssuer(deps) {
       issued: issuedAt,
       expiry: expiry,
     };
+    if (seats > 1) payload.seats = seats;
 
     let token;
     try {
       token = signLicense(payload);
     } catch (e) {
-      // Never include the payload/secret in the error surface.
       log({ evt: 'webhook', provider: provider, status: 500, orderId: orderId, reason: 'sign-failed' });
       sendJson(res, 500, { error: 'minting failed' });
       return;
     }
 
-    const record = { orderId: orderId, provider: provider, tier: tier, email: payload.email, issuedAt: issuedAt };
+    const record = {
+      orderId: orderId,
+      provider: provider,
+      tier: tier,
+      seats: seats,
+      email: payload.email,
+      issuedAt: issuedAt,
+    };
     ledger.set(orderId, record);
     try {
       persistLedgerFile(ledgerFile, ledger);
@@ -447,13 +400,33 @@ function createIssuer(deps) {
       /* durability best-effort; in-memory guard still holds */
     }
 
-    // Out-of-band delivery (stub). Token is scoped to this call only.
+    if (invoices && typeof invoices.recordPurchase === 'function') {
+      try {
+        const mappedAmount = mapped && typeof mapped === 'object' ? mapped.amount : undefined;
+        const mappedCurrency = mapped && typeof mapped === 'object' ? mapped.currency : undefined;
+        invoices.recordPurchase({
+          orderId: orderId,
+          provider: provider,
+          email: payload.email,
+          tier: tier,
+          seats: seats,
+          months: typeof months === 'number' && months > 0 ? months : 12,
+          amount: event.amount != null ? event.amount : mappedAmount != null ? mappedAmount : 0,
+          currency: event.currency || mappedCurrency || (provider === 'iyzico' || provider === 'paytr' ? 'TRY' : 'USD'),
+          countryCode: event.countryCode || (provider === 'iyzico' || provider === 'paytr' ? 'TR' : 'INTL'),
+          issuedAt: issuedAt,
+        });
+      } catch (e) {
+        /* invoice log best effort */
+      }
+    }
+
     try {
       deliverLicense(record, token);
     } catch (e) {
       /* delivery failures don't unmint */
     }
-    token = null; // drop the reference promptly.
+    token = null;
 
     log({ evt: 'webhook', provider: provider, status: 200, orderId: orderId, tier: tier, issued: true });
     recordEvent({
@@ -463,6 +436,7 @@ function createIssuer(deps) {
       orderId: orderId,
       email: payload.email,
       tier: tier,
+      seats: seats,
       note: 'issued from ' + provider,
     });
     sendJson(res, 200, { issued: true, tier: tier });
@@ -483,7 +457,13 @@ function createIssuer(deps) {
       return;
     }
 
-    // The admin panel (issuer/admin.js) owns everything under /admin.
+    if (req.method === 'GET' && pathname === '/plans') {
+      const region = parsed.searchParams.get('region') || undefined;
+      const plans = cfgMod().plansForRegion(region);
+      sendJson(res, 200, { plans: plans, region: region || 'ALL' });
+      return;
+    }
+
     if (admin && (pathname === '/admin' || pathname.startsWith('/admin/'))) {
       admin(req, res);
       return;
@@ -495,8 +475,6 @@ function createIssuer(deps) {
         sendJson(res, 405, { error: 'method not allowed' });
         return;
       }
-      // decodeURIComponent so an encoded provider still validates against the RE
-      // (and traversal attempts fail the strict charset check).
       let provider;
       try {
         provider = decodeURIComponent(m[1]);
@@ -514,20 +492,14 @@ function createIssuer(deps) {
   };
 
   const server = http.createServer(handler);
-  return { server: server, handler: handler, ledger: ledger, secretEnvName: secretEnvName };
+  return { server: server, handler: handler, ledger: ledger, invoices: invoices, secretEnvName: secretEnvName };
 }
 
-// configReadiness() -> { ready, pendingProducts } for the config in effect.
-// "ready" means every product slot carries a REAL provider product id, so a
-// purchase can actually be mapped to a tier. While slots are still the
-// REPLACE_ placeholders the issuer is not ready to sell, and it says so.
 function configReadiness() {
   try {
     const pending = cfgMod().pendingProducts(cfgData());
     return { ready: pending.length === 0, pendingProducts: pending };
   } catch (e) {
-    // A broken config surfaces loudly on first use (validateConfig throws) —
-    // here we just report "not ready" rather than crashing the boot.
     return { ready: false, pendingProducts: [] };
   }
 }
@@ -538,36 +510,36 @@ function start(deps) {
   const port = Number(deps.port || process.env.PORT || 8787);
   const host = deps.host || process.env.HOST || DEFAULT_HOST;
   const ledgerFile = deps.ledgerFile || path.join(__dirname, 'state', 'ledger.json');
-  // The event log and the admin panel are part of the default runtime: the log
-  // records what each webhook did (never a token), and the panel is the
-  // operator's view of it. The panel fails CLOSED — with no
-  // KEYFLIP_ISSUER_ADMIN_TOKEN set it answers 503 and does nothing.
+  const storeMod = require('./store');
   const events =
     deps.events ||
-    new (require('./store').EventLog)({
+    new storeMod.EventLog({
       file: deps.eventLogFile || path.join(__dirname, 'state', 'events.jsonl'),
+    });
+  const invoices =
+    deps.invoices ||
+    new storeMod.InvoiceStore({
+      file: deps.invoiceFile || path.join(__dirname, 'state', 'invoices.jsonl'),
     });
   const admin =
     deps.admin ||
     require('./admin').createAdmin({
       events: events,
+      invoices: invoices,
       storeFile: deps.storeFile || path.join(__dirname, 'state', 'licenses.json'),
       eventLogFile: deps.eventLogFile || path.join(__dirname, 'state', 'events.jsonl'),
+      invoiceFile: deps.invoiceFile || path.join(__dirname, 'state', 'invoices.jsonl'),
     }).handler;
   const issuer = createIssuer(
     Object.assign({}, deps, {
       ledgerFile: ledgerFile,
       events: events,
+      invoices: invoices,
       admin: admin,
     }),
   );
   issuer.server.listen(port, host, function () {
-    // No secrets here — just where we're listening.
     process.stdout.write(JSON.stringify({ evt: 'listen', host: host, port: port }) + '\n');
-    // If the config still carries REPLACE_ product slots, the owner has not
-    // pasted the real PSP product ids yet: a real purchase would NOT map to a
-    // tier and no license would be minted. Say so at boot rather than letting
-    // a paying customer hit a silent no-op.
     const readiness = configReadiness();
     if (!readiness.ready) {
       process.stdout.write(
@@ -591,7 +563,6 @@ module.exports = {
   MAX_BODY_BYTES: MAX_BODY_BYTES,
 };
 
-// Run directly: `node issuer/server.js`.
 if (require.main === module) {
   start();
 }

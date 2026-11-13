@@ -1,6 +1,7 @@
 'use strict';
 // ISSUER / store.js — the issuer's own bookkeeping: the license records it has
-// minted, and the webhook event log.
+// minted, the invoice/tax reconciliation ledger (invoices.jsonl), and the
+// webhook event log.
 //
 // WHAT THIS STORE IS (and is not):
 //   * It holds NON-SECRET metadata only: who was licensed, at what tier, until
@@ -17,12 +18,7 @@
 //   There is no server in the loop at verify time to consult. So "revoke" here
 //   means: record the revocation, stop the issuer from reissuing that license id
 //   or renewing that order, and flag it in the admin view. The customer's
-//   existing token stays valid until it EXPIRES. The only true remote kill-switch
-//   would be a phone-home check, which keyflip deliberately refuses to ship.
-//
-//   That is why `reissue` exists: a fresh license with a shorter expiry is the
-//   honest way to shorten a customer's access — they activate the new token,
-//   and the old one stops mattering once it lapses.
+//   existing token stays valid until it EXPIRES.
 
 const fs = require('fs');
 const path = require('path');
@@ -44,6 +40,24 @@ function nowIso() {
 // not a secret: it carries no capability (a token is still needed to unlock).
 function newLicenseId() {
   return 'lic_' + crypto.randomBytes(8).toString('hex');
+}
+
+// A unique invoice identifier for accounting & e-Arşiv/e-Fatura reconciliation.
+function newInvoiceId() {
+  return 'inv_' + crypto.randomBytes(8).toString('hex');
+}
+
+// Resolve tax classification: domestic Turkish payments (TR / iyzico / paytr / TRY)
+// carry 20% KDV ('domestic-vat-20pct'); international software export carries 0% VAT
+// ('export-exempt-0pct').
+function resolveTaxMode(provider, countryCode, currency) {
+  const cc = String(countryCode || '').toUpperCase();
+  const prov = String(provider || '').toLowerCase();
+  const cur = String(currency || '').toUpperCase();
+  if (cc === 'TR' || prov === 'iyzico' || prov === 'paytr' || cur === 'TRY') {
+    return 'domestic-vat-20pct';
+  }
+  return 'export-exempt-0pct';
 }
 
 // Loose but bounded email check: one @, no whitespace, sane length. This is a
@@ -124,10 +138,12 @@ class LicenseStore {
   create(fields) {
     const issuedAt = fields.issuedAt || this.now();
     const months = Number.isFinite(fields.months) ? Math.max(1, Math.min(MAX_MONTHS, fields.months)) : 0;
+    const seats = Number.isInteger(Number(fields.seats)) && Number(fields.seats) > 0 ? Number(fields.seats) : 1;
     const rec = {
       licenseId: fields.licenseId || newLicenseId(),
       email: fields.email || '',
       tier: fields.tier,
+      seats: seats,
       issuedAt: issuedAt,
       expiry: months > 0 ? addMonths(issuedAt, months) : null,
       months: months,
@@ -178,8 +194,7 @@ class LicenseStore {
   }
 
   // Mark a license revoked. Returns { ok, record } — ok=false when the id is
-  // unknown or already revoked (revoking twice is not an error, it is a no-op
-  // the caller can see).
+  // unknown or already revoked.
   revoke(id, reason) {
     const rec = this.get(id);
     if (!rec) return { ok: false, reason: 'not-found' };
@@ -191,8 +206,7 @@ class LicenseStore {
     return { ok: true, record: rec };
   }
 
-  // Mark `oldId` superseded by a new record. Keeps the chain intact: the new
-  // license says which one it replaces, the old one says what replaced it.
+  // Mark `oldId` superseded by a new record.
   supersede(oldId, newRec) {
     const old = this.get(oldId);
     if (!old) return null;
@@ -207,6 +221,209 @@ class LicenseStore {
     const list = this.list({ email: email, status: 'active' });
     return list.length ? list[0] : null;
   }
+}
+
+// ---- invoice store (invoices.jsonl) ------------------------------------------
+// JSONL accounting & tax reconciliation ledger (<stateDir>/invoices.jsonl, 0600).
+// Records every purchase and refund with currency (TRY/USD), seats, months, and
+// taxMode ('domestic-vat-20pct' vs 'export-exempt-0pct'). NEVER stores a token.
+class InvoiceStore {
+  constructor(opts) {
+    opts = opts || {};
+    this.file = opts.file || null;
+    this.now = opts.now || nowIso;
+    this.byInvoiceId = new Map(); // invoiceId -> record
+    this.byOrderId = new Map(); // orderId -> invoiceId
+    this._load();
+  }
+
+  _load() {
+    if (!this.file) return;
+    let raw;
+    try {
+      raw = fs.readFileSync(this.file, 'utf8');
+    } catch {
+      return;
+    }
+    for (const line of raw.split('\n')) {
+      const t = line.trim();
+      if (!t) continue;
+      let o;
+      try {
+        o = JSON.parse(t);
+      } catch {
+        continue;
+      }
+      if (o && typeof o.invoiceId === 'string') {
+        this.byInvoiceId.set(o.invoiceId, o);
+        if (o.orderId) this.byOrderId.set(String(o.orderId), o.invoiceId);
+      }
+    }
+  }
+
+  _appendLine(rec) {
+    if (!this.file) return;
+    try {
+      fs.mkdirSync(path.dirname(this.file), { recursive: true, mode: 0o700 });
+      fs.appendFileSync(this.file, JSON.stringify(rec) + '\n', { mode: 0o600 });
+    } catch {
+      /* best effort */
+    }
+  }
+
+  recordPurchase(fields) {
+    fields = fields || {};
+    const orderId = fields.orderId ? String(fields.orderId) : null;
+    if (orderId && this.byOrderId.has(orderId)) {
+      return this.byInvoiceId.get(this.byOrderId.get(orderId));
+    }
+    const issuedAt = fields.issuedAt || this.now();
+    const provider = fields.provider ? String(fields.provider) : 'manual';
+    const currency = fields.currency
+      ? String(fields.currency).toUpperCase()
+      : provider === 'iyzico' || provider === 'paytr'
+        ? 'TRY'
+        : 'USD';
+    const amount = Number.isFinite(Number(fields.amount)) && Number(fields.amount) >= 0 ? Number(fields.amount) : 0;
+    const seats = Number.isInteger(Number(fields.seats)) && Number(fields.seats) > 0 ? Number(fields.seats) : 1;
+    const months = Number.isInteger(Number(fields.months)) && Number(fields.months) > 0 ? Number(fields.months) : 12;
+    const countryCode =
+      fields.countryCode || (provider === 'iyzico' || provider === 'paytr' || currency === 'TRY' ? 'TR' : 'INTL');
+    const taxMode = fields.taxMode || resolveTaxMode(provider, countryCode, currency);
+
+    const rec = {
+      invoiceId: fields.invoiceId || newInvoiceId(),
+      orderId: orderId,
+      licenseId: fields.licenseId || null,
+      provider: provider,
+      email: fields.email || '',
+      tier: fields.tier || 'pro',
+      seats: seats,
+      months: months,
+      amount: amount,
+      currency: currency,
+      countryCode: countryCode,
+      taxMode: taxMode,
+      issuedAt: issuedAt,
+      status: 'paid',
+      refundedAt: null,
+      refundReason: null,
+    };
+    this.byInvoiceId.set(rec.invoiceId, rec);
+    if (orderId) this.byOrderId.set(orderId, rec.invoiceId);
+    this._appendLine(rec);
+    return rec;
+  }
+
+  recordRefund(orderIdOrInvoiceId, reason) {
+    const key = String(orderIdOrInvoiceId || '');
+    const invId = this.byOrderId.get(key) || (this.byInvoiceId.has(key) ? key : null);
+    if (!invId) return { ok: false, reason: 'not-found' };
+    const existing = this.byInvoiceId.get(invId);
+    if (existing.status === 'refunded') {
+      return { ok: false, reason: 'already-refunded', invoice: existing };
+    }
+    const updated = Object.assign({}, existing, {
+      status: 'refunded',
+      refundedAt: this.now(),
+      refundReason: String(reason == null ? 'refund' : reason).slice(0, MAX_REASON_LEN),
+    });
+    this.byInvoiceId.set(invId, updated);
+    this._appendLine(updated);
+    return { ok: true, invoice: updated };
+  }
+
+  get(id) {
+    const k = String(id || '');
+    if (this.byInvoiceId.has(k)) return this.byInvoiceId.get(k);
+    if (this.byOrderId.has(k)) return this.byInvoiceId.get(this.byOrderId.get(k)) || null;
+    return null;
+  }
+
+  list(filters) {
+    filters = filters || {};
+    let out = Array.from(this.byInvoiceId.values());
+    if (filters.provider) out = out.filter((r) => r.provider === filters.provider);
+    if (filters.currency) out = out.filter((r) => r.currency === String(filters.currency).toUpperCase());
+    if (filters.status) out = out.filter((r) => r.status === filters.status);
+    if (filters.taxMode) out = out.filter((r) => r.taxMode === filters.taxMode);
+    if (filters.email) out = out.filter((r) => r.email === filters.email);
+    if (filters.q) {
+      const q = String(filters.q).toLowerCase();
+      out = out.filter(
+        (r) =>
+          String(r.email || '')
+            .toLowerCase()
+            .indexOf(q) !== -1 ||
+          String(r.invoiceId || '')
+            .toLowerCase()
+            .indexOf(q) !== -1 ||
+          String(r.orderId || '')
+            .toLowerCase()
+            .indexOf(q) !== -1,
+      );
+    }
+    out.sort((a, b) => String(b.issuedAt).localeCompare(String(a.issuedAt)));
+    const limit = Math.max(1, Math.min(500, Number(filters.limit) || 200));
+    return out.slice(0, limit);
+  }
+
+  revenueSummary() {
+    const totalsByCurrency = {
+      TRY: { paid: 0, refunded: 0, net: 0, count: 0, paidCount: 0, refundedCount: 0 },
+      USD: { paid: 0, refunded: 0, net: 0, count: 0, paidCount: 0, refundedCount: 0 },
+    };
+    const byProvider = {};
+    const byTaxMode = {
+      'domestic-vat-20pct': { count: 0, netTry: 0, netUsd: 0 },
+      'export-exempt-0pct': { count: 0, netTry: 0, netUsd: 0 },
+    };
+
+    for (const inv of this.byInvoiceId.values()) {
+      const cur = inv.currency === 'TRY' ? 'TRY' : 'USD';
+      const bucket = totalsByCurrency[cur];
+      const amt = Number(inv.amount) || 0;
+      bucket.count += 1;
+      if (inv.status === 'refunded') {
+        bucket.refunded = Math.round((bucket.refunded + amt) * 100) / 100;
+        bucket.refundedCount += 1;
+      } else {
+        bucket.paid = Math.round((bucket.paid + amt) * 100) / 100;
+        bucket.net = Math.round((bucket.net + amt) * 100) / 100;
+        bucket.paidCount += 1;
+      }
+      const prov = inv.provider || 'unknown';
+      if (!byProvider[prov]) byProvider[prov] = { count: 0, paidCount: 0, refundedCount: 0 };
+      byProvider[prov].count += 1;
+      if (inv.status === 'refunded') byProvider[prov].refundedCount += 1;
+      else byProvider[prov].paidCount += 1;
+
+      const tm = byTaxMode[inv.taxMode] || byTaxMode['export-exempt-0pct'];
+      if (inv.status !== 'refunded') {
+        tm.count += 1;
+        if (cur === 'TRY') tm.netTry = Math.round((tm.netTry + amt) * 100) / 100;
+        else tm.netUsd = Math.round((tm.netUsd + amt) * 100) / 100;
+      }
+    }
+
+    return {
+      totalInvoices: this.byInvoiceId.size,
+      totalsByCurrency: totalsByCurrency,
+      byProvider: byProvider,
+      byTaxMode: byTaxMode,
+    };
+  }
+}
+
+// Convenience helpers over an InvoiceStore or file path.
+function listInvoices(storeOrFile, filters) {
+  const s = storeOrFile instanceof InvoiceStore ? storeOrFile : new InvoiceStore({ file: storeOrFile });
+  return s.list(filters);
+}
+
+function revenueSummary(storeOrFile) {
+  const s = storeOrFile instanceof InvoiceStore ? storeOrFile : new InvoiceStore({ file: storeOrFile });
+  return s.revenueSummary();
 }
 
 // ---- event log ----------------------------------------------------------------
@@ -268,8 +485,13 @@ module.exports = {
   TIERS: TIERS,
   MAX_MONTHS: MAX_MONTHS,
   newLicenseId: newLicenseId,
+  newInvoiceId: newInvoiceId,
+  resolveTaxMode: resolveTaxMode,
   normalizeEmail: normalizeEmail,
   addMonths: addMonths,
   LicenseStore: LicenseStore,
+  InvoiceStore: InvoiceStore,
+  listInvoices: listInvoices,
+  revenueSummary: revenueSummary,
   EventLog: EventLog,
 };
