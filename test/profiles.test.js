@@ -5,6 +5,7 @@ import path from 'path';
 import * as profiles from '../src/profiles.js';
 import * as core from '../src/core.js';
 import * as schedule from '../src/schedule.js';
+import * as daemon from '../src/daemon.js';
 import * as secretpolicy from '../src/secretpolicy.js';
 import * as proxyroutes from '../src/proxyroutes.js';
 import { tmpdir, makeCtx, writeClaude } from './helpers.js';
@@ -80,6 +81,8 @@ test('a top-level state file is never listed as an account', function () {
       secretpolicy.FILE_NAME,
       'refresh-metrics.json',
       'expired-captures.json',
+      daemon.RECORD_NAME,
+      daemon.STATE_NAME,
       // proxy-routes.json is user-authored routing config; it lives at the top
       // level so it must be reserved or it shows up as an account (#4).
       proxyroutes.FILE_NAME,

@@ -54,6 +54,8 @@ const RESERVED_FILES = [
   'refresh-metrics',
   'expired-captures',
   'refresh-state',
+  'daemon-schedule',
+  'daemon-state',
 ];
 
 const TOMBSTONES_FILE = '.tombstones.json';

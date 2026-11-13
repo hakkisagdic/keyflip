@@ -90,6 +90,7 @@ import * as _clisurfaces from './clisurfaces.js';
 import * as _codex from './codex.js';
 import * as _cfg from './config.js';
 import * as _svc from './autoswitchservice.js';
+import * as _daemon from './daemon.js';
 import * as _selfbin from './selfbin.js';
 import * as _identity from './identity.js';
 import * as _failover from './failover.js';
@@ -1508,6 +1509,132 @@ function formatAutoswitchTickLine(r, opts) {
     );
   }
   return '';
+}
+
+// `keyflip daemon install [-y] | uninstall | status [--json] | run | run-now <job>`
+async function cmdDaemon(ctx, rest) {
+  const sub = rest[0] || 'status';
+  if (sub === '--help' || sub === '-h' || sub === 'help') {
+    print('usage: keyflip daemon status [--json]');
+    print('       keyflip daemon install [-y]');
+    print('       keyflip daemon uninstall');
+    print('       keyflip daemon run-now <autoswitch|refresh|surface-refresh|conv-index|usage>');
+    print('       keyflip daemon run');
+    return;
+  }
+  if (sub === 'status') {
+    const st = await _daemon.status(ctx, { home: ctx.home, run: ctx.run });
+    if (JSON_MODE) {
+      jsonOut({ daemon: st });
+      if (st.installed && !st.healthy) process.exitCode = 1;
+      return;
+    }
+    print(
+      'Keyflip daemon (' +
+        _daemon.LABEL +
+        '): ' +
+        (!st.installed
+          ? style.warn('not installed')
+          : st.healthy
+            ? style.ok('installed') + (st.pid ? ' (pid ' + st.pid + ')' : '')
+            : style.err('installed with issues'))
+    );
+    print('  socket: ' + st.socketPath + ' — ' + (st.socketReachable ? style.ok('reachable') : style.warn('offline')));
+    if (st.log) print('  log:    ' + st.log);
+    if (st.liveStatus && st.liveStatus.activeAccount) {
+      const aa = st.liveStatus.activeAccount;
+      print('  active: ' + (aa.email || aa.name) + (aa.tier ? ' [' + aa.tier + ']' : ''));
+    }
+    if (st.liveStatus && st.liveStatus.failover) {
+      const fo = st.liveStatus.failover;
+      print('  failover: ' + (fo.engaged ? style.warn('ENGAGED') : fo.enabled ? style.ok('standing by') : style.dim('disabled')));
+    }
+    const jobs = (st.liveStatus && st.liveStatus.jobs) || (st.stateOnDisk && st.stateOnDisk.jobs) || null;
+    if (jobs) {
+      print('  jobs:');
+      Object.keys(jobs).forEach(function (k) {
+        const j = jobs[k];
+        print(
+          '    ' +
+            style.bold(k) +
+            ': ' +
+            (j.lastResult || 'never') +
+            (j.lastRunAt ? ' at ' + j.lastRunAt : '') +
+            (j.intervalSeconds ? ' (every ' + j.intervalSeconds + 's)' : '')
+        );
+      });
+    }
+    (st.problems || []).forEach(function (p) {
+      print('  ' + style.warn('⚠ ' + p));
+    });
+    if (st.installed && !st.healthy) process.exitCode = 1;
+    return;
+  }
+  if (sub === 'install') {
+    if (rest.indexOf('-y') === -1 && rest.indexOf('--force') === -1) {
+      if (!process.stdin.isTTY) return fail('re-run with -y to confirm.');
+      if (!(await confirm('Install com.keyflip.daemon and replace legacy launchd jobs? [y/N] '))) {
+        print('Cancelled.');
+        return;
+      }
+    }
+    const r = _daemon.install(ctx, { home: ctx.home, run: ctx.run });
+    if (!r.ok && r.kind === 'unsupported') return fail(r.reason || 'daemon install is macOS-only');
+    if (JSON_MODE) {
+      jsonOut({ daemonInstall: r });
+      if (!r.ok) process.exitCode = 1;
+      return;
+    }
+    if (!r.ok) return fail('could not load daemon plist (launchctl exit ' + r.loadCode + ')');
+    print(style.ok('✅') + ' installed ' + style.bold(_daemon.LABEL) + ' (' + r.path + ')');
+    print('  socket: ' + r.socketPath);
+    print('  log:    ' + r.log);
+    if (r.migratedLegacy && r.migratedLegacy.length) {
+      print('  migrated legacy jobs: ' + r.migratedLegacy.join(', '));
+      print('  backup & rollback:    ' + path.join(r.legacyBackupDir, 'ROLLBACK.md'));
+    }
+    return;
+  }
+  if (sub === 'uninstall') {
+    const r = _daemon.uninstall(ctx, { home: ctx.home, run: ctx.run });
+    if (JSON_MODE) {
+      jsonOut({ daemonUninstall: r });
+      return;
+    }
+    if (r.kind === 'unsupported') return fail('daemon uninstall is macOS-only');
+    print(style.ok('✅') + ' ' + _daemon.LABEL + ' ' + (r.existed ? 'uninstalled.' : 'was not installed.'));
+    if (r.legacyBackupDir) {
+      print(style.dim('  Legacy launchd backup remains at ' + r.legacyBackupDir));
+    }
+    return;
+  }
+  if (sub === 'run-now') {
+    const job = rest[1];
+    if (!job) return fail('usage: keyflip daemon run-now <autoswitch|refresh|surface-refresh|conv-index|usage>');
+    const q = await _daemon.querySocket(ctx, { cmd: 'run-now', job: job });
+    if (JSON_MODE) {
+      jsonOut({ daemonRunNow: q });
+      if (!q.ok) process.exitCode = 1;
+      return;
+    }
+    if (!q.reachable) return fail('daemon socket is not reachable (' + q.reason + ')');
+    if (!q.ok) return fail('job ' + job + ' failed: ' + ((q.response && (q.response.error || q.response.message)) || 'error'));
+    print(style.ok('✅') + ' ran job ' + style.bold(job) + ': ' + ((q.response && q.response.result) || 'ok'));
+    return;
+  }
+  if (sub === 'run' || sub === 'start') {
+    const handle = await _daemon.startDaemon(ctx, { home: ctx.home });
+    print('keyflip daemon listening on ' + handle.socketPath + ' (pid ' + process.pid + ')');
+    await new Promise(function (resolve) {
+      const shutdown = function () {
+        handle.stop().then(resolve, resolve);
+      };
+      process.once('SIGINT', shutdown);
+      process.once('SIGTERM', shutdown);
+    });
+    return;
+  }
+  return fail('usage: keyflip daemon status | install [-y] | uninstall | run-now <job> | run');
 }
 
 // `keyflip failover setup [--dry-run] | status | on | off` — the keysmith API failover (P4).
@@ -17516,6 +17643,7 @@ async function main(argv) {
     'login',
     'mcp',
     'run',
+    'daemon',
     'autoswitch',
     'failover',
     'install-skill',
@@ -17979,6 +18107,8 @@ async function dispatch(ctx, cmd, rest) {
         return cmdMcp(ctx, rest);
       case 'install-skill':
         return cmdInstallSkill(ctx, rest);
+      case 'daemon':
+        return cmdDaemon(ctx, rest);
       case 'autoswitch':
         return cmdAutoswitch(ctx, rest);
       case 'failover':
@@ -18381,4 +18511,5 @@ export {
   verifyAppRelogin,
   formatAutoswitchTickLine,
   cmdAutoswitch,
+  cmdDaemon,
 };

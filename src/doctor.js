@@ -13,6 +13,7 @@ import * as _appauth from './appauth.js';
 import * as _llm from './llm.js';
 import * as _schedule from './schedule.js';
 import * as _autosvc from './autoswitchservice.js';
+import * as _daemon from './daemon.js';
 import * as _convindex from './convindex.js';
 import * as _leakscan from './leakscan.js';
 import * as _chains from './chains.js';
@@ -89,6 +90,7 @@ async function diagnose(ctx, opts) {
   emptyProjectsCheck(ctx, add);
   quotaPressure(ctx, add);
   choreProvider(ctx, add);
+  await daemonService(ctx, add, opts);
   tokenRenewalCheck(ctx, add, opts);
   backgroundServices(ctx, add, opts);
   autoswitchService(ctx, add, opts);
@@ -754,6 +756,71 @@ function choreProvider(ctx, add) {
   add('chore provider', true, line + (rec ? ' (nightly job scheduled)' : ' (on demand only)'));
 }
 
+// Unified supervised daemon (`keyflip daemon` / `com.keyflip.daemon`) health check.
+async function daemonService(ctx, add, opts) {
+  opts = opts || {};
+  if (ctx.platform !== 'darwin' && ctx.platform !== 'linux') return;
+  let st;
+  try {
+    st = await _daemon.status(ctx, {
+      home: opts.home || ctx.home,
+      run: opts.run,
+      probeSocket: Boolean(opts.probeDaemonSocket),
+      socketPath: opts.socketPath,
+    });
+  } catch (e) {
+    return add('keyflip daemon', 'warn', 'unreadable: ' + (e && e.message));
+  }
+  if (!st.installed) {
+    if (opts.checkDaemon) {
+      add(
+        'keyflip daemon',
+        'warn',
+        'not installed — run `keyflip daemon install -y` to consolidate background jobs into one supervised daemon',
+        'keyflip daemon install -y',
+      );
+    }
+    return;
+  }
+  const problems = (st.problems || []).filter(function (p) {
+    return opts.run || !/launchd has not loaded/.test(p);
+  });
+  if (problems.length) {
+    const hardFail = problems.some(function (p) {
+      return /launchd has not loaded|does not exist|per-shell path/.test(p);
+    });
+    return add(
+      'keyflip daemon',
+      hardFail ? false : 'warn',
+      problems.join('; '),
+      'keyflip daemon install -y',
+      { daemon: st },
+    );
+  }
+  const extraDetail = [];
+  if (st.pid) extraDetail.push('pid ' + st.pid);
+  if (st.socketReachable) extraDetail.push('socket ok');
+  add(
+    'keyflip daemon',
+    true,
+    'installed (' + st.label + (extraDetail.length ? ', ' + extraDetail.join(', ') : '') + ')',
+    undefined,
+    { daemon: st },
+  );
+}
+
+function isUnifiedDaemonInstalled(ctx, opts) {
+  opts = opts || {};
+  const home = opts.home || ctx.home || '';
+  try {
+    if (fs.existsSync(_daemon.recordPath(ctx))) return true;
+    if (home && fs.existsSync(_daemon.plistPath(home))) return true;
+  } catch (_) {
+    /* ignore */
+  }
+  return false;
+}
+
 // #36: a stored OAuth token dies on the CALENDAR, not on the day you happen to switch — and the
 // proof is a switch that "succeeds" and opens an onboarding screen. `keyflip refresh --all` fixes
 // that, but only if it runs while the tokens are still alive, which is precisely the moment nobody
@@ -779,6 +846,10 @@ function tokenRenewalCheck(ctx, add, opts) {
     }
   });
   if (!accounts.length && !failedAccounts.length) return; // nothing stored, nothing to renew
+
+  if (!failedAccounts.length && isUnifiedDaemonInstalled(ctx, opts)) {
+    return add('token renewal', true, accounts.length + ' account(s), renewed by com.keyflip.daemon');
+  }
 
   let rec = null;
   try {
@@ -859,6 +930,9 @@ function tokenRenewalCheck(ctx, add, opts) {
 function autoswitchService(ctx, add, opts) {
   opts = opts || {};
   if (ctx.platform !== 'darwin' && ctx.platform !== 'linux') return;
+  if (isUnifiedDaemonInstalled(ctx, opts)) {
+    return add('autoswitch service', true, 'handled by com.keyflip.daemon');
+  }
   let st;
   try {
     st = _autosvc.status(ctx, {
@@ -956,6 +1030,7 @@ function backgroundServices(ctx, add, opts) {
   // schedule when the index is actually ageing; tokenRenewalCheck already owns that complaint for
   // `refresh`, so this check does not repeat it.
   if (
+    !isUnifiedDaemonInstalled(ctx, opts) &&
     !scheduled.some(function (r) {
       return r.job === 'conv';
     })

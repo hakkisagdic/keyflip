@@ -74,6 +74,35 @@ SCHEMA['refresh.leadMinutes'] = {
   max: 240,
   help: 'Refresh stored OAuth access tokens this many minutes before they expire (5..240).',
 };
+// Unified supervised daemon (`keyflip daemon`) scheduler intervals.
+SCHEMA['daemon.autoswitchIntervalSeconds'] = {
+  type: 'int',
+  default: 120,
+  min: 30,
+  max: 3600,
+  help: 'Interval (seconds) for the daemon autoswitch and failover check.',
+};
+SCHEMA['daemon.refreshIntervalSeconds'] = {
+  type: 'int',
+  default: 900,
+  min: 60,
+  max: 7200,
+  help: 'Interval (seconds) for stored Claude OAuth token refresh in the daemon.',
+};
+SCHEMA['daemon.surfaceRefreshIntervalSeconds'] = {
+  type: 'int',
+  default: 300,
+  min: 60,
+  max: 7200,
+  help: 'Interval (seconds) for Antigravity/Codex/Kiro credential refresh in the daemon.',
+};
+SCHEMA['daemon.convIndexIntervalSeconds'] = {
+  type: 'int',
+  default: 1800,
+  min: 0,
+  max: 86400,
+  help: 'Interval (seconds) for incremental conversation indexing in the daemon (0 = disabled).',
+};
 // P4: API failover through keysmith when every Claude account is over the threshold.
 SCHEMA['failover.enabled'] = {
   type: 'bool',
