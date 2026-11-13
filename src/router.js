@@ -9,19 +9,25 @@
 //     else a deterministic alphabetical fallback. Provider facts are read from
 //     provider.list/read — routing never mutates a provider.
 //
-// (2) Cache: a CONTENT cache keyed by sha256(model + '\n' + prompt), stored at
-//     <configDir>/cache/<hash>.json = { model, promptHash, response, at }. The
-//     PROMPT is never stored (only its hash — it may hold secrets); the RESPONSE
-//     is model text that still gets a notify-style secret strip before it lands
-//     on disk. The dir is bounded (cap file count, evict oldest). TTL and "now"
-//     come from ctx.now() (injectable) — no real clock, no network, pure-ish.
+// (2) Cache: a CONTENT + NORMALIZED/SIMILARITY cache keyed by sha256(model + '\n' + prompt),
+//     stored at <configDir>/cache/<hash>.json = { model, promptHash, normHash, shingles,
+//     response, inputTokens, outputTokens, costUsd, at }. The raw PROMPT is never stored
+//     (only its hashes and numeric 32-bit FNV-1a shingle hashes — it may hold secrets);
+//     the RESPONSE is model text that still gets a notify-style secret strip before it lands
+//     on disk. Cache hits/misses and USD/TRY/token savings are tracked in cache-stats.json
+//     and synced with license.recordUsage().
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 import * as profiles from './profiles.js';
 import * as provider from './provider.js';
 import * as secretscan from './secretscan.js';
+import * as license from './license.js';
 import { atomicWrite, readJsonForWrite } from './fsutil.js';
+
+const USD_TO_TRY_APPROX = 35;
+const DEFAULT_SIMILARITY_THRESHOLD = 0.88;
+const DEFAULT_BLENDED_USD_PER_MTOK = 6.0;
 
 // A model id is user-supplied and becomes a MAP KEY, so it must be bounded and
 // free of reserved object-property names (prototype-pollution safety). The char
@@ -255,13 +261,16 @@ function route(ctx, sel, opts) {
 }
 
 // ---------------------------------------------------------------------------
-// Response cache
+// Response cache + Normalized/Similarity Lookup + Savings Ledger (P1-2)
 // ---------------------------------------------------------------------------
 const DAY_MS = 24 * 60 * 60 * 1000;
 const MAX_CACHE_FILES = 500; // bound the dir (anti-unbounded-growth); oldest evicted
 
 function cacheDir(ctx) {
   return path.join(ctx.configDir, 'cache');
+}
+function cacheStatsPath(ctx) {
+  return path.join(ctx.configDir, 'cache-stats.json');
 }
 function cacheKey(model, prompt) {
   return crypto
@@ -271,6 +280,138 @@ function cacheKey(model, prompt) {
 }
 function cacheFile(ctx, model, prompt) {
   return path.join(cacheDir(ctx), cacheKey(model, prompt) + '.json');
+}
+
+// Normalize prompt text for equivalence / similarity comparison:
+// lowercase, strip punctuation, collapse whitespace.
+function normalizePrompt(prompt) {
+  return String(prompt == null ? '' : prompt)
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function normKey(model, prompt) {
+  return crypto
+    .createHash('sha256')
+    .update(String(model) + '\n' + normalizePrompt(prompt))
+    .digest('hex');
+}
+
+// FNV-1a 32-bit unsigned integer hash of a 3-gram shingle.
+// Storing only sorted integer hashes (capped to 64) ensures raw prompt words
+// never touch disk while allowing fast Jaccard similarity evaluation.
+function fnv1a32(str) {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return h >>> 0;
+}
+
+function shingleSignatures(prompt) {
+  const norm = normalizePrompt(prompt);
+  if (!norm) return [];
+  const compact = norm.replace(/\s+/g, ' ');
+  const set = new Set();
+  if (compact.length < 3) {
+    set.add(fnv1a32(compact));
+  } else {
+    for (let i = 0; i <= compact.length - 3; i++) {
+      set.add(fnv1a32(compact.slice(i, i + 3)));
+    }
+  }
+  // Keep up to 96 smallest hashes (MinHash-style bounded sketch)
+  return Array.from(set)
+    .sort(function (a, b) {
+      return a - b;
+    })
+    .slice(0, 96);
+}
+
+function jaccardSimilarity(sigA, sigB) {
+  if (!Array.isArray(sigA) || !Array.isArray(sigB) || !sigA.length || !sigB.length) return 0;
+  let i = 0,
+    j = 0,
+    inter = 0;
+  while (i < sigA.length && j < sigB.length) {
+    if (sigA[i] === sigB[j]) {
+      inter++;
+      i++;
+      j++;
+    } else if (sigA[i] < sigB[j]) {
+      i++;
+    } else {
+      j++;
+    }
+  }
+  const union = sigA.length + sigB.length - inter;
+  return union > 0 ? inter / union : 0;
+}
+
+function round6(n) {
+  return Math.round((Number(n) || 0) * 1000000) / 1000000;
+}
+function round2(n) {
+  return Math.round((Number(n) || 0) * 100) / 100;
+}
+
+function readCacheStatsRaw(ctx) {
+  try {
+    const raw = readJsonForWrite(cacheStatsPath(ctx));
+    if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+      return {
+        hits: Number(raw.hits) || 0,
+        misses: Number(raw.misses) || 0,
+        savedTokens: Number(raw.savedTokens) || 0,
+        savedUsd: round6(raw.savedUsd),
+        savedTry: round2(raw.savedTry),
+      };
+    }
+  } catch (e) {
+    /* fall through */
+  }
+  return { hits: 0, misses: 0, savedTokens: 0, savedUsd: 0, savedTry: 0 };
+}
+
+function recordCacheMetric(ctx, hitEntry, isHit, promptText, opts) {
+  if (!ctx || !ctx.configDir || (opts && opts.trackStats === false)) return;
+  try {
+    const cur = readCacheStatsRaw(ctx);
+    if (isHit && hitEntry) {
+      cur.hits += 1;
+      const inTok =
+        typeof hitEntry.inputTokens === 'number' && hitEntry.inputTokens > 0
+          ? hitEntry.inputTokens
+          : Math.max(1, Math.ceil(String(promptText || '').length / 4));
+      const outTok =
+        typeof hitEntry.outputTokens === 'number' && hitEntry.outputTokens > 0
+          ? hitEntry.outputTokens
+          : Math.max(1, Math.ceil(String(hitEntry.response || '').length / 4));
+      const tok = inTok + outTok;
+      const usd =
+        typeof hitEntry.costUsd === 'number' && hitEntry.costUsd > 0
+          ? hitEntry.costUsd
+          : round6((tok / 1000000) * DEFAULT_BLENDED_USD_PER_MTOK);
+      const tryAmt = round2(usd * ((opts && opts.usdToTryRate) || USD_TO_TRY_APPROX));
+      cur.savedTokens += tok;
+      cur.savedUsd = round6(cur.savedUsd + usd);
+      cur.savedTry = round2(cur.savedTry + tryAmt);
+      atomicWrite(cacheStatsPath(ctx), JSON.stringify(cur, null, 2), 0o600);
+      try {
+        license.recordUsage(ctx, { savedUsd: usd, savedTokens: tok });
+      } catch (e) {
+        /* best effort */
+      }
+    } else if (!isHit) {
+      cur.misses += 1;
+      atomicWrite(cacheStatsPath(ctx), JSON.stringify(cur, null, 2), 0o600);
+    }
+  } catch (e) {
+    /* best effort */
+  }
 }
 
 // "now" as an ISO string / ms, from opts.now (fn|string) else ctx.now() — never a real clock.
@@ -370,13 +511,21 @@ function cacheGet(ctx, sel, opts) {
   try {
     entry = JSON.parse(fs.readFileSync(path.join(cacheDir(ctx), hash + '.json'), 'utf8'));
   } catch (e) {
+    recordCacheMetric(ctx, null, false, prompt, opts);
     return null;
   }
-  if (!entry || typeof entry !== 'object' || entry.model !== model || entry.promptHash !== hash) return null;
+  if (!entry || typeof entry !== 'object' || entry.model !== model || entry.promptHash !== hash) {
+    recordCacheMetric(ctx, null, false, prompt, opts);
+    return null;
+  }
   const ttl = typeof opts.ttlMs === 'number' && opts.ttlMs >= 0 ? opts.ttlMs : DAY_MS;
   const at = Date.parse(entry.at);
   const now = nowMs(ctx, opts);
-  if (!isNaN(at) && now - at > ttl) return null; // expired
+  if (!isNaN(at) && now - at > ttl) {
+    recordCacheMetric(ctx, null, false, prompt, opts);
+    return null; // expired
+  }
+  recordCacheMetric(ctx, entry, true, prompt, opts);
   return {
     model: entry.model,
     promptHash: entry.promptHash,
@@ -386,8 +535,76 @@ function cacheGet(ctx, sel, opts) {
   };
 }
 
-// cachePut(ctx, {model, prompt, response}, opts). Stores model + key-hash +
-// secret-stripped response + timestamp. Never stores the raw prompt. Evicts to cap.
+// Normalized / Jaccard similarity cache lookup (P1-2).
+// First attempts an exact match; if missed, compares normalized prompt hash and
+// 3-gram shingle Jaccard similarity against non-expired entries for the same model.
+function cacheLookupSimilar(ctx, sel, opts) {
+  sel = sel || {};
+  opts = opts || {};
+  const model = sel.model,
+    prompt = sel.prompt;
+  if (!isValidModel(model) || typeof prompt !== 'string' || !prompt.length) return null;
+
+  // 1) Try exact match (without double-counting miss if we fall back to similarity)
+  const exact = cacheGet(ctx, sel, Object.assign({}, opts, { trackStats: false }));
+  if (exact) {
+    recordCacheMetric(ctx, exact, true, prompt, opts);
+    return Object.assign({}, exact, { similarity: 1, matchType: 'exact' });
+  }
+
+  const threshold =
+    typeof opts.threshold === 'number' && opts.threshold > 0 && opts.threshold <= 1
+      ? opts.threshold
+      : DEFAULT_SIMILARITY_THRESHOLD;
+  const ttl = typeof opts.ttlMs === 'number' && opts.ttlMs >= 0 ? opts.ttlMs : DAY_MS;
+  const now = nowMs(ctx, opts);
+  const targetNorm = normKey(model, prompt);
+  const targetShingles = shingleSignatures(prompt);
+
+  const files = listCacheFiles(ctx);
+  let bestEntry = null;
+  let bestSim = 0;
+  let bestAgeMs = null;
+
+  for (let i = 0; i < files.length; i++) {
+    const e = readEntryFile(ctx, files[i]);
+    if (!e || typeof e !== 'object' || e.model !== model) continue;
+    const at = Date.parse(e.at);
+    if (!isNaN(at) && now - at > ttl) continue;
+    let sim = 0;
+    if (e.normHash && e.normHash === targetNorm) {
+      sim = 1;
+    } else if (Array.isArray(e.shingles) && e.shingles.length) {
+      sim = jaccardSimilarity(targetShingles, e.shingles);
+    }
+    if (sim >= threshold && sim > bestSim) {
+      bestSim = sim;
+      bestEntry = e;
+      bestAgeMs = isNaN(at) ? null : now - at;
+      if (sim === 1) break;
+    }
+  }
+
+  if (!bestEntry) {
+    recordCacheMetric(ctx, null, false, prompt, opts);
+    return null;
+  }
+
+  recordCacheMetric(ctx, bestEntry, true, prompt, opts);
+  return {
+    model: bestEntry.model,
+    promptHash: bestEntry.promptHash,
+    response: typeof bestEntry.response === 'string' ? bestEntry.response : '',
+    at: bestEntry.at,
+    ageMs: bestAgeMs,
+    similarity: Math.round(bestSim * 10000) / 10000,
+    matchType: bestSim === 1 ? 'normalized' : 'similar',
+  };
+}
+
+// cachePut(ctx, {model, prompt, response, inputTokens?, outputTokens?, costUsd?}, opts).
+// Stores model + key-hash + normHash + numeric shingle sketch + secret-stripped response + timestamp.
+// Never stores the raw prompt. Evicts to cap.
 function cachePut(ctx, sel, opts) {
   sel = sel || {};
   opts = opts || {};
@@ -399,12 +616,21 @@ function cachePut(ctx, sel, opts) {
   const dir = cacheDir(ctx);
   fs.mkdirSync(dir, { recursive: true });
   const hash = cacheKey(model, prompt);
+  const nHash = normKey(model, prompt);
+  const shingles = shingleSignatures(prompt);
   const at = nowIso(ctx, opts);
-  atomicWrite(
-    path.join(dir, hash + '.json'),
-    JSON.stringify({ model: model, promptHash: hash, response: response, at: at }, null, 2),
-    0o600,
-  );
+  const record = {
+    model: model,
+    promptHash: hash,
+    normHash: nHash,
+    shingles: shingles,
+    response: response,
+    at: at,
+  };
+  if (typeof sel.inputTokens === 'number' && sel.inputTokens >= 0) record.inputTokens = sel.inputTokens;
+  if (typeof sel.outputTokens === 'number' && sel.outputTokens >= 0) record.outputTokens = sel.outputTokens;
+  if (typeof sel.costUsd === 'number' && sel.costUsd >= 0) record.costUsd = round6(sel.costUsd);
+  atomicWrite(path.join(dir, hash + '.json'), JSON.stringify(record, null, 2), 0o600);
   const evicted = evict(ctx, opts);
   return { model: model, promptHash: hash, at: at, bytes: Buffer.byteLength(response), evicted: evicted };
 }
@@ -449,7 +675,7 @@ function cachePurge(ctx, sel, opts) {
   return { removed: removed };
 }
 
-// Read-only cache overview for `cache status` / its MCP tool.
+// Read-only cache overview + savings metrics for `cache status` / `cache stats` / MCP tools.
 function cacheStatus(ctx) {
   const dir = cacheDir(ctx);
   const files = listCacheFiles(ctx);
@@ -471,7 +697,28 @@ function cacheStatus(ctx) {
       if (!newest || at > newest) newest = at;
     }
   });
-  return { dir: dir, count: files.length, bytes: bytes, cap: MAX_CACHE_FILES, oldest: oldest, newest: newest };
+  const s = readCacheStatsRaw(ctx);
+  const totalLookups = s.hits + s.misses;
+  const hitRatePct = totalLookups > 0 ? round2((s.hits / totalLookups) * 100) : 0;
+  return {
+    dir: dir,
+    count: files.length,
+    bytes: bytes,
+    cap: MAX_CACHE_FILES,
+    oldest: oldest,
+    newest: newest,
+    hits: s.hits,
+    misses: s.misses,
+    totalLookups: totalLookups,
+    hitRatePct: hitRatePct,
+    savedTokens: s.savedTokens,
+    savedUsd: s.savedUsd,
+    savedTry: s.savedTry,
+  };
+}
+
+function cacheStats(ctx) {
+  return cacheStatus(ctx);
 }
 
 export {
@@ -487,12 +734,19 @@ export {
   providerServes,
   costHintOf, // cache
   cacheDir,
+  cacheStatsPath,
   cacheKey,
+  normKey,
+  normalizePrompt,
+  shingleSignatures,
+  jaccardSimilarity,
   cacheFile,
   cacheGet,
+  cacheLookupSimilar,
   cachePut,
   cachePurge,
   cacheStatus,
+  cacheStats,
   stripSecretText,
   DAY_MS,
   MAX_CACHE_FILES,

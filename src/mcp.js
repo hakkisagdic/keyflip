@@ -4402,6 +4402,17 @@ const TOOLS = [
     },
   },
   {
+    name: 'keyflip_cache_stats',
+    title: 'Response cache savings and hit-rate metrics',
+    description:
+      'Response-cache ROI & similarity stats: hits, misses, hitRatePct, savedTokens, savedUsd, savedTry, entry count, and byte size. Read-only.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    annotations: RO,
+    run: async function (ctx) {
+      return _router.cacheStats(ctx);
+    },
+  },
+  {
     name: 'keyflip_route_set',
     title: 'Pin a model to a provider',
     description:

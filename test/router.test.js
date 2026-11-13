@@ -5,6 +5,7 @@ import path from 'path';
 import * as router from '../src/router.js';
 import * as provider from '../src/provider.js';
 import * as secretscan from '../src/secretscan.js';
+import * as license from '../src/license.js';
 import { makeCtx, assertPrivateMode } from './helpers.js';
 
 function addProv(ctx, name, baseUrl, models, extra) {
@@ -265,4 +266,57 @@ test('cacheStatus reports count, cap and the timestamp range', function () {
   assert.strictEqual(s.oldest, '2026-01-01T00:00:00.000Z');
   assert.strictEqual(s.newest, '2026-01-05T00:00:00.000Z');
   assert.ok(s.bytes > 0);
+});
+
+// ---------------------------------------------------------------------------
+// P1-2: Normalized / Jaccard Similarity Lookup & Savings Ledger
+// ---------------------------------------------------------------------------
+test('cacheLookupSimilar matches whitespace/punctuation variants and near-identical prompts while tracking USD/TRY savings', function () {
+  const ctx = makeCtx();
+  router.cachePut(ctx, {
+    model: 'claude-sonnet-4-6',
+    prompt: 'Explain how Ed25519 offline license verification works in Node.js!',
+    response: 'Ed25519 verifies signatures using a 32-byte public key without network calls.',
+    inputTokens: 400,
+    outputTokens: 600,
+    costUsd: 0.012,
+  });
+
+  // 1) Normalized match (case, punctuation, extra whitespace)
+  const hitNorm = router.cacheLookupSimilar(ctx, {
+    model: 'claude-sonnet-4-6',
+    prompt: '  explain   how ed25519 offline license verification works in node.js??? ',
+  });
+  assert.ok(hitNorm, 'normalized prompt hits cache');
+  assert.strictEqual(hitNorm.matchType, 'normalized');
+  assert.strictEqual(hitNorm.similarity, 1);
+
+  // 2) Shingle Jaccard similarity match (>= 0.88)
+  const hitSim = router.cacheLookupSimilar(ctx, {
+    model: 'claude-sonnet-4-6',
+    prompt: 'Explain how Ed25519 offline license verification works in Node.js',
+  });
+  assert.ok(hitSim, 'near-identical prompt hits cache');
+  assert.ok(hitSim.similarity >= 0.88);
+
+  // 3) Unrelated prompt misses
+  const miss = router.cacheLookupSimilar(ctx, {
+    model: 'claude-sonnet-4-6',
+    prompt: 'Write a SQL migration for PostgreSQL partitioning',
+  });
+  assert.strictEqual(miss, null);
+
+  // 4) Verify cacheStats and license usage ledger sync
+  const st = router.cacheStats(ctx);
+  assert.strictEqual(st.hits, 2);
+  assert.strictEqual(st.misses, 1);
+  assert.strictEqual(st.totalLookups, 3);
+  assert.strictEqual(st.hitRatePct, 66.67);
+  assert.strictEqual(st.savedTokens, 2000);
+  assert.strictEqual(st.savedUsd, 0.024);
+  assert.ok(st.savedTry > 0);
+
+  const ledger = license.usageSummary(ctx);
+  assert.strictEqual(ledger.month.savedTokens, 2000);
+  assert.strictEqual(ledger.month.savedUsd, 0.024);
 });
