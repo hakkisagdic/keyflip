@@ -16,12 +16,12 @@
 | **P0-1** | `keyflip license` Tam Yaşam Döngüsü: 14 Günlük Deneme (`trial`), Ek Süre (`graceDays`), Koltuk (`seats`), Yerel Kullanım/ROI Defteri ve Web Panel Lisans Kartı | Çevrimdışı İmzalı Lisans + Deneme + Grace Period + Kullanım Ölçümü (Kısmi) | 10 | 10 | 2 | **50.0** | **P0** | [x] Tamamlandı |
 | **P0-2** | `issuer/` iyzico + MoR Fatura Defteri (`invoices.jsonl`), TL/USD Paket Katalogu (`plans`) ve Sipariş/Vergi Mutabakatı | Türkiye Yerel Ödeme iyzico/PayTR + Fatura Kaydı (Kısmi) | 10 | 9 | 2 | **45.0** | **P0** | [x] Tamamlandı |
 | **P0-3** | Sanal Anahtarlar (`Virtual Keys` — `vk_...`), Anahtar/Model Bazlı USD/TL Harcama Bütçesi, RPM/TPM Limiti ve Geçici Bütçe Artışı (`tempBoost`) | Sanal Anahtarlar + USD/TL Bütçe & RPM/TPM Limiti (Yok) | 9 | 10 | 2 | **45.0** | **P0** | [x] Tamamlandı |
-| **P1-1** | Proxy Üzerinde Gerçek Zamanlı Giden (Outbound) PII & Sır Maskeleme / Engelleme Guardrail'i (`src/proxy.js` + `src/policy.js`) | Canlı Proxy Outbound PII & Sır Guardrail (Kısmi) | 9 | 9 | 2 | **40.5** | **P1** | [ ] Bekliyor |
-| **P1-2** | Normalize/Semantik Yanıt Önbelleği + Kazanılan USD/TL & Token Tasarruf Sayacı (`src/router.js`) | Semantik Yanıt Önbelleği + Maliyet Tasarruf Raporu (Kısmi) | 8 | 9 | 2 | **36.0** | **P1** | [ ] Bekliyor |
-| **P1-3** | Bileşik Yönlendirme Skoru (Fiyat + Gecikme TTFT + 429 Oranı + Kota) ve Tur Sınırında (Turn-Boundary) Prompt-Cache Dostu Otomatik Hesap Değişimi | Bileşik Yönlendirme Skoru (Kısmi) + Turn-Boundary Cache-Warm Geçiş (Kısmi) | 8 | 9 | 2 | **36.0** | **P1** | [ ] Bekliyor |
-| **P2-1** | Çoklu Protokol Proxy Ağ Geçidi (`/v1/chat/completions` & `/v1/responses` ↔ `/v1/messages` Normalizasyonu) | Çoklu Protokol Ağ Geçidi (Kısmi) | 7 | 8 | 3 | **18.7** | **P2** | [ ] Bekliyor |
-| **P2-2** | Git Commit ↔ Ajan Konuşması İlişkilendirme (`keyflip conv why <commit\|file>`) ve Oturum Verimlilik / Prompt Kalite Skoru (`Efficiency Score`) | Git Commit ↔ Konuşma İlişkilendirme & Prompt Skoru (Yok) | 7 | 8 | 3 | **18.7** | **P2** | [ ] Bekliyor |
-| **P2-3** | Web Panel (`keyflip ui`) ve Ödeme/Lisans Arayüzü `ui-quality` Kalite Kapısı (Mobil/Laptop/Masaüstü Taşma & Görsel Doğrulama) | Arayüz Kalite Kapısı (Kısmi) | 8 | 8 | 2 | **32.0** | **P2** | [ ] Bekliyor |
+| **P1-1** | Proxy Üzerinde Gerçek Zamanlı Giden (Outbound) PII & Sır Maskeleme / Engelleme Guardrail'i (`src/proxy.js` + `src/policy.js`) | Canlı Proxy Outbound PII & Sır Guardrail (Kısmi) | 9 | 9 | 2 | **40.5** | **P1** | [x] Tamamlandı |
+| **P1-2** | Normalize/Semantik Yanıt Önbelleği + Kazanılan USD/TL & Token Tasarruf Sayacı (`src/router.js`) | Semantik Yanıt Önbelleği + Maliyet Tasarruf Raporu (Kısmi) | 8 | 9 | 2 | **36.0** | **P1** | [x] Tamamlandı |
+| **P1-3** | Bileşik Yönlendirme Skoru (Fiyat + Gecikme TTFT + 429 Oranı + Kota) ve Tur Sınırında (Turn-Boundary) Prompt-Cache Dostu Otomatik Hesap Değişimi | Bileşik Yönlendirme Skoru (Kısmi) + Turn-Boundary Cache-Warm Geçiş (Kısmi) | 8 | 9 | 2 | **36.0** | **P1** | [x] Tamamlandı |
+| **P2-1** | Çoklu Protokol Proxy Ağ Geçidi (`/v1/chat/completions` & `/v1/responses` ↔ `/v1/messages` Normalizasyonu) | Çoklu Protokol Ağ Geçidi (Kısmi) | 7 | 8 | 3 | **18.7** | **P2** | [x] Tamamlandı |
+| **P2-2** | Git Commit ↔ Ajan Konuşması İlişkilendirme (`keyflip conv why <commit\|file>`) ve Oturum Verimlilik / Prompt Kalite Skoru (`Efficiency Score`) | Git Commit ↔ Konuşma İlişkilendirme & Prompt Skoru (Yok) | 7 | 8 | 3 | **18.7** | **P2** | [x] Tamamlandı |
+| **P2-3** | Web Panel (`keyflip ui`) ve Ödeme/Lisans Arayüzü `ui-quality` Kalite Kapısı (Mobil/Laptop/Masaüstü Taşma & Görsel Doğrulama) | Arayüz Kalite Kapısı (Kısmi) | 8 | 8 | 2 | **32.0** | **P2** | [x] Tamamlandı |
 
 ---
 
@@ -64,7 +64,7 @@
 
 ---
 
-### [ ] P1-1 — Proxy Üzerinde Gerçek Zamanlı Giden (Outbound) PII & Sır Maskeleme / Engelleme Guardrail'i
+### [x] P1-1 — Proxy Üzerinde Gerçek Zamanlı Giden (Outbound) PII & Sır Maskeleme / Engelleme Guardrail'i
 - **Matris Karşılığı:** *Proxy Üzerinde Gerçek Zamanlı Giden (Outbound) PII & Sır Maskeleme Guardrail'i (Kısmi → Var)*
 - **Tahmini Efor:** 2 birim (Orta)
 - **Bağımlılık:** P0-3 (`src/proxy.js`, `src/policy.js`, `src/pii.js`, `src/secretscan.js`)
@@ -76,7 +76,7 @@
 
 ---
 
-### [ ] P1-2 — Normalize/Semantik Yanıt Önbelleği + Kazanılan USD/TL & Token Tasarruf Sayacı (`src/router.js`)
+### [x] P1-2 — Normalize/Semantik Yanıt Önbelleği + Kazanılan USD/TL & Token Tasarruf Sayacı (`src/router.js`)
 - **Matris Karşılığı:** *Semantik Yanıt Önbelleği (Semantic Cache) + Maliyet Tasarruf Raporu (Kısmi → Var)*
 - **Tahmini Efor:** 2 birim (Orta)
 - **Bağımlılık:** P0-1 (`src/router.js`, `src/cost.js`, `src/cli.js`, `src/mcp.js`)
@@ -87,7 +87,7 @@
 
 ---
 
-### [ ] P1-3 — Bileşik Yönlendirme Skoru (Fiyat + Gecikme TTFT + 429 Oranı + Kota Sağlığı) ve Tur Sınırında (Turn-Boundary) Prompt-Cache Dostu Otomatik Hesap Değişimi
+### [x] P1-3 — Bileşik Yönlendirme Skoru (Fiyat + Gecikme TTFT + 429 Oranı + Kota Sağlığı) ve Tur Sınırında (Turn-Boundary) Prompt-Cache Dostu Otomatik Hesap Değişimi
 - **Matris Karşılığı:** *Bileşik Yönlendirme Skoru (Kısmi → Var)* ve *Tur Sınırında (Turn-Boundary) Önbellek Dostu Otomatik Hesap Değişimi (Kısmi → Var)*
 - **Tahmini Efor:** 2 birim (Orta)
 - **Bağımlılık:** P1-2 (`src/router.js`, `src/switchplan.js`)
@@ -98,7 +98,7 @@
 
 ---
 
-### [ ] P2-1 — Çoklu Protokol Proxy Ağ Geçidi (`/v1/chat/completions` & `/v1/responses` ↔ `/v1/messages` Normalizasyonu)
+### [x] P2-1 — Çoklu Protokol Proxy Ağ Geçidi (`/v1/chat/completions` & `/v1/responses` ↔ `/v1/messages` Normalizasyonu)
 - **Matris Karşılığı:** *Çoklu Protokol Ağ Geçidi (`/v1/messages` ↔ `/v1/chat/completions` ↔ `/v1/responses`) (Kısmi → Var)*
 - **Tahmini Efor:** 3 birim (Orta-Yüksek)
 - **Bağımlılık:** P0-3 (`src/proxy.js`)
@@ -109,7 +109,7 @@
 
 ---
 
-### [ ] P2-2 — Git Commit ↔ Ajan Konuşması İlişkilendirme (`keyflip conv why <commit|file>`) ve Oturum Verimlilik Skoru (`Efficiency Score`)
+### [x] P2-2 — Git Commit ↔ Ajan Konuşması İlişkilendirme (`keyflip conv why <commit|file>`) ve Oturum Verimlilik Skoru (`Efficiency Score`)
 - **Matris Karşılığı:** *Git Commit ↔ Ajan Konuşması İlişkilendirme (`why` / `blame`) ve Prompt Kalite/Verimlilik Skoru (Yok → Var)*
 - **Tahmini Efor:** 3 birim (Orta-Yüksek)
 - **Bağımlılık:** Yok (`src/conversations.js`, `src/convindex.js`, `src/cli.js`, `src/mcp.js`)
@@ -120,7 +120,7 @@
 
 ---
 
-### [ ] P2-3 — Web Panel (`keyflip ui`) ve Lisans Arayüzü `ui-quality` Kalite Kapısı Doğrulaması
+### [x] P2-3 — Web Panel (`keyflip ui`) ve Lisans Arayüzü `ui-quality` Kalite Kapısı Doğrulaması
 - **Matris Karşılığı:** *Arayüz Kalite Kapısı (`ui-quality/SKILL.md`)*
 - **Tahmini Efor:** 2 birim (Orta)
 - **Bağımlılık:** P0-1, P0-3 (`src/panel.js`, `DESIGN.md`)

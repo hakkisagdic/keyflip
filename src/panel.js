@@ -1,8 +1,8 @@
 // G1: `keyflip panel` — a command-activated LOCAL web dashboard (loopback only, never a
 // daemon; the user starts/stops it). Read-only v1: it aggregates keyflip state (accounts +
-// cached quota, providers, CLI surfaces, conversation index, license & ROI summary, recent
-// sessions, keepsakes) and renders it. Zero-dep (Node http + inline HTML/CSS/JS). No mutation
-// surface → nothing dangerous is exposed over HTTP.
+// cached quota, providers, CLI surfaces, conversation index, license & ROI summary, cache +
+// guardrail + virtual-key telemetry, recent sessions, keepsakes) and renders it. Zero-dep
+// (Node http + inline HTML/CSS/JS). No mutation surface → nothing dangerous is exposed over HTTP.
 import http from 'http';
 import fs from 'fs';
 import path from 'path';
@@ -16,6 +16,10 @@ import * as _usage from './usage.js';
 import * as _surface from './surface.js';
 import * as _convindex from './convindex.js';
 import * as _license from './license.js';
+import * as _router from './router.js';
+import * as _policy from './policy.js';
+import * as _pii from './pii.js';
+import * as _budget from './budget.js';
 
 // Aggregate the dashboard state. FAST — reads the cached usage (no network fetch) and bounds
 // the session/keepsake lists. Never throws (a panel must not crash on partial data).
@@ -168,6 +172,55 @@ function buildState(ctx) {
     },
   );
 
+  const cacheInfo = safe(
+    function () {
+      return _router.cacheStats(ctx);
+    },
+    {
+      count: 0,
+      hits: 0,
+      misses: 0,
+      hitRatePct: 0,
+      savedUsd: 0,
+      savedTry: 0,
+      savedTokens: 0,
+    },
+  );
+
+  const guardrailInfo = safe(
+    function () {
+      const g = _policy.getGuardrail(ctx);
+      const mode = typeof g === 'string' ? g : (g && g.mode) || 'off';
+      const custom = _pii.loadCustom(ctx);
+      return {
+        mode: mode,
+        customPatterns: Array.isArray(custom) ? custom.length : 0,
+      };
+    },
+    { mode: 'off', customPatterns: 0 },
+  );
+
+  const virtualKeysInfo = safe(
+    function () {
+      const vks = _budget.listVirtualKeys(ctx) || [];
+      let activeCount = 0;
+      let spendUsd = 0;
+      let spendTry = 0;
+      vks.forEach(function (k) {
+        if (k.status === 'active' || (!k.revoked && !k.revokedAt)) activeCount++;
+        spendUsd += (typeof k.spentUsd === 'number' ? k.spentUsd : (k.usage && k.usage.totalUsd)) || 0;
+        spendTry += (typeof k.spentTry === 'number' ? k.spentTry : (k.usage && k.usage.totalTry)) || 0;
+      });
+      return {
+        count: vks.length,
+        activeCount: activeCount,
+        totalSpendUsd: Math.round(spendUsd * 10000) / 10000,
+        totalSpendTry: Math.round(spendTry * 100) / 100,
+      };
+    },
+    { count: 0, activeCount: 0, totalSpendUsd: 0, totalSpendTry: 0 },
+  );
+
   return {
     activeEmail: safe(function () {
       return core.currentEmail(ctx);
@@ -178,6 +231,9 @@ function buildState(ctx) {
     surfaces: surfaces,
     convIndex: convIndex,
     license: licenseInfo,
+    cache: cacheInfo,
+    guardrail: guardrailInfo,
+    virtualKeys: virtualKeysInfo,
     sessions: recent,
     keepsakes: keepsakes,
     activity: safe(
@@ -276,7 +332,7 @@ function buildMemoryGraph(ctx) {
 }
 
 // G8: a SHARE-SAFE snapshot of the dashboard — accounts + quota + activity + providers +
-// detected surfaces + conversation index + license summary ONLY.
+// detected surfaces + conversation index + license/cache/guardrail/virtualKeys summary ONLY.
 // Deliberately EXCLUDES anything that carries private content (session cwds/previews,
 // keepsakes, the memory constellation's terms). `anon` masks emails + account/provider names.
 function buildSnapshot(ctx, opts) {
@@ -329,6 +385,17 @@ function buildSnapshot(ctx, opts) {
       inGrace: false,
       usage: { requests: 0, savedUsd: 0, savedTry: 0, savedTokens: 0, failoversSaved: 0, leaksBlocked: 0 },
     },
+    cache: s.cache || {
+      count: 0,
+      hits: 0,
+      misses: 0,
+      hitRatePct: 0,
+      savedUsd: 0,
+      savedTry: 0,
+      savedTokens: 0,
+    },
+    guardrail: s.guardrail || { mode: 'off', customPatterns: 0 },
+    virtualKeys: s.virtualKeys || { count: 0, activeCount: 0, totalSpendUsd: 0, totalSpendTry: 0 },
     activity: s.activity,
     anon: !!opts.anon,
   };
@@ -419,20 +486,40 @@ function renderSnapshot(snap) {
     : 'Not built yet.';
   const lic = snap.license || { plan: 'free', seats: 1, usage: {} };
   const licUsg = lic.usage || {};
+  const cch = snap.cache || { count: 0, hits: 0, misses: 0, hitRatePct: 0, savedUsd: 0 };
+  const grd = snap.guardrail || { mode: 'off', customPatterns: 0 };
+  const vks = snap.virtualKeys || { count: 0, activeCount: 0, totalSpendUsd: 0 };
   const licSummary =
-    'plan: <b>' +
-    esc(lic.plan || 'free') +
-    '</b>' +
-    (lic.trial ? ' (trial)' : '') +
-    (lic.inGrace ? ' (grace period)' : '') +
+    '<div class="kpi-grid">' +
+    '<div class="kpi-card"><div class="kpi-label">Plan &amp; ROI</div><div class="kpi-val">' +
+    esc((lic.plan || 'free').toUpperCase()) +
+    (lic.trial ? ' <span class="kpi-tag warn">trial</span>' : '') +
+    (lic.inGrace ? ' <span class="kpi-tag warn">grace</span>' : '') +
+    '</div><div class="kpi-sub">saved $' +
+    esc(Number(licUsg.savedUsd || 0).toFixed(2)) +
     (lic.seats > 1 ? ' · ' + esc(lic.seats) + ' seats' : '') +
-    ' · saved $' +
-    esc((licUsg.savedUsd || 0).toFixed(2)) +
     ' · ' +
     esc(licUsg.failoversSaved || 0) +
-    ' failovers · ' +
+    ' failovers</div></div>' +
+    '<div class="kpi-card"><div class="kpi-label">Semantic Cache</div><div class="kpi-val">' +
+    pct(cch.hitRatePct || 0) +
+    '</div><div class="kpi-sub">' +
+    esc(cch.hits || 0) + ' hits · ' + esc(cch.count || 0) + ' entries · saved $' + esc(Number(cch.savedUsd || 0).toFixed(2)) + '</div></div>' +
+    '<div class="kpi-card"><div class="kpi-label">PII Guardrail</div><div class="kpi-val">' +
+    esc((grd.mode || 'off').toUpperCase()) +
+    '</div><div class="kpi-sub">' +
     esc(licUsg.leaksBlocked || 0) +
-    ' leaks blocked';
+    ' leaks blocked · ' +
+    esc(grd.customPatterns || 0) +
+    ' custom rules</div></div>' +
+    '<div class="kpi-card"><div class="kpi-label">Virtual Keys</div><div class="kpi-val">' +
+    esc(vks.activeCount || 0) +
+    ' / ' +
+    esc(vks.count || 0) +
+    '</div><div class="kpi-sub">spend $' +
+    esc(Number(vks.totalSpendUsd || 0).toFixed(2)) +
+    '</div></div>' +
+    '</div>';
   const act = snap.activity || { days: [], total: 0, weeks: 26 };
   const when = snap.generatedAt ? String(snap.generatedAt).slice(0, 16).replace('T', ' ') : '';
   return (
@@ -465,7 +552,7 @@ function renderSnapshot(snap) {
     '<section><h2>Conversation index</h2><div class="muted">' +
     ciSummary +
     '</div></section>' +
-    '<section><h2>License &amp; monthly value</h2><div class="muted">' +
+    '<section><h2>License &amp; monthly value</h2><div id="license-info">' +
     licSummary +
     '</div></section>' +
     '</main><footer class="muted">Read-only static snapshot · no session content, no secrets.</footer>' +
@@ -601,7 +688,7 @@ function renderPage() {
     '<section><h2>Providers</h2><div id="providers" class="chips"></div></section>' +
     '<section><h2>Detected AI surfaces</h2><div id="surfaces" class="chips"></div></section>' +
     '<section><h2>Conversation index</h2><div id="conv-index" class="muted"></div></section>' +
-    '<section><h2>License &amp; monthly value</h2><div id="license-info" class="muted"></div></section>' +
+    '<section><h2>License &amp; monthly value</h2><div id="license-info"></div></section>' +
     '<section><h2>Recent sessions</h2><ul id="sessions" class="list"></ul></section>' +
     '<section><h2>Keepsakes</h2><ul id="keepsakes" class="list"></ul></section>' +
     '<section><h2>Memory constellation</h2><div id="memgraph"></div></section>' +
@@ -616,18 +703,24 @@ const STYLE = [
   ':root{--bg:#0f1115;--card:#1a1d24;--fg:#e6e8ec;--muted:#8b909a;--accent:#7aa2f7;--ok:#6ccf8e;--warn:#e0af68;--bad:#f7768e;--bar:#2a2e37}',
   '@media(prefers-color-scheme:light){:root{--bg:#f6f7f9;--card:#fff;--fg:#1a1d24;--muted:#6b7280;--bar:#e5e7eb}}',
   '*{box-sizing:border-box}body{margin:0;font:14px/1.5 -apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif;font-variant-numeric:tabular-nums;background:var(--bg);color:var(--fg)}',
-  'header{display:flex;align-items:center;gap:12px;padding:14px 22px;border-bottom:1px solid var(--bar);position:sticky;top:0;background:var(--bg)}',
+  'header{display:flex;align-items:center;gap:12px;padding:14px 22px;border-bottom:1px solid var(--bar);position:sticky;top:0;background:var(--bg);z-index:10}',
   'header h1{font-size:18px;margin:0}#refresh{margin-left:auto;background:var(--card);color:var(--fg);border:1px solid var(--bar);border-radius:8px;padding:4px 10px;cursor:pointer}',
   'main{padding:18px 22px;max-width:1000px;margin:0 auto}section{margin-bottom:26px}h2{font-size:13px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin:0 0 10px}',
   '.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:12px}',
-  '.card{background:var(--card);border:1px solid var(--bar);border-radius:12px;padding:14px}',
+  '.kpi-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px}',
+  '.kpi-card{background:var(--card);border:1px solid var(--bar);border-radius:12px;padding:12px 14px;font-variant-numeric:tabular-nums}',
+  '.kpi-label{font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);margin-bottom:4px}',
+  '.kpi-val{font-size:18px;font-weight:600;color:var(--fg);display:flex;align-items:center;gap:6px;font-variant-numeric:tabular-nums}',
+  '.kpi-sub{font-size:12px;color:var(--muted);margin-top:4px;font-variant-numeric:tabular-nums}',
+  '.kpi-tag{font-size:10px;padding:1px 6px;border-radius:6px;border:1px solid var(--bar);color:var(--muted);font-weight:500}.kpi-tag.warn{border-color:var(--warn);color:var(--warn)}.kpi-tag.ok{border-color:var(--ok);color:var(--ok)}',
+  '.card{background:var(--card);border:1px solid var(--bar);border-radius:12px;padding:14px;font-variant-numeric:tabular-nums}',
   '.card.active{border-color:var(--accent)}.card .email{font-weight:600;word-break:break-all}.card .name{color:var(--muted);font-size:12px}',
   '.bar{height:6px;background:var(--bar);border-radius:4px;margin-top:8px;overflow:hidden}.bar>i{display:block;height:100%;background:var(--ok)}',
   '.spark{width:100%;height:26px;margin-top:8px;display:block}.spark polyline{fill:none;stroke:var(--accent);stroke-width:1.5;vector-effect:non-scaling-stroke}',
-  '.bar.hi>i{background:var(--warn)}.bar.crit>i{background:var(--bad)}.barlabel{font-size:11px;color:var(--muted);display:flex;justify-content:space-between;margin-top:6px}',
+  '.bar.hi>i{background:var(--warn)}.bar.crit>i{background:var(--bad)}.barlabel{font-size:11px;color:var(--muted);display:flex;justify-content:space-between;margin-top:6px;font-variant-numeric:tabular-nums}',
   '.chips{display:flex;flex-wrap:wrap;gap:8px}.chip{background:var(--card);border:1px solid var(--bar);border-radius:20px;padding:5px 12px;font-size:13px}.chip.active{border-color:var(--accent);color:var(--accent)}',
-  '.list{list-style:none;margin:0;padding:0}.list li{background:var(--card);border:1px solid var(--bar);border-radius:10px;padding:10px 12px;margin-bottom:8px}',
-  '.list .meta{color:var(--muted);font-size:12px}.badge{font-size:11px;color:var(--bad)}.muted{color:var(--muted)}code{background:var(--bar);padding:1px 5px;border-radius:4px}',
+  '.list{list-style:none;margin:0;padding:0}.list li{background:var(--card);border:1px solid var(--bar);border-radius:10px;padding:10px 12px;margin-bottom:8px;overflow-wrap:anywhere;word-break:break-word}',
+  '.list .meta{color:var(--muted);font-size:12px;overflow-wrap:anywhere;word-break:break-word}.badge{font-size:11px;color:var(--bad)}.muted{color:var(--muted)}code{background:var(--bar);padding:1px 5px;border-radius:4px;font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace}',
   '.cal{width:100%;max-width:100%;height:auto;display:block;overflow:visible}.cal rect{rx:2}',
   '.cal .l0{fill:var(--bar)}.cal .l1{fill:#0e4429}.cal .l2{fill:#26a641}.cal .l3{fill:#39d353}.cal .l4{fill:#57ff6b}',
   '@media(prefers-color-scheme:light){.cal .l1{fill:#9be9a8}.cal .l2{fill:#40c463}.cal .l3{fill:#30a14e}.cal .l4{fill:#216e39}}',
@@ -636,7 +729,7 @@ const STYLE = [
   'footer{padding:14px 22px;border-top:1px solid var(--bar);font-size:12px}',
   // mobile: never scroll the body sideways; wide SVGs scroll inside their own box.
   'img,svg{max-width:100%}#activity{overflow-x:auto;-webkit-overflow-scrolling:touch}',
-  '@media(max-width:600px){header{padding:11px 14px;flex-wrap:wrap;gap:6px}header h1{font-size:16px}#refresh{margin-left:auto}main{padding:14px}section{margin-bottom:20px}.grid{grid-template-columns:1fr}.callegend{justify-content:flex-start}}',
+  '@media(max-width:600px){header{padding:11px 14px;flex-wrap:wrap;gap:6px}header h1{font-size:16px}#refresh{margin-left:auto}main{padding:14px}section{margin-bottom:20px}.grid,.kpi-grid{grid-template-columns:1fr}.callegend{justify-content:flex-start}}',
 ].join('');
 
 const SCRIPT = [
@@ -660,7 +753,13 @@ const SCRIPT = [
   ' document.getElementById("providers").innerHTML=(s.providers||[]).map(function(p){return "<span class=\\"chip"+(p.active?" active":"")+"\\">"+esc(p.name)+(p.active?" ●":"")+"</span>";}).join("")||"<span class=muted>No providers.</span>";',
   ' document.getElementById("surfaces").innerHTML=(s.surfaces||[]).filter(function(sf){return sf.present;}).map(function(sf){return "<span class=\\"chip"+(sf.switchable?" active":"")+"\\">"+esc(sf.label)+(sf.activeAccount?" ("+esc(sf.activeAccount)+")":sf.switchable?" ⇄":"")+"</span>";}).join("")||"<span class=muted>No other AI tools detected.</span>";',
   ' var ci=s.convIndex||{}; document.getElementById("conv-index").innerHTML=ci.exists?(esc(ci.sources||0)+" conversations · "+esc(ci.chunks||0)+" chunks · "+pct(ci.coverage||0)+" vector coverage"+(ci.model?" ("+esc(ci.model)+")":"")):"Not built yet — try <code>keyflip conv index --embed</code>.";',
-  ' var lc=s.license||{plan:"free",seats:1,usage:{}}; var lu=lc.usage||{}; document.getElementById("license-info").innerHTML="plan: <b>"+esc(lc.plan||"free")+"</b>"+(lc.trial?" (trial)":"")+(lc.inGrace?" (grace period)":"")+(lc.seats>1?" · "+esc(lc.seats)+" seats":"")+" · saved $"+esc(Number(lu.savedUsd||0).toFixed(2))+" · "+esc(lu.failoversSaved||0)+" failovers · "+esc(lu.leaksBlocked||0)+" leaks blocked"+(lc.plan==="free"?" — try <code>keyflip license trial</code>":"");',
+  ' var lc=s.license||{plan:"free",seats:1,usage:{}}; var lu=lc.usage||{}; var cc=s.cache||{}; var gr=s.guardrail||{mode:"off"}; var vk=s.virtualKeys||{count:0,activeCount:0,totalSpendUsd:0};',
+  ' document.getElementById("license-info").innerHTML="<div class=kpi-grid>"+',
+  '  "<div class=kpi-card><div class=kpi-label>Plan &amp; ROI</div><div class=kpi-val>"+esc((lc.plan||"free").toUpperCase())+(lc.trial?" <span class=\\"kpi-tag warn\\">trial</span>":"")+(lc.inGrace?" <span class=\\"kpi-tag warn\\">grace</span>":"")+"</div><div class=kpi-sub>saved $"+esc(Number(lu.savedUsd||0).toFixed(2))+(lc.seats>1?" · "+esc(lc.seats)+" seats":"")+" · "+esc(lu.failoversSaved||0)+" failovers"+(lc.plan==="free"?" · <code>keyflip license trial</code>":"")+"</div></div>"+',
+  '  "<div class=kpi-card><div class=kpi-label>Semantic Cache</div><div class=kpi-val>"+pct(cc.hitRatePct||0)+"</div><div class=kpi-sub>"+esc(cc.hits||0)+" hits · "+esc(cc.count||0)+" entries · saved $"+esc(Number(cc.savedUsd||0).toFixed(2))+"</div></div>"+',
+  '  "<div class=kpi-card><div class=kpi-label>PII Guardrail</div><div class=kpi-val>"+esc((gr.mode||"off").toUpperCase())+"</div><div class=kpi-sub>"+esc(lu.leaksBlocked||0)+" leaks blocked · "+esc(gr.customPatterns||0)+" custom rules</div></div>"+',
+  '  "<div class=kpi-card><div class=kpi-label>Virtual Keys</div><div class=kpi-val>"+esc(vk.activeCount||0)+" / "+esc(vk.count||0)+"</div><div class=kpi-sub>spend $"+esc(Number(vk.totalSpendUsd||0).toFixed(2))+"</div></div>"+',
+  '  "</div>";',
   ' document.getElementById("sessions").innerHTML=(s.sessions||[]).map(function(r){return "<li><div>"+esc((r.sessionId||"").slice(0,8))+" <span class=meta>"+esc(r.cwd||"")+"</span>"+(r.orphan?" <span class=badge>⚠ folder gone</span>":(r.staleCwd?" <span class=meta>(folder gone, still live)</span>":""))+"</div>"+(r.preview?"<div class=meta>"+esc(r.preview)+"</div>":"")+"</li>";}).join("")||"<li class=muted>No sessions.</li>";',
   ' document.getElementById("keepsakes").innerHTML=(s.keepsakes||[]).map(function(k){return "<li>"+esc(k.key.slice(0,8))+" <span class=meta>"+esc((k.mtime||"").slice(0,16).replace("T"," "))+"</span></li>";}).join("")||"<li class=muted>No keepsakes yet — try <code>keyflip dream --apply</code>.</li>";',
   ' var a=s.activity||{};document.getElementById("activity-total").textContent=a.total?("· "+a.total+" session"+(a.total===1?"":"s")+", last "+(a.weeks||26)+" weeks"):"";',

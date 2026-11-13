@@ -8,6 +8,9 @@ import http from 'http';
 import * as panel from '../src/panel.js';
 import * as profiles from '../src/profiles.js';
 import * as memory from '../src/memory.js';
+import * as budget from '../src/budget.js';
+import * as policy from '../src/policy.js';
+import * as router from '../src/router.js';
 import { makeCtx, writeClaude } from './helpers.js';
 
 function get(url) {
@@ -318,4 +321,34 @@ test('panel exposes enabled, duplicateOf, model-scoped quotas, and limitedScopes
   assert.ok(snap.convIndex && typeof snap.convIndex.exists === 'boolean', 'buildSnapshot includes convIndex');
   assert.match(html, /Detected AI surfaces/);
   assert.match(html, /Conversation index/);
+});
+
+test('P2-3: panel exposes KPI telemetry cards (License, Semantic Cache, PII Guardrail, Virtual Keys) with tabular-nums and zero token leakage', function () {
+  const ctx = makeCtx();
+  policy.setGuardrail(ctx, 'redact');
+  const vk = budget.createVirtualKey(ctx, { label: 'ci-agent', maxUsd: 25 });
+  budget.recordVirtualKeySpend(ctx, vk.id, { costUsd: 4.5, model: 'claude-sonnet-4-6' });
+  router.cachePut(ctx, { model: 'claude-haiku-4-5', prompt: 'hello world cache test', response: '{"id":"msg_1"}' });
+  router.cacheGet(ctx, { model: 'claude-haiku-4-5', prompt: 'hello world cache test' });
+
+  const st = panel.buildState(ctx);
+  assert.strictEqual(st.guardrail.mode, 'redact');
+  assert.strictEqual(st.guardrail.customPatterns, 0);
+  assert.strictEqual(st.virtualKeys.count, 1);
+  assert.strictEqual(st.virtualKeys.activeCount, 1);
+  assert.strictEqual(st.virtualKeys.totalSpendUsd, 4.5);
+  assert.ok(st.cache.count >= 1 && st.cache.hits >= 1);
+  // Raw virtual key token must never appear in buildState or buildSnapshot
+  assert.strictEqual(JSON.stringify(st).indexOf(vk.key), -1, 'raw vk_ token never exposed in panel state');
+
+  const snap = panel.buildSnapshot(ctx, {});
+  const snapHtml = panel.renderSnapshot(snap);
+  assert.match(snapHtml, /kpi-grid/);
+  assert.match(snapHtml, /Semantic Cache/);
+  assert.match(snapHtml, /PII Guardrail/);
+  assert.match(snapHtml, /REDACT/);
+  assert.match(snapHtml, /Virtual Keys/);
+  assert.match(snapHtml, /spend \$4\.50/);
+  assert.match(snapHtml, /tabular-nums/);
+  assert.strictEqual(snapHtml.indexOf(vk.key), -1);
 });
