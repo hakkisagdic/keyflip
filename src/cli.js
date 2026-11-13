@@ -2765,6 +2765,29 @@ function cmdPolicy(ctx, rest) {
       print(style.ok('✅') + ' default policy = ' + set);
       return;
     }
+    case 'guardrail': {
+      if (!args[0]) {
+        const g = policy.getGuardrail(ctx);
+        if (JSON_MODE) {
+          jsonOut({ guardrail: g });
+          return;
+        }
+        print('outbound guardrail: ' + g);
+        return;
+      }
+      let set;
+      try {
+        set = policy.setGuardrail(ctx, args[0]);
+      } catch (e) {
+        return fail(e.message);
+      }
+      if (JSON_MODE) {
+        jsonOut({ guardrail: set });
+        return;
+      }
+      print(style.ok('\u2705') + ' outbound guardrail = ' + set);
+      return;
+    }
     case 'check': {
       const acct =
         one('--account') ||
@@ -2783,7 +2806,7 @@ function cmdPolicy(ctx, rest) {
     }
     default:
       return fail(
-        'unknown: keyflip policy ' + sub + ' (use: list | allow | deny | remove <id> | default <allow|deny> | check)',
+        'unknown: keyflip policy ' + sub + ' (use: list | allow | deny | remove <id> | default <allow|deny> | guardrail [off|redact|block] | check)',
       );
   }
 }

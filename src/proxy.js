@@ -18,6 +18,7 @@ import * as _cost from './cost.js';
 import * as prices from './prices.js';
 import * as budget from './budget.js';
 import * as license from './license.js';
+import * as policy from './policy.js';
 import * as proxyroutes from './proxyroutes.js';
 import * as tiers from './tiers.js';
 import * as _profiles from './profiles.js';
@@ -579,6 +580,38 @@ async function handleRequest(ctx, reqInfo, clientRes, opts) {
   const routed = proxyroutes.applyTransforms(reqInfo, routes);
   let upstreamReq = routed.info;
 
+  // Outbound Proxy Guardrail (`off` | `redact` | `block`): inspect request body for
+  // raw secrets and PII before forwarding upstream.
+  const gr = policy.inspectOutboundBody(ctx, upstreamReq.body, { mode: opts.guardrail });
+  if (gr.action === 'block') {
+    const grStatus = gr.status || 422;
+    const grBody = JSON.stringify({
+      error: {
+        type: gr.code || 'GUARDRAIL_BLOCKED',
+        message: gr.reason,
+        findings: gr.findings,
+      },
+    });
+    const grHeaders = { 'content-type': 'application/json' };
+    if (debug) {
+      grHeaders['x-keyflip-guardrail'] = 'blocked';
+      if (gr.findings && gr.findings.length) {
+        grHeaders['x-keyflip-guardrail-findings'] = gr.findings.join(',');
+      }
+    }
+    clientRes.writeHead(grStatus, grHeaders);
+    clientRes.end(grBody);
+    return { status: grStatus, error: gr.code || 'GUARDRAIL_BLOCKED', findings: gr.findings, reason: gr.reason };
+  }
+  if (gr.action === 'redact' && gr.body != null) {
+    upstreamReq = Object.assign({}, upstreamReq, { body: gr.body });
+    if (upstreamReq.headers && upstreamReq.headers['content-length'] != null) {
+      upstreamReq.headers = Object.assign({}, upstreamReq.headers, {
+        'content-length': String(Buffer.isBuffer(gr.body) ? gr.body.length : Buffer.byteLength(String(gr.body))),
+      });
+    }
+  }
+
   const list = candidates(ctx, { nowMs: clock(), model: facts.model });
   if (!list.length) {
     // Distinguish "every plan refuses this model" from "nothing available".
@@ -633,7 +666,7 @@ async function handleRequest(ctx, reqInfo, clientRes, opts) {
     }
     // Per-account budget for retries that keep the SAME model (one Retry-After
     // wait, plus the model-chain descents); each is otherwise uncounted.
-    for (let sameRetry = 0; ;) {
+    for (let sameRetry = 0; ; ) {
       attempts++;
       let resp;
       try {
@@ -684,6 +717,7 @@ async function handleRequest(ctx, reqInfo, clientRes, opts) {
           model: currentModel,
           route: decision.reason,
           vkey: vkey,
+          guardrailRedacted: gr.redactedCount || 0,
         });
       }
       // Traycer per-problem routing (`model_unavailable`) + `model-chain`:
@@ -750,6 +784,7 @@ async function handleRequest(ctx, reqInfo, clientRes, opts) {
         model: currentModel,
         route: decision.reason,
         vkey: vkey,
+        guardrailRedacted: gr.redactedCount || 0,
       });
     }
   }
@@ -770,6 +805,7 @@ function commit(ctx, resp, clientRes, info) {
     if (info.kind && info.kind !== 'none') headers['x-keyflip-error-class'] = info.kind;
     if (info.model) headers['x-keyflip-model'] = headerSafe(info.model);
     if (info.route) headers['x-keyflip-route'] = headerSafe(info.route);
+    if (info.guardrailRedacted > 0) headers['x-keyflip-guardrail-redacted'] = String(info.guardrailRedacted);
     const cd = breaker.cooldownOf(ctx, info.acct);
     if (cd.active) headers['x-keyflip-cooldown'] = String(Math.ceil(cd.remainingMs / 1000));
   }

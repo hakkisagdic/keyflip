@@ -10,6 +10,9 @@ import os from 'os';
 import path from 'path';
 import * as policy from '../src/policy.js';
 import * as groups from '../src/groups.js';
+import * as license from '../src/license.js';
+import * as proxy from '../src/proxy.js';
+import * as profiles from '../src/profiles.js';
 import { makeCtx } from './helpers.js';
 
 test('evaluate resolves symlinks — a deny rule on the real path applies to a symlinked cwd (no fail-open)', function () {
@@ -378,4 +381,137 @@ test('mcp: add + remove require confirm and are declared mutating', async functi
   await assert.rejects(remove.run(ctx, { id: res.added.id }), /confirmation required/);
   assert.strictEqual((await remove.run(ctx, { id: res.added.id, confirm: true })).removed, res.added.id);
   assert.strictEqual(policy.get(ctx).rules.length, 0);
+});
+
+// ---- Outbound Proxy Guardrail (P1-1: off | redact | block) -----------------------
+
+test('guardrail: getGuardrail / setGuardrail persists without clobbering rules', function () {
+  const ctx = makeCtx();
+  assert.strictEqual(policy.getGuardrail(ctx), 'off');
+  policy.addRule(ctx, { id: 'r1', match: { cwdPrefix: '/c' }, allow: { accounts: ['work'] } });
+  assert.strictEqual(policy.setGuardrail(ctx, 'redact'), 'redact');
+  assert.strictEqual(policy.getGuardrail(ctx), 'redact');
+  assert.strictEqual(policy.get(ctx).rules.length, 1, 'existing rules preserved');
+  assert.strictEqual(policy.setGuardrail(ctx, 'block'), 'block');
+  assert.strictEqual(policy.getGuardrail(ctx), 'block');
+  assert.strictEqual(policy.setGuardrail(ctx, 'off'), 'off');
+  assert.strictEqual(policy.getGuardrail(ctx), 'off');
+  assert.throws(function () {
+    policy.setGuardrail(ctx, 'invalid');
+  }, /must be 'off', 'redact', or 'block'/);
+});
+
+test('guardrail: inspectOutboundBody masks secrets and PII in redact mode and blocks in block mode', function () {
+  const ctx = makeCtx();
+  const sampleSecret = 'sk-ant-api03-abcdefghijklmnopqrstuvwxyz0123456789';
+  const payload = JSON.stringify({
+    model: 'claude-sonnet-4-6',
+    messages: [{ role: 'user', content: 'Key is ' + sampleSecret + ' and email is dev@acme.com' }],
+  });
+
+  // off mode -> untouched
+  const offRes = policy.inspectOutboundBody(ctx, Buffer.from(payload, 'utf8'));
+  assert.strictEqual(offRes.action, 'allow');
+  assert.strictEqual(offRes.redactedCount, 0);
+
+  // redact mode -> masks secret and email, records leaksBlocked in usage ledger
+  policy.setGuardrail(ctx, 'redact');
+  const redRes = policy.inspectOutboundBody(ctx, Buffer.from(payload, 'utf8'));
+  assert.strictEqual(redRes.action, 'redact');
+  assert.strictEqual(redRes.redactedCount, 2);
+  assert.deepStrictEqual(redRes.findings, ['email', 'secret']);
+  const redText = redRes.body.toString('utf8');
+  assert.ok(redText.includes('[REDACTED_SECRET]'));
+  assert.ok(redText.includes('[REDACTED_PII:email]'));
+  assert.ok(!redText.includes(sampleSecret));
+  assert.ok(!redText.includes('dev@acme.com'));
+  assert.strictEqual(license.usageSummary(ctx).month.leaksBlocked, 2);
+
+  // block mode -> refuses with 422 GUARDRAIL_BLOCKED
+  policy.setGuardrail(ctx, 'block');
+  const blkRes = policy.inspectOutboundBody(ctx, Buffer.from(payload, 'utf8'));
+  assert.strictEqual(blkRes.action, 'block');
+  assert.strictEqual(blkRes.status, 422);
+  assert.strictEqual(blkRes.code, 'GUARDRAIL_BLOCKED');
+  assert.deepStrictEqual(blkRes.findings, ['email', 'secret']);
+  assert.strictEqual(license.usageSummary(ctx).month.leaksBlocked, 4);
+});
+
+test('proxy.handleRequest enforces outbound guardrail in redact and block modes', async function () {
+  const ctx = makeCtx();
+  ctx.store.setProfile('work', JSON.stringify({ claudeAiOauth: { accessToken: 'tok-work' } }));
+  profiles.write(ctx.configDir, { name: 'work', email: 'w@acme.com' });
+
+  const sampleSecret = 'sk-ant-api03-abcdefghijklmnopqrstuvwxyz0123456789';
+  const reqBody = Buffer.from(
+    JSON.stringify({
+      model: 'claude-sonnet-4-6',
+      messages: [{ role: 'user', content: 'Please debug ' + sampleSecret }],
+    }),
+    'utf8',
+  );
+
+  function fakeRes() {
+    const out = { status: 0, headers: {}, body: '' };
+    return {
+      out: out,
+      writeHead: function (s, h) {
+        out.status = s;
+        out.headers = h || {};
+      },
+      write: function (c) {
+        out.body += Buffer.isBuffer(c) ? c.toString('utf8') : String(c);
+        return true;
+      },
+      end: function (c) {
+        if (c) out.body += Buffer.isBuffer(c) ? c.toString('utf8') : String(c);
+      },
+      on: function () {},
+    };
+  }
+
+  // 1) Block mode refuses with 422 before calling upstream forward
+  policy.setGuardrail(ctx, 'block');
+  let forwardCalled = 0;
+  const res1 = fakeRes();
+  const r1 = await proxy.handleRequest(
+    ctx,
+    { method: 'POST', path: '/v1/messages', headers: { 'content-type': 'application/json' }, body: reqBody },
+    res1,
+    {
+      forward: async function () {
+        forwardCalled++;
+        return { status: 200, headers: {}, body: Buffer.from('{}') };
+      },
+    },
+  );
+  assert.strictEqual(r1.status, 422);
+  assert.strictEqual(r1.error, 'GUARDRAIL_BLOCKED');
+  assert.strictEqual(forwardCalled, 0, 'upstream must never be called when guardrail blocks');
+  assert.strictEqual(res1.out.status, 422);
+  assert.strictEqual(res1.out.headers['x-keyflip-guardrail'], 'blocked');
+
+  // 2) Redact mode masks the secret before calling upstream forward
+  policy.setGuardrail(ctx, 'redact');
+  let upstreamSeenBody = '';
+  const res2 = fakeRes();
+  const r2 = await proxy.handleRequest(
+    ctx,
+    { method: 'POST', path: '/v1/messages', headers: { 'content-type': 'application/json' }, body: reqBody },
+    res2,
+    {
+      forward: async function (_up, uReq) {
+        upstreamSeenBody = uReq.body.toString('utf8');
+        return {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+          body: Buffer.from(JSON.stringify({ model: 'claude-sonnet-4-6', usage: { input_tokens: 10, output_tokens: 5 } })),
+        };
+      },
+    },
+  );
+  assert.strictEqual(r2.status, 200);
+  assert.ok(upstreamSeenBody.includes('[REDACTED_SECRET]'), 'upstream receives redacted body');
+  assert.ok(!upstreamSeenBody.includes(sampleSecret), 'raw secret never leaves proxy');
+  assert.strictEqual(res2.out.headers['x-keyflip-guardrail-redacted'], '1');
 });

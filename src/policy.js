@@ -1,34 +1,21 @@
-// POLICY ENGINE: let an org constrain WHICH account a directory/repo may use
-// ("client code only on the work account"). State lives in <configDir>/policy.json
-// as { rules:[ {id, match:{cwdPrefix?,repo?}, allow?:{accounts?,groups?},
-// deny?:{accounts?,groups?}, note?, createdAt? } ], default:'allow'|'deny' }.
-//
-// This is an ENFORCEMENT helper: switch/run/link call evaluate()/enforce() with the
-// {cwd, account} they are about to activate. Decision model (deterministic, documented):
-//   1. Collect rules whose `match` matches the context (cwdPrefix is a path-segment
-//      prefix of cwd AND/OR repo equals the resolved repo; an empty match is global).
-//   2. deny beats allow — an EXPLICIT deny on the account (by name or group) in ANY
-//      matching rule is a hard block (the most specific such rule is reported).
-//   3. Otherwise the MOST SPECIFIC matching rule (longest cwdPrefix; repo-qualified
-//      wins ties) that expresses a constraint governs: an allow-set is an EXCLUSIVE
-//      allowlist (account must be in it), a deny-only rule the account is not on is a
-//      pass (blocklist).
-//   4. If nothing constrains the account, fall back to `default`.
-// Group membership is resolved via groups.membersOf (injectable). Everything is pure +
-// validated; every map keyed by a user-supplied name is Object.create(null) so a hostile
-// name (e.g. "__proto__") can never pollute a prototype.
+// POLICY ENGINE:
+// 1) Let an org constrain WHICH account a directory/repo may use ("client code only on the work account").
+// 2) Outbound Proxy Guardrail (`off` | `redact` | `block`) that inspects outgoing request bodies for
+//    raw secrets (sk-ant-..., sk-proj-..., AKIA..., GitHub/Slack tokens) and PII (email, phone, TCKN,
+//    credit cards, IBAN) before traffic leaves the machine.
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 import * as profiles from './profiles.js';
 import * as groups from './groups.js';
+import * as pii from './pii.js';
+import * as license from './license.js';
 import { atomicWrite, readJsonForWrite } from './fsutil.js';
 import * as _exec from './exec.js';
 
-// Compare paths PHYSICALLY (resolve symlinks): on macOS /tmp->/private/tmp etc., so a lexical
-// path.resolve on the rule prefix vs the kernel's physical process.cwd() would make a deny rule
-// silently fail open. realpathSync where the path exists; fall back to lexical for a non-existent
-// path (e.g. a rule prefix for a not-yet-created dir).
+const GUARDRAIL_MODES = ['off', 'redact', 'block'];
+const GUARDRAIL_CATEGORIES = ['secret', 'email', 'phone', 'tckn', 'creditCard', 'iban'];
+
 function physical(p) {
   try {
     return fs.realpathSync.native(p);
@@ -41,23 +28,19 @@ function policyPath(ctx) {
   return path.join(ctx.configDir, 'policy.json');
 }
 
-// A rule id must start alphanumeric and use only safe chars (bounded). It becomes a
-// KEY in the null-proto dedupe map, so '__proto__' (fails the regex) can never enter.
 const ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 function isValidId(x) {
   return typeof x === 'string' && ID_RE.test(x);
 }
 
 // eslint-disable-next-line no-control-regex
-const CTRL = /[\x00-\x1f\x7f]/g; // strip control chars incl. ANSI ESC from a free-text note
+const CTRL = /[\x00-\x1f\x7f]/g;
 function scrub(s, max) {
   return String(s == null ? '' : s)
     .replace(CTRL, ' ')
     .trim()
     .slice(0, max || 200);
 }
-
-// ---- normalization (a tampered/hand-edited file can never inject a dangerous shape) --
 
 function cleanNameList(arr, valid) {
   const out = [];
@@ -67,7 +50,6 @@ function cleanNameList(arr, valid) {
   return out.sort();
 }
 
-// A {accounts?,groups?} bucket -> clean bucket, or null if it lists nothing usable.
 function normalizeBucket(b) {
   if (!b || typeof b !== 'object' || Array.isArray(b)) return null;
   const accounts = cleanNameList(b.accounts, profiles.isValidName);
@@ -81,6 +63,7 @@ function normalizeBucket(b) {
 
 function normalizeMatch(m) {
   const out = {};
+  if (m && typeof m !== 'object' && !Array.isArray(m)) return out;
   if (m && typeof m === 'object' && !Array.isArray(m)) {
     if (typeof m.cwdPrefix === 'string' && m.cwdPrefix.trim()) out.cwdPrefix = m.cwdPrefix;
     if (typeof m.repo === 'string' && m.repo.trim()) out.repo = m.repo.trim();
@@ -88,9 +71,6 @@ function normalizeMatch(m) {
   return out;
 }
 
-// One parsed rule -> a clean rule, or null (dropped) if it has no valid id. Rules are
-// machine-managed via addRule (which always assigns an id); dropping id-less/hostile
-// entries mirrors groups.js's "drop junk" philosophy and keeps every id map safe.
 function normalizeRule(r) {
   if (!r || typeof r !== 'object' || Array.isArray(r)) return null;
   if (!isValidId(r.id)) return null;
@@ -108,7 +88,10 @@ function normalizeState(parsed) {
   const out = { rules: [], default: 'allow' };
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return out;
   if (parsed.default === 'deny') out.default = 'deny';
-  const seen = Object.create(null); // null-proto: a hostile id can't shadow a prototype key
+  if (GUARDRAIL_MODES.indexOf(parsed.guardrail) !== -1 && parsed.guardrail !== 'off') {
+    out.guardrail = parsed.guardrail;
+  }
+  const seen = Object.create(null);
   (Array.isArray(parsed.rules) ? parsed.rules : []).forEach(function (r) {
     const nr = normalizeRule(r);
     if (nr && !seen[nr.id]) {
@@ -119,10 +102,6 @@ function normalizeState(parsed) {
   return out;
 }
 
-// ---- state IO --------------------------------------------------------------------
-
-// Read-only accessor: never throws — missing OR corrupt file degrades to the empty
-// default state. Returns { rules:[...], default:'allow'|'deny' }.
 function get(ctx) {
   let parsed;
   try {
@@ -130,11 +109,10 @@ function get(ctx) {
   } catch (e) {
     return { rules: [], default: 'allow' };
   }
-  return normalizeState(parsed);
+  const st = normalizeState(parsed);
+  return { rules: st.rules, default: st.default };
 }
 
-// Read-for-write: a MISSING file is empty; a CORRUPT file THROWS (readJsonForWrite) so a
-// read-modify-write never silently clobbers the user's real policy.
 function loadForWrite(ctx) {
   return normalizeState(readJsonForWrite(policyPath(ctx)));
 }
@@ -150,7 +128,131 @@ function ruleForSave(r) {
 
 function save(ctx, state) {
   const out = { rules: state.rules.map(ruleForSave), default: state.default === 'deny' ? 'deny' : 'allow' };
+  if (state.guardrail && GUARDRAIL_MODES.indexOf(state.guardrail) !== -1 && state.guardrail !== 'off') {
+    out.guardrail = state.guardrail;
+  }
   atomicWrite(policyPath(ctx), JSON.stringify(out, null, 2), 0o600);
+}
+
+// ---- Outbound Proxy Guardrail (off | redact | block) -------------------------
+
+function getGuardrail(ctx) {
+  try {
+    const parsed = readJsonForWrite(policyPath(ctx));
+    if (parsed && GUARDRAIL_MODES.indexOf(parsed.guardrail) !== -1) {
+      return parsed.guardrail;
+    }
+  } catch (e) {
+    /* fall through */
+  }
+  return 'off';
+}
+
+function setGuardrail(ctx, mode) {
+  const m = String(mode || '').toLowerCase();
+  if (GUARDRAIL_MODES.indexOf(m) === -1) {
+    throw new Error("guardrail mode must be 'off', 'redact', or 'block'");
+  }
+  const state = loadForWrite(ctx);
+  if (m === 'off') delete state.guardrail;
+  else state.guardrail = m;
+  save(ctx, state);
+  return m;
+}
+
+function resolveNonOverlapping(matches) {
+  const sorted = (matches || []).slice().sort(function (a, b) {
+    return a.start - b.start || b.end - a.end;
+  });
+  const kept = [];
+  let lastEnd = -1;
+  for (let i = 0; i < sorted.length; i++) {
+    if (sorted[i].start >= lastEnd) {
+      kept.push(sorted[i]);
+      lastEnd = sorted[i].end;
+    }
+  }
+  return kept;
+}
+
+// Inspect an outgoing proxy request body according to the active guardrail mode
+// ('off' | 'redact' | 'block').
+//   - 'off': no-op, returns { action: 'allow', mode: 'off', body, redactedCount: 0, findings: [] }
+//   - 'redact': masks secrets with '[REDACTED_SECRET]' and PII with '[REDACTED_PII:<label>]',
+//               increments license.recordUsage(ctx, { leaksBlocked: N }), and returns modified body.
+//   - 'block': refuses the request with { action: 'block', status: 422, code: 'GUARDRAIL_BLOCKED', ... }
+//              when any secret or PII is detected.
+function inspectOutboundBody(ctx, body, opts) {
+  opts = opts || {};
+  const mode = opts.mode && GUARDRAIL_MODES.indexOf(opts.mode) !== -1 ? opts.mode : getGuardrail(ctx);
+  if (mode === 'off' || body == null || (Buffer.isBuffer(body) && body.length === 0)) {
+    return { action: 'allow', mode: mode, body: body, redactedCount: 0, findings: [] };
+  }
+  const isBuf = Buffer.isBuffer(body);
+  const text = isBuf ? body.toString('utf8') : String(body);
+  if (!text) {
+    return { action: 'allow', mode: mode, body: body, redactedCount: 0, findings: [] };
+  }
+
+  const rawMatches = pii.detect(text, {
+    categories: opts.categories || GUARDRAIL_CATEGORIES,
+    custom: ctx ? pii.loadCustom(ctx) : [],
+  });
+  const kept = resolveNonOverlapping(rawMatches);
+  if (!kept.length) {
+    return { action: 'allow', mode: mode, body: body, redactedCount: 0, findings: [] };
+  }
+
+  const findingSet = new Set();
+  for (let i = 0; i < kept.length; i++) findingSet.add(kept[i].label);
+  const findings = Array.from(findingSet).sort();
+
+  if (mode === 'block') {
+    if (ctx && ctx.configDir) {
+      try {
+        license.recordUsage(ctx, { leaksBlocked: kept.length });
+      } catch (e) {
+        /* best effort */
+      }
+    }
+    return {
+      action: 'block',
+      mode: 'block',
+      status: 422,
+      code: 'GUARDRAIL_BLOCKED',
+      redactedCount: kept.length,
+      findings: findings,
+      reason: 'outbound request blocked by guardrail (' + findings.join(', ') + ' detected)',
+      body: body,
+    };
+  }
+
+  // mode === 'redact'
+  let redacted = '';
+  let pos = 0;
+  for (let i = 0; i < kept.length; i++) {
+    const m = kept[i];
+    const token = m.label === 'secret' ? '[REDACTED_SECRET]' : '[REDACTED_PII:' + m.label + ']';
+    redacted += text.slice(pos, m.start) + token;
+    pos = m.end;
+  }
+  redacted += text.slice(pos);
+
+  if (ctx && ctx.configDir) {
+    try {
+      license.recordUsage(ctx, { leaksBlocked: kept.length });
+    } catch (e) {
+      /* best effort */
+    }
+  }
+
+  return {
+    action: 'redact',
+    mode: 'redact',
+    body: isBuf ? Buffer.from(redacted, 'utf8') : redacted,
+    redactedCount: kept.length,
+    findings: findings,
+  };
 }
 
 // ---- mutations -------------------------------------------------------------------
@@ -167,8 +269,6 @@ function genId(state) {
   }
 }
 
-// Reject invalid account/group names LOUDLY (clear CLI/MCP error) rather than silently
-// dropping them the way the tolerant read path does.
 function assertNames(b) {
   if (!b || typeof b !== 'object') return;
   (Array.isArray(b.accounts) ? b.accounts : []).forEach(function (a) {
@@ -179,8 +279,6 @@ function assertNames(b) {
   });
 }
 
-// Add (append) a rule. Assigns an id when absent; rejects a duplicate/invalid id and a
-// rule that constrains nothing. cwdPrefix is stored ABSOLUTE. Returns the stored rule.
 function addRule(ctx, rule) {
   if (!rule || typeof rule !== 'object' || Array.isArray(rule)) throw new Error('rule must be an object');
   const match = normalizeMatch(rule.match);
@@ -231,24 +329,18 @@ function setDefault(ctx, def) {
   return def;
 }
 
-// ---- repo resolution (injectable — tests need no subprocess) ----------------------
+// ---- repo resolution (injectable) ------------------------------------------------
 
-// Normalize a repo identifier to a comparable "owner/repo" (lowercased): strips a
-// trailing .git and slashes, and extracts the last owner/name pair from a git URL
-// (git@host:owner/repo(.git), https://host/owner/repo(.git), ssh://…). A bare token or
-// "owner/repo" is returned lowercased as-is.
 function normalizeRepo(s) {
   if (typeof s !== 'string') return null;
   let x = s.trim();
   if (!x) return null;
-  x = x.replace(/\.git$/i, '').replace(/[\/]+$/, '');
+  x = x.replace(/\.git$/i, '').replace(/[/]+$/, '');
   const m = x.match(/[:/]([^/:]+\/[^/:]+)$/);
   if (m) x = m[1];
   return x.toLowerCase();
 }
 
-// Resolve the repo for a cwd. Fully injectable: opts.repoOf(cwd) short-circuits, else
-// opts.run (default exec.run) shells out to git (origin url, else toplevel basename).
 function resolveRepo(cwd, opts) {
   opts = opts || {};
   if (typeof opts.repoOf === 'function') {
@@ -277,8 +369,6 @@ function caseFold(p, platform) {
   return platform === 'win32' || platform === 'darwin' ? String(p).toLowerCase() : String(p);
 }
 
-// Is `cwd` at or below `prefix`, PATH-SEGMENT aware (so /a/b matches /a/b and /a/b/c but
-// never /a/bc)? Both are resolved; comparison honors the target platform's case rules.
 function underPrefix(cwd, prefix, platform) {
   const c = caseFold(physical(cwd), platform);
   const p = caseFold(physical(prefix), platform);
@@ -289,15 +379,12 @@ function bucketHas(b) {
   return !!(b && ((b.accounts && b.accounts.length) || (b.groups && b.groups.length)));
 }
 
-// Longer resolved cwdPrefix = more specific; -1 for a rule with no cwdPrefix (global/repo-only).
 function specificity(r) {
   return r.match && typeof r.match.cwdPrefix === 'string' && r.match.cwdPrefix
     ? path.resolve(r.match.cwdPrefix).length
     : -1;
 }
 
-// evaluate(ctx, {cwd, account, repo?}, opts) -> { allowed, reason, ruleId }
-// opts: { membersOf(group)->[names], repoOf(cwd)->repo, run } — all injectable for tests.
 function evaluate(ctx, input, opts) {
   input = input || {};
   opts = opts || {};
@@ -313,7 +400,6 @@ function evaluate(ctx, input, opts) {
           return groups.membersOf(ctx, g);
         };
 
-  // Resolve the repo lazily and once — only if a candidate rule actually needs it.
   let repoDone = false,
     repoVal = null;
   function repoOf() {
@@ -337,7 +423,6 @@ function evaluate(ctx, input, opts) {
     return true;
   }
 
-  // Cache group membership lookups within this evaluation (null-proto set per group).
   const memCache = Object.create(null);
   function inBucket(b) {
     if (!b) return false;
@@ -363,7 +448,6 @@ function evaluate(ctx, input, opts) {
   if (!matches.length)
     return { allowed: def === 'allow', reason: "no policy rule matches; default is '" + def + "'", ruleId: null };
 
-  // Most specific first; a repo-qualified rule outranks a non-repo rule on a cwdPrefix tie.
   const sorted = matches.slice().sort(function (a, b) {
     const sa = specificity(a),
       sb = specificity(b);
@@ -371,7 +455,6 @@ function evaluate(ctx, input, opts) {
     return (b.match && b.match.repo ? 1 : 0) - (a.match && a.match.repo ? 1 : 0);
   });
 
-  // (2) deny beats allow: an explicit deny in ANY matching rule is a hard block.
   for (let i = 0; i < sorted.length; i++) {
     const r = sorted[i];
     if (inBucket(r.deny))
@@ -383,7 +466,6 @@ function evaluate(ctx, input, opts) {
       };
   }
 
-  // (3) most specific constraining rule governs the allow/allowlist decision.
   for (let i = 0; i < sorted.length; i++) {
     const r = sorted[i];
     if (bucketHas(r.allow)) {
@@ -399,7 +481,6 @@ function evaluate(ctx, input, opts) {
       return { allowed: true, reason: 'allowed (not on the blocklist of rule ' + r.id + ')', ruleId: r.id };
   }
 
-  // (4) rules matched but none constrained the account -> default.
   return {
     allowed: def === 'allow',
     reason: "matching rule(s) set no account constraint; default is '" + def + "'",
@@ -407,9 +488,6 @@ function evaluate(ctx, input, opts) {
   };
 }
 
-// enforce: evaluate and THROW a clear Error when disallowed; otherwise return the result.
-// The error carries .code='POLICY_DENIED' and .policy (the evaluate result) so callers
-// (switch/run/link) can special-case it.
 function enforce(ctx, input, opts) {
   const res = evaluate(ctx, input, opts);
   if (!res.allowed) {
@@ -417,7 +495,7 @@ function enforce(ctx, input, opts) {
     const err = new Error(
       "policy denied: account '" +
         acct +
-        "' may not be used here — " +
+        "' may not be used here \u2014 " +
         res.reason +
         (res.ruleId ? ' [rule ' + res.ruleId + ']' : ''),
     );
@@ -428,8 +506,7 @@ function enforce(ctx, input, opts) {
   return res;
 }
 
-// ---- MCP tools (spliced into mcp.js TOOLS by the parent) -------------------------
-// RO tools: list + check. MUT tools: add + remove — gated on confirm:true.
+// ---- MCP tools -------------------------------------------------------------------
 const RO = { readOnlyHint: true, destructiveHint: false, openWorldHint: false };
 const MUT = { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false };
 function needConfirm(args) {
@@ -437,7 +514,7 @@ function needConfirm(args) {
     throw new Error('confirmation required: ask the user first, then call again with confirm=true');
 }
 const confirmProp = {
-  confirm: { type: 'boolean', description: 'Must be true — set it only after the user has agreed.' },
+  confirm: { type: 'boolean', description: 'Must be true \u2014 set it only after the user has agreed.' },
 };
 const strArray = { type: 'array', items: { type: 'string' } };
 
@@ -484,7 +561,7 @@ const mcpTools = [
     name: 'keyflip_policy_add',
     title: 'Add an account-usage policy rule',
     description:
-      'Add an allow or deny rule. `effect:"allow"` makes the listed accounts/groups the EXCLUSIVE set permitted where the rule matches; `effect:"deny"` blocks them (deny always beats allow). Scope with cwd_prefix and/or repo. Changes enforcement — ask the user first, then set confirm=true.',
+      'Add an allow or deny rule. `effect:"allow"` makes the listed accounts/groups the EXCLUSIVE set permitted where the rule matches; `effect:"deny"` blocks them (deny always beats allow). Scope with cwd_prefix and/or repo. Changes enforcement \u2014 ask the user first, then set confirm=true.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -523,7 +600,7 @@ const mcpTools = [
     name: 'keyflip_policy_remove',
     title: 'Remove an account-usage policy rule',
     description:
-      'Delete a policy rule by id (from keyflip_policy_list). Changes enforcement — ask the user first, then set confirm=true.',
+      'Delete a policy rule by id (from keyflip_policy_list). Changes enforcement \u2014 ask the user first, then set confirm=true.',
     inputSchema: {
       type: 'object',
       properties: { id: { type: 'string', description: 'Rule id to remove.' }, confirm: confirmProp.confirm },
@@ -536,6 +613,29 @@ const mcpTools = [
       return { removed: removeRule(ctx, String(args.id)) ? String(args.id) : null };
     },
   },
+  {
+    name: 'keyflip_policy_guardrail',
+    title: 'Get or set outbound proxy PII & secret guardrail mode',
+    description:
+      'Read or update the outbound proxy guardrail mode ("off" | "redact" | "block"). In "redact" mode, raw API keys and PII (emails, phones, TCKN, credit cards, IBAN) are masked before leaving the machine; in "block" mode, requests containing secrets/PII are rejected with 422 GUARDRAIL_BLOCKED.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        mode: { type: 'string', enum: ['off', 'redact', 'block'] },
+        confirm: confirmProp.confirm,
+      },
+      required: ['confirm'],
+      additionalProperties: false,
+    },
+    annotations: MUT,
+    run: async function (ctx, args) {
+      if (!args || !args.mode) {
+        return { guardrail: getGuardrail(ctx) };
+      }
+      needConfirm(args);
+      return { guardrail: setGuardrail(ctx, String(args.mode)) };
+    },
+  },
 ];
 
 export {
@@ -544,6 +644,10 @@ export {
   addRule,
   removeRule,
   setDefault,
+  getGuardrail,
+  setGuardrail,
+  inspectOutboundBody,
+  GUARDRAIL_MODES,
   evaluate,
   enforce,
   normalizeRepo,
