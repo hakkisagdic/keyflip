@@ -2997,6 +2997,7 @@ function cmdLicense(ctx, rest) {
       const s = lic.status(ctx);
       const feats = lic.unlockedFeatures(ctx);
       const enforced = lic.enforcementEnabled();
+      const usage = lic.usageSummary(ctx);
       if (JSON_MODE) {
         jsonOut({
           plan: lic.tier(ctx),
@@ -3005,23 +3006,150 @@ function cmdLicense(ctx, rest) {
           expiry: s.expiry,
           valid: s.valid,
           reason: s.reason,
+          seats: s.seats,
+          trial: s.trial,
+          daysRemaining: s.daysRemaining,
+          expiringSoon: s.expiringSoon,
+          inGrace: s.inGrace,
           features: feats,
           enforcement: enforced,
+          usage: usage,
         });
         return;
       }
-      print(style.bold('plan: ') + lic.tier(ctx) + (s.valid ? '' : '  (' + s.reason + ')'));
+      print(
+        style.bold('plan: ') +
+          lic.tier(ctx) +
+          (s.trial ? ' (14-day trial)' : '') +
+          (s.inGrace ? ' (grace period — expired, renew soon)' : !s.valid ? '  (' + s.reason + ')' : ''),
+      );
       if (s.email) print('email:  ' + s.email);
-      if (s.expiry) print('expiry: ' + s.expiry);
+      if (s.seats && s.seats > 1) print('seats:  ' + s.seats);
+      if (s.expiry) {
+        print(
+          'expiry: ' +
+            s.expiry +
+            (s.daysRemaining != null ? ' (' + s.daysRemaining + 'd)' : '') +
+            (s.expiringSoon ? '  ⚠ expiring soon' : ''),
+        );
+      }
       print('features: ' + (feats.length ? feats.join(', ') : '(none — free)'));
-      // Say whether the paywall is actually gating anything. A valid pro
-      // license with enforcement off means "nothing is locked yet" — without
-      // this line that reads like a broken license.
+      const m = usage.month;
+      print(
+        'monthly value (' +
+          usage.currentMonth +
+          '): saved USD ' +
+          m.savedUsd.toFixed(2) +
+          ' (' +
+          m.savedTry.toFixed(2) +
+          ' TL) · ' +
+          m.failoversSaved +
+          ' failovers · ' +
+          m.leaksBlocked +
+          ' leaks blocked',
+      );
       print(
         enforced
           ? 'paywall: on (paid features are gated)'
           : 'paywall: off (KEYFLIP_LICENSING is not set — paid features are not gated yet)',
       );
+      return;
+    }
+    case 'trial': {
+      let email = null;
+      for (let i = 1; i < rest.length; i++) {
+        if (rest[i] === '--email' && rest[i + 1]) {
+          email = rest[++i];
+        } else if (rest[i].indexOf('-') !== 0 && !email) {
+          email = rest[i];
+        }
+      }
+      let r;
+      try {
+        r = lic.startTrial(ctx, { email: email });
+      } catch (e) {
+        return fail(e.message);
+      }
+      if (JSON_MODE) {
+        jsonOut(r);
+        return;
+      }
+      print(
+        style.ok('✅') +
+          ' started 14-day Pro trial' +
+          (r.email ? ' for ' + r.email : '') +
+          ' (expires ' +
+          r.expiry.slice(0, 10) +
+          ')',
+      );
+      return;
+    }
+    case 'usage': {
+      const u = lic.usageSummary(ctx);
+      if (JSON_MODE) {
+        jsonOut(u);
+        return;
+      }
+      print(style.bold('month (' + u.currentMonth + '):'));
+      print(
+        '  requests: ' +
+          u.month.requests +
+          ' · saved: USD ' +
+          u.month.savedUsd.toFixed(2) +
+          ' (' +
+          u.month.savedTry.toFixed(2) +
+          ' TL, ' +
+          u.month.savedTokens +
+          ' tokens) · failovers: ' +
+          u.month.failoversSaved +
+          ' · leaks blocked: ' +
+          u.month.leaksBlocked,
+      );
+      print(style.bold('all-time:'));
+      print(
+        '  requests: ' +
+          u.total.requests +
+          ' · saved: USD ' +
+          u.total.savedUsd.toFixed(2) +
+          ' (' +
+          u.total.savedTry.toFixed(2) +
+          ' TL, ' +
+          u.total.savedTokens +
+          ' tokens) · failovers: ' +
+          u.total.failoversSaved +
+          ' · leaks blocked: ' +
+          u.total.leaksBlocked,
+      );
+      return;
+    }
+    case 'plans': {
+      const cat = lic.PRICING_CATALOG;
+      if (JSON_MODE) {
+        jsonOut(cat);
+        return;
+      }
+      Object.keys(cat).forEach(function (k) {
+        const p = cat[k];
+        if (p.monthlyUsd === 0) {
+          print(style.bold(p.label.padEnd(18)) + ' 0 TL / 0 USD');
+        } else if (p.monthlyUsd == null) {
+          print(style.bold(p.label.padEnd(18)) + ' from ' + p.yearlyTry + ' TL/yr (' + p.yearlyUsd + ' USD/yr, ' + p.minSeats + '+ seats)');
+        } else {
+          print(
+            style.bold(p.label.padEnd(18)) +
+              ' ' +
+              p.monthlyTry +
+              ' TL/mo (' +
+              p.monthlyUsd +
+              ' USD/mo) · ' +
+              p.yearlyTry +
+              ' TL/yr (' +
+              p.yearlyUsd +
+              ' USD/yr)' +
+              (p.minSeats ? ' [per seat, min ' + p.minSeats + ']' : ''),
+          );
+        }
+      });
       return;
     }
     case 'activate': {
@@ -3044,6 +3172,7 @@ function cmdLicense(ctx, rest) {
           ' activated ' +
           r.tier +
           ' plan' +
+          (r.seats && r.seats > 1 ? ' (' + r.seats + ' seats)' : '') +
           (r.email ? ' for ' + r.email : '') +
           (r.expiry ? ' (expires ' + r.expiry + ')' : ''),
       );
@@ -3059,7 +3188,7 @@ function cmdLicense(ctx, rest) {
       return;
     }
     default:
-      return fail('usage: keyflip license <status|activate <file>|deactivate>');
+      return fail('usage: keyflip license <status|trial [--email <e>]|usage|plans|activate <file>|deactivate>');
   }
 }
 

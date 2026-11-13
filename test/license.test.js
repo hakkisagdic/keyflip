@@ -426,3 +426,103 @@ test('paywall is env-gated: requireTier is a no-op unless KEYFLIP_LICENSING is s
   assert.strictEqual(license.featureFor('cost'), 'cost');
   assert.strictEqual(license.featureFor('list'), null);
 });
+
+
+// ---- P0-1: seats, grace period, 14-day local trial, and ROI usage ledger ----
+
+test("seats and trial fields are cryptographically bound in canonicalPayload and verify", function () {
+  const k = freshKeys();
+  license.setPublicKey(k.pubB64);
+  const token = license.makeLicense(
+    k.privateKey,
+    { tier: "team", email: "team@acme.co", expiry: "2030-01-01T00:00:00.000Z", seats: 5 },
+    { now: NOW },
+  );
+  const v = license.verify(token, { now: NOW });
+  assert.strictEqual(v.valid, true);
+  assert.strictEqual(v.tier, "team");
+  assert.strictEqual(v.seats, 5);
+  assert.strictEqual(v.trial, false);
+
+  // Tampering seats from 5 to 50 invalidates signature
+  const forgedPayload = license.canonicalPayload({
+    tier: "team",
+    email: "team@acme.co",
+    expiry: "2030-01-01T00:00:00.000Z",
+    issued: NOW(),
+    seats: 50,
+  });
+  const forged = Buffer.from(forgedPayload, "utf8").toString("base64url") + "." + token.split(".")[1];
+  assert.strictEqual(license.verify(forged, { now: NOW }).valid, false);
+});
+
+test("expiringSoon and 7-day grace period keep paid tier working during grace window, then collapse to free", function () {
+  const k = freshKeys();
+  license.setPublicKey(k.pubB64);
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "kf-grace-"));
+  const ctxActivate = makeCtx({ home: home, now: function () { return "2026-06-01T00:00:00.000Z"; } });
+  const token = license.makeLicense(
+    k.privateKey,
+    { tier: "pro", email: "a@b.co", expiry: "2026-06-10T00:00:00.000Z" },
+    { now: ctxActivate.now },
+  );
+  license.activate(ctxActivate, { token: token });
+
+  // 3 days before expiry -> expiringSoon: true
+  const ctxSoon = makeCtx({ home: home, now: function () { return "2026-06-07T12:00:00.000Z"; } });
+  const stSoon = license.status(ctxSoon);
+  assert.strictEqual(stSoon.valid, true);
+  assert.strictEqual(stSoon.expiringSoon, true);
+  assert.strictEqual(license.tier(ctxSoon), "pro");
+
+  // 3 days AFTER expiry -> within 7-day grace window: valid=false, inGrace=true, effective tier stays pro
+  const ctxGrace = makeCtx({ home: home, now: function () { return "2026-06-13T00:00:00.000Z"; } });
+  const stGrace = license.status(ctxGrace);
+  assert.strictEqual(stGrace.valid, false);
+  assert.strictEqual(stGrace.reason, "expired");
+  assert.strictEqual(stGrace.inGrace, true);
+  assert.strictEqual(license.tier(ctxGrace), "pro");
+  assert.strictEqual(license.tier(ctxGrace, { allowGrace: false }), "free");
+
+  // 10 days AFTER expiry -> past 7-day grace window: collapses to free
+  const ctxPast = makeCtx({ home: home, now: function () { return "2026-06-21T00:00:00.000Z"; } });
+  assert.strictEqual(license.status(ctxPast).inGrace, false);
+  assert.strictEqual(license.tier(ctxPast), "free");
+});
+
+test("startTrial grants a one-time 14-day Pro trial and refuses a second trial on the same machine", async function () {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "kf-trial-"));
+  const ctx = makeCtx({ home: home, now: function () { return "2026-06-01T00:00:00.000Z"; } });
+
+  const tr = license.startTrial(ctx, { email: "dev@example.com" });
+  assert.strictEqual(tr.tier, "pro");
+  assert.strictEqual(tr.trial, true);
+  assert.strictEqual(tr.daysRemaining, 14);
+  assert.strictEqual(license.tier(ctx), "pro");
+  assert.strictEqual(license.status(ctx).reason, "trial");
+
+  // Second call on the same machine is refused
+  assert.throws(function () {
+    license.startTrial(ctx, { email: "dev2@example.com" });
+  }, /trial already used/);
+
+  // 16 days later -> trial expired, back to free
+  const ctxExpired = makeCtx({ home: home, now: function () { return "2026-06-17T00:00:00.000Z"; } });
+  assert.strictEqual(license.tier(ctxExpired), "free");
+  assert.strictEqual(license.status(ctxExpired).reason, "trial-expired");
+});
+
+test("recordUsage and usageSummary track monthly and all-time ROI metrics in usage-ledger.json", function () {
+  const ctx = makeCtx({ now: function () { return "2026-11-13T10:00:00.000Z"; } });
+  license.recordUsage(ctx, { requests: 12, savedUsd: 1.5, savedTokens: 45000, failoversSaved: 2, leaksBlocked: 1 });
+  const sum = license.recordUsage(ctx, { requests: 8, savedUsd: 0.5, savedTokens: 15000, failoversSaved: 1, leaksBlocked: 3 });
+  assert.strictEqual(sum.currentMonth, "2026-11");
+  assert.strictEqual(sum.month.requests, 20);
+  assert.strictEqual(sum.month.savedUsd, 2);
+  assert.ok(sum.month.savedTry > 60);
+  assert.strictEqual(sum.month.savedTokens, 60000);
+  assert.strictEqual(sum.month.failoversSaved, 3);
+  assert.strictEqual(sum.month.leaksBlocked, 4);
+  assert.strictEqual(sum.total.requests, 20);
+  assertPrivateMode(license.usageLedgerPath(ctx), "usage-ledger.json");
+});

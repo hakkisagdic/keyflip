@@ -1,8 +1,8 @@
 // G1: `keyflip panel` — a command-activated LOCAL web dashboard (loopback only, never a
 // daemon; the user starts/stops it). Read-only v1: it aggregates keyflip state (accounts +
-// cached quota, providers, CLI surfaces, conversation index, recent sessions, keepsakes) and
-// renders it. Zero-dep (Node http + inline HTML/CSS/JS). No mutation surface → nothing
-// dangerous is exposed over HTTP.
+// cached quota, providers, CLI surfaces, conversation index, license & ROI summary, recent
+// sessions, keepsakes) and renders it. Zero-dep (Node http + inline HTML/CSS/JS). No mutation
+// surface → nothing dangerous is exposed over HTTP.
 import http from 'http';
 import fs from 'fs';
 import path from 'path';
@@ -15,6 +15,7 @@ import * as _history from './history.js';
 import * as _usage from './usage.js';
 import * as _surface from './surface.js';
 import * as _convindex from './convindex.js';
+import * as _license from './license.js';
 
 // Aggregate the dashboard state. FAST — reads the cached usage (no network fetch) and bounds
 // the session/keepsake lists. Never throws (a panel must not crash on partial data).
@@ -134,6 +135,39 @@ function buildState(ctx) {
     { exists: false, sources: 0, chunks: 0, vectorChunks: 0, coverage: 0, model: null },
   );
 
+  const licenseInfo = safe(
+    function () {
+      const st = _license.status(ctx);
+      const us = _license.usageSummary(ctx);
+      return {
+        plan: _license.tier(ctx),
+        tier: st.tier,
+        valid: !!st.valid,
+        reason: st.reason,
+        seats: st.seats || 1,
+        trial: !!st.trial,
+        inGrace: !!st.inGrace,
+        expiringSoon: !!st.expiringSoon,
+        daysRemaining: st.daysRemaining,
+        expiry: st.expiry || null,
+        usage: us.month || { requests: 0, savedUsd: 0, savedTry: 0, savedTokens: 0, failoversSaved: 0, leaksBlocked: 0 },
+      };
+    },
+    {
+      plan: 'free',
+      tier: 'free',
+      valid: false,
+      reason: 'no-license',
+      seats: 1,
+      trial: false,
+      inGrace: false,
+      expiringSoon: false,
+      daysRemaining: null,
+      expiry: null,
+      usage: { requests: 0, savedUsd: 0, savedTry: 0, savedTokens: 0, failoversSaved: 0, leaksBlocked: 0 },
+    },
+  );
+
   return {
     activeEmail: safe(function () {
       return core.currentEmail(ctx);
@@ -143,6 +177,7 @@ function buildState(ctx) {
     providers: providers,
     surfaces: surfaces,
     convIndex: convIndex,
+    license: licenseInfo,
     sessions: recent,
     keepsakes: keepsakes,
     activity: safe(
@@ -241,7 +276,7 @@ function buildMemoryGraph(ctx) {
 }
 
 // G8: a SHARE-SAFE snapshot of the dashboard — accounts + quota + activity + providers +
-// detected surfaces + conversation index counts ONLY.
+// detected surfaces + conversation index + license summary ONLY.
 // Deliberately EXCLUDES anything that carries private content (session cwds/previews,
 // keepsakes, the memory constellation's terms). `anon` masks emails + account/provider names.
 function buildSnapshot(ctx, opts) {
@@ -285,6 +320,15 @@ function buildSnapshot(ctx, opts) {
       };
     }),
     convIndex: s.convIndex || { exists: false, sources: 0, chunks: 0, vectorChunks: 0, coverage: 0, model: null },
+    license: s.license || {
+      plan: 'free',
+      tier: 'free',
+      valid: false,
+      seats: 1,
+      trial: false,
+      inGrace: false,
+      usage: { requests: 0, savedUsd: 0, savedTry: 0, savedTokens: 0, failoversSaved: 0, leaksBlocked: 0 },
+    },
     activity: s.activity,
     anon: !!opts.anon,
   };
@@ -373,6 +417,22 @@ function renderSnapshot(snap) {
       ' vector coverage' +
       (ci.model ? ' (' + esc(ci.model) + ')' : '')
     : 'Not built yet.';
+  const lic = snap.license || { plan: 'free', seats: 1, usage: {} };
+  const licUsg = lic.usage || {};
+  const licSummary =
+    'plan: <b>' +
+    esc(lic.plan || 'free') +
+    '</b>' +
+    (lic.trial ? ' (trial)' : '') +
+    (lic.inGrace ? ' (grace period)' : '') +
+    (lic.seats > 1 ? ' · ' + esc(lic.seats) + ' seats' : '') +
+    ' · saved $' +
+    esc((licUsg.savedUsd || 0).toFixed(2)) +
+    ' · ' +
+    esc(licUsg.failoversSaved || 0) +
+    ' failovers · ' +
+    esc(licUsg.leaksBlocked || 0) +
+    ' leaks blocked';
   const act = snap.activity || { days: [], total: 0, weeks: 26 };
   const when = snap.generatedAt ? String(snap.generatedAt).slice(0, 16).replace('T', ' ') : '';
   return (
@@ -404,6 +464,9 @@ function renderSnapshot(snap) {
     '</div></section>' +
     '<section><h2>Conversation index</h2><div class="muted">' +
     ciSummary +
+    '</div></section>' +
+    '<section><h2>License &amp; monthly value</h2><div class="muted">' +
+    licSummary +
     '</div></section>' +
     '</main><footer class="muted">Read-only static snapshot · no session content, no secrets.</footer>' +
     '</body></html>'
@@ -538,6 +601,7 @@ function renderPage() {
     '<section><h2>Providers</h2><div id="providers" class="chips"></div></section>' +
     '<section><h2>Detected AI surfaces</h2><div id="surfaces" class="chips"></div></section>' +
     '<section><h2>Conversation index</h2><div id="conv-index" class="muted"></div></section>' +
+    '<section><h2>License &amp; monthly value</h2><div id="license-info" class="muted"></div></section>' +
     '<section><h2>Recent sessions</h2><ul id="sessions" class="list"></ul></section>' +
     '<section><h2>Keepsakes</h2><ul id="keepsakes" class="list"></ul></section>' +
     '<section><h2>Memory constellation</h2><div id="memgraph"></div></section>' +
@@ -551,7 +615,7 @@ function renderPage() {
 const STYLE = [
   ':root{--bg:#0f1115;--card:#1a1d24;--fg:#e6e8ec;--muted:#8b909a;--accent:#7aa2f7;--ok:#6ccf8e;--warn:#e0af68;--bad:#f7768e;--bar:#2a2e37}',
   '@media(prefers-color-scheme:light){:root{--bg:#f6f7f9;--card:#fff;--fg:#1a1d24;--muted:#6b7280;--bar:#e5e7eb}}',
-  '*{box-sizing:border-box}body{margin:0;font:14px/1.5 -apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--fg)}',
+  '*{box-sizing:border-box}body{margin:0;font:14px/1.5 -apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif;font-variant-numeric:tabular-nums;background:var(--bg);color:var(--fg)}',
   'header{display:flex;align-items:center;gap:12px;padding:14px 22px;border-bottom:1px solid var(--bar);position:sticky;top:0;background:var(--bg)}',
   'header h1{font-size:18px;margin:0}#refresh{margin-left:auto;background:var(--card);color:var(--fg);border:1px solid var(--bar);border-radius:8px;padding:4px 10px;cursor:pointer}',
   'main{padding:18px 22px;max-width:1000px;margin:0 auto}section{margin-bottom:26px}h2{font-size:13px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin:0 0 10px}',
@@ -596,6 +660,7 @@ const SCRIPT = [
   ' document.getElementById("providers").innerHTML=(s.providers||[]).map(function(p){return "<span class=\\"chip"+(p.active?" active":"")+"\\">"+esc(p.name)+(p.active?" ●":"")+"</span>";}).join("")||"<span class=muted>No providers.</span>";',
   ' document.getElementById("surfaces").innerHTML=(s.surfaces||[]).filter(function(sf){return sf.present;}).map(function(sf){return "<span class=\\"chip"+(sf.switchable?" active":"")+"\\">"+esc(sf.label)+(sf.activeAccount?" ("+esc(sf.activeAccount)+")":sf.switchable?" ⇄":"")+"</span>";}).join("")||"<span class=muted>No other AI tools detected.</span>";',
   ' var ci=s.convIndex||{}; document.getElementById("conv-index").innerHTML=ci.exists?(esc(ci.sources||0)+" conversations · "+esc(ci.chunks||0)+" chunks · "+pct(ci.coverage||0)+" vector coverage"+(ci.model?" ("+esc(ci.model)+")":"")):"Not built yet — try <code>keyflip conv index --embed</code>.";',
+  ' var lc=s.license||{plan:"free",seats:1,usage:{}}; var lu=lc.usage||{}; document.getElementById("license-info").innerHTML="plan: <b>"+esc(lc.plan||"free")+"</b>"+(lc.trial?" (trial)":"")+(lc.inGrace?" (grace period)":"")+(lc.seats>1?" · "+esc(lc.seats)+" seats":"")+" · saved $"+esc(Number(lu.savedUsd||0).toFixed(2))+" · "+esc(lu.failoversSaved||0)+" failovers · "+esc(lu.leaksBlocked||0)+" leaks blocked"+(lc.plan==="free"?" — try <code>keyflip license trial</code>":"");',
   ' document.getElementById("sessions").innerHTML=(s.sessions||[]).map(function(r){return "<li><div>"+esc((r.sessionId||"").slice(0,8))+" <span class=meta>"+esc(r.cwd||"")+"</span>"+(r.orphan?" <span class=badge>⚠ folder gone</span>":(r.staleCwd?" <span class=meta>(folder gone, still live)</span>":""))+"</div>"+(r.preview?"<div class=meta>"+esc(r.preview)+"</div>":"")+"</li>";}).join("")||"<li class=muted>No sessions.</li>";',
   ' document.getElementById("keepsakes").innerHTML=(s.keepsakes||[]).map(function(k){return "<li>"+esc(k.key.slice(0,8))+" <span class=meta>"+esc((k.mtime||"").slice(0,16).replace("T"," "))+"</span></li>";}).join("")||"<li class=muted>No keepsakes yet — try <code>keyflip dream --apply</code>.</li>";',
   ' var a=s.activity||{};document.getElementById("activity-total").textContent=a.total?("· "+a.total+" session"+(a.total===1?"":"s")+", last "+(a.weeks||26)+" weeks"):"";',
