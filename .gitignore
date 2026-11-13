@@ -3,6 +3,9 @@ node_modules/
 *.tgz
 coverage/
 .nyc_output/
+apps/menubar/.build/
+apps/menubar/.swiftpm/
+apps/menubar/build/
 
 # macOS
 .DS_Store

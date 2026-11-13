@@ -1,0 +1,268 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import {
+  collectOtherQuotas,
+  collectServicesStatus,
+  restartManagedService,
+  summarizeFleetSweep,
+  collectServerStatus
+} from "../src/controlcenter.js";
+import * as daemon from "../src/daemon.js";
+
+function makeTempEnv() {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "kf-cc-test-"));
+  const home = path.join(root, "home");
+  const configDir = path.join(home, ".config", "keyflip");
+  fs.mkdirSync(configDir, { recursive: true });
+  return {
+    root,
+    home,
+    configDir,
+    ctx: {
+      home,
+      configDir,
+      platform: "darwin",
+      now: () => "2026-11-13T15:00:00.000Z",
+      nowMs: () => Date.parse("2026-11-13T15:00:00.000Z")
+    },
+    cleanup() {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  };
+}
+
+test("collectOtherQuotas reads quota.md, apicredits, plugin JSON, and returns okunamadı for unknown sources", () => {
+  const env = makeTempEnv();
+  try {
+    const adminDir = path.join(env.home, ".polyctl", "admin");
+    fs.mkdirSync(adminDir, { recursive: true });
+    const quotaMd = path.join(adminDir, "quota.md");
+    fs.writeFileSync(
+      quotaMd,
+      [
+        "## 2026-11-13 15:47",
+        "| tool | account | 5h used % | weekly used % | resets |",
+        "|---|---|---:|---:|---|",
+        "| antigravity | hakkisagdic@gmail.com | 0.0 | 40.0 | 5h: 1h39m, 7d: Nov 20 |",
+        "| kiro (monthly credits, freeskynet) | - | - | 0.21 / 50 | 12/01 |"
+      ].join("\n"),
+      "utf8"
+    );
+
+    // Write manual apicredits entry
+    fs.writeFileSync(
+      path.join(env.configDir, "api-accounts.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        accounts: [
+          {
+            id: "max20",
+            plan: "max20x",
+            grant: 200,
+            cycleDay: 1,
+            entries: [{ at: "2026-11-13T12:00:00.000Z", usd: 145.5 }]
+          }
+        ]
+      }),
+      "utf8"
+    );
+
+    const quotas = collectOtherQuotas(env.ctx, { homeDir: env.home, configDir: env.configDir });
+    const byId = Object.fromEntries(quotas.map((q) => [q.id, q]));
+
+    assert.equal(byId.kiro.status, "ok");
+    assert.equal(byId.kiro.display, "0.21 / 50 kredi");
+    assert.equal(byId.kiro.usedPct, 0.4);
+
+    assert.equal(byId.agy.status, "ok");
+    assert.equal(byId.agy.display, "5s: %0 · 7g: %40");
+    assert.equal(byId.agy.usedPct, 40);
+
+    // Unknown sources must NEVER fabricate numbers; they must return "okunamadı"
+    assert.equal(byId.copilot.status, "unreadable");
+    assert.equal(byId.copilot.display, "okunamadı");
+    assert.equal(byId.copilot.usedPct, null);
+
+    assert.equal(byId.evren.status, "unreadable");
+    assert.equal(byId.evren.display, "okunamadı");
+
+    // API credits
+    assert.equal(byId.apicredits.status, "ok");
+    assert.match(byId.apicredits.display, /\$145\.50 kalan/);
+
+    // Plugin JSON override for EVREN
+    const quotasDir = path.join(env.configDir, "quotas");
+    fs.mkdirSync(quotasDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(quotasDir, "evren.json"),
+      JSON.stringify({
+        label: "EVREN",
+        status: "ok",
+        display: "120 / 500 sorgu",
+        usedPct: 24
+      }),
+      "utf8"
+    );
+
+    const quotasWithPlugin = collectOtherQuotas(env.ctx, { homeDir: env.home, configDir: env.configDir });
+    const evrenPlugin = quotasWithPlugin.find((q) => q.id === "evren");
+    assert.equal(evrenPlugin.status, "ok");
+    assert.equal(evrenPlugin.display, "120 / 500 sorgu");
+    assert.equal(evrenPlugin.usedPct, 24);
+  } finally {
+    env.cleanup();
+  }
+});
+
+test("collectServicesStatus inspects launchd map and log tails; restartManagedService enforces confirm and whitelist", () => {
+  const env = makeTempEnv();
+  try {
+    const backupLogDir = path.join(env.home, ".polyctl", "admin", "backups", "flowparts-nightly");
+    fs.mkdirSync(backupLogDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(backupLogDir, "nightly.log"),
+      [
+        "2026-11-13 03:30:01 start (pid 26970)",
+        "2026-11-13 03:31:55 ok: /Users/hakkisagdic/.polyctl/admin/backups/flowparts-nightly/2026-11-13 4.2M; 169 tables verified",
+        "2026-11-13 03:31:55 done"
+      ].join("\n"),
+      "utf8"
+    );
+
+    const services = collectServicesStatus(env.ctx, {
+      homeDir: env.home,
+      launchdMap: {
+        "dev.keysmith.gateway": { pid: 14197, lastExitStatus: 0 },
+        "dev.keysmith.router": { pid: 50076, lastExitStatus: 0 },
+        "dev.polyctl.admin-tick": { pid: null, lastExitStatus: 0 },
+        "dev.polyctl.flowparts-backup": { pid: null, lastExitStatus: 0 },
+        "local.yargitay.embed-ensure": { pid: null, lastExitStatus: 1 }
+      }
+    });
+
+    const gw = services.find((s) => s.id === "keysmith-gateway");
+    assert.equal(gw.state, "running");
+    assert.equal(gw.pid, 14197);
+    assert.equal(gw.restartable, true);
+
+    const backup = services.find((s) => s.id === "nightly-backup");
+    assert.equal(backup.state, "scheduled");
+    assert.match(backup.lastSuccess, /169 tables verified/);
+
+    const embed = services.find((s) => s.id === "embedding-guardian");
+    assert.equal(embed.state, "error");
+
+    // 1. Rejects without confirm: true
+    assert.throws(
+      () => restartManagedService(env.ctx, { label: "dev.keysmith.gateway", confirm: false }),
+      (err) => err.code === "CONFIRMATION_REQUIRED"
+    );
+
+    // 2. Rejects non-whitelisted service even with confirm: true
+    assert.throws(
+      () => restartManagedService(env.ctx, { label: "com.apple.Finder", confirm: true }),
+      (err) => err.code === "SERVICE_NOT_ALLOWED"
+    );
+
+    // 3. Succeeds with confirm: true on whitelisted service and writes audit logs
+    const calls = [];
+    const res = restartManagedService(env.ctx, {
+      label: "dev.keysmith.gateway",
+      confirm: true,
+      runner: (cmd, args) => {
+        calls.push({ cmd, args });
+        return { status: 0, stdout: "kickstarted", stderr: "" };
+      }
+    });
+    assert.equal(res.ok, true);
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].cmd, "launchctl");
+    assert.equal(calls[0].args[0], "kickstart");
+
+    const logContent = fs.readFileSync(path.join(env.configDir, "logs", "keyflip.log"), "utf8");
+    assert.match(logContent, /AUDIT action=service_restart label=dev\.keysmith\.gateway ok=true/);
+
+    const eventsContent = fs.readFileSync(path.join(env.configDir, "events.jsonl"), "utf8");
+    assert.match(eventsContent, /"kind":"service-restart"/);
+  } finally {
+    env.cleanup();
+  }
+});
+
+test("summarizeFleetSweep and collectServerStatus handle data and unreadable fallbacks cleanly", () => {
+  const env = makeTempEnv();
+  try {
+    const unreadableFleet = summarizeFleetSweep(null);
+    assert.equal(unreadableFleet.status, "unreadable");
+    assert.equal(unreadableFleet.display, "okunamadı");
+
+    const summary = summarizeFleetSweep([
+      { active: true, lastTurnAt: 10, updatedMinAgo: 10 },
+      { active: true, lastTurnAt: 180, updatedMinAgo: 180 }, // stuck (>120m)
+      { active: false, updatedMinAgo: 30 }, // idle
+      { active: false, updatedMinAgo: 60 * 24 * 10 } // dormant (>7d)
+    ]);
+    assert.equal(summary.working, 1);
+    assert.equal(summary.stuck, 1);
+    assert.equal(summary.idle, 1);
+    assert.equal(summary.dormant, 1);
+    assert.equal(summary.status, "warning");
+
+    const srvUnreadable = collectServerStatus(env.ctx, { homeDir: env.home, configDir: env.configDir });
+    assert.equal(srvUnreadable.status, "unreadable");
+    assert.equal(srvUnreadable.load, "okunamadı");
+    assert.equal(srvUnreadable.readOnly, true);
+  } finally {
+    env.cleanup();
+  }
+});
+
+test("daemon handleCommand serves control-center and service-restart endpoints", async () => {
+  const env = makeTempEnv();
+  try {
+    const ccRes = await daemon.handleCommand(
+      env.ctx,
+      null,
+      { cmd: "control-center" },
+      {
+        home: env.home,
+        controlCenter: {
+          homeDir: env.home,
+          configDir: env.configDir,
+          sweepScript: null,
+          launchdMap: { "dev.keysmith.gateway": { pid: 999, lastExitStatus: 0 } }
+        }
+      }
+    );
+    assert.equal(ccRes.status, 200);
+    assert.equal(ccRes.body.ok, true);
+    assert.equal(Array.isArray(ccRes.body.otherQuotas), true);
+    assert.equal(Array.isArray(ccRes.body.services), true);
+    assert.equal(ccRes.body.fleet.display, "okunamadı");
+    assert.equal(ccRes.body.server.readOnly, true);
+    assert.equal(typeof ccRes.body.preferences.thresholdPct, "number");
+
+    const restartNoConfirm = await daemon.handleCommand(
+      env.ctx,
+      null,
+      { cmd: "service-restart", label: "dev.keysmith.gateway" },
+      { home: env.home }
+    );
+    assert.equal(restartNoConfirm.status, 400);
+    assert.equal(restartNoConfirm.body.error, "confirmation_required");
+
+    const restartForbidden = await daemon.handleCommand(
+      env.ctx,
+      null,
+      { cmd: "service-restart", label: "com.apple.WindowServer", confirm: true },
+      { home: env.home }
+    );
+    assert.equal(restartForbidden.status, 403);
+    assert.equal(restartForbidden.body.error, "service_not_allowed");
+  } finally {
+    env.cleanup();
+  }
+});

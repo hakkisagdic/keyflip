@@ -32,6 +32,7 @@ import * as _convindex from './convindex.js';
 import * as _log from './log.js';
 import * as _history from './history.js';
 import * as _notify from './notify.js';
+import * as _controlcenter from './controlcenter.js';
 
 const LABEL = 'com.keyflip.daemon';
 const LEGACY_LABELS = [
@@ -781,6 +782,20 @@ async function buildStatus(ctx, scheduler, opts) {
   return redactSecrets(payload);
 }
 
+
+// Build the full Control Center payload (status + otherQuotas + services + fleet + server + preferences).
+async function buildControlCenter(ctx, scheduler, opts) {
+  opts = opts || {};
+  const base = await buildStatus(ctx, scheduler, opts);
+  const ccOpts = Object.assign({ homeDir: opts.home || ctx.home, configDir: ctx.configDir }, opts.controlCenter || {});
+  base.otherQuotas = _controlcenter.collectOtherQuotas(ctx, ccOpts);
+  base.services = _controlcenter.collectServicesStatus(ctx, ccOpts);
+  base.fleet = _controlcenter.collectFleetStatus(ctx, ccOpts);
+  base.server = _controlcenter.collectServerStatus(ctx, ccOpts);
+  base.preferences = _controlcenter.collectPreferences(ctx);
+  return redactSecrets(base);
+}
+
 // Execute a command received over the Unix domain socket.
 async function handleCommand(ctx, scheduler, req, opts) {
   opts = opts || {};
@@ -789,6 +804,45 @@ async function handleCommand(ctx, scheduler, req, opts) {
 
   if (cmd === 'status') {
     return { status: 200, body: await buildStatus(ctx, scheduler, opts) };
+  }
+
+  if (cmd === 'control-center') {
+    return { status: 200, body: await buildControlCenter(ctx, scheduler, opts) };
+  }
+
+  if (cmd === 'service-restart') {
+    if (req.confirm !== true) {
+      return {
+        status: 400,
+        body: {
+          ok: false,
+          error: 'confirmation_required',
+          message: 'Restarting a service requires confirm: true',
+        },
+      };
+    }
+    const label = String(req.label || '').trim();
+    try {
+      const r = _controlcenter.restartManagedService(ctx, {
+        label: label,
+        confirm: true,
+        runner: opts.serviceRunner,
+      });
+      appendDaemonLog(ctx, 'audit service-restart: ' + label + ' -> ok', opts);
+      return {
+        status: 200,
+        body: redactSecrets(r),
+      };
+    } catch (e) {
+      const msg = redactText((e && e.message) || String(e));
+      appendDaemonLog(ctx, 'audit service-restart FAILED -> ' + label + ': ' + msg, opts);
+      const code = e && e.code === 'SERVICE_NOT_ALLOWED' ? 403 : 500;
+      const errKey = e && e.code === 'SERVICE_NOT_ALLOWED' ? 'service_not_allowed' : 'restart_failed';
+      return {
+        status: code,
+        body: { ok: false, error: errKey, message: msg },
+      };
+    }
   }
 
   if (cmd === 'switch') {
@@ -1014,6 +1068,9 @@ function mapHttpToCommand(method, urlPath, bodyObj) {
   if (method === 'GET' && (cleanPath === '/v1/status' || cleanPath === '/status' || cleanPath === '/')) {
     return { cmd: 'status' };
   }
+  if (method === 'GET' && (cleanPath === '/v1/control-center' || cleanPath === '/control-center')) {
+    return { cmd: 'control-center' };
+  }
   if (method === 'GET' && (cleanPath === '/v1/config' || cleanPath === '/config')) {
     return { cmd: 'config' };
   }
@@ -1028,6 +1085,9 @@ function mapHttpToCommand(method, urlPath, bodyObj) {
   }
   if (method === 'POST' && (cleanPath === '/v1/config' || cleanPath === '/config')) {
     return Object.assign(base, { cmd: 'config' });
+  }
+  if (method === 'POST' && (cleanPath === '/v1/service-restart' || cleanPath === '/service-restart')) {
+    return Object.assign(base, { cmd: 'service-restart' });
   }
   if (method === 'POST' && (cleanPath === '/v1/command' || cleanPath === '/command')) {
     return base;
@@ -1622,6 +1682,7 @@ export {
   appendDaemonLog,
   createScheduler,
   buildStatus,
+  buildControlCenter,
   handleCommand,
   startServer,
   querySocket,

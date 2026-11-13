@@ -1519,7 +1519,24 @@ async function cmdDaemon(ctx, rest) {
     print('       keyflip daemon install [-y]');
     print('       keyflip daemon uninstall');
     print('       keyflip daemon run-now <autoswitch|refresh|surface-refresh|conv-index|usage>');
+    print('       keyflip daemon control-center [--json]');
     print('       keyflip daemon run');
+    return;
+  }
+  if (sub === 'control-center') {
+    const q = await _daemon.querySocket(ctx, { cmd: 'control-center' });
+    let payload;
+    if (q.ok && q.response) {
+      payload = Object.assign({}, q.response, { daemonRunning: true });
+    } else {
+      payload = await _daemon.buildControlCenter(ctx, null, { home: ctx.home });
+      payload.daemonRunning = false;
+    }
+    if (JSON_MODE) {
+      jsonOut(payload);
+      return;
+    }
+    print('Keyflip Control Center (' + (payload.daemonRunning ? style.ok('daemon running') : style.warn('daemon çalışmıyor')) + ')');
     return;
   }
   if (sub === 'status') {

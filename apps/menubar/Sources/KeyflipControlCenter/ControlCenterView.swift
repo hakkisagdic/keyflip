@@ -1,0 +1,561 @@
+import AppKit
+import SwiftUI
+
+public struct ControlCenterView: View {
+    @ObservedObject var viewModel: ControlCenterViewModel
+    @State private var showPreferences: Bool = false
+
+    public init(viewModel: ControlCenterViewModel) {
+        self.viewModel = viewModel
+    }
+
+    public var body: some View {
+        VStack(spacing: 0) {
+            headerBar
+            Divider()
+
+            if !viewModel.daemonRunning {
+                daemonOfflineBanner
+                Divider()
+            }
+
+            if let confirmAction = viewModel.pendingConfirmation {
+                confirmationBanner(confirmAction)
+                Divider()
+            }
+
+            if let err = viewModel.lastError {
+                messageRow(icon: "exclamationmark.triangle.fill", color: .orange, text: err)
+                Divider()
+            } else if let note = viewModel.statusBanner {
+                messageRow(icon: "checkmark.circle.fill", color: .green, text: note)
+                Divider()
+            }
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 14) {
+                    accountsSection
+                    failoverSection
+                    otherQuotasSection
+                    servicesSection
+                    fleetAndServerSection
+                    if showPreferences {
+                        preferencesSection
+                    }
+                }
+                .padding(12)
+            }
+
+            Divider()
+            footerBar
+        }
+        .frame(width: 400, height: 580)
+    }
+
+    // MARK: - Header & Banners
+
+    private var headerBar: some View {
+        HStack(spacing: 8) {
+            Circle()
+                .fill(statusDotColor(for: viewModel.menuBarSeverity, online: viewModel.daemonRunning))
+                .frame(width: 8, height: 8)
+
+            Text("Keyflip Kontrol Merkezi")
+                .font(.system(size: 13, weight: .semibold))
+
+            if viewModel.isFailoverEngaged {
+                Text("YEDEK ZİNCİR")
+                    .font(.system(size: 10, weight: .semibold))
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Color.orange.opacity(0.2))
+                    .foregroundColor(.orange)
+                    .cornerRadius(4)
+            }
+
+            Spacer()
+
+            Button(action: { viewModel.refresh() }) {
+                Image(systemName: "arrow.clockwise")
+                    .font(.system(size: 12))
+            }
+            .buttonStyle(.borderless)
+            .disabled(viewModel.isLoading)
+            .help("Durumu yenile")
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
+    }
+
+    private var daemonOfflineBanner: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "bolt.slash.fill")
+                .foregroundColor(.orange)
+                .font(.system(size: 12))
+            Text("daemon çalışmıyor — başlat")
+                .font(.system(size: 12, weight: .medium))
+            Spacer()
+            Button("Başlat") {
+                viewModel.startDaemonService()
+            }
+            .controlSize(.small)
+            .disabled(viewModel.isLoading)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(Color.orange.opacity(0.12))
+    }
+
+    private func confirmationBanner(_ action: PendingConfirmationAction) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(action.title)
+                .font(.system(size: 12, weight: .semibold))
+            Text(action.message)
+                .font(.system(size: 11))
+                .foregroundColor(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack {
+                Spacer()
+                Button("Vazgeç") {
+                    viewModel.cancelConfirmation()
+                }
+                .controlSize(.small)
+                Button("Onayla") {
+                    viewModel.executeConfirmedAction()
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+            }
+        }
+        .padding(10)
+        .background(Color(nsColor: .controlBackgroundColor))
+    }
+
+    private func messageRow(icon: String, color: Color, text: String) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: icon)
+                .foregroundColor(color)
+                .font(.system(size: 11))
+            Text(text)
+                .font(.system(size: 11))
+                .lineLimit(2)
+            Spacer()
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+    }
+
+    // MARK: - 1. Hesaplar (Accounts)
+
+    private var accountsSection: some View {
+        sectionBox(title: "HESAPLAR") {
+            if viewModel.payload.accounts.isEmpty {
+                Text("Kayıtlı Claude hesabı bulunamadı")
+                    .font(.system(size: 12))
+                    .foregroundColor(.secondary)
+            } else {
+                VStack(alignment: .leading, spacing: 10) {
+                    ForEach(viewModel.payload.accounts) { acct in
+                        VStack(alignment: .leading, spacing: 5) {
+                            HStack(spacing: 6) {
+                                Image(systemName: acct.active ? "checkmark.circle.fill" : "circle")
+                                    .foregroundColor(acct.active ? .accentColor : .secondary)
+                                    .font(.system(size: 11))
+
+                                Text(acct.name)
+                                    .font(.system(size: 12, weight: acct.active ? .semibold : .regular))
+
+                                if !acct.email.isEmpty {
+                                    Text(acct.email)
+                                        .font(.system(size: 11))
+                                        .foregroundColor(.secondary)
+                                        .lineLimit(1)
+                                }
+
+                                Spacer()
+
+                                if acct.active {
+                                    Text("Etkin")
+                                        .font(.system(size: 10, weight: .medium))
+                                        .foregroundColor(.secondary)
+                                } else if acct.enabled {
+                                    Button("Geç") {
+                                        viewModel.requestSwitchAccount(acct.name)
+                                    }
+                                    .controlSize(.mini)
+                                    .disabled(!viewModel.daemonRunning || viewModel.isLoading)
+                                }
+                            }
+
+                            HStack(spacing: 10) {
+                                quotaMeter(label: "5s", pct: acct.fiveHourPct)
+                                quotaMeter(label: "7g", pct: acct.sevenDayPct)
+                            }
+
+                            HStack(spacing: 8) {
+                                Text("Token: \(acct.token.formattedRemaining)")
+                                    .font(.system(size: 10))
+                                    .foregroundColor(acct.token.status == "expired" ? .red : .secondary)
+
+                                if let reset = acct.usage?.fiveHour?.resetsAt, !reset.isEmpty {
+                                    Text("· Sıfırlama: \(shortIsoTime(reset))")
+                                        .font(.system(size: 10))
+                                        .foregroundColor(.secondary)
+                                }
+                            }
+                        }
+                        if acct.id != viewModel.payload.accounts.last?.id {
+                            Divider()
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func quotaMeter(label: String, pct: Double?) -> some View {
+        HStack(spacing: 5) {
+            Text(label)
+                .font(.system(size: 10, design: .monospaced))
+                .foregroundColor(.secondary)
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    RoundedRectangle(cornerRadius: 2)
+                        .fill(Color.secondary.opacity(0.18))
+                    if let val = pct {
+                        RoundedRectangle(cornerRadius: 2)
+                            .fill(quotaBarColor(usedPct: val))
+                            .frame(width: max(2, geo.size.width * CGFloat(min(100, max(0, val)) / 100.0)))
+                    }
+                }
+            }
+            .frame(height: 5)
+            Text(pct != nil ? "%\(Int(pct!.rounded()))" : "okunamadı")
+                .font(.system(size: 10, design: .monospaced))
+                .foregroundColor(.secondary)
+                .frame(width: 54, alignment: .trailing)
+        }
+    }
+
+    // MARK: - 2. Yedek Zincir (Failover)
+
+    private var failoverSection: some View {
+        let fo = viewModel.payload.failover
+        return sectionBox(title: "YEDEK ZİNCİR (FAILOVER)") {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Circle()
+                        .fill(fo.engaged ? Color.orange : (fo.gatewayReady ? Color.green : Color.secondary))
+                        .frame(width: 7, height: 7)
+                    Text(fo.engaged ? "Devrede" : (fo.enabled ? "Hazır (Beklemede)" : "Devre dışı"))
+                        .font(.system(size: 12, weight: .medium))
+
+                    Spacer()
+
+                    Button(fo.engaged ? "Kapat" : "Aç") {
+                        viewModel.requestToggleFailover(enable: !fo.engaged)
+                    }
+                    .controlSize(.mini)
+                    .disabled(!viewModel.daemonRunning || viewModel.isLoading || !fo.enabled)
+                }
+
+                HStack(spacing: 12) {
+                    if let cap = fo.cap, let maxUsd = cap.max {
+                        let spentText = cap.spent != nil ? String(format: "$%.2f", cap.spent!) : "okunamadı"
+                        Text("Harcama / Tavan: \(spentText) / \(String(format: "$%.2f", maxUsd))")
+                            .font(.system(size: 11))
+                            .foregroundColor(.secondary)
+                    } else {
+                        Text("Harcama / Tavan: okunamadı")
+                            .font(.system(size: 11))
+                            .foregroundColor(.secondary)
+                    }
+
+                    if let alias = fo.alias, !alias.isEmpty {
+                        Text("· \(alias)")
+                            .font(.system(size: 11))
+                            .foregroundColor(.secondary)
+                    }
+                }
+
+                if let reason = fo.reason, fo.engaged {
+                    Text("Neden: \(reason)")
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary)
+                }
+            }
+        }
+    }
+
+    // MARK: - 3. Diğer Kotalar (Other Quotas)
+
+    private var otherQuotasSection: some View {
+        let quotas = viewModel.payload.otherQuotas ?? []
+        return sectionBox(title: "DİĞER KOTALAR") {
+            if quotas.isEmpty {
+                Text("okunamadı")
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
+            } else {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(quotas) { item in
+                        HStack(alignment: .firstTextBaseline) {
+                            Circle()
+                                .fill(quotaItemDotColor(item.status))
+                                .frame(width: 6, height: 6)
+                            Text(item.label)
+                                .font(.system(size: 11))
+                            Spacer()
+                            Text(item.display)
+                                .font(.system(size: 11, design: .monospaced))
+                                .foregroundColor(item.status == "unreadable" ? .secondary : .primary)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: - 4. Servisler (Services)
+
+    private var servicesSection: some View {
+        let services = viewModel.payload.services ?? []
+        return sectionBox(title: "SERVİSLER") {
+            if services.isEmpty {
+                Text("okunamadı")
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
+            } else {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(services) { svc in
+                        VStack(alignment: .leading, spacing: 3) {
+                            HStack {
+                                Circle()
+                                    .fill(serviceDotColor(svc.state))
+                                    .frame(width: 7, height: 7)
+                                Text(svc.title)
+                                    .font(.system(size: 11, weight: .medium))
+                                Text("(\(serviceStateLabel(svc.state)))")
+                                    .font(.system(size: 10))
+                                    .foregroundColor(.secondary)
+                                Spacer()
+                                if svc.restartable {
+                                    Button("Yeniden başlat") {
+                                        viewModel.requestRestartService(label: svc.label, title: svc.title)
+                                    }
+                                    .controlSize(.mini)
+                                    .disabled(!viewModel.daemonRunning || viewModel.isLoading)
+                                }
+                            }
+                            if let lastSuccess = svc.lastSuccess, !lastSuccess.isEmpty {
+                                Text("Son başarı: \(lastSuccess)")
+                                    .font(.system(size: 10))
+                                    .foregroundColor(.secondary)
+                                    .lineLimit(1)
+                            }
+                            if let lastErr = svc.lastError, !lastErr.isEmpty {
+                                Text("Son hata: \(lastErr)")
+                                    .font(.system(size: 10))
+                                    .foregroundColor(.orange)
+                                    .lineLimit(1)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: - 5. Filo (Fleet) & 6. Sunucu (Server - Read-Only)
+
+    private var fleetAndServerSection: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            sectionBox(title: "FİLO (TRAYCER)") {
+                if let fleet = viewModel.payload.fleet {
+                    HStack {
+                        Text("Ajan Durumu:")
+                            .font(.system(size: 11))
+                            .foregroundColor(.secondary)
+                        Spacer()
+                        Text(fleet.display)
+                            .font(.system(size: 11, design: .monospaced))
+                    }
+                } else {
+                    Text("okunamadı")
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary)
+                }
+            }
+
+            sectionBox(title: "SUNUCU (ALASTYR · SALT OKUNUR)") {
+                if let srv = viewModel.payload.server {
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack {
+                            Text("Yük / Bellek / Disk:")
+                                .font(.system(size: 11))
+                                .foregroundColor(.secondary)
+                            Spacer()
+                            Text("\(srv.load) · \(srv.memory) · \(srv.disk)")
+                                .font(.system(size: 11, design: .monospaced))
+                        }
+                        ForEach(srv.sites) { site in
+                            HStack {
+                                Text(site.name)
+                                    .font(.system(size: 10))
+                                    .foregroundColor(.secondary)
+                                Spacer()
+                                Text(site.detail)
+                                    .font(.system(size: 10, design: .monospaced))
+                                    .foregroundColor(site.status == "ok" ? .green : .secondary)
+                            }
+                        }
+                    }
+                } else {
+                    Text("okunamadı")
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary)
+                }
+            }
+        }
+    }
+
+    // MARK: - 7. Tercihler (Preferences)
+
+    private var preferencesSection: some View {
+        sectionBox(title: "TERCİHLER") {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Text("Geçiş eşiği: %\(Int(viewModel.prefThresholdPct.rounded()))")
+                        .font(.system(size: 11))
+                    Slider(value: $viewModel.prefThresholdPct, in: 50...100, step: 5)
+                }
+                HStack {
+                    Text("Yenileme aralığı (sn):")
+                        .font(.system(size: 11))
+                    Spacer()
+                    Picker("", selection: $viewModel.prefRefreshIntervalSec) {
+                        Text("60 sn").tag(60)
+                        Text("120 sn").tag(120)
+                        Text("300 sn").tag(300)
+                    }
+                    .frame(width: 100)
+                }
+                Toggle("Masaüstü bildirimleri", isOn: $viewModel.prefNotify)
+                    .font(.system(size: 11))
+
+                HStack {
+                    Text("Oturum açıldığında başlat:")
+                        .font(.system(size: 11))
+                    Spacer()
+                    Text(viewModel.prefLaunchAtLogin ? "Etkin (launchd)" : "Kapalı")
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary)
+                }
+
+                HStack {
+                    Spacer()
+                    Button("Tercihleri Kaydet") {
+                        viewModel.requestSavePreferences()
+                    }
+                    .controlSize(.small)
+                    .disabled(!viewModel.daemonRunning || viewModel.isLoading)
+                }
+            }
+        }
+    }
+
+    // MARK: - Footer
+
+    private var footerBar: some View {
+        HStack {
+            Button(showPreferences ? "Tercihleri Gizle" : "Tercihler…") {
+                showPreferences.toggle()
+            }
+            .buttonStyle(.borderless)
+            .font(.system(size: 11))
+
+            Spacer()
+
+            Button("Çıkış") {
+                NSApplication.shared.terminate(nil)
+            }
+            .buttonStyle(.borderless)
+            .font(.system(size: 11))
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+    }
+
+    // MARK: - Visual Helpers
+
+    private func sectionBox<Content: View>(title: String, @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title)
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundColor(.secondary)
+            VStack(alignment: .leading, spacing: 6) {
+                content()
+            }
+            .padding(9)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color(nsColor: .controlBackgroundColor))
+            .cornerRadius(6)
+        }
+    }
+
+    private func statusDotColor(for severity: QuotaSeverity, online: Bool) -> Color {
+        guard online else { return .secondary }
+        switch severity {
+        case .normal: return .green
+        case .warning: return .yellow
+        case .critical: return .red
+        case .unknown: return .secondary
+        }
+    }
+
+    private func quotaBarColor(usedPct: Double) -> Color {
+        switch QuotaSeverity.from(usedPct: usedPct) {
+        case .normal: return .green
+        case .warning: return .yellow
+        case .critical: return .red
+        case .unknown: return .secondary
+        }
+    }
+
+    private func quotaItemDotColor(_ status: String) -> Color {
+        switch status {
+        case "ok": return .green
+        case "warning": return .yellow
+        case "exhausted": return .red
+        default: return .secondary
+        }
+    }
+
+    private func serviceDotColor(_ state: String) -> Color {
+        switch state {
+        case "running", "scheduled": return .green
+        case "warning": return .yellow
+        case "error": return .red
+        default: return .secondary
+        }
+    }
+
+    private func serviceStateLabel(_ state: String) -> String {
+        switch state {
+        case "running": return "çalışıyor"
+        case "scheduled": return "zamanlanmış"
+        case "warning": return "uyarı"
+        case "error": return "hata"
+        default: return "durdu"
+        }
+    }
+
+    private func shortIsoTime(_ iso: String) -> String {
+        if iso.count >= 16 {
+            let start = iso.index(iso.startIndex, offsetBy: 11)
+            let end = iso.index(iso.startIndex, offsetBy: 16)
+            return String(iso[start..<end])
+        }
+        return iso
+    }
+}
