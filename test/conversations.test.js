@@ -468,3 +468,89 @@ test('forEachLine streams an actual >160 MB JSONL session and UTF-8 across chunk
     fs.rmSync(file, { force: true });
   }
 });
+
+// ---------------------------------------------------------------------------
+// P2-2: Session Efficiency Score & Git Commit/File Attribution (conv why)
+// ---------------------------------------------------------------------------
+test('efficiencyOf scores productive code/tool sessions higher than retry-heavy sessions', function () {
+  const productive = {
+    messages: [
+      { role: 'user', text: 'Implement Ed25519 signature verification in src/license.js', tools: [] },
+      {
+        role: 'assistant',
+        text: 'Here is the implementation:\n```js\nexport function verify(sig, msg) { return crypto.verify(null, msg, key, sig); }\n```',
+        tools: ['Read', 'Edit', 'Bash'],
+      },
+    ],
+  };
+  const thrashing = {
+    messages: [
+      { role: 'user', text: 'Do something', tools: [] },
+      { role: 'assistant', text: 'I tried.', tools: [] },
+      { role: 'user', text: 'Error failed again, fix the broken build', tools: [] },
+      { role: 'assistant', text: 'Sorry, let me retry.', tools: [] },
+      { role: 'user', text: 'Still wrong and broken, retry again', tools: [] },
+      { role: 'assistant', text: 'Retrying.', tools: [] },
+    ],
+  };
+  const effProd = conversations.efficiencyOf(productive);
+  const effThrash = conversations.efficiencyOf(thrashing);
+  assert.ok(effProd.score >= 80, 'productive session gets grade A (' + effProd.score + ')');
+  assert.strictEqual(effProd.grade, 'A');
+  assert.ok(effProd.codeChars > 0);
+  assert.strictEqual(effProd.toolCalls, 3);
+  assert.ok(effThrash.score < effProd.score, 'retry-heavy session scores lower than productive session');
+  assert.strictEqual(effThrash.retryTurns, 2);
+});
+
+test('conversations.why correlates a git commit and file path to the originating agent session with confidence', function () {
+  const ctx = ctxFor();
+  const repoDir = path.join(ctx.home, 'repo');
+  writeClaude(ctx, 'sess-guardrail', [
+    {
+      type: 'user',
+      cwd: repoDir,
+      timestamp: '2026-11-13T10:00:00.000Z',
+      message: { role: 'user', content: 'Add outbound PII guardrail to src/policy.js and src/proxy.js' },
+    },
+    {
+      type: 'assistant',
+      timestamp: '2026-11-13T10:05:00.000Z',
+      message: {
+        role: 'assistant',
+        content: [
+          { type: 'tool_use', name: 'Edit' },
+          { type: 'text', text: 'Updated src/policy.js with inspectOutboundBody:\n```js\nfunction inspectOutboundBody() {}\n```' },
+        ],
+      },
+    },
+  ]);
+
+  const fakeGitRun = function (_cmd, args) {
+    const joined = args.join(' ');
+    if (joined.includes('rev-parse --verify abc1234^{commit}')) {
+      return { code: 0, stdout: 'abc1234567890abcdef1234567890abcdef12345\n', stderr: '' };
+    }
+    if (joined.includes('show -s')) {
+      const tsSec = Math.floor(Date.parse('2026-11-13T10:15:00.000Z') / 1000);
+      return {
+        code: 0,
+        stdout: 'abc1234567890abcdef1234567890abcdef12345\n' + tsSec + '\nfeat(policy): add outbound PII guardrail\n',
+        stderr: '',
+      };
+    }
+    if (joined.includes('diff-tree')) {
+      return { code: 0, stdout: 'src/policy.js\nsrc/proxy.js\n', stderr: '' };
+    }
+    return { code: 1, stdout: '', stderr: '' };
+  };
+
+  const res = conversations.why(ctx, 'abc1234', { cwd: repoDir, run: fakeGitRun });
+  assert.strictEqual(res.kind, 'commit');
+  assert.strictEqual(res.commit, 'abc1234567890abcdef1234567890abcdef12345');
+  assert.strictEqual(res.matches.length, 1);
+  assert.strictEqual(res.matches[0].confidence, 'high');
+  assert.ok(res.matches[0].score >= 65);
+  assert.ok(res.matches[0].matchedFiles.includes('src/policy.js'));
+  assert.ok(res.matches[0].efficiency.score > 0);
+});

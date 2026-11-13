@@ -1874,6 +1874,29 @@ const TOOLS = [
     },
   },
   {
+    name: 'keyflip_conv_why',
+    title: 'Correlate a git commit or file with the AI agent conversation that produced it',
+    description:
+      'Given a git commit hash/ref (e.g. HEAD, abc1234) or a file path (e.g. src/proxy.js), find which AI agent conversation(s) worked on it, with confidence score (high|medium|low), matching reasons, and session efficiency score (0-100). Read-only.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        target: { type: 'string', description: 'Git commit hash/ref or file path.' },
+        cwd: { type: 'string', description: 'Optional git repository directory (defaults to process.cwd()).' },
+        limit: { type: 'integer', minimum: 1, maximum: 50, description: 'Max matches to return (default 10).' },
+      },
+      required: ['target'],
+      additionalProperties: false,
+    },
+    annotations: RO,
+    run: async function (ctx, args) {
+      return _conversations.why(ctx, String((args && args.target) || ''), {
+        cwd: args && args.cwd ? String(args.cwd) : process.cwd(),
+        limit: args && args.limit ? Number(args.limit) : 10,
+      });
+    },
+  },
+  {
     name: 'keyflip_conv_status',
     title: 'Conversation index status',
     description:

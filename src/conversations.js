@@ -1150,6 +1150,271 @@ function loadPath(ctx, file, opts) {
   return load(ctx, src, opts);
 }
 
+
+// ---- P2-2: Session Efficiency Score & Git Commit/File Attribution (conv why) ----
+
+const RETRY_WORD_RE = /\b(error|failed|fix|retry|broken|again|wrong|revert|bug|hatalı|düzelt)\b/i;
+const CODE_BLOCK_RE = /```[\s\S]*?```/g;
+
+// Compute an efficiency score (0-100) for a conversation based on token-to-code yield,
+// tool utilization, and retry/thrash rate.
+function efficiencyOf(conv) {
+  const msgs = (conv && Array.isArray(conv.messages)) ? conv.messages : [];
+  let userMessages = 0;
+  let assistantMessages = 0;
+  let toolCalls = 0;
+  let totalChars = 0;
+  let codeChars = 0;
+  let retryTurns = 0;
+
+  for (let i = 0; i < msgs.length; i++) {
+    const m = msgs[i];
+    if (!m || typeof m !== "object") continue;
+    const txt = String(m.text || "");
+    totalChars += txt.length;
+    const tools = Array.isArray(m.tools) ? m.tools.length : 0;
+    toolCalls += tools;
+    if (m.role === "user") {
+      userMessages++;
+      if (i > 0 && RETRY_WORD_RE.test(txt)) retryTurns++;
+    } else if (m.role === "assistant") {
+      assistantMessages++;
+      const blocks = txt.match(CODE_BLOCK_RE);
+      if (blocks) {
+        for (let b = 0; b < blocks.length; b++) codeChars += blocks[b].length;
+      }
+    }
+  }
+
+  const estimatedTokens = Math.max(1, Math.ceil(totalChars / 4));
+  if (!msgs.length) {
+    return {
+      score: 0,
+      grade: "D",
+      estimatedTokens: 0,
+      messages: 0,
+      userMessages: 0,
+      assistantMessages: 0,
+      toolCalls: 0,
+      codeChars: 0,
+      retryTurns: 0,
+    };
+  }
+
+  const codeOrToolSignal = codeChars > 0 || toolCalls > 0 ? 25 : 10;
+  const codeDensityBonus = Math.min(20, Math.round((codeChars / Math.max(1, totalChars)) * 40));
+  const toolBonus = Math.min(15, toolCalls * 3);
+  const retryPenalty = userMessages > 0 ? Math.min(35, Math.round((retryTurns / userMessages) * 45)) : 0;
+  const bloatPenalty = msgs.length > 60 ? Math.min(15, Math.floor((msgs.length - 60) / 10) * 3) : 0;
+  const rawScore = 55 + codeOrToolSignal + codeDensityBonus + toolBonus - retryPenalty - bloatPenalty;
+  const score = Math.max(0, Math.min(100, rawScore));
+  const grade = score >= 80 ? "A" : score >= 65 ? "B" : score >= 50 ? "C" : "D";
+
+  return {
+    score: score,
+    grade: grade,
+    estimatedTokens: estimatedTokens,
+    messages: msgs.length,
+    userMessages: userMessages,
+    assistantMessages: assistantMessages,
+    toolCalls: toolCalls,
+    codeChars: codeChars,
+    retryTurns: retryTurns,
+  };
+}
+
+// Correlate a git commit hash/ref or file path with discovered AI agent conversations
+// using timestamp proximity, working-directory overlap, file-name mentions, and commit subject keywords.
+function why(ctx, target, opts) {
+  opts = opts || {};
+  const q = String(target == null ? "" : target).trim();
+  if (!q) throw new Error("why requires a commit ref or file path");
+  const cwd = path.resolve(opts.cwd || process.cwd());
+  const execRun = typeof opts.run === "function" ? opts.run : run;
+  const limit = typeof opts.limit === "number" && opts.limit > 0 ? opts.limit : 10;
+
+  let commitHash = null;
+  let commitTsMs = null;
+  let subject = null;
+  let files = [];
+  let kind = "file";
+
+  // 1) Probe whether target resolves as a git commit in cwd
+  try {
+    const rev = execRun("git", ["-C", cwd, "rev-parse", "--verify", q + "^{commit}"]);
+    if (rev && rev.code === 0 && rev.stdout && rev.stdout.trim()) {
+      commitHash = rev.stdout.trim();
+      kind = "commit";
+      const show = execRun("git", ["-C", cwd, "show", "-s", "--format=%H%n%ct%n%s", commitHash]);
+      if (show && show.code === 0 && show.stdout) {
+        const lines = show.stdout.trim().split(/\r?\n/);
+        if (lines[1] && /^\d+$/.test(lines[1].trim())) commitTsMs = parseInt(lines[1].trim(), 10) * 1000;
+        if (lines[2]) subject = lines.slice(2).join(" ").trim();
+      }
+      const dt = execRun("git", ["-C", cwd, "diff-tree", "--no-commit-id", "--name-only", "-r", commitHash]);
+      if (dt && dt.code === 0 && dt.stdout) {
+        files = dt.stdout
+          .split(/\r?\n/)
+          .map((l) => l.trim())
+          .filter(Boolean);
+      }
+    }
+  } catch {
+    /* git unavailable or not a commit */
+  }
+
+  if (kind === "file") {
+    files = [q];
+    try {
+      const log = execRun("git", ["-C", cwd, "log", "-n", "1", "--format=%H%n%ct%n%s", "--", q]);
+      if (log && log.code === 0 && log.stdout && log.stdout.trim()) {
+        const lines = log.stdout.trim().split(/\r?\n/);
+        if (lines[0]) commitHash = lines[0].trim();
+        if (lines[1] && /^\d+$/.test(lines[1].trim())) commitTsMs = parseInt(lines[1].trim(), 10) * 1000;
+        if (lines[2]) subject = lines.slice(2).join(" ").trim();
+      }
+    } catch {
+      /* optional git log enrichment */
+    }
+  }
+
+  const fileTokens = [];
+  files.forEach((f) => {
+    const norm = f.replace(/\\/g, "/");
+    const base = path.basename(norm);
+    if (norm && !fileTokens.includes(norm)) fileTokens.push(norm);
+    if (base && base.length >= 3 && !fileTokens.includes(base)) fileTokens.push(base);
+  });
+
+  const subjectWords = subject
+    ? subject
+        .toLowerCase()
+        .replace(/[^a-z0-9_\u00c0-\u024f\s-]/gi, " ")
+        .split(/\s+/)
+        .filter((w) => w.length >= 4 && !["feat", "chore", "docs", "test", "refactor", "with", "from", "into"].includes(w))
+    : [];
+
+  const sources = discover(ctx, opts);
+  const matches = [];
+
+  for (let i = 0; i < sources.length; i++) {
+    let conv;
+    try {
+      conv = load(ctx, sources[i], opts);
+    } catch {
+      continue;
+    }
+    if (!conv || !Array.isArray(conv.messages) || !conv.messages.length) continue;
+
+    let score = 0;
+    const reasons = [];
+    const matchedFiles = [];
+    const excerpts = [];
+
+    // a) Working directory match
+    if (conv.cwd) {
+      const cc = path.resolve(conv.cwd);
+      if (cc === cwd || cc.indexOf(cwd + path.sep) === 0 || cwd.indexOf(cc + path.sep) === 0) {
+        score += 30;
+        reasons.push("cwd match (" + conv.cwd + ")");
+      }
+    }
+
+    // b) File name / path mentions and commit hash mentions inside conversation messages
+    const fullTextLower = conv.messages.map((m) => String(m.text || "")).join("\n").toLowerCase();
+    if (commitHash && (fullTextLower.includes(commitHash.toLowerCase()) || fullTextLower.includes(commitHash.slice(0, 7).toLowerCase()))) {
+      score += 45;
+      reasons.push("mentions commit " + commitHash.slice(0, 7));
+    }
+
+    for (let f = 0; f < fileTokens.length; f++) {
+      const tok = fileTokens[f];
+      if (fullTextLower.includes(tok.toLowerCase())) {
+        if (!matchedFiles.includes(tok)) matchedFiles.push(tok);
+      }
+    }
+    if (matchedFiles.length) {
+      score += Math.min(40, 25 + (matchedFiles.length - 1) * 8);
+      reasons.push("mentions " + matchedFiles.slice(0, 3).join(", "));
+    }
+
+    // c) Subject keyword overlap
+    if (subjectWords.length) {
+      const titleAndText = (String(conv.title || "") + " " + fullTextLower).toLowerCase();
+      const hitWords = subjectWords.filter((w) => titleAndText.includes(w));
+      if (hitWords.length) {
+        score += Math.min(15, hitWords.length * 5);
+        reasons.push("keywords (" + hitWords.slice(0, 3).join(", ") + ")");
+      }
+    }
+
+    // d) Timestamp proximity to commit
+    if (commitTsMs != null) {
+      const updatedMs = Date.parse(conv.updatedAt || "");
+      const createdMs = Date.parse(conv.createdAt || "") || updatedMs;
+      if (!isNaN(updatedMs)) {
+        const diffMs = Math.abs(commitTsMs - updatedMs);
+        const spansCommit = !isNaN(createdMs) && createdMs <= commitTsMs + 10 * 60 * 1000 && updatedMs >= commitTsMs - 6 * 3600 * 1000;
+        if (spansCommit || diffMs <= 2 * 3600 * 1000) {
+          score += 25;
+          reasons.push("active within 2h of commit");
+        } else if (diffMs <= 24 * 3600 * 1000) {
+          score += 12;
+          reasons.push("active within 24h of commit");
+        }
+      }
+    }
+
+    if (score <= 0 || (!matchedFiles.length && !reasons.some((r) => r.startsWith("mentions commit") || r.startsWith("keywords") || r.startsWith("active within")))) {
+      continue;
+    }
+
+    // Collect up to 2 concise excerpts where matched files or commit keywords appear
+    const needles = matchedFiles.concat(commitHash ? [commitHash.slice(0, 7)] : []).concat(subjectWords.slice(0, 2));
+    for (let mIdx = 0; mIdx < conv.messages.length && excerpts.length < 2; mIdx++) {
+      const m = conv.messages[mIdx];
+      const txt = String(m.text || "");
+      const low = txt.toLowerCase();
+      if (needles.some((n) => n && low.includes(n.toLowerCase()))) {
+        excerpts.push({
+          role: m.role,
+          text: txt.slice(0, 220),
+          ts: m.ts || null,
+        });
+      }
+    }
+
+    const boundedScore = Math.min(100, score);
+    const confidence = boundedScore >= 65 ? "high" : boundedScore >= 35 ? "medium" : "low";
+    matches.push({
+      id: conv.id,
+      app: conv.app,
+      surface: conv.surface,
+      title: conv.title,
+      cwd: conv.cwd,
+      updatedAt: conv.updatedAt,
+      score: boundedScore,
+      confidence: confidence,
+      reasons: reasons,
+      matchedFiles: matchedFiles,
+      efficiency: efficiencyOf(conv),
+      excerpts: excerpts,
+    });
+  }
+
+  matches.sort((a, b) => b.score - a.score || String(b.updatedAt || "").localeCompare(String(a.updatedAt || "")));
+
+  return {
+    target: q,
+    kind: kind,
+    commit: commitHash,
+    commitAt: commitTsMs ? new Date(commitTsMs).toISOString() : null,
+    subject: subject,
+    files: files,
+    matches: matches.slice(0, limit),
+  };
+}
+
 function toParsed(conv) {
   return { messages: conv.messages, cwd: conv.cwd, counts: conv.counts };
 }
@@ -1167,6 +1432,8 @@ export {
   find,
   matchRef,
   toParsed,
+  efficiencyOf,
+  why,
   countsOf,
   codexTitles,
   claudeRoot,
