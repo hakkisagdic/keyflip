@@ -786,3 +786,113 @@ test('classify detects model_unavailable on 400/404 model not found errors', fun
     'none',
   );
 });
+
+// ---------------------------------------------------------------------------
+// P2-1: Multi-Protocol Proxy Gateway (/v1/chat/completions & /v1/responses <-> /v1/messages)
+// ---------------------------------------------------------------------------
+test('multi-protocol gateway translates /v1/chat/completions and /v1/responses to /v1/messages and back', async function () {
+  const ctx = twoAccounts();
+
+  // 1) OpenAI /v1/chat/completions
+  let seenUpstreamReq = null;
+  const chatClientRes = fakeRes();
+  const chatReqBody = Buffer.from(
+    JSON.stringify({
+      model: 'claude-sonnet-4-6',
+      max_completion_tokens: 512,
+      messages: [
+        { role: 'system', content: 'You are a terse systems engineer.' },
+        { role: 'user', content: 'Ping?' },
+      ],
+    }),
+    'utf8',
+  );
+  const rChat = await proxy.handleRequest(
+    ctx,
+    {
+      method: 'POST',
+      path: '/v1/chat/completions',
+      headers: { 'content-type': 'application/json' },
+      body: chatReqBody,
+    },
+    chatClientRes,
+    {
+      forward: async function (_up, uReq) {
+        seenUpstreamReq = uReq;
+        return {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+          body: Buffer.from(
+            JSON.stringify({
+              id: 'msg_123',
+              model: 'claude-sonnet-4-6',
+              stop_reason: 'end_turn',
+              content: [{ type: 'text', text: 'Pong!' }],
+              usage: { input_tokens: 14, output_tokens: 3 },
+            }),
+          ),
+        };
+      },
+    },
+  );
+  assert.strictEqual(rChat.status, 200);
+  assert.strictEqual(seenUpstreamReq.path, '/v1/messages');
+  const upParsed = JSON.parse(seenUpstreamReq.body.toString('utf8'));
+  assert.strictEqual(upParsed.system, 'You are a terse systems engineer.');
+  assert.strictEqual(upParsed.max_tokens, 512);
+  assert.deepStrictEqual(upParsed.messages, [{ role: 'user', content: 'Ping?' }]);
+
+  const chatReply = JSON.parse(Buffer.concat(chatClientRes.chunks).toString('utf8'));
+  assert.strictEqual(chatReply.object, 'chat.completion');
+  assert.strictEqual(chatReply.choices[0].message.content, 'Pong!');
+  assert.strictEqual(chatReply.usage.prompt_tokens, 14);
+  assert.strictEqual(chatReply.usage.completion_tokens, 3);
+  assert.strictEqual(chatReply.usage.total_tokens, 17);
+  assert.strictEqual(chatClientRes.headers['x-keyflip-protocol'], 'openai-chat');
+
+  // 2) OpenAI /v1/responses
+  const respClientRes = fakeRes();
+  const respReqBody = Buffer.from(
+    JSON.stringify({
+      model: 'claude-sonnet-4-6',
+      instructions: 'Answer in one word.',
+      input: 'Capital of Turkey?',
+      max_output_tokens: 128,
+    }),
+    'utf8',
+  );
+  const rResp = await proxy.handleRequest(
+    ctx,
+    {
+      method: 'POST',
+      path: '/v1/responses',
+      headers: { 'content-type': 'application/json' },
+      body: respReqBody,
+    },
+    respClientRes,
+    {
+      forward: async function (_up, uReq) {
+        seenUpstreamReq = uReq;
+        return {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+          body: Buffer.from(
+            JSON.stringify({
+              id: 'msg_456',
+              model: 'claude-sonnet-4-6',
+              stop_reason: 'end_turn',
+              content: [{ type: 'text', text: 'Ankara' }],
+              usage: { input_tokens: 10, output_tokens: 2 },
+            }),
+          ),
+        };
+      },
+    },
+  );
+  assert.strictEqual(rResp.status, 200);
+  const respReply = JSON.parse(Buffer.concat(respClientRes.chunks).toString('utf8'));
+  assert.strictEqual(respReply.object, 'response');
+  assert.strictEqual(respReply.output_text, 'Ankara');
+  assert.strictEqual(respReply.usage.total_tokens, 12);
+  assert.strictEqual(respClientRes.headers['x-keyflip-protocol'], 'openai-responses');
+});

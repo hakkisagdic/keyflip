@@ -541,6 +541,198 @@ function nextChainModel(chain, current) {
   return null;
 }
 
+
+// ---- Multi-protocol normalization (/v1/chat/completions & /v1/responses -> /v1/messages) (P2-1) ----
+
+function extractTextContent(c) {
+  if (typeof c === "string") return c;
+  if (Array.isArray(c)) {
+    return c
+      .map(function (part) {
+        if (typeof part === "string") return part;
+        if (part && typeof part.text === "string") return part.text;
+        if (part && typeof part.input_text === "string") return part.input_text;
+        return "";
+      })
+      .join("");
+  }
+  return "";
+}
+
+function normalizeOpenAIToAnthropic(reqInfo) {
+  if (!reqInfo || typeof reqInfo.path !== "string") return { translated: false, protocol: null, reqInfo: reqInfo };
+  const cleanPath = reqInfo.path.split("?")[0];
+  const isChat = cleanPath === "/v1/chat/completions";
+  const isResponses = cleanPath === "/v1/responses";
+  if (!isChat && !isResponses) return { translated: false, protocol: null, reqInfo: reqInfo };
+  if (!reqInfo.body || !reqInfo.body.length) return { translated: false, protocol: null, reqInfo: reqInfo };
+
+  let parsed;
+  try {
+    parsed = JSON.parse(Buffer.isBuffer(reqInfo.body) ? reqInfo.body.toString("utf8") : String(reqInfo.body));
+  } catch (e) {
+    return { translated: false, protocol: null, reqInfo: reqInfo };
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return { translated: false, protocol: null, reqInfo: reqInfo };
+  }
+
+  const model = typeof parsed.model === "string" && parsed.model ? parsed.model : "claude-sonnet-4-6";
+  const systemParts = [];
+  const messages = [];
+
+  if (isChat) {
+    const rawMsgs = Array.isArray(parsed.messages) ? parsed.messages : [];
+    rawMsgs.forEach(function (m) {
+      if (!m || typeof m !== "object") return;
+      const role = String(m.role || "user");
+      const text = extractTextContent(m.content);
+      if (role === "system" || role === "developer") {
+        if (text) systemParts.push(text);
+      } else {
+        messages.push({
+          role: role === "assistant" ? "assistant" : "user",
+          content: text,
+        });
+      }
+    });
+  } else if (isResponses) {
+    if (typeof parsed.instructions === "string" && parsed.instructions.trim()) {
+      systemParts.push(parsed.instructions.trim());
+    }
+    if (typeof parsed.input === "string") {
+      messages.push({ role: "user", content: parsed.input });
+    } else if (Array.isArray(parsed.input)) {
+      parsed.input.forEach(function (item) {
+        if (typeof item === "string") {
+          messages.push({ role: "user", content: item });
+        } else if (item && typeof item === "object") {
+          const role = item.role === "assistant" ? "assistant" : "user";
+          messages.push({ role: role, content: extractTextContent(item.content != null ? item.content : item.text) });
+        }
+      });
+    }
+  }
+
+  if (!messages.length) {
+    messages.push({ role: "user", content: "" });
+  }
+
+  const maxTokens =
+    Number.isInteger(parsed.max_completion_tokens) && parsed.max_completion_tokens > 0
+      ? parsed.max_completion_tokens
+      : Number.isInteger(parsed.max_output_tokens) && parsed.max_output_tokens > 0
+        ? parsed.max_output_tokens
+        : Number.isInteger(parsed.max_tokens) && parsed.max_tokens > 0
+          ? parsed.max_tokens
+          : 4096;
+
+  const anthBody = {
+    model: model,
+    max_tokens: maxTokens,
+    messages: messages,
+  };
+  if (systemParts.length) anthBody.system = systemParts.join("\n\n");
+  if (typeof parsed.temperature === "number") anthBody.temperature = parsed.temperature;
+  if (typeof parsed.top_p === "number") anthBody.top_p = parsed.top_p;
+  if (Array.isArray(parsed.stop)) anthBody.stop_sequences = parsed.stop;
+  else if (typeof parsed.stop === "string") anthBody.stop_sequences = [parsed.stop];
+
+  const newBuf = Buffer.from(JSON.stringify(anthBody), "utf8");
+  const newHeaders = Object.assign({}, reqInfo.headers || {});
+  if (newHeaders["content-length"] != null) {
+    newHeaders["content-length"] = String(newBuf.length);
+  }
+  const protocol = isChat ? "openai-chat" : "openai-responses";
+  return {
+    translated: true,
+    protocol: protocol,
+    originalPath: reqInfo.path,
+    reqInfo: Object.assign({}, reqInfo, {
+      path: "/v1/messages",
+      headers: newHeaders,
+      body: newBuf,
+    }),
+  };
+}
+
+function translateAnthropicToOpenAI(protocol, payloadBuf, fallbackModel) {
+  if (!protocol || payloadBuf == null) return payloadBuf;
+  const text = Buffer.isBuffer(payloadBuf) ? payloadBuf.toString("utf8") : String(payloadBuf);
+  let j;
+  try {
+    j = JSON.parse(text);
+  } catch (e) {
+    return payloadBuf;
+  }
+  if (!j || typeof j !== "object") return payloadBuf;
+  const msg = j.message && typeof j.message === "object" ? j.message : j;
+  const model = msg.model || fallbackModel || "claude-sonnet-4-6";
+  const contentArr = Array.isArray(msg.content) ? msg.content : [];
+  const outText = contentArr
+    .map(function (c) {
+      return c && typeof c.text === "string" ? c.text : "";
+    })
+    .join("");
+  const usage = msg.usage || j.usage || {};
+  const inTok = Number(usage.input_tokens) || 0;
+  const outTok = Number(usage.output_tokens) || 0;
+  const createdSec = Math.floor(Date.now() / 1000);
+  const stopReason = msg.stop_reason === "max_tokens" ? "length" : "stop";
+
+  if (protocol === "openai-chat") {
+    return Buffer.from(
+      JSON.stringify({
+        id: msg.id ? "chatcmpl-" + String(msg.id).replace(/^msg_/, "") : "chatcmpl-keyflip",
+        object: "chat.completion",
+        created: createdSec,
+        model: model,
+        choices: [
+          {
+            index: 0,
+            message: { role: "assistant", content: outText },
+            finish_reason: stopReason,
+          },
+        ],
+        usage: {
+          prompt_tokens: inTok,
+          completion_tokens: outTok,
+          total_tokens: inTok + outTok,
+        },
+      }),
+      "utf8",
+    );
+  }
+
+  if (protocol === "openai-responses") {
+    return Buffer.from(
+      JSON.stringify({
+        id: msg.id ? "resp_" + String(msg.id).replace(/^msg_/, "") : "resp_keyflip",
+        object: "response",
+        created_at: createdSec,
+        status: "completed",
+        model: model,
+        output_text: outText,
+        output: [
+          {
+            type: "message",
+            role: "assistant",
+            content: [{ type: "output_text", text: outText }],
+          },
+        ],
+        usage: {
+          input_tokens: inTok,
+          output_tokens: outTok,
+          total_tokens: inTok + outTok,
+        },
+      }),
+      "utf8",
+    );
+  }
+
+  return payloadBuf;
+}
+
 // Core request handler. opts.forward(up, reqInfo) -> { status, headers, res }
 // (res is a readable stream) OR { status, headers, body:Buffer } for tests.
 // opts.sleep(ms) is injectable so a Retry-After wait is testable without real time.
@@ -556,14 +748,16 @@ async function handleRequest(ctx, reqInfo, clientRes, opts) {
   // Declarative routing (#4–#8, #19): rules / sticky / custom hook pick the
   // account to try FIRST, and may rewrite the model. The usable set decides
   // what a rule or hook is allowed to name — a cooldown is never overridden.
+  const protoNorm = normalizeOpenAIToAnthropic(reqInfo);
+  const normalizedReq = protoNorm.reqInfo;
   const live = proxyroutes.load(ctx);
   const routes = live.routes;
-  const userKey = proxyroutes.userKeyOf(reqInfo);
+  const userKey = proxyroutes.userKeyOf(normalizedReq);
   const facts = {
-    model: proxyroutes.modelOf(reqInfo.body),
-    path: reqInfo.path,
-    tokens: proxyroutes.estimateTokens(reqInfo.body),
-    headers: reqInfo.headers || {},
+    model: proxyroutes.modelOf(normalizedReq.body),
+    path: normalizedReq.path,
+    tokens: proxyroutes.estimateTokens(normalizedReq.body),
+    headers: normalizedReq.headers || {},
     user: userKey,
   };
   const vkey = budget.extractVirtualKeyFromHeaders(reqInfo.headers);
@@ -577,7 +771,7 @@ async function handleRequest(ctx, reqInfo, clientRes, opts) {
       return { status: errStatus, error: vkCheck.code, reason: vkCheck.reason };
     }
   }
-  const routed = proxyroutes.applyTransforms(reqInfo, routes);
+  const routed = proxyroutes.applyTransforms(normalizedReq, routes);
   let upstreamReq = routed.info;
 
   // Outbound Proxy Guardrail (`off` | `redact` | `block`): inspect request body for
@@ -718,6 +912,7 @@ async function handleRequest(ctx, reqInfo, clientRes, opts) {
           route: decision.reason,
           vkey: vkey,
           guardrailRedacted: gr.redactedCount || 0,
+          protocol: protoNorm.protocol,
         });
       }
       // Traycer per-problem routing (`model_unavailable`) + `model-chain`:
@@ -785,6 +980,7 @@ async function handleRequest(ctx, reqInfo, clientRes, opts) {
         route: decision.reason,
         vkey: vkey,
         guardrailRedacted: gr.redactedCount || 0,
+          protocol: protoNorm.protocol,
       });
     }
   }
@@ -806,15 +1002,23 @@ function commit(ctx, resp, clientRes, info) {
     if (info.model) headers['x-keyflip-model'] = headerSafe(info.model);
     if (info.route) headers['x-keyflip-route'] = headerSafe(info.route);
     if (info.guardrailRedacted > 0) headers['x-keyflip-guardrail-redacted'] = String(info.guardrailRedacted);
+    if (info.protocol) headers['x-keyflip-protocol'] = info.protocol;
     const cd = breaker.cooldownOf(ctx, info.acct);
     if (cd.active) headers['x-keyflip-cooldown'] = String(Math.ceil(cd.remainingMs / 1000));
   }
-  const payload = info.bodyOverride != null ? info.bodyOverride : resp.body;
+  const rawPayload = info.bodyOverride != null ? info.bodyOverride : resp.body;
+  const payload =
+    rawPayload != null && info.protocol && resp.status >= 200 && resp.status < 300
+      ? translateAnthropicToOpenAI(info.protocol, toBuffer(rawPayload), info.model)
+      : rawPayload;
+  if (payload != null && info.protocol && headers['content-length'] != null) {
+    headers['content-length'] = String(Buffer.isBuffer(payload) ? payload.length : Buffer.byteLength(String(payload)));
+  }
   clientRes.writeHead(resp.status, headers);
   if (payload != null) {
     // buffered (tests / small JSON / a peeked error body)
     clientRes.end(payload);
-    recordCost(ctx, info.acct, extractUsage(toBuffer(payload)), info.vkey);
+    recordCost(ctx, info.acct, extractUsage(toBuffer(rawPayload)), info.vkey);
   } else {
     // stream, teeing for accounting
     const chunks = [];
@@ -823,14 +1027,20 @@ function commit(ctx, resp, clientRes, info) {
     // upstream stream in memory; tear down the upstream if the client goes away.
     upstream.on('data', function (c) {
       if (chunks.length < 4096) chunks.push(c);
+      if (info.protocol && resp.status >= 200 && resp.status < 300) return;
       if (clientRes.write(c) === false) upstream.pause();
     });
     clientRes.on('drain', function () {
       upstream.resume();
     });
     upstream.on('end', function () {
-      clientRes.end();
-      recordCost(ctx, info.acct, extractUsage(Buffer.concat(chunks)), info.vkey);
+      const fullBuf = Buffer.concat(chunks);
+      if (info.protocol && resp.status >= 200 && resp.status < 300) {
+        clientRes.end(translateAnthropicToOpenAI(info.protocol, fullBuf, info.model));
+      } else {
+        clientRes.end();
+      }
+      recordCost(ctx, info.acct, extractUsage(fullBuf), info.vkey);
     });
     upstream.on('error', function () {
       try {
@@ -1269,6 +1479,8 @@ export {
   isRunning,
   wireSettings,
   pidAlive,
+  normalizeOpenAIToAnthropic,
+  translateAnthropicToOpenAI,
   DEFAULT_PORT,
   RETRYABLE,
 };
