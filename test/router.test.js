@@ -320,3 +320,49 @@ test('cacheLookupSimilar matches whitespace/punctuation variants and near-identi
   assert.strictEqual(ledger.month.savedTokens, 2000);
   assert.strictEqual(ledger.month.savedUsd, 0.024);
 });
+
+// ---------------------------------------------------------------------------
+// P1-3: Composite Routing Score (Cost + Latency TTFT + 429 Error Rate + Quota Health)
+// ---------------------------------------------------------------------------
+test('route composite strategy balances price, TTFT latency, and 429 error rate', function () {
+  const ctx = makeCtx();
+  addProv(ctx, 'cheap_flaky', 'https://cheap/v1', { sonnet: 'claude-sonnet-4-6' });
+  addProv(ctx, 'balanced_fast', 'https://fast/v1', { sonnet: 'claude-sonnet-4-6' });
+  addProv(ctx, 'expensive_slow', 'https://slow/v1', { sonnet: 'claude-sonnet-4-6' });
+
+  const r = router.route(
+    ctx,
+    { model: 'claude-sonnet-4-6', strategy: 'composite' },
+    {
+      priceFor: function (n) {
+        return n === 'cheap_flaky' ? 2 : n === 'balanced_fast' ? 3 : 10;
+      },
+      latencyFor: function (n) {
+        return n === 'cheap_flaky' ? 1800 : n === 'balanced_fast' ? 220 : 2500;
+      },
+      errorRateFor: function (n) {
+        return n === 'cheap_flaky' ? 0.65 : n === 'balanced_fast' ? 0.01 : 0.1;
+      },
+      healthFor: function (n) {
+        return n === 'cheap_flaky' ? 0.3 : 0.95;
+      },
+    },
+  );
+  assert.strictEqual(r.provider, 'balanced_fast', 'composite score avoids high-429 slow provider despite slightly lower price');
+  assert.match(r.reason, /composite best of 3/);
+  assert.ok(typeof r.score === 'number' && r.score > 0);
+  assert.ok(r.breakdown && typeof r.breakdown.normLatency === 'number');
+
+  // Latency strategy picks the fastest TTFT
+  const lat = router.route(
+    ctx,
+    { model: 'claude-sonnet-4-6', strategy: 'latency' },
+    {
+      latencyFor: function (n) {
+        return n === 'cheap_flaky' ? 900 : n === 'balanced_fast' ? 180 : 1200;
+      },
+    },
+  );
+  assert.strictEqual(lat.provider, 'balanced_fast');
+  assert.match(lat.reason, /lowest latency of 3 \(180ms\)/);
+});

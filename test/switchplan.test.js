@@ -310,3 +310,49 @@ test('build() is pure: the same facts render the same plan, twice', function () 
   assert.deepStrictEqual(a, b);
   assert.notStrictEqual(a.writes, b.writes, 'a fresh object every call — no shared state to leak');
 });
+
+// ---------------------------------------------------------------------------
+// P1-3: Turn-Boundary & Warm Prompt-Cache Aware Switch Deferral
+// ---------------------------------------------------------------------------
+test('isCacheWarm detects warm 5-minute prompt cache and turn-in-progress sessions', function () {
+  const now = 1700000000000;
+  // Warm cache (2 minutes old, 18,000 cacheReadTokens)
+  const warm = plan.isCacheWarm(
+    { cacheReadTokens: 18000, lastRequestAt: now - 120 * 1000 },
+    { nowMs: now },
+  );
+  assert.strictEqual(warm.warm, true);
+  assert.strictEqual(warm.cacheTokens, 18000);
+  assert.strictEqual(warm.ttlRemainingMs, 180 * 1000);
+  assert.match(warm.reason, /warm prompt cache/);
+
+  // Expired cache (6 minutes old > 5m TTL)
+  const cold = plan.isCacheWarm(
+    { cacheReadTokens: 18000, lastRequestAt: now - 360 * 1000 },
+    { nowMs: now },
+  );
+  assert.strictEqual(cold.warm, false);
+  assert.match(cold.reason, /expired/);
+
+  // Mid-turn session is always treated as warm/active
+  const midTurn = plan.isCacheWarm({ turnInProgress: true, cacheReadTokens: 0 }, { nowMs: now });
+  assert.strictEqual(midTurn.warm, true);
+  assert.strictEqual(midTurn.inTurn, true);
+});
+
+test('build defers switch when deferForWarmCache is set and prompt cache is warm', function () {
+  const now = 1700000000000;
+  const f = facts({
+    warmSession: { cacheReadTokens: 24000, lastRequestAt: now - 60 * 1000 },
+  });
+  const deferred = plan.build(f, { deferForWarmCache: true, nowMs: now });
+  assert.strictEqual(deferred.mode, 'defer-warm-cache');
+  assert.strictEqual(deferred.deferred, true);
+  assert.deepStrictEqual(deferred.writes, [], 'deferred switch performs no writes until turn/cache boundary');
+  assert.match(deferred.skips.join(' '), /24000 tokens/);
+
+  // With --force, deferForWarmCache is overridden
+  const forced = plan.build(f, { deferForWarmCache: true, force: true, nowMs: now });
+  assert.strictEqual(forced.mode, 'plain');
+  assert.ok(forced.writes.length > 0);
+});

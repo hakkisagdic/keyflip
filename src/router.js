@@ -178,15 +178,69 @@ function costHintOf(meta) {
   return typeof c === 'number' && isFinite(c) ? c : null;
 }
 
-function rankReason(ranked, win, anyPriced) {
+const DEFAULT_COMPOSITE_WEIGHTS = { cost: 0.45, latency: 0.25, error: 0.2, quota: 0.1 };
+
+function latencyHintOf(meta) {
+  if (!meta || typeof meta !== 'object') return null;
+  const v = typeof meta.ttftMs === 'number' ? meta.ttftMs : typeof meta.latencyMs === 'number' ? meta.latencyMs : null;
+  return typeof v === 'number' && isFinite(v) && v >= 0 ? v : null;
+}
+
+function errorRateHintOf(meta) {
+  if (!meta || typeof meta !== 'object') return null;
+  const v =
+    typeof meta.errorRate429 === 'number'
+      ? meta.errorRate429
+      : typeof meta.errorRate === 'number'
+        ? meta.errorRate
+        : null;
+  return typeof v === 'number' && isFinite(v) && v >= 0 ? Math.min(1, v) : null;
+}
+
+function quotaHealthHintOf(meta) {
+  if (!meta || typeof meta !== 'object') return null;
+  const v = typeof meta.quotaHealth === 'number' ? meta.quotaHealth : null;
+  return typeof v === 'number' && isFinite(v) ? Math.min(1, Math.max(0, v)) : null;
+}
+
+// Compute lower-is-better composite routing score in [0, 1].
+function compositeScoreOf(metrics, bounds, weights) {
+  const w = Object.assign({}, DEFAULT_COMPOSITE_WEIGHTS, weights || {});
+  const maxCost = bounds && bounds.maxCost > 0 ? bounds.maxCost : 0;
+  const maxLat = bounds && bounds.maxLatency > 0 ? bounds.maxLatency : 0;
+  const normCost = metrics.cost != null && maxCost > 0 ? metrics.cost / maxCost : 0.5;
+  const normLatency = metrics.latencyMs != null && maxLat > 0 ? metrics.latencyMs / maxLat : 0.5;
+  const errPenalty = metrics.errorRate != null ? Math.min(1, Math.max(0, metrics.errorRate)) : 0;
+  const quotaPenalty = metrics.quotaHealth != null ? Math.max(0, 1 - Math.min(1, Math.max(0, metrics.quotaHealth))) : 0;
+  const score = w.cost * normCost + w.latency * normLatency + w.error * errPenalty + w.quota * quotaPenalty;
+  return {
+    score: Math.round(score * 10000) / 10000,
+    normCost: Math.round(normCost * 10000) / 10000,
+    normLatency: Math.round(normLatency * 10000) / 10000,
+    errPenalty: Math.round(errPenalty * 10000) / 10000,
+    quotaPenalty: Math.round(quotaPenalty * 10000) / 10000,
+  };
+}
+
+function rankReason(ranked, win, anyPriced, strategy) {
   if (ranked.length === 1) return 'only provider serving the model';
+  if (strategy === 'composite') {
+    const parts = ['score=' + win.compositeScore];
+    if (win.cost != null) parts.push('cost=' + win.cost);
+    if (win.latencyMs != null) parts.push('ttft=' + win.latencyMs + 'ms');
+    if (win.errorRate != null) parts.push('err=' + Math.round(win.errorRate * 100) + '%');
+    return 'composite best of ' + ranked.length + ' (' + parts.join(', ') + ')';
+  }
+  if (strategy === 'latency' && win.latencyMs != null) {
+    return 'lowest latency of ' + ranked.length + ' (' + win.latencyMs + 'ms)';
+  }
   if (anyPriced && win.cost != null) return 'cheapest of ' + ranked.length + ' (cost ' + win.cost + ')';
   return 'first of ' + ranked.length + ' (no price hints; alphabetical)';
 }
 
-// route(ctx, {model}, opts) -> { provider, baseUrl, reason }. provider is null
-// when nothing is configured to serve the model. opts.priceFor(provider,model)
-// (returns a number or null) overrides the per-provider costHint.
+// route(ctx, {model, strategy?}, opts) -> { provider, baseUrl, reason, score?, breakdown? }.
+// provider is null when nothing is configured to serve the model.
+// Supports strategy: 'cost' (default) | 'latency' | 'composite'.
 function route(ctx, sel, opts) {
   sel = sel || {};
   opts = opts || {};
@@ -229,17 +283,79 @@ function route(ctx, sel, opts) {
     };
   }
 
-  const ranked = candidates
-    .map(function (n) {
-      let cost = null;
-      if (priceFor) {
-        const c = priceFor(n, model);
-        if (typeof c === 'number' && isFinite(c)) cost = c;
-      }
-      if (cost == null) cost = costHintOf(metas[n]);
-      return { name: n, cost: cost };
+  const latencyFor = typeof opts.latencyFor === 'function' ? opts.latencyFor : null;
+  const errorRateFor = typeof opts.errorRateFor === 'function' ? opts.errorRateFor : null;
+  const healthFor = typeof opts.healthFor === 'function' ? opts.healthFor : null;
+  const requestedStrategy = sel.strategy || opts.strategy || null;
+  const strategy =
+    requestedStrategy === 'composite' || requestedStrategy === 'latency' || requestedStrategy === 'cost'
+      ? requestedStrategy
+      : latencyFor || errorRateFor || healthFor
+        ? 'composite'
+        : 'cost';
+
+  const rawRows = candidates.map(function (n) {
+    let cost = null;
+    if (priceFor) {
+      const c = priceFor(n, model);
+      if (typeof c === 'number' && isFinite(c)) cost = c;
+    }
+    if (cost == null) cost = costHintOf(metas[n]);
+
+    let latencyMs = null;
+    if (latencyFor) {
+      const l = latencyFor(n, model);
+      if (typeof l === 'number' && isFinite(l) && l >= 0) latencyMs = l;
+    }
+    if (latencyMs == null) latencyMs = latencyHintOf(metas[n]);
+
+    let errorRate = null;
+    if (errorRateFor) {
+      const er = errorRateFor(n, model);
+      if (typeof er === 'number' && isFinite(er) && er >= 0) errorRate = Math.min(1, er);
+    }
+    if (errorRate == null) errorRate = errorRateHintOf(metas[n]);
+
+    let quotaHealth = null;
+    if (healthFor) {
+      const qh = healthFor(n, model);
+      if (typeof qh === 'number' && isFinite(qh)) quotaHealth = Math.min(1, Math.max(0, qh));
+    }
+    if (quotaHealth == null) quotaHealth = quotaHealthHintOf(metas[n]);
+
+    return {
+      name: n,
+      cost: cost,
+      latencyMs: latencyMs,
+      errorRate: errorRate,
+      quotaHealth: quotaHealth,
+    };
+  });
+
+  const maxCost = rawRows.reduce(function (m, r) {
+    return r.cost != null && r.cost > m ? r.cost : m;
+  }, 0);
+  const maxLatency = rawRows.reduce(function (m, r) {
+    return r.latencyMs != null && r.latencyMs > m ? r.latencyMs : m;
+  }, 0);
+
+  const ranked = rawRows
+    .map(function (r) {
+      const comp = compositeScoreOf(r, { maxCost: maxCost, maxLatency: maxLatency }, opts.weights);
+      return Object.assign({}, r, { compositeScore: comp.score, breakdown: comp });
     })
     .sort(function (a, b) {
+      if (strategy === 'composite') {
+        if (a.compositeScore !== b.compositeScore) return a.compositeScore - b.compositeScore;
+        return a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
+      }
+      if (strategy === 'latency') {
+        if (a.latencyMs == null && b.latencyMs == null) return a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
+        if (a.latencyMs == null) return 1;
+        if (b.latencyMs == null) return -1;
+        if (a.latencyMs !== b.latencyMs) return a.latencyMs - b.latencyMs;
+        return a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
+      }
       if (a.cost == null && b.cost == null) return a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
       if (a.cost == null) return 1; // unpriced sorts last
       if (b.cost == null) return -1;
@@ -252,12 +368,19 @@ function route(ctx, sel, opts) {
     return r.cost != null;
   });
   let reason;
-  if (state.arbitrage) reason = 'arbitrage: ' + rankReason(ranked, win, anyPriced);
+  if (state.arbitrage) reason = 'arbitrage: ' + rankReason(ranked, win, anyPriced, strategy);
   else if (pinned && !pinExists)
-    reason = 'pinned provider "' + pinned + '" missing; ' + rankReason(ranked, win, anyPriced);
-  else reason = rankReason(ranked, win, anyPriced);
+    reason = 'pinned provider "' + pinned + '" missing; ' + rankReason(ranked, win, anyPriced, strategy);
+  else reason = rankReason(ranked, win, anyPriced, strategy);
 
-  return { provider: win.name, baseUrl: (metas[win.name] && metas[win.name].baseUrl) || null, reason: reason };
+  const out = { provider: win.name, baseUrl: (metas[win.name] && metas[win.name].baseUrl) || null, reason: reason };
+  if (strategy === 'composite') {
+    out.score = win.compositeScore;
+    out.breakdown = win.breakdown;
+  } else if (strategy === 'latency' && win.latencyMs != null) {
+    out.latencyMs = win.latencyMs;
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -732,7 +855,11 @@ export {
   isValidModel,
   servedModels,
   providerServes,
-  costHintOf, // cache
+  costHintOf,
+  latencyHintOf,
+  errorRateHintOf,
+  quotaHealthHintOf,
+  compositeScoreOf, // cache
   cacheDir,
   cacheStatsPath,
   cacheKey,

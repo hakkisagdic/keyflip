@@ -15,18 +15,87 @@
 // verify.js) it says whether to put the previous account back. Also pure — the caller decides how
 // loudly to warn, because a rollback RE-WRITES credential stores.
 //
-// build() returns { mode, writes[], skips[], warns[], blockers[], wouldQuit, needsConfirm } — data
-// only; the CLI owns the rendering, so a plan can be printed, diffed or asserted on identically.
+// `isCacheWarm(session, opts)` detects whether an active Claude conversation has a warm ephemeral
+// prompt cache (`cacheReadTokens > 0` or `cacheCreationTokens > 0` within the 5-minute TTL) or is
+// mid-turn, allowing `build(..., { deferForWarmCache: true })` to defer an automatic switch until the
+// turn/cache boundary so prompt cache hits are not discarded.
+
+const WARM_CACHE_TTL_MS = 5 * 60 * 1000;
+
+function isCacheWarm(session, opts) {
+  opts = opts || {};
+  if (!session || typeof session !== 'object') {
+    return {
+      warm: false,
+      ageMs: null,
+      cacheTokens: 0,
+      inTurn: false,
+      ttlRemainingMs: 0,
+      reason: 'no active session telemetry',
+    };
+  }
+  const ttlMs = typeof opts.ttlMs === 'number' && opts.ttlMs > 0 ? opts.ttlMs : WARM_CACHE_TTL_MS;
+  const nowMs = typeof opts.nowMs === 'number' && isFinite(opts.nowMs) ? opts.nowMs : Date.now();
+  const readTok = typeof session.cacheReadTokens === 'number' && session.cacheReadTokens > 0 ? session.cacheReadTokens : 0;
+  const createTok =
+    typeof session.cacheCreationTokens === 'number' && session.cacheCreationTokens > 0
+      ? session.cacheCreationTokens
+      : 0;
+  const cacheTokens = readTok + createTok;
+  const inTurn = !!(session.turnInProgress || session.inTurn);
+
+  const rawTs = session.lastRequestAt != null ? session.lastRequestAt : session.lastTurnAt;
+  const tsMs = typeof rawTs === 'number' ? rawTs : typeof rawTs === 'string' ? Date.parse(rawTs) : NaN;
+  const ageMs = !isNaN(tsMs) ? Math.max(0, nowMs - tsMs) : null;
+
+  if (inTurn) {
+    return {
+      warm: true,
+      ageMs: ageMs,
+      cacheTokens: cacheTokens,
+      inTurn: true,
+      ttlRemainingMs: ageMs != null && ageMs < ttlMs ? ttlMs - ageMs : ttlMs,
+      reason: 'turn in progress — deferring account switch until turn boundary',
+    };
+  }
+
+  if (cacheTokens > 0 && ageMs != null && ageMs < ttlMs) {
+    const rem = ttlMs - ageMs;
+    return {
+      warm: true,
+      ageMs: ageMs,
+      cacheTokens: cacheTokens,
+      inTurn: false,
+      ttlRemainingMs: rem,
+      reason:
+        'warm prompt cache (' +
+        cacheTokens +
+        ' tokens, ' +
+        Math.ceil(rem / 1000) +
+        's TTL remaining) — switching now would invalidate cache',
+    };
+  }
+
+  return {
+    warm: false,
+    ageMs: ageMs,
+    cacheTokens: cacheTokens,
+    inTurn: false,
+    ttlRemainingMs: 0,
+    reason: cacheTokens > 0 ? 'prompt cache expired' : 'no cached prompt tokens',
+  };
+}
 
 // A switch can end up in one of these shapes. Mirrors cmdSwitch's real branches so the plan cannot
 // drift from the code it describes.
-//   'already-active' — nothing to do for the CLI/app (both are already on the target)
-//   'app-only'       — the CLI is already the target (or `--only app`); only the desktop app's login moves
-//   'browser-only'   — only the browser's claude.ai session moves (`--only browser`, or CLI+app already there)
-//   'restart'        — full switch; Claude gets quit and reopened
-//   'in-place'       — full switch with --force (or `--only cli`); Claude keeps running and may fight the swap
-//   'plain'          — full switch; Claude is closed (or cannot be managed on this OS)
-//   'refuse'         — nothing runs: a blocker stops the switch before it starts
+//   'already-active'   — nothing to do for the CLI/app (both are already on the target)
+//   'app-only'         — the CLI is already the target (or `--only app`); only the desktop app's login moves
+//   'browser-only'     — only the browser's claude.ai session moves (`--only browser`, or CLI+app already there)
+//   'restart'          — full switch; Claude gets quit and reopened
+//   'in-place'         — full switch with --force (or `--only cli`); Claude keeps running and may fight the swap
+//   'plain'            — full switch; Claude is closed (or cannot be managed on this OS)
+//   'defer-warm-cache' — deferred to turn/cache boundary because prompt cache is warm and deferForWarmCache is set
+//   'refuse'           — nothing runs: a blocker stops the switch before it starts
 function build(facts, opts) {
   facts = facts || {};
   opts = opts || {};
@@ -47,6 +116,22 @@ function build(facts, opts) {
     if (msg) plan.blockers.push(msg);
     return plan;
   };
+
+  // Turn-boundary & warm prompt-cache check (P1-3):
+  const warmCheck = isCacheWarm(facts.warmSession || facts.session, {
+    nowMs: opts.nowMs,
+    ttlMs: opts.warmCacheTtlMs,
+  });
+  if (warmCheck.warm) {
+    if ((opts.deferForWarmCache || facts.deferForWarmCache) && !force) {
+      plan.mode = 'defer-warm-cache';
+      plan.deferred = true;
+      plan.warmCache = warmCheck;
+      push(plan.skips, warmCheck.reason);
+      return plan;
+    }
+    push(plan.warns, warmCheck.reason);
+  }
 
   // What the TARGET can actually authenticate with, from the read-back verifier (may be absent when
   // the caller skipped verification). A switch that "succeeds" onto a dead capture is the failure
@@ -116,7 +201,7 @@ function build(facts, opts) {
           plan.writes.push(
             'the ' +
               b.browser +
-              ' claude.ai session → ' +
+              ' claude.ai session \u2192 ' +
               facts.target +
               (b.quit ? ' (' + b.browser + ' is closed and reopened to apply it)' : ''),
           );
@@ -137,7 +222,7 @@ function build(facts, opts) {
               '`',
           );
       });
-    } else if (facts.browserCaptured) plan.writes.push('the browser claude.ai session → ' + facts.target);
+    } else if (facts.browserCaptured) plan.writes.push('the browser claude.ai session \u2192 ' + facts.target);
     else
       push(plan.skips, 'no saved browser session exists for this account (capture one with `keyflip browser capture`)');
   };
@@ -160,7 +245,7 @@ function build(facts, opts) {
     else if (!facts.cliCaptured) return refuse("no CLI login captured for '" + facts.target + "'");
     else {
       plan.mode = 'in-place';
-      plan.writes.push('the CLI login (OAuth blob) → ' + facts.target);
+      plan.writes.push('the CLI login (OAuth blob) \u2192 ' + facts.target);
       if (facts.appRunning && facts.appActiveProfile !== facts.target)
         push(plan.warns, 'Claude Desktop stays on its own account and may rewrite the shared CLI login back.');
     }
@@ -179,7 +264,7 @@ function build(facts, opts) {
       return plan;
     }
     plan.mode = 'app-only';
-    plan.writes.push("the Claude desktop app's login → " + facts.target);
+    plan.writes.push("the Claude desktop app's login \u2192 " + facts.target);
     plan.writes.push('consolidated chat pointers');
     if (facts.appRunning) {
       if (!facts.canManageApp)
@@ -206,7 +291,7 @@ function build(facts, opts) {
       return plan;
     }
     plan.mode = 'app-only';
-    plan.writes.push("the Claude desktop app's login → " + facts.target);
+    plan.writes.push("the Claude desktop app's login \u2192 " + facts.target);
     plan.writes.push('consolidated chat pointers');
     browserLines();
     if (appNow) push(plan.warns, 'the CLI already reads as this account; only the desktop app is on ' + appNow + '.');
@@ -229,14 +314,14 @@ function build(facts, opts) {
   // --- full switch -----------------------------------------------------------------------------
   if (facts.policyDenied) return refuse(facts.policyDenied + '  (override with --force)');
 
-  if (facts.cliCaptured) plan.writes.push('the CLI login (OAuth blob) → ' + facts.target);
+  if (facts.cliCaptured) plan.writes.push('the CLI login (OAuth blob) \u2192 ' + facts.target);
   else
     push(
       plan.skips,
       "no CLI login captured for '" + facts.target + "' — the desktop app would move, the CLI would not",
     );
 
-  if (facts.appCaptured) plan.writes.push("the Claude desktop app's login → " + facts.target);
+  if (facts.appCaptured) plan.writes.push("the Claude desktop app's login \u2192 " + facts.target);
   else push(plan.skips, 'no saved desktop-app login for this account — the app stays where it is');
 
   browserLines();
@@ -344,4 +429,4 @@ function guard(decision, res) {
   };
 }
 
-export { build, rollbackScope, shouldRollback };
+export { build, rollbackScope, shouldRollback, isCacheWarm, WARM_CACHE_TTL_MS };
