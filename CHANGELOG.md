@@ -20,6 +20,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The failover gateway check no longer reports a slow gateway as unreachable.** On a loaded machine
+  (load average ~75) `keyflip failover status` and the autoswitch tick sometimes said `gateway
+  unreachable at http://127.0.0.1:8787` while keysmith answered in 23–203 ms, because the checks
+  (`GET /v1/models`, the usage route) gave up after 3 s; a false "unreachable" could delay or block the
+  API failover. Each try now gets 15 s (`GATEWAY_TIMEOUT_MS`), a try with no HTTP answer (timeout or
+  failed connection) is retried once after 1 s, an HTTP status (401/403/404/5xx) is never retried, and
+  one 31 s deadline covers the whole check, so `failover status` with the gateway down returns within
+  31 s and an engaged tick waits at most ~64 s on the gateway. The reason says what happened, e.g.
+  `gateway unreachable at <url> (timed out after 15 s, 2 tries)`.
+
 - **P2 follow-up: an inference-only live token, the status line, and the keysmith-owned failover.**
   The profile endpoint needs the `user:profile` scope, so a one-year `login --long-lived` token got a
   403 every time and its wrong label could never be repaired. Such a token is no longer sent there;

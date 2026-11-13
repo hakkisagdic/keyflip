@@ -286,24 +286,100 @@ async function setup(ctx, opts) {
   };
 }
 
+// The gateway checks (GET /v1/models, the usage route). The gateway answers in well under a second,
+// but this machine runs at load averages near 75, where 3 s was not always enough and a false
+// "unreachable" held the failover back. Each try gets GATEWAY_TIMEOUT_MS; a try that got no HTTP
+// answer at all (a failed connection or a timeout) is retried once after GATEWAY_RETRY_PAUSE_MS.
+// An HTTP status (401/403/404/5xx) is a real answer and is never retried. One deadline covers the
+// whole check, every request in it: 2 x 15 s + 1 s = 31 s at most, so `failover status` with the
+// gateway down returns within that, and a tick that checks twice (autoswitch re-checks once, 1.5 s
+// apart) waits at most ~64 s on the gateway, well inside the 120 s autoswitch interval.
+const GATEWAY_TIMEOUT_MS = 15000;
+const GATEWAY_TRIES = 2;
+const GATEWAY_RETRY_PAUSE_MS = 1000;
+
+function sleepMs(ms) {
+  return new Promise(function (r) {
+    setTimeout(r, ms);
+  });
+}
+function secondsText(ms) {
+  return ms < 1000 ? ms + ' ms' : Math.round(ms / 100) / 10 + ' s'; // 14998 -> "15 s", 14800 -> "14.8 s"
+}
+function isTimeout(e) {
+  return !!e && (e.name === 'TimeoutError' || e.name === 'AbortError');
+}
+
+// One budget per check: per-try timeout, pause, and the deadline shared by every request in it.
+// opts: timeoutMs, retryPauseMs, sleep, now (tests).
+function gatewayBudget(opts) {
+  opts = opts || {};
+  const timeoutMs = opts.timeoutMs || GATEWAY_TIMEOUT_MS;
+  const pauseMs = opts.retryPauseMs !== undefined ? opts.retryPauseMs : GATEWAY_RETRY_PAUSE_MS;
+  const now = opts.now || Date.now;
+  return {
+    timeoutMs: timeoutMs,
+    pauseMs: pauseMs,
+    sleep: opts.sleep || sleepMs,
+    now: now,
+    deadline: now() + GATEWAY_TRIES * timeoutMs + (GATEWAY_TRIES - 1) * pauseMs,
+  };
+}
+
+// GET url with the failover key and read its JSON body, within budget b. Retried only when no HTTP
+// answer came. -> { res, json } (json null for a non-2xx or a body that is not JSON)
+//               | { error: 'timed out after 15 s, 2 tries' | 'connection failed: ECONNREFUSED, 2 tries' }
+async function gatewayGet(doFetch, url, key, b) {
+  let tries = 0;
+  let last = null;
+  let lastTimeoutMs = b.timeoutMs;
+  for (;;) {
+    const left = b.deadline - b.now();
+    if (left <= 0) break;
+    lastTimeoutMs = Math.min(b.timeoutMs, left);
+    tries++;
+    try {
+      const res = await doFetch(url, {
+        headers: { Authorization: 'Bearer ' + key },
+        signal:
+          typeof AbortSignal !== 'undefined' && AbortSignal.timeout ? AbortSignal.timeout(lastTimeoutMs) : undefined,
+      });
+      if (!res || !res.ok || typeof res.json !== 'function') return { res: res || null, json: null };
+      let json = null;
+      try {
+        json = await res.json();
+      } catch (e) {
+        if (!e || e.name !== 'SyntaxError') throw e; // the body stalled or the connection dropped
+      }
+      return { res: res, json: json };
+    } catch (e) {
+      last = e;
+    }
+    if (tries >= GATEWAY_TRIES || b.deadline - b.now() <= b.pauseMs) break;
+    await b.sleep(b.pauseMs);
+  }
+  const n = tries + (tries === 1 ? ' try' : ' tries');
+  if (!tries) return { error: 'not asked: the check ran out of time' };
+  if (isTimeout(last)) return { error: 'timed out after ' + secondsText(lastTimeoutMs) + ', ' + n };
+  const code = last && ((last.cause && last.cause.code) || last.code);
+  return { error: 'connection failed' + (code && /^[A-Z0-9_]+$/.test(code) ? ': ' + code : '') + ', ' + n };
+}
+
 // Does the RUNNING gateway enforce a spend cap of at most capUsd on the paid leg? A cap in keysmith's
 // config is not proof (it reads limits at start); its own usage route is. Asked with the failover's
 // scoped key, which sees exactly the caps on the adapters it can reach — and its OWN spend under them.
+// opts.budget: the calling check's budget (gatewayReady); else a fresh one from opts.
 async function capLoaded(p, key, doFetch, opts) {
   opts = opts || {};
   if (!p.capAdapter) return { ok: false, reason: p.aliasError || 'the alias has no paid leg to check' };
-  let res;
-  try {
-    res = await doFetch(p.gatewayUrl + '/v1/keysmith/usage?hours=1', {
-      headers: { Authorization: 'Bearer ' + key },
-      signal:
-        typeof AbortSignal !== 'undefined' && AbortSignal.timeout
-          ? AbortSignal.timeout(opts.timeoutMs || 3000)
-          : undefined,
-    });
-  } catch (e) {
-    return { ok: false, reason: 'could not read the spend caps from the gateway' };
-  }
+  const got = await gatewayGet(
+    doFetch,
+    p.gatewayUrl + '/v1/keysmith/usage?hours=1',
+    key,
+    opts.budget || gatewayBudget(opts),
+  );
+  if (got.error) return { ok: false, reason: 'could not read the spend caps from the gateway (' + got.error + ')' };
+  const res = got.res;
   if (!res || !res.ok)
     return {
       ok: false,
@@ -312,12 +388,7 @@ async function capLoaded(p, key, doFetch, opts) {
         ((res && res.status) || 'no answer') +
         '); refusing to fail over uncapped',
     };
-  let j = null;
-  try {
-    j = await res.json();
-  } catch (e) {
-    j = null;
-  }
+  const j = got.json;
   const hit = (j && Array.isArray(j.spend) ? j.spend : []).find(function (r) {
     return r && r.kind === 'adapter' && r.target === p.capAdapter && typeof r.cap === 'number' && r.cap <= p.capUsd;
   });
@@ -338,7 +409,8 @@ async function capLoaded(p, key, doFetch, opts) {
 }
 
 // Is the gateway up, does our key work, does it serve the alias — and (unless opts.capCheck is
-// false: the per-tick health check) does it enforce the spend cap? GET /v1/models + the usage route.
+// false: the per-tick health check) does it enforce the spend cap? GET /v1/models + the usage route,
+// both within one budget (gatewayBudget: opts.timeoutMs, retryPauseMs, sleep, now).
 async function gatewayReady(ctx, opts) {
   opts = opts || {};
   const p = opts.plan || resolvePlan(ctx, opts);
@@ -353,26 +425,18 @@ async function gatewayReady(ctx, opts) {
   if (!_provider.exists(ctx, p.provider))
     return { ok: false, reason: 'provider ' + p.provider + ' missing (keyflip failover setup)' };
   if (!doFetch) return { ok: false, reason: 'no fetch' };
-  try {
-    const res = await doFetch(p.gatewayUrl + '/v1/models', {
-      headers: { Authorization: 'Bearer ' + key },
-      signal:
-        typeof AbortSignal !== 'undefined' && AbortSignal.timeout
-          ? AbortSignal.timeout(opts.timeoutMs || 3000)
-          : undefined,
-    });
-    if (!res || !res.ok) return { ok: false, reason: 'gateway answered ' + ((res && res.status) || 'nothing') };
-    const j = await res.json();
-    const ids = ((j && j.data) || []).map(function (m) {
-      return m && m.id;
-    });
-    if (ids.indexOf(p.alias) === -1)
-      return { ok: false, reason: 'gateway does not serve ' + p.alias + ' to the failover key' };
-  } catch (e) {
-    return { ok: false, reason: 'gateway unreachable at ' + p.gatewayUrl };
-  }
+  const budget = gatewayBudget(opts);
+  const got = await gatewayGet(doFetch, p.gatewayUrl + '/v1/models', key, budget);
+  if (got.error) return { ok: false, reason: 'gateway unreachable at ' + p.gatewayUrl + ' (' + got.error + ')' };
+  const res = got.res;
+  if (!res || !res.ok) return { ok: false, reason: 'gateway answered ' + ((res && res.status) || 'nothing') };
+  const ids = ((got.json && got.json.data) || []).map(function (m) {
+    return m && m.id;
+  });
+  if (ids.indexOf(p.alias) === -1)
+    return { ok: false, reason: 'gateway does not serve ' + p.alias + ' to the failover key' };
   if (opts.capCheck === false) return { ok: true };
-  const c = await capLoaded(p, key, doFetch, { timeoutMs: opts.timeoutMs });
+  const c = await capLoaded(p, key, doFetch, { budget: budget });
   if (!c.ok) return { ok: false, reason: c.reason };
   return { ok: true, cap: c.cap };
 }
@@ -507,4 +571,6 @@ export {
   keysmithConfigPath,
   DEFAULTS,
   STATE_FILE,
+  GATEWAY_TIMEOUT_MS,
+  GATEWAY_RETRY_PAUSE_MS,
 };

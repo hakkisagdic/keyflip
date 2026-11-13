@@ -245,7 +245,153 @@ test('gatewayReady: up + serving the alias + the cap; not set up; alias missing;
   const down = async () => {
     throw new Error('ECONNREFUSED');
   };
-  assert.ok(/unreachable/.test((await failover.gatewayReady(ctx, { fetch: down, keysmithConfig: ksc })).reason));
+  const pauses = [];
+  const unreachable = await failover.gatewayReady(ctx, {
+    fetch: down,
+    keysmithConfig: ksc,
+    sleep: async (ms) => pauses.push(ms),
+  });
+  assert.ok(/unreachable/.test(unreachable.reason));
+  assert.deepStrictEqual(pauses, [1000], 'one retry, after a 1 s pause');
+});
+
+// A gateway that is up but slow (load average ~75) must not read as "unreachable". No real sleeps or
+// sockets: `sleep` and `now` are injected, timeouts are simulated by throwing what AbortSignal.timeout
+// throws, and one case lets a real (20 ms) AbortSignal fire against a fetch that never answers.
+function timeoutError() {
+  const e = new Error('The operation was aborted due to timeout');
+  e.name = 'TimeoutError';
+  return e;
+}
+function refused() {
+  return Object.assign(new TypeError('fetch failed'), { cause: { code: 'ECONNREFUSED' } });
+}
+// The `gateway` stub, but the first `fail` calls to a path matching `re` throw `err()` first.
+function flaky(re, fail, err, inner) {
+  const f = inner || gateway(['claude-failover']);
+  const seen = [];
+  let left = fail;
+  const g = async (url, opts) => {
+    seen.push(url.replace('http://127.0.0.1:8787', ''));
+    if (re.test(url) && left > 0) {
+      left--;
+      throw err();
+    }
+    return f(url, opts);
+  };
+  g.seen = seen;
+  return g;
+}
+test('gateway checks: 15 s per try, one retry on a timeout or failed connection, never on an HTTP answer', async function () {
+  const ctx = makeCtx();
+  const ksc = await setUp(ctx);
+  assert.strictEqual(failover.GATEWAY_TIMEOUT_MS, 15000);
+  assert.strictEqual(failover.GATEWAY_RETRY_PAUSE_MS, 1000);
+  const pauses = [];
+  const sleep = async (ms) => pauses.push(ms);
+  // one slow /v1/models, then an answer: ready, no false "unreachable"
+  const slow = flaky(/\/v1\/models/, 1, timeoutError);
+  const r1 = await failover.gatewayReady(ctx, { fetch: slow, keysmithConfig: ksc, sleep: sleep });
+  assert.strictEqual(r1.ok, true, r1.reason);
+  assert.deepStrictEqual(slow.seen, ['/v1/models', '/v1/models', '/v1/keysmith/usage?hours=1']);
+  assert.deepStrictEqual(pauses, [1000]);
+  // a refused connection on the usage route, then an answer: the cap is still proven
+  const blip = flaky(/\/v1\/keysmith\/usage/, 1, refused);
+  const r2 = await failover.gatewayReady(ctx, { fetch: blip, keysmithConfig: ksc, sleep: sleep });
+  assert.strictEqual(r2.ok, true, r2.reason);
+  assert.strictEqual(r2.cap.cap, 25);
+  // both tries time out: the reason says so, with the default timeout
+  const hung = flaky(/\/v1\/models/, 2, timeoutError);
+  const r3 = await failover.gatewayReady(ctx, { fetch: hung, keysmithConfig: ksc, sleep: sleep, capCheck: false });
+  assert.strictEqual(r3.reason, 'gateway unreachable at http://127.0.0.1:8787 (timed out after 15 s, 2 tries)');
+  // both tries refused
+  const dead = flaky(/./, 2, refused);
+  const r4 = await failover.gatewayReady(ctx, { fetch: dead, keysmithConfig: ksc, sleep: sleep });
+  assert.strictEqual(
+    r4.reason,
+    'gateway unreachable at http://127.0.0.1:8787 (connection failed: ECONNREFUSED, 2 tries)',
+  );
+  assert.strictEqual(dead.seen.length, 2, 'no cap check once the gateway is unreachable');
+  // the usage route never answers: refused uncapped, and it says why
+  const capHung = flaky(/\/v1\/keysmith\/usage/, 2, timeoutError);
+  const r5 = await failover.gatewayReady(ctx, { fetch: capHung, keysmithConfig: ksc, sleep: sleep });
+  assert.strictEqual(r5.ok, false);
+  assert.ok(
+    /could not read the spend caps from the gateway \(timed out after 15 s, 2 tries\)/.test(r5.reason),
+    r5.reason,
+  );
+  // an HTTP answer is an answer: asked once, never retried
+  for (const status of [401, 403, 404, 503]) {
+    pauses.length = 0;
+    const g = gateway(['claude-failover'], status);
+    const r = await failover.gatewayReady(ctx, { fetch: g, keysmithConfig: ksc, sleep: sleep });
+    assert.strictEqual(r.reason, 'gateway answered ' + status);
+    assert.strictEqual(g.calls.length, 1, status + ' was not retried');
+    assert.deepStrictEqual(pauses, []);
+  }
+  const noRoute = gateway(['claude-failover'], null, null); // the usage route 404s
+  const r6 = await failover.gatewayReady(ctx, { fetch: noRoute, keysmithConfig: ksc, sleep: sleep });
+  assert.ok(/does not report its spend caps \(404\)/.test(r6.reason), r6.reason);
+  assert.strictEqual(noRoute.calls.length, 2, '/v1/models once, the usage route once');
+  // a real AbortSignal: the fetch never answers, the signal ends it, and it reads as a timeout
+  const never = (url, opts) =>
+    new Promise((resolve, reject) => {
+      opts.signal.addEventListener('abort', () => reject(opts.signal.reason));
+    });
+  const r7 = await failover.gatewayReady(ctx, {
+    fetch: never,
+    keysmithConfig: ksc,
+    timeoutMs: 20,
+    retryPauseMs: 0,
+    now: () => 0, // a frozen clock: a late timer on a loaded machine cannot spend the deadline
+  });
+  assert.strictEqual(r7.reason, 'gateway unreachable at http://127.0.0.1:8787 (timed out after 20 ms, 2 tries)');
+});
+
+test('gateway checks: one 31 s deadline for the whole check, so a hung gateway cannot eat the 120 s tick', async function () {
+  const ctx = makeCtx();
+  const ksc = await setUp(ctx);
+  // a fake clock: a timed-out try costs the full 15 s, a pause its 1 s
+  let t = 0;
+  const now = () => t;
+  const sleep = async (ms) => {
+    t += ms;
+  };
+  const seen = [];
+  const answer = gateway(['claude-failover']);
+  function clocked(plan) {
+    return async (url, opts) => {
+      const step = plan.shift();
+      seen.push(url.replace('http://127.0.0.1:8787', '') + ' ' + step);
+      if (step === 'timeout') {
+        t += 15000;
+        throw timeoutError();
+      }
+      t += step;
+      return answer(url, opts);
+    };
+  }
+  // /v1/models: one timeout, then an answer after 14 s -> 30 s gone, 1 s left for the usage route
+  const r = await failover.gatewayReady(ctx, {
+    fetch: clocked(['timeout', 14000, 'timeout']),
+    keysmithConfig: ksc,
+    sleep: sleep,
+    now: now,
+  });
+  assert.strictEqual(r.ok, false);
+  assert.ok(/timed out after 1 s, 1 try/.test(r.reason), 'the usage route got what was left: ' + r.reason);
+  assert.deepStrictEqual(seen, ['/v1/models timeout', '/v1/models 14000', '/v1/keysmith/usage?hours=1 timeout']);
+  // the per-tick health check (no cap check) on a hung gateway: 15 + 1 + 15 s
+  t = 0;
+  const h = await failover.gatewayReady(ctx, {
+    fetch: clocked(['timeout', 'timeout']),
+    keysmithConfig: ksc,
+    sleep: sleep,
+    now: now,
+    capCheck: false,
+  });
+  assert.ok(/timed out after 15 s, 2 tries/.test(h.reason), h.reason);
+  assert.strictEqual(t, 31000);
 });
 
 test('REGRESSION: the failover never engages uncapped — the RUNNING gateway must report the cap', async function () {
