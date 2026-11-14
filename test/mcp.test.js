@@ -856,10 +856,7 @@ test('B4: MCP keyflip_gateway_use refuses unless experimental=true and configure
   assert.strictEqual(tool.inputSchema.properties.experimental.default, false);
   assert.match(tool.description, /experimental=true/);
 
-  await assert.rejects(
-    () => tool.run(ctx, { provider: 'gw' }),
-    /confirmation required/,
-  );
+  await assert.rejects(() => tool.run(ctx, { provider: 'gw' }), /confirmation required/);
   await assert.rejects(
     () => tool.run(ctx, { provider: 'gw', confirm: true }),
     /Desktop never uses the gateway by default; pass experimental=true to force it \(unsupported\)/,
@@ -962,14 +959,8 @@ test('B3: MCP keyflip_failover_verify defaults no_spend=true, requires confirm w
   assert.strictEqual(defProbe.detail.skipped, true);
 
   // 2) no_spend=false without confirm throws.
-  await assert.rejects(
-    () => tool.run(ctx, { no_spend: false }),
-    /confirmation required/,
-  );
-  await assert.rejects(
-    () => tool.run(ctx, { no_spend: false, confirm: false }),
-    /confirmation required/,
-  );
+  await assert.rejects(() => tool.run(ctx, { no_spend: false }), /confirmation required/);
+  await assert.rejects(() => tool.run(ctx, { no_spend: false, confirm: false }), /confirmation required/);
   assert.strictEqual(spawnCount, 0, 'refused call must not spawn probes');
 
   // 3) no_spend=false with confirm=true passes through and runs probes.

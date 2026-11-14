@@ -9,6 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **API failover that survives its own failure modes (Desktop never touches the gateway).**
+  `keyflip failover on` is now a probed transaction (write, probe with real `claude -p` calls,
+  commit or roll back) on the `cli-launcher` surface by default: only `keyflip failover run` /
+  `resume` children use the gateway; Claude Desktop is never pointed at it and never restarted for
+  it. New `keyflip failover run|resume|verify` (`verify --no-spend` makes no inference calls), a
+  Desktop-leak guard for the optional `cli-settings` surface, `doctor` checks for leftovers and for
+  `keyflip` on PATH, and a `keyflip_failover_verify` MCP tool (no-spend by default; spending needs
+  `confirm=true`). Review fixes in this release: the process scan lists every process (`ps -ax`, C
+  locale) so the leak guard and `failover off` actually see Desktop sessions; crash recovery skips a
+  live `probing` transaction (owner pid and age recorded) and a rollback never deletes a file whose
+  backup is missing; a kept `cli-settings` rollback removes only the keys keyflip wrote and keeps the
+  owner's later edits and file mode; failed engages back off (30 min or the quota reset) with one
+  notification per episode instead of a probe and a notification every tick; `failover off` no
+  longer strips another provider's settings; Desktop config restores are deferred while the app is
+  running and a Desktop `3p` setup that keyflip did not write is left alone; `keyflip_gateway_use`
+  needs `experimental=true`.
+
 - **Local transcript rate-limit signal, sticky manual failover, and `keyflip_failover` MCP tool.**
   When the usage endpoint is throttled (`429`), `autoswitch` now also checks recent Claude Code
   session transcripts (`<claudeDir>/projects/*/*.jsonl`, window `failover.limitSignalMinutes`,

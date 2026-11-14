@@ -2213,6 +2213,7 @@ test('A7: failover on prints surface-accurate message; failover run reports miss
   const onSettings = await runCliCaptured(['failover', 'on'], cliCtx);
   assert.strictEqual(onSettings.exitCode, 0);
   assert.match(onSettings.stdout, /on \(cli-settings\) — Claude Code now uses the gateway\./);
+});
 
 test('B1: migratePendingGateway drops gateway-* immediately, defers restore while Desktop runs, and tick restores once Desktop closes', async function () {
   const ctx = makeCtx({ platform: 'darwin', appDataDir: true });
