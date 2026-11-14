@@ -32,6 +32,7 @@ function takeLines(decoder, chunk, carry) {
 
 function parseRecord(j, state) {
   if (!state.cwd && typeof j.cwd === 'string') state.cwd = j.cwd;
+  if (!state.entrypoint && typeof j.entrypoint === 'string') state.entrypoint = j.entrypoint;
   // The first record that carries a timestamp is the earliest moment the transcript itself
   // claims to exist — account attribution (attrib.js) needs a session SPAN, not just its last
   // write. A leading `custom-title` record has none, so this is "first we see", not "line 1".
@@ -63,7 +64,7 @@ function summarize(file) {
   } catch (e) {
     return null;
   }
-  const state = { cwd: null, preview: null, startedAt: null };
+  const state = { cwd: null, preview: null, startedAt: null, entrypoint: null };
   try {
     const dec = new StringDecoder('utf8');
     const buf = Buffer.alloc(CHUNK_BYTES);
@@ -285,6 +286,7 @@ function list(ctx, opts) {
     const s = summarize(r.file) || {};
     r.cwd = s.cwd || decodeProjectDir(r.project);
     r.preview = s.preview || '';
+    r.entrypoint = s.entrypoint || null;
     // Session span start, from the transcript's own first timestamp. A clock ahead of the
     // last write (skew, a copied file) would make the span negative, so it is dropped here
     // rather than at every call site — `mtimeMs` alone is still honest evidence.
@@ -401,6 +403,219 @@ function find(ctx, idOrPrefix) {
 // The command that resumes a session in its original directory.
 function resumeCommand(row) {
   return { cwd: row.cwd, command: 'claude', args: ['--resume', row.sessionId] };
+}
+
+function defaultPidAlive(pid) {
+  const n = Number(pid);
+  if (!Number.isInteger(n) || n <= 0) return false;
+  try {
+    process.kill(n, 0);
+    return true;
+  } catch (e) {
+    return !!(e && e.code === 'EPERM');
+  }
+}
+
+function sessionMetadataDirs(ctx) {
+  const dirs = [];
+  if (ctx && ctx.claudeDir) dirs.push(path.join(ctx.claudeDir, 'sessions'));
+  if (ctx && ctx.home) {
+    const p = path.join(ctx.home, '.claude', 'sessions');
+    if (dirs.indexOf(p) === -1) dirs.push(p);
+  }
+  return dirs;
+}
+
+function readSessionPidRecords(ctx) {
+  const out = [];
+  sessionMetadataDirs(ctx).forEach(function (dir) {
+    let files;
+    try {
+      files = fs.readdirSync(dir);
+    } catch {
+      return;
+    }
+    files.forEach(function (f) {
+      if (!/^[0-9]+\.json$/.test(f)) return;
+      const pidFromName = parseInt(f.slice(0, -5), 10);
+      try {
+        const j = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8'));
+        if (!j || typeof j !== 'object') return;
+        out.push({
+          pid: Number.isInteger(j.pid) && j.pid > 0 ? j.pid : pidFromName,
+          sessionId: j.sessionId || j.cliSessionId || j.id || null,
+          entrypoint: j.entrypoint || null,
+          cwd: j.cwd || null,
+          status: j.status || null,
+        });
+      } catch {
+        /* ignore unreadable */
+      }
+    });
+  });
+  return out;
+}
+
+function desktopSessionIds(ctx) {
+  const ids = appRegistrySessionIds(ctx);
+  readSessionPidRecords(ctx).forEach(function (rec) {
+    if (rec.entrypoint === 'claude-desktop' && typeof rec.sessionId === 'string' && rec.sessionId) {
+      ids.add(rec.sessionId);
+    }
+  });
+  return ids;
+}
+
+function isDesktopSession(ctx, row, knownDesktopIds) {
+  if (!row || !row.sessionId) return false;
+  const set = knownDesktopIds || desktopSessionIds(ctx);
+  if (set.has(row.sessionId)) return true;
+  if (row.entrypoint === 'claude-desktop') return true;
+  return false;
+}
+
+// Check whether a session currently has a live writer process (Desktop session file,
+// Desktop claude-code-sessions registry pid, or a running `claude --resume/--session-id` process).
+function sessionLivePid(ctx, row, opts) {
+  opts = opts || {};
+  if (!row || !row.sessionId) return null;
+  const alive = opts.pidAlive || (ctx && ctx.pidAlive) || defaultPidAlive;
+  const targetId = row.sessionId;
+
+  const pidRecs = readSessionPidRecords(ctx);
+  for (let i = 0; i < pidRecs.length; i++) {
+    const rec = pidRecs[i];
+    if (rec.sessionId === targetId && rec.pid && alive(rec.pid)) {
+      return rec.pid;
+    }
+  }
+
+  // Also check <appDataDir>/claude-code-sessions/**/local_*.json if it recorded a pid.
+  const store = ctx && ctx.appDataDir && path.join(ctx.appDataDir, 'claude-code-sessions');
+  if (store && fs.existsSync(store)) {
+    let foundAppPid = null;
+    const walkApp = function (dir, depth) {
+      if (foundAppPid !== null) return;
+      let ents;
+      try {
+        ents = fs.readdirSync(dir, { withFileTypes: true });
+      } catch {
+        return;
+      }
+      for (let i = 0; i < ents.length; i++) {
+        const e = ents[i];
+        const p = path.join(dir, e.name);
+        if (e.isDirectory()) {
+          if (depth < 3) walkApp(p, depth + 1);
+        } else if (e.isFile() && e.name.slice(0, 6) === 'local_' && e.name.slice(-5) === '.json') {
+          try {
+            const j = JSON.parse(fs.readFileSync(p, 'utf8'));
+            if (j && j.cliSessionId === targetId && j.pid && alive(j.pid)) {
+              foundAppPid = Number(j.pid);
+              return;
+            }
+          } catch {
+            /* ignore */
+          }
+        }
+      }
+    };
+    walkApp(store, 0);
+    if (foundAppPid !== null) return foundAppPid;
+  }
+
+  // Check injected process list or `ps` for `--resume <id>` / `--session-id <id>`.
+  const esc = targetId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const flagRe = new RegExp('(?:--resume|--session-id)(?:=|["\']?\\s+["\']?)' + esc + '(?:["\']|\\s|$)');
+  const lister = opts.listProcesses || (ctx && ctx.listProcesses) || null;
+  if (typeof lister === 'function') {
+    const procs = lister() || [];
+    if (Array.isArray(procs)) {
+      for (let i = 0; i < procs.length; i++) {
+        const pr = procs[i];
+        if (!pr || !pr.pid) continue;
+        if (flagRe.test(String(pr.command || ''))) {
+          if ((opts.pidAlive || (ctx && ctx.pidAlive) ? alive(pr.pid) : true)) return pr.pid;
+        }
+      }
+    }
+  } else if (opts.run || (ctx && ctx.run) || process.env.KEYFLIP_TEST_OFFLINE !== '1') {
+    const runner = opts.run || (ctx && ctx.run) || run;
+    try {
+      const res = runner('ps', ['-Ao', 'pid=,command='], null, { timeoutMs: 4000 });
+      if (res && res.code === 0 && res.stdout) {
+        const lines = String(res.stdout).split('\n');
+        for (let i = 0; i < lines.length; i++) {
+          const m = /^\s*(\d+)\s+(.*)$/.exec(lines[i]);
+          if (!m) continue;
+          const p = parseInt(m[1], 10);
+          if (p !== process.pid && flagRe.test(m[2]) && alive(p)) return p;
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+
+  return null;
+}
+
+// §4.5: Resolve `<session-id|--last> [--desktop]` into `{ row, sessionId, cwd, command, args, livePid }`.
+// Shared by MCP `keyflip_resume_command` and CLI `keyflip failover resume`.
+function resolveResume(ctx, opts) {
+  if (typeof opts === 'string') opts = { id: opts };
+  opts = opts || {};
+  const wantDesktop = !!opts.desktop;
+  const wantLast = !!opts.last;
+  const all = list(ctx, { limit: 100000, running: [], appIds: [] });
+  const deskSet = wantDesktop ? desktopSessionIds(ctx) : null;
+  const pool = wantDesktop
+    ? all.filter(function (r) {
+        return isDesktopSession(ctx, r, deskSet);
+      })
+    : all;
+
+  let row = null;
+  if (wantLast) {
+    row = pool[0] || null;
+    if (!row) {
+      throw new Error(wantDesktop ? 'no Desktop session found to resume' : 'no session found to resume');
+    }
+  } else {
+    const idOrPrefix = String(opts.id || '').trim();
+    if (!idOrPrefix) throw new Error('missing session id (pass <session-id> or --last)');
+    const exact = pool.filter(function (r) {
+      return r.sessionId === idOrPrefix;
+    })[0];
+    if (exact) {
+      row = exact;
+    } else {
+      const pref = pool.filter(function (r) {
+        return r.sessionId.indexOf(idOrPrefix) === 0;
+      });
+      if (pref.length === 1) row = pref[0];
+      else if (pref.length > 1) {
+        throw new Error("'" + idOrPrefix + "' is ambiguous (" + pref.length + ' sessions) — use more of the id');
+      }
+    }
+    if (!row) {
+      if (wantDesktop && find(ctx, idOrPrefix)) {
+        throw new Error("session '" + idOrPrefix + "' is not a Desktop session");
+      }
+      throw new Error('no such session: ' + idOrPrefix);
+    }
+  }
+
+  const rc = resumeCommand(row);
+  const livePid = sessionLivePid(ctx, row, opts);
+  return {
+    row: row,
+    sessionId: row.sessionId,
+    cwd: rc.cwd,
+    command: rc.command,
+    args: rc.args,
+    livePid: livePid,
+  };
 }
 
 // E4: the headless command that INJECTS a message into a session and prints the reply —
@@ -1099,6 +1314,9 @@ export {
   find,
   summarize,
   resumeCommand,
+  resolveResume,
+  isDesktopSession,
+  sessionLivePid,
   sendCommand,
   decodeProjectDir,
   encodeCwd,

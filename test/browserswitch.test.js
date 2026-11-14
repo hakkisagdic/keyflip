@@ -300,3 +300,23 @@ test('two profiles of one browser: quit once, restore both, reopen once', async 
   assert.strictEqual(calls.opened, 1, 'and one reopen after BOTH restores');
   assert.deepStrictEqual(out.synced, ['Chrome', 'Chrome (Work)']);
 });
+
+test('status() shows Chrome account and "not rotated" (never on the gateway)', function () {
+  const dir = configDir();
+  const f = fakeBrowser({ running: true, jar: signedInAs('yahoo'), snapshots: {} });
+  const st = bs.status({ platform: 'darwin', configDir: dir, home: dir }, { browser: f.br });
+  assert.strictEqual(st.rotated, false);
+  assert.strictEqual(st.note, 'not rotated');
+  assert.match(st.gateway, /not on the gateway/i);
+  assert.ok(st.chrome);
+  assert.strictEqual(st.chrome.account, 'yahoo');
+  assert.strictEqual(st.chrome.email, 'yahoo@example.com');
+  assert.strictEqual(st.chrome.rotated, false);
+  assert.strictEqual(st.chrome.note, 'not rotated');
+  assert.strictEqual(st.summary, 'Chrome: yahoo@example.com (not rotated)');
+
+  const out = fakeBrowser({ running: false, jar: null, snapshots: {} });
+  const stOut = bs.status({ platform: 'darwin', configDir: dir, home: dir }, { browser: out.br });
+  assert.strictEqual(stOut.chrome.signedIn, false);
+  assert.strictEqual(stOut.summary, 'Chrome: not signed in (not rotated)');
+});

@@ -23,6 +23,8 @@ import * as _sessionage from './sessionage.js';
 import * as _instances from './instances.js';
 import * as _codex from './codex.js';
 import * as _oauth from './oauth.js';
+import * as _selfbin from './selfbin.js';
+import * as _failover from './failover.js';
 
 async function probe(url, opts) {
   opts = opts || {};
@@ -92,6 +94,8 @@ async function diagnose(ctx, opts) {
   tokenRenewalCheck(ctx, add, opts);
   backgroundServices(ctx, add, opts);
   autoswitchService(ctx, add, opts);
+  keyflipOnPath(ctx, add, opts);
+  failoverLeftovers(ctx, add);
   settingsJson(ctx, add);
 
   const active = provider.readActive(ctx);
@@ -1016,6 +1020,114 @@ function humanAge(ms) {
   const h = Math.floor(m / 60);
   if (h < 48) return h + ' h';
   return Math.floor(h / 24) + ' d';
+}
+
+function realpathOr(p, fsx) {
+  if (!p) return null;
+  try {
+    return (fsx.realpathSync.native || fsx.realpathSync)(p);
+  } catch {
+    return p;
+  }
+}
+
+function parseCommandV(res) {
+  if (!res || res.code !== 0) return null;
+  const lines = String(res.stdout || '')
+    .split('\n')
+    .map(function (l) {
+      return l.trim();
+    })
+    .filter(Boolean);
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (lines[i].indexOf('/') !== -1) return lines[i];
+  }
+  return lines[0] || null;
+}
+
+// §11: Check whether `keyflip` is on PATH in both login (`-lc`) and interactive (`-ic`) shells
+// under a clean `env -i`, and resolves to `selfbin.resolveSelf().script`.
+// Only runs when `opts.run` is supplied (same hermetic-test contract as `backgroundServices`).
+function keyflipOnPath(ctx, add, opts) {
+  opts = opts || {};
+  if (ctx.platform === 'win32' || !opts.run) return;
+  const fsx = opts.fs || fs;
+  const home = opts.home || ctx.home || process.env.HOME || '';
+  const user = opts.user || process.env.USER || 'user';
+  const shell = opts.shell || process.env.SHELL || (ctx.platform === 'darwin' ? '/bin/zsh' : '/bin/sh');
+  const resolved = _selfbin.resolveSelf({
+    run: opts.run,
+    fs: fsx,
+    selfScript: opts.selfScript,
+    fallbackScript: opts.fallbackScript,
+  });
+  const expected = resolved.script || resolved.exec;
+
+  const envPrefix = ['-i', 'HOME=' + home, 'USER=' + user, 'TERM=dumb', shell];
+  const loginRes = opts.run('env', envPrefix.concat(['-lc', 'command -v keyflip']), undefined, { timeoutMs: 4000 });
+  const interRes = opts.run('env', envPrefix.concat(['-ic', 'command -v keyflip']), undefined, { timeoutMs: 4000 });
+
+  const loginHit = parseCommandV(loginRes);
+  const interHit = parseCommandV(interRes);
+  const loginReal = realpathOr(loginHit, fsx);
+  const interReal = realpathOr(interHit, fsx);
+  const fixHint = 'add /opt/homebrew/bin to PATH in ~/.zshrc (e.g. export PATH="/opt/homebrew/bin:$PATH")';
+  const extra = { login: loginReal, interactive: interReal, expected: expected };
+
+  if (!interHit && loginHit) {
+    return add(
+      'keyflip-on-path',
+      'warn',
+      'found in login shell (' + loginReal + '), missing in interactive shell (-ic)',
+      fixHint,
+      extra,
+    );
+  }
+  if (!interHit && !loginHit) {
+    return add(
+      'keyflip-on-path',
+      'warn',
+      'keyflip not found on PATH in login (-lc) or interactive (-ic) shell',
+      fixHint,
+      extra,
+    );
+  }
+  if (!loginHit && interHit) {
+    return add(
+      'keyflip-on-path',
+      'warn',
+      'found in interactive shell (' + interReal + '), missing in login shell (-lc)',
+      fixHint,
+      extra,
+    );
+  }
+  if (expected && (interReal !== expected || loginReal !== expected)) {
+    const mismatch = interReal !== expected ? interReal : loginReal;
+    return add(
+      'keyflip-on-path',
+      'warn',
+      'shell PATH resolves keyflip to ' + mismatch + ', expected ' + expected,
+      fixHint,
+      extra,
+    );
+  }
+  add('keyflip-on-path', true, interReal, undefined, extra);
+}
+
+// Check for leftover failover state (managed ANTHROPIC_* in settings.json while not engaged,
+// .failover-env.json while not engaged, Desktop deploymentMode "3p" / keyflip-gateway-*,
+// .keyflip-gateway.json, pending gateway-* actions).
+function failoverLeftovers(ctx, add) {
+  let lo;
+  try {
+    lo = _failover.leftovers(ctx);
+  } catch (e) {
+    return add('failover-leftovers', 'warn', 'unreadable: ' + ((e && e.message) || String(e)), 'keyflip failover off');
+  }
+  if (lo.items && lo.items.length) {
+    return add('failover-leftovers', 'warn', lo.items.join('; '), 'keyflip failover off', { items: lo.items });
+  }
+  add('failover-leftovers', true, 'none', undefined, { items: [] });
 }
 
 function settingsJson(ctx, add) {

@@ -1343,12 +1343,38 @@ aren't given. MCP: `keyflip_autoswitch_service` (`action=status|install|remove`)
 endpoint is throttled (`429`), autoswitch scans recent Claude Code transcripts
 (`failover.limitSignalMinutes`, default 15 min, ignoring hits before the last switch/release
 in `.live-since.json`) for a subscription rate-limit rejection and either rotates to an
-account with headroom or engages the capped `keysmith` API failover until `resetsAt`.
-`keyflip failover on` engages a **sticky manual** failover that autoswitch never
-auto-releases (`keyflip failover off` releases it; MCP: `keyflip_failover` with
-`action=status|on|off`). While engaged, if the gateway stops answering after 3 retries
-(2 s, 5 s, 10 s), keyflip holds the failover in a degraded state for up to
-`failover.lostGraceSeconds` (default 300 s) before releasing.
+account with headroom or engages the capped `keysmith` API failover as an atomic transaction
+(write → live `claude -p` probe → commit or full rollback).
+
+- **Surfaces:** `cli-launcher` (default — writes `.failover-env.json` with no token on disk and
+  injects the gateway env only into child `claude` processes spawned by `failover run` / `resume`,
+  leaving `~/.claude/settings.json` untouched), `cli-settings` (opt-in via `failover.cliTarget=settings`
+  when the gateway serves every entry in `failover.modelIds` and `failover.desktopLeakGuard=true` —
+  writes URL + token only, never model keys, and rolls back to `cli-launcher` if a Desktop session
+  picks up gateway env). `desktop` and `chrome` never use the gateway (`chrome` is reported with its
+  `claude.ai` account as `not rotated`).
+- **Launch & resume on the gateway:**
+  - `keyflip failover run [--force-gateway] [--print-command] [--] [claude args…]` spawns `claude`
+    with the gateway token in the child environment only (never `argv`), adding
+    `--strict-mcp-config --mcp-config <path>` when `failover.mcpConfig` is configured.
+  - `keyflip failover resume <session-id|--last> [--desktop] [--yes] [--force-gateway] [--print-command]`
+    resolves the transcript's `cwd` + `sessionId` (`--last` picks the newest transcript, `--desktop`
+    restricts to Desktop sessions) and refuses with exit `3` when that session's PID is still alive
+    unless `--yes` is passed.
+- **Verify (`keyflip failover verify [--no-spend] [--deep] [--json]`):** read-only preflight over
+  `gateway`, `legs` (last 48h of `failover.keysmithUsageLog`), `modelIds`, live `cli-launcher`
+  `probe` (skipped with `--no-spend`; `--deep` adds a `Bash` tool probe and a `sonnet` subagent
+  probe, reporting metered spend delta), `leftovers`, `processes` (`stillCarrying` env var names
+  only), and `toolCount` (`>128` tool rejections in last 7d). Exits `0` (all ok), `2` (any warn),
+  or `1` (any fail).
+- **Manual control & MCP:** `keyflip failover on` engages a sticky manual failover; `keyflip failover off`
+  releases every surface regardless of `failover.enabled` and reports running processes still carrying
+  gateway env (`stillCarrying`). MCP exposes `keyflip_failover` (`status|on|off`, including `surface`
+  and `exhausted`) and read-only `keyflip_failover_verify`.
+- **Failover config keys (`keyflip config set failover.<key> <val>`):** `cliTarget` (`launcher`|`settings`),
+  `modelIds` (`claude-opus-5-5,claude-sonnet-5-5,claude-haiku-5-5`), `probeModels` (`sonnet`),
+  `probeTimeoutSeconds` (`90`), `probeEnabled` (`true`), `mcpConfig` (`''`), `desktopLeakGuard` (`true`),
+  `keysmithUsageLog` (`~/.local/share/keysmith/usage.jsonl`).
 
 ### One MCP-server registry, every agent
 

@@ -342,7 +342,10 @@ function recoverCrashedTxn(ctx) {
 // Build child environment for `surface`:
 // - `cli-launcher`: user's env minus every `ANTHROPIC_*` key + launcher env (with token from store)
 // - `cli-settings`: user's env minus every `ANTHROPIC_*` key (child inherits settings.json)
-function buildChildEnv(ctx, surface, baseEnv) {
+// When `opts.forceGateway` is true and `.failover-env.json` is absent, synthesizes the launcher
+// env in memory from the failover provider metadata without writing anything to disk.
+function buildChildEnv(ctx, surface, baseEnv, opts) {
+  opts = opts || {};
   const src = baseEnv || process.env;
   const clean = {};
   Object.keys(src).forEach(function (k) {
@@ -354,7 +357,30 @@ function buildChildEnv(ctx, surface, baseEnv) {
   if (surface !== 'cli-launcher') {
     throw new Error("surface '" + surface + "' cannot spawn gateway child");
   }
-  const envRec = readLauncherEnv(ctx);
+  let envRec = readLauncherEnv(ctx);
+  if (!envRec && opts.forceGateway) {
+    const p = opts.plan || {};
+    const providerName = p.provider || cfg(ctx, 'failover.provider', 'keysmith-failover');
+    const alias = p.alias || cfg(ctx, 'failover.alias', 'claude-failover');
+    const gatewayUrl = String(p.gatewayUrl || cfg(ctx, 'failover.gatewayUrl', 'http://127.0.0.1:8787')).replace(
+      /\/+$/,
+      '',
+    );
+    const meta = _provider.read(ctx, providerName);
+    const authScheme = meta && meta.authScheme === 'api-key' ? 'api-key' : 'bearer';
+    const modelEnv = {};
+    Object.keys(_provider.MODEL_KEYS).forEach(function (role) {
+      const envKey = _provider.MODEL_KEYS[role];
+      modelEnv[envKey] = (meta && meta.models && meta.models[role]) || alias;
+    });
+    envRec = {
+      baseUrl: (meta && meta.baseUrl) || gatewayUrl,
+      provider: providerName,
+      authScheme: authScheme,
+      modelEnv: modelEnv,
+      tokenRef: 'provider__' + providerName,
+    };
+  }
   if (!envRec) throw new Error('missing .failover-env.json for cli-launcher');
   let token;
   try {
@@ -608,7 +634,10 @@ async function probe(ctx, surface, deps) {
   const actualSpawn = spawnFn || _nodeSpawn;
   let childEnv;
   try {
-    childEnv = buildChildEnv(ctx, surface, deps.env);
+    childEnv = buildChildEnv(ctx, surface, deps.env, {
+      forceGateway: !!deps.forceGateway,
+      plan: deps.plan,
+    });
   } catch (e) {
     const safeErr = redact((e && e.message) || String(e)).slice(0, 150);
     return {
@@ -688,7 +717,78 @@ async function probe(ctx, surface, deps) {
     }
   }
 
-  return {
+  const deepChecks = [];
+  if (deps.deep) {
+    const deepSteps = [
+      {
+        id: 'bash',
+        args: ['-p', 'run: echo hi', '--allowedTools', 'Bash', '--output-format', 'json', '--max-turns', '3'],
+      },
+      {
+        id: 'subagent',
+        args: [
+          '-p',
+          'Use a sonnet general-purpose subagent to reply with PONG, then reply with PONG',
+          '--output-format',
+          'json',
+          '--max-turns',
+          '4',
+        ],
+      },
+    ];
+    for (let d = 0; d < deepSteps.length; d++) {
+      const step = deepSteps[d];
+      const tempSessionId = noPersist ? null : crypto.randomUUID();
+      const dArgs = step.args.slice();
+      if (noPersist) dArgs.push('--no-session-persistence');
+      else dArgs.push('--session-id', tempSessionId);
+      if (mcpCfg) dArgs.push('--strict-mcp-config', '--mcp-config', mcpCfg);
+
+      let res;
+      try {
+        res = await runSpawnWithTimeout(
+          actualSpawn,
+          claudeBin,
+          dArgs,
+          { cwd: ctx.home, env: childEnv, stdio: ['ignore', 'pipe', 'pipe'] },
+          timeoutMs,
+        );
+      } finally {
+        if (tempSessionId) trashProbeTranscript(ctx, tempSessionId);
+      }
+
+      const parsed = !res.timedOut && res.code === 0 ? parseClaudeJsonOutput(res.stdout) : null;
+      const resultText =
+        parsed && typeof parsed === 'object' && parsed.result !== undefined ? String(parsed.result).trim() : '';
+      const isErr = !!(parsed && parsed.is_error);
+      const passed = !res.timedOut && res.code === 0 && parsed && !isErr && resultText.length > 0;
+
+      if (!passed) {
+        const classified = classifyProbeFailure(res, { nowMs: nowFn() });
+        return {
+          at: t0,
+          ok: false,
+          ms: Math.max(0, nowFn() - t0),
+          models: passedModels,
+          deepChecks: deepChecks,
+          failedModel: step.id,
+          class: classified.class,
+          reason: classified.reason,
+          resetAt: classified.resetAt || null,
+          costUsd: sawCost ? Math.round(totalCostUsd * 1e6) / 1e6 : null,
+          costLabel: 'CLI estimate',
+        };
+      }
+
+      deepChecks.push(step.id);
+      if (typeof parsed.total_cost_usd === 'number' && isFinite(parsed.total_cost_usd)) {
+        totalCostUsd += parsed.total_cost_usd;
+        sawCost = true;
+      }
+    }
+  }
+
+  const okOut = {
     at: t0,
     ok: true,
     ms: Math.max(0, nowFn() - t0),
@@ -697,6 +797,8 @@ async function probe(ctx, surface, deps) {
     costUsd: sawCost ? Math.round(totalCostUsd * 1e6) / 1e6 : 0,
     costLabel: 'CLI estimate',
   };
+  if (deps.deep) okOut.deepChecks = deepChecks;
+  return okOut;
 }
 
 // Parse `ps -Ewwo pid=,lstart=,command=` into `{ pid, startedAt, command, env }`.

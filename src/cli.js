@@ -431,7 +431,14 @@ function usage() {
   print('                                 (--threshold 95 --interval 60 --strategy next-available)');
   print('  keyflip autoswitch install [--interval 300]   run it UNATTENDED (launchd/cron) — no terminal to keep open');
   print('  keyflip failover setup|status|on|off   when EVERY account is over the threshold, keep working on the API');
-  print('                                 through keysmith (gmail API → agy → kiro-emu, $25/month cap on the API key)');
+  print('                                 through keysmith (surfaces: cli-launcher default, cli-settings opt-in;');
+  print('                                 desktop & chrome never use the gateway)');
+  print('  keyflip failover run [--force-gateway] [--print-command] [--] [claude args…]');
+  print('                                 launch Claude Code with gateway env in child process only (never settings.json)');
+  print('  keyflip failover resume <session-id|--last> [--desktop] [--yes] [--force-gateway] [--print-command]');
+  print('                                 resume a session in its cwd on the gateway (exits 3 if session pid is alive)');
+  print('  keyflip failover verify [--no-spend] [--deep] [--json]');
+  print('                                 read-only check of gateway, legs, modelIds, probes, leftovers, processes & tools');
   print(
     '                                 keyflip autoswitch <status|uninstall|--once>   check/stop the service; --once = one tick',
   );
@@ -1522,13 +1529,13 @@ function formatAutoswitchTickLine(r, opts) {
   return '';
 }
 
-// `keyflip failover setup [--dry-run] | status | on | off` — the keysmith API failover (P4).
+// `keyflip failover setup [--dry-run] | status | on | off | run | resume | verify` — the keysmith API failover (P4).
 async function cmdFailover(ctx, rest) {
   const sub = rest[0] || 'status';
   if (sub === 'setup') {
     const dry = rest.indexOf('--dry-run') !== -1;
     const r = await withLock(ctx, function () {
-      return _failover.setup(ctx, { run: ctx.run, dryRun: dry });
+      return _failover.setup(ctx, { run: ctx.run, keysmithConfig: ctx.keysmithConfig, dryRun: dry });
     });
     if (JSON_MODE) {
       jsonOut({ failoverSetup: { ok: r.ok, steps: r.steps, restartGateway: r.restartGateway } });
@@ -1554,11 +1561,40 @@ async function cmdFailover(ctx, rest) {
     return;
   }
   if (sub === 'status') {
-    const p = _failover.resolvePlan(ctx, {});
+    const p = _failover.resolvePlan(ctx, { keysmithConfig: ctx.keysmithConfig });
     const st = _failover.state(ctx);
-    const ready = await _failover.gatewayReady(ctx, { plan: p });
+    const ready = await _failover.gatewayReady(ctx, { plan: p, fetch: ctx.fetch });
+    const exh = _failover.exhausted(ctx);
+    const bsSt = _browserswitch.status(ctx, { run: ctx.run });
+    let cliTarget = 'launcher';
+    try {
+      cliTarget = _cfg.get(ctx, 'failover.cliTarget') || 'launcher';
+    } catch {
+      cliTarget = 'launcher';
+    }
+    const cliSurf = st ? st.surface || 'cli-launcher' : cliTarget === 'settings' ? 'cli-settings' : 'cli-launcher';
+    const chromeSummary =
+      bsSt && bsSt.chrome
+        ? bsSt.chrome.label + ' — not rotated; not on the gateway (cannot use it)'
+        : 'not rotated; not on the gateway (cannot use it)';
+    const surfaces = {
+      cli: cliSurf,
+      desktop: 'not on the gateway (cannot use it)',
+      chrome: chromeSummary,
+    };
     if (JSON_MODE) {
-      jsonOut({ failover: { enabled: p.enabled, engaged: !!st, state: st, gateway: ready, plan: p } });
+      jsonOut({
+        failover: {
+          enabled: p.enabled,
+          engaged: !!st,
+          surface: (st && st.surface) || null,
+          exhausted: exh,
+          surfaces: surfaces,
+          state: st,
+          gateway: ready,
+          plan: p,
+        },
+      });
       return;
     }
     print(
@@ -1577,15 +1613,21 @@ async function cmdFailover(ctx, rest) {
             : style.ok('standing by')),
     );
     print(
-      '  chain:   ' +
+      '  chain:    ' +
         p.alias +
         (p.legs ? ' = ' + p.legs.join(' → ') : ' — ' + style.warn(p.aliasError || 'unknown')) +
         style.dim("   (keysmith's alias; the failover accepts a cap of at most $" + p.capUsd + ' on the paid leg)'),
     );
-    print('  gateway: ' + p.gatewayUrl + ' — ' + (ready.ok ? style.ok('ready') : style.warn(ready.reason)));
+    print('  gateway:  ' + p.gatewayUrl + ' — ' + (ready.ok ? style.ok('ready') : style.warn(ready.reason)));
+    print(
+      '  surfaces: cli = ' +
+        cliSurf +
+        ' · desktop = not on the gateway (cannot use it) · chrome = ' +
+        chromeSummary,
+    );
     if (ready.cap)
       print(
-        '  cap:     ' +
+        '  cap:      ' +
           _failover.capText(ready.cap) +
           ' on ' +
           ready.cap.kind +
@@ -1611,7 +1653,8 @@ async function cmdFailover(ctx, rest) {
         ? await fa.engage({ manual: true, reason: 'turned on by hand' })
         : await fa.release({ by: 'cli', reason: 'turned off by hand' });
     if (JSON_MODE) {
-      jsonOut({ failover: r });
+      if (sub === 'off') jsonOut({ failover: r, stillCarrying: r.stillCarrying || [] });
+      else jsonOut({ failover: r });
       if (!r.ok) process.exitCode = 1;
       return;
     }
@@ -1645,7 +1688,157 @@ async function cmdFailover(ctx, rest) {
     );
     return;
   }
-  return fail('usage: keyflip failover setup [--dry-run] | status | on | off');
+  if (sub === 'run') {
+    const tail = rest.slice(1);
+    let forceGateway = false;
+    let printCommand = false;
+    const claudeArgs = [];
+    let afterDashDash = false;
+    for (let i = 0; i < tail.length; i++) {
+      const a = tail[i];
+      if (!afterDashDash && a === '--') {
+        afterDashDash = true;
+        continue;
+      }
+      if (!afterDashDash && a === '--force-gateway') {
+        forceGateway = true;
+        continue;
+      }
+      if (!afterDashDash && a === '--print-command') {
+        printCommand = true;
+        continue;
+      }
+      claudeArgs.push(a);
+    }
+    const r = _failover.run(ctx, claudeArgs, {
+      forceGateway: forceGateway,
+      printCommand: printCommand,
+      spawnSync: ctx.spawnSync,
+      claudeBin: ctx.claudeBin,
+      env: ctx.env,
+    });
+    if (r.printed) {
+      if (JSON_MODE) jsonOut({ command: r.command, args: r.args, cwd: r.cwd });
+      else process.stdout.write(r.command + '\n');
+      return;
+    }
+    if (r.error) return fail(r.error);
+    if (r.exitCode !== 0) process.exitCode = r.exitCode;
+    return;
+  }
+  if (sub === 'resume') {
+    const tail = rest.slice(1);
+    let sessionId = null;
+    let last = false;
+    let desktop = false;
+    let yes = false;
+    let forceGateway = false;
+    let printCommand = false;
+    const extraArgs = [];
+    let afterDashDash = false;
+    for (let i = 0; i < tail.length; i++) {
+      const a = tail[i];
+      if (!afterDashDash && a === '--') {
+        afterDashDash = true;
+        continue;
+      }
+      if (afterDashDash) {
+        extraArgs.push(a);
+        continue;
+      }
+      if (a === '--last') {
+        last = true;
+      } else if (a === '--desktop') {
+        desktop = true;
+      } else if (a === '--yes' || a === '-y') {
+        yes = true;
+      } else if (a === '--force-gateway') {
+        forceGateway = true;
+      } else if (a === '--print-command') {
+        printCommand = true;
+      } else if (a[0] === '-') {
+        return fail(
+          'usage: keyflip failover resume <session-id|--last> [--desktop] [--yes] [--force-gateway] [--print-command]',
+        );
+      } else if (!sessionId) {
+        sessionId = a;
+      } else {
+        extraArgs.push(a);
+      }
+    }
+    if ((!last && !sessionId) || (last && sessionId)) {
+      return fail(
+        'usage: keyflip failover resume <session-id|--last> [--desktop] [--yes] [--force-gateway] [--print-command]',
+      );
+    }
+    const r = _failover.resume(ctx, {
+      id: sessionId,
+      last: last,
+      desktop: desktop,
+      yes: yes,
+      forceGateway: forceGateway,
+      printCommand: printCommand,
+      extraArgs: extraArgs,
+      pidAlive: ctx.pidAlive,
+      listProcesses: ctx.listProcesses,
+      run: ctx.run,
+      spawnSync: ctx.spawnSync,
+      claudeBin: ctx.claudeBin,
+      env: ctx.env,
+    });
+    if (r.printed) {
+      if (JSON_MODE) {
+        jsonOut({ command: r.command, sessionId: r.sessionId, cwd: r.cwd, args: r.args });
+      } else {
+        process.stdout.write(r.command + '\n');
+      }
+      return;
+    }
+    if (r.busy && r.exitCode === 3) {
+      const msg = redact(r.error || 'stop this session in Desktop first (one writer per transcript)');
+      if (JSON_MODE) jsonOut({ error: { message: msg, pid: r.pid || null, sessionId: r.sessionId || null } });
+      process.stderr.write(style.err('❌ ') + msg + '\n');
+      process.exitCode = 3;
+      return;
+    }
+    if (r.error) return fail(r.error);
+    if (r.missingCwd && !JSON_MODE) {
+      print(style.warn('⚠️  original directory is gone: ' + r.missingCwd + ' — launching in ' + r.cwd));
+    }
+    if (r.exitCode !== 0) process.exitCode = r.exitCode;
+    return;
+  }
+  if (sub === 'verify') {
+    const noSpend = rest.indexOf('--no-spend') !== -1;
+    const deep = rest.indexOf('--deep') !== -1;
+    const r = await _failover.verify(ctx, {
+      noSpend: noSpend,
+      deep: deep,
+      fetch: ctx.fetch,
+      spawn: ctx.spawn,
+      run: ctx.run,
+      listProcesses: ctx.listProcesses,
+      lsof: ctx.lsof,
+      keysmithConfig: ctx.keysmithConfig,
+      nowMs: ctx.nowMs,
+    });
+    if (r.exitCode !== 0) process.exitCode = r.exitCode;
+    if (JSON_MODE) {
+      jsonOut({ checks: r.checks, spentUsd: r.spentUsd });
+      return;
+    }
+    print('Failover verify:');
+    r.checks.forEach(function (c) {
+      const mark =
+        c.state === 'fail' ? style.err('✗') : c.state === 'warn' ? style.warn('⚠') : style.ok('✓');
+      print('  ' + mark + ' ' + c.id + ' — ' + c.reason);
+    });
+    print('  spent: $' + r.spentUsd + (noSpend ? style.dim(' (--no-spend)') : style.dim(' (metered cap delta)')));
+    return;
+  }
+  return fail(
+    'usage: keyflip failover setup [--dry-run] | status | on | off | run [--force-gateway] [--print-command] [-- <args…>] | resume <id|--last> [--desktop] [--yes] [--force-gateway] [--print-command] | verify [--no-spend] [--deep] [--json]',
+  );
 }
 
 // Watch the active account and auto-switch the CLI credential at a usage
@@ -12745,7 +12938,7 @@ async function cmdChains(ctx, rest) {
 }
 
 async function cmdDoctor(ctx, rest) {
-  const r = await doctor.diagnose(ctx, { run: run });
+  const r = await doctor.diagnose(ctx, { run: ctx.run || run, fetch: ctx.fetch });
   // `--history` is opt-in because it walks every blob keyflip ever committed (a few seconds, read-only).
   const wantHistory = rest.indexOf('--history') !== -1;
   if (wantHistory && !JSON_MODE) print('  … scanning git history (' + ctx.configDir + ')');
@@ -13356,6 +13549,12 @@ async function cmdStatus(ctx, rest) {
     }
   }
   const tokInfo = oauth.tokenStatusForAccount(ctx, (id && id.name) || null, { isLive: true });
+  let browserSt = null;
+  try {
+    browserSt = _browserswitch.status(ctx, { run: ctx.run });
+  } catch {
+    browserSt = null;
+  }
   jsonOut({
     cli: cliEmail
       ? {
@@ -13389,6 +13588,17 @@ async function cmdStatus(ctx, rest) {
             at: staleSt.at,
             org: staleSt.org || null,
             profile: _sessionage.profileForOrg(ctx.configDir, staleSt.org) || null,
+          }
+        : undefined,
+    browser:
+      browserSt && browserSt.chrome
+        ? {
+            name: browserSt.chrome.name,
+            account: browserSt.chrome.account,
+            email: browserSt.chrome.email,
+            signedIn: browserSt.chrome.signedIn,
+            rotated: false,
+            note: 'not rotated',
           }
         : undefined,
     provider: activeProvider ? activeProvider.name : null,
@@ -13475,6 +13685,9 @@ async function cmdStatus(ctx, rest) {
           "'s token. Sign that account in again: " +
           style.bold('keyflip login ' + id.wrongCredentialIn[0]),
       );
+    if (browserSt && browserSt.chrome) {
+      print('  ' + browserSt.chrome.name + ': ' + browserSt.chrome.label + style.dim(' (not rotated)'));
+    }
     if (activeProvider) print('Endpoint: provider "' + activeProvider.name + '" (overrides the account for API calls)');
   }
 }
@@ -14684,7 +14897,7 @@ async function cmdBrowser(ctx, rest) {
           b.name +
           ': claude.ai = ' +
           style.bold(lbl) +
-          '  ' +
+          '  (not rotated)  ' +
           (match
             ? style.ok('✓ matches active')
             : style.warn('⚠ MISMATCH — the Claude browser extension will not connect')),
@@ -14700,9 +14913,18 @@ async function cmdBrowser(ctx, rest) {
       );
     jsonOut({
       active: activeLabel || activeOrg,
+      rotated: false,
+      note: 'not rotated',
       browsers: list.map(function (b) {
         const ck = browser.readClaudeCookies(b, {});
-        return { id: b.id, org: ck && ck.org, match: !!(ck && ck.org && ck.org === activeOrg) };
+        return {
+          id: b.id,
+          org: ck && ck.org,
+          account: ck && ck.org ? _browserswitch.orgOwner(ctx.configDir, ck.org) || null : null,
+          rotated: false,
+          note: 'not rotated',
+          match: !!(ck && ck.org && ck.org === activeOrg),
+        };
       }),
     });
     return;
@@ -17489,17 +17711,22 @@ function cmdLaunchCmd(ctx, rest) {
   }
 }
 
-async function main(argv) {
-  // Global flags, valid anywhere on the line.
-  JSON_MODE = argv.indexOf('--json') !== -1;
-  const debug = argv.indexOf('--debug') !== -1;
-  argv = argv.filter(function (a) {
-    return a !== '--json' && a !== '--debug';
-  });
+async function main(argv, injectedCtx) {
+  // Global flags, valid anywhere before `--`.
+  const ddIdx = argv.indexOf('--');
+  const head = ddIdx === -1 ? argv : argv.slice(0, ddIdx);
+  const tail = ddIdx === -1 ? [] : argv.slice(ddIdx);
+  JSON_MODE = head.indexOf('--json') !== -1;
+  const debug = head.indexOf('--debug') !== -1;
+  argv = head
+    .filter(function (a) {
+      return a !== '--json' && a !== '--debug';
+    })
+    .concat(tail);
 
   const cmd = argv[0];
   const rest = argv.slice(1);
-  const ctx = createContext();
+  const ctx = injectedCtx || createContext();
   // Honor config ui.color=false (hard-disable color, like NO_COLOR). Re-made here because ctx —
   // and thus config — isn't available when the module-level `style` is first created. Only disables.
   try {
@@ -18420,4 +18647,5 @@ export {
   verifyAppRelogin,
   formatAutoswitchTickLine,
   cmdAutoswitch,
+  cmdFailover,
 };

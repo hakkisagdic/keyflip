@@ -733,3 +733,122 @@ test('background services: ages are computed against the project clock, which is
   assert.match(c.detail, /silent for 24 h while it is scheduled every 30 min/);
   assert.ok(c.detail.indexOf('NaN') === -1, c.detail);
 });
+
+test('T44: doctor keyflip-on-path: fake shells (-l hit, -i miss) -> warn with fix', async function (t) {
+  if (process.platform === 'win32') return t.skip('POSIX shells not applicable on Windows');
+  const selfbin = await import('../src/selfbin.js');
+  const ctx = makeCtx({ platform: 'darwin' });
+  const expectedScript = selfbin.resolveSelf().script;
+  assert.ok(expectedScript, 'resolveSelf().script resolved');
+
+  // Create a symlink in temp dir pointing to expectedScript to verify realpath comparison too.
+  const binDir = path.join(ctx.home, 'homebrew-bin');
+  fs.mkdirSync(binDir, { recursive: true });
+  const brewLink = path.join(binDir, 'keyflip');
+  fs.symlinkSync(expectedScript, brewLink);
+
+  const otherScript = path.join(ctx.home, 'other-keyflip.js');
+  fs.writeFileSync(otherScript, '#!/usr/bin/env node\n');
+
+  // 1) Login shell (-lc) finds keyflip, interactive shell (-ic) misses -> warn with /opt/homebrew/bin + .zshrc fix.
+  const envCalls = [];
+  const runLoginHitInterMiss = function (cmd, args) {
+    if (cmd === 'env') {
+      envCalls.push(args.slice());
+      if (args.includes('-lc')) return { code: 0, stdout: brewLink + '\n' };
+      if (args.includes('-ic')) return { code: 1, stdout: '' };
+    }
+    return { code: 1, stdout: '' };
+  };
+  const r1 = await doctor.diagnose(ctx, {
+    run: runLoginHitInterMiss,
+    shell: '/bin/zsh',
+    user: 'tester',
+  });
+  const c1 = find(r1.checks, 'keyflip-on-path');
+  assert.ok(c1, 'keyflip-on-path check emitted when run is provided');
+  assert.strictEqual(c1.ok, 'warn');
+  assert.match(c1.detail, /login shell/i);
+  assert.match(c1.detail, /interactive shell \(-ic\)/i);
+  assert.match(c1.fix || '', /\/opt\/homebrew\/bin/);
+  assert.match(c1.fix || '', /\.zshrc/);
+  assert.strictEqual(envCalls.length, 2, 'ran both -lc and -ic under env -i');
+  assert.deepStrictEqual(envCalls[0].slice(0, 5), [
+    '-i',
+    'HOME=' + ctx.home,
+    'USER=tester',
+    'TERM=dumb',
+    '/bin/zsh',
+  ]);
+  assert.deepStrictEqual(envCalls[0].slice(5), ['-lc', 'command -v keyflip']);
+  assert.deepStrictEqual(envCalls[1].slice(5), ['-ic', 'command -v keyflip']);
+
+  // 2) Interactive shell resolves to a DIFFERENT script -> warn naming mismatch and expected.
+  const runMismatch = function (cmd, args) {
+    if (cmd === 'env') {
+      if (args.includes('-lc')) return { code: 0, stdout: brewLink + '\n' };
+      if (args.includes('-ic')) return { code: 0, stdout: otherScript + '\n' };
+    }
+    return { code: 1, stdout: '' };
+  };
+  const c2 = find((await doctor.diagnose(ctx, { run: runMismatch, shell: '/bin/zsh' })).checks, 'keyflip-on-path');
+  assert.strictEqual(c2.ok, 'warn');
+  assert.ok(c2.detail.includes('expected'), c2.detail);
+
+  // 3) Both -lc and -ic resolve via symlink realpath to selfbin.resolveSelf().script -> ok === true.
+  const runBothMatch = function (cmd, args) {
+    if (cmd === 'env' && (args.includes('-lc') || args.includes('-ic'))) {
+      return { code: 0, stdout: brewLink + '\n' };
+    }
+    return { code: 1, stdout: '' };
+  };
+  const c3 = find((await doctor.diagnose(ctx, { run: runBothMatch, shell: '/bin/zsh' })).checks, 'keyflip-on-path');
+  assert.strictEqual(c3.ok, true);
+  assert.strictEqual(c3.fix, undefined);
+});
+
+test('doctor failover-leftovers: warns on settings/launcher/3p/pending gateway leftovers while not engaged, clean after failover off', async function () {
+  const failover = await import('../src/failover.js');
+  const fosurface = await import('../src/fosurface.js');
+  const desktopgw = await import('../src/desktopgw.js');
+  const dr = await import('../src/desktoprestart.js');
+
+  const ctx = makeCtx({ platform: 'darwin', appDataDir: true });
+  let c = find((await doctor.diagnose(ctx)).checks, 'failover-leftovers');
+  assert.ok(c && c.ok === true, 'clean state passes failover-leftovers');
+
+  const FAKE_SECRET = 'ks_FAKE_DOCTOR_LEFTOVER_SECRET';
+  fs.mkdirSync(path.dirname(ctx.claudeSettingsPath), { recursive: true });
+  fs.writeFileSync(
+    ctx.claudeSettingsPath,
+    JSON.stringify({
+      env: {
+        ANTHROPIC_BASE_URL: 'http://127.0.0.1:8787',
+        ANTHROPIC_AUTH_TOKEN: FAKE_SECRET,
+        ANTHROPIC_MODEL: 'claude-failover',
+      },
+    }),
+  );
+  fs.writeFileSync(fosurface.envPath(ctx), JSON.stringify({ baseUrl: 'http://127.0.0.1:8787' }), { mode: 0o600 });
+  fs.mkdirSync(ctx.appDataDir, { recursive: true });
+  fs.writeFileSync(path.join(ctx.appDataDir, 'claude_desktop_config.json'), JSON.stringify({ deploymentMode: '3p' }));
+  fs.writeFileSync(path.join(ctx.configDir, desktopgw.META), JSON.stringify({ provider: 'keysmith-failover' }));
+  fs.writeFileSync(
+    path.join(ctx.configDir, dr.PENDING_FILE),
+    JSON.stringify({ actions: [{ kind: 'gateway-off', target: null }], since: 1700000000000 }),
+  );
+
+  const rWarn = await doctor.diagnose(ctx);
+  c = find(rWarn.checks, 'failover-leftovers');
+  assert.strictEqual(c.ok, 'warn');
+  assert.strictEqual(c.fix, 'keyflip failover off');
+  assert.match(c.detail, /settings\.json/);
+  assert.match(c.detail, /\.failover-env\.json/);
+  assert.match(c.detail, /deploymentMode "3p"/);
+  assert.match(c.detail, /gateway-off/);
+  assert.strictEqual(JSON.stringify(rWarn).indexOf(FAKE_SECRET), -1, 'doctor never leaks leftover token value');
+
+  await failover.release(ctx, { by: 'test', reason: 'cleanup' });
+  c = find((await doctor.diagnose(ctx)).checks, 'failover-leftovers');
+  assert.strictEqual(c.ok, true, 'clean after failover release');
+});

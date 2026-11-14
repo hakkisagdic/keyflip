@@ -199,4 +199,68 @@ async function align(ctx, name, opts) {
   return out;
 }
 
-export { align, preview, decide, restoresTabs, profileDirOf, signedIn, orgOwner };
+// §11: Read-only browser surface status. Shows Chrome's (and other installed browsers') claude.ai
+// account and explicitly marks it "not rotated" (no automatic rotation, never on the gateway).
+function status(ctx, opts) {
+  opts = opts || {};
+  const br = opts.browser || _browser;
+  if (!isSupportedPlatform(br, ctx.platform) && !opts.anyPlatform) {
+    return {
+      supported: false,
+      rotated: false,
+      note: 'not rotated',
+      gateway: 'not on the gateway (cannot use it)',
+      chrome: null,
+      browsers: [],
+      summary: 'Chrome: not rotated',
+    };
+  }
+  const list = opts.installed || br.installed(ctx.home, { platform: ctx.platform, localAppData: ctx.localAppData });
+  const rows = list.map(function (b) {
+    let ck = null;
+    try {
+      ck = br.readClaudeCookies(b, { unprotect: opts.dpapi || (ctx && ctx.dpapi), run: opts.run });
+    } catch {
+      ck = null;
+    }
+    const isSigned = signedIn(ck);
+    const org = (ck && ck.org) || null;
+    const acct = isSigned && org ? orgOwner(ctx.configDir, org) || null : null;
+    const email = acct ? profiles.email(ctx.configDir, acct) || null : null;
+    const label = acct
+      ? email || acct
+      : isSigned
+        ? org
+          ? org.slice(0, 8) + '…'
+          : 'signed in'
+        : 'not signed in';
+    return {
+      id: b.id,
+      name: b.name,
+      signedIn: isSigned,
+      org: org,
+      account: acct,
+      email: email,
+      label: label,
+      rotated: false,
+      note: 'not rotated',
+    };
+  });
+  const chrome =
+    rows.find(function (r) {
+      return r.id === 'chrome' || /^chrome/i.test(r.id);
+    }) ||
+    rows[0] ||
+    null;
+  return {
+    supported: true,
+    rotated: false,
+    note: 'not rotated',
+    gateway: 'not on the gateway (cannot use it)',
+    chrome: chrome,
+    browsers: rows,
+    summary: chrome ? chrome.name + ': ' + chrome.label + ' (not rotated)' : 'Chrome: not rotated',
+  };
+}
+
+export { align, preview, status, decide, restoresTabs, profileDirOf, signedIn, orgOwner };

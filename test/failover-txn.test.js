@@ -1,16 +1,20 @@
-// Slice 1 tests: failover transaction core (T1-T10, T15-T20, T30).
+// Slice 1 + Slice 2 tests: failover transaction core & CLI surface (T1-T20, T30).
 // Every test is hermetic: makeCtx() temp dirs, MemoryStore / fake KeychainStore,
 // and injected fakes for fetch, spawn, listProcesses, lsof, notify, and clock.
 import test from 'node:test';
 import assert from 'node:assert';
+import cp from 'child_process';
 import { EventEmitter } from 'events';
 import fs from 'fs';
 import path from 'path';
+import { fileURLToPath } from 'url';
 import { makeCtx, writeClaude, assertPrivateMode } from './helpers.js';
 import * as config from '../src/config.js';
 import * as provider from '../src/provider.js';
 import * as failover from '../src/failover.js';
 import * as fosurface from '../src/fosurface.js';
+import * as sessions from '../src/sessions.js';
+import * as mcp from '../src/mcp.js';
 import * as desktopgw from '../src/desktopgw.js';
 import * as dr from '../src/desktoprestart.js';
 import * as autosw from '../src/autoswitch.js';
@@ -21,6 +25,10 @@ import * as notify from '../src/notify.js';
 import * as redactMod from '../src/redact.js';
 import { HybridStore, KeychainStore, FileStore } from '../src/stores/index.js';
 import { main as cliMain } from '../src/cli.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const BIN_PATH = path.join(__dirname, '..', 'bin', 'keyflip.js');
 
 const FAKE_GW_KEY = 'ks_FAKE_GATEWAY_KEY_FOR_TESTS';
 const FAKE_API_KEY = 'sk-ant-FAKE-API03-9999999999999999';
@@ -151,6 +159,53 @@ function walkFiles(dir, acc) {
     else if (ent.isFile()) acc.push(p);
   });
   return acc;
+}
+
+async function runCliCaptured(argv, ctx) {
+  const outChunks = [];
+  const errChunks = [];
+  const origOut = process.stdout.write.bind(process.stdout);
+  const origErr = process.stderr.write.bind(process.stderr);
+  const prevExit = process.exitCode;
+  process.stdout.write = function (c, enc, cb) {
+    if (typeof c === 'string') {
+      outChunks.push(c);
+      if (typeof enc === 'function') enc();
+      else if (typeof cb === 'function') cb();
+      return true;
+    }
+    return origOut(c, enc, cb);
+  };
+  process.stderr.write = function (c, enc, cb) {
+    if (typeof c === 'string') {
+      errChunks.push(c);
+      if (typeof enc === 'function') enc();
+      else if (typeof cb === 'function') cb();
+      return true;
+    }
+    return origErr(c, enc, cb);
+  };
+  process.exitCode = 0;
+  let exitCode;
+  try {
+    await cliMain(argv, ctx);
+    exitCode = process.exitCode || 0;
+  } finally {
+    process.stdout.write = origOut;
+    process.stderr.write = origErr;
+    process.exitCode = prevExit;
+  }
+  return {
+    stdout: outChunks.join(''),
+    stderr: errChunks.join(''),
+    exitCode,
+  };
+}
+
+function mcpTool(name) {
+  const hit = mcp.TOOLS.find((t) => t.name === name);
+  assert.ok(hit, 'missing MCP tool: ' + name);
+  return hit;
 }
 
 test('T1: engage cli-launcher: probe passes -> .failover-env.json written, settings.json untouched, state kept', async function () {
@@ -654,6 +709,481 @@ test('T10: keychain read error -> retry, no "not set up" log line, no release of
   assert.strictEqual(/not set up/i.test(logLines.join('\n')), false, 'never logs "not set up" on keychain error');
 });
 
+test('T11: probe failure classification: too-many-tools, quota (with "Resets in 46h43m" -> reset time), auth', async function () {
+  const fixedNow = Date.UTC(2026, 10, 14, 12, 0, 0); // 2026-11-14T12:00:00.000Z
+
+  // 1) too-many-tools ("at most 128")
+  const cTools = fosurface.classifyProbeFailure(
+    {
+      timedOut: false,
+      code: 1,
+      stdout: '',
+      stderr: 'APIError: 400 invalid_request_error: tools: 243 tools provided, at most 128 are taken',
+    },
+    { nowMs: fixedNow },
+  );
+  assert.strictEqual(cTools.class, 'too-many-tools');
+  assert.match(cTools.reason, /^too-many-tools:/);
+  assert.strictEqual(cTools.resetAt, null);
+
+  // 2) quota ("Resets in 46h43m" -> exact ISO resetAt)
+  const expectedResetIso = new Date(fixedNow + (46 * 3600 + 43 * 60) * 1000).toISOString();
+  const cQuota = fosurface.classifyProbeFailure(
+    {
+      timedOut: false,
+      code: 1,
+      stdout: JSON.stringify({
+        type: 'result',
+        is_error: true,
+        result: 'leg agy/claude-sonnet-5-5-low: quota reached. Resets in 46h43m',
+      }),
+      stderr: '',
+    },
+    { nowMs: fixedNow },
+  );
+  assert.strictEqual(cQuota.class, 'quota');
+  assert.strictEqual(cQuota.resetAt, expectedResetIso);
+  assert.match(cQuota.reason, /^quota:/);
+
+  // Also verify end-to-end through fosurface.probe() with fake spawn.
+  const ctx = makeCtx();
+  setupGateway(ctx);
+  const quotaSpawn = makeFakeSpawn(function (rec) {
+    setImmediate(function () {
+      rec.child.stderr.emit('data', 'Error: out of quota on agy/claude-sonnet-5-5-low — Resets in 46h43m');
+      rec.child.emit('close', 1);
+    });
+  });
+  const probeRes = await fosurface.probe(ctx, 'cli-launcher', {
+    forceGateway: true,
+    spawn: quotaSpawn.spawn,
+    now: () => fixedNow,
+  });
+  assert.strictEqual(probeRes.ok, false);
+  assert.strictEqual(probeRes.class, 'quota');
+  assert.strictEqual(probeRes.resetAt, expectedResetIso);
+
+  // 3) auth (401/403 + secret redaction)
+  const cAuth = fosurface.classifyProbeFailure(
+    {
+      timedOut: false,
+      code: 1,
+      stdout: '',
+      stderr: 'HTTP 401 authentication_error: invalid key ' + FAKE_GW_KEY + ' / ' + FAKE_API_KEY,
+    },
+    { nowMs: fixedNow },
+  );
+  assert.strictEqual(cAuth.class, 'auth');
+  assert.strictEqual(cAuth.resetAt, null);
+  assert.match(cAuth.reason, /^auth:/);
+  assert.strictEqual(cAuth.reason.indexOf(FAKE_GW_KEY), -1, 'gateway key redacted from auth reason');
+  assert.strictEqual(cAuth.reason.indexOf(FAKE_API_KEY), -1, 'api key redacted from auth reason');
+});
+
+test('T12: failover run spawns claude with token only in env (assert argv has no token) and --strict-mcp-config when configured', async function () {
+  const ctx = makeCtx();
+  const { ksPath, gwFetch } = setupGateway(ctx);
+
+  // Refuses when failover is not engaged and --force-gateway is omitted.
+  let spawnedCount = 0;
+  const refused = await runCliCaptured(
+    ['failover', 'run', '--', '-p', 'ping'],
+    Object.assign({}, ctx, {
+      spawnSync: function () {
+        spawnedCount++;
+        return { status: 0 };
+      },
+    }),
+  );
+  assert.strictEqual(refused.exitCode, 1);
+  assert.strictEqual(spawnedCount, 0);
+  assert.match(refused.stderr, /not engaged|--force-gateway/);
+
+  // Engage cli-launcher and configure failover.mcpConfig.
+  const mcpConfigFile = path.join(ctx.home, 'reduced-mcp.json');
+  fs.writeFileSync(mcpConfigFile, JSON.stringify({ mcpServers: {} }));
+  config.set(ctx, 'failover.mcpConfig', mcpConfigFile);
+
+  const sp = okSpawnRecorder();
+  const eng = await failover.engage(
+    ctx,
+    { from: 'gmail', manual: true },
+    { fetch: gwFetch, keysmithConfig: ksPath, spawn: sp.spawn, nowMs: 1700000100000 },
+  );
+  assert.strictEqual(eng.ok, true);
+
+  const syncCalls = [];
+  const runCtx = Object.assign({}, ctx, {
+    claudeBin: '/fake/bin/claude',
+    env: {
+      PATH: '/usr/bin:/bin',
+      USER_KEEP: 'yes',
+      ANTHROPIC_API_KEY: FAKE_API_KEY,
+      ANTHROPIC_MODEL: 'claude-3-5-sonnet-parent',
+    },
+    spawnSync: function (cmd, args, opts) {
+      syncCalls.push({ cmd, args: args.slice(), opts });
+      return { status: 0 };
+    },
+  });
+
+  const okRun = await runCliCaptured(['failover', 'run', '--', '-p', 'hello', '--max-turns', '1'], runCtx);
+  assert.strictEqual(okRun.exitCode, 0);
+  assert.strictEqual(syncCalls.length, 1);
+  assert.strictEqual(syncCalls[0].cmd, '/fake/bin/claude');
+  assert.deepStrictEqual(syncCalls[0].args, [
+    '--strict-mcp-config',
+    '--mcp-config',
+    mcpConfigFile,
+    '-p',
+    'hello',
+    '--max-turns',
+    '1',
+  ]);
+  assert.strictEqual(JSON.stringify(syncCalls[0].args).indexOf(FAKE_GW_KEY), -1, 'argv has NO token');
+  assert.strictEqual(syncCalls[0].opts.stdio, 'inherit');
+  assert.strictEqual(syncCalls[0].opts.env.ANTHROPIC_AUTH_TOKEN, FAKE_GW_KEY, 'token passed in child env');
+  assert.strictEqual(syncCalls[0].opts.env.ANTHROPIC_BASE_URL, 'http://127.0.0.1:8787');
+  assert.strictEqual(syncCalls[0].opts.env.ANTHROPIC_MODEL, 'claude-failover');
+  assert.strictEqual(syncCalls[0].opts.env.ANTHROPIC_API_KEY, undefined, 'parent ANTHROPIC_* stripped');
+  assert.strictEqual(syncCalls[0].opts.env.USER_KEEP, 'yes');
+
+  // --print-command prints exact command, never spawns, never leaks token.
+  const printed = await runCliCaptured(['failover', 'run', '--print-command', '--', '-p', 'hello world'], runCtx);
+  assert.strictEqual(printed.exitCode, 0);
+  assert.strictEqual(syncCalls.length, 1, '--print-command must not spawn');
+  assert.match(printed.stdout.trim(), /^keyflip failover run -- -p 'hello world'$/);
+  assert.strictEqual(printed.stdout.indexOf(FAKE_GW_KEY), -1);
+
+  // Release failover, verify --force-gateway works without writing .failover-env.json, and propagates child exit code.
+  await failover.release(ctx, { by: 'test', reason: 'done' });
+  assert.strictEqual(fs.existsSync(fosurface.envPath(ctx)), false);
+
+  const nonZeroCtx = Object.assign({}, runCtx, {
+    spawnSync: function (cmd, args, opts) {
+      syncCalls.push({ cmd, args: args.slice(), opts });
+      return { status: 42 };
+    },
+  });
+  const forced = await runCliCaptured(['failover', 'run', '--force-gateway', '--', '--version'], nonZeroCtx);
+  assert.strictEqual(forced.exitCode, 42, 'child exit code propagated');
+  assert.strictEqual(syncCalls.length, 2);
+  assert.strictEqual(syncCalls[1].opts.env.ANTHROPIC_AUTH_TOKEN, FAKE_GW_KEY);
+  assert.strictEqual(JSON.stringify(syncCalls[1].args).indexOf(FAKE_GW_KEY), -1);
+  assert.strictEqual(fs.existsSync(fosurface.envPath(ctx)), false, '--force-gateway writes nothing on disk');
+});
+
+test("T13: failover resume --last picks newest transcript; refuses (exit 3) when that session's pid is alive", async function () {
+  const ctx = makeCtx({ platform: 'darwin', appDataDir: true });
+  const { ksPath, gwFetch } = setupGateway(ctx);
+  const sp = okSpawnRecorder();
+  const eng = await failover.engage(
+    ctx,
+    { from: 'gmail', manual: true },
+    { fetch: gwFetch, keysmithConfig: ksPath, spawn: sp.spawn, nowMs: 1700000110000 },
+  );
+  assert.strictEqual(eng.ok, true);
+
+  const projOld = path.join(ctx.home, 'proj-old');
+  const projDesk = path.join(ctx.home, 'proj-desk');
+  const projNewest = path.join(ctx.home, 'proj-newest');
+  [projOld, projDesk, projNewest].forEach((d) => fs.mkdirSync(d, { recursive: true }));
+
+  function writeTranscript(cwdDir, sessionId, mtimeSec, extra) {
+    const dir = path.join(ctx.claudeDir, 'projects', sessions.encodeCwd(cwdDir));
+    fs.mkdirSync(dir, { recursive: true });
+    const fp = path.join(dir, sessionId + '.jsonl');
+    const rec = Object.assign({ cwd: cwdDir, timestamp: new Date(mtimeSec * 1000).toISOString() }, extra || {});
+    fs.writeFileSync(fp, JSON.stringify(rec) + '\n');
+    const dt = new Date(mtimeSec * 1000);
+    fs.utimesSync(fp, dt, dt);
+    return fp;
+  }
+
+  const idOld = '11111111-1111-4111-8111-111111111111';
+  const idDesk = '22222222-2222-4222-8222-222222222222';
+  const idNewest = '33333333-3333-4333-8333-333333333333';
+  writeTranscript(projOld, idOld, 1700000100);
+  writeTranscript(projDesk, idDesk, 1700000200, { entrypoint: 'claude-desktop' });
+  writeTranscript(projNewest, idNewest, 1700000300);
+
+  // Also register idDesk in Desktop's claude-code-sessions registry.
+  const deskStore = path.join(ctx.appDataDir, 'claude-code-sessions', 'acct', 'org');
+  fs.mkdirSync(deskStore, { recursive: true });
+  fs.writeFileSync(path.join(deskStore, 'local_desk.json'), JSON.stringify({ cliSessionId: idDesk, cwd: projDesk }));
+
+  // Also verify shared sessions.resolveResume() works directly and via MCP keyflip_resume_command.
+  const mcpRc = await mcpTool('keyflip_resume_command').run(ctx, { id: idOld.slice(0, 8) });
+  assert.deepStrictEqual(mcpRc, { cwd: projOld, command: 'claude --resume ' + idOld });
+
+  const syncCalls = [];
+  const baseResumeCtx = Object.assign({}, ctx, {
+    claudeBin: '/fake/bin/claude',
+    pidAlive: () => false,
+    spawnSync: function (cmd, args, opts) {
+      syncCalls.push({ cmd, args: args.slice(), cwd: opts.cwd, env: opts.env });
+      return { status: 0 };
+    },
+  });
+
+  // 1) `failover resume --last` picks newest transcript (idNewest in projNewest).
+  const rLast = await runCliCaptured(['failover', 'resume', '--last'], baseResumeCtx);
+  assert.strictEqual(rLast.exitCode, 0);
+  assert.strictEqual(syncCalls.length, 1);
+  assert.deepStrictEqual(syncCalls[0].args, ['--resume', idNewest]);
+  assert.strictEqual(syncCalls[0].cwd, projNewest);
+  assert.strictEqual(syncCalls[0].env.ANTHROPIC_AUTH_TOKEN, FAKE_GW_KEY);
+  assert.strictEqual(JSON.stringify(syncCalls[0].args).indexOf(FAKE_GW_KEY), -1);
+
+  // 2) `failover resume --last --desktop` picks newest Desktop session (idDesk in projDesk).
+  const rDeskIdle = await runCliCaptured(['failover', 'resume', '--last', '--desktop'], baseResumeCtx);
+  assert.strictEqual(rDeskIdle.exitCode, 0);
+  assert.strictEqual(syncCalls.length, 2);
+  assert.deepStrictEqual(syncCalls[1].args, ['--resume', idDesk]);
+  assert.strictEqual(syncCalls[1].cwd, projDesk);
+
+  // 3) Mark idDesk's PID as alive -> refuses with exit 3 and exact message, unless --yes is passed.
+  const sessDir = path.join(ctx.claudeDir, 'sessions');
+  fs.mkdirSync(sessDir, { recursive: true });
+  const liveDeskPid = process.pid; // guaranteed alive in both in-process and spawned subprocess checks
+  fs.writeFileSync(
+    path.join(sessDir, liveDeskPid + '.json'),
+    JSON.stringify({ pid: liveDeskPid, sessionId: idDesk, entrypoint: 'claude-desktop', status: 'idle' }),
+  );
+
+  const liveResumeCtx = Object.assign({}, baseResumeCtx, {
+    pidAlive: (p) => p === liveDeskPid,
+  });
+  const refused = await runCliCaptured(['failover', 'resume', '--last', '--desktop'], liveResumeCtx);
+  assert.strictEqual(refused.exitCode, 3);
+  assert.strictEqual(syncCalls.length, 2, 'must not spawn when session pid is alive');
+  assert.match(refused.stderr, /stop this session in Desktop first \(one writer per transcript\)/);
+
+  // Verify real spawned CLI process exit code === 3 as well.
+  const sub = cp.spawnSync(process.execPath, [BIN_PATH, 'failover', 'resume', '--last', '--desktop'], {
+    encoding: 'utf8',
+    env: Object.assign({}, process.env, {
+      HOME: ctx.home,
+      USERPROFILE: ctx.home,
+      KEYFLIP_CONFIG_DIR: ctx.configDir,
+      KEYFLIP_TEST_OFFLINE: '1',
+    }),
+  });
+  assert.strictEqual(sub.status, 3, 'spawned keyflip exits with code 3 when session pid is alive');
+  assert.match(sub.stderr, /stop this session in Desktop first \(one writer per transcript\)/);
+
+  // With --yes, proceeds despite live pid.
+  const forcedYes = await runCliCaptured(['failover', 'resume', '--last', '--desktop', '--yes'], liveResumeCtx);
+  assert.strictEqual(forcedYes.exitCode, 0);
+  assert.strictEqual(syncCalls.length, 3);
+  assert.deepStrictEqual(syncCalls[2].args, ['--resume', idDesk]);
+  assert.strictEqual(syncCalls[2].cwd, projDesk);
+});
+
+test('T14: failover verify --no-spend makes zero inference calls; --deep issues the tool and subagent probes; exit codes 0/2/1', async function () {
+  const fixedNow = Date.UTC(2026, 10, 14, 14, 0, 0);
+  const ctx = makeCtx({ platform: 'darwin', appDataDir: true });
+  const ksPath = writeKeysmithCfg(ctx);
+  ctx.store.setProfile('provider__keysmith-failover', FAKE_GW_KEY);
+  provider.add(ctx, 'keysmith-failover', {
+    baseUrl: 'http://127.0.0.1:8787',
+    authScheme: 'bearer',
+    compat: 'anthropic',
+    models: {
+      default: 'claude-failover',
+      smallFast: 'claude-failover',
+      haiku: 'claude-failover',
+      sonnet: 'claude-failover',
+      opus: 'claude-failover',
+    },
+  });
+
+  const usageLogPath = path.join(ctx.home, '.local', 'share', 'keysmith', 'usage.jsonl');
+  fs.mkdirSync(path.dirname(usageLogPath), { recursive: true });
+  fs.writeFileSync(
+    usageLogPath,
+    JSON.stringify({
+      ts: new Date(fixedNow - 60 * 1000).toISOString(),
+      leg: 'claude-failover-api/claude-opus-5-5',
+      adapter: 'claude-failover-api',
+      status: 200,
+      ok: true,
+    }) + '\n',
+  );
+
+  let capCalls = 0;
+  const meteredFetch = async function (url) {
+    if (/\/v1\/keysmith\/usage/.test(url)) {
+      capCalls++;
+      // Return 7.34 before probes, 7.39 after probes (delta = $0.05).
+      const spent = capCalls === 1 ? 7.34 : 7.39;
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          spend: [
+            {
+              kind: 'adapter',
+              target: 'claude-failover-api',
+              cap: 25,
+              spent,
+              exceeded: false,
+              window: { since: '2026-11-12', until: '2026-12-09' },
+              windowStatus: 'open',
+            },
+          ],
+        }),
+      };
+    }
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({ data: [{ id: 'claude-failover' }] }),
+    };
+  };
+
+  // A) --no-spend -> zero inference spawns, exit 0, read-only (nothing written to settings.json or .failover-env.json).
+  const noSpendRecorder = okSpawnRecorder();
+  const verifyCtxA = Object.assign({}, ctx, {
+    fetch: meteredFetch,
+    spawn: noSpendRecorder.spawn,
+    keysmithConfig: ksPath,
+    nowMs: fixedNow,
+    listProcesses: () => [],
+  });
+  const resNoSpend = await runCliCaptured(['failover', 'verify', '--no-spend', '--json'], verifyCtxA);
+  assert.strictEqual(resNoSpend.exitCode, 0, resNoSpend.stderr || resNoSpend.stdout);
+  assert.strictEqual(noSpendRecorder.calls.length, 0, '--no-spend must make zero inference calls');
+  assert.strictEqual(fs.existsSync(ctx.claudeSettingsPath), false, 'verify never writes settings.json');
+  assert.strictEqual(fs.existsSync(fosurface.envPath(ctx)), false, 'verify never writes .failover-env.json');
+
+  const jsonA = JSON.parse(resNoSpend.stdout.trim());
+  assert.strictEqual(jsonA.spentUsd, 0);
+  assert.deepStrictEqual(
+    jsonA.checks.map((c) => c.id),
+    ['gateway', 'legs', 'modelIds', 'probe', 'leftovers', 'processes', 'toolCount'],
+  );
+  assert.ok(jsonA.checks.every((c) => c.state === 'ok'));
+  assert.match(jsonA.checks[0].reason, /\$7\.34 of \$25, window 12 Nov–9 Dec/);
+
+  // Also check MCP read-only `keyflip_failover_verify` and `keyflip_failover` surface/exhausted fields.
+  const mcpVerifyTool = mcpTool('keyflip_failover_verify');
+  assert.strictEqual(mcpVerifyTool.annotations.readOnlyHint, true);
+  const mcpV = await mcpVerifyTool.run(verifyCtxA, { no_spend: true });
+  assert.strictEqual(mcpV.exitCode, 0);
+  assert.strictEqual(mcpV.checks.length, 7);
+
+  const mcpStatus = await mcpTool('keyflip_failover').run(verifyCtxA, { action: 'status' });
+  assert.strictEqual(mcpStatus.failover.surface, null);
+  assert.strictEqual(mcpStatus.failover.exhausted, null);
+
+  // B) --deep -> runs default, sonnet, Bash tool ("run: echo hi"), and sonnet subagent ("PONG") probes; metered spentUsd = 0.05; exit 0.
+  capCalls = 0;
+  const deepSpawn = makeFakeSpawn(function (rec, idx) {
+    setImmediate(function () {
+      const reply = idx === 2 ? 'hi' : idx === 3 ? 'PONG' : 'OK';
+      rec.child.stdout.emit(
+        'data',
+        JSON.stringify({ type: 'result', is_error: false, result: reply, total_cost_usd: 0.01 }),
+      );
+      rec.child.emit('close', 0);
+    });
+  });
+  const verifyCtxB = Object.assign({}, verifyCtxA, { spawn: deepSpawn.spawn });
+  const resDeep = await runCliCaptured(['failover', 'verify', '--deep', '--json'], verifyCtxB);
+  assert.strictEqual(resDeep.exitCode, 0, resDeep.stderr || resDeep.stdout);
+  assert.strictEqual(deepSpawn.calls.length, 4, 'default + sonnet + bash + subagent = 4 spawns');
+
+  // Verify exact probe shapes:
+  assert.strictEqual(deepSpawn.calls[0].args.includes('--model'), false, '1st probe is default model');
+  assert.ok(
+    deepSpawn.calls[1].args.includes('--model') && deepSpawn.calls[1].args.includes('sonnet'),
+    '2nd probe passes --model sonnet',
+  );
+  assert.ok(
+    deepSpawn.calls[2].args.includes('--allowedTools') &&
+      deepSpawn.calls[2].args.includes('Bash') &&
+      deepSpawn.calls[2].args.includes('run: echo hi'),
+    '3rd probe (--deep) runs Bash tool check',
+  );
+  assert.ok(
+    deepSpawn.calls[3].args.some((a) => /sonnet.*subagent.*PONG/i.test(a)),
+    '4th probe (--deep) runs sonnet general-purpose subagent PONG check',
+  );
+  deepSpawn.calls.forEach(function (call) {
+    assert.strictEqual(JSON.stringify(call.args).indexOf(FAKE_GW_KEY), -1, 'probe argv never carries key');
+    assert.strictEqual(call.env.ANTHROPIC_AUTH_TOKEN, FAKE_GW_KEY);
+  });
+
+  const jsonB = JSON.parse(resDeep.stdout.trim());
+  assert.strictEqual(jsonB.spentUsd, 0.05, 'metered spend delta read from cap before/after');
+  const probeCheckB = jsonB.checks.find((c) => c.id === 'probe');
+  assert.strictEqual(probeCheckB.state, 'ok');
+  assert.deepStrictEqual(probeCheckB.detail.deepChecks, ['bash', 'subagent']);
+  assert.strictEqual(fs.existsSync(ctx.claudeSettingsPath), false, '--deep still writes nothing to settings.json');
+  assert.strictEqual(fs.existsSync(fosurface.envPath(ctx)), false, '--deep still writes nothing to .failover-env.json');
+
+  // C) Warn -> exit code 2 (quota leg with "Resets in 12h", >128-tool rejection in 7d, leftover file, process carrying gateway env).
+  const legErrTs = fixedNow - 1800 * 1000;
+  const expectedLegReset = new Date(legErrTs + 12 * 3600 * 1000).toISOString();
+  fs.writeFileSync(
+    usageLogPath,
+    [
+      JSON.stringify({
+        ts: new Date(legErrTs).toISOString(),
+        leg: 'agy/claude-sonnet-5-5-low',
+        adapter: 'agy',
+        ok: false,
+        status: 429,
+        error: 'quota reached. Resets in 12h',
+      }),
+      JSON.stringify({
+        ts: new Date(fixedNow - 2 * 86400 * 1000).toISOString(),
+        leg: 'claude-failover-api/claude-opus-5-5',
+        adapter: 'claude-failover-api',
+        ok: false,
+        status: 400,
+        error: 'tools: 243 provided, at most 128 are taken',
+      }),
+    ].join('\n') + '\n',
+  );
+  fs.writeFileSync(path.join(ctx.configDir, '.keyflip-gateway.json'), JSON.stringify({ provider: 'keysmith-failover' }));
+
+  const verifyCtxWarn = Object.assign({}, verifyCtxA, {
+    listProcesses: () => [
+      {
+        pid: 8181,
+        startedAt: fixedNow - 5000,
+        command: 'claude',
+        env: { ANTHROPIC_BASE_URL: 'http://127.0.0.1:8787' },
+      },
+    ],
+  });
+  const resWarn = await runCliCaptured(['failover', 'verify', '--no-spend', '--json'], verifyCtxWarn);
+  assert.strictEqual(resWarn.exitCode, 2, 'warnings without failures must exit 2');
+  const jsonWarn = JSON.parse(resWarn.stdout.trim());
+  const byIdWarn = Object.fromEntries(jsonWarn.checks.map((c) => [c.id, c]));
+  assert.strictEqual(byIdWarn.legs.state, 'warn');
+  assert.ok(byIdWarn.legs.reason.includes(expectedLegReset), 'legs warn includes computed reset time');
+  assert.strictEqual(byIdWarn.leftovers.state, 'warn');
+  assert.strictEqual(byIdWarn.processes.state, 'warn');
+  assert.strictEqual(byIdWarn.toolCount.state, 'warn');
+  assert.match(byIdWarn.toolCount.reason, /failover\.mcpConfig/);
+
+  // D) Fail -> exit code 1 when probe fails (or gateway fails).
+  const failProbeSpawn = makeFakeSpawn(function (rec) {
+    setImmediate(function () {
+      rec.child.stderr.emit('data', '404 model_not_found');
+      rec.child.emit('close', 1);
+    });
+  });
+  const verifyCtxFail = Object.assign({}, verifyCtxWarn, { spawn: failProbeSpawn.spawn });
+  const resFail = await runCliCaptured(['failover', 'verify', '--json'], verifyCtxFail);
+  assert.strictEqual(resFail.exitCode, 1, 'any failing check must exit 1');
+  const jsonFail = JSON.parse(resFail.stdout.trim());
+  assert.strictEqual(jsonFail.checks.find((c) => c.id === 'probe').state, 'fail');
+});
+
 test('T15: failover off works with failover.enabled=false while engaged', async function () {
   const ctx = makeCtx();
   const { ksPath, gwFetch } = setupGateway(ctx);
@@ -676,9 +1206,14 @@ test('T15: failover off works with failover.enabled=false while engaged', async 
   const origWrite = process.stdout.write.bind(process.stdout);
   process.env.HOME = ctx.home;
   process.env.KEYFLIP_CONFIG_DIR = ctx.configDir;
-  process.stdout.write = function (c) {
-    chunks.push(String(c));
-    return true;
+  process.stdout.write = function (c, enc, cb) {
+    if (typeof c === 'string') {
+      chunks.push(c);
+      if (typeof enc === 'function') enc();
+      else if (typeof cb === 'function') cb();
+      return true;
+    }
+    return origWrite(c, enc, cb);
   };
   try {
     process.exitCode = 0;
@@ -968,7 +1503,7 @@ test('T20: old 12 h expiry can no longer drop a gateway action without restore (
   assert.strictEqual('deploymentMode' in JSON.parse(fs.readFileSync(mainCfg, 'utf8')), false, '3p restored despite >12h age');
 });
 
-test('T30: secret redaction unit + probe-reason redaction + engage/tick/off output grep -> zero hits', async function () {
+test('T30: end-to-end (engage -> tick -> verify -> off) with fake key ks_FAKE_GATEWAY_KEY_FOR_TESTS and fake OAuth/session tokens: grep stdout, stderr, logs/keyflip.log, events.jsonl, history, notifications, --json outputs, txn/state files -> zero hits', async function () {
   redactMod.clearSecrets();
   const ctx = makeCtx({ platform: 'darwin', appDataDir: true });
   logmod.init(ctx.configDir, false);
@@ -1019,10 +1554,25 @@ test('T30: secret redaction unit + probe-reason redaction + engage/tick/off outp
     assert.strictEqual(classified.reason.indexOf(sec), -1, 'probe reason must not contain ' + sec);
   });
 
-  // End-to-end Slice 1 flow (failed probe -> successful engage -> tick -> off) with webhook + log + history.
+  // End-to-end flow: engage -> tick -> verify -> off (CLI human + --json + MCP + webhook + log + history).
   loginAccount(ctx, 'alice@example.com', 'u1', FAKE_OAUTH_TOK);
   core.addCurrent(ctx);
   const { ksPath, gwFetch } = setupGateway(ctx, { key: FAKE_GW_KEY });
+
+  // Seed keysmith usage.jsonl with an error line containing fake secrets to verify `verify` redacts leg errors too.
+  const usageLogPath = path.join(ctx.home, '.local', 'share', 'keysmith', 'usage.jsonl');
+  fs.mkdirSync(path.dirname(usageLogPath), { recursive: true });
+  fs.writeFileSync(
+    usageLogPath,
+    JSON.stringify({
+      ts: new Date(1700000081500).toISOString(),
+      leg: 'agy/claude-sonnet-5-5-low',
+      adapter: 'agy',
+      ok: false,
+      status: 401,
+      error: 'upstream rejected key ' + FAKE_GW_KEY + ' and ' + FAKE_API_KEY + ' Resets in 2h',
+    }) + '\n',
+  );
 
   const webhookBodies = [];
   const webhookFetch = async function (url, init) {
@@ -1050,11 +1600,14 @@ test('T30: secret redaction unit + probe-reason redaction + engage/tick/off outp
   );
   assert.strictEqual(badEng.ok, false);
 
-  // 2) Passing engage -> tick -> off with fake processes carrying secrets.
+  // 2) Passing engage -> tick -> verify -> off with fake processes carrying secrets.
   const okSp = okSpawnRecorder();
   const goodEng = await failover.engage(
     ctx,
-    { from: 'alice', reason: 'exhausted with token ' + FAKE_OAUTH_TOK + ' at https://api.example/v1?key=' + FAKE_GW_KEY },
+    {
+      from: 'alice',
+      reason: 'exhausted with token ' + FAKE_OAUTH_TOK + ' at https://api.example/v1?key=' + FAKE_GW_KEY,
+    },
     { fetch: gwFetch, keysmithConfig: ksPath, spawn: okSp.spawn, notify: noteFn, nowMs: 1700000081000 },
   );
   assert.strictEqual(goodEng.ok, true);
@@ -1080,47 +1633,101 @@ test('T30: secret redaction unit + probe-reason redaction + engage/tick/off outp
     },
   });
 
-  const relOut = await failover.release(
-    ctx,
-    { by: 'cli', to: 'alice', reason: 'off' },
+  const fakeProcessList = () => [
     {
-      notify: noteFn,
-      listProcesses: () => [
-        {
-          pid: 9001,
-          startedAt: 1700000081500,
-          command: 'claude',
-          env: {
-            CLAUDE_CODE_ENTRYPOINT: 'cli',
-            ANTHROPIC_AUTH_TOKEN: FAKE_GW_KEY,
-            ANTHROPIC_API_KEY: FAKE_API_KEY,
-            SESSION: FAKE_SESSION_KEY,
-          },
-        },
-      ],
+      pid: 9001,
+      startedAt: 1700000081500,
+      command: 'claude',
+      env: {
+        CLAUDE_CODE_ENTRYPOINT: 'cli',
+        ANTHROPIC_AUTH_TOKEN: FAKE_GW_KEY,
+        ANTHROPIC_API_KEY: FAKE_API_KEY,
+        SESSION: FAKE_SESSION_KEY,
+      },
     },
+    {
+      pid: 9002,
+      startedAt: 1700000081600,
+      command: 'claude',
+      env: {
+        CLAUDE_CODE_ENTRYPOINT: 'claude-desktop',
+        ANTHROPIC_MODEL: 'claude-failover',
+        ANTHROPIC_AUTH_TOKEN: FAKE_GW_KEY,
+        COOKIE: 'sessionKey=' + FAKE_SESSION_KEY,
+      },
+    },
+  ];
+
+  const e2eCliCtx = Object.assign({}, ctx, {
+    fetch: gwFetch,
+    spawn: okSp.spawn,
+    keysmithConfig: ksPath,
+    nowMs: 1700000083000,
+    listProcesses: fakeProcessList,
+    lsof: () => ({ 9001: '/Users/tester/proj-cli', 9002: '/Users/tester/proj-desk' }),
+    run: () => ({ code: 0, stdout: '', stderr: '' }),
+  });
+
+  // Exercise CLI status, verify, run --print-command, and MCP tools (human + --json) while engaged.
+  const cliStatusHuman = await runCliCaptured(['failover', 'status'], e2eCliCtx);
+  const cliStatusJson = await runCliCaptured(['failover', 'status', '--json'], e2eCliCtx);
+  const cliVerifyHuman = await runCliCaptured(['failover', 'verify'], e2eCliCtx);
+  const cliVerifyJson = await runCliCaptured(['failover', 'verify', '--json'], e2eCliCtx);
+  const cliPrintRun = await runCliCaptured(['failover', 'run', '--print-command', '--', '-p', 'test'], e2eCliCtx);
+  const mcpStatusOut = await mcpTool('keyflip_failover').run(e2eCliCtx, { action: 'status' });
+  const mcpVerifyOut = await mcpTool('keyflip_failover_verify').run(e2eCliCtx, {});
+
+  // Exercise CLI `failover off` (human, then re-engage & `--json`) so both human process report and JSON `stillCarrying` are grepped.
+  const cliOffHuman = await runCliCaptured(['failover', 'off'], e2eCliCtx);
+  assert.strictEqual(cliOffHuman.exitCode, 0);
+  await failover.engage(
+    ctx,
+    { from: 'alice', manual: true },
+    { fetch: gwFetch, keysmithConfig: ksPath, spawn: okSp.spawn, notify: noteFn, nowMs: 1700000084000 },
   );
-  assert.strictEqual(relOut.ok, true);
+  const cliOffJson = await runCliCaptured(['failover', 'off', '--json'], e2eCliCtx);
+  assert.strictEqual(cliOffJson.exitCode, 0);
+  const offJsonParsed = JSON.parse(cliOffJson.stdout.trim());
+  assert.strictEqual(Array.isArray(offJsonParsed.stillCarrying), true);
+  assert.strictEqual(offJsonParsed.stillCarrying.length, 2);
 
   // Log a line directly with fake secrets to verify log.log redaction on disk too.
   logmod.log('manual check: ' + sampleRaw);
 
-  // Collect every output surface: snapshots, configDir files (except creds store if file-backed; here MemoryStore),
-  // logs/keyflip.log, events.jsonl, webhook bodies, and JSON return payloads.
+  // Collect EVERY output surface: CLI stdout + stderr, --json outputs, MCP payloads,
+  // snapshots while engaged, history.readEvents, webhook bodies, logs/keyflip.log, events.jsonl, and all configDir files.
+  const cliOutputs = [
+    cliStatusHuman,
+    cliStatusJson,
+    cliVerifyHuman,
+    cliVerifyJson,
+    cliPrintRun,
+    cliOffHuman,
+    cliOffJson,
+  ]
+    .map((r) => r.stdout + '\n' + r.stderr)
+    .join('\n');
+
   const corpusParts = [
+    cliOutputs,
     envSnapshotWhileEngaged,
     stateSnapshotWhileEngaged,
     txnSnapshotWhileEngaged,
     JSON.stringify(badEng),
     JSON.stringify(goodEng),
     JSON.stringify(tickOut),
-    JSON.stringify(relOut),
+    JSON.stringify(mcpStatusOut),
+    JSON.stringify(mcpVerifyOut),
+    JSON.stringify(history.readEvents(ctx)),
     webhookBodies.join('\n'),
   ];
   walkFiles(ctx.configDir).forEach(function (fp) {
     corpusParts.push(fp + ':\n' + fs.readFileSync(fp, 'utf8'));
   });
   const corpus = corpusParts.join('\n');
+
+  assert.ok(fs.existsSync(path.join(ctx.configDir, 'logs', 'keyflip.log')), 'logs/keyflip.log present');
+  assert.ok(fs.existsSync(path.join(ctx.configDir, 'events.jsonl')), 'events.jsonl present');
 
   forbidden.forEach(function (sec) {
     assert.strictEqual(corpus.indexOf(sec), -1, 'secret leaked in output/files: ' + sec);

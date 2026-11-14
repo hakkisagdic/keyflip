@@ -1590,9 +1590,7 @@ const TOOLS = [
     },
     annotations: RO,
     run: async function (ctx, args) {
-      const row = sessions.find(ctx, String(args.id));
-      if (!row) throw new Error('no such session: ' + args.id);
-      const rc = sessions.resumeCommand(row);
+      const rc = sessions.resolveResume(ctx, { id: String(args.id) });
       return { cwd: rc.cwd, command: rc.command + ' ' + rc.args.join(' ') };
     },
   },
@@ -2194,7 +2192,7 @@ const TOOLS = [
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
     annotations: RO_NET,
     run: async function (ctx) {
-      return await doctor.diagnose(ctx, { run: exec.run });
+      return await doctor.diagnose(ctx, { run: ctx.run || exec.run, fetch: ctx.fetch });
     },
   },
   {
@@ -3878,7 +3876,18 @@ const TOOLS = [
         const p = _failover.resolvePlan(ctx, { keysmithConfig: ctx.keysmithConfig });
         const st = _failover.state(ctx);
         const ready = await _failover.gatewayReady(ctx, { plan: p, fetch: ctx.fetch });
-        return { failover: { enabled: p.enabled, engaged: !!st, state: st, gateway: ready, plan: p } };
+        const exh = _failover.exhausted(ctx);
+        return {
+          failover: {
+            enabled: p.enabled,
+            engaged: !!st,
+            surface: (st && st.surface) || null,
+            exhausted: exh,
+            state: st,
+            gateway: ready,
+            plan: p,
+          },
+        };
       }
       if (action !== 'on' && action !== 'off') {
         throw new Error("invalid action '" + action + "' — use: status | on | off");
@@ -3904,10 +3913,53 @@ const TOOLS = [
           action === 'on'
             ? await _failover.engage(ctx, { manual: true, reason: 'turned on by hand' }, deps)
             : await _failover.release(ctx, { by: 'mcp', reason: 'turned off by hand' }, deps);
-        return { failover: r };
+        const stAfter = _failover.state(ctx);
+        return {
+          failover: Object.assign(
+            {
+              surface: (r && r.surface) || (stAfter && stAfter.surface) || null,
+              exhausted: _failover.exhausted(ctx),
+            },
+            r,
+          ),
+        };
       } finally {
         l.release();
       }
+    },
+  },
+  {
+    name: 'keyflip_failover_verify',
+    title: 'Verify the API failover gateway, legs, probes and leftovers',
+    description:
+      'Read-only verification of the keysmith API failover (`keyflip failover verify`). Checks gateway reachability/cap, per-leg health from keysmith usage.jsonl, modelIds for cli-settings, live cli-launcher inference probes (skipped when no_spend=true; deep=true adds Bash tool + sonnet subagent probes), leftover gateway state, running processes carrying gateway env, and >128-tool rejections.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        no_spend: {
+          type: 'boolean',
+          description: 'Skip live inference probes so zero API tokens are spent (--no-spend).',
+        },
+        deep: {
+          type: 'boolean',
+          description: 'Also run Bash tool and sonnet subagent probes (--deep).',
+        },
+      },
+      additionalProperties: false,
+    },
+    annotations: RO,
+    run: async function (ctx, args) {
+      return await _failover.verify(ctx, {
+        noSpend: !!(args && args.no_spend),
+        deep: !!(args && args.deep),
+        fetch: ctx.fetch,
+        spawn: ctx.spawn,
+        run: ctx.run,
+        listProcesses: ctx.listProcesses,
+        lsof: ctx.lsof,
+        keysmithConfig: ctx.keysmithConfig,
+        nowMs: ctx.nowMs,
+      });
     },
   },
 
