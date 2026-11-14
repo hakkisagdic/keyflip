@@ -8,7 +8,8 @@ import {
   collectServicesStatus,
   restartManagedService,
   summarizeFleetSweep,
-  collectServerStatus
+  collectServerStatus,
+  collectStatusBoard
 } from "../src/controlcenter.js";
 import * as daemon from "../src/daemon.js";
 
@@ -220,6 +221,41 @@ test("summarizeFleetSweep and collectServerStatus handle data and unreadable fal
   }
 });
 
+test("collectStatusBoard returns null when missing, sorts bad/warn first, and flags data older than 20 minutes", () => {
+  const env = makeTempEnv();
+  try {
+    // 1. Missing file -> null (section hidden)
+    assert.equal(collectStatusBoard(env.ctx, { homeDir: env.home }), null);
+
+    // 2. Load sample fixture (updated: 2026-11-14T18:20:00Z)
+    const fixturePath = path.resolve("test/fixtures/status.sample.json");
+    const freshBoard = collectStatusBoard(env.ctx, {
+      homeDir: env.home,
+      statusFile: fixturePath,
+      nowMs: () => Date.parse("2026-11-14T18:35:00Z") // 15m old -> fresh
+    });
+    assert.ok(freshBoard);
+    assert.equal(freshBoard.stale, false);
+    assert.equal(freshBoard.ageMinutes, 15);
+    assert.equal(freshBoard.owner_needed.length, 2);
+    assert.deepEqual(
+      freshBoard.sections[0].rows.map((r) => r.status),
+      ["bad", "warn", "ok"]
+    );
+
+    // 3. Stale (>20 minutes old)
+    const staleBoard = collectStatusBoard(env.ctx, {
+      homeDir: env.home,
+      statusFile: fixturePath,
+      nowMs: () => Date.parse("2026-11-14T18:45:00Z") // 25m old -> stale
+    });
+    assert.equal(staleBoard.stale, true);
+    assert.equal(staleBoard.ageMinutes, 25);
+  } finally {
+    env.cleanup();
+  }
+});
+
 test("daemon handleCommand serves control-center and service-restart endpoints", async () => {
   const env = makeTempEnv();
   try {
@@ -243,7 +279,9 @@ test("daemon handleCommand serves control-center and service-restart endpoints",
     assert.equal(Array.isArray(ccRes.body.services), true);
     assert.equal(ccRes.body.fleet.display, "okunamadı");
     assert.equal(ccRes.body.server.readOnly, true);
+    assert.equal(ccRes.body.statusBoard, null);
     assert.equal(typeof ccRes.body.preferences.thresholdPct, "number");
+    assert.equal(ccRes.body.preferences.statusFile, "~/.polyctl/admin/status.json");
 
     const restartNoConfirm = await daemon.handleCommand(
       env.ctx,

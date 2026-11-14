@@ -96,6 +96,11 @@ SCHEMA['daemon.surfaceRefreshIntervalSeconds'] = {
   max: 7200,
   help: 'Interval (seconds) for Antigravity/Codex/Kiro credential refresh in the daemon.',
 };
+SCHEMA['menubar.statusFile'] = {
+  type: 'string',
+  default: '~/.polyctl/admin/status.json',
+  help: 'Path to the external status board JSON file watched by the menu bar app.',
+};
 SCHEMA['daemon.convIndexIntervalSeconds'] = {
   type: 'int',
   default: 1800,

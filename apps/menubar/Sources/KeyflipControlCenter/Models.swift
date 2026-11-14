@@ -12,6 +12,7 @@ public struct ControlCenterPayload: Codable {
     public var services: [ServiceItem]?
     public var fleet: FleetSummary?
     public var server: ServerSummary?
+    public var statusBoard: StatusBoardPayload?
     public var preferences: PreferencesSummary?
     public var warnings: [DaemonWarning]?
 
@@ -27,6 +28,7 @@ public struct ControlCenterPayload: Codable {
         services: [ServiceItem]? = [],
         fleet: FleetSummary? = nil,
         server: ServerSummary? = nil,
+        statusBoard: StatusBoardPayload? = nil,
         preferences: PreferencesSummary? = nil,
         warnings: [DaemonWarning]? = []
     ) {
@@ -41,6 +43,7 @@ public struct ControlCenterPayload: Codable {
         self.services = services
         self.fleet = fleet
         self.server = server
+        self.statusBoard = statusBoard
         self.preferences = preferences
         self.warnings = warnings
     }
@@ -233,11 +236,164 @@ public struct ServerSiteItem: Codable, Identifiable {
     public var detail: String
 }
 
+// MARK: - Generic Status Board Schema (status.json)
+
+public struct StatusBoardPayload: Codable {
+    public static let defaultRelativePath = "~/.polyctl/admin/status.json"
+    public static let staleThresholdSeconds: TimeInterval = 20 * 60
+
+    public var updated: String?
+    public var sections: [StatusBoardSection]
+    public var owner_needed: [StatusBoardOwnerItem]?
+
+    public init(
+        updated: String? = nil,
+        sections: [StatusBoardSection] = [],
+        owner_needed: [StatusBoardOwnerItem]? = nil
+    ) {
+        self.updated = updated
+        self.sections = sections
+        self.owner_needed = owner_needed
+    }
+
+    public var ownerNeededItems: [StatusBoardOwnerItem] {
+        owner_needed ?? []
+    }
+
+    public var ownerNeededCount: Int {
+        ownerNeededItems.count
+    }
+
+    public func isStale(now: Date = Date(), fallbackModificationDate: Date? = nil) -> Bool {
+        if let updatedStr = updated, let parsed = Self.parseISO8601(updatedStr) {
+            return now.timeIntervalSince(parsed) > Self.staleThresholdSeconds
+        }
+        if let mtime = fallbackModificationDate {
+            return now.timeIntervalSince(mtime) > Self.staleThresholdSeconds
+        }
+        return true
+    }
+
+    public static func parseISO8601(_ string: String) -> Date? {
+        let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty { return nil }
+        let frac = ISO8601DateFormatter()
+        frac.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let d = frac.date(from: trimmed) { return d }
+        let plain = ISO8601DateFormatter()
+        plain.formatOptions = [.withInternetDateTime]
+        return plain.date(from: trimmed)
+    }
+
+    public static func resolvePath(_ configuredPath: String?) -> String {
+        let raw = (configuredPath?.trimmingCharacters(in: .whitespacesAndNewlines)).flatMap { $0.isEmpty ? nil : $0 }
+            ?? ProcessInfo.processInfo.environment["KEYFLIP_STATUS_FILE"]
+            ?? Self.defaultRelativePath
+        return (raw as NSString).expandingTildeInPath
+    }
+
+    public static func load(fromFile path: String) -> (board: StatusBoardPayload, isStale: Bool)? {
+        let expanded = resolvePath(path)
+        guard FileManager.default.fileExists(atPath: expanded),
+              let data = try? Data(contentsOf: URL(fileURLWithPath: expanded)),
+              var decoded = try? JSONDecoder().decode(StatusBoardPayload.self, from: data)
+        else {
+            return nil
+        }
+        decoded.sections = decoded.sections.map { sec in
+            var copy = sec
+            copy.rows = sec.sortedRows
+            return copy
+        }
+        let attrs = try? FileManager.default.attributesOfItem(atPath: expanded)
+        let mtime = attrs?[.modificationDate] as? Date
+        return (decoded, decoded.isStale(now: Date(), fallbackModificationDate: mtime))
+    }
+}
+
+public struct StatusBoardSection: Codable, Identifiable {
+    public var id: String
+    public var title: String
+    public var rows: [StatusBoardRow]
+
+    public init(id: String, title: String, rows: [StatusBoardRow] = []) {
+        self.id = id
+        self.title = title
+        self.rows = rows
+    }
+
+    /// Stable sort placing `bad` first, `warn` second, `ok` third, and `unknown` last.
+    public var sortedRows: [StatusBoardRow] {
+        rows.enumerated()
+            .sorted { lhs, rhs in
+                let lRank = lhs.element.statusRank
+                let rRank = rhs.element.statusRank
+                if lRank != rRank {
+                    return lRank < rRank
+                }
+                return lhs.offset < rhs.offset
+            }
+            .map { $0.element }
+    }
+
+    public var badCount: Int {
+        rows.filter { $0.status == "bad" }.count
+    }
+
+    public var warnCount: Int {
+        rows.filter { $0.status == "warn" }.count
+    }
+}
+
+public struct StatusBoardRow: Codable, Identifiable {
+    public var id: String { "\(label)-\(value)-\(status)" }
+    public var label: String
+    public var value: String
+    public var status: String
+    public var detail: String?
+    public var since: String?
+
+    public init(
+        label: String,
+        value: String,
+        status: String,
+        detail: String? = nil,
+        since: String? = nil
+    ) {
+        self.label = label
+        self.value = value
+        self.status = status
+        self.detail = detail
+        self.since = since
+    }
+
+    public var statusRank: Int {
+        switch status.lowercased() {
+        case "bad": return 0
+        case "warn": return 1
+        case "ok": return 2
+        default: return 3
+        }
+    }
+}
+
+public struct StatusBoardOwnerItem: Codable, Identifiable {
+    public var id: String { "\(project):\(text)" }
+    public var project: String
+    public var text: String
+
+    public init(project: String, text: String) {
+        self.project = project
+        self.text = text
+    }
+}
+
 public struct PreferencesSummary: Codable {
     public var thresholdPct: Double
     public var refreshIntervalSec: Int
     public var notify: Bool
     public var launchAtLogin: Bool
+    public var statusFile: String?
 }
 
 public struct DaemonWarning: Codable, Identifiable {
@@ -266,7 +422,7 @@ public enum PendingConfirmationAction: Identifiable {
     case switchAccount(account: String)
     case toggleFailover(enable: Bool)
     case restartService(label: String, title: String)
-    case savePreferences(threshold: Int, refreshIntervalSec: Int, notify: Bool)
+    case savePreferences(threshold: Int, refreshIntervalSec: Int, notify: Bool, statusFile: String)
 
     public var id: String {
         switch self {
@@ -300,8 +456,8 @@ public enum PendingConfirmationAction: Identifiable {
                 : "Yedek zincir devre dışı bırakılıp normal hesaba dönülecek ve denetim günlüğüne kaydedilecek."
         case .restartService(let label, _):
             return "launchctl kickstart -k (\(label)) komutu çalıştırılacak ve denetim günlüğüne kaydedilecek."
-        case .savePreferences(let threshold, let refreshIntervalSec, let notify):
-            return "Otomatik geçiş eşiği %\(threshold), kontrol aralığı \(refreshIntervalSec) sn, bildirimler \(notify ? "açık" : "kapalı") olarak güncellenecek."
+        case .savePreferences(let threshold, let refreshIntervalSec, let notify, let statusFile):
+            return "Otomatik geçiş eşiği %\(threshold), kontrol aralığı \(refreshIntervalSec) sn, bildirimler \(notify ? "açık" : "kapalı"), durum panosu yolu '\(statusFile)' olarak güncellenecek."
         }
     }
 }

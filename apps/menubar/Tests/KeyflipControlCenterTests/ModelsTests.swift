@@ -75,7 +75,8 @@ public enum ModelsTestSuite {
             "thresholdPct": 95,
             "refreshIntervalSec": 120,
             "notify": true,
-            "launchAtLogin": true
+            "launchAtLogin": true,
+            "statusFile": "~/.polyctl/admin/status.json"
           }
         }
         """.data(using: .utf8)!
@@ -99,6 +100,31 @@ public enum ModelsTestSuite {
 
         let client = DaemonClient(customSocketPath: "/tmp/nonexistent-keyflip-test.sock")
         precondition(client.resolveSocketPath() == "/tmp/nonexistent-keyflip-test.sock", "custom socket path must resolve")
+
+        // Status board fixture test: sorting (bad -> warn -> ok -> unknown), owner_needed count, and 20-minute staleness
+        let cwd = FileManager.default.currentDirectoryPath
+        let fixturePath = (cwd as NSString).appendingPathComponent("test/fixtures/status.sample.json")
+        guard let loaded = StatusBoardPayload.load(fromFile: fixturePath) else {
+            preconditionFailure("Expected test/fixtures/status.sample.json to load")
+        }
+        let board = loaded.board
+        precondition(board.ownerNeededCount == 2, "ownerNeededCount must be 2")
+        precondition(board.sections.count == 2, "sections.count must be 2")
+
+        let quotaRows = board.sections[0].sortedRows
+        precondition(quotaRows.count == 3, "quotaRows.count must be 3")
+        precondition(quotaRows[0].status == "bad", "first sorted row must be bad")
+        precondition(quotaRows[1].status == "warn", "second sorted row must be warn")
+        precondition(quotaRows[2].status == "ok", "third sorted row must be ok")
+
+        // Staleness check: fixture updated is 2026-11-14T18:20:00Z
+        let freshNow = StatusBoardPayload.parseISO8601("2026-11-14T18:35:00Z")! // 15 min later -> fresh
+        let staleNow = StatusBoardPayload.parseISO8601("2026-11-14T18:45:00Z")! // 25 min later -> stale (>20m)
+        precondition(!board.isStale(now: freshNow), "15-minute-old board must NOT be stale")
+        precondition(board.isStale(now: staleNow), "25-minute-old board MUST be stale (>20 min)")
+
+        // Missing file must return nil so section is hidden
+        precondition(StatusBoardPayload.load(fromFile: "/tmp/definitely-missing-status-board-99999.json") == nil, "missing file must return nil")
     }
 }
 
@@ -107,7 +133,7 @@ public enum ModelsTestSuite {
 struct StandaloneTestMain {
     static func main() throws {
         try ModelsTestSuite.runAll()
-        print("✔ KeyflipControlCenter Swift model & confirmation tests passed")
+        print("✔ KeyflipControlCenter Swift model, statusBoard fixture & confirmation tests passed")
     }
 }
 #else

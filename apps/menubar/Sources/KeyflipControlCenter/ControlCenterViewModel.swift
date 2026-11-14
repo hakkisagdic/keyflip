@@ -11,11 +11,17 @@ public final class ControlCenterViewModel: ObservableObject {
     @Published public var statusBanner: String?
     @Published public var pendingConfirmation: PendingConfirmationAction?
 
+    // External status board (watched from configured statusFile; nil if file does not exist)
+    @Published public var statusBoard: StatusBoardPayload?
+    @Published public var statusBoardStale: Bool = false
+
     // Editable preferences
     @Published public var prefThresholdPct: Double = 95
     @Published public var prefRefreshIntervalSec: Int = 120
     @Published public var prefNotify: Bool = true
     @Published public var prefLaunchAtLogin: Bool = false
+    @Published public var prefStatusFile: String = UserDefaults.standard.string(forKey: "menubar.statusFile")
+        ?? StatusBoardPayload.defaultRelativePath
     @Published public var preferencesLoaded: Bool = false
 
     private let client: DaemonClient
@@ -23,6 +29,7 @@ public final class ControlCenterViewModel: ObservableObject {
 
     public init(client: DaemonClient = DaemonClient(), startPolling: Bool = true) {
         self.client = client
+        reloadStatusBoard()
         if startPolling {
             refresh()
             scheduleTimer()
@@ -38,7 +45,28 @@ public final class ControlCenterViewModel: ObservableObject {
         }
     }
 
+    public func reloadStatusBoard(overridePath: String? = nil) {
+        let configured = overridePath ?? prefStatusFile
+        if let loaded = StatusBoardPayload.load(fromFile: configured) {
+            self.statusBoard = loaded.board
+            self.statusBoardStale = loaded.isStale
+        } else if let daemonBoard = payload.statusBoard {
+            var sorted = daemonBoard
+            sorted.sections = daemonBoard.sections.map { sec in
+                var copy = sec
+                copy.rows = sec.sortedRows
+                return copy
+            }
+            self.statusBoard = sorted
+            self.statusBoardStale = sorted.isStale()
+        } else {
+            self.statusBoard = nil
+            self.statusBoardStale = false
+        }
+    }
+
     public func refresh() {
+        reloadStatusBoard()
         guard !isLoading else { return }
         isLoading = true
         let clientRef = self.client
@@ -56,10 +84,16 @@ public final class ControlCenterViewModel: ObservableObject {
                         self.prefRefreshIntervalSec = prefs.refreshIntervalSec
                         self.prefNotify = prefs.notify
                         self.prefLaunchAtLogin = prefs.launchAtLogin
+                        if let sf = prefs.statusFile, !sf.isEmpty {
+                            self.prefStatusFile = sf
+                            UserDefaults.standard.set(sf, forKey: "menubar.statusFile")
+                        }
                         self.preferencesLoaded = true
                     }
+                    self.reloadStatusBoard()
                     self.lastError = nil
                 } else {
+                    self.reloadStatusBoard()
                     self.lastError = result.error
                 }
             }
@@ -101,6 +135,10 @@ public final class ControlCenterViewModel: ObservableObject {
         payload.failover.engaged
     }
 
+    public var ownerNeededBadgeCount: Int {
+        statusBoard?.ownerNeededCount ?? 0
+    }
+
     // MARK: - Confirmation Flow
 
     public func requestSwitchAccount(_ accountName: String) {
@@ -116,10 +154,17 @@ public final class ControlCenterViewModel: ObservableObject {
     }
 
     public func requestSavePreferences() {
+        let cleanedPath = prefStatusFile.trimmingCharacters(in: .whitespacesAndNewlines)
+        let effectivePath = cleanedPath.isEmpty ? StatusBoardPayload.defaultRelativePath : cleanedPath
+        prefStatusFile = effectivePath
+        UserDefaults.standard.set(effectivePath, forKey: "menubar.statusFile")
+        reloadStatusBoard(overridePath: effectivePath)
+
         pendingConfirmation = .savePreferences(
             threshold: Int(prefThresholdPct.rounded()),
             refreshIntervalSec: prefRefreshIntervalSec,
-            notify: prefNotify
+            notify: prefNotify,
+            statusFile: effectivePath
         )
     }
 
@@ -158,14 +203,15 @@ public final class ControlCenterViewModel: ObservableObject {
                         "label": label,
                         "confirm": true
                     ])
-                case .savePreferences(let threshold, let refreshIntervalSec, let notify):
+                case .savePreferences(let threshold, let refreshIntervalSec, let notify, let statusFile):
                     try clientRef.sendConfirmedCommand([
                         "cmd": "config",
                         "confirm": true,
                         "set": [
                             "autoswitch.threshold": threshold,
                             "daemon.autoswitchIntervalSeconds": refreshIntervalSec,
-                            "notify.desktop": notify
+                            "notify.desktop": notify,
+                            "menubar.statusFile": statusFile
                         ]
                     ])
                 }
@@ -177,6 +223,7 @@ public final class ControlCenterViewModel: ObservableObject {
                     if let p = updated.payload {
                         self.payload = p
                     }
+                    self.reloadStatusBoard()
                     self.statusBanner = "İşlem tamamlandı ve denetim günlüğüne kaydedildi."
                 }
             } catch {
@@ -207,6 +254,7 @@ public final class ControlCenterViewModel: ObservableObject {
                     if let p = updated.payload {
                         self.payload = p
                     }
+                    self.reloadStatusBoard()
                     self.statusBanner = "Keyflip daemon başlatıldı."
                 }
             } catch {

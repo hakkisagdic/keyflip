@@ -13,7 +13,8 @@ struct KeyflipControlCenterApp: App {
                 remainingPct: viewModel.activeRemainingPct,
                 severity: viewModel.menuBarSeverity,
                 failoverEngaged: viewModel.isFailoverEngaged,
-                daemonRunning: viewModel.daemonRunning
+                daemonRunning: viewModel.daemonRunning,
+                ownerNeededCount: viewModel.ownerNeededBadgeCount
             )
         }
         .menuBarExtraStyle(.window)
@@ -26,32 +27,44 @@ public struct MenuBarGlanceLabel: View {
     public let severity: QuotaSeverity
     public let failoverEngaged: Bool
     public let daemonRunning: Bool
+    public let ownerNeededCount: Int
 
     public init(
         accountName: String,
         remainingPct: Int?,
         severity: QuotaSeverity,
         failoverEngaged: Bool,
-        daemonRunning: Bool
+        daemonRunning: Bool,
+        ownerNeededCount: Int = 0
     ) {
         self.accountName = accountName
         self.remainingPct = remainingPct
         self.severity = severity
         self.failoverEngaged = failoverEngaged
         self.daemonRunning = daemonRunning
+        self.ownerNeededCount = ownerNeededCount
     }
 
     public var body: some View {
         HStack(spacing: 4) {
             Image(systemName: daemonRunning ? severitySymbol : "bolt.slash")
-            if let rem = remainingPct {
-                Text("\(accountName) %\(rem)\(failoverEngaged ? " · YEDEK" : "")")
-                    .font(.system(size: 12, design: .monospaced))
-            } else {
-                Text("\(accountName)\(failoverEngaged ? " · YEDEK" : "")")
-                    .font(.system(size: 12, design: .monospaced))
-            }
+            Text(labelText)
+                .font(.system(size: 12, design: .monospaced))
         }
+    }
+
+    public var labelText: String {
+        var base = accountName
+        if let rem = remainingPct {
+            base += " %\(rem)"
+        }
+        if failoverEngaged {
+            base += " · YEDEK"
+        }
+        if ownerNeededCount > 0 {
+            base += " •\(ownerNeededCount)"
+        }
+        return base
     }
 
     private var severitySymbol: String {

@@ -644,6 +644,104 @@ export function collectServerStatus(ctx, options = {}) {
   };
 }
 
+
+const STATUS_ROW_RANK = Object.freeze({
+  bad: 0,
+  warn: 1,
+  ok: 2,
+  unknown: 3
+});
+
+export function expandHomePath(rawPath, homeDir = os.homedir()) {
+  if (typeof rawPath !== "string" || !rawPath.trim()) return "";
+  const trimmed = rawPath.trim();
+  if (trimmed === "~") return homeDir;
+  if (trimmed.startsWith("~/")) return path.join(homeDir, trimmed.slice(2));
+  return trimmed;
+}
+
+export function sortStatusBoardRows(rows) {
+  if (!Array.isArray(rows)) return [];
+  return rows
+    .map((r, idx) => {
+      const st = ["ok", "warn", "bad", "unknown"].includes(r?.status) ? r.status : "unknown";
+      return {
+        index: idx,
+        row: {
+          label: String(r?.label ?? ""),
+          value: String(r?.value ?? ""),
+          status: st,
+          detail: r?.detail != null ? String(r.detail) : null,
+          since: r?.since != null ? String(r.since) : null
+        }
+      };
+    })
+    .sort((a, b) => {
+      const rankDiff = (STATUS_ROW_RANK[a.row.status] ?? 3) - (STATUS_ROW_RANK[b.row.status] ?? 3);
+      return rankDiff !== 0 ? rankDiff : a.index - b.index;
+    })
+    .map((item) => item.row);
+}
+
+export function collectStatusBoard(ctx, options = {}) {
+  const homeDir = options.homeDir || ctx?.home || ctx?.homeDir || os.homedir();
+  const configuredPath =
+    options.statusFile !== undefined
+      ? options.statusFile
+      : process.env.KEYFLIP_STATUS_FILE || _config.get(ctx, "menubar.statusFile");
+  const resolvedPath = expandHomePath(configuredPath, homeDir);
+  if (!resolvedPath || !fs.existsSync(resolvedPath)) {
+    return null;
+  }
+  const raw = readJsonSafe(resolvedPath);
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return null;
+  }
+
+  const nowMs =
+    typeof options.nowMs === "function"
+      ? options.nowMs()
+      : typeof ctx?.nowMs === "function"
+        ? ctx.nowMs()
+        : Date.now();
+
+  let updatedMs = raw.updated ? Date.parse(String(raw.updated)) : Number.NaN;
+  if (!Number.isFinite(updatedMs)) {
+    try {
+      updatedMs = fs.statSync(resolvedPath).mtimeMs;
+    } catch {
+      updatedMs = Number.NaN;
+    }
+  }
+  const ageMinutes = Number.isFinite(updatedMs) ? Math.max(0, Math.round((nowMs - updatedMs) / 60000)) : null;
+  const stale = ageMinutes !== null ? ageMinutes > 20 : true;
+
+  const sections = Array.isArray(raw.sections)
+    ? raw.sections.map((sec, idx) => ({
+        id: String(sec?.id || `section-${idx}`),
+        title: String(sec?.title || sec?.id || `Bölüm ${idx + 1}`),
+        rows: sortStatusBoardRows(sec?.rows)
+      }))
+    : [];
+
+  const ownerNeeded = Array.isArray(raw.owner_needed)
+    ? raw.owner_needed
+        .filter((item) => item && (item.project || item.text))
+        .map((item) => ({
+          project: String(item.project ?? ""),
+          text: String(item.text ?? "")
+        }))
+    : [];
+
+  return {
+    updated: raw.updated ? String(raw.updated) : null,
+    stale,
+    ageMinutes,
+    sections,
+    owner_needed: ownerNeeded
+  };
+}
+
 export function collectPreferences(ctx) {
   const homeDir = ctx?.home || ctx?.homeDir || os.homedir();
   const daemonPlist = path.join(homeDir, "Library", "LaunchAgents", "com.keyflip.daemon.plist");
@@ -651,6 +749,7 @@ export function collectPreferences(ctx) {
     thresholdPct: _config.get(ctx, "autoswitch.threshold") ?? 95,
     refreshIntervalSec: _config.get(ctx, "daemon.autoswitchIntervalSeconds") ?? 120,
     notify: _config.get(ctx, "notify.desktop") !== false,
-    launchAtLogin: fs.existsSync(daemonPlist)
+    launchAtLogin: fs.existsSync(daemonPlist),
+    statusFile: _config.get(ctx, "menubar.statusFile") || "~/.polyctl/admin/status.json"
   };
 }

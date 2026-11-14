@@ -4,6 +4,7 @@ import SwiftUI
 public struct ControlCenterView: View {
     @ObservedObject var viewModel: ControlCenterViewModel
     @State private var showPreferences: Bool = false
+    @State private var collapsedSectionIds: Set<String> = []
 
     public init(viewModel: ControlCenterViewModel) {
         self.viewModel = viewModel
@@ -34,6 +35,9 @@ public struct ControlCenterView: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
+                    if let board = viewModel.statusBoard {
+                        statusBoardSection(board)
+                    }
                     accountsSection
                     failoverSection
                     otherQuotasSection
@@ -49,7 +53,7 @@ public struct ControlCenterView: View {
             Divider()
             footerBar
         }
-        .frame(width: 400, height: 580)
+        .frame(width: 400, height: 600)
     }
 
     // MARK: - Header & Banners
@@ -69,6 +73,16 @@ public struct ControlCenterView: View {
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
                     .background(Color.orange.opacity(0.2))
+                    .foregroundColor(.orange)
+                    .cornerRadius(4)
+            }
+
+            if viewModel.ownerNeededBadgeCount > 0 {
+                Text("BEKLEYEN: \(viewModel.ownerNeededBadgeCount)")
+                    .font(.system(size: 10, weight: .semibold))
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Color.orange.opacity(0.22))
                     .foregroundColor(.orange)
                     .cornerRadius(4)
             }
@@ -143,6 +157,171 @@ public struct ControlCenterView: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
+    }
+
+    // MARK: - 0. Durum Panosu (External Status Board - hidden if file missing)
+
+    private func statusBoardSection(_ board: StatusBoardPayload) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Text("DURUM PANOSU")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundColor(.secondary)
+
+                if viewModel.statusBoardStale {
+                    HStack(spacing: 3) {
+                        Image(systemName: "clock.badge.exclamationmark")
+                            .font(.system(size: 9))
+                        Text("veri eski")
+                            .font(.system(size: 9, weight: .semibold))
+                    }
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 1)
+                    .background(Color.orange.opacity(0.2))
+                    .foregroundColor(.orange)
+                    .cornerRadius(3)
+                }
+
+                Spacer()
+
+                if let updated = board.updated, !updated.isEmpty {
+                    Text(shortIsoTime(updated))
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundColor(.secondary)
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                if !board.ownerNeededItems.isEmpty {
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(spacing: 5) {
+                            Image(systemName: "bell.badge.fill")
+                                .foregroundColor(.orange)
+                                .font(.system(size: 10))
+                            Text("Sahipten Bekleyen (\(board.ownerNeededItems.count))")
+                                .font(.system(size: 11, weight: .semibold))
+                        }
+                        ForEach(board.ownerNeededItems) { item in
+                            HStack(alignment: .top, spacing: 6) {
+                                Text(item.project)
+                                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                                    .foregroundColor(.orange)
+                                Text(item.text)
+                                    .font(.system(size: 11))
+                                    .foregroundColor(.primary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
+                    }
+                    .padding(8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.orange.opacity(0.1))
+                    .cornerRadius(5)
+                }
+
+                ForEach(board.sections) { sec in
+                    let isExpanded = !collapsedSectionIds.contains(sec.id)
+                    let sorted = sec.sortedRows
+                    VStack(alignment: .leading, spacing: 4) {
+                        Button(action: {
+                            if isExpanded {
+                                collapsedSectionIds.insert(sec.id)
+                            } else {
+                                collapsedSectionIds.remove(sec.id)
+                            }
+                        }) {
+                            HStack(spacing: 6) {
+                                Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                                    .font(.system(size: 9, weight: .semibold))
+                                    .foregroundColor(.secondary)
+                                    .frame(width: 10)
+                                Text(sec.title)
+                                    .font(.system(size: 11, weight: .semibold))
+                                    .foregroundColor(.primary)
+                                Spacer()
+                                if sec.badCount > 0 {
+                                    Text("\(sec.badCount) kritik")
+                                        .font(.system(size: 9, weight: .semibold))
+                                        .padding(.horizontal, 4)
+                                        .padding(.vertical, 1)
+                                        .background(Color.red.opacity(0.18))
+                                        .foregroundColor(.red)
+                                        .cornerRadius(3)
+                                }
+                                if sec.warnCount > 0 {
+                                    Text("\(sec.warnCount) uyarı")
+                                        .font(.system(size: 9, weight: .semibold))
+                                        .padding(.horizontal, 4)
+                                        .padding(.vertical, 1)
+                                        .background(Color.orange.opacity(0.18))
+                                        .foregroundColor(.orange)
+                                        .cornerRadius(3)
+                                }
+                                Text("\(sorted.count)")
+                                    .font(.system(size: 10, design: .monospaced))
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                        .buttonStyle(.plain)
+
+                        if isExpanded {
+                            VStack(alignment: .leading, spacing: 4) {
+                                ForEach(sorted) { row in
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        HStack(alignment: .firstTextBaseline, spacing: 6) {
+                                            Circle()
+                                                .fill(boardRowColor(row.status))
+                                                .frame(width: 6, height: 6)
+                                            Text(row.label)
+                                                .font(.system(size: 11, weight: (row.status == "bad" || row.status == "warn") ? .medium : .regular))
+                                            Spacer()
+                                            Text(row.value)
+                                                .font(.system(size: 11, design: .monospaced))
+                                                .foregroundColor(row.status == "bad" ? .red : (row.status == "warn" ? .orange : .primary))
+                                        }
+                                        if (row.detail != nil && !row.detail!.isEmpty) || (row.since != nil && !row.since!.isEmpty) {
+                                            HStack(spacing: 6) {
+                                                if let detail = row.detail, !detail.isEmpty {
+                                                    Text(detail)
+                                                        .font(.system(size: 10))
+                                                        .foregroundColor(.secondary)
+                                                        .lineLimit(1)
+                                                }
+                                                if let since = row.since, !since.isEmpty {
+                                                    Spacer()
+                                                    Text(shortIsoTime(since))
+                                                        .font(.system(size: 9, design: .monospaced))
+                                                        .foregroundColor(.secondary)
+                                                }
+                                            }
+                                            .padding(.leading, 12)
+                                        }
+                                    }
+                                }
+                            }
+                            .padding(.leading, 10)
+                            .padding(.top, 2)
+                        }
+                    }
+                    if sec.id != board.sections.last?.id {
+                        Divider()
+                    }
+                }
+            }
+            .padding(9)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color(nsColor: .controlBackgroundColor))
+            .cornerRadius(6)
+        }
+    }
+
+    private func boardRowColor(_ status: String) -> Color {
+        switch status.lowercased() {
+        case "bad": return .red
+        case "warn": return .yellow
+        case "ok": return .green
+        default: return .secondary
+        }
     }
 
     // MARK: - 1. Hesaplar (Accounts)
@@ -443,6 +622,14 @@ public struct ControlCenterView: View {
                 Toggle("Masaüstü bildirimleri", isOn: $viewModel.prefNotify)
                     .font(.system(size: 11))
 
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Durum panosu dosyası:")
+                        .font(.system(size: 11))
+                    TextField(StatusBoardPayload.defaultRelativePath, text: $viewModel.prefStatusFile)
+                        .textFieldStyle(.roundedBorder)
+                        .font(.system(size: 11, design: .monospaced))
+                }
+
                 HStack {
                     Text("Oturum açıldığında başlat:")
                         .font(.system(size: 11))
@@ -458,7 +645,7 @@ public struct ControlCenterView: View {
                         viewModel.requestSavePreferences()
                     }
                     .controlSize(.small)
-                    .disabled(!viewModel.daemonRunning || viewModel.isLoading)
+                    .disabled(viewModel.isLoading)
                 }
             }
         }

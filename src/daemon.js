@@ -783,6 +783,7 @@ async function buildStatus(ctx, scheduler, opts) {
       'daemon.refreshIntervalSeconds': _config.get(ctx, 'daemon.refreshIntervalSeconds'),
       'daemon.surfaceRefreshIntervalSeconds': _config.get(ctx, 'daemon.surfaceRefreshIntervalSeconds'),
       'daemon.convIndexIntervalSeconds': _config.get(ctx, 'daemon.convIndexIntervalSeconds'),
+      'menubar.statusFile': _config.get(ctx, 'menubar.statusFile'),
     },
   };
 
@@ -799,6 +800,7 @@ async function buildControlCenter(ctx, scheduler, opts) {
   base.services = _controlcenter.collectServicesStatus(ctx, ccOpts);
   base.fleet = _controlcenter.collectFleetStatus(ctx, ccOpts);
   base.server = _controlcenter.collectServerStatus(ctx, ccOpts);
+  base.statusBoard = _controlcenter.collectStatusBoard(ctx, ccOpts);
   base.preferences = _controlcenter.collectPreferences(ctx);
   return redactSecrets(base);
 }

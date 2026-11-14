@@ -1,0 +1,62 @@
+{
+  "updated": "2026-11-14T18:20:00Z",
+  "sections": [
+    {
+      "id": "quotas",
+      "title": "Kotalar",
+      "rows": [
+        {
+          "label": "Birincil Hesap",
+          "value": "%28",
+          "status": "ok",
+          "detail": "5 saatlik pencere",
+          "since": "2026-11-14T16:00:00Z"
+        },
+        {
+          "label": "Yedek Hesap",
+          "value": "%88",
+          "status": "warn",
+          "detail": "Eşiğe yakın",
+          "since": "2026-11-14T17:15:00Z"
+        },
+        {
+          "label": "Test Hesabı",
+          "value": "%100",
+          "status": "bad",
+          "detail": "Kota doldu",
+          "since": "2026-11-14T17:45:00Z"
+        }
+      ]
+    },
+    {
+      "id": "services",
+      "title": "Servisler",
+      "rows": [
+        {
+          "label": "Ağ Geçidi",
+          "value": "aktif",
+          "status": "ok",
+          "detail": "127.0.0.1:8787",
+          "since": "2026-11-14T08:00:00Z"
+        },
+        {
+          "label": "Arka Plan İndeksleyici",
+          "value": "bilinmiyor",
+          "status": "unknown",
+          "detail": "Son yanıt yok",
+          "since": "2026-11-14T14:00:00Z"
+        }
+      ]
+    }
+  ],
+  "owner_needed": [
+    {
+      "project": "core-app",
+      "text": "Üretim dağıtımı için onay bekleniyor"
+    },
+    {
+      "project": "gateway",
+      "text": "Yeni API anahtarı tanımlanmalı"
+    }
+  ]
+}
