@@ -144,6 +144,10 @@ public enum ModelsTestSuite {
         let snoozeConfirm = PendingConfirmationAction.toggleFocusSnooze(enable: true, snoozeUntil: "2026-11-14T19:00:00Z")
         precondition(snoozeConfirm.title.contains("Odak Modu"), "snooze confirmation must mention Odak Modu")
 
+        let jobConfirm = PendingConfirmationAction.triggerDaemonJob(job: "refresh", title: "OAuth Ön-Isıtma")
+        precondition(jobConfirm.id == "job-refresh", "jobConfirm id must be job-refresh")
+        precondition(jobConfirm.message.contains("refresh"), "jobConfirm message must mention refresh")
+
         let client = DaemonClient(customSocketPath: "/tmp/nonexistent-keyflip-test.sock")
         precondition(client.resolveSocketPath() == "/tmp/nonexistent-keyflip-test.sock", "custom socket path must resolve")
 

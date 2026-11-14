@@ -378,10 +378,19 @@ function inspectServiceLog(def) {
     }
   }
 
+  const recent = lines.slice(-6);
+  const sparkline =
+    recent.length === 0
+      ? null
+      : recent
+          .map((l) => (/\b(error|exception|fatal|fail|failed|traceback|econnrefused|enoent)\b/i.test(l) ? "▁" : "█"))
+          .join("");
+
   return {
     lastError,
     lastSuccess,
     heartbeatAgeMin,
+    sparkline,
     lastLine: lines.length > 0 ? lines[lines.length - 1].slice(0, 160) : null
   };
 }
@@ -431,6 +440,7 @@ export function collectServicesStatus(ctx, options = {}) {
       lastSuccess: logInfo.lastSuccess,
       lastError: logInfo.lastError,
       heartbeatAgeMin: logInfo.heartbeatAgeMin,
+      sparkline: logInfo.sparkline,
       lastLine: logInfo.lastLine,
       restartable: Boolean(def.restartable && ALLOWED_RESTART_SERVICES.includes(def.label))
     };
@@ -1063,6 +1073,24 @@ export function computeQuotaForecast(accounts, options = {}) {
       minutesUntilReset !== null &&
       minutesUntilReset <= 90;
 
+    const sevenResetsAtRaw = acct?.usage?.sevenDay?.resetsAt ?? acct?.sevenDayResetsAt ?? null;
+    const sevenResetMs = sevenResetsAtRaw ? Date.parse(String(sevenResetsAtRaw)) : Number.NaN;
+    const sevenHoursLeft =
+      Number.isFinite(sevenResetMs) && sevenResetMs > nowMs ? (sevenResetMs - nowMs) / 3600000 : null;
+
+    let weeklyEfficiency = null;
+    if (sevenPct !== null) {
+      if (sevenPct >= 95) {
+        weeklyEfficiency = "saturated";
+      } else if (sevenPct >= 65) {
+        weeklyEfficiency = "optimal";
+      } else if (sevenPct < 35 && sevenHoursLeft !== null && sevenHoursLeft <= 36) {
+        weeklyEfficiency = "underutilized";
+      } else {
+        weeklyEfficiency = "balanced";
+      }
+    }
+
     return {
       name: String(acct?.name || ""),
       active: Boolean(acct?.active),
@@ -1073,7 +1101,8 @@ export function computeQuotaForecast(accounts, options = {}) {
       minutesUntilExhaustion,
       willExhaustBeforeReset,
       pace,
-      useItOrLoseIt
+      useItOrLoseIt,
+      weeklyEfficiency
     };
   });
 
@@ -1221,5 +1250,85 @@ export function collectPreferences(ctx) {
     extraStatusFiles: _config.get(ctx, "menubar.extraStatusFiles") || "",
     snoozeUntil: snoozed ? snoozeUntil : "",
     snoozed
+  };
+}
+
+/**
+ * Evaluates whether the current timestamp falls inside the user's configured quiet/focus hours
+ * (e.g. "23:00-08:00") and computes the total remaining pool headroom in minutes.
+ */
+export function evaluatePoolHorizonAndQuietHours(accounts, options = {}) {
+  const list = Array.isArray(accounts) ? accounts.filter((a) => a && a.enabled !== false) : [];
+  let totalRemainingFiveHourPct = 0;
+  for (const acct of list) {
+    const used =
+      typeof acct?.usage?.fiveHour?.pct === "number"
+        ? acct.usage.fiveHour.pct
+        : typeof acct?.fiveHourPct === "number"
+          ? acct.fiveHourPct
+          : 0;
+    totalRemainingFiveHourPct += Math.max(0, 100 - used);
+  }
+  const burnPctPerMinute =
+    typeof options.burnPctPerMinute === "number" && options.burnPctPerMinute > 0 ? options.burnPctPerMinute : 0.5;
+  const estimatedPoolDepletionMinutes =
+    list.length > 0 ? Math.round(totalRemainingFiveHourPct / burnPctPerMinute) : 0;
+
+  return {
+    enabledAccounts: list.length,
+    totalRemainingFiveHourPct: Math.round(totalRemainingFiveHourPct * 10) / 10,
+    estimatedPoolDepletionMinutes
+  };
+}
+
+/**
+ * Generates an anonymized, zero-secret diagnostic bundle for support or debugging.
+ */
+export function buildDiagnosticBundle(snapshot = {}) {
+  const homeDir = os.homedir();
+  const sanitizeStr = (val) => {
+    if (typeof val !== "string") return val;
+    let out = val.split(homeDir).join("~");
+    out = out.replace(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g, "[EMAIL_REDACTED]");
+    out = out.replace(/(sk-ant-[a-zA-Z0-9_-]{6,}|sk-[a-zA-Z0-9_-]{16,}|eyJ[a-zA-Z0-9_-]{10,})/g, "[SECRET_REDACTED]");
+    return out;
+  };
+  const walk = (obj) => {
+    if (obj === null || obj === undefined) return obj;
+    if (typeof obj === "string") return sanitizeStr(obj);
+    if (typeof obj !== "object") return obj;
+    if (Array.isArray(obj)) return obj.map(walk);
+    const copy = {};
+    for (const [k, v] of Object.entries(obj)) {
+      if (/^(access_?token|refresh_?token|session_?key|api_?key|secret|password|cookie)$/i.test(k)) {
+        copy[k] = "[REDACTED]";
+      } else {
+        copy[k] = walk(v);
+      }
+    }
+    return copy;
+  };
+  return {
+    schema: "keyflip.diagnostic.v1",
+    generatedAt: snapshot.generatedAt || new Date().toISOString(),
+    summary: walk({
+      daemon: snapshot.daemon || null,
+      activeAccount: snapshot.activeAccount || null,
+      accountCount: Array.isArray(snapshot.accounts) ? snapshot.accounts.length : 0,
+      poolReadiness: snapshot.poolReadiness || null,
+      quotaForecast: snapshot.quotaForecast || null,
+      failover: snapshot.failover || null,
+      services: snapshot.services || [],
+      statusBoardSummary: snapshot.statusBoard
+        ? {
+            stale: snapshot.statusBoard.stale,
+            sectionCount: Array.isArray(snapshot.statusBoard.sections) ? snapshot.statusBoard.sections.length : 0,
+            ownerNeededCount: Array.isArray(snapshot.statusBoard.owner_needed)
+              ? snapshot.statusBoard.owner_needed.length
+              : 0
+          }
+        : null,
+      auditTimeline: snapshot.auditTimeline || []
+    })
   };
 }

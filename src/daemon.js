@@ -807,8 +807,10 @@ async function buildControlCenter(ctx, scheduler, opts) {
   base.poolReadiness = _controlcenter.evaluatePoolReadiness(base.accounts);
   base.quotaForecast = _controlcenter.computeQuotaForecast(base.accounts, { nowMs: opts.nowMs || ctx.nowMs });
   base.auditTimeline = _controlcenter.collectAuditTimeline(ctx, ccOpts);
+  base.poolHorizon = _controlcenter.evaluatePoolHorizonAndQuietHours(base.accounts);
   base.preferences = _controlcenter.collectPreferences(ctx);
   base.markdownReport = _controlcenter.buildControlCenterMarkdown(base);
+  base.diagnosticBundle = _controlcenter.buildDiagnosticBundle(base);
   return redactSecrets(base);
 }
 

@@ -14,7 +14,8 @@ struct KeyflipControlCenterApp: App {
                 severity: viewModel.menuBarSeverity,
                 failoverEngaged: viewModel.isFailoverEngaged,
                 daemonRunning: viewModel.daemonRunning,
-                ownerNeededCount: viewModel.ownerNeededBadgeCount
+                ownerNeededCount: viewModel.ownerNeededBadgeCount,
+                compactMode: viewModel.compactMenuBarLabel
             )
         }
         .menuBarExtraStyle(.window)
@@ -28,6 +29,7 @@ public struct MenuBarGlanceLabel: View {
     public let failoverEngaged: Bool
     public let daemonRunning: Bool
     public let ownerNeededCount: Int
+    public let compactMode: Bool
 
     public init(
         accountName: String,
@@ -35,7 +37,8 @@ public struct MenuBarGlanceLabel: View {
         severity: QuotaSeverity,
         failoverEngaged: Bool,
         daemonRunning: Bool,
-        ownerNeededCount: Int = 0
+        ownerNeededCount: Int = 0,
+        compactMode: Bool = false
     ) {
         self.accountName = accountName
         self.remainingPct = remainingPct
@@ -43,6 +46,7 @@ public struct MenuBarGlanceLabel: View {
         self.failoverEngaged = failoverEngaged
         self.daemonRunning = daemonRunning
         self.ownerNeededCount = ownerNeededCount
+        self.compactMode = compactMode
     }
 
     public var body: some View {
@@ -54,6 +58,13 @@ public struct MenuBarGlanceLabel: View {
     }
 
     public var labelText: String {
+        if compactMode {
+            var parts: [String] = []
+            if let rem = remainingPct { parts.append("%\(rem)") }
+            if failoverEngaged { parts.append("Y") }
+            if ownerNeededCount > 0 { parts.append("•\(ownerNeededCount)") }
+            return parts.isEmpty ? String(accountName.prefix(2)) : parts.joined(separator: " ")
+        }
         var base = accountName
         if let rem = remainingPct {
             base += " %\(rem)"

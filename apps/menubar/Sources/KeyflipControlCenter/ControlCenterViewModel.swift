@@ -20,6 +20,9 @@ public final class ControlCenterViewModel: ObservableObject {
     @Published public var pinnedSectionIds: Set<String> = Set(
         UserDefaults.standard.stringArray(forKey: "menubar.pinnedSections") ?? []
     )
+    @Published public var compactMenuBarLabel: Bool = UserDefaults.standard.bool(forKey: "menubar.compactLabel") {
+        didSet { UserDefaults.standard.set(compactMenuBarLabel, forKey: "menubar.compactLabel") }
+    }
 
     // Editable preferences
     @Published public var prefThresholdPct: Double = 95
@@ -228,6 +231,10 @@ public final class ControlCenterViewModel: ObservableObject {
         pendingConfirmation = .restartService(label: label, title: title)
     }
 
+    public func requestTriggerDaemonJob(job: String, title: String) {
+        pendingConfirmation = .triggerDaemonJob(job: job, title: title)
+    }
+
     public func requestToggleFocusSnooze() {
         let enable = !isFocusSnoozed
         let fmt = ISO8601DateFormatter()
@@ -284,6 +291,12 @@ public final class ControlCenterViewModel: ObservableObject {
                     try clientRef.sendConfirmedCommand([
                         "cmd": "service-restart",
                         "label": label,
+                        "confirm": true
+                    ])
+                case .triggerDaemonJob(let job, _):
+                    try clientRef.sendConfirmedCommand([
+                        "cmd": "run-now",
+                        "job": job,
                         "confirm": true
                     ])
                 case .toggleFocusSnooze(_, let snoozeUntil):

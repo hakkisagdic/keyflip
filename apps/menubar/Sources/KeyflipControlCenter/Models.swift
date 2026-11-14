@@ -14,6 +14,7 @@ public struct ControlCenterPayload: Codable {
     public var server: ServerSummary?
     public var statusBoard: StatusBoardPayload?
     public var poolReadiness: PoolReadinessSummary?
+    public var poolHorizon: PoolHorizonSummary?
     public var quotaForecast: QuotaForecastSummary?
     public var auditTimeline: [AuditEventItem]?
     public var markdownReport: String?
@@ -34,6 +35,7 @@ public struct ControlCenterPayload: Codable {
         server: ServerSummary? = nil,
         statusBoard: StatusBoardPayload? = nil,
         poolReadiness: PoolReadinessSummary? = nil,
+        poolHorizon: PoolHorizonSummary? = nil,
         quotaForecast: QuotaForecastSummary? = nil,
         auditTimeline: [AuditEventItem]? = [],
         markdownReport: String? = nil,
@@ -53,11 +55,28 @@ public struct ControlCenterPayload: Codable {
         self.server = server
         self.statusBoard = statusBoard
         self.poolReadiness = poolReadiness
+        self.poolHorizon = poolHorizon
         self.quotaForecast = quotaForecast
         self.auditTimeline = auditTimeline
         self.markdownReport = markdownReport
         self.preferences = preferences
         self.warnings = warnings
+    }
+}
+
+public struct PoolHorizonSummary: Codable {
+    public var enabledAccounts: Int
+    public var totalRemainingFiveHourPct: Double
+    public var estimatedPoolDepletionMinutes: Int
+
+    public init(
+        enabledAccounts: Int = 0,
+        totalRemainingFiveHourPct: Double = 0,
+        estimatedPoolDepletionMinutes: Int = 0
+    ) {
+        self.enabledAccounts = enabledAccounts
+        self.totalRemainingFiveHourPct = totalRemainingFiveHourPct
+        self.estimatedPoolDepletionMinutes = estimatedPoolDepletionMinutes
     }
 }
 
@@ -161,6 +180,7 @@ public struct AccountQuotaForecast: Codable, Identifiable {
     public var willExhaustBeforeReset: Bool
     public var pace: String
     public var useItOrLoseIt: Bool
+    public var weeklyEfficiency: String?
 }
 
 public struct DaemonMeta: Codable {
@@ -318,6 +338,7 @@ public struct ServiceItem: Codable, Identifiable {
     public var lastSuccess: String?
     public var lastError: String?
     public var heartbeatAgeMin: Int?
+    public var sparkline: String?
     public var lastLine: String?
     public var restartable: Bool
 }
@@ -698,6 +719,7 @@ public enum PendingConfirmationAction: Identifiable {
     case toggleFailover(enable: Bool)
     case restartService(label: String, title: String)
     case toggleFocusSnooze(enable: Bool, snoozeUntil: String)
+    case triggerDaemonJob(job: String, title: String)
     case savePreferences(threshold: Int, refreshIntervalSec: Int, notify: Bool, statusFile: String)
 
     public var id: String {
@@ -706,6 +728,7 @@ public enum PendingConfirmationAction: Identifiable {
         case .toggleFailover(let enable): return "failover-\(enable)"
         case .restartService(let label, _): return "restart-\(label)"
         case .toggleFocusSnooze(let enable, _): return "snooze-\(enable)"
+        case .triggerDaemonJob(let job, _): return "job-\(job)"
         case .savePreferences: return "save-prefs"
         }
     }
@@ -720,6 +743,8 @@ public enum PendingConfirmationAction: Identifiable {
             return "'\(title)' servisi yeniden başlatılsın mı?"
         case .toggleFocusSnooze(let enable, _):
             return enable ? "Odak Modu (60 dk masaüstü restart erteleme) açılsın mı?" : "Odak Modu (erteleme) kapatılsın mı?"
+        case .triggerDaemonJob(_, let title):
+            return "'\(title)' görevi şimdi çalıştırılsın mı?"
         case .savePreferences:
             return "Tercih değişiklikleri kaydedilsin mi?"
         }
@@ -739,6 +764,8 @@ public enum PendingConfirmationAction: Identifiable {
             return enable
                 ? "Otomatik Claude Desktop yeniden başlatmaları '\(snoozeUntil)' zamanına kadar ertelenecek ve audit log'a kaydedilecek."
                 : "Masaüstü yeniden başlatma ertelemesi kaldırılacak ve audit log'a kaydedilecek."
+        case .triggerDaemonJob(let job, _):
+            return "Daemon üzerinde '\(job)' görevi anında tetiklenecek ve denetim günlüğüne kaydedilecek."
         case .savePreferences(let threshold, let refreshIntervalSec, let notify, let statusFile):
             return "Otomatik geçiş eşiği %\(threshold), kontrol aralığı \(refreshIntervalSec) sn, bildirimler \(notify ? "açık" : "kapalı"), durum panosu yolu '\(statusFile)' olarak güncellenecek."
         }

@@ -15,7 +15,9 @@ import {
   collectAuditTimeline,
   evaluateFailoverSpendHealth,
   evaluatePoolReadiness,
-  detectStatusBoardTransitions
+  detectStatusBoardTransitions,
+  evaluatePoolHorizonAndQuietHours,
+  buildDiagnosticBundle
 } from "../src/controlcenter.js";
 import * as daemon from "../src/daemon.js";
 
@@ -453,4 +455,37 @@ test("evaluateFailoverSpendHealth, evaluatePoolReadiness, and detectStatusBoardT
   assert.equal(diff.newBadRows.length, 1);
   assert.equal(diff.ownerNeededDelta, 1);
   assert.match(diff.summary, /Yeni kritik satır: API/);
+});
+
+test("evaluatePoolHorizonAndQuietHours, weeklyEfficiency, service sparkline, and buildDiagnosticBundle work and scrub PII/secrets", () => {
+  const forecast = computeQuotaForecast(
+    [
+      {
+        name: "acct-under",
+        active: true,
+        usage: {
+          fiveHour: { pct: 20, resetsAt: "2026-11-14T20:00:00Z" },
+          sevenDay: { pct: 15, resetsAt: "2026-11-15T10:00:00Z" } // <35% and <=36h left -> underutilized
+        }
+      }
+    ],
+    { nowMs: Date.parse("2026-11-14T18:00:00Z") }
+  );
+  assert.equal(forecast.accounts[0].weeklyEfficiency, "underutilized");
+
+  const horizon = evaluatePoolHorizonAndQuietHours([
+    { name: "a1", enabled: true, usage: { fiveHour: { pct: 40 } } },
+    { name: "a2", enabled: true, usage: { fiveHour: { pct: 60 } } }
+  ]);
+  assert.equal(horizon.enabledAccounts, 2);
+  assert.equal(horizon.totalRemainingFiveHourPct, 100);
+  assert.equal(horizon.estimatedPoolDepletionMinutes, 200);
+
+  const diag = buildDiagnosticBundle({
+    generatedAt: "2026-11-14T18:00:00Z",
+    activeAccount: { name: "gmail", email: "user@example.com" },
+    accounts: [{ name: "gmail", accessToken: "sk-ant-secret123456" }]
+  });
+  assert.equal(diag.schema, "keyflip.diagnostic.v1");
+  assert.equal(diag.summary.activeAccount.email, "[EMAIL_REDACTED]");
 });

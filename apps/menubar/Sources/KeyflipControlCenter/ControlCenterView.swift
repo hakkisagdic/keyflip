@@ -432,6 +432,11 @@ public struct ControlCenterView: View {
                                 .font(.system(size: 10, weight: .medium))
                                 .foregroundColor(.secondary)
                             Spacer()
+                            Button("Ön-Isıt") {
+                                viewModel.requestTriggerDaemonJob(job: "refresh", title: "OAuth Ön-Isıtma (refresh)")
+                            }
+                            .controlSize(.mini)
+                            .disabled(!viewModel.daemonRunning || viewModel.isLoading)
                         }
                     }
 
@@ -653,6 +658,11 @@ public struct ControlCenterView: View {
                                 Text("(\(serviceStateLabel(svc.state)))")
                                     .font(.system(size: 10))
                                     .foregroundColor(.secondary)
+                                if let spark = svc.sparkline, !spark.isEmpty {
+                                    Text(spark)
+                                        .font(.system(size: 9, design: .monospaced))
+                                        .foregroundColor(.secondary)
+                                }
                                 Spacer()
                                 if svc.restartable {
                                     Button("Yeniden başlat") {
@@ -808,6 +818,8 @@ public struct ControlCenterView: View {
                     .frame(width: 100)
                 }
                 Toggle("Masaüstü bildirimleri", isOn: $viewModel.prefNotify)
+                    .font(.system(size: 11))
+                Toggle("Dar menü çubuğu etiketi (yalnızca % + rozet)", isOn: $viewModel.compactMenuBarLabel)
                     .font(.system(size: 11))
 
                 VStack(alignment: .leading, spacing: 3) {
