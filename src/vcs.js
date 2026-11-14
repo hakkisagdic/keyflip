@@ -26,6 +26,9 @@ const GITIGNORE = ['# keyflip: NEVER version secrets — they live in the OS cre
     // per-machine runtime state: a pending Desktop restart (P5), an engaged API failover (P4)
     '.desktop-restart.json',
     '.failover-state.json',
+    '.failover-txn.json',
+    '.failover-env.json',
+    '.keyflip-gateway.json',
     '.live-since.json',
     // #36/#40: a schedule receipt describes the launchd/cron job on THIS machine. Versioned, it
     // follows the repo to a second machine (`migrate`) or comes back from `restore`, and doctor —

@@ -12,17 +12,19 @@ function tmpdir() {
 function makeCtx(overrides) {
   overrides = overrides || {};
   const home = overrides.home || tmpdir();
-  const configDir = path.join(home, '.config', 'keyflip');
+  const configDir = overrides.configDir || path.join(home, '.config', 'keyflip');
   const claudeDir = overrides.claudeDir || path.join(home, '.claude');
   const claudeConfigPath = path.join(home, '.claude.json');
+  const claudeSettingsPath = overrides.claudeSettingsPath || path.join(claudeDir, 'settings.json');
   const credsFilePath = path.join(claudeDir, '.credentials.json');
   fs.mkdirSync(configDir, { recursive: true });
-  return {
+  const ctx = {
     home: home,
     platform: overrides.platform || 'linux',
     configDir: configDir,
     claudeDir: claudeDir,
     claudeConfigPath: claudeConfigPath,
+    claudeSettingsPath: claudeSettingsPath,
     credsFilePath: credsFilePath,
     account: 'tester',
     store: overrides.store || new MemoryStore(),
@@ -32,6 +34,16 @@ function makeCtx(overrides) {
         return '2026-01-01T00:00:00.000Z';
       },
   };
+  if (overrides.appDataDir) {
+    ctx.appDataDir =
+      overrides.appDataDir === true
+        ? path.join(home, 'Library', 'Application Support', 'Claude')
+        : overrides.appDataDir;
+  }
+  ['fetch', 'spawn', 'run', 'listProcesses', 'lsof', 'notify', 'nowMs', 'keysmithConfig'].forEach(function (k) {
+    if (overrides[k] !== undefined) ctx[k] = overrides[k];
+  });
+  return ctx;
 }
 
 function writeClaude(ctx, obj) {

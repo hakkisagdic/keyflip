@@ -116,6 +116,49 @@ SCHEMA['failover.lostGraceSeconds'] = {
   max: 1800,
   help: 'How long (in seconds) to hold an engaged failover when the gateway stops answering before releasing it.',
 };
+SCHEMA['failover.cliTarget'] = {
+  type: 'enum',
+  values: ['launcher', 'settings'],
+  default: 'launcher',
+  help: 'Which CLI surface engage uses.',
+};
+SCHEMA['failover.modelIds'] = {
+  type: 'string',
+  default: 'claude-opus-5-5,claude-sonnet-5-5,claude-haiku-5-5',
+  help: 'Comma-separated real model IDs the gateway must serve for cli-settings.',
+};
+SCHEMA['failover.probeModels'] = {
+  type: 'string',
+  default: 'sonnet',
+  help: 'Comma-separated model aliases the probe passes with --model in addition to the default-model probe.',
+};
+SCHEMA['failover.probeTimeoutSeconds'] = {
+  type: 'int',
+  default: 90,
+  min: 10,
+  max: 600,
+  help: 'Kill the failover probe child after this many seconds; timeout counts as failure.',
+};
+SCHEMA['failover.probeEnabled'] = {
+  type: 'bool',
+  default: true,
+  help: 'Require a passing CLI inference probe before keeping a failover surface.',
+};
+SCHEMA['failover.mcpConfig'] = {
+  type: 'string',
+  default: '',
+  help: 'When set, failover launcher/probe adds --strict-mcp-config --mcp-config <path> (avoids >128 tools rejection).',
+};
+SCHEMA['failover.desktopLeakGuard'] = {
+  type: 'bool',
+  default: true,
+  help: 'While cli-settings is engaged, roll back to cli-launcher if a Claude Desktop session picks up gateway env.',
+};
+SCHEMA['failover.keysmithUsageLog'] = {
+  type: 'string',
+  default: '~/.local/share/keysmith/usage.jsonl',
+  help: 'Read-only path to keysmith usage.jsonl for per-leg health checks.',
+};
 SCHEMA['autoswitch.group'] = {
   type: 'string',
   default: '',

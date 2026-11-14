@@ -42,14 +42,6 @@ function app(opts) {
           log.push('apply:account:' + target + ':' + (running ? 'RUNNING' : 'closed'));
           return opts.applyFails ? { ok: false, reason: 'no saved desktop login' } : { ok: true };
         },
-        'gateway-on': (ctx, target) => {
-          log.push('apply:gateway-on:' + target + ':' + (running ? 'RUNNING' : 'closed'));
-          return { ok: true };
-        },
-        'gateway-off': () => {
-          log.push('apply:gateway-off:' + (running ? 'RUNNING' : 'closed'));
-          return { ok: true };
-        },
       },
       waitMs: 30,
       pollMs: 5,
@@ -103,33 +95,24 @@ test('IDLE: notify, quit, apply while CLOSED, reopen, clear', async function () 
   assert.strictEqual(dr.readPending(ctx), null);
 });
 
-test('one restart carries the gateway AND the account change, gateway first', async function () {
-  const ctx = makeCtx();
-  const a = app();
-  dr.request(ctx, { kind: 'account', target: 'yahoo' });
-  dr.request(ctx, { kind: 'gateway-off' });
-  const r = await dr.processPending(ctx, a.deps);
-  assert.strictEqual(r.state, 'restarted');
-  assert.deepStrictEqual(
-    a.log.filter((l) => l.indexOf('apply:') === 0),
-    ['apply:gateway-off:closed', 'apply:account:yahoo:closed'],
-  );
-});
-
-test('newest wins per group; gateway-on then gateway-off before a restart cancel out', function () {
+test('newest wins for account; gateway-on and gateway-off kinds are rejected', function () {
   const ctx = makeCtx();
   dr.request(ctx, { kind: 'account', target: 'a' });
   dr.request(ctx, { kind: 'account', target: 'b' });
   assert.deepStrictEqual(dr.readPending(ctx).actions, [{ kind: 'account', target: 'b' }]);
-  dr.request(ctx, { kind: 'gateway-on', target: 'keysmith-failover' });
-  dr.request(ctx, { kind: 'gateway-off' });
+  assert.throws(function () {
+    dr.request(ctx, { kind: 'gateway-on', target: 'keysmith-failover' });
+  }, /unsupported desktop restart kind/);
+  assert.throws(function () {
+    dr.request(ctx, { kind: 'gateway-off' });
+  }, /unsupported desktop restart kind/);
   assert.deepStrictEqual(dr.readPending(ctx).actions, [{ kind: 'account', target: 'b' }]);
 });
 
 test('an app that will not quit is left alone: nothing applied, not reopened, still pending', async function () {
   const ctx = makeCtx();
   const a = app({ quitWorks: false });
-  dr.request(ctx, { kind: 'gateway-on', target: 'keysmith-failover' });
+  dr.request(ctx, { kind: 'account', target: 'gmail' });
   const r = await dr.processPending(ctx, a.deps);
   assert.strictEqual(r.state, 'quit-failed');
   assert.ok(!a.log.some((l) => l.indexOf('apply:') === 0), 'never applied under a running app');
@@ -141,7 +124,7 @@ test('REGRESSION: an app that will not quit is asked again only after a while, a
   const ctx = makeCtx();
   const a = app({ quitWorks: false });
   const t0 = 1800000000000;
-  dr.request(ctx, { kind: 'gateway-on', target: 'keysmith-failover' }, { nowMs: t0 });
+  dr.request(ctx, { kind: 'account', target: 'gmail' }, { nowMs: t0 });
   const r1 = await dr.processPending(ctx, Object.assign({}, a.deps, { nowMs: t0 }));
   const r2 = await dr.processPending(ctx, Object.assign({}, a.deps, { nowMs: t0 + 120000 }));
   const r3 = await dr.processPending(ctx, Object.assign({}, a.deps, { nowMs: t0 + 240000 }));
@@ -218,7 +201,7 @@ test('a running keyflip Claude clone defers the restart (quit-by-name could hit 
   ].join('\n');
   a.deps.run = () => ({ code: 0, stdout: ps });
   a.deps.desktopAccount = () => null;
-  dr.request(ctx, { kind: 'gateway-on', target: 'keysmith-failover' });
+  dr.request(ctx, { kind: 'account', target: 'gmail' });
   const saved = process.env.KEYFLIP_TEST_CLAUDE;
   delete process.env.KEYFLIP_TEST_CLAUDE;
   try {
@@ -370,13 +353,14 @@ test('MCP autoswitch tick only RECORDS the Desktop follow-up (it may run inside 
   );
 });
 
-test('engaging the failover asks Desktop for a gateway-on restart (default path)', async function () {
+test('engaging the failover never asks Desktop for a gateway-* restart', async function () {
   const ctx = makeCtx({ platform: 'darwin' });
   ctx.appDataDir = path.join(ctx.home, 'AppData');
-  ctx.store.setProfile('provider__keysmith-failover', 'ks_FAKE');
+  ctx.store.setProfile('provider__keysmith-failover', 'ks_FAKE_DR_KEY');
   const provider = await import('../src/provider.js');
+  const config = await import('../src/config.js');
+  config.set(ctx, 'failover.probeEnabled', false);
   provider.add(ctx, 'keysmith-failover', { baseUrl: 'http://127.0.0.1:8787', models: { default: 'claude-failover' } });
-  // keysmith's own alias and its paid leg (keyflip reads them from keysmith's config, never writes them)
   const ksc = path.join(ctx.home, 'keysmith.json');
   fs.writeFileSync(ksc, JSON.stringify({ aliases: { 'claude-failover': ['claude-failover-api/m', 'agy/m'] } }));
   const fetch = async (url) =>
@@ -387,11 +371,9 @@ test('engaging the failover asks Desktop for a gateway-on restart (default path)
           json: async () => ({ spend: [{ kind: 'adapter', target: 'claude-failover-api', cap: 25 }] }),
         }
       : { ok: true, status: 200, json: async () => ({ data: [{ id: 'claude-failover' }] }) };
-  const e = await failover.engage(ctx, { from: 'b' }, { fetch: fetch, keysmithConfig: ksc, useProvider: () => {} });
+  const e = await failover.engage(ctx, { from: 'b' }, { fetch: fetch, keysmithConfig: ksc });
   assert.strictEqual(e.ok, true);
-  assert.deepStrictEqual(dr.readPending(ctx).actions, [
-    { kind: 'gateway-on', target: 'keysmith-failover', reason: 'every Claude account is over the threshold' },
-  ]);
+  assert.strictEqual(dr.readPending(ctx), null);
 });
 
 test(

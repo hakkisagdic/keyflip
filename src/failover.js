@@ -19,12 +19,16 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { run as _run } from './exec.js';
-import { atomicWrite } from './fsutil.js';
+import { atomicWrite, writeJsonStable } from './fsutil.js';
 import * as _provider from './provider.js';
+import * as _settings from './settings.js';
 import * as _config from './config.js';
 import * as _history from './history.js';
+import * as _desktopgw from './desktopgw.js';
 import * as _desktoprestart from './desktoprestart.js';
+import * as _fosurface from './fosurface.js';
 import * as _log from './log.js';
+import { redact, registerSecret } from './redact.js';
 import { writeLiveSince } from './livesince.js';
 
 const STATE_FILE = '.failover-state.json';
@@ -211,8 +215,8 @@ async function setup(ctx, opts) {
   // 3) a key scoped to the alias and its legs, handed over through a 0600 file, kept in the store
   let haveKey = false;
   try {
-    haveKey = !!ctx.store.getProfile('provider__' + p.provider);
-  } catch (e) {
+    haveKey = !!registerSecret(ctx.store.getProfile('provider__' + p.provider));
+  } catch {
     haveKey = false;
   }
   const allow = ['alias:' + p.alias].concat(p.legs).join(',');
@@ -232,10 +236,11 @@ async function setup(ctx, opts) {
       let key = null;
       try {
         key = fs.readFileSync(keyFile, 'utf8').trim();
-      } catch (e) {
+      } catch {
         key = null;
       }
       if (r && r.code === 0 && key) {
+        registerSecret(key);
         ctx.store.setProfile('provider__' + p.provider, key);
         steps.push({
           step: 'key',
@@ -248,14 +253,14 @@ async function setup(ctx, opts) {
           ok: false,
           detail:
             'keysmith key add failed: ' +
-            String((r && (r.stderr || r.stdout)) || '')
+            redact(String((r && (r.stderr || r.stdout)) || ''))
               .trim()
               .slice(0, 300),
         });
     } finally {
       try {
         fs.rmSync(tmpDir, { recursive: true, force: true });
-      } catch (e) {
+      } catch {
         /* best effort */
       }
     }
@@ -419,9 +424,9 @@ async function gatewayReady(ctx, opts) {
   const doFetch = opts.fetch || (typeof fetch !== 'undefined' ? fetch : null);
   let key = null;
   try {
-    key = ctx.store.getProfile('provider__' + p.provider);
-  } catch (e) {
-    key = null;
+    key = registerSecret(ctx.store.getProfile('provider__' + p.provider));
+  } catch {
+    return { ok: false, retry: true, reason: 'keychain unavailable' };
   }
   if (!key) return { ok: false, reason: 'not set up (keyflip failover setup)' };
   if (!_provider.exists(ctx, p.provider))
@@ -432,15 +437,17 @@ async function gatewayReady(ctx, opts) {
   if (got.error) return { ok: false, reason: 'gateway unreachable at ' + p.gatewayUrl + ' (' + got.error + ')' };
   const res = got.res;
   if (!res || !res.ok) return { ok: false, reason: 'gateway answered ' + ((res && res.status) || 'nothing') };
-  const ids = ((got.json && got.json.data) || []).map(function (m) {
-    return m && m.id;
-  });
+  const ids = ((got.json && got.json.data) || [])
+    .map(function (m) {
+      return m && m.id;
+    })
+    .filter(Boolean);
   if (ids.indexOf(p.alias) === -1)
     return { ok: false, reason: 'gateway does not serve ' + p.alias + ' to the failover key' };
-  if (opts.capCheck === false) return { ok: true };
+  if (opts.capCheck === false) return { ok: true, models: ids };
   const c = await capLoaded(p, key, doFetch, { budget: budget });
   if (!c.ok) return { ok: false, reason: c.reason };
-  return { ok: true, cap: c.cap };
+  return { ok: true, cap: c.cap, models: ids };
 }
 
 // "$25 over 2026-11-12..2026-12-09" / "$25/month" for a cap the gateway reported.
@@ -489,105 +496,356 @@ function clearLost(ctx) {
   return cur;
 }
 
-// Move onto the API failover. deps: fetch, nowMs, useProvider, requestDesktop, notify.
+function stripUrlQuery(s) {
+  if (typeof s !== 'string' || !s) return s;
+  return s.replace(/(https?:\/\/[^\s?#]+)\?[^\s#]*/g, '$1');
+}
+
+function assertSettingsWritable(filePath) {
+  if (!filePath || !fs.existsSync(filePath)) return;
+  if (process.platform !== 'win32') {
+    const mode = fs.statSync(filePath).mode;
+    if ((mode & 0o222) === 0) {
+      const err = new Error('EACCES: permission denied, open ' + filePath);
+      err.code = 'EACCES';
+      throw err;
+    }
+  }
+  fs.accessSync(filePath, fs.constants.W_OK);
+}
+
+// §4.3: Move onto the API failover as a transaction (write -> probe -> commit or rollback).
+// Never touches Claude Desktop or requests a gateway-* restart.
 async function engage(ctx, info, deps) {
   deps = deps || {};
   info = info || {};
   const p = plan(ctx);
-  if (!p.enabled) return { ok: false, reason: 'failover is disabled (failover.enabled=false)' };
+  if (!p.enabled) return { ok: false, disabled: true, reason: 'failover is disabled (failover.enabled=false)' };
   const cur = state(ctx);
   if (cur) {
     if (info.manual && !cur.manual) {
       cur.manual = true;
-      if (info.reason) cur.reason = info.reason;
+      if (info.reason) cur.reason = redact(stripUrlQuery(info.reason));
       atomicWrite(statePath(ctx), JSON.stringify(cur, null, 2) + '\n', 0o600);
     }
     return { ok: true, already: true, state: cur };
   }
   const rp = resolvePlan(ctx, { keysmithConfig: deps.keysmithConfig });
   const ready = await gatewayReady(ctx, { plan: rp, fetch: deps.fetch });
-  if (!ready.ok) return { ok: false, reason: ready.reason };
-  const useProvider =
-    deps.useProvider ||
-    function (name) {
-      return _provider.use(ctx, name);
+  if (!ready.ok) {
+    return ready.retry ? { ok: false, retry: true, reason: ready.reason } : { ok: false, reason: ready.reason };
+  }
+
+  const nowFn =
+    deps.now ||
+    (deps.nowMs !== undefined
+      ? function () {
+          return deps.nowMs;
+        }
+      : function () {
+          return Date.now();
+        });
+
+  const chosen = _fosurface.chooseSurface(ctx, ready.models || []);
+  let fallbackReason = chosen.fallbackReason || null;
+  if (fallbackReason) {
+    _log.log('failover: falling back to cli-launcher (' + fallbackReason + ')');
+  }
+
+  async function attemptSurface(surface) {
+    const startedAt = nowFn();
+    const txnRec = _fosurface.beginTxn(ctx, surface, {
+      plan: rp,
+      startedAt: startedAt,
+      useProvider: deps.useProvider,
+    });
+    const probeEnabled = cfg(ctx, 'failover.probeEnabled', true) !== false;
+    let pRes;
+    if (probeEnabled) {
+      pRes = await _fosurface.probe(ctx, surface, {
+        spawn: deps.spawn,
+        run: deps.run,
+        env: deps.env,
+        now: nowFn,
+        timeoutMs: deps.probeTimeoutMs,
+        supportsNoSessionPersistence: deps.supportsNoSessionPersistence,
+        claudeBin: deps.claudeBin,
+      });
+    } else {
+      pRes = {
+        at: startedAt,
+        ok: true,
+        ms: 0,
+        models: [],
+        reason: null,
+        costUsd: null,
+      };
+    }
+    const probeSummary = {
+      at: pRes.at,
+      ok: !!pRes.ok,
+      ms: typeof pRes.ms === 'number' ? pRes.ms : 0,
+      models: Array.isArray(pRes.models) ? pRes.models : [],
+      reason: pRes.reason || null,
+      costUsd: pRes.costUsd !== undefined ? pRes.costUsd : null,
     };
-  useProvider(p.provider); // Claude Code: settings.json env, hot-reloaded
-  // Claude Desktop reads its gateway config at start: the change waits for an idle restart (P5).
-  const requestDesktop =
-    deps.requestDesktop ||
-    function (rec) {
-      return ctx.appDataDir ? _desktoprestart.request(ctx, rec, { nowMs: deps.nowMs }) : null;
+    if (pRes.resetAt) probeSummary.resetAt = pRes.resetAt;
+
+    if (pRes.ok) {
+      _fosurface.commitTxn(ctx, txnRec, probeSummary);
+      return { ok: true, surface: surface, startedAt: startedAt, probe: probeSummary };
+    }
+
+    _fosurface.rollbackTxn(ctx, txnRec, probeSummary);
+    _history.recordEvent(ctx, {
+      kind: 'failover-engage-failed',
+      surface: surface,
+      reason: stripUrlQuery(pRes.reason || 'probe failed'),
+    });
+    return {
+      ok: false,
+      surface: surface,
+      startedAt: startedAt,
+      probe: probeSummary,
+      class: pRes.class || 'other',
+      reason: pRes.reason || 'probe failed',
     };
-  requestDesktop({ kind: 'gateway-on', target: p.provider, reason: 'every Claude account is over the threshold' });
+  }
+
+  let attempt = await attemptSurface(chosen.surface);
+  // §4.3 step 7: if surface was `cli-settings` and failure is not gateway-wide (`auth`/`quota`),
+  // retry once with `cli-launcher`.
+  if (!attempt.ok && chosen.surface === 'cli-settings' && attempt.class !== 'auth' && attempt.class !== 'quota') {
+    fallbackReason = 'cli-settings probe failed (' + attempt.reason + ')';
+    _log.log('failover: retrying cli-launcher after ' + fallbackReason);
+    attempt = await attemptSurface('cli-launcher');
+  }
+
+  if (!attempt.ok) {
+    if (deps.notify) {
+      await deps.notify('quota', 'API failover could not be switched on: ' + attempt.reason);
+    }
+    return {
+      ok: false,
+      surface: attempt.surface,
+      reason: attempt.reason,
+      probe: attempt.probe,
+      fallbackReason: fallbackReason,
+    };
+  }
+
+  const cleanReason = redact(stripUrlQuery(info.reason || 'every Claude account is over the threshold'));
   const st = {
     engaged: true,
-    at: deps.nowMs !== undefined ? deps.nowMs : Date.now(),
+    at: attempt.startedAt,
+    surface: attempt.surface,
     from: info.from || null,
-    reason: info.reason || 'every Claude account is over the threshold',
+    reason: cleanReason,
     manual: !!info.manual,
     provider: p.provider,
     alias: p.alias,
-    // When the account that ran out has headroom again by the clock (its binding window resets):
-    // the failback that needs no usage reading.
     recoverAt: info.recoverAt || null,
     cap: ready.cap || null,
+    txn: attempt.probe,
   };
+  if (fallbackReason) st.fallbackReason = fallbackReason;
   atomicWrite(statePath(ctx), JSON.stringify(st, null, 2) + '\n', 0o600);
-  _history.recordEvent(ctx, { kind: 'failover-engage', from: st.from, to: p.provider, reason: st.reason });
-  if (deps.notify)
+  _history.recordEvent(ctx, {
+    kind: 'failover-engage',
+    from: st.from,
+    to: p.provider,
+    surface: attempt.surface,
+    reason: cleanReason,
+    probeMs: attempt.probe.ms,
+  });
+  if (deps.notify) {
     await deps.notify(
       'quota',
       'All Claude accounts are over the threshold — now on the API failover (' +
         rp.alias +
         ': ' +
         (rp.legs || []).join(' -> ') +
+        ', surface ' +
+        attempt.surface +
         ', paid leg capped at ' +
         (capText(ready.cap) || '$' + p.capUsd) +
         ' by keysmith).',
     );
-  return { ok: true, state: st };
+  }
+  return { ok: true, state: st, surface: attempt.surface, fallbackReason: fallbackReason };
 }
 
-// Back to the Claude account. deps: useOfficial, requestDesktop, notify.
+// §8.1 & §8.2: Turn the failover off. Works regardless of `failover.enabled`.
+// Each cleanup step runs independently so a failure in one never skips the rest.
 async function release(ctx, info, deps) {
   deps = deps || {};
   info = info || {};
   const liveMarkerOpts = { nowMs: deps.nowMs !== undefined ? deps.nowMs : info.nowMs };
+  const p = plan(ctx);
   const cur = state(ctx);
-  if (!cur) {
-    writeLiveSince(ctx, liveMarkerOpts);
-    return { ok: true, already: true };
-  }
-  const useOfficial =
-    deps.useOfficial ||
-    function () {
-      return _provider.useOfficial(ctx);
-    };
-  useOfficial();
-  const requestDesktop =
-    deps.requestDesktop ||
-    function (rec) {
-      return ctx.appDataDir ? _desktoprestart.request(ctx, rec, { nowMs: deps.nowMs }) : null;
-    };
-  requestDesktop({
-    kind: 'gateway-off',
-    target: null,
-    reason: info.lost ? 'the failover gateway stopped answering' : 'a Claude account has headroom again',
-  });
+  const txnRec = _fosurface.readTxn(ctx);
+  const activeRec = _provider.readActive(ctx);
+  const cleaned = [];
+  const failed = [];
+
+  // Step 1: settings.json — remove recorded keys + any unrecorded managed keys carrying our gateway URL/alias.
   try {
-    fs.unlinkSync(statePath(ctx));
+    if (typeof deps.useOfficial === 'function') {
+      deps.useOfficial();
+      cleaned.push('settings.json');
+    } else if (ctx && ctx.claudeSettingsPath && fs.existsSync(ctx.claudeSettingsPath)) {
+      const cfgObj = _settings.read(ctx.claudeSettingsPath);
+      if (cfgObj && cfgObj.env && typeof cfgObj.env === 'object') {
+        const recordedSet = new Set();
+        if (txnRec && Array.isArray(txnRec.wrote)) {
+          txnRec.wrote.forEach(function (w) {
+            if (w && w.kind === 'settings-env' && Array.isArray(w.keys)) {
+              w.keys.forEach(function (k) {
+                if (_provider.ALL_MANAGED.indexOf(k) !== -1) recordedSet.add(k);
+              });
+            }
+          });
+        }
+        if (activeRec && Array.isArray(activeRec.envKeys)) {
+          activeRec.envKeys.forEach(function (k) {
+            if (_provider.ALL_MANAGED.indexOf(k) !== -1) recordedSet.add(k);
+          });
+        }
+        const unrecordedSet = new Set();
+        if (
+          typeof cfgObj.env.ANTHROPIC_BASE_URL === 'string' &&
+          cfgObj.env.ANTHROPIC_BASE_URL.replace(/\/+$/, '') === p.gatewayUrl
+        ) {
+          unrecordedSet.add('ANTHROPIC_BASE_URL');
+          if ('ANTHROPIC_AUTH_TOKEN' in cfgObj.env) unrecordedSet.add('ANTHROPIC_AUTH_TOKEN');
+          if ('ANTHROPIC_API_KEY' in cfgObj.env) unrecordedSet.add('ANTHROPIC_API_KEY');
+        }
+        Object.keys(_provider.MODEL_KEYS).forEach(function (role) {
+          const mk = _provider.MODEL_KEYS[role];
+          if (cfgObj.env[mk] === p.alias) unrecordedSet.add(mk);
+        });
+
+        const toRemove = [];
+        let removedUnrecorded = false;
+        _provider.ALL_MANAGED.forEach(function (k) {
+          if (!(k in cfgObj.env)) return;
+          if (recordedSet.has(k)) {
+            toRemove.push(k);
+          } else if (unrecordedSet.has(k)) {
+            toRemove.push(k);
+            removedUnrecorded = true;
+          }
+        });
+
+        if (toRemove.length) {
+          assertSettingsWritable(ctx.claudeSettingsPath);
+          toRemove.forEach(function (k) {
+            delete cfgObj.env[k];
+          });
+          if (!Object.keys(cfgObj.env).length) delete cfgObj.env;
+          writeJsonStable(ctx.claudeSettingsPath, cfgObj, 0o600);
+          cleaned.push(removedUnrecorded ? 'settings.json (unrecorded gateway keys removed)' : 'settings.json');
+        }
+      }
+    }
   } catch (e) {
-    /* gone */
+    failed.push({ step: 'settings.json', error: redact((e && e.message) || String(e)) });
   }
-  writeLiveSince(ctx, liveMarkerOpts);
+
+  // Step 2: `.failover-env.json`, `.failover-txn.json`, `.failover-state.json`, provider active file.
+  if (txnRec && Array.isArray(txnRec.wrote)) {
+    txnRec.wrote.forEach(function (w) {
+      if (w && w.backup) {
+        try {
+          fs.unlinkSync(w.backup);
+          fs.rmdirSync(path.dirname(w.backup));
+        } catch {
+          /* best effort */
+        }
+      }
+    });
+  }
+
+  const targetProvider = (cur && cur.provider) || p.provider;
+  const shouldCleanActive = !!(activeRec && (!activeRec.name || activeRec.name === targetProvider));
+  const stateFiles = [
+    ['.failover-env.json', _fosurface.envPath(ctx)],
+    ['.failover-txn.json', _fosurface.txnPath(ctx)],
+    ['.failover-state.json', statePath(ctx)],
+  ];
+  if (shouldCleanActive) {
+    stateFiles.push(['providers/.active.json', _provider.activePath(ctx)]);
+  }
+  stateFiles.forEach(function (pair) {
+    const label = pair[0];
+    const fp = pair[1];
+    try {
+      if (fp && fs.existsSync(fp)) {
+        fs.unlinkSync(fp);
+        cleaned.push(label);
+      }
+    } catch (e) {
+      failed.push({ step: label, error: redact((e && e.message) || String(e)) });
+    }
+  });
+
+  // Step 3: Desktop gateway leftovers (`desktopgw.restore`).
+  try {
+    const gwRes = _desktopgw.restore(ctx);
+    if (gwRes && gwRes.restored && Array.isArray(gwRes.cleaned)) {
+      gwRes.cleaned.forEach(function (item) {
+        cleaned.push(item);
+      });
+    }
+  } catch (e) {
+    failed.push({ step: 'desktopgw', error: redact((e && e.message) || String(e)) });
+  }
+
+  // Step 4: Pending record — drop any `gateway-*` action.
+  try {
+    const dr = _desktoprestart.dropGatewayActions(ctx);
+    if (dr && dr.dropped) {
+      cleaned.push('.desktop-restart.json (' + dr.removed.join(', ') + ')');
+    }
+  } catch (e) {
+    failed.push({ step: '.desktop-restart.json', error: redact((e && e.message) || String(e)) });
+  }
+
+  try {
+    writeLiveSince(ctx, liveMarkerOpts);
+  } catch {
+    /* best effort */
+  }
+
+  // §8.2: scan running processes still carrying gateway env (names only, never values).
+  let stillCarrying = [];
+  try {
+    stillCarrying = await _fosurface.scanGatewayProcesses(ctx, {
+      listProcesses: deps.listProcesses,
+      lsof: deps.lsof,
+      run: deps.run,
+    });
+  } catch {
+    stillCarrying = [];
+  }
+
+  if (!cur && !cleaned.length && !failed.length) {
+    return { ok: true, already: true, cleaned: [], failed: [], stillCarrying: stillCarrying };
+  }
+
+  // Step 5: History + notification.
+  const by = info.by || (info.lost ? 'gateway-lost' : info.to ? 'autoswitch' : 'manual');
   _history.recordEvent(ctx, {
     kind: 'failover-release',
-    from: cur.provider,
+    by: by,
+    from: targetProvider,
     to: info.to || null,
     reason: info.reason || 'recovered',
+    cleaned: cleaned,
+    failed: failed,
   });
-  if (deps.notify)
+
+  if (cur && deps.notify) {
     await deps.notify(
       info.lost ? 'quota' : 'switch',
       info.lost
@@ -596,7 +854,22 @@ async function release(ctx, info, deps) {
             ' (it may still be over its limit).'
         : 'Back on Claude (' + (info.to || 'your account') + ') — the API failover is off.',
     );
-  return { ok: true };
+  }
+
+  const out = {
+    ok: failed.length === 0,
+    cleaned: cleaned,
+    failed: failed,
+    stillCarrying: stillCarrying,
+  };
+  if (failed.length) {
+    out.reason = failed
+      .map(function (f) {
+        return f.step + ': ' + f.error;
+      })
+      .join('; ');
+  }
+  return out;
 }
 
 export {

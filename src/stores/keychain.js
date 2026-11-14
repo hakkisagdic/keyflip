@@ -7,6 +7,7 @@
 // throws an Error with code 'EKEYCHAIN' so callers can say "keychain locked"
 // instead of the misleading "no credentials".
 import { run as defaultRun } from '../exec.js';
+import { registerSecret } from '../redact.js';
 
 const SERVICE_LIVE = 'Claude Code-credentials'; // the item Claude itself manages
 const PROFILE_PREFIX = 'keyflip:';
@@ -53,12 +54,13 @@ class KeychainStore {
       undefined,
       { timeoutMs: TIMEOUT_MS },
     );
-    if (r.code === 0) return r.stdout.replace(/\r?\n$/, '');
+    if (r.code === 0) return registerSecret(r.stdout.replace(/\r?\n$/, ''));
     if (r.code === NOT_FOUND) return null;
     throw keychainError('read of "' + service + '"', r);
   }
 
   _write(service, blob) {
+    registerSecret(blob);
     // Preferred: feed `add-generic-password ... -X <hex>` to `security -i` on
     // stdin — the secret never becomes an argv value visible in `ps`. Very large
     // blobs fall back to argv (-w) rather than risk truncating the command line.

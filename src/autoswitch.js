@@ -16,6 +16,9 @@ import * as fsutil from './fsutil.js';
 import * as _config from './config.js';
 import * as _identity from './identity.js';
 import * as _limitsignal from './limitsignal.js';
+import * as _fosurface from './fosurface.js';
+import * as _desktopgw from './desktopgw.js';
+import * as _desktoprestart from './desktoprestart.js';
 import * as _log from './log.js';
 
 const STATE_FILE = '.autoswitch-state.json';
@@ -121,6 +124,50 @@ function freshReadingOverrulesHit(activeInfo, eff, hit, threshold) {
 
 async function tickInner(ctx, opts, out) {
   opts = opts || {};
+  // §4.2: a record left in `phase:"probing"` (crash mid-transaction) is rolled back first.
+  try {
+    const rec = _fosurface.recoverCrashedTxn(ctx);
+    if (rec && rec.rolledBack) out.recoveredTxn = rec;
+  } catch {
+    /* never break tick */
+  }
+  // §8.3 one-time pending gateway migration + §8.1 step 3 Desktop `3p` leftover re-check.
+  try {
+    const mig = _desktoprestart.migratePendingGateway(ctx);
+    if (mig && mig.migrated) {
+      out.migratedGateway = mig;
+    } else if (ctx && ctx.appDataDir && _desktopgw.hasLeftovers(ctx)) {
+      const deskRunning =
+        typeof opts.isDesktopRunning === 'function'
+          ? opts.isDesktopRunning()
+          : process.env.KEYFLIP_TEST_OFFLINE === '1' && !opts.run && !ctx.run
+            ? false
+            : _desktoprestart.isMainAppRunning(ctx, opts.run || ctx.run);
+      if (!deskRunning) _desktopgw.restore(ctx);
+    }
+  } catch {
+    /* never break tick */
+  }
+  // §4.4: Desktop-leak guard while `cli-settings` is kept.
+  try {
+    const leakNotify =
+      typeof opts.notify === 'function'
+        ? opts.notify
+        : opts.failover && typeof opts.failover.notify === 'function'
+          ? opts.failover.notify
+          : null;
+    const leak = await _fosurface.checkDesktopLeak(ctx, {
+      listProcesses: opts.listProcesses,
+      run: opts.run,
+      spawn: opts.spawn,
+      env: opts.env,
+      nowMs: opts.nowMs,
+      notify: leakNotify,
+    });
+    if (leak && leak.leaked) out.desktopLeak = leak;
+  } catch {
+    /* never break tick */
+  }
   // Switch at >= N% utilization. 95 (P3): late enough not to waste a window, early enough that the
   // next account is in place before the current one starts refusing.
   const threshold = opts.threshold !== undefined ? opts.threshold : DEFAULT_THRESHOLD;
@@ -252,6 +299,7 @@ async function tickInner(ctx, opts, out) {
     );
     if (!opts.failover) return base;
     if (fo) return Object.assign(base, { state: 'failover', failover: fo });
+    if (opts.failover.enabled === false) return base;
     let e;
     try {
       e = await opts.failover.engage({
@@ -271,6 +319,10 @@ async function tickInner(ctx, opts, out) {
       e = { ok: false, reason: (err && err.message) || String(err) };
     }
     if (e && e.ok) return Object.assign(base, { state: 'failover-engaged', failover: e.state || null });
+    if (e && e.disabled) return base;
+    if (e && e.retry) {
+      return Object.assign(base, { failoverRetry: true, failoverError: e.reason || 'keychain unavailable' });
+    }
     return Object.assign(base, { failoverError: (e && e.reason) || 'failover unavailable' });
   }
 
@@ -290,7 +342,7 @@ async function tickInner(ctx, opts, out) {
     const firstPause = opts.failoverRecheckMs !== undefined ? opts.failoverRecheckMs : 2000;
     const pauses = [firstPause, 5000, 10000];
     let ok = await runCheck();
-    for (let i = 0; i < pauses.length && (!ok || !ok.ok); i++) {
+    for (let i = 0; i < pauses.length && (!ok || (!ok.ok && !ok.retry)); i++) {
       await (opts.sleep || sleepMs)(pauses[i]);
       ok = await runCheck();
     }
@@ -301,6 +353,9 @@ async function tickInner(ctx, opts, out) {
         else _log.log('gateway back');
         out.gatewayBack = true;
       }
+    } else if (ok && ok.retry) {
+      // Transient keychain unavailability: retry next tick without marking lost or releasing.
+      out.failoverRetry = true;
     } else {
       const why = 'the failover gateway stopped answering (' + ((ok && ok.reason) || 'no answer') + ')';
       let graceSec = 300;
@@ -548,7 +603,7 @@ async function tickInner(ctx, opts, out) {
           }),
         },
         limitHit ? { limitHit: limitHit } : {},
-        opts.failover
+        opts.failover && opts.failover.enabled !== false
           ? {
               failoverDeferred:
                 'not engaging the paid failover while the usage of ' +
@@ -619,6 +674,10 @@ async function tick(ctx, opts) {
   if (side.identityRepair) r.identityRepair = side.identityRepair;
   if (side.gatewayBack) r.gatewayBack = true;
   if (side.limitSignalIgnored) r.limitSignalIgnored = side.limitSignalIgnored;
+  if (side.recoveredTxn) r.recoveredTxn = side.recoveredTxn;
+  if (side.migratedGateway) r.migratedGateway = side.migratedGateway;
+  if (side.desktopLeak) r.desktopLeak = side.desktopLeak;
+  if (side.failoverRetry) r.failoverRetry = true;
   return r;
 }
 

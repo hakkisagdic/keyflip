@@ -11,6 +11,7 @@ import fs from 'fs';
 import path from 'path';
 import { atomicWrite, readJsonForWrite } from './fsutil.js';
 import * as _exec from './exec.js';
+import { redact } from './redact.js';
 
 let VERSION = '0.0.0';
 try {
@@ -109,7 +110,8 @@ function stripSecrets(value, depth) {
   depth = depth || 0;
   if (value === null) return null;
   const t = typeof value;
-  if (t === 'string' || t === 'number' || t === 'boolean') return value;
+  if (t === 'string') return redact(value);
+  if (t === 'number' || t === 'boolean') return value;
   if (t !== 'object') return undefined; // function / undefined / symbol
   if (depth >= 6) return Array.isArray(value) ? [] : {};
   if (Array.isArray(value)) {

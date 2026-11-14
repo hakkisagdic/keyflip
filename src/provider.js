@@ -16,7 +16,8 @@ import path from 'path';
 import * as profiles from './profiles.js';
 import * as settings from './settings.js';
 import * as txn from './txn.js';
-import { writeJsonStable, atomicWrite } from './fsutil.js';
+import { writeJsonStable } from './fsutil.js';
+import { registerSecret } from './redact.js';
 
 // env keys keyflip manages for a provider (everything else in env is the user's)
 const MODEL_KEYS = {
@@ -128,19 +129,24 @@ function remove(ctx, name) {
 }
 
 // Build the managed env block for a provider (with its stored key).
-function envFor(ctx, meta) {
+// opts.models === false omits all ANTHROPIC_*MODEL keys (URL + auth key only).
+function envFor(ctx, meta, opts) {
+  opts = opts || {};
+  const includeModels = opts.models !== false;
   const env = {};
   env[BASE_URL_KEY] = meta.baseUrl;
   let key = null;
   try {
-    key = ctx.store.getProfile(keyStoreName(meta.name));
-  } catch (e) {
+    key = registerSecret(ctx.store.getProfile(keyStoreName(meta.name)));
+  } catch {
     key = null;
   }
   if (key) env[meta.authScheme === 'api-key' ? 'ANTHROPIC_API_KEY' : 'ANTHROPIC_AUTH_TOKEN'] = key;
-  Object.keys(MODEL_KEYS).forEach(function (m) {
-    if (meta.models && meta.models[m]) env[MODEL_KEYS[m]] = meta.models[m];
-  });
+  if (includeModels) {
+    Object.keys(MODEL_KEYS).forEach(function (m) {
+      if (meta.models && meta.models[m]) env[MODEL_KEYS[m]] = meta.models[m];
+    });
+  }
   return env;
 }
 
@@ -152,7 +158,10 @@ const ALL_MANAGED = [BASE_URL_KEY].concat(AUTH_KEYS).concat(
 
 // Switch Claude Code to provider <name>: inject the managed env keys into
 // settings.json (preserving every other key), record what we injected.
-function use(ctx, name) {
+// opts.models === false injects only ANTHROPIC_BASE_URL + the auth key and
+// strips every managed model key.
+function use(ctx, name, opts) {
+  opts = opts || {};
   const meta = read(ctx, name);
   if (!meta) throw new Error("no such provider: '" + name + "' (see: keyflip provider list)");
   const file = ctx.claudeSettingsPath;
@@ -165,7 +174,7 @@ function use(ctx, name) {
     Object.keys(prevEnv).forEach(function (k) {
       if (ALL_MANAGED.indexOf(k) === -1) userEnv[k] = prevEnv[k];
     });
-    const managed = envFor(ctx, meta);
+    const managed = envFor(ctx, meta, { models: opts.models });
     cfg.env = Object.assign(userEnv, managed);
     writeJsonStable(file, cfg, 0o600);
     writeJsonStable(activePath(ctx), { name: name, envKeys: Object.keys(managed), at: ctx.now() }, 0o600);

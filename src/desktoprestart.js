@@ -23,6 +23,7 @@ import * as _config from './config.js';
 import * as _log from './log.js';
 import * as _core from './core.js';
 import * as _profiles from './profiles.js';
+import { redact } from './redact.js';
 
 const PENDING_FILE = '.desktop-restart.json';
 const DEFAULT_QUIET_MS = 60 * 1000;
@@ -240,12 +241,8 @@ function clearPending(ctx) {
   }
 }
 
-// What a restart is FOR. Each action's apply() runs while the app is CLOSED, in order:
-//   gateway-on  -> desktop third-party mode pointed at provider `target` (P4 failover)
-//   gateway-off -> back to first-party mode
-//   account     -> the desktop login of profile `target` (the outgoing login is preserved first)
-// One restart carries every pending action: the gateway leg and the account leg are separate
-// GROUPS, and a newer request replaces only the action of its own group.
+// What a restart is FOR. Only `account` restarts exist: Claude Desktop never uses a gateway.
+//   account -> the desktop login of profile `target` (the outgoing login is preserved first)
 const KINDS = {
   account: function (ctx, target) {
     // Nothing to restore -> touch nothing (not even the outgoing login's token cache).
@@ -254,47 +251,95 @@ const KINDS = {
       const det = _appauth.detectAppAccount(ctx);
       const cur = det && det.org ? _sessionage.profileForOrg(ctx.configDir, det.org) : null;
       if (cur && cur !== target) _appauth.snapshotToProfile(ctx, cur);
-    } catch (e) {
+    } catch {
       /* preserving the outgoing login is best effort */
     }
     return _appauth.applyFromProfile(ctx, target);
   },
-  'gateway-on': function (ctx, target) {
-    _desktopgw.use(ctx, target);
-    return { ok: true };
-  },
-  'gateway-off': function (ctx) {
-    _desktopgw.restore(ctx);
-    return { ok: true };
-  },
 };
 function groupOf(kind) {
-  return kind === 'gateway-on' || kind === 'gateway-off' ? 'gateway' : kind;
+  return kind;
 }
-const ORDER = { gateway: 1, account: 2 };
+const ORDER = { account: 1 };
 function describeAction(a) {
   if (a.kind === 'account') return 'switch to ' + (a.email || a.target);
-  if (a.kind === 'gateway-on') return 'use the API failover gateway';
-  if (a.kind === 'gateway-off') return 'leave the API failover gateway';
   return a.kind;
 }
 function describe(rec) {
   return rec.actions.map(describeAction).join(' and ');
 }
 
+function isGatewayAction(a) {
+  return !!(a && typeof a.kind === 'string' && /^gateway-/.test(a.kind));
+}
+
+// Drop any legacy `gateway-*` actions from `.desktop-restart.json` while keeping `account` actions.
+function dropGatewayActions(ctx) {
+  if (!ctx || !ctx.configDir) return { dropped: false, removed: [], kept: 0 };
+  const rec = readPending(ctx);
+  if (!rec) return { dropped: false, removed: [], kept: 0 };
+  const removed = rec.actions.filter(isGatewayAction).map(function (a) {
+    return a.kind;
+  });
+  if (!removed.length) return { dropped: false, removed: [], kept: rec.actions.length };
+  const keep = rec.actions.filter(function (a) {
+    return !isGatewayAction(a);
+  });
+  if (keep.length) writePending(ctx, Object.assign({}, rec, { actions: keep }));
+  else clearPending(ctx);
+  return { dropped: true, removed: removed, kept: keep.length };
+}
+
+// §8.3 one-time migration: if `.desktop-restart.json` contains a legacy `gateway-off` or
+// `gateway-on` action, run `desktopgw.restore(ctx)` immediately, remove the gateway action,
+// keep any `account` action, and log the migration.
+function migratePendingGateway(ctx) {
+  if (!ctx || !ctx.configDir) return { migrated: false, removed: [], kept: 0 };
+  const rec = readPending(ctx);
+  if (!rec) return { migrated: false, removed: [], kept: 0 };
+  const gwActions = rec.actions.filter(isGatewayAction);
+  if (!gwActions.length) return { migrated: false, removed: [], kept: rec.actions.length };
+  let restored = false;
+  try {
+    const r = _desktopgw.restore(ctx);
+    restored = !!(r && r.restored);
+  } catch {
+    restored = false;
+  }
+  const dropped = dropGatewayActions(ctx);
+  const hasOff = gwActions.some(function (a) {
+    return a.kind === 'gateway-off';
+  });
+  _log.log(
+    hasOff
+      ? 'migrated pending gateway-off: restored Desktop first-party config'
+      : 'migrated pending ' + gwActions[0].kind + ': restored Desktop first-party config',
+  );
+  return { migrated: true, restored: restored, removed: dropped.removed, kept: dropped.kept };
+}
+
+function isMainAppRunning(ctx, runner) {
+  if (testMode()) return _appctl.isDesktopAppRunning(ctx.platform);
+  if (ctx.platform !== 'darwin') return _appctl.isDesktopAppRunning(ctx.platform);
+  const p = desktopProcesses(ctx, runner);
+  return p ? p.main.length > 0 : true;
+}
+
 async function defaultNotify(ctx, event, message, opts) {
   opts = opts || {};
+  const cleanMessage = redact(String(message == null ? '' : message));
   let r = null;
   try {
-    r = await _notify.send(ctx, event, { message: message }, { force: true, run: opts.run });
-  } catch (e) {
+    r = await _notify.send(ctx, event, { message: cleanMessage }, { force: true, run: opts.run });
+  } catch {
     r = null;
   }
   if (r && r.sent) return r;
   // Quitting someone's app is never silent: when no sink is configured, a plain macOS banner.
   if (ctx.platform === 'darwin') {
     const runner = opts.run || _run;
-    const esc = String(message)
+    // eslint-disable-next-line no-control-regex
+    const esc = cleanMessage
       .replace(/[\u0000-\u001f\u007f]/g, ' ')
       .replace(/\\/g, '\\\\')
       .replace(/"/g, '\\"')
@@ -303,7 +348,7 @@ async function defaultNotify(ctx, event, message, opts) {
       runner('/usr/bin/osascript', ['-e', 'display notification "' + esc + '" with title "keyflip"'], undefined, {
         timeoutMs: 5000,
       });
-    } catch (e) {
+    } catch {
       /* best effort */
     }
   }
@@ -316,23 +361,19 @@ function sleep(ms) {
   });
 }
 
-// Record that Claude Desktop must restart for `action` ({ kind, target, email?, reason }). It joins
-// the pending restart, replacing an older action of the same group (newest wins per group).
+// Record that Claude Desktop must restart for `action` ({ kind: 'account', target, email?, reason }).
+// Gateway restart kinds do not exist and are rejected.
 function request(ctx, action, opts) {
+  if (!action || !Object.prototype.hasOwnProperty.call(KINDS, action.kind)) {
+    throw new Error("unsupported desktop restart kind: '" + ((action && action.kind) || '') + "'");
+  }
   opts = opts || {};
   const prev = readPending(ctx);
   const now = opts.nowMs !== undefined ? opts.nowMs : Date.now();
   const actions = (prev ? prev.actions : []).filter(function (a) {
-    return groupOf(a.kind) !== groupOf(action.kind);
+    return !isGatewayAction(a) && groupOf(a.kind) !== groupOf(action.kind);
   });
-  // gateway-off with nothing to turn off is a no-op only if no gateway-on is pending: then they cancel.
-  const cancelled =
-    action.kind === 'gateway-off' &&
-    prev &&
-    prev.actions.some(function (a) {
-      return a.kind === 'gateway-on';
-    });
-  if (!cancelled) actions.push(Object.assign({}, action));
+  actions.push(Object.assign({}, action));
   actions.sort(function (a, b) {
     return (ORDER[groupOf(a.kind)] || 9) - (ORDER[groupOf(b.kind)] || 9);
   });
@@ -370,10 +411,15 @@ function desktopAccountNow(ctx) {
   }
 }
 
-// A pending record is a promise to make Desktop follow the CLI. Before acting on it, re-check what
-// it promises: it expires; an account action follows the CLI's CURRENT account (a later manual
-// switch retargets it, or drops it when that account has no desktop login). -> rec | null.
+// A pending record is a promise to make Desktop follow the CLI. Before acting on it, migrate any
+// legacy gateway-* action FIRST (restoring Desktop first-party config before expiry could ever
+// drop the record), then check expiry and retarget `account` actions. -> rec | null.
 function revalidate(ctx, rec, deps, now) {
+  if (rec && Array.isArray(rec.actions) && rec.actions.some(isGatewayAction)) {
+    migratePendingGateway(ctx);
+    rec = readPending(ctx);
+    if (!rec) return null;
+  }
   const maxAgeMs = deps.maxAgeMs !== undefined ? deps.maxAgeMs : cfg(ctx, 'desktop.pendingMaxHours', 12) * 3600 * 1000;
   if (maxAgeMs > 0 && typeof rec.since === 'number' && now - rec.since > maxAgeMs) {
     clearPending(ctx);
@@ -408,6 +454,7 @@ function revalidate(ctx, rec, deps, now) {
 async function processPending(ctx, deps) {
   deps = deps || {};
   const now = deps.nowMs !== undefined ? deps.nowMs : Date.now();
+  migratePendingGateway(ctx);
   let rec = readPending(ctx);
   if (!rec) return { state: 'none' };
   rec = revalidate(ctx, rec, deps, now);
@@ -570,9 +617,13 @@ export {
   defaultDetector,
   request,
   processPending,
+  revalidate,
+  migratePendingGateway,
+  dropGatewayActions,
   readPending,
   clearPending,
   desktopProcesses,
+  isMainAppRunning,
   KINDS,
   PENDING_FILE,
   defaultNotify as notifyLoud,

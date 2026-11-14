@@ -4,6 +4,7 @@ import fs from 'fs';
 import path from 'path';
 import KeychainStore from './keychain.js';
 import FileStore from './file.js';
+import { registerSecret } from '../redact.js';
 
 // macOS store: live credential ALWAYS lives in the Keychain (Claude Code reads it
 // there first), but keyflip's own profile backups learn to fall back to files
@@ -14,6 +15,7 @@ class HybridStore {
     this.kc = kc;
     this.file = file;
     this.fallback = false; // sticky for this process once the keychain misbehaves
+    this.lastKeychainError = null;
     this.type = 'keychain';
   }
   _profileOp(op, args) {
@@ -23,33 +25,54 @@ class HybridStore {
     } catch (e) {
       if (e && e.code === 'EKEYCHAIN') {
         this.fallback = true;
+        this.lastKeychainError = e;
         return this.file[op].apply(this.file, args);
       }
       throw e;
     }
   }
   getLive() {
-    return this.kc.getLive();
+    return registerSecret(this.kc.getLive());
   }
   setLive(blob) {
+    registerSecret(blob);
     return this.kc.setLive(blob);
   }
   delLive() {
     return this.kc.delLive();
   }
   getProfile(name) {
-    const v = this._profileOp('getProfile', [name]);
-    // A profile saved during an earlier fallback lives in the file store.
-    if (v === null && !this.fallback) {
+    if (this.fallback) {
+      const fv = this.file.getProfile(name);
+      if (fv !== null) return registerSecret(fv);
+      if (this.lastKeychainError) throw this.lastKeychainError;
+      return null;
+    }
+    try {
+      const v = this.kc.getProfile(name);
+      if (v !== null) return registerSecret(v);
       try {
-        return this.file.getProfile(name);
-      } catch (e) {
+        return registerSecret(this.file.getProfile(name));
+      } catch {
         return null;
       }
+    } catch (e) {
+      if (e && e.code === 'EKEYCHAIN') {
+        this.fallback = true;
+        this.lastKeychainError = e;
+        let fv = null;
+        try {
+          fv = this.file.getProfile(name);
+        } catch {
+          fv = null;
+        }
+        if (fv !== null) return registerSecret(fv);
+      }
+      throw e;
     }
-    return v;
   }
   setProfile(name, blob) {
+    registerSecret(blob);
     return this._profileOp('setProfile', [name, blob]);
   }
   delProfile(name) {
@@ -107,18 +130,20 @@ class MemoryStore {
     this.profiles = Object.create(null);
   }
   getLive() {
-    return this.live;
+    return registerSecret(this.live);
   }
   setLive(blob) {
+    registerSecret(blob);
     this.live = blob;
   }
   delLive() {
     this.live = null;
   }
   getProfile(name) {
-    return Object.prototype.hasOwnProperty.call(this.profiles, name) ? this.profiles[name] : null;
+    return Object.prototype.hasOwnProperty.call(this.profiles, name) ? registerSecret(this.profiles[name]) : null;
   }
   setProfile(name, blob) {
+    registerSecret(blob);
     this.profiles[name] = blob;
   }
   delProfile(name) {

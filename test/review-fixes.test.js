@@ -54,9 +54,9 @@ test('desktopgw.use rolls back and preserves a corrupt desktop config', function
   const p = path.join(ctx.appDataDir, 'claude_desktop_config.json');
   writeCorrupt(p);
   const before = fs.readFileSync(p, 'utf8');
-  provider.add(ctx, 'gw', { baseUrl: 'https://gw/v1' });
+  provider.add(ctx, 'gw', { baseUrl: 'https://gw/v1', key: 'ks_FAKE_GW_KEY' });
   assert.throws(function () {
-    desktopgw.use(ctx, 'gw');
+    desktopgw.use(ctx, 'gw', { experimental: true });
   }, /not valid JSON/);
   assert.strictEqual(fs.readFileSync(p, 'utf8'), before);
 });

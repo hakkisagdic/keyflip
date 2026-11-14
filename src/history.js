@@ -2,6 +2,7 @@
 // line count so they never grow unbounded. Failure to log never breaks a command.
 import fs from 'fs';
 import path from 'path';
+import { redactDeep } from './redact.js';
 
 const MAX_LINES = 5000;
 
@@ -47,7 +48,7 @@ function read(file, limit) {
 
 // Record a failover / breaker event: { at, kind, from, to, reason }.
 function recordEvent(ctx, ev) {
-  append(eventsFile(ctx), Object.assign({ at: ctx.now() }, ev));
+  append(eventsFile(ctx), redactDeep(Object.assign({ at: ctx.now() }, ev)));
 }
 function readEvents(ctx, limit) {
   return read(eventsFile(ctx), limit);

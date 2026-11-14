@@ -3746,7 +3746,8 @@ const TOOLS = [
         },
       };
       // P4: when every account is over the threshold, the keysmith API failover (if set up).
-      if (_failover.plan(ctx).enabled && !ctx.noFailover) {
+      // Fact 3: always attach the adapter so health checks and release work even if failover.enabled=false.
+      if (!ctx.noFailover) {
         // Moving onto (or off) a PAID API is never silent: the configured sinks, else a macOS banner.
         // ctx.notify is the test injection channel.
         const loud =
@@ -3758,13 +3759,22 @@ const TOOLS = [
           return async function (info) {
             const l = await lock.acquire(ctx.configDir);
             try {
-              return await fn(ctx, info, { fetch: ctx.fetch, notify: loud });
+              return await fn(ctx, info, {
+                fetch: ctx.fetch,
+                keysmithConfig: ctx.keysmithConfig,
+                spawn: ctx.spawn,
+                run: ctx.run,
+                listProcesses: ctx.listProcesses,
+                lsof: ctx.lsof,
+                notify: loud,
+              });
             } finally {
               l.release();
             }
           };
         };
         opts.failover = {
+          enabled: _failover.plan(ctx).enabled,
           state: function () {
             return _failover.state(ctx);
           },
@@ -3881,11 +3891,19 @@ const TOOLS = [
         };
       const l = await lock.acquire(ctx.configDir);
       try {
-        const deps = { fetch: ctx.fetch, keysmithConfig: ctx.keysmithConfig, notify: loud };
+        const deps = {
+          fetch: ctx.fetch,
+          keysmithConfig: ctx.keysmithConfig,
+          spawn: ctx.spawn,
+          run: ctx.run,
+          listProcesses: ctx.listProcesses,
+          lsof: ctx.lsof,
+          notify: loud,
+        };
         const r =
           action === 'on'
             ? await _failover.engage(ctx, { manual: true, reason: 'turned on by hand' }, deps)
-            : await _failover.release(ctx, { reason: 'turned off by hand' }, deps);
+            : await _failover.release(ctx, { by: 'mcp', reason: 'turned off by hand' }, deps);
         return { failover: r };
       } finally {
         l.release();

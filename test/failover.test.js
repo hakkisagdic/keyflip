@@ -5,6 +5,7 @@
 // CLI, a temp file for its config, a fake fetch for its gateway. No real key, keychain, settings or app.
 import test from 'node:test';
 import assert from 'node:assert';
+import { EventEmitter } from 'events';
 import fs from 'fs';
 import path from 'path';
 import { makeCtx, writeClaude } from './helpers.js';
@@ -441,30 +442,44 @@ test('REGRESSION: the failover never engages uncapped — the RUNNING gateway mu
   assert.strictEqual(ok.cap.exceeded, true);
 });
 
-test('engage points Claude Code at the gateway, asks Desktop to follow, records it; release undoes it', async function () {
+function okProbeSpawn() {
+  return function () {
+    const child = new EventEmitter();
+    child.stdout = new EventEmitter();
+    child.stderr = new EventEmitter();
+    child.kill = () => {};
+    setImmediate(() => {
+      child.stdout.emit('data', JSON.stringify({ type: 'result', is_error: false, result: 'OK', total_cost_usd: 0.01 }));
+      child.emit('close', 0);
+    });
+    return child;
+  };
+}
+
+test('engage writes launcher env on cli-launcher, never touches Desktop, records state; release undoes it', async function () {
   const ctx = makeCtx();
   const ksc = await setUp(ctx);
   const log = [];
   const deps = {
     fetch: gateway(['claude-failover']),
     keysmithConfig: ksc,
-    useProvider: (n) => log.push('use:' + n),
-    useOfficial: () => log.push('official'),
-    requestDesktop: (rec) => log.push('desktop:' + rec.kind),
+    spawn: okProbeSpawn(),
     notify: async (ev, msg) => log.push('notify:' + ev + ':' + msg),
   };
   const e = await failover.engage(ctx, { from: 'gmail' }, deps);
   assert.strictEqual(e.ok, true, e.reason);
   assert.ok(failover.state(ctx).engaged);
+  assert.strictEqual(failover.state(ctx).surface, 'cli-launcher');
   assert.strictEqual(failover.state(ctx).alias, 'claude-failover');
   assert.strictEqual(failover.state(ctx).cap.cap, 25);
-  assert.deepStrictEqual(log.slice(0, 2), ['use:keysmith-failover', 'desktop:gateway-on']);
-  assert.ok(/capped at \$25 over 2026-11-12\.\.2026-12-09 by keysmith/.test(log[2]), log[2]);
+  assert.ok(fs.existsSync(path.join(ctx.configDir, '.failover-env.json')));
+  assert.strictEqual(fs.existsSync(ctx.claudeSettingsPath), false);
+  assert.ok(/capped at \$25 over 2026-11-12\.\.2026-12-09 by keysmith/.test(log[0]), log[0]);
   assert.strictEqual((await failover.engage(ctx, {}, deps)).already, true, 'engaging twice is a no-op');
   const r = await failover.release(ctx, { to: 'yahoo' }, deps);
   assert.strictEqual(r.ok, true);
   assert.strictEqual(failover.state(ctx), null);
-  assert.ok(log.includes('official') && log.includes('desktop:gateway-off'));
+  assert.strictEqual(fs.existsSync(path.join(ctx.configDir, '.failover-env.json')), false);
   const kinds = history.readEvents(ctx).map((x) => x.kind);
   assert.ok(kinds.includes('failover-engage') && kinds.includes('failover-release'));
 });

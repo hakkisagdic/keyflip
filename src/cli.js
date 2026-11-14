@@ -93,8 +93,10 @@ import * as _svc from './autoswitchservice.js';
 import * as _selfbin from './selfbin.js';
 import * as _identity from './identity.js';
 import * as _failover from './failover.js';
+import * as _fosurface from './fosurface.js';
 import * as _limitsignal from './limitsignal.js';
 import * as _desktoprestart from './desktoprestart.js';
+import { redact } from './redact.js';
 import * as _groups from './groups.js';
 import * as _budget from './budget.js';
 import * as _shellhook from './shellhook.js';
@@ -207,9 +209,10 @@ function jsonOut(obj) {
   process.stdout.write(JSON.stringify(Object.assign({ schemaVersion: JSON_SCHEMA_VERSION }, obj)) + '\n');
 }
 function fail(msg) {
-  logmod.log('error: ' + msg);
-  if (JSON_MODE) jsonOut({ error: { message: String(msg) } });
-  process.stderr.write(style.err('❌ ') + msg + '\n');
+  const safe = redact(String(msg == null ? '' : msg));
+  logmod.log('error: ' + safe);
+  if (JSON_MODE) jsonOut({ error: { message: safe } });
+  process.stderr.write(style.err('❌ ') + safe + '\n');
   process.exitCode = 1;
 }
 
@@ -1426,15 +1429,16 @@ async function cmdImport(ctx, rest) {
   logmod.log('import: ' + r.imported.length + ' account(s)');
 }
 
-// The P4 API failover as the autoswitch tick sees it: { state, engage, release }. Engage/release
-// take the switch lock (they rewrite settings.json and the desktop config) and notify.
+// The P4 API failover as the autoswitch tick and CLI see it: { enabled, state, engage, release, check }.
+// Always returns an adapter (Fact 3): `failover.enabled` gates only a new engage, so `off`, `state()`,
+// and health checks always work even when `failover.enabled=false`.
 function failoverAdapter(ctx) {
-  if (!_failover.plan(ctx).enabled) return undefined;
   // Moving onto (or off) a PAID API is never silent: the configured sinks, else a macOS banner.
   function note(ev, msg) {
     return _desktoprestart.notifyLoud(ctx, ev, msg).catch(function () {});
   }
   return {
+    enabled: _failover.plan(ctx).enabled,
     state: function () {
       return _failover.state(ctx);
     },
@@ -1455,13 +1459,21 @@ function failoverAdapter(ctx) {
           fetch: ctx.fetch,
           keysmithConfig: ctx.keysmithConfig,
           nowMs: ctx.nowMs,
+          spawn: ctx.spawn,
+          run: ctx.run,
           notify: note,
         });
       });
     },
     release: function (info) {
       return withLock(ctx, function () {
-        return _failover.release(ctx, info, { nowMs: ctx.nowMs, notify: note });
+        return _failover.release(ctx, info, {
+          nowMs: ctx.nowMs,
+          listProcesses: ctx.listProcesses,
+          lsof: ctx.lsof,
+          run: ctx.run,
+          notify: note,
+        });
       });
     },
   };
@@ -1594,34 +1606,42 @@ async function cmdFailover(ctx, rest) {
   }
   if (sub === 'on' || sub === 'off') {
     const fa = failoverAdapter(ctx);
-    if (!fa) {
-      if (JSON_MODE) {
-        jsonOut({ failover: { ok: false, reason: 'failover is disabled (failover.enabled=false)' } });
-        process.exitCode = 1;
-        return;
-      }
-      return fail('the API failover is disabled — keyflip config set failover.enabled true');
-    }
     const r =
       sub === 'on'
         ? await fa.engage({ manual: true, reason: 'turned on by hand' })
-        : await fa.release({ reason: 'turned off by hand' });
+        : await fa.release({ by: 'cli', reason: 'turned off by hand' });
     if (JSON_MODE) {
       jsonOut({ failover: r });
       if (!r.ok) process.exitCode = 1;
       return;
     }
-    if (!r.ok) return fail('could not ' + (sub === 'on' ? 'engage' : 'release') + ' the failover: ' + r.reason);
+    if (sub === 'on') {
+      if (!r.ok) {
+        if (r.disabled) return fail('the API failover is disabled — keyflip config set failover.enabled true');
+        return fail('could not engage the failover: ' + r.reason);
+      }
+      print(
+        style.ok('✅') +
+          ' API failover ' +
+          (r.already
+            ? 'was already on.'
+            : 'on (' + (r.surface || 'cli-launcher') + ') — Claude Code now uses the gateway.'),
+      );
+      return;
+    }
+    if (Array.isArray(r.cleaned) && r.cleaned.length) {
+      print('  cleaned: ' + r.cleaned.join(', '));
+    }
+    if (Array.isArray(r.stillCarrying) && r.stillCarrying.length) {
+      _fosurface.formatProcessReport(r.stillCarrying).forEach(function (line) {
+        print(line);
+      });
+    }
+    if (!r.ok) return fail('could not release every failover surface: ' + r.reason);
     print(
       style.ok('✅') +
         ' API failover ' +
-        (sub === 'on'
-          ? r.already
-            ? 'was already on.'
-            : 'on — Claude Code now uses the gateway.'
-          : r.already
-            ? 'was already off.'
-            : 'off — back on your Claude account.'),
+        (r.already ? 'was already off.' : 'off — back on your Claude account.'),
     );
     return;
   }
@@ -4724,19 +4744,27 @@ function cmdMcpreg(ctx, rest) {
   return fail('usage: keyflip mcpreg [add|list|surfaces|enable|disable|remove|import]');
 }
 
-// #17 Claude Desktop third-party gateway
+// #17 Claude Desktop third-party gateway (experimental-only manual path)
 function cmdGateway(ctx, rest) {
   const sub = rest[0];
   if (sub === 'use') {
-    if (!provider.exists(ctx, rest[1])) return fail("no such provider: '" + (rest[1] || '') + "'");
-    const r = desktopgw.use(ctx, rest[1]);
+    if (rest.indexOf('--experimental') === -1) {
+      return fail(
+        'Desktop third-party gateway mode is disabled (experimental only: keyflip desktop gateway-experimental <provider>)',
+      );
+    }
+    const target = rest.filter(function (x, idx) {
+      return idx > 0 && x !== '--experimental';
+    })[0];
+    if (!provider.exists(ctx, target)) return fail("no such provider: '" + (target || '') + "'");
+    const r = desktopgw.use(ctx, target, { experimental: true });
     print(
       style.ok('✅') +
         ' Claude desktop app -> gateway "' +
-        rest[1] +
+        target +
         '" (' +
         r.dirs +
-        ' config dir(s)). Restart the app to apply.',
+        ' config dir(s), experimental). Restart the app to apply.',
     );
     return;
   }
@@ -4750,7 +4778,7 @@ function cmdGateway(ctx, rest) {
     print(a ? 'Desktop gateway: ' + a.provider : 'Desktop app: first-party (Anthropic)');
     return;
   }
-  return fail('usage: keyflip gateway [use <provider>|off|status]');
+  return fail('usage: keyflip gateway [off|status] (or: keyflip desktop gateway-experimental <provider>)');
 }
 
 // #18 encrypted WebDAV sync
@@ -17692,6 +17720,17 @@ async function dispatch(ctx, cmd, rest) {
           },
           'claude-desktop',
         );
+      case 'desktop':
+        if (rest[0] === 'gateway-experimental') {
+          return withLock(
+            ctx,
+            function () {
+              return cmdGateway(ctx, ['use', rest[1], '--experimental']);
+            },
+            'claude-desktop',
+          );
+        }
+        return fail('usage: keyflip desktop gateway-experimental <provider>');
       case 'sync':
         return cmdSync(ctx, rest);
       case 'group':

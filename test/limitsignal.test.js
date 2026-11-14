@@ -11,6 +11,7 @@ import * as core from '../src/core.js';
 import * as breaker from '../src/breaker.js';
 import * as backup from '../src/backup.js';
 import * as vcs from '../src/vcs.js';
+import * as config from '../src/config.js';
 import * as mcp from '../src/mcp.js';
 import * as logmod from '../src/log.js';
 import { formatAutoswitchTickLine, cmdAutoswitch } from '../src/cli.js';
@@ -531,13 +532,14 @@ function setupFailoverReady(ctx) {
       },
     }),
   );
-  ctx.store.setProfile('provider__keysmith-failover', 'ks_live_testkey');
+  ctx.store.setProfile('provider__keysmith-failover', 'ks_FAKE_LIMITSIGNAL_KEY');
   fs.mkdirSync(path.join(ctx.configDir, 'providers'), { recursive: true });
   fs.writeFileSync(
     path.join(ctx.configDir, 'providers', 'keysmith-failover.json'),
     JSON.stringify({ name: 'keysmith-failover', baseUrl: 'http://127.0.0.1:8787', authScheme: 'bearer' }),
   );
   ctx.claudeSettingsPath = path.join(ctx.claudeDir, 'settings.json');
+  config.set(ctx, 'failover.probeEnabled', false);
   return ksPath;
 }
 

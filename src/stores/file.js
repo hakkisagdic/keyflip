@@ -5,6 +5,7 @@
 import fs from 'fs';
 import path from 'path';
 import { atomicWrite } from '../fsutil.js';
+import { registerSecret } from '../redact.js';
 
 class FileStore {
   constructor(opts) {
@@ -15,13 +16,14 @@ class FileStore {
 
   _read(p) {
     try {
-      return fs.readFileSync(p, 'utf8');
-    } catch (e) {
+      return registerSecret(fs.readFileSync(p, 'utf8'));
+    } catch {
       return null;
     }
   }
 
   _write(p, blob) {
+    registerSecret(blob);
     atomicWrite(p, blob, 0o600);
   }
 

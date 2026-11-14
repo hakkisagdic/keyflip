@@ -61,12 +61,22 @@ test('WSL path detection, distro extraction and command wrapping', function () {
   assert.deepStrictEqual(w.args, ['-d', 'Ubuntu', '--', 'sh', '-lc', 'claude --resume']);
 });
 
-// ---- #17 desktop gateway ----
-test('gateway use sets 3p in both dirs + writes profile; restore flips back to 1p', function () {
+// ---- #17 desktop gateway (experimental manual path + recorded-mode restore) ----
+test('gateway experimental use sets 3p in both dirs + refuses empty key; restore flips back to recorded mode', function () {
   const ctx = ctxDesktop();
-  provider.add(ctx, 'gw', { baseUrl: 'https://gw/v1', key: 'k', authScheme: 'bearer', models: { default: 'm' } });
-  desktopgw.use(ctx, 'gw');
   const main = path.join(ctx.appDataDir, 'claude_desktop_config.json');
+  fs.mkdirSync(ctx.appDataDir, { recursive: true });
+  fs.writeFileSync(main, JSON.stringify({ deploymentMode: '1p' }));
+  provider.add(ctx, 'gw', {
+    baseUrl: 'https://gw/v1',
+    key: 'ks_FAKE_GW_KEY',
+    authScheme: 'bearer',
+    models: { default: 'm' },
+  });
+  assert.throws(function () {
+    desktopgw.use(ctx, 'gw');
+  }, /experimental/);
+  desktopgw.use(ctx, 'gw', { experimental: true });
   const cfg = JSON.parse(fs.readFileSync(main, 'utf8'));
   assert.strictEqual(cfg.deploymentMode, '3p');
   const prof = path.join(ctx.appDataDir, 'configLibrary', desktopgw.KEYFLIP_PROFILE_ID + '.json');
