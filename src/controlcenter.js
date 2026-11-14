@@ -703,6 +703,154 @@ export function sortStatusBoardRows(rows, nowMs = Date.now()) {
     .map((item) => item.row);
 }
 
+/**
+ * Validates a status.json object or file against the Status Board schema (`docs/STATUS-BOARD.md`).
+ */
+export function validateStatusBoardSchema(input) {
+  const errors = [];
+  const warnings = [];
+
+  let raw = input;
+  if (typeof input === "string") {
+    try {
+      raw = JSON.parse(input);
+    } catch (e) {
+      return {
+        valid: false,
+        errors: [`Geçersiz JSON: ${e.message}`],
+        warnings: [],
+        stats: { sectionCount: 0, rowCount: 0, ownerNeededCount: 0 }
+      };
+    }
+  }
+
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return {
+      valid: false,
+      errors: ["Kök değer bir JSON nesnesi (object) olmalıdır."],
+      warnings: [],
+      stats: { sectionCount: 0, rowCount: 0, ownerNeededCount: 0 }
+    };
+  }
+
+  if (raw.updated === undefined || raw.updated === null || String(raw.updated).trim() === "") {
+    warnings.push("'updated' alanı eksik (bayatlama kontrolü dosya mtime değerine düşecek).");
+  } else if (!Number.isFinite(Date.parse(String(raw.updated)))) {
+    errors.push(`'updated' alanı geçerli bir ISO-8601 zaman damgası değil: ${raw.updated}`);
+  }
+
+  if (!Array.isArray(raw.sections)) {
+    errors.push("'sections' alanı bir dizi (array) olmalıdır.");
+  }
+
+  const sections = Array.isArray(raw.sections) ? raw.sections : [];
+  let rowCount = 0;
+  const seenIds = new Set();
+
+  sections.forEach((sec, sIdx) => {
+    if (!sec || typeof sec !== "object") {
+      errors.push(`sections[${sIdx}] bir nesne olmalıdır.`);
+      return;
+    }
+    if (!sec.id || typeof sec.id !== "string") {
+      errors.push(`sections[${sIdx}].id zorunlu bir metin alanıdır.`);
+    } else if (seenIds.has(sec.id)) {
+      warnings.push(`Yinelenen bölüm kimliği: '${sec.id}' (satırlar birleştirilecek).`);
+    } else {
+      seenIds.add(sec.id);
+    }
+    if (!sec.title || typeof sec.title !== "string") {
+      warnings.push(`sections[${sIdx}].title eksik; id başlık olarak kullanılacak.`);
+    }
+    if (!Array.isArray(sec.rows)) {
+      errors.push(`sections[${sIdx}].rows bir dizi olmalıdır.`);
+      return;
+    }
+    sec.rows.forEach((row, rIdx) => {
+      rowCount += 1;
+      if (!row || typeof row !== "object") {
+        errors.push(`sections[${sIdx}].rows[${rIdx}] bir nesne olmalıdır.`);
+        return;
+      }
+      if (typeof row.label !== "string" || !row.label.trim()) {
+        errors.push(`sections[${sIdx}].rows[${rIdx}].label boş olamaz.`);
+      }
+      if (row.value === undefined || row.value === null) {
+        errors.push(`sections[${sIdx}].rows[${rIdx}].value eksik.`);
+      }
+      if (!["ok", "warn", "bad", "unknown"].includes(row.status)) {
+        errors.push(
+          `sections[${sIdx}].rows[${rIdx}].status geçersiz ('${row.status}'); beklenen: ok | warn | bad | unknown.`
+        );
+      }
+      if (row.since !== undefined && row.since !== null && !Number.isFinite(Date.parse(String(row.since)))) {
+        warnings.push(`sections[${sIdx}].rows[${rIdx}].since geçerli bir ISO-8601 tarihi değil: ${row.since}`);
+      }
+    });
+  });
+
+  let ownerNeededCount = 0;
+  if (raw.owner_needed !== undefined) {
+    if (!Array.isArray(raw.owner_needed)) {
+      errors.push("'owner_needed' alanı bir dizi (array) olmalıdır.");
+    } else {
+      raw.owner_needed.forEach((item, oIdx) => {
+        ownerNeededCount += 1;
+        if (!item || typeof item !== "object" || (!item.project && !item.text)) {
+          errors.push(`owner_needed[${oIdx}] içinde 'project' ve 'text' alanları bulunmalıdır.`);
+        }
+      });
+    }
+  }
+
+  return {
+    valid: errors.length === 0,
+    errors,
+    warnings,
+    stats: {
+      sectionCount: sections.length,
+      rowCount,
+      ownerNeededCount
+    }
+  };
+}
+
+/**
+ * Computes overall SLA / health score across all status board sections.
+ */
+export function computeStatusBoardHealth(sections = []) {
+  const list = Array.isArray(sections) ? sections : [];
+  let totalRows = 0;
+  let okRows = 0;
+  let warnRows = 0;
+  let badRows = 0;
+  let unknownRows = 0;
+
+  for (const sec of list) {
+    for (const r of sec?.rows || []) {
+      totalRows += 1;
+      if (r?.status === "ok") okRows += 1;
+      else if (r?.status === "warn") warnRows += 1;
+      else if (r?.status === "bad") badRows += 1;
+      else unknownRows += 1;
+    }
+  }
+
+  // Weighted health: ok = 1.0, warn = 0.5, unknown = 0.75, bad = 0.0
+  const weighted = okRows * 1.0 + warnRows * 0.5 + unknownRows * 0.75;
+  const healthPct = totalRows > 0 ? Math.round((weighted / totalRows) * 100) : 100;
+
+  return {
+    totalRows,
+    okRows,
+    warnRows,
+    badRows,
+    unknownRows,
+    healthPct,
+    summary: totalRows > 0 ? `%${healthPct} sağlıklı (${okRows}/${totalRows} ok)` : "Veri yok"
+  };
+}
+
 export function collectStatusBoard(ctx, options = {}) {
   const homeDir = options.homeDir || ctx?.home || ctx?.homeDir || os.homedir();
   const configuredPath =
@@ -811,10 +959,14 @@ export function collectStatusBoard(ctx, options = {}) {
     rows: sortStatusBoardRows(sec.rawRows, nowMs)
   }));
 
+  const health = computeStatusBoardHealth(sections);
+
   return {
     updated: raw.updated ? String(raw.updated) : null,
     stale,
     ageMinutes,
+    healthPct: health.healthPct,
+    healthSummary: health.summary,
     sections,
     owner_needed: ownerNeeded
   };
@@ -936,6 +1088,38 @@ export function evaluateFailoverSpendHealth(failoverInfo, options = {}) {
 }
 
 /**
+ * Simulates expected 1-hour failover API cost across coding intensity tiers and checks
+ * how many hours of standard Claude Code work the remaining Keysmith cap can sustain.
+ */
+export function estimateFailoverSessionCost(failoverInfo = {}, options = {}) {
+  const lightHourlyUsd = typeof options.lightHourlyUsd === "number" ? options.lightHourlyUsd : 0.9;
+  const standardHourlyUsd = typeof options.standardHourlyUsd === "number" ? options.standardHourlyUsd : 2.4;
+  const heavyHourlyUsd = typeof options.heavyHourlyUsd === "number" ? options.heavyHourlyUsd : 6.0;
+
+  const cap = failoverInfo?.cap || null;
+  const maxUsd = typeof cap?.max === "number" && cap.max > 0 ? cap.max : 25;
+  const spentUsd = typeof cap?.spent === "number" && cap.spent >= 0 ? cap.spent : 0;
+  const remainingUsd =
+    typeof cap?.remaining === "number" && cap.remaining >= 0
+      ? cap.remaining
+      : Math.max(0, Math.round((maxUsd - spentUsd) * 100) / 100);
+
+  const standardHoursCovered =
+    standardHourlyUsd > 0 ? Math.round((remainingUsd / standardHourlyUsd) * 10) / 10 : 0;
+  const canCoverOneHourStandard = remainingUsd >= standardHourlyUsd;
+
+  return {
+    lightHourlyUsd,
+    standardHourlyUsd,
+    heavyHourlyUsd,
+    remainingUsd,
+    standardHoursCovered,
+    canCoverOneHourStandard,
+    summary: `Simülasyon: Standart ~$${standardHourlyUsd.toFixed(2)}/saat · Kalan tavan ~${standardHoursCovered} saat yeter`
+  };
+}
+
+/**
  * Evaluates account pool OAuth token readiness and pre-warm needs before peak hours.
  */
 export function evaluatePoolReadiness(accounts, options = {}) {
@@ -1002,6 +1186,88 @@ export function evaluatePoolReadiness(accounts, options = {}) {
     readyForRotation,
     needsPreWarm,
     summary
+  };
+}
+
+/**
+ * Computes a 0-100 Pool Resilience & Redundancy Score evaluating single-point-of-failure (SPOF) risk,
+ * OAuth token validity, 5h/7d quota headroom balance, and failover readiness.
+ */
+export function evaluatePoolResilienceScore(accounts = [], failoverInfo = {}) {
+  const enabled = (Array.isArray(accounts) ? accounts : []).filter((a) => a && a.enabled !== false);
+  const risks = [];
+
+  if (enabled.length === 0) {
+    return {
+      score: 0,
+      grade: "D",
+      spofRisk: true,
+      risks: ["Etkin abonelik hesabı yok"],
+      summary: "Dayanıklılık: D (0/100)"
+    };
+  }
+
+  let score = 0;
+
+  // 1. Account redundancy (up to 35 pts)
+  if (enabled.length >= 3) {
+    score += 35;
+  } else if (enabled.length === 2) {
+    score += 25;
+  } else {
+    score += 10;
+    risks.push("Tek hesap (SPOF riski)");
+  }
+
+  // 2. Valid OAuth tokens (up to 25 pts)
+  const validTokens = enabled.filter((a) => a?.token?.status === "valid").length;
+  const tokenRatio = validTokens / enabled.length;
+  score += Math.round(tokenRatio * 25);
+  if (validTokens < enabled.length) {
+    risks.push(`${enabled.length - validTokens} hesapta OAuth yenileme gerekli`);
+  }
+
+  // 3. Quota headroom across accounts (up to 25 pts)
+  const withHeadroom = enabled.filter((a) => {
+    const five =
+      typeof a?.usage?.fiveHour?.pct === "number"
+        ? a.usage.fiveHour.pct
+        : typeof a?.fiveHourPct === "number"
+          ? a.fiveHourPct
+          : 0;
+    const seven =
+      typeof a?.usage?.sevenDay?.pct === "number"
+        ? a.usage.sevenDay.pct
+        : typeof a?.sevenDayPct === "number"
+          ? a.sevenDayPct
+          : 0;
+    return five < 85 && seven < 90;
+  }).length;
+  score += Math.round((withHeadroom / enabled.length) * 25);
+  if (withHeadroom === 0) {
+    risks.push("Tüm hesaplar %85+ dolulukta");
+  }
+
+  // 4. Failover safety net (up to 15 pts)
+  if (failoverInfo?.enabled && failoverInfo?.gatewayReady) {
+    score += 15;
+  } else if (failoverInfo?.enabled) {
+    score += 8;
+    risks.push("Failover açık ancak gateway hazır değil");
+  } else {
+    risks.push("Yedek zincir (Failover) kapalı");
+  }
+
+  score = Math.max(0, Math.min(100, score));
+  const grade = score >= 85 ? "A" : score >= 70 ? "B" : score >= 50 ? "C" : "D";
+  const spofRisk = enabled.length < 2 && !(failoverInfo?.enabled && failoverInfo?.gatewayReady);
+
+  return {
+    score,
+    grade,
+    spofRisk,
+    risks,
+    summary: `Dayanıklılık: ${grade} (${score}/100)`
   };
 }
 
@@ -1316,12 +1582,14 @@ export function buildDiagnosticBundle(snapshot = {}) {
       activeAccount: snapshot.activeAccount || null,
       accountCount: Array.isArray(snapshot.accounts) ? snapshot.accounts.length : 0,
       poolReadiness: snapshot.poolReadiness || null,
+      poolResilience: snapshot.poolResilience || null,
       quotaForecast: snapshot.quotaForecast || null,
       failover: snapshot.failover || null,
       services: snapshot.services || [],
       statusBoardSummary: snapshot.statusBoard
         ? {
             stale: snapshot.statusBoard.stale,
+            healthPct: snapshot.statusBoard.healthPct ?? null,
             sectionCount: Array.isArray(snapshot.statusBoard.sections) ? snapshot.statusBoard.sections.length : 0,
             ownerNeededCount: Array.isArray(snapshot.statusBoard.owner_needed)
               ? snapshot.statusBoard.owner_needed.length

@@ -14,6 +14,7 @@ public struct ControlCenterPayload: Codable {
     public var server: ServerSummary?
     public var statusBoard: StatusBoardPayload?
     public var poolReadiness: PoolReadinessSummary?
+    public var poolResilience: PoolResilienceSummary?
     public var poolHorizon: PoolHorizonSummary?
     public var quotaForecast: QuotaForecastSummary?
     public var auditTimeline: [AuditEventItem]?
@@ -35,6 +36,7 @@ public struct ControlCenterPayload: Codable {
         server: ServerSummary? = nil,
         statusBoard: StatusBoardPayload? = nil,
         poolReadiness: PoolReadinessSummary? = nil,
+        poolResilience: PoolResilienceSummary? = nil,
         poolHorizon: PoolHorizonSummary? = nil,
         quotaForecast: QuotaForecastSummary? = nil,
         auditTimeline: [AuditEventItem]? = [],
@@ -55,12 +57,35 @@ public struct ControlCenterPayload: Codable {
         self.server = server
         self.statusBoard = statusBoard
         self.poolReadiness = poolReadiness
+        self.poolResilience = poolResilience
         self.poolHorizon = poolHorizon
         self.quotaForecast = quotaForecast
         self.auditTimeline = auditTimeline
         self.markdownReport = markdownReport
         self.preferences = preferences
         self.warnings = warnings
+    }
+}
+
+public struct PoolResilienceSummary: Codable {
+    public var score: Int
+    public var grade: String
+    public var spofRisk: Bool
+    public var risks: [String]?
+    public var summary: String
+
+    public init(
+        score: Int = 100,
+        grade: String = "A",
+        spofRisk: Bool = false,
+        risks: [String]? = [],
+        summary: String = ""
+    ) {
+        self.score = score
+        self.grade = grade
+        self.spofRisk = spofRisk
+        self.risks = risks
+        self.summary = summary
     }
 }
 
@@ -124,6 +149,34 @@ public struct FailoverSpendHealth: Codable {
         self.burnUsdPerHour = burnUsdPerHour
         self.estimatedMinutesToCap = estimatedMinutesToCap
         self.alertReason = alertReason
+    }
+}
+
+public struct FailoverCostEstimate: Codable {
+    public var lightHourlyUsd: Double
+    public var standardHourlyUsd: Double
+    public var heavyHourlyUsd: Double
+    public var remainingUsd: Double
+    public var standardHoursCovered: Double
+    public var canCoverOneHourStandard: Bool
+    public var summary: String
+
+    public init(
+        lightHourlyUsd: Double = 0.9,
+        standardHourlyUsd: Double = 2.4,
+        heavyHourlyUsd: Double = 6.0,
+        remainingUsd: Double = 25.0,
+        standardHoursCovered: Double = 10.4,
+        canCoverOneHourStandard: Bool = true,
+        summary: String = ""
+    ) {
+        self.lightHourlyUsd = lightHourlyUsd
+        self.standardHourlyUsd = standardHourlyUsd
+        self.heavyHourlyUsd = heavyHourlyUsd
+        self.remainingUsd = remainingUsd
+        self.standardHoursCovered = standardHoursCovered
+        self.canCoverOneHourStandard = canCoverOneHourStandard
+        self.summary = summary
     }
 }
 
@@ -286,6 +339,7 @@ public struct FailoverStatus: Codable {
     public var gatewayReason: String?
     public var cap: FailoverCap?
     public var spendHealth: FailoverSpendHealth?
+    public var costEstimate: FailoverCostEstimate?
 
     public static let empty = FailoverStatus(
         enabled: false,
@@ -301,7 +355,8 @@ public struct FailoverStatus: Codable {
         gatewayReady: false,
         gatewayReason: nil,
         cap: nil,
-        spendHealth: nil
+        spendHealth: nil,
+        costEstimate: nil
     )
 }
 
@@ -381,17 +436,23 @@ public struct StatusBoardPayload: Codable {
 
     public var host: String?
     public var updated: String?
+    public var healthPct: Int?
+    public var healthSummary: String?
     public var sections: [StatusBoardSection]
     public var owner_needed: [StatusBoardOwnerItem]?
 
     public init(
         host: String? = nil,
         updated: String? = nil,
+        healthPct: Int? = nil,
+        healthSummary: String? = nil,
         sections: [StatusBoardSection] = [],
         owner_needed: [StatusBoardOwnerItem]? = nil
     ) {
         self.host = host
         self.updated = updated
+        self.healthPct = healthPct
+        self.healthSummary = healthSummary
         self.sections = sections
         self.owner_needed = owner_needed
     }
@@ -408,6 +469,34 @@ public struct StatusBoardPayload: Codable {
         sections.reduce(0) { $0 + $1.badCount + $1.warnCount }
     }
 
+    public func unmutedIssueCount(mutedRowKeys: Set<String> = []) -> Int {
+        sections.reduce(0) { acc, sec in
+            let count = sec.rows.filter { row in
+                (row.status == "bad" || row.status == "warn") && !mutedRowKeys.contains("\(sec.id)::\(row.label)")
+            }.count
+            return acc + count
+        }
+    }
+
+    public var computedHealthPct: Int {
+        if let explicit = healthPct { return explicit }
+        var total = 0
+        var weighted = 0.0
+        for sec in sections {
+            for r in sec.rows {
+                total += 1
+                switch r.status.lowercased() {
+                case "ok": weighted += 1.0
+                case "warn": weighted += 0.5
+                case "bad": weighted += 0.0
+                default: weighted += 0.75
+                }
+            }
+        }
+        guard total > 0 else { return 100 }
+        return Int(((weighted / Double(total)) * 100.0).rounded())
+    }
+
     public func filteredOwnerNeeded(searchQuery: String = "") -> [StatusBoardOwnerItem] {
         let query = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !query.isEmpty else { return ownerNeededItems }
@@ -416,13 +505,19 @@ public struct StatusBoardPayload: Codable {
         }
     }
 
-    public func filteredSections(onlyIssues: Bool, searchQuery: String = "") -> [StatusBoardSection] {
+    public func filteredSections(
+        onlyIssues: Bool,
+        searchQuery: String = "",
+        mutedRowKeys: Set<String> = []
+    ) -> [StatusBoardSection] {
         let query = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         return sections.compactMap { sec in
             let sectionTitleMatches = !query.isEmpty && sec.title.lowercased().contains(query)
             let rows = sec.sortedRows.filter { row in
-                if onlyIssues && row.status != "bad" && row.status != "warn" {
-                    return false
+                let isMuted = mutedRowKeys.contains("\(sec.id)::\(row.label)")
+                if onlyIssues {
+                    if isMuted { return false }
+                    if row.status != "bad" && row.status != "warn" { return false }
                 }
                 if query.isEmpty || sectionTitleMatches {
                     return true
@@ -437,9 +532,10 @@ public struct StatusBoardPayload: Codable {
     public func orderedSections(
         pinnedIds: Set<String> = [],
         onlyIssues: Bool = false,
-        searchQuery: String = ""
+        searchQuery: String = "",
+        mutedRowKeys: Set<String> = []
     ) -> [StatusBoardSection] {
-        let filtered = filteredSections(onlyIssues: onlyIssues, searchQuery: searchQuery)
+        let filtered = filteredSections(onlyIssues: onlyIssues, searchQuery: searchQuery, mutedRowKeys: mutedRowKeys)
         guard !pinnedIds.isEmpty else { return filtered }
         let pinned = filtered.filter { pinnedIds.contains($0.id) }
         let unpinned = filtered.filter { !pinnedIds.contains($0.id) }

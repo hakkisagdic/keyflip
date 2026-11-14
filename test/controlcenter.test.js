@@ -14,10 +14,14 @@ import {
   buildControlCenterMarkdown,
   collectAuditTimeline,
   evaluateFailoverSpendHealth,
+  estimateFailoverSessionCost,
   evaluatePoolReadiness,
+  evaluatePoolResilienceScore,
   detectStatusBoardTransitions,
   evaluatePoolHorizonAndQuietHours,
-  buildDiagnosticBundle
+  buildDiagnosticBundle,
+  validateStatusBoardSchema,
+  computeStatusBoardHealth
 } from "../src/controlcenter.js";
 import * as daemon from "../src/daemon.js";
 
@@ -488,4 +492,57 @@ test("evaluatePoolHorizonAndQuietHours, weeklyEfficiency, service sparkline, and
   });
   assert.equal(diag.schema, "keyflip.diagnostic.v1");
   assert.equal(diag.summary.activeAccount.email, "[EMAIL_REDACTED]");
+});
+
+test("validateStatusBoardSchema, computeStatusBoardHealth, estimateFailoverSessionCost, and evaluatePoolResilienceScore work accurately", () => {
+  const sampleText = fs.readFileSync(path.resolve("test/fixtures/status.sample.json"), "utf8");
+  const validRes = validateStatusBoardSchema(sampleText);
+  assert.equal(validRes.valid, true);
+  assert.equal(validRes.errors.length, 0);
+  assert.equal(validRes.stats.sectionCount, 2);
+  assert.equal(validRes.stats.rowCount, 5);
+  assert.equal(validRes.stats.ownerNeededCount, 2);
+
+  const invalidRes = validateStatusBoardSchema({
+    updated: "not-a-date",
+    sections: [{ id: "", rows: [{ label: "", value: "1", status: "invalid-status" }] }]
+  });
+  assert.equal(invalidRes.valid, false);
+  assert.ok(invalidRes.errors.length >= 3);
+
+  const parsedSample = JSON.parse(sampleText);
+  const health = computeStatusBoardHealth(parsedSample.sections);
+  assert.equal(health.totalRows, 5);
+  assert.equal(health.okRows, 2);
+  assert.equal(health.warnRows, 1);
+  assert.equal(health.badRows, 1);
+  assert.equal(health.unknownRows, 1);
+  assert.equal(health.healthPct, 65);
+
+  const costSim = estimateFailoverSessionCost({
+    cap: { max: 25, spent: 5.8, remaining: 19.2 }
+  });
+  assert.equal(costSim.remainingUsd, 19.2);
+  assert.equal(costSim.standardHoursCovered, 8);
+  assert.equal(costSim.canCoverOneHourStandard, true);
+
+  const resilienceHigh = evaluatePoolResilienceScore(
+    [
+      { name: "a1", enabled: true, token: { status: "valid" }, usage: { fiveHour: { pct: 20 }, sevenDay: { pct: 30 } } },
+      { name: "a2", enabled: true, token: { status: "valid" }, usage: { fiveHour: { pct: 10 }, sevenDay: { pct: 40 } } },
+      { name: "a3", enabled: true, token: { status: "valid" }, usage: { fiveHour: { pct: 50 }, sevenDay: { pct: 60 } } }
+    ],
+    { enabled: true, gatewayReady: true }
+  );
+  assert.equal(resilienceHigh.score, 100);
+  assert.equal(resilienceHigh.grade, "A");
+  assert.equal(resilienceHigh.spofRisk, false);
+
+  const resilienceLow = evaluatePoolResilienceScore(
+    [{ name: "only", enabled: true, token: { status: "expired" }, usage: { fiveHour: { pct: 95 }, sevenDay: { pct: 92 } } }],
+    { enabled: false, gatewayReady: false }
+  );
+  assert.equal(resilienceLow.grade, "D");
+  assert.equal(resilienceLow.spofRisk, true);
+  assert.ok(resilienceLow.risks.length >= 3);
 });

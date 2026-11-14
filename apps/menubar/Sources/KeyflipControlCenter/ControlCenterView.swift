@@ -184,15 +184,26 @@ public struct ControlCenterView: View {
         let displayedSections = board.orderedSections(
             pinnedIds: viewModel.pinnedSectionIds,
             onlyIssues: viewModel.showOnlyIssuesInStatusBoard,
-            searchQuery: viewModel.statusBoardSearchQuery
+            searchQuery: viewModel.statusBoardSearchQuery,
+            mutedRowKeys: viewModel.mutedRowKeys
         )
         let displayedOwners = board.filteredOwnerNeeded(searchQuery: viewModel.statusBoardSearchQuery)
         let allCollapsed = !displayedSections.isEmpty && displayedSections.allSatisfy { collapsedSectionIds.contains($0.id) }
+        let activeIssuesCount = board.unmutedIssueCount(mutedRowKeys: viewModel.mutedRowKeys)
+        let healthPct = board.computedHealthPct
         return VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
                 Text("DURUM PANOSU")
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundColor(.secondary)
+
+                Text("%\(healthPct) sağlıklı")
+                    .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 1)
+                    .background((healthPct >= 85 ? Color.green : (healthPct >= 65 ? Color.orange : Color.red)).opacity(0.18))
+                    .foregroundColor(healthPct >= 85 ? .green : (healthPct >= 65 ? .orange : .red))
+                    .cornerRadius(3)
 
                 if viewModel.statusBoardStale {
                     HStack(spacing: 3) {
@@ -209,6 +220,16 @@ public struct ControlCenterView: View {
                 }
 
                 Spacer()
+
+                if !viewModel.mutedRowKeys.isEmpty {
+                    Button(action: { viewModel.clearMutedRows() }) {
+                        Text("Sessiz (\(viewModel.mutedRowKeys.count))")
+                            .font(.system(size: 9, weight: .medium))
+                            .foregroundColor(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Sessize alınan satırları geri aç")
+                }
 
                 if !displayedSections.isEmpty {
                     Button(action: {
@@ -229,7 +250,7 @@ public struct ControlCenterView: View {
                     Button(action: {
                         viewModel.showOnlyIssuesInStatusBoard.toggle()
                     }) {
-                        Text(viewModel.showOnlyIssuesInStatusBoard ? "Tümünü Göster" : "Yalnızca Sorunlar (\(board.totalIssueCount))")
+                        Text(viewModel.showOnlyIssuesInStatusBoard ? "Tümünü Göster" : "Yalnızca Sorunlar (\(activeIssuesCount))")
                             .font(.system(size: 9, weight: .semibold))
                             .padding(.horizontal, 5)
                             .padding(.vertical, 1)
@@ -355,6 +376,7 @@ public struct ControlCenterView: View {
                         if isExpanded {
                             VStack(alignment: .leading, spacing: 4) {
                                 ForEach(sorted) { row in
+                                    let isRowMuted = viewModel.isRowMuted(sectionId: sec.id, label: row.label)
                                     VStack(alignment: .leading, spacing: 2) {
                                         HStack(alignment: .firstTextBaseline, spacing: 6) {
                                             Circle()
@@ -362,10 +384,22 @@ public struct ControlCenterView: View {
                                                 .frame(width: 6, height: 6)
                                             Text(row.label)
                                                 .font(.system(size: 11, weight: (row.status == "bad" || row.status == "warn") ? .medium : .regular))
+                                                .foregroundColor(isRowMuted ? .secondary : .primary)
                                             Spacer()
                                             Text(row.value)
                                                 .font(.system(size: 11, design: .monospaced))
-                                                .foregroundColor(row.status == "bad" ? .red : (row.status == "warn" ? .orange : .primary))
+                                                .foregroundColor(isRowMuted ? .secondary : (row.status == "bad" ? .red : (row.status == "warn" ? .orange : .primary)))
+                                            if row.status == "bad" || row.status == "warn" {
+                                                Button(action: {
+                                                    viewModel.toggleMuteRow(sectionId: sec.id, label: row.label)
+                                                }) {
+                                                    Image(systemName: isRowMuted ? "bell.slash.fill" : "bell.slash")
+                                                        .font(.system(size: 9))
+                                                        .foregroundColor(isRowMuted ? .orange : .secondary)
+                                                }
+                                                .buttonStyle(.plain)
+                                                .help(isRowMuted ? "Bu satırın uyarısını geri aç" : "Bu satırın uyarısını sessize al")
+                                            }
                                         }
                                         if (row.detail != nil && !row.detail!.isEmpty) || (row.since != nil && !row.since!.isEmpty) {
                                             HStack(spacing: 6) {
@@ -431,6 +465,11 @@ public struct ControlCenterView: View {
                             Text(pool.summary)
                                 .font(.system(size: 10, weight: .medium))
                                 .foregroundColor(.secondary)
+                            if let res = viewModel.payload.poolResilience {
+                                Text("· \(res.grade) (\(res.score))")
+                                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                                    .foregroundColor(res.score >= 80 ? .green : (res.score >= 55 ? .orange : .red))
+                            }
                             Spacer()
                             Button("Ön-Isıt") {
                                 viewModel.requestTriggerDaemonJob(job: "refresh", title: "OAuth Ön-Isıtma (refresh)")
@@ -590,6 +629,12 @@ public struct ControlCenterView: View {
                             .font(.system(size: 11))
                             .foregroundColor(.secondary)
                     }
+                }
+
+                if let sim = fo.costEstimate, !sim.summary.isEmpty {
+                    Text(sim.summary)
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary)
                 }
 
                 if let sh = fo.spendHealth, let alert = sh.alertReason, !alert.isEmpty {

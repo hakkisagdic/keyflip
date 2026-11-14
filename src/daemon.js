@@ -804,7 +804,9 @@ async function buildControlCenter(ctx, scheduler, opts) {
   base.server = _controlcenter.collectServerStatus(ctx, ccOpts);
   base.statusBoard = _controlcenter.collectStatusBoard(ctx, ccOpts);
   base.failover.spendHealth = _controlcenter.evaluateFailoverSpendHealth(base.failover, { nowMs: opts.nowMs || ctx.nowMs });
+  base.failover.costEstimate = _controlcenter.estimateFailoverSessionCost(base.failover);
   base.poolReadiness = _controlcenter.evaluatePoolReadiness(base.accounts);
+  base.poolResilience = _controlcenter.evaluatePoolResilienceScore(base.accounts, base.failover);
   base.quotaForecast = _controlcenter.computeQuotaForecast(base.accounts, { nowMs: opts.nowMs || ctx.nowMs });
   base.auditTimeline = _controlcenter.collectAuditTimeline(ctx, ccOpts);
   base.poolHorizon = _controlcenter.evaluatePoolHorizonAndQuietHours(base.accounts);

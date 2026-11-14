@@ -91,6 +91,7 @@ import * as _codex from './codex.js';
 import * as _cfg from './config.js';
 import * as _svc from './autoswitchservice.js';
 import * as _daemon from './daemon.js';
+import * as _controlcenter from './controlcenter.js';
 import * as _selfbin from './selfbin.js';
 import * as _identity from './identity.js';
 import * as _failover from './failover.js';
@@ -1512,6 +1513,46 @@ function formatAutoswitchTickLine(r, opts) {
 }
 
 // `keyflip daemon install [-y] | uninstall | status [--json] | run | run-now <job>`
+
+async function cmdStatusBoard(ctx, rest) {
+  const sub = rest[0] || 'validate';
+  if (sub === '--help' || sub === '-h' || sub === 'help') {
+    print('usage: keyflip status-board validate [file] [--json]');
+    return;
+  }
+  if (sub === 'validate') {
+    const rawTarget = rest[1] || _cfg.get(ctx, 'menubar.statusFile') || '~/.polyctl/admin/status.json';
+    const resolved = _controlcenter.expandHomePath(rawTarget, ctx.home);
+    if (!fs.existsSync(resolved)) {
+      return fail('status.json file not found: ' + resolved);
+    }
+    const content = fs.readFileSync(resolved, 'utf8');
+    const result = _controlcenter.validateStatusBoardSchema(content);
+    if (JSON_MODE) {
+      jsonOut({ statusBoardValidation: Object.assign({ path: resolved }, result) });
+      if (!result.valid) process.exitCode = 1;
+      return;
+    }
+    if (result.valid) {
+      print(style.ok('✅') + ' valid status.json (' + resolved + ') — ' + result.stats.sectionCount + ' sections, ' + result.stats.rowCount + ' rows, ' + result.stats.ownerNeededCount + ' owner_needed');
+      result.warnings.forEach(function (w) {
+        print('  ' + style.warn('warn:') + ' ' + w);
+      });
+    } else {
+      print(style.err('❌') + ' invalid status.json (' + resolved + ')');
+      result.errors.forEach(function (e) {
+        print('  ' + style.err('error:') + ' ' + e);
+      });
+      result.warnings.forEach(function (w) {
+        print('  ' + style.warn('warn:') + ' ' + w);
+      });
+      process.exitCode = 1;
+    }
+    return;
+  }
+  return fail('usage: keyflip status-board validate [file] [--json]');
+}
+
 async function cmdDaemon(ctx, rest) {
   const sub = rest[0] || 'status';
   if (sub === '--help' || sub === '-h' || sub === 'help') {
@@ -18126,6 +18167,8 @@ async function dispatch(ctx, cmd, rest) {
         return cmdInstallSkill(ctx, rest);
       case 'daemon':
         return cmdDaemon(ctx, rest);
+      case 'status-board':
+        return cmdStatusBoard(ctx, rest);
       case 'autoswitch':
         return cmdAutoswitch(ctx, rest);
       case 'failover':

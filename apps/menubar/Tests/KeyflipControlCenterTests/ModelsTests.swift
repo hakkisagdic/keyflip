@@ -36,7 +36,8 @@ public enum ModelsTestSuite {
             "gatewayReady": true,
             "alias": "claude-sonnet-failover",
             "cap": { "max": 25.0, "spent": 3.4, "remaining": 21.6, "exceeded": false },
-            "spendHealth": { "status": "ok", "utilizationPct": 13.6, "burnUsdPerHour": null, "estimatedMinutesToCap": null, "alertReason": null }
+            "spendHealth": { "status": "ok", "utilizationPct": 13.6, "burnUsdPerHour": null, "estimatedMinutesToCap": null, "alertReason": null },
+            "costEstimate": { "lightHourlyUsd": 0.9, "standardHourlyUsd": 2.4, "heavyHourlyUsd": 6.0, "remainingUsd": 21.6, "standardHoursCovered": 9.0, "canCoverOneHourStandard": true, "summary": "Simülasyon: Standart ~$2.40/saat · Kalan tavan ~9 saat yeter" }
           },
           "otherQuotas": [
             { "id": "kiro", "label": "Kiro Kredisi", "status": "ok", "display": "0.21 / 50 kredi", "usedPct": 0.4 },
@@ -79,6 +80,13 @@ public enum ModelsTestSuite {
             "readyForRotation": 1,
             "needsPreWarm": [],
             "summary": "1/1 hesap rotasyona hazır"
+          },
+          "poolResilience": {
+            "score": 88,
+            "grade": "A",
+            "spofRisk": false,
+            "risks": [],
+            "summary": "Dayanıklılık: A (88/100)"
           },
           "quotaForecast": {
             "recommendedAccount": "gmail",
@@ -128,7 +136,9 @@ public enum ModelsTestSuite {
         precondition(decoded.server?.load == "okunamadı", "unreadable server load must be okunamadı")
         precondition(decoded.server?.readOnly == true, "server must be readOnly")
         precondition(decoded.poolReadiness?.readyForRotation == 1, "poolReadiness.readyForRotation must be 1")
+        precondition(decoded.poolResilience?.grade == "A", "poolResilience.grade must be A")
         precondition(decoded.failover.spendHealth?.utilizationPct == 13.6, "failover.spendHealth.utilizationPct must be 13.6")
+        precondition(decoded.failover.costEstimate?.standardHoursCovered == 9.0, "failover.costEstimate.standardHoursCovered must be 9.0")
         precondition(decoded.quotaForecast?.recommendedAccount == "gmail", "quotaForecast.recommendedAccount must be gmail")
         precondition(decoded.auditTimeline?.first?.kind == "daemon-switch", "auditTimeline must decode daemon-switch")
 
@@ -161,6 +171,13 @@ public enum ModelsTestSuite {
         precondition(board.ownerNeededCount == 2, "ownerNeededCount must be 2")
         precondition(board.sections.count == 2, "sections.count must be 2")
         precondition(board.totalIssueCount == 2, "totalIssueCount must be 2 (1 bad + 1 warn)")
+        precondition(board.computedHealthPct == 65, "computedHealthPct for 2 ok + 1 warn + 1 unknown + 1 bad must be 65")
+
+        // Muted row test
+        let mutedSet: Set<String> = ["quotas::Test Hesabı"]
+        precondition(board.unmutedIssueCount(mutedRowKeys: mutedSet) == 1, "unmutedIssueCount must drop to 1 when bad row is muted")
+        let issuesWithMute = board.filteredSections(onlyIssues: true, searchQuery: "", mutedRowKeys: mutedSet)
+        precondition(issuesWithMute.count == 1 && issuesWithMute[0].rows.count == 1, "muted row must be hidden in onlyIssues mode")
 
         let quotaRows = board.sections[0].sortedRows
         precondition(quotaRows.count == 3, "quotaRows.count must be 3")
@@ -220,7 +237,7 @@ public enum ModelsTestSuite {
 struct StandaloneTestMain {
     static func main() throws {
         try ModelsTestSuite.runAll()
-        print("✔ KeyflipControlCenter Swift model, statusBoard fixture, search/pin, transitions, quotaForecast & confirmation tests passed")
+        print("✔ KeyflipControlCenter Swift model, statusBoard fixture, search/pin, mute, resilience, costEstimate & confirmation tests passed")
     }
 }
 #else

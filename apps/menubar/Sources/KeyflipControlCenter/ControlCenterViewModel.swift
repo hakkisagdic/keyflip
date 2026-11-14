@@ -20,6 +20,9 @@ public final class ControlCenterViewModel: ObservableObject {
     @Published public var pinnedSectionIds: Set<String> = Set(
         UserDefaults.standard.stringArray(forKey: "menubar.pinnedSections") ?? []
     )
+    @Published public var mutedRowKeys: Set<String> = Set(
+        UserDefaults.standard.stringArray(forKey: "menubar.mutedRowKeys") ?? []
+    )
     @Published public var compactMenuBarLabel: Bool = UserDefaults.standard.bool(forKey: "menubar.compactLabel") {
         didSet { UserDefaults.standard.set(compactMenuBarLabel, forKey: "menubar.compactLabel") }
     }
@@ -57,6 +60,29 @@ public final class ControlCenterViewModel: ObservableObject {
             pinnedSectionIds.insert(sectionId)
         }
         UserDefaults.standard.set(Array(pinnedSectionIds).sorted(), forKey: "menubar.pinnedSections")
+    }
+
+    public func rowMuteKey(sectionId: String, label: String) -> String {
+        "\(sectionId)::\(label)"
+    }
+
+    public func isRowMuted(sectionId: String, label: String) -> Bool {
+        mutedRowKeys.contains(rowMuteKey(sectionId: sectionId, label: label))
+    }
+
+    public func toggleMuteRow(sectionId: String, label: String) {
+        let key = rowMuteKey(sectionId: sectionId, label: label)
+        if mutedRowKeys.contains(key) {
+            mutedRowKeys.remove(key)
+        } else {
+            mutedRowKeys.insert(key)
+        }
+        UserDefaults.standard.set(Array(mutedRowKeys).sorted(), forKey: "menubar.mutedRowKeys")
+    }
+
+    public func clearMutedRows() {
+        mutedRowKeys.removeAll()
+        UserDefaults.standard.removeObject(forKey: "menubar.mutedRowKeys")
     }
 
     public func scheduleTimer() {

@@ -1,6 +1,6 @@
 # Geliştirme Listesi ve Yaratıcı Özellik Önerileri (`GELISTIRME_LISTESI.md`)
 
-Bu liste, `docs/RAKIP_ANALIZI.md` sonucunda belirlenen tüm özelliklerin tamamlanma durumunu ve dördüncü turda önerilen **beş yeni yaratıcı özelliği** (en değerli ikisi uygulanmış olarak) içerir.
+Bu liste, `docs/RAKIP_ANALIZI.md` sonucunda belirlenen tüm özelliklerin tamamlanma durumunu ve beşinci turda önerilen **beş yeni yaratıcı özelliği** (en değerli ikisi uygulanmış olarak) içerir.
 
 ---
 
@@ -23,24 +23,29 @@ Bu liste, `docs/RAKIP_ANALIZI.md` sonucunda belirlenen tüm özelliklerin tamaml
 - [x] **Hesap Başına Haftalık Kota Verimlilik Sınıflandırması (`weeklyEfficiency`):** 7 günlük pencere kullanımını `optimal`, `balanced`, `underutilized`, `saturated` olarak sınıflandırma.
 - [x] **Servis Sağlık Kıvılcım Grafiği (`sparkline` — `█/▁`):** İzlenen servislerin son log satırlarındaki başarı/hata durumunu tek bakışlık Unicode kıvılcım dizisiyle (`████▁█`) gösterme.
 - [x] **Anonimleştirilmiş Tanılama Paketi (`buildDiagnosticBundle`):** E-posta adreslerini, ev dizini yollarını ve tüm OAuth/API sırlarını maskeleyerek (`keyflip.diagnostic.v1`) dışa aktarma.
+- [x] **Menü Çubuğundan Tek Tıkla Onaylı OAuth Ön-Isıtma (`triggerDaemonJob: refresh`) ve Havuz Ufku (`evaluatePoolHorizonAndQuietHours`):** `HESAPLAR` bölümünden tek tıkla (`Ön-Isıt`) kullanıcı onaylı `refresh` tetikleme ve toplam kalan 5 saatlik kapasiteyi hesaplama.
+- [x] **Çentik Dostu Dar Menü Çubuğu Etiketi (`compactMenuBarLabel`):** MacBook ekran çentiği (notch) için menü çubuğu etiketini yalnızca kalan yüzde ve `owner_needed` rozetine (`%58 •2`) daraltma.
+- [x] **Durum Panosu Satır Bazlı Sessize Alma (`mutedRowKeys`):** Bilinen ve üzerinde çalışılan bir `bad`/`warn` satırını geçici olarak sessize (`bell.slash.fill`) alarak sorun sayacından ve "Yalnızca Sorunlar" filtresinden düşürme.
+- [x] **Failover Maliyet Simülatörü (`estimateFailoverSessionCost`):** Aktif Claude Code oturumlarının ortalama token tüketimine göre yedek zincirde 1 saatlik standart çalışmanın tahmini API maliyetini (`~$2.40/saat`) ve kalan tavanın kaç saat yeteceğini hesaplama.
+- [x] **Durum Panosu JSON Şema Doğrulayıcı (`keyflip status-board validate [dosya] [--json]`):** Harici script yazarlarının ürettikleri `status.json` dosyasını şema ve ISO-8601 tarih formatı açısından CLI üzerinden doğrulaması.
 
 ---
 
 ## 2. Listedeki İşler Tamamlandığı İçin Önerilen Beş Yeni Yaratıcı Özellik (En Değerli İkisi Uygulandı)
 
-### ✅ Yeni Öneri 1 (UYGULANDI): Menü Çubuğundan Tek Tıkla Onaylı OAuth Ön-Isıtma (`triggerDaemonJob: refresh` / `Ön-Isıt`) ve Havuz Ufku (`evaluatePoolHorizonAndQuietHours`)
-- **Değer:** Kullanıcı yoğun bir çalışma veya toplantı seansına girmeden hemen önce `HESAPLAR` bölümündeki **`Ön-Isıt`** düğmesine tıklayarak (onay penceresi ve denetim günlüğü kaydıyla) daemon üzerindeki `refresh` görevini anında tetikleyebilir; ayrıca tüm etkin hesapların birleşik kalan 5 saatlik kapasitesi (`poolHorizon`) hesaplanır.
-- **Uygulama:** `src/controlcenter.js` (`evaluatePoolHorizonAndQuietHours`), `Models.swift` (`PoolHorizonSummary`, `PendingConfirmationAction.triggerDaemonJob`), `ControlCenterViewModel.swift` (`requestTriggerDaemonJob`) ve `ControlCenterView.swift`.
+### ✅ Yeni Öneri 1 (UYGULANDI): Hesap Havuzu Dayanıklılık ve SPOF Riski Derecesi (`evaluatePoolResilienceScore` — `0-100` / `A`–`D`)
+- **Değer:** Kullanıcıya tek bir bakışta abonelik havuzunun kesintiye karşı ne kadar dayanıklı olduğunu `0-100` puan ve `A`–`D` harf notuyla (`Dayanıklılık: A (95/100)`) gösterir; tek hesap (SPOF riski), süresi dolmuş OAuth belirteci, %85 üstü kota doluluğu veya kapalı failover gibi zayıf noktaları otomatik listeler.
+- **Uygulama:** `src/controlcenter.js` (`evaluatePoolResilienceScore`), `src/daemon.js` (`base.poolResilience`), `Models.swift` (`PoolResilienceSummary`) ve `ControlCenterView.swift` (`accountsSection` başlık rozeti).
 
-### ✅ Yeni Öneri 2 (UYGULANDI): Çentik Dostu Dar Menü Çubuğu Etiketi (`compactMenuBarLabel`)
-- **Değer:** 14"/16" MacBook Pro ekran çentiği (notch) nedeniyle menü çubuğunda dar alanı olan kullanıcılar, Tercihler altındaki *"Dar menü çubuğu etiketi (yalnızca % + rozet)"* seçeneğiyle tam hesap adı yerine yalnızca kalan yüzdeyi, failover kısaltmasını ve `owner_needed` rozetini (`%58 •2`) görüntüleyebilir.
-- **Uygulama:** `KeyflipControlCenterApp.swift` (`MenuBarGlanceLabel.compactMode`), `ControlCenterViewModel.swift` (`compactMenuBarLabel`) ve `ControlCenterView.swift`.
+### ✅ Yeni Öneri 2 (UYGULANDI): Durum Panosu Ağırlıklı SLA / Sağlık Yüzdesi (`computeStatusBoardHealth` & `computedHealthPct`)
+- **Değer:** Durum Panosu'ndaki tüm bölümlerin satırlarını ağırlıklı olarak (`ok=1.0`, `unknown=0.75`, `warn=0.5`, `bad=0.0`) değerlendirerek genel sistem sağlığını yüzde olarak (`%65 sağlıklı`) hem daemon JSON çıktısında hem de SwiftUI `DURUM PANOSU` başlığında canlı rozet olarak gösterir.
+- **Uygulama:** `src/controlcenter.js` (`computeStatusBoardHealth`), `Models.swift` (`StatusBoardPayload.computedHealthPct`) ve `ControlCenterView.swift` (`statusBoardSection`).
 
-### 📋 Yeni Öneri 3 (Gelecek Adayı): Durum Panosu Satır Bazlı Sessize Alma (`mutedRowKeys`)
-- **Değer:** Bilinen ve üzerinde çalışılan bir `bad`/`warn` satırını geçici olarak sessize alarak üst çubuktaki uyarı sayısını kirletmesini önleme.
+### 📋 Yeni Öneri 3 (Gelecek Adayı): Olay Zaman Çizelgesi Tür Filtresi (`auditKindFilter`)
+- **Değer:** `SON OLAYLAR (DENETİM)` bölümündeki kayıtları yalnızca hesap geçişleri (`switch`), yalnızca `failover` veya yalnızca servis yeniden başlatmaları (`service-restart`) olarak filtreleme.
 
-### 📋 Yeni Öneri 4 (Gelecek Adayı): Failover Maliyet Simülatörü (`estimateFailoverSessionCost`)
-- **Değer:** Aktif Claude Code oturumlarının ortalama token tüketimine göre yedek zincirde 1 saat kalınması halinde oluşacak tahmini API maliyetini önceden gösterme.
+### 📋 Yeni Öneri 4 (Gelecek Adayı): Haftalık Sıfırlama Takvimi Özeti (`weeklyResetSchedule`)
+- **Değer:** Birden fazla Claude Max/Pro hesabının 7 günlük sıfırlama gün ve saatlerini tek bir mini takvim satırında göstererek hangi gün hangi hesabın yenileneceğini önceden planlama.
 
-### 📋 Yeni Öneri 5 (Gelecek Adayı): Durum Panosu JSON Şema Doğrulayıcı (`keyflip status-board validate <dosya>`)
-- **Değer:** Harici script yazarlarının ürettikleri `status.json` dosyasını menü çubuğuna bağlamadan önce şema ve ISO tarih formatı açısından CLI üzerinden doğrulaması.
+### 📋 Yeni Öneri 5 (Gelecek Adayı): Durum Panosu Fark Özeti CLI Komutu (`keyflip status-board diff <eski.json> <yeni.json>`)
+- **Değer:** İki `status.json` anlık görüntüsü arasındaki durum geçişlerini (`ok → bad`, yeni `owner_needed` maddeleri) terminalde veya CI/CD boru hattında karşılaştırma.
