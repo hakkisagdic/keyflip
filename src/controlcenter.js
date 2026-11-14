@@ -1600,3 +1600,259 @@ export function buildDiagnosticBundle(snapshot = {}) {
     })
   };
 }
+
+const TR_WEEKDAYS = Object.freeze(["Paz", "Pzt", "Sal", "Çar", "Per", "Cum", "Cmt"]);
+
+/**
+ * Builds a chronological 7-day reset calendar across all enabled accounts so the user
+ * can see which account's weekly window refreshes next and how much unused capacity it holds.
+ */
+export function buildWeeklyResetCalendar(accounts = [], options = {}) {
+  const nowMs =
+    typeof options.nowMs === "function" ? options.nowMs() : typeof options.nowMs === "number" ? options.nowMs : Date.now();
+  const enabled = (Array.isArray(accounts) ? accounts : []).filter((a) => a && a.enabled !== false);
+  const items = [];
+
+  for (const acct of enabled) {
+    const rawReset = acct?.usage?.sevenDay?.resetsAt ?? acct?.sevenDayResetsAt ?? null;
+    if (!rawReset) continue;
+    const resetMs = Date.parse(String(rawReset));
+    if (!Number.isFinite(resetMs) || resetMs <= nowMs) continue;
+    const hoursUntilReset = Math.max(1, Math.round((resetMs - nowMs) / 3600000));
+    const sevenPct =
+      typeof acct?.usage?.sevenDay?.pct === "number"
+        ? acct.usage.sevenDay.pct
+        : typeof acct?.sevenDayPct === "number"
+          ? acct.sevenDayPct
+          : 0;
+    const unusedPct = Math.max(0, Math.round((100 - sevenPct) * 10) / 10);
+    const dt = new Date(resetMs);
+    const dayLabel = TR_WEEKDAYS[dt.getUTCDay()] || "";
+    const hh = String(dt.getUTCHours()).padStart(2, "0");
+    const mm = String(dt.getUTCMinutes()).padStart(2, "0");
+
+    items.push({
+      account: String(acct.name || ""),
+      resetsAt: String(rawReset),
+      hoursUntilReset,
+      unusedSevenDayPct: unusedPct,
+      slotLabel: `${dayLabel} ${hh}:${mm}`
+    });
+  }
+
+  items.sort((a, b) => a.hoursUntilReset - b.hoursUntilReset);
+  const nextReset = items[0] || null;
+  const summary = nextReset
+    ? `Sıradaki 7g sıfırlama: ${nextReset.account} (${nextReset.slotLabel} · ${nextReset.hoursUntilReset}s kaldı)`
+    : null;
+
+  return {
+    items,
+    nextResetAccount: nextReset ? nextReset.account : null,
+    nextResetHours: nextReset ? nextReset.hoursUntilReset : null,
+    summary
+  };
+}
+
+/**
+ * Compares two StatusBoard snapshots (`prev` and `next`) and returns a structured diff
+ * including newly degraded (`bad`/`warn`) rows, recovered (`ok`) rows, and `owner_needed` changes.
+ */
+export function diffStatusBoards(prevInput, nextInput) {
+  const parseBoard = (inp) => {
+    if (!inp) return { sections: [], owner_needed: [] };
+    if (typeof inp === "string") {
+      try {
+        return JSON.parse(inp);
+      } catch {
+        return { sections: [], owner_needed: [] };
+      }
+    }
+    return typeof inp === "object" ? inp : { sections: [], owner_needed: [] };
+  };
+
+  const prev = parseBoard(prevInput);
+  const next = parseBoard(nextInput);
+
+  const prevRows = new Map();
+  for (const sec of prev.sections || []) {
+    for (const r of sec?.rows || []) {
+      prevRows.set(`${sec.id}::${r.label}`, {
+        sectionId: sec.id,
+        sectionTitle: sec.title || sec.id,
+        label: r.label,
+        status: r.status || "unknown",
+        value: r.value ?? ""
+      });
+    }
+  }
+
+  const degraded = [];
+  const recovered = [];
+  const added = [];
+
+  for (const sec of next.sections || []) {
+    for (const r of sec?.rows || []) {
+      const key = `${sec.id}::${r.label}`;
+      const curStatus = r.status || "unknown";
+      const old = prevRows.get(key);
+      if (!old) {
+        added.push({ sectionId: sec.id, label: r.label, status: curStatus, value: r.value ?? "" });
+        continue;
+      }
+      const oldRank = STATUS_ROW_RANK[old.status] ?? 3;
+      const curRank = STATUS_ROW_RANK[curStatus] ?? 3;
+      if (curRank < oldRank && (curStatus === "bad" || curStatus === "warn")) {
+        degraded.push({
+          sectionId: sec.id,
+          label: r.label,
+          fromStatus: old.status,
+          toStatus: curStatus,
+          fromValue: old.value,
+          toValue: r.value ?? ""
+        });
+      } else if (oldRank < 2 && curStatus === "ok") {
+        recovered.push({
+          sectionId: sec.id,
+          label: r.label,
+          fromStatus: old.status,
+          toStatus: "ok",
+          toValue: r.value ?? ""
+        });
+      }
+    }
+  }
+
+  const prevOwnerSet = new Set((prev.owner_needed || []).map((o) => `${o.project}::${o.text}`));
+  const nextOwnerSet = new Set((next.owner_needed || []).map((o) => `${o.project}::${o.text}`));
+  const addedOwners = (next.owner_needed || []).filter((o) => !prevOwnerSet.has(`${o.project}::${o.text}`));
+  const resolvedOwners = (prev.owner_needed || []).filter((o) => !nextOwnerSet.has(`${o.project}::${o.text}`));
+
+  const prevHealth = computeStatusBoardHealth(prev.sections || []).healthPct;
+  const nextHealth = computeStatusBoardHealth(next.sections || []).healthPct;
+  const healthDelta = nextHealth - prevHealth;
+
+  return {
+    hasChanges:
+      degraded.length > 0 || recovered.length > 0 || added.length > 0 || addedOwners.length > 0 || resolvedOwners.length > 0,
+    prevHealthPct: prevHealth,
+    nextHealthPct: nextHealth,
+    healthDelta,
+    degraded,
+    recovered,
+    added,
+    addedOwners,
+    resolvedOwners,
+    summary: `Sağlık: %${prevHealth} → %${nextHealth} (${healthDelta >= 0 ? `+${healthDelta}` : healthDelta}) · Kötüleşen: ${degraded.length} · İyileşen: ${recovered.length}`
+  };
+}
+
+/**
+ * Computes a Multi-Provider AI Diversification & Continuity Index across Claude subscriptions,
+ * Keysmith failover, and secondary AI coding tools (Antigravity, Kiro, Copilot, EVREN, API credits).
+ */
+export function evaluateMultiProviderContinuity(accounts = [], failoverInfo = {}, otherQuotas = []) {
+  const enabledClaude = (Array.isArray(accounts) ? accounts : []).filter((a) => a && a.enabled !== false);
+  const activeClaudeWithHeadroom = enabledClaude.filter((a) => {
+    const five =
+      typeof a?.usage?.fiveHour?.pct === "number"
+        ? a.usage.fiveHour.pct
+        : typeof a?.fiveHourPct === "number"
+          ? a.fiveHourPct
+          : 0;
+    const seven =
+      typeof a?.usage?.sevenDay?.pct === "number"
+        ? a.usage.sevenDay.pct
+        : typeof a?.sevenDayPct === "number"
+          ? a.sevenDayPct
+          : 0;
+    return five < 90 && seven < 95;
+  });
+
+  const healthySecondaryTools = (Array.isArray(otherQuotas) ? otherQuotas : []).filter(
+    (q) => q && (q.status === "ok" || q.status === "warning") && (q.usedPct === null || q.usedPct === undefined || q.usedPct < 95)
+  );
+
+  const activeSurfaces = [];
+  if (activeClaudeWithHeadroom.length > 0) {
+    activeSurfaces.push(`Claude (${activeClaudeWithHeadroom.length} hesap)`);
+  }
+  if (failoverInfo?.enabled && failoverInfo?.gatewayReady && !failoverInfo?.cap?.exceeded) {
+    activeSurfaces.push("Keysmith Failover");
+  }
+  for (const tool of healthySecondaryTools) {
+    activeSurfaces.push(tool.label || tool.id);
+  }
+
+  let score = 0;
+  if (activeClaudeWithHeadroom.length >= 2) score += 45;
+  else if (activeClaudeWithHeadroom.length === 1) score += 25;
+
+  if (failoverInfo?.enabled && failoverInfo?.gatewayReady && !failoverInfo?.cap?.exceeded) {
+    score += 25;
+  }
+  score += Math.min(30, healthySecondaryTools.length * 10);
+  score = Math.max(0, Math.min(100, score));
+
+  const tier = score >= 80 ? "high" : score >= 50 ? "medium" : "low";
+  return {
+    score,
+    tier,
+    readyClaudeCount: activeClaudeWithHeadroom.length,
+    readySecondaryCount: healthySecondaryTools.length,
+    activeSurfaces,
+    summary: `Süreklilik: %${score} (${activeSurfaces.length} aktif yüzey)`
+  };
+}
+
+/**
+ * Evaluates all monitored services (`collectServicesStatus`) and returns a consolidated
+ * Service Fleet Health Score (`0-100`) and actionable recovery advice.
+ */
+export function evaluateServicesHealthSummary(services = []) {
+  const list = Array.isArray(services) ? services : [];
+  if (list.length === 0) {
+    return {
+      score: 100,
+      status: "ok",
+      healthyCount: 0,
+      warningCount: 0,
+      errorCount: 0,
+      failedLabels: [],
+      summary: "İzlenen servis yok"
+    };
+  }
+
+  let healthyCount = 0;
+  let warningCount = 0;
+  let errorCount = 0;
+  const failedLabels = [];
+
+  for (const svc of list) {
+    if (svc?.state === "running" || svc?.state === "scheduled") {
+      healthyCount += 1;
+    } else if (svc?.state === "warning") {
+      warningCount += 1;
+    } else if (svc?.state === "error") {
+      errorCount += 1;
+      if (svc.label) failedLabels.push(svc.label);
+    }
+  }
+
+  const weighted = healthyCount * 1.0 + warningCount * 0.5 + (list.length - healthyCount - warningCount - errorCount) * 0.5;
+  const score = Math.max(0, Math.min(100, Math.round((weighted / list.length) * 100)));
+  const status = errorCount > 0 ? "critical" : warningCount > 0 ? "warning" : "ok";
+
+  return {
+    score,
+    status,
+    healthyCount,
+    warningCount,
+    errorCount,
+    failedLabels,
+    summary:
+      errorCount > 0
+        ? `${errorCount} serviste hata (${failedLabels.join(", ")}) · %${score} sağlıklı`
+        : `${healthyCount}/${list.length} servis sağlıklı (%${score})`
+  };
+}

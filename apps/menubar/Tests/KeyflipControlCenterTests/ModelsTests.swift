@@ -88,6 +88,31 @@ public enum ModelsTestSuite {
             "risks": [],
             "summary": "Dayanıklılık: A (88/100)"
           },
+          "weeklyResetCalendar": {
+            "items": [
+              { "account": "gmail", "resetsAt": "2026-11-18T00:00:00.000Z", "hoursUntilReset": 80, "unusedSevenDayPct": 18.5, "slotLabel": "Çar 00:00" }
+            ],
+            "nextResetAccount": "gmail",
+            "nextResetHours": 80,
+            "summary": "Sıradaki 7g sıfırlama: gmail (Çar 00:00 · 80s kaldı)"
+          },
+          "multiProviderContinuity": {
+            "score": 85,
+            "tier": "high",
+            "readyClaudeCount": 1,
+            "readySecondaryCount": 2,
+            "activeSurfaces": ["Claude (1 hesap)", "Keysmith Failover", "Kiro Kredisi"],
+            "summary": "Süreklilik: %85 (3 aktif yüzey)"
+          },
+          "servicesHealth": {
+            "score": 100,
+            "status": "ok",
+            "healthyCount": 1,
+            "warningCount": 0,
+            "errorCount": 0,
+            "failedLabels": [],
+            "summary": "1/1 servis sağlıklı (%100)"
+          },
           "quotaForecast": {
             "recommendedAccount": "gmail",
             "recommendationReason": "5s penceresi 45 dk içinde sıfırlanıyor (%58 boş kapasite)",
@@ -141,6 +166,11 @@ public enum ModelsTestSuite {
         precondition(decoded.failover.costEstimate?.standardHoursCovered == 9.0, "failover.costEstimate.standardHoursCovered must be 9.0")
         precondition(decoded.quotaForecast?.recommendedAccount == "gmail", "quotaForecast.recommendedAccount must be gmail")
         precondition(decoded.auditTimeline?.first?.kind == "daemon-switch", "auditTimeline must decode daemon-switch")
+        precondition(decoded.auditTimeline?.first?.matchesCategory("switch") == true, "audit event must match switch category")
+        precondition(decoded.auditTimeline?.first?.matchesCategory("failover") == false, "switch event must not match failover category")
+        precondition(decoded.weeklyResetCalendar?.nextResetAccount == "gmail", "weeklyResetCalendar.nextResetAccount must be gmail")
+        precondition(decoded.multiProviderContinuity?.score == 85, "multiProviderContinuity.score must be 85")
+        precondition(decoded.servicesHealth?.score == 100, "servicesHealth.score must be 100")
 
         precondition(QuotaSeverity.from(usedPct: nil) == .unknown, "nil pct -> unknown")
         precondition(QuotaSeverity.from(usedPct: 45.0) == .normal, "45% -> normal")

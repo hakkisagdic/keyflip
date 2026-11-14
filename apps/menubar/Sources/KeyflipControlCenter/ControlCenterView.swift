@@ -479,6 +479,18 @@ public struct ControlCenterView: View {
                         }
                     }
 
+                    if let cal = viewModel.payload.weeklyResetCalendar, let calSummary = cal.summary, !calSummary.isEmpty {
+                        HStack(spacing: 5) {
+                            Image(systemName: "calendar.badge.clock")
+                                .font(.system(size: 10))
+                                .foregroundColor(.secondary)
+                            Text(calSummary)
+                                .font(.system(size: 10))
+                                .foregroundColor(.secondary)
+                                .lineLimit(1)
+                        }
+                    }
+
                     if let forecast = viewModel.payload.quotaForecast,
                        let rec = forecast.recommendedAccount,
                        !rec.isEmpty {
@@ -656,7 +668,9 @@ public struct ControlCenterView: View {
 
     private var otherQuotasSection: some View {
         let quotas = viewModel.payload.otherQuotas ?? []
-        return sectionBox(title: "DİĞER KOTALAR") {
+        let cont = viewModel.payload.multiProviderContinuity
+        let titleText = cont != nil ? "DİĞER KOTALAR · \(cont!.summary.uppercased())" : "DİĞER KOTALAR"
+        return sectionBox(title: titleText) {
             if quotas.isEmpty {
                 Text("okunamadı")
                     .font(.system(size: 11))
@@ -685,7 +699,9 @@ public struct ControlCenterView: View {
 
     private var servicesSection: some View {
         let services = viewModel.payload.services ?? []
-        return sectionBox(title: "SERVİSLER") {
+        let sh = viewModel.payload.servicesHealth
+        let titleText = sh != nil ? "SERVİSLER · \(sh!.summary.uppercased())" : "SERVİSLER"
+        return sectionBox(title: titleText) {
             if services.isEmpty {
                 Text("okunamadı")
                     .font(.system(size: 11))
@@ -793,7 +809,8 @@ public struct ControlCenterView: View {
     // MARK: - 6b. Son Olaylar (Mini Audit Timeline)
 
     private var auditTimelineSection: some View {
-        let events = viewModel.payload.auditTimeline ?? []
+        let allEvents = viewModel.payload.auditTimeline ?? []
+        let events = allEvents.filter { $0.matchesCategory(viewModel.auditKindFilter) }
         return VStack(alignment: .leading, spacing: 6) {
             Button(action: { showAuditTimeline.toggle() }) {
                 HStack(spacing: 5) {
@@ -810,6 +827,20 @@ public struct ControlCenterView: View {
 
             if showAuditTimeline {
                 VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 4) {
+                        ForEach([("all", "Tümü"), ("switch", "Geçiş"), ("failover", "Failover"), ("service", "Servis")], id: \.0) { item in
+                            Button(action: { viewModel.auditKindFilter = item.0 }) {
+                                Text(item.1)
+                                    .font(.system(size: 9, weight: viewModel.auditKindFilter == item.0 ? .semibold : .regular))
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 2)
+                                    .background(viewModel.auditKindFilter == item.0 ? Color.accentColor.opacity(0.2) : Color.secondary.opacity(0.12))
+                                    .cornerRadius(3)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                        Spacer()
+                    }
                     if events.isEmpty {
                         Text("Henüz kayıtlı denetim olayı yok")
                             .font(.system(size: 11))

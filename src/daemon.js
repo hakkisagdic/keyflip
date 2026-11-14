@@ -810,6 +810,9 @@ async function buildControlCenter(ctx, scheduler, opts) {
   base.quotaForecast = _controlcenter.computeQuotaForecast(base.accounts, { nowMs: opts.nowMs || ctx.nowMs });
   base.auditTimeline = _controlcenter.collectAuditTimeline(ctx, ccOpts);
   base.poolHorizon = _controlcenter.evaluatePoolHorizonAndQuietHours(base.accounts);
+  base.weeklyResetCalendar = _controlcenter.buildWeeklyResetCalendar(base.accounts, { nowMs: opts.nowMs || ctx.nowMs });
+  base.multiProviderContinuity = _controlcenter.evaluateMultiProviderContinuity(base.accounts, base.failover, base.otherQuotas);
+  base.servicesHealth = _controlcenter.evaluateServicesHealthSummary(base.services);
   base.preferences = _controlcenter.collectPreferences(ctx);
   base.markdownReport = _controlcenter.buildControlCenterMarkdown(base);
   base.diagnosticBundle = _controlcenter.buildDiagnosticBundle(base);

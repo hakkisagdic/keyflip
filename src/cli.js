@@ -1518,6 +1518,37 @@ async function cmdStatusBoard(ctx, rest) {
   const sub = rest[0] || 'validate';
   if (sub === '--help' || sub === '-h' || sub === 'help') {
     print('usage: keyflip status-board validate [file] [--json]');
+    print('       keyflip status-board diff <old.json> <new.json> [--json]');
+    return;
+  }
+  if (sub === 'diff') {
+    const oldRaw = rest[1];
+    const newRaw = rest[2];
+    if (!oldRaw || !newRaw) {
+      return fail('usage: keyflip status-board diff <old.json> <new.json> [--json]');
+    }
+    const oldPath = _controlcenter.expandHomePath(oldRaw, ctx.home);
+    const newPath = _controlcenter.expandHomePath(newRaw, ctx.home);
+    if (!fs.existsSync(oldPath)) return fail('old status.json not found: ' + oldPath);
+    if (!fs.existsSync(newPath)) return fail('new status.json not found: ' + newPath);
+    const diff = _controlcenter.diffStatusBoards(
+      fs.readFileSync(oldPath, 'utf8'),
+      fs.readFileSync(newPath, 'utf8')
+    );
+    if (JSON_MODE) {
+      jsonOut({ statusBoardDiff: Object.assign({ oldPath, newPath }, diff) });
+      return;
+    }
+    print(style.bold('status-board diff') + ' — ' + diff.summary);
+    diff.degraded.forEach(function (d) {
+      print('  ' + style.err('degraded:') + ' [' + d.sectionId + '] ' + d.label + ' (' + d.fromStatus + ' → ' + d.toStatus + ': ' + d.toValue + ')');
+    });
+    diff.recovered.forEach(function (r) {
+      print('  ' + style.ok('recovered:') + ' [' + r.sectionId + '] ' + r.label + ' (' + r.fromStatus + ' → ok: ' + r.toValue + ')');
+    });
+    diff.addedOwners.forEach(function (o) {
+      print('  ' + style.warn('+owner_needed:') + ' [' + o.project + '] ' + o.text);
+    });
     return;
   }
   if (sub === 'validate') {

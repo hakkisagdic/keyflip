@@ -17,6 +17,7 @@ public final class ControlCenterViewModel: ObservableObject {
     @Published public var statusBoardStale: Bool = false
     @Published public var showOnlyIssuesInStatusBoard: Bool = false
     @Published public var statusBoardSearchQuery: String = ""
+    @Published public var auditKindFilter: String = "all"
     @Published public var pinnedSectionIds: Set<String> = Set(
         UserDefaults.standard.stringArray(forKey: "menubar.pinnedSections") ?? []
     )

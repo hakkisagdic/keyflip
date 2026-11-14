@@ -16,6 +16,9 @@ public struct ControlCenterPayload: Codable {
     public var poolReadiness: PoolReadinessSummary?
     public var poolResilience: PoolResilienceSummary?
     public var poolHorizon: PoolHorizonSummary?
+    public var weeklyResetCalendar: WeeklyResetCalendarSummary?
+    public var multiProviderContinuity: MultiProviderContinuitySummary?
+    public var servicesHealth: ServicesHealthSummary?
     public var quotaForecast: QuotaForecastSummary?
     public var auditTimeline: [AuditEventItem]?
     public var markdownReport: String?
@@ -38,6 +41,9 @@ public struct ControlCenterPayload: Codable {
         poolReadiness: PoolReadinessSummary? = nil,
         poolResilience: PoolResilienceSummary? = nil,
         poolHorizon: PoolHorizonSummary? = nil,
+        weeklyResetCalendar: WeeklyResetCalendarSummary? = nil,
+        multiProviderContinuity: MultiProviderContinuitySummary? = nil,
+        servicesHealth: ServicesHealthSummary? = nil,
         quotaForecast: QuotaForecastSummary? = nil,
         auditTimeline: [AuditEventItem]? = [],
         markdownReport: String? = nil,
@@ -59,6 +65,9 @@ public struct ControlCenterPayload: Codable {
         self.poolReadiness = poolReadiness
         self.poolResilience = poolResilience
         self.poolHorizon = poolHorizon
+        self.weeklyResetCalendar = weeklyResetCalendar
+        self.multiProviderContinuity = multiProviderContinuity
+        self.servicesHealth = servicesHealth
         self.quotaForecast = quotaForecast
         self.auditTimeline = auditTimeline
         self.markdownReport = markdownReport
@@ -180,6 +189,42 @@ public struct FailoverCostEstimate: Codable {
     }
 }
 
+
+public struct WeeklyResetCalendarSummary: Codable {
+    public var items: [WeeklyResetCalendarItem]?
+    public var nextResetAccount: String?
+    public var nextResetHours: Int?
+    public var summary: String?
+}
+
+public struct WeeklyResetCalendarItem: Codable, Identifiable {
+    public var id: String { account }
+    public var account: String
+    public var resetsAt: String
+    public var hoursUntilReset: Int
+    public var unusedSevenDayPct: Double
+    public var slotLabel: String
+}
+
+public struct MultiProviderContinuitySummary: Codable {
+    public var score: Int
+    public var tier: String
+    public var readyClaudeCount: Int
+    public var readySecondaryCount: Int
+    public var activeSurfaces: [String]?
+    public var summary: String
+}
+
+public struct ServicesHealthSummary: Codable {
+    public var score: Int
+    public var status: String
+    public var healthyCount: Int
+    public var warningCount: Int
+    public var errorCount: Int
+    public var failedLabels: [String]?
+    public var summary: String
+}
+
 public struct AuditEventItem: Codable, Identifiable {
     public var id: String
     public var at: String?
@@ -187,6 +232,18 @@ public struct AuditEventItem: Codable, Identifiable {
     public var status: String
     public var summary: String
     public var detail: String?
+
+    public func matchesCategory(_ filter: String) -> Bool {
+        let f = filter.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if f.isEmpty || f == "all" { return true }
+        let k = kind.lowercased()
+        switch f {
+        case "switch": return k.contains("switch")
+        case "failover": return k.contains("failover")
+        case "service": return k.contains("service") || k.contains("restart")
+        default: return k.contains(f)
+        }
+    }
 
     public init(
         id: String,

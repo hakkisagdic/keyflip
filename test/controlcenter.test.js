@@ -21,7 +21,11 @@ import {
   evaluatePoolHorizonAndQuietHours,
   buildDiagnosticBundle,
   validateStatusBoardSchema,
-  computeStatusBoardHealth
+  computeStatusBoardHealth,
+  buildWeeklyResetCalendar,
+  diffStatusBoards,
+  evaluateMultiProviderContinuity,
+  evaluateServicesHealthSummary
 } from "../src/controlcenter.js";
 import * as daemon from "../src/daemon.js";
 
@@ -545,4 +549,91 @@ test("validateStatusBoardSchema, computeStatusBoardHealth, estimateFailoverSessi
   assert.equal(resilienceLow.grade, "D");
   assert.equal(resilienceLow.spofRisk, true);
   assert.ok(resilienceLow.risks.length >= 3);
+});
+
+test("buildWeeklyResetCalendar, diffStatusBoards, evaluateMultiProviderContinuity, and evaluateServicesHealthSummary work accurately", () => {
+  const nowMs = Date.parse("2026-11-14T12:00:00Z");
+  const cal = buildWeeklyResetCalendar(
+    [
+      {
+        name: "work",
+        enabled: true,
+        usage: { sevenDay: { pct: 60, resetsAt: "2026-11-16T08:00:00Z" } }
+      },
+      {
+        name: "personal",
+        enabled: true,
+        usage: { sevenDay: { pct: 25, resetsAt: "2026-11-15T06:00:00Z" } }
+      }
+    ],
+    { nowMs }
+  );
+  assert.equal(cal.nextResetAccount, "personal");
+  assert.equal(cal.nextResetHours, 18);
+  assert.equal(cal.items.length, 2);
+  assert.match(cal.summary, /Sıradaki 7g sıfırlama: personal/);
+
+  const boardA = {
+    sections: [
+      {
+        id: "quotas",
+        title: "Kotalar",
+        rows: [
+          { label: "Claude", value: "%30", status: "ok" },
+          { label: "Gateway", value: "502", status: "bad" }
+        ]
+      }
+    ],
+    owner_needed: [{ project: "app", text: "Onay bekliyor" }]
+  };
+  const boardB = {
+    sections: [
+      {
+        id: "quotas",
+        title: "Kotalar",
+        rows: [
+          { label: "Claude", value: "%99", status: "bad" },
+          { label: "Gateway", value: "200", status: "ok" }
+        ]
+      }
+    ],
+    owner_needed: [
+      { project: "app", text: "Onay bekliyor" },
+      { project: "infra", text: "Disk dolu" }
+    ]
+  };
+  const diff = diffStatusBoards(boardA, boardB);
+  assert.equal(diff.hasChanges, true);
+  assert.equal(diff.degraded.length, 1);
+  assert.equal(diff.degraded[0].label, "Claude");
+  assert.equal(diff.recovered.length, 1);
+  assert.equal(diff.recovered[0].label, "Gateway");
+  assert.equal(diff.addedOwners.length, 1);
+
+  const cont = evaluateMultiProviderContinuity(
+    [
+      { name: "a1", enabled: true, usage: { fiveHour: { pct: 30 }, sevenDay: { pct: 40 } } },
+      { name: "a2", enabled: true, usage: { fiveHour: { pct: 50 }, sevenDay: { pct: 60 } } }
+    ],
+    { enabled: true, gatewayReady: true, cap: { exceeded: false } },
+    [
+      { id: "agy", label: "Antigravity (agy)", status: "ok", usedPct: 20 },
+      { id: "kiro", label: "Kiro Kredisi", status: "ok", usedPct: 10 },
+      { id: "copilot", label: "GitHub Copilot", status: "unreadable", usedPct: null }
+    ]
+  );
+  assert.equal(cont.score, 90);
+  assert.equal(cont.tier, "high");
+  assert.equal(cont.readyClaudeCount, 2);
+  assert.equal(cont.readySecondaryCount, 2);
+
+  const svcHealth = evaluateServicesHealthSummary([
+    { id: "gw", label: "dev.keysmith.gateway", state: "running" },
+    { id: "rt", label: "dev.keysmith.router", state: "scheduled" },
+    { id: "em", label: "local.yargitay.embed-ensure", state: "error" }
+  ]);
+  assert.equal(svcHealth.status, "critical");
+  assert.equal(svcHealth.errorCount, 1);
+  assert.deepEqual(svcHealth.failedLabels, ["local.yargitay.embed-ensure"]);
+  assert.equal(svcHealth.score, 67);
 });
