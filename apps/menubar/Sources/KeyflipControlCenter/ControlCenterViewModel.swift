@@ -24,6 +24,8 @@ public final class ControlCenterViewModel: ObservableObject {
     @Published public var prefLaunchAtLogin: Bool = false
     @Published public var prefStatusFile: String = UserDefaults.standard.string(forKey: "menubar.statusFile")
         ?? StatusBoardPayload.defaultRelativePath
+    @Published public var prefExtraStatusFiles: String = UserDefaults.standard.string(forKey: "menubar.extraStatusFiles")
+        ?? ""
     @Published public var preferencesLoaded: Bool = false
 
     private let client: DaemonClient
@@ -78,7 +80,7 @@ public final class ControlCenterViewModel: ObservableObject {
         let attrs = lastObservedStatusExists ? (try? FileManager.default.attributesOfItem(atPath: expanded)) : nil
         lastObservedStatusMtime = attrs?[.modificationDate] as? Date
 
-        if let loaded = StatusBoardPayload.load(fromFile: configured) {
+        if let loaded = StatusBoardPayload.load(fromFile: configured, extraPaths: prefExtraStatusFiles) {
             self.statusBoard = loaded.board
             self.statusBoardStale = loaded.isStale
         } else if let daemonBoard = payload.statusBoard {
@@ -134,6 +136,10 @@ public final class ControlCenterViewModel: ObservableObject {
                             self.prefStatusFile = sf
                             UserDefaults.standard.set(sf, forKey: "menubar.statusFile")
                         }
+                        if let ef = prefs.extraStatusFiles {
+                            self.prefExtraStatusFiles = ef
+                            UserDefaults.standard.set(ef, forKey: "menubar.extraStatusFiles")
+                        }
                         self.preferencesLoaded = true
                     }
                     self.reloadStatusBoard()
@@ -181,6 +187,10 @@ public final class ControlCenterViewModel: ObservableObject {
         payload.failover.engaged
     }
 
+    public var isFocusSnoozed: Bool {
+        payload.preferences?.snoozed ?? false
+    }
+
     public var ownerNeededBadgeCount: Int {
         statusBoard?.ownerNeededCount ?? 0
     }
@@ -197,6 +207,14 @@ public final class ControlCenterViewModel: ObservableObject {
 
     public func requestRestartService(label: String, title: String) {
         pendingConfirmation = .restartService(label: label, title: title)
+    }
+
+    public func requestToggleFocusSnooze() {
+        let enable = !isFocusSnoozed
+        let fmt = ISO8601DateFormatter()
+        fmt.formatOptions = [.withInternetDateTime]
+        let untilStr = enable ? fmt.string(from: Date().addingTimeInterval(60 * 60)) : ""
+        pendingConfirmation = .toggleFocusSnooze(enable: enable, snoozeUntil: untilStr)
     }
 
     public func requestSavePreferences() {
@@ -248,6 +266,14 @@ public final class ControlCenterViewModel: ObservableObject {
                         "cmd": "service-restart",
                         "label": label,
                         "confirm": true
+                    ])
+                case .toggleFocusSnooze(_, let snoozeUntil):
+                    try clientRef.sendConfirmedCommand([
+                        "cmd": "config",
+                        "confirm": true,
+                        "set": [
+                            "desktop.snoozeUntil": snoozeUntil
+                        ]
                     ])
                 case .savePreferences(let threshold, let refreshIntervalSec, let notify, let statusFile):
                     try clientRef.sendConfirmedCommand([

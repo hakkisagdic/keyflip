@@ -655,11 +655,25 @@ export function expandHomePath(rawPath, homeDir = os.homedir()) {
   return trimmed;
 }
 
-export function sortStatusBoardRows(rows) {
+export function formatSinceAge(sinceIso, nowMs = Date.now()) {
+  if (!sinceIso || typeof sinceIso !== "string") return null;
+  const parsed = Date.parse(sinceIso.trim());
+  if (!Number.isFinite(parsed) || parsed > nowMs) return null;
+  const totalMin = Math.max(1, Math.round((nowMs - parsed) / 60000));
+  if (totalMin < 60) return `${totalMin} dk`;
+  const hours = Math.floor(totalMin / 60);
+  const mins = totalMin % 60;
+  if (hours < 48) return mins > 0 ? `${hours}s ${mins}dk` : `${hours} saat`;
+  const days = Math.floor(hours / 24);
+  return `${days} gün`;
+}
+
+export function sortStatusBoardRows(rows, nowMs = Date.now()) {
   if (!Array.isArray(rows)) return [];
   return rows
     .map((r, idx) => {
       const st = ["ok", "warn", "bad", "unknown"].includes(r?.status) ? r.status : "unknown";
+      const sinceStr = r?.since != null ? String(r.since) : null;
       return {
         index: idx,
         row: {
@@ -667,7 +681,8 @@ export function sortStatusBoardRows(rows) {
           value: String(r?.value ?? ""),
           status: st,
           detail: r?.detail != null ? String(r.detail) : null,
-          since: r?.since != null ? String(r.since) : null
+          since: sinceStr,
+          sinceAge: formatSinceAge(sinceStr, nowMs)
         }
       };
     })
@@ -711,13 +726,19 @@ export function collectStatusBoard(ctx, options = {}) {
   const ageMinutes = Number.isFinite(updatedMs) ? Math.max(0, Math.round((nowMs - updatedMs) / 60000)) : null;
   const stale = ageMinutes !== null ? ageMinutes > 20 : true;
 
-  const sections = Array.isArray(raw.sections)
-    ? raw.sections.map((sec, idx) => ({
-        id: String(sec?.id || `section-${idx}`),
-        title: String(sec?.title || sec?.id || `Bölüm ${idx + 1}`),
-        rows: sortStatusBoardRows(sec?.rows)
-      }))
-    : [];
+  const sectionMap = new Map();
+  const baseSections = Array.isArray(raw.sections) ? raw.sections : [];
+  baseSections.forEach((sec, idx) => {
+    const id = String(sec?.id || `section-${idx}`);
+    const title = String(sec?.title || sec?.id || `Bölüm ${idx + 1}`);
+    const existing = sectionMap.get(id);
+    const rawRows = Array.isArray(sec?.rows) ? sec.rows : [];
+    if (existing) {
+      existing.rawRows.push(...rawRows);
+    } else {
+      sectionMap.set(id, { id, title, rawRows: [...rawRows] });
+    }
+  });
 
   const ownerNeeded = Array.isArray(raw.owner_needed)
     ? raw.owner_needed
@@ -727,6 +748,58 @@ export function collectStatusBoard(ctx, options = {}) {
           text: String(item.text ?? "")
         }))
     : [];
+
+  // Optional multi-host / extra status files aggregation
+  const extraRaw =
+    options.extraStatusFiles !== undefined
+      ? options.extraStatusFiles
+      : _config.get(ctx, "menubar.extraStatusFiles") || "";
+  const extraList = Array.isArray(extraRaw)
+    ? extraRaw
+    : String(extraRaw)
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean);
+
+  for (const extraItem of extraList) {
+    const extraPath = expandHomePath(extraItem, homeDir);
+    if (!extraPath || !fs.existsSync(extraPath)) continue;
+    const extraJson = readJsonSafe(extraPath);
+    if (!extraJson || typeof extraJson !== "object" || Array.isArray(extraJson)) continue;
+    const hostPrefix = extraJson.host ? `[${extraJson.host}] ` : "";
+    if (Array.isArray(extraJson.sections)) {
+      extraJson.sections.forEach((sec, idx) => {
+        const id = String(sec?.id || `extra-${idx}`);
+        const title = String(sec?.title || sec?.id || `Bölüm ${idx + 1}`);
+        const taggedRows = (Array.isArray(sec?.rows) ? sec.rows : []).map((r) => ({
+          ...r,
+          label: hostPrefix ? `${hostPrefix}${r?.label ?? ""}` : r?.label
+        }));
+        const existing = sectionMap.get(id);
+        if (existing) {
+          existing.rawRows.push(...taggedRows);
+        } else {
+          sectionMap.set(id, { id, title, rawRows: taggedRows });
+        }
+      });
+    }
+    if (Array.isArray(extraJson.owner_needed)) {
+      for (const item of extraJson.owner_needed) {
+        if (item && (item.project || item.text)) {
+          ownerNeeded.push({
+            project: hostPrefix ? `${hostPrefix}${item.project ?? ""}`.trim() : String(item.project ?? ""),
+            text: String(item.text ?? "")
+          });
+        }
+      }
+    }
+  }
+
+  const sections = Array.from(sectionMap.values()).map((sec) => ({
+    id: sec.id,
+    title: sec.title,
+    rows: sortStatusBoardRows(sec.rawRows, nowMs)
+  }));
 
   return {
     updated: raw.updated ? String(raw.updated) : null,
@@ -897,14 +970,67 @@ export function buildControlCenterMarkdown(snapshot = {}) {
   return lines.join("\n").trim() + "\n";
 }
 
+/**
+ * Collects recent audit events from events.jsonl for the menu bar timeline.
+ */
+export function collectAuditTimeline(ctx, options = {}) {
+  const limit = typeof options.limit === "number" && options.limit > 0 ? options.limit : 8;
+  const rawEvents = ctx?.configDir ? _history.readEvents(ctx, limit) : [];
+  return rawEvents
+    .slice()
+    .reverse()
+    .map((ev, idx) => {
+      const kind = String(ev?.kind || "event");
+      const at = ev?.at ? String(ev.at) : null;
+      let status = "ok";
+      let summary = kind;
+      let detail = ev?.reason ? String(ev.reason) : null;
+
+      if (kind === "daemon-switch" || kind === "autoswitch" || kind === "switch") {
+        summary = `Hesap geçişi: ${ev.from || "?"} → ${ev.to || "?"}`;
+        status = "ok";
+      } else if (kind === "daemon-failover-on" || kind === "failover-on") {
+        summary = "Yedek zincir (Failover) devreye alındı";
+        status = "warn";
+      } else if (kind === "daemon-failover-off" || kind === "failover-off") {
+        summary = "Yedek zincir kapatıldı (normal hesaba dönüldü)";
+        status = "ok";
+      } else if (kind === "service-restart") {
+        summary = `Servis yeniden başlatıldı: ${ev.label || "?"}`;
+        status = ev.ok === false ? "bad" : "ok";
+        detail = ev.detail ? String(ev.detail) : detail;
+      } else if (kind === "daemon-config") {
+        const keys = Array.isArray(ev.keys) ? ev.keys.join(", ") : "";
+        summary = `Ayarlar güncellendi${keys ? `: ${keys}` : ""}`;
+        status = "ok";
+      }
+
+      return {
+        id: `${at || idx}-${kind}-${idx}`,
+        at,
+        kind,
+        status,
+        summary,
+        detail
+      };
+    });
+}
+
 export function collectPreferences(ctx) {
   const homeDir = ctx?.home || ctx?.homeDir || os.homedir();
   const daemonPlist = path.join(homeDir, "Library", "LaunchAgents", "com.keyflip.daemon.plist");
+  const snoozeUntil = _config.get(ctx, "desktop.snoozeUntil") || "";
+  const nowMs = typeof ctx?.nowMs === "function" ? ctx.nowMs() : Date.now();
+  const snoozeMs = snoozeUntil ? Date.parse(snoozeUntil) : Number.NaN;
+  const snoozed = Number.isFinite(snoozeMs) && snoozeMs > nowMs;
   return {
     thresholdPct: _config.get(ctx, "autoswitch.threshold") ?? 95,
     refreshIntervalSec: _config.get(ctx, "daemon.autoswitchIntervalSeconds") ?? 120,
     notify: _config.get(ctx, "notify.desktop") !== false,
     launchAtLogin: fs.existsSync(daemonPlist),
-    statusFile: _config.get(ctx, "menubar.statusFile") || "~/.polyctl/admin/status.json"
+    statusFile: _config.get(ctx, "menubar.statusFile") || "~/.polyctl/admin/status.json",
+    extraStatusFiles: _config.get(ctx, "menubar.extraStatusFiles") || "",
+    snoozeUntil: snoozed ? snoozeUntil : "",
+    snoozed
   };
 }

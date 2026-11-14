@@ -4,6 +4,7 @@ import SwiftUI
 public struct ControlCenterView: View {
     @ObservedObject var viewModel: ControlCenterViewModel
     @State private var showPreferences: Bool = false
+    @State private var showAuditTimeline: Bool = false
     @State private var collapsedSectionIds: Set<String> = []
 
     public init(viewModel: ControlCenterViewModel) {
@@ -43,6 +44,7 @@ public struct ControlCenterView: View {
                     otherQuotasSection
                     servicesSection
                     fleetAndServerSection
+                    auditTimelineSection
                     if showPreferences {
                         preferencesSection
                     }
@@ -89,12 +91,22 @@ public struct ControlCenterView: View {
 
             Spacer()
 
+            Button(action: { viewModel.requestToggleFocusSnooze() }) {
+                Image(systemName: viewModel.isFocusSnoozed ? "moon.fill" : "moon")
+                    .font(.system(size: 11))
+                    .foregroundColor(viewModel.isFocusSnoozed ? .purple : .secondary)
+            }
+            .buttonStyle(.borderless)
+            .disabled(!viewModel.daemonRunning || viewModel.isLoading)
+            .help(viewModel.isFocusSnoozed ? "Odak Modu etkin (masaüstü restart ertelendi) — kapatmak için tıkla" : "Odak Modu: Otomatik Claude Desktop yeniden başlatmasını 60 dk ertele")
+
             Button(action: { viewModel.copySummaryToPasteboard() }) {
                 Image(systemName: "doc.on.doc")
                     .font(.system(size: 11))
             }
             .buttonStyle(.borderless)
-            .help("Gizlilik korumalı durum özetini Markdown olarak kopyala")
+            .keyboardShortcut("c", modifiers: [.command, .shift])
+            .help("Gizlilik korumalı durum özetini Markdown olarak kopyala (⌘⇧C)")
 
             Button(action: { viewModel.refresh() }) {
                 Image(systemName: "arrow.clockwise")
@@ -170,6 +182,7 @@ public struct ControlCenterView: View {
 
     private func statusBoardSection(_ board: StatusBoardPayload) -> some View {
         let displayedSections = board.filteredSections(onlyIssues: viewModel.showOnlyIssuesInStatusBoard)
+        let allCollapsed = !displayedSections.isEmpty && displayedSections.allSatisfy { collapsedSectionIds.contains($0.id) }
         return VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
                 Text("DURUM PANOSU")
@@ -191,6 +204,21 @@ public struct ControlCenterView: View {
                 }
 
                 Spacer()
+
+                if !displayedSections.isEmpty {
+                    Button(action: {
+                        if allCollapsed {
+                            collapsedSectionIds.removeAll()
+                        } else {
+                            collapsedSectionIds = Set(displayedSections.map { $0.id })
+                        }
+                    }) {
+                        Text(allCollapsed ? "Genişlet" : "Daralt")
+                            .font(.system(size: 9, weight: .medium))
+                            .foregroundColor(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                }
 
                 if board.totalIssueCount > 0 {
                     Button(action: {
@@ -311,9 +339,10 @@ public struct ControlCenterView: View {
                                                 }
                                                 if let since = row.since, !since.isEmpty {
                                                     Spacer()
-                                                    Text(shortIsoTime(since))
+                                                    let ageText = row.formattedSinceDuration()
+                                                    Text(ageText != nil ? "\(ageText!) · \(shortIsoTime(since))" : shortIsoTime(since))
                                                         .font(.system(size: 9, design: .monospaced))
-                                                        .foregroundColor(.secondary)
+                                                        .foregroundColor((row.status == "bad" || row.status == "warn") ? .orange : .secondary)
                                                 }
                                             }
                                             .padding(.leading, 12)
@@ -646,6 +675,57 @@ public struct ControlCenterView: View {
                         .font(.system(size: 11))
                         .foregroundColor(.secondary)
                 }
+            }
+        }
+    }
+
+    // MARK: - 6b. Son Olaylar (Mini Audit Timeline)
+
+    private var auditTimelineSection: some View {
+        let events = viewModel.payload.auditTimeline ?? []
+        return VStack(alignment: .leading, spacing: 6) {
+            Button(action: { showAuditTimeline.toggle() }) {
+                HStack(spacing: 5) {
+                    Image(systemName: showAuditTimeline ? "chevron.down" : "chevron.right")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundColor(.secondary)
+                    Text("SON OLAYLAR (DENETİM · \(events.count))")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(.secondary)
+                    Spacer()
+                }
+            }
+            .buttonStyle(.plain)
+
+            if showAuditTimeline {
+                VStack(alignment: .leading, spacing: 6) {
+                    if events.isEmpty {
+                        Text("Henüz kayıtlı denetim olayı yok")
+                            .font(.system(size: 11))
+                            .foregroundColor(.secondary)
+                    } else {
+                        ForEach(events) { ev in
+                            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                                Circle()
+                                    .fill(boardRowColor(ev.status))
+                                    .frame(width: 6, height: 6)
+                                Text(ev.summary)
+                                    .font(.system(size: 11))
+                                    .lineLimit(1)
+                                Spacer()
+                                if let at = ev.at, !at.isEmpty {
+                                    Text(shortIsoTime(at))
+                                        .font(.system(size: 9, design: .monospaced))
+                                        .foregroundColor(.secondary)
+                                }
+                            }
+                        }
+                    }
+                }
+                .padding(9)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color(nsColor: .controlBackgroundColor))
+                .cornerRadius(6)
             }
         }
     }

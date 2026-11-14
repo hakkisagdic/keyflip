@@ -477,6 +477,11 @@ async function processPending(ctx, deps) {
     }
     return { state: 'disabled', pending: rec };
   }
+  const snoozeRaw = String(cfg(ctx, 'desktop.snoozeUntil', '') || '').trim();
+  const snoozeMs = snoozeRaw ? Date.parse(snoozeRaw) : Number.NaN;
+  if (Number.isFinite(snoozeMs) && snoozeMs > now) {
+    return { state: 'deferred', reason: 'Focus snooze active until ' + snoozeRaw, pending: rec };
+  }
   // It refused to quit recently: do not ask again (and do not notify again) before QUIT_RETRY_MS.
   if (rec.quitFailedAt && now - rec.quitFailedAt < (deps.quitRetryMs !== undefined ? deps.quitRetryMs : QUIT_RETRY_MS))
     return { state: 'deferred', reason: 'Claude Desktop did not quit last time; retrying later', pending: rec };

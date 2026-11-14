@@ -11,7 +11,8 @@ import {
   collectServerStatus,
   collectStatusBoard,
   computeQuotaForecast,
-  buildControlCenterMarkdown
+  buildControlCenterMarkdown,
+  collectAuditTimeline
 } from "../src/controlcenter.js";
 import * as daemon from "../src/daemon.js";
 
@@ -341,6 +342,57 @@ test("daemon handleCommand serves control-center and service-restart endpoints",
     );
     assert.equal(restartForbidden.status, 403);
     assert.equal(restartForbidden.body.error, "service_not_allowed");
+  } finally {
+    env.cleanup();
+  }
+});
+
+test("collectStatusBoard computes sinceAge, merges extraStatusFiles, and collectAuditTimeline formats recent events", () => {
+  const env = makeTempEnv();
+  try {
+    const fixturePath = path.resolve("test/fixtures/status.sample.json");
+    const extraPath = path.join(env.root, "extra-status.json");
+    fs.writeFileSync(
+      extraPath,
+      JSON.stringify({
+        host: "devbox-2",
+        updated: "2026-11-14T18:25:00Z",
+        sections: [
+          {
+            id: "quotas",
+            title: "Kotalar",
+            rows: [{ label: "Uzak Hesap", value: "%99", status: "bad", since: "2026-11-14T17:00:00Z" }]
+          }
+        ],
+        owner_needed: [{ project: "remote-api", text: "Sertifika yenilenmeli" }]
+      }),
+      "utf8"
+    );
+
+    const merged = collectStatusBoard(env.ctx, {
+      homeDir: env.home,
+      statusFile: fixturePath,
+      extraStatusFiles: extraPath,
+      nowMs: () => Date.parse("2026-11-14T18:30:00Z")
+    });
+    assert.equal(merged.owner_needed.length, 3);
+    assert.equal(merged.sections[0].rows.length, 4);
+    assert.equal(merged.sections[0].rows[0].sinceAge, "45 dk");
+    assert.ok(merged.sections[0].rows.some((r) => r.label === "[devbox-2] Uzak Hesap"));
+
+    fs.writeFileSync(
+      path.join(env.configDir, "events.jsonl"),
+      [
+        JSON.stringify({ at: "2026-11-14T18:00:00Z", kind: "daemon-switch", from: "a", to: "b", reason: "menubar" }),
+        JSON.stringify({ at: "2026-11-14T18:05:00Z", kind: "service-restart", label: "dev.keysmith.gateway", ok: true })
+      ].join("\n") + "\n",
+      "utf8"
+    );
+
+    const timeline = collectAuditTimeline(env.ctx, { limit: 5 });
+    assert.equal(timeline.length, 2);
+    assert.match(timeline[0].summary, /Servis yeniden başlatıldı/);
+    assert.match(timeline[1].summary, /Hesap geçişi: a → b/);
   } finally {
     env.cleanup();
   }

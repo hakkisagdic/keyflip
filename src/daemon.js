@@ -784,6 +784,8 @@ async function buildStatus(ctx, scheduler, opts) {
       'daemon.surfaceRefreshIntervalSeconds': _config.get(ctx, 'daemon.surfaceRefreshIntervalSeconds'),
       'daemon.convIndexIntervalSeconds': _config.get(ctx, 'daemon.convIndexIntervalSeconds'),
       'menubar.statusFile': _config.get(ctx, 'menubar.statusFile'),
+      'menubar.extraStatusFiles': _config.get(ctx, 'menubar.extraStatusFiles'),
+      'desktop.snoozeUntil': _config.get(ctx, 'desktop.snoozeUntil'),
     },
   };
 
@@ -802,6 +804,7 @@ async function buildControlCenter(ctx, scheduler, opts) {
   base.server = _controlcenter.collectServerStatus(ctx, ccOpts);
   base.statusBoard = _controlcenter.collectStatusBoard(ctx, ccOpts);
   base.quotaForecast = _controlcenter.computeQuotaForecast(base.accounts, { nowMs: opts.nowMs || ctx.nowMs });
+  base.auditTimeline = _controlcenter.collectAuditTimeline(ctx, ccOpts);
   base.preferences = _controlcenter.collectPreferences(ctx);
   base.markdownReport = _controlcenter.buildControlCenterMarkdown(base);
   return redactSecrets(base);

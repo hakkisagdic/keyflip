@@ -101,6 +101,16 @@ SCHEMA['menubar.statusFile'] = {
   default: '~/.polyctl/admin/status.json',
   help: 'Path to the external status board JSON file watched by the menu bar app.',
 };
+SCHEMA['menubar.extraStatusFiles'] = {
+  type: 'string',
+  default: '',
+  help: 'Comma-separated additional status.json file paths merged into the status board.',
+};
+SCHEMA['desktop.snoozeUntil'] = {
+  type: 'string',
+  default: '',
+  help: 'ISO timestamp until which automatic Claude Desktop restarts are snoozed (focus/meeting mode).',
+};
 SCHEMA['daemon.convIndexIntervalSeconds'] = {
   type: 'int',
   default: 1800,

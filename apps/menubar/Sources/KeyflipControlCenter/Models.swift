@@ -14,6 +14,7 @@ public struct ControlCenterPayload: Codable {
     public var server: ServerSummary?
     public var statusBoard: StatusBoardPayload?
     public var quotaForecast: QuotaForecastSummary?
+    public var auditTimeline: [AuditEventItem]?
     public var markdownReport: String?
     public var preferences: PreferencesSummary?
     public var warnings: [DaemonWarning]?
@@ -32,6 +33,7 @@ public struct ControlCenterPayload: Codable {
         server: ServerSummary? = nil,
         statusBoard: StatusBoardPayload? = nil,
         quotaForecast: QuotaForecastSummary? = nil,
+        auditTimeline: [AuditEventItem]? = [],
         markdownReport: String? = nil,
         preferences: PreferencesSummary? = nil,
         warnings: [DaemonWarning]? = []
@@ -49,9 +51,35 @@ public struct ControlCenterPayload: Codable {
         self.server = server
         self.statusBoard = statusBoard
         self.quotaForecast = quotaForecast
+        self.auditTimeline = auditTimeline
         self.markdownReport = markdownReport
         self.preferences = preferences
         self.warnings = warnings
+    }
+}
+
+public struct AuditEventItem: Codable, Identifiable {
+    public var id: String
+    public var at: String?
+    public var kind: String
+    public var status: String
+    public var summary: String
+    public var detail: String?
+
+    public init(
+        id: String,
+        at: String? = nil,
+        kind: String,
+        status: String = "ok",
+        summary: String,
+        detail: String? = nil
+    ) {
+        self.id = id
+        self.at = at
+        self.kind = kind
+        self.status = status
+        self.summary = summary
+        self.detail = detail
     }
 }
 
@@ -278,15 +306,18 @@ public struct StatusBoardPayload: Codable {
     public static let defaultRelativePath = "~/.polyctl/admin/status.json"
     public static let staleThresholdSeconds: TimeInterval = 20 * 60
 
+    public var host: String?
     public var updated: String?
     public var sections: [StatusBoardSection]
     public var owner_needed: [StatusBoardOwnerItem]?
 
     public init(
+        host: String? = nil,
         updated: String? = nil,
         sections: [StatusBoardSection] = [],
         owner_needed: [StatusBoardOwnerItem]? = nil
     ) {
+        self.host = host
         self.updated = updated
         self.sections = sections
         self.owner_needed = owner_needed
@@ -365,7 +396,7 @@ public struct StatusBoardPayload: Codable {
         return (raw as NSString).expandingTildeInPath
     }
 
-    public static func load(fromFile path: String) -> (board: StatusBoardPayload, isStale: Bool)? {
+    public static func load(fromFile path: String, extraPaths: String? = nil) -> (board: StatusBoardPayload, isStale: Bool)? {
         let expanded = resolvePath(path)
         guard FileManager.default.fileExists(atPath: expanded),
               let data = try? Data(contentsOf: URL(fileURLWithPath: expanded)),
@@ -373,6 +404,40 @@ public struct StatusBoardPayload: Codable {
         else {
             return nil
         }
+
+        if let extrasRaw = extraPaths, !extrasRaw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            let parts = extrasRaw.split(separator: ",").map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
+            var ownerList = decoded.owner_needed ?? []
+            for extra in parts where !extra.isEmpty {
+                let expExtra = (extra as NSString).expandingTildeInPath
+                guard FileManager.default.fileExists(atPath: expExtra),
+                      let extraData = try? Data(contentsOf: URL(fileURLWithPath: expExtra)),
+                      let extraBoard = try? JSONDecoder().decode(StatusBoardPayload.self, from: extraData)
+                else { continue }
+
+                let prefix = (extraBoard.host?.isEmpty == false) ? "[\(extraBoard.host!)] " : ""
+                for extraSec in extraBoard.sections {
+                    let taggedRows = extraSec.rows.map { r -> StatusBoardRow in
+                        var copy = r
+                        if !prefix.isEmpty { copy.label = "\(prefix)\(r.label)" }
+                        return copy
+                    }
+                    if let idx = decoded.sections.firstIndex(where: { $0.id == extraSec.id }) {
+                        decoded.sections[idx].rows.append(contentsOf: taggedRows)
+                    } else {
+                        decoded.sections.append(StatusBoardSection(id: extraSec.id, title: extraSec.title, rows: taggedRows))
+                    }
+                }
+                if let extraOwners = extraBoard.owner_needed {
+                    for item in extraOwners {
+                        let proj = prefix.isEmpty ? item.project : "\(prefix)\(item.project)"
+                        ownerList.append(StatusBoardOwnerItem(project: proj, text: item.text))
+                    }
+                }
+            }
+            decoded.owner_needed = ownerList
+        }
+
         decoded.sections = decoded.sections.map { sec in
             var copy = sec
             copy.rows = sec.sortedRows
@@ -425,19 +490,22 @@ public struct StatusBoardRow: Codable, Identifiable {
     public var status: String
     public var detail: String?
     public var since: String?
+    public var sinceAge: String?
 
     public init(
         label: String,
         value: String,
         status: String,
         detail: String? = nil,
-        since: String? = nil
+        since: String? = nil,
+        sinceAge: String? = nil
     ) {
         self.label = label
         self.value = value
         self.status = status
         self.detail = detail
         self.since = since
+        self.sinceAge = sinceAge
     }
 
     public var statusRank: Int {
@@ -447,6 +515,28 @@ public struct StatusBoardRow: Codable, Identifiable {
         case "ok": return 2
         default: return 3
         }
+    }
+
+    public func formattedSinceDuration(now: Date = Date()) -> String? {
+        if let precomputed = sinceAge, !precomputed.isEmpty {
+            return precomputed
+        }
+        guard let sinceStr = since, let parsed = StatusBoardPayload.parseISO8601(sinceStr) else {
+            return nil
+        }
+        let elapsedSec = now.timeIntervalSince(parsed)
+        guard elapsedSec >= 0 else { return nil }
+        let totalMin = max(1, Int((elapsedSec / 60.0).rounded()))
+        if totalMin < 60 {
+            return "\(totalMin) dk"
+        }
+        let hours = totalMin / 60
+        let mins = totalMin % 60
+        if hours < 48 {
+            return mins > 0 ? "\(hours)s \(mins)dk" : "\(hours) saat"
+        }
+        let days = hours / 24
+        return "\(days) gün"
     }
 }
 
@@ -467,6 +557,9 @@ public struct PreferencesSummary: Codable {
     public var notify: Bool
     public var launchAtLogin: Bool
     public var statusFile: String?
+    public var extraStatusFiles: String?
+    public var snoozeUntil: String?
+    public var snoozed: Bool?
 }
 
 public struct DaemonWarning: Codable, Identifiable {
@@ -495,6 +588,7 @@ public enum PendingConfirmationAction: Identifiable {
     case switchAccount(account: String)
     case toggleFailover(enable: Bool)
     case restartService(label: String, title: String)
+    case toggleFocusSnooze(enable: Bool, snoozeUntil: String)
     case savePreferences(threshold: Int, refreshIntervalSec: Int, notify: Bool, statusFile: String)
 
     public var id: String {
@@ -502,6 +596,7 @@ public enum PendingConfirmationAction: Identifiable {
         case .switchAccount(let account): return "switch-\(account)"
         case .toggleFailover(let enable): return "failover-\(enable)"
         case .restartService(let label, _): return "restart-\(label)"
+        case .toggleFocusSnooze(let enable, _): return "snooze-\(enable)"
         case .savePreferences: return "save-prefs"
         }
     }
@@ -514,6 +609,8 @@ public enum PendingConfirmationAction: Identifiable {
             return enable ? "Yedek zincir (Failover) devreye alınsın mı?" : "Yedek zincir (Failover) kapatılsın mı?"
         case .restartService(_, let title):
             return "'\(title)' servisi yeniden başlatılsın mı?"
+        case .toggleFocusSnooze(let enable, _):
+            return enable ? "Odak Modu (60 dk masaüstü restart erteleme) açılsın mı?" : "Odak Modu (erteleme) kapatılsın mı?"
         case .savePreferences:
             return "Tercih değişiklikleri kaydedilsin mi?"
         }
@@ -529,6 +626,10 @@ public enum PendingConfirmationAction: Identifiable {
                 : "Yedek zincir devre dışı bırakılıp normal hesaba dönülecek ve denetim günlüğüne kaydedilecek."
         case .restartService(let label, _):
             return "launchctl kickstart -k (\(label)) komutu çalıştırılacak ve denetim günlüğüne kaydedilecek."
+        case .toggleFocusSnooze(let enable, let snoozeUntil):
+            return enable
+                ? "Otomatik Claude Desktop yeniden başlatmaları '\(snoozeUntil)' zamanına kadar ertelenecek ve audit log'a kaydedilecek."
+                : "Masaüstü yeniden başlatma ertelemesi kaldırılacak ve audit log'a kaydedilecek."
         case .savePreferences(let threshold, let refreshIntervalSec, let notify, let statusFile):
             return "Otomatik geçiş eşiği %\(threshold), kontrol aralığı \(refreshIntervalSec) sn, bildirimler \(notify ? "açık" : "kapalı"), durum panosu yolu '\(statusFile)' olarak güncellenecek."
         }

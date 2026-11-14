@@ -89,12 +89,24 @@ public enum ModelsTestSuite {
               }
             ]
           },
+          "auditTimeline": [
+            {
+              "id": "1",
+              "at": "2026-11-14T18:10:00Z",
+              "kind": "daemon-switch",
+              "status": "ok",
+              "summary": "Hesap geçişi: yahoo → gmail",
+              "detail": "autoswitch"
+            }
+          ],
           "preferences": {
             "thresholdPct": 95,
             "refreshIntervalSec": 120,
             "notify": true,
             "launchAtLogin": true,
-            "statusFile": "~/.polyctl/admin/status.json"
+            "statusFile": "~/.polyctl/admin/status.json",
+            "snoozed": false,
+            "snoozeUntil": ""
           }
         }
         """.data(using: .utf8)!
@@ -107,6 +119,7 @@ public enum ModelsTestSuite {
         precondition(decoded.server?.load == "okunamadı", "unreadable server load must be okunamadı")
         precondition(decoded.server?.readOnly == true, "server must be readOnly")
         precondition(decoded.quotaForecast?.recommendedAccount == "gmail", "quotaForecast.recommendedAccount must be gmail")
+        precondition(decoded.auditTimeline?.first?.kind == "daemon-switch", "auditTimeline must decode daemon-switch")
 
         precondition(QuotaSeverity.from(usedPct: nil) == .unknown, "nil pct -> unknown")
         precondition(QuotaSeverity.from(usedPct: 45.0) == .normal, "45% -> normal")
@@ -116,6 +129,9 @@ public enum ModelsTestSuite {
         let switchConfirm = PendingConfirmationAction.switchAccount(account: "yahoo")
         precondition(switchConfirm.title.contains("yahoo"), "confirmation title must include target account")
         precondition(switchConfirm.message.contains("audit log"), "confirmation message must mention audit log")
+
+        let snoozeConfirm = PendingConfirmationAction.toggleFocusSnooze(enable: true, snoozeUntil: "2026-11-14T19:00:00Z")
+        precondition(snoozeConfirm.title.contains("Odak Modu"), "snooze confirmation must mention Odak Modu")
 
         let client = DaemonClient(customSocketPath: "/tmp/nonexistent-keyflip-test.sock")
         precondition(client.resolveSocketPath() == "/tmp/nonexistent-keyflip-test.sock", "custom socket path must resolve")
@@ -136,6 +152,10 @@ public enum ModelsTestSuite {
         precondition(quotaRows[0].status == "bad", "first sorted row must be bad")
         precondition(quotaRows[1].status == "warn", "second sorted row must be warn")
         precondition(quotaRows[2].status == "ok", "third sorted row must be ok")
+
+        // Since-age formatting test (fixture row[0] since is 2026-11-14T17:45:00Z)
+        let refNow = StatusBoardPayload.parseISO8601("2026-11-14T18:30:00Z")!
+        precondition(quotaRows[0].formattedSinceDuration(now: refNow) == "45 dk", "since duration must be 45 dk")
 
         // Issue-only filter test: sections with no bad/warn rows are omitted
         let onlyIssues = board.filteredSections(onlyIssues: true)
@@ -164,7 +184,7 @@ public enum ModelsTestSuite {
 struct StandaloneTestMain {
     static func main() throws {
         try ModelsTestSuite.runAll()
-        print("✔ KeyflipControlCenter Swift model, statusBoard fixture, quotaForecast & confirmation tests passed")
+        print("✔ KeyflipControlCenter Swift model, statusBoard fixture, quotaForecast, auditTimeline & confirmation tests passed")
     }
 }
 #else
