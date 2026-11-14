@@ -209,18 +209,22 @@ function restore(ctx) {
   txn.withRollback(touched, function () {
     dirs.forEach(function (d) {
       const cp = cfgPath(d);
+      const pfs = profFilesByDir[d] || [];
+      const hadProfFiles = pfs.length > 0;
       if (fs.existsSync(cp)) {
         const cfg = readJson(cp);
         const recorded = recordedModeForDir(gwMeta, d);
         const had3p = cfg.deploymentMode === '3p';
-        const hadKeyflipId = !!(
-          cfg.enterpriseConfig &&
-          typeof cfg.enterpriseConfig.activeConfigId === 'string' &&
-          /^keyflip-gateway-/.test(cfg.enterpriseConfig.activeConfigId)
-        );
-        if (had3p || hadKeyflipId || hadMetaFile) {
+        const activeId =
+          cfg.enterpriseConfig && typeof cfg.enterpriseConfig.activeConfigId === 'string'
+            ? cfg.enterpriseConfig.activeConfigId
+            : null;
+        const hadKeyflipId = !!(activeId && /^keyflip-gateway-/.test(activeId));
+        const hadForeignId = !!(activeId && !hadKeyflipId);
+        const keyflipOwned = (hadMetaFile || hadKeyflipId || hadProfFiles) && !hadForeignId;
+        if (keyflipOwned) {
           if (recorded) cfg.deploymentMode = recorded;
-          else if (had3p || hadMetaFile) delete cfg.deploymentMode;
+          else if (had3p || hadMetaFile || hadKeyflipId || hadProfFiles) delete cfg.deploymentMode;
           if (cfg.enterpriseConfig && (hadKeyflipId || hadMetaFile)) {
             delete cfg.enterpriseConfig.activeConfigId;
             if (!Object.keys(cfg.enterpriseConfig).length) delete cfg.enterpriseConfig;
@@ -229,7 +233,6 @@ function restore(ctx) {
           cleaned.push(cp);
         }
       }
-      const pfs = profFilesByDir[d] || [];
       pfs.forEach(function (pf) {
         try {
           fs.rmSync(pf, { force: true });
@@ -262,7 +265,6 @@ function hasLeftovers(ctx) {
     if (!fs.existsSync(cp)) continue;
     try {
       const cfg = JSON.parse(fs.readFileSync(cp, 'utf8'));
-      if (cfg && cfg.deploymentMode === '3p') return true;
       if (
         cfg &&
         cfg.enterpriseConfig &&

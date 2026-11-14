@@ -291,14 +291,42 @@ function dropGatewayActions(ctx) {
 }
 
 // §8.3 one-time migration: if `.desktop-restart.json` contains a legacy `gateway-off` or
-// `gateway-on` action, run `desktopgw.restore(ctx)` immediately, remove the gateway action,
-// keep any `account` action, and log the migration.
-function migratePendingGateway(ctx) {
+// `gateway-on` action, drop the gateway action immediately (keeping any `account` action),
+// and run `desktopgw.restore(ctx)` only when Claude Desktop is not running.
+function migratePendingGateway(ctx, opts) {
+  opts = opts || {};
   if (!ctx || !ctx.configDir) return { migrated: false, removed: [], kept: 0 };
   const rec = readPending(ctx);
   if (!rec) return { migrated: false, removed: [], kept: 0 };
   const gwActions = rec.actions.filter(isGatewayAction);
   if (!gwActions.length) return { migrated: false, removed: [], kept: rec.actions.length };
+  const dropped = dropGatewayActions(ctx);
+  const runner = opts.run || ctx.run;
+  const isRunningFn =
+    typeof opts.isRunning === 'function'
+      ? opts.isRunning
+      : typeof opts.isDesktopRunning === 'function'
+        ? opts.isDesktopRunning
+        : null;
+  const deskRunning = isRunningFn
+    ? !!isRunningFn()
+    : process.env.KEYFLIP_TEST_OFFLINE === '1' && !runner
+      ? false
+      : isMainAppRunning(ctx, runner);
+  const hasOff = gwActions.some(function (a) {
+    return a.kind === 'gateway-off';
+  });
+  const kindLabel = hasOff ? 'gateway-off' : gwActions[0].kind;
+  if (deskRunning) {
+    _log.log('migrated pending ' + kindLabel + ': deferred Desktop first-party config restore (Desktop is running)');
+    return {
+      migrated: true,
+      restored: false,
+      deferred: true,
+      removed: dropped.removed,
+      kept: dropped.kept,
+    };
+  }
   let restored = false;
   try {
     const r = _desktopgw.restore(ctx);
@@ -306,16 +334,14 @@ function migratePendingGateway(ctx) {
   } catch {
     restored = false;
   }
-  const dropped = dropGatewayActions(ctx);
-  const hasOff = gwActions.some(function (a) {
-    return a.kind === 'gateway-off';
-  });
-  _log.log(
-    hasOff
-      ? 'migrated pending gateway-off: restored Desktop first-party config'
-      : 'migrated pending ' + gwActions[0].kind + ': restored Desktop first-party config',
-  );
-  return { migrated: true, restored: restored, removed: dropped.removed, kept: dropped.kept };
+  _log.log('migrated pending ' + kindLabel + ': restored Desktop first-party config');
+  return {
+    migrated: true,
+    restored: restored,
+    deferred: false,
+    removed: dropped.removed,
+    kept: dropped.kept,
+  };
 }
 
 function isMainAppRunning(ctx, runner) {
@@ -415,8 +441,9 @@ function desktopAccountNow(ctx) {
 // legacy gateway-* action FIRST (restoring Desktop first-party config before expiry could ever
 // drop the record), then check expiry and retarget `account` actions. -> rec | null.
 function revalidate(ctx, rec, deps, now) {
+  deps = deps || {};
   if (rec && Array.isArray(rec.actions) && rec.actions.some(isGatewayAction)) {
-    migratePendingGateway(ctx);
+    migratePendingGateway(ctx, { isRunning: deps.isRunning || deps.isDesktopRunning, run: deps.run });
     rec = readPending(ctx);
     if (!rec) return null;
   }
@@ -454,7 +481,7 @@ function revalidate(ctx, rec, deps, now) {
 async function processPending(ctx, deps) {
   deps = deps || {};
   const now = deps.nowMs !== undefined ? deps.nowMs : Date.now();
-  migratePendingGateway(ctx);
+  migratePendingGateway(ctx, { isRunning: deps.isRunning || deps.isDesktopRunning, run: deps.run });
   let rec = readPending(ctx);
   if (!rec) return { state: 'none' };
   rec = revalidate(ctx, rec, deps, now);

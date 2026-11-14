@@ -133,16 +133,24 @@ async function tickInner(ctx, opts, out) {
   }
   // §8.3 one-time pending gateway migration + §8.1 step 3 Desktop `3p` leftover re-check.
   try {
-    const mig = _desktoprestart.migratePendingGateway(ctx);
+    const isRunningFn =
+      typeof opts.isDesktopRunning === 'function'
+        ? opts.isDesktopRunning
+        : typeof opts.isRunning === 'function'
+          ? opts.isRunning
+          : null;
+    const mig = _desktoprestart.migratePendingGateway(ctx, {
+      isRunning: isRunningFn,
+      run: opts.run || ctx.run,
+    });
     if (mig && mig.migrated) {
       out.migratedGateway = mig;
     } else if (ctx && ctx.appDataDir && _desktopgw.hasLeftovers(ctx)) {
-      const deskRunning =
-        typeof opts.isDesktopRunning === 'function'
-          ? opts.isDesktopRunning()
-          : process.env.KEYFLIP_TEST_OFFLINE === '1' && !opts.run && !ctx.run
-            ? false
-            : _desktoprestart.isMainAppRunning(ctx, opts.run || ctx.run);
+      const deskRunning = isRunningFn
+        ? !!isRunningFn()
+        : process.env.KEYFLIP_TEST_OFFLINE === '1' && !opts.run && !ctx.run
+          ? false
+          : _desktoprestart.isMainAppRunning(ctx, opts.run || ctx.run);
       if (!deskRunning) _desktopgw.restore(ctx);
     }
   } catch {

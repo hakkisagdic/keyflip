@@ -780,6 +780,7 @@ async function release(ctx, info, deps) {
   const activeRec = _provider.readActive(ctx);
   const cleaned = [];
   const failed = [];
+  const deferred = [];
 
   const targetProvider = (cur && cur.provider) || p.provider;
   const shouldCleanActive = !!(activeRec && (!activeRec.name || activeRec.name === targetProvider));
@@ -885,13 +886,31 @@ async function release(ctx, info, deps) {
     }
   });
 
-  // Step 3: Desktop gateway leftovers (`desktopgw.restore`).
+  // Step 3: Desktop gateway leftovers (`desktopgw.restore`), only when Desktop is not running.
   try {
-    const gwRes = _desktopgw.restore(ctx);
-    if (gwRes && gwRes.restored && Array.isArray(gwRes.cleaned)) {
-      gwRes.cleaned.forEach(function (item) {
-        cleaned.push(item);
-      });
+    const isRunningFn =
+      typeof deps.isDesktopRunning === 'function'
+        ? deps.isDesktopRunning
+        : typeof deps.isRunning === 'function'
+          ? deps.isRunning
+          : ctx && typeof ctx.isDesktopRunning === 'function'
+            ? ctx.isDesktopRunning
+            : null;
+    const deskRunner = deps.run || (ctx && ctx.run);
+    const deskRunning = isRunningFn
+      ? !!isRunningFn()
+      : process.env.KEYFLIP_TEST_OFFLINE === '1' && !deskRunner
+        ? false
+        : _desktoprestart.isMainAppRunning(ctx, deskRunner);
+    if (deskRunning) {
+      deferred.push('desktopgw deferred (Desktop is running)');
+    } else {
+      const gwRes = _desktopgw.restore(ctx);
+      if (gwRes && gwRes.restored && Array.isArray(gwRes.cleaned)) {
+        gwRes.cleaned.forEach(function (item) {
+          cleaned.push(item);
+        });
+      }
     }
   } catch (e) {
     failed.push({ step: 'desktopgw', error: redact((e && e.message) || String(e)) });
@@ -925,8 +944,8 @@ async function release(ctx, info, deps) {
     stillCarrying = [];
   }
 
-  if (!cur && !cleaned.length && !failed.length) {
-    return { ok: true, already: true, cleaned: [], failed: [], stillCarrying: stillCarrying };
+  if (!cur && !cleaned.length && !failed.length && !deferred.length) {
+    return { ok: true, already: true, cleaned: [], failed: [], deferred: [], stillCarrying: stillCarrying };
   }
 
   // Step 5: History + notification.
@@ -939,6 +958,7 @@ async function release(ctx, info, deps) {
     reason: info.reason || 'recovered',
     cleaned: cleaned,
     failed: failed,
+    deferred: deferred,
   });
 
   if (cur && deps.notify) {
@@ -956,6 +976,7 @@ async function release(ctx, info, deps) {
     ok: failed.length === 0,
     cleaned: cleaned,
     failed: failed,
+    deferred: deferred,
     stillCarrying: stillCarrying,
   };
   if (failed.length) {

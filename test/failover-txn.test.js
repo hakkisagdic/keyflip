@@ -1066,9 +1066,11 @@ test('T14: failover verify --no-spend makes zero inference calls; --deep issues 
   assert.ok(jsonA.checks.every((c) => c.state === 'ok'));
   assert.match(jsonA.checks[0].reason, /\$7\.34 of \$25, window 12 Nov–9 Dec/);
 
-  // Also check MCP read-only `keyflip_failover_verify` and `keyflip_failover` surface/exhausted fields.
+  // Also check MCP `keyflip_failover_verify` and `keyflip_failover` surface/exhausted fields.
   const mcpVerifyTool = mcpTool('keyflip_failover_verify');
-  assert.strictEqual(mcpVerifyTool.annotations.readOnlyHint, true);
+  assert.strictEqual(mcpVerifyTool.annotations.readOnlyHint, false);
+  assert.strictEqual(mcpVerifyTool.annotations.openWorldHint, true);
+  assert.strictEqual(mcpVerifyTool.annotations.destructiveHint, false);
   const mcpV = await mcpVerifyTool.run(verifyCtxA, { no_spend: true });
   assert.strictEqual(mcpV.exitCode, 0);
   assert.strictEqual(mcpV.checks.length, 7);
@@ -1484,7 +1486,10 @@ test('T20: old 12 h expiry can no longer drop a gateway action without restore (
   // processPending / revalidate restores Desktop BEFORE expiry can drop the record.
   const mainCfg = path.join(ctx.appDataDir, 'claude_desktop_config.json');
   fs.mkdirSync(ctx.appDataDir, { recursive: true });
-  fs.writeFileSync(mainCfg, JSON.stringify({ deploymentMode: '3p' }));
+  fs.writeFileSync(
+    mainCfg,
+    JSON.stringify({ deploymentMode: '3p', enterpriseConfig: { activeConfigId: desktopgw.KEYFLIP_PROFILE_ID } }),
+  );
   const t0 = 1700000000000;
   fs.writeFileSync(
     path.join(ctx.configDir, dr.PENDING_FILE),
@@ -2208,4 +2213,213 @@ test('A7: failover on prints surface-accurate message; failover run reports miss
   const onSettings = await runCliCaptured(['failover', 'on'], cliCtx);
   assert.strictEqual(onSettings.exitCode, 0);
   assert.match(onSettings.stdout, /on \(cli-settings\) — Claude Code now uses the gateway\./);
+
+test('B1: migratePendingGateway drops gateway-* immediately, defers restore while Desktop runs, and tick restores once Desktop closes', async function () {
+  const ctx = makeCtx({ platform: 'darwin', appDataDir: true });
+  logmod.init(ctx.configDir, false);
+  loginAccount(ctx, 'alice@example.com', 'u1', FAKE_OAUTH_TOK);
+  core.addCurrent(ctx);
+
+  const mainCfg = path.join(ctx.appDataDir, 'claude_desktop_config.json');
+  const prof = path.join(ctx.appDataDir, 'configLibrary', desktopgw.KEYFLIP_PROFILE_ID + '.json');
+  const gwMeta = path.join(ctx.configDir, '.keyflip-gateway.json');
+  fs.mkdirSync(path.dirname(prof), { recursive: true });
+  const runningBytes = '{\n  "deploymentMode": "3p",\n  "preferences": { "liveEdit": 1 }\n}\n';
+  fs.writeFileSync(mainCfg, runningBytes);
+  fs.writeFileSync(prof, JSON.stringify({ id: desktopgw.KEYFLIP_PROFILE_ID }));
+  fs.writeFileSync(gwMeta, JSON.stringify({ provider: 'keysmith-failover', previousDeploymentMode: '1p' }));
+
+  fs.writeFileSync(
+    path.join(ctx.configDir, dr.PENDING_FILE),
+    JSON.stringify({
+      actions: [
+        { kind: 'gateway-off', target: null, reason: 'legacy' },
+        { kind: 'account', target: 'alice', email: 'alice@example.com', reason: 'autoswitch' },
+      ],
+      since: 1700000090000,
+      notified: false,
+    }),
+  );
+
+  let desktopRunning = true;
+  const tickFetch = async () => ({
+    ok: true,
+    status: 200,
+    headers: { get: () => null },
+    json: async () => ({ five_hour: { utilization: 10 } }),
+  });
+
+  // Tick 1: Desktop is running -> gateway-off dropped, account kept, restore deferred, config file untouched.
+  const tick1 = await autosw.tick(ctx, {
+    nowMs: 1700000091000,
+    cacheTtlMs: 0,
+    isDesktopRunning: () => desktopRunning,
+    fetch: tickFetch,
+  });
+  assert.ok(tick1.migratedGateway);
+  assert.strictEqual(tick1.migratedGateway.migrated, true);
+  assert.strictEqual(tick1.migratedGateway.restored, false);
+  assert.strictEqual(tick1.migratedGateway.deferred, true);
+  assert.deepStrictEqual(tick1.migratedGateway.removed, ['gateway-off']);
+  assert.strictEqual(tick1.migratedGateway.kept, 1);
+  assert.strictEqual(fs.readFileSync(mainCfg, 'utf8'), runningBytes, 'running Desktop config must not be rewritten');
+  assert.strictEqual(fs.existsSync(prof), true);
+  assert.strictEqual(fs.existsSync(gwMeta), true);
+
+  const pendingAfterTick1 = dr.readPending(ctx);
+  assert.ok(pendingAfterTick1);
+  assert.deepStrictEqual(
+    pendingAfterTick1.actions.map((a) => a.kind + ':' + a.target),
+    ['account:alice'],
+  );
+
+  // Tick 2: Desktop closes -> hasLeftovers re-check restores Desktop config and deletes leftovers.
+  desktopRunning = false;
+  await autosw.tick(ctx, {
+    nowMs: 1700000092000,
+    cacheTtlMs: 0,
+    isDesktopRunning: () => desktopRunning,
+    fetch: tickFetch,
+  });
+  const afterClose = JSON.parse(fs.readFileSync(mainCfg, 'utf8'));
+  assert.strictEqual(afterClose.deploymentMode, '1p');
+  assert.deepStrictEqual(afterClose.preferences, { liveEdit: 1 });
+  assert.strictEqual(fs.existsSync(prof), false);
+  assert.strictEqual(fs.existsSync(gwMeta), false);
+});
+
+test('B1: failover.release step 3 defers desktopgw.restore into deferred[] when Desktop is running and restores when closed', async function () {
+  const ctx = makeCtx({ platform: 'darwin', appDataDir: true });
+  const { ksPath, gwFetch } = setupGateway(ctx);
+  const sp = okSpawnRecorder();
+  await failover.engage(
+    ctx,
+    { from: 'gmail', manual: true },
+    { fetch: gwFetch, keysmithConfig: ksPath, spawn: sp.spawn, nowMs: 1700000095000 },
+  );
+
+  const mainCfg = path.join(ctx.appDataDir, 'claude_desktop_config.json');
+  const prof = path.join(ctx.appDataDir, 'configLibrary', desktopgw.KEYFLIP_PROFILE_ID + '.json');
+  const gwMeta = path.join(ctx.configDir, '.keyflip-gateway.json');
+  fs.mkdirSync(path.dirname(prof), { recursive: true });
+  const runningBytes = '{\n  "deploymentMode": "3p",\n  "enterpriseConfig": { "activeConfigId": "' + desktopgw.KEYFLIP_PROFILE_ID + '" },\n  "preferences": { "sidebar": true }\n}\n';
+  fs.writeFileSync(mainCfg, runningBytes);
+  fs.writeFileSync(prof, JSON.stringify({ id: desktopgw.KEYFLIP_PROFILE_ID }));
+  fs.writeFileSync(gwMeta, JSON.stringify({ provider: 'keysmith-failover', previousDeploymentMode: '1p' }));
+
+  // Release while Desktop is running: release succeeds, desktopgw is deferred (not failed), Desktop files untouched.
+  const relRunning = await failover.release(
+    ctx,
+    { by: 'cli', reason: 'turned off while Desktop open' },
+    { isDesktopRunning: () => true },
+  );
+  assert.strictEqual(relRunning.ok, true);
+  assert.deepStrictEqual(relRunning.failed, []);
+  assert.ok(Array.isArray(relRunning.deferred));
+  assert.ok(relRunning.deferred.some((d) => /desktopgw deferred.*Desktop is running/i.test(d)));
+  assert.strictEqual(failover.state(ctx), null, 'CLI failover state still released');
+  assert.strictEqual(fs.readFileSync(mainCfg, 'utf8'), runningBytes, 'Desktop config untouched while running');
+  assert.strictEqual(fs.existsSync(prof), true);
+  assert.strictEqual(fs.existsSync(gwMeta), true);
+
+  // Release once Desktop is closed: desktopgw.restore runs and cleans up.
+  const relClosed = await failover.release(
+    ctx,
+    { by: 'cli', reason: 'turned off after Desktop closed' },
+    { isDesktopRunning: () => false },
+  );
+  assert.strictEqual(relClosed.ok, true);
+  assert.deepStrictEqual(relClosed.failed, []);
+  assert.deepStrictEqual(relClosed.deferred, []);
+  const afterCfg = JSON.parse(fs.readFileSync(mainCfg, 'utf8'));
+  assert.strictEqual(afterCfg.deploymentMode, '1p');
+  assert.strictEqual(afterCfg.enterpriseConfig, undefined);
+  assert.deepStrictEqual(afterCfg.preferences, { sidebar: true });
+  assert.strictEqual(fs.existsSync(prof), false);
+  assert.strictEqual(fs.existsSync(gwMeta), false);
+});
+
+test('B2: desktopgw.hasLeftovers and restore leave foreign 3p configs byte-identical and clean each of the 3 keyflip-owned signals', function () {
+  // 1) Foreign '3p' + foreign activeConfigId (and bare '3p' in sibling dir): hasLeftovers false, restore leaves bytes identical.
+  const ctxForeign = makeCtx({ platform: 'darwin', appDataDir: true });
+  const mainDir = ctxForeign.appDataDir;
+  const dir3p = ctxForeign.appDataDir + '-3p';
+  fs.mkdirSync(mainDir, { recursive: true });
+  fs.mkdirSync(dir3p, { recursive: true });
+  const mainCfg = path.join(mainDir, 'claude_desktop_config.json');
+  const sibCfg = path.join(dir3p, 'claude_desktop_config.json');
+  const foreignMainBytes =
+    '{\n  "z_order": 1,\n  "deploymentMode": "3p",\n  "enterpriseConfig": {\n    "activeConfigId": "my-bedrock-profile",\n    "region": "us-east-1"\n  }\n}';
+  const foreignSibBytes = '{\n  "deploymentMode": "3p",\n  "preferences": { "theme": "dark" }\n}';
+  fs.writeFileSync(mainCfg, foreignMainBytes);
+  fs.writeFileSync(sibCfg, foreignSibBytes);
+
+  assert.strictEqual(desktopgw.hasLeftovers(ctxForeign), false, 'foreign 3p must not be flagged as leftover');
+  const rForeign = desktopgw.restore(ctxForeign);
+  assert.strictEqual(rForeign.restored, false);
+  assert.deepStrictEqual(rForeign.cleaned, []);
+  assert.strictEqual(fs.readFileSync(mainCfg, 'utf8'), foreignMainBytes, 'foreign main config left byte-identical');
+  assert.strictEqual(fs.readFileSync(sibCfg, 'utf8'), foreignSibBytes, 'foreign sibling 3p config left byte-identical');
+
+  // Even if .keyflip-gateway.json exists, a dir whose 3p points at a foreign activeConfigId is never touched.
+  fs.writeFileSync(path.join(ctxForeign.configDir, desktopgw.META), JSON.stringify({ provider: 'gw' }));
+  assert.strictEqual(desktopgw.hasLeftovers(ctxForeign), true);
+  desktopgw.restore(ctxForeign);
+  assert.strictEqual(
+    fs.readFileSync(mainCfg, 'utf8'),
+    foreignMainBytes,
+    'foreign activeConfigId never touched even when .keyflip-gateway.json exists',
+  );
+  assert.strictEqual(fs.existsSync(path.join(ctxForeign.configDir, desktopgw.META)), false);
+
+  // 2) Signal 1: .keyflip-gateway.json exists.
+  const ctxSig1 = makeCtx({ platform: 'darwin', appDataDir: true });
+  fs.mkdirSync(ctxSig1.appDataDir, { recursive: true });
+  const cfg1 = path.join(ctxSig1.appDataDir, 'claude_desktop_config.json');
+  fs.writeFileSync(cfg1, JSON.stringify({ deploymentMode: '3p', preferences: { a: 1 } }));
+  fs.writeFileSync(
+    path.join(ctxSig1.configDir, desktopgw.META),
+    JSON.stringify({ provider: 'gw', previousDeploymentMode: '1p' }),
+  );
+  assert.strictEqual(desktopgw.hasLeftovers(ctxSig1), true);
+  const r1 = desktopgw.restore(ctxSig1);
+  assert.strictEqual(r1.restored, true);
+  assert.strictEqual(JSON.parse(fs.readFileSync(cfg1, 'utf8')).deploymentMode, '1p');
+  assert.strictEqual(fs.existsSync(path.join(ctxSig1.configDir, desktopgw.META)), false);
+
+  // 3) Signal 2: activeConfigId matches /^keyflip-gateway-/.
+  const ctxSig2 = makeCtx({ platform: 'darwin', appDataDir: true });
+  fs.mkdirSync(ctxSig2.appDataDir, { recursive: true });
+  const cfg2 = path.join(ctxSig2.appDataDir, 'claude_desktop_config.json');
+  fs.writeFileSync(
+    cfg2,
+    JSON.stringify({
+      deploymentMode: '3p',
+      enterpriseConfig: { activeConfigId: 'keyflip-gateway-custom' },
+      preferences: { b: 2 },
+    }),
+  );
+  assert.strictEqual(desktopgw.hasLeftovers(ctxSig2), true);
+  const r2 = desktopgw.restore(ctxSig2);
+  assert.strictEqual(r2.restored, true);
+  const after2 = JSON.parse(fs.readFileSync(cfg2, 'utf8'));
+  assert.strictEqual('deploymentMode' in after2, false);
+  assert.strictEqual('enterpriseConfig' in after2, false);
+  assert.deepStrictEqual(after2.preferences, { b: 2 });
+
+  // 4) Signal 3: keyflip-gateway-*.json profile file present in configLibrary.
+  const ctxSig3 = makeCtx({ platform: 'darwin', appDataDir: true });
+  const lib3 = path.join(ctxSig3.appDataDir, 'configLibrary');
+  fs.mkdirSync(lib3, { recursive: true });
+  const cfg3 = path.join(ctxSig3.appDataDir, 'claude_desktop_config.json');
+  const pf3 = path.join(lib3, 'keyflip-gateway-orphan.json');
+  fs.writeFileSync(cfg3, JSON.stringify({ deploymentMode: '3p', preferences: { c: 3 } }));
+  fs.writeFileSync(pf3, JSON.stringify({ id: 'keyflip-gateway-orphan' }));
+  assert.strictEqual(desktopgw.hasLeftovers(ctxSig3), true);
+  const r3 = desktopgw.restore(ctxSig3);
+  assert.strictEqual(r3.restored, true);
+  const after3 = JSON.parse(fs.readFileSync(cfg3, 'utf8'));
+  assert.strictEqual('deploymentMode' in after3, false);
+  assert.deepStrictEqual(after3.preferences, { c: 3 });
+  assert.strictEqual(fs.existsSync(pf3), false);
 });

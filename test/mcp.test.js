@@ -5,6 +5,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { spawn } from 'child_process';
+import { EventEmitter } from 'events';
 import * as _child_process from 'child_process';
 import { makeCtx } from './helpers.js';
 import * as _mcp from '../src/mcp.js';
@@ -172,7 +173,7 @@ test('MCP lifecycle: initialize negotiates a supported protocol version and decl
   // every mutating tool must gate on confirm
   got[2].result.tools.forEach(function (t) {
     if (t.annotations && t.annotations.readOnlyHint === false) {
-      if (t.name === 'keyflip_failover') {
+      if (t.name === 'keyflip_failover' || t.name === 'keyflip_failover_verify') {
         assert.ok(t.inputSchema.properties && t.inputSchema.properties.confirm, t.name + ' must declare confirm');
       } else {
         assert.ok(
@@ -837,6 +838,146 @@ test('parity MCP: gateway_status reports first-party when no gateway is set', as
   const r = await toolByName('keyflip_gateway_status').run(makeCtx());
   assert.strictEqual(r.firstParty, true);
   assert.strictEqual(r.gateway, null);
+});
+
+test('B4: MCP keyflip_gateway_use refuses unless experimental=true and configures Desktop when experimental=true', async function () {
+  const ctx = makeCtx({ platform: 'darwin', appDataDir: true });
+  fs.mkdirSync(ctx.appDataDir, { recursive: true });
+  fs.writeFileSync(path.join(ctx.appDataDir, 'claude_desktop_config.json'), JSON.stringify({ deploymentMode: '1p' }));
+  _provider.add(ctx, 'gw', {
+    baseUrl: 'https://gw.example/v1',
+    key: 'ks_FAKE_MCP_GW_KEY',
+    authScheme: 'bearer',
+    models: { default: 'm' },
+  });
+  const tool = toolByName('keyflip_gateway_use');
+  assert.ok(tool.inputSchema.properties.experimental);
+  assert.strictEqual(tool.inputSchema.properties.experimental.type, 'boolean');
+  assert.strictEqual(tool.inputSchema.properties.experimental.default, false);
+  assert.match(tool.description, /experimental=true/);
+
+  await assert.rejects(
+    () => tool.run(ctx, { provider: 'gw' }),
+    /confirmation required/,
+  );
+  await assert.rejects(
+    () => tool.run(ctx, { provider: 'gw', confirm: true }),
+    /Desktop never uses the gateway by default; pass experimental=true to force it \(unsupported\)/,
+  );
+  await assert.rejects(
+    () => tool.run(ctx, { provider: 'gw', experimental: false, confirm: true }),
+    /Desktop never uses the gateway by default; pass experimental=true to force it \(unsupported\)/,
+  );
+
+  const ok = await tool.run(ctx, { provider: 'gw', experimental: true, confirm: true });
+  assert.strictEqual(ok.gateway, 'gw');
+  assert.strictEqual(ok.dirs, 2);
+  const st = await toolByName('keyflip_gateway_status').run(ctx);
+  assert.strictEqual(st.gateway, 'gw');
+  assert.strictEqual(st.firstParty, false);
+});
+
+test('B3: MCP keyflip_failover_verify defaults no_spend=true, requires confirm when no_spend=false, and passes through with confirm=true', async function () {
+  const tool = toolByName('keyflip_failover_verify');
+  assert.strictEqual(tool.annotations.readOnlyHint, false);
+  assert.strictEqual(tool.annotations.openWorldHint, true);
+  assert.strictEqual(tool.annotations.destructiveHint, false);
+  assert.strictEqual(tool.inputSchema.properties.no_spend.default, true);
+  assert.ok(tool.inputSchema.properties.confirm);
+  assert.match(tool.description, /no_spend=false/);
+  assert.match(tool.description, /confirm/);
+
+  let spawnCount = 0;
+  const ctx = makeCtx({
+    fetch: async function (url) {
+      if (/\/v1\/keysmith\/usage/.test(url)) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            spend: [
+              {
+                kind: 'adapter',
+                target: 'claude-failover-api',
+                cap: 25,
+                spent: 1.0,
+                exceeded: false,
+                window: { since: '2026-11-12', until: '2026-12-09' },
+                windowStatus: 'open',
+              },
+            ],
+          }),
+        };
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ data: [{ id: 'claude-failover' }] }),
+      };
+    },
+    spawn: function () {
+      spawnCount++;
+      const child = new EventEmitter();
+      child.stdout = new EventEmitter();
+      child.stderr = new EventEmitter();
+      child.kill = function () {};
+      setImmediate(function () {
+        child.stdout.emit(
+          'data',
+          JSON.stringify({ type: 'result', is_error: false, result: 'OK', total_cost_usd: 0.005 }),
+        );
+        child.emit('close', 0);
+      });
+      return child;
+    },
+    listProcesses: () => [],
+  });
+  const ksPath = path.join(ctx.home, 'keysmith-config.json');
+  fs.writeFileSync(
+    ksPath,
+    JSON.stringify({
+      aliases: { 'claude-failover': ['claude-failover-api/claude-opus-5-5'] },
+      limits: { spend: { 'claude-failover-api': { usd: 25, since: '2026-11-12', until: '2026-12-09' } } },
+    }),
+  );
+  ctx.keysmithConfig = ksPath;
+  ctx.store.setProfile('provider__keysmith-failover', 'ks_FAKE_MCP_VERIFY_KEY');
+  _provider.add(ctx, 'keysmith-failover', {
+    baseUrl: 'http://127.0.0.1:8787',
+    authScheme: 'bearer',
+    compat: 'anthropic',
+    models: {
+      default: 'claude-failover',
+      smallFast: 'claude-failover',
+      haiku: 'claude-failover',
+      sonnet: 'claude-failover',
+      opus: 'claude-failover',
+    },
+  });
+
+  // 1) Default call ({}) passes no_spend:true -> 0 spawns.
+  const defRes = await tool.run(ctx, {});
+  assert.strictEqual(spawnCount, 0, 'default MCP call must skip live probes (no_spend=true)');
+  const defProbe = defRes.checks.find((c) => c.id === 'probe');
+  assert.strictEqual(defProbe.detail.skipped, true);
+
+  // 2) no_spend=false without confirm throws.
+  await assert.rejects(
+    () => tool.run(ctx, { no_spend: false }),
+    /confirmation required/,
+  );
+  await assert.rejects(
+    () => tool.run(ctx, { no_spend: false, confirm: false }),
+    /confirmation required/,
+  );
+  assert.strictEqual(spawnCount, 0, 'refused call must not spawn probes');
+
+  // 3) no_spend=false with confirm=true passes through and runs probes.
+  const spendRes = await tool.run(ctx, { no_spend: false, confirm: true });
+  assert.strictEqual(spawnCount, 2, 'confirmed no_spend=false runs default + sonnet probes');
+  const spendProbe = spendRes.checks.find((c) => c.id === 'probe');
+  assert.strictEqual(spendProbe.state, 'ok');
+  assert.deepStrictEqual(spendProbe.detail.models, ['default', 'sonnet']);
 });
 
 test('parity MCP: mcpreg set/list/remove round-trips (and gates on confirm)', async function () {

@@ -3269,23 +3269,35 @@ const TOOLS = [
   },
   {
     name: 'keyflip_gateway_use',
-    title: 'Route the Claude desktop app through a provider',
+    title: 'Route the Claude desktop app through a provider (experimental)',
     description:
-      'Point the Claude DESKTOP app at a saved provider (gateway); takes effect after the app restarts. Mutating (rewrites the desktop app config) — ask the user, then confirm=true.',
+      'Experimental/unsupported: point the Claude DESKTOP app at a saved provider (gateway); takes effect after the app restarts. Desktop never uses the gateway by default — pass experimental=true to force it (unsupported). Mutating (rewrites the desktop app config) — ask the user, then confirm=true.',
     inputSchema: {
       type: 'object',
-      properties: { provider: { type: 'string' }, confirm: confirmProp.confirm },
+      properties: {
+        provider: { type: 'string' },
+        experimental: {
+          type: 'boolean',
+          default: false,
+          description:
+            'Must be true to force the unsupported experimental Desktop third-party gateway mode (default false).',
+        },
+        confirm: confirmProp.confirm,
+      },
       required: ['provider', 'confirm'],
       additionalProperties: false,
     },
     annotations: MUT,
     run: async function (ctx, args) {
       needConfirm(args);
+      if (!args || args.experimental !== true) {
+        throw new Error('Desktop never uses the gateway by default; pass experimental=true to force it (unsupported)');
+      }
       if (!provider.exists(ctx, String(args.provider))) throw new Error("no such provider: '" + args.provider + "'");
       const l = await lock.acquire(ctx.configDir);
       let r;
       try {
-        r = _desktopgw.use(ctx, String(args.provider));
+        r = _desktopgw.use(ctx, String(args.provider), { experimental: true });
       } finally {
         l.release();
       }
@@ -3932,25 +3944,30 @@ const TOOLS = [
     name: 'keyflip_failover_verify',
     title: 'Verify the API failover gateway, legs, probes and leftovers',
     description:
-      'Read-only verification of the keysmith API failover (`keyflip failover verify`). Checks gateway reachability/cap, per-leg health from keysmith usage.jsonl, modelIds for cli-settings, live cli-launcher inference probes (skipped when no_spend=true; deep=true adds Bash tool + sonnet subagent probes), leftover gateway state, running processes carrying gateway env, and >128-tool rejections.',
+      'Verify the keysmith API failover (`keyflip failover verify`). Checks gateway reachability/cap, per-leg health from keysmith usage.jsonl, modelIds for cli-settings, live cli-launcher inference probes (skipped by default over MCP with no_spend=true; deep=true adds Bash tool + sonnet subagent probes), leftover gateway state, running processes carrying gateway env, and >128-tool rejections. A call with no_spend=false spends on the paid leg and needs confirm=true.',
     inputSchema: {
       type: 'object',
       properties: {
         no_spend: {
           type: 'boolean',
-          description: 'Skip live inference probes so zero API tokens are spent (--no-spend).',
+          default: true,
+          description:
+            'Skip live inference probes so zero API tokens are spent (default true over MCP; no_spend=false spends on the paid leg and requires confirm=true).',
         },
         deep: {
           type: 'boolean',
           description: 'Also run Bash tool and sonnet subagent probes (--deep).',
         },
+        confirm: confirmProp.confirm,
       },
       additionalProperties: false,
     },
-    annotations: RO,
+    annotations: MUT_NET,
     run: async function (ctx, args) {
+      const noSpend = args && args.no_spend !== undefined ? !!args.no_spend : true;
+      if (!noSpend) needConfirm(args);
       return await _failover.verify(ctx, {
-        noSpend: !!(args && args.no_spend),
+        noSpend: noSpend,
         deep: !!(args && args.deep),
         fetch: ctx.fetch,
         spawn: ctx.spawn,
