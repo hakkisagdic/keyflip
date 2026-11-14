@@ -89,6 +89,13 @@ public struct ControlCenterView: View {
 
             Spacer()
 
+            Button(action: { viewModel.copySummaryToPasteboard() }) {
+                Image(systemName: "doc.on.doc")
+                    .font(.system(size: 11))
+            }
+            .buttonStyle(.borderless)
+            .help("Gizlilik korumalı durum özetini Markdown olarak kopyala")
+
             Button(action: { viewModel.refresh() }) {
                 Image(systemName: "arrow.clockwise")
                     .font(.system(size: 12))
@@ -162,7 +169,8 @@ public struct ControlCenterView: View {
     // MARK: - 0. Durum Panosu (External Status Board - hidden if file missing)
 
     private func statusBoardSection(_ board: StatusBoardPayload) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
+        let displayedSections = board.filteredSections(onlyIssues: viewModel.showOnlyIssuesInStatusBoard)
+        return VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
                 Text("DURUM PANOSU")
                     .font(.system(size: 10, weight: .semibold))
@@ -183,6 +191,20 @@ public struct ControlCenterView: View {
                 }
 
                 Spacer()
+
+                if board.totalIssueCount > 0 {
+                    Button(action: {
+                        viewModel.showOnlyIssuesInStatusBoard.toggle()
+                    }) {
+                        Text(viewModel.showOnlyIssuesInStatusBoard ? "Tümünü Göster" : "Yalnızca Sorunlar (\(board.totalIssueCount))")
+                            .font(.system(size: 9, weight: .semibold))
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1)
+                            .background(viewModel.showOnlyIssuesInStatusBoard ? Color.accentColor.opacity(0.2) : Color.secondary.opacity(0.15))
+                            .cornerRadius(3)
+                    }
+                    .buttonStyle(.plain)
+                }
 
                 if let updated = board.updated, !updated.isEmpty {
                     Text(shortIsoTime(updated))
@@ -219,7 +241,7 @@ public struct ControlCenterView: View {
                     .cornerRadius(5)
                 }
 
-                ForEach(board.sections) { sec in
+                ForEach(displayedSections) { sec in
                     let isExpanded = !collapsedSectionIds.contains(sec.id)
                     let sorted = sec.sortedRows
                     VStack(alignment: .leading, spacing: 4) {
@@ -303,7 +325,7 @@ public struct ControlCenterView: View {
                             .padding(.top, 2)
                         }
                     }
-                    if sec.id != board.sections.last?.id {
+                    if sec.id != displayedSections.last?.id {
                         Divider()
                     }
                 }
@@ -334,7 +356,30 @@ public struct ControlCenterView: View {
                     .foregroundColor(.secondary)
             } else {
                 VStack(alignment: .leading, spacing: 10) {
+                    if let forecast = viewModel.payload.quotaForecast,
+                       let rec = forecast.recommendedAccount,
+                       !rec.isEmpty {
+                        HStack(spacing: 6) {
+                            Image(systemName: "sparkles")
+                                .font(.system(size: 10))
+                                .foregroundColor(.accentColor)
+                            Text("Önerilen: \(rec)")
+                                .font(.system(size: 10, weight: .semibold))
+                            if let reason = forecast.recommendationReason, !reason.isEmpty {
+                                Text("· \(reason)")
+                                    .font(.system(size: 10))
+                                    .foregroundColor(.secondary)
+                                    .lineLimit(1)
+                            }
+                            Spacer()
+                        }
+                        .padding(6)
+                        .background(Color.accentColor.opacity(0.08))
+                        .cornerRadius(4)
+                    }
+
                     ForEach(viewModel.payload.accounts) { acct in
+                        let acctForecast = viewModel.payload.quotaForecast?.accounts?.first(where: { $0.name == acct.name })
                         VStack(alignment: .leading, spacing: 5) {
                             HStack(spacing: 6) {
                                 Image(systemName: acct.active ? "checkmark.circle.fill" : "circle")
@@ -380,6 +425,12 @@ public struct ControlCenterView: View {
                                     Text("· Sıfırlama: \(shortIsoTime(reset))")
                                         .font(.system(size: 10))
                                         .foregroundColor(.secondary)
+                                }
+
+                                if let f = acctForecast, f.willExhaustBeforeReset, let mins = f.minutesUntilExhaustion {
+                                    Text("· ~\(mins) dk sonra dolabilir")
+                                        .font(.system(size: 10, weight: .medium))
+                                        .foregroundColor(.orange)
                                 }
                             }
                         }
@@ -548,7 +599,8 @@ public struct ControlCenterView: View {
     // MARK: - 5. Filo (Fleet) & 6. Sunucu (Server - Read-Only)
 
     private var fleetAndServerSection: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        let serverHostTitle = (viewModel.payload.server?.host ?? "UZAK SUNUCU").uppercased()
+        return VStack(alignment: .leading, spacing: 14) {
             sectionBox(title: "FİLO (TRAYCER)") {
                 if let fleet = viewModel.payload.fleet {
                     HStack {
@@ -566,7 +618,7 @@ public struct ControlCenterView: View {
                 }
             }
 
-            sectionBox(title: "SUNUCU (ALASTYR · SALT OKUNUR)") {
+            sectionBox(title: "SUNUCU (\(serverHostTitle) · SALT OKUNUR)") {
                 if let srv = viewModel.payload.server {
                     VStack(alignment: .leading, spacing: 4) {
                         HStack {

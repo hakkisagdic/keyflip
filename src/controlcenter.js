@@ -617,7 +617,7 @@ export function collectServerStatus(ctx, options = {}) {
         }))
       : [];
     return {
-      host: snap.host || "Alastyr",
+      host: snap.host || "Uzak Sunucu",
       status: ["ok", "warning", "down", "unreadable"].includes(snap.status) ? snap.status : "ok",
       load: typeof snap.load === "string" && snap.load.trim() ? snap.load.trim() : "okunamadı",
       memory: typeof snap.memory === "string" && snap.memory.trim() ? snap.memory.trim() : "okunamadı",
@@ -629,21 +629,16 @@ export function collectServerStatus(ctx, options = {}) {
   }
 
   return {
-    host: "Alastyr",
+    host: "Uzak Sunucu",
     status: "unreadable",
     load: "okunamadı",
     memory: "okunamadı",
     disk: "okunamadı",
-    sites: [
-      { name: "partflow.hakkisagdic.dev", status: "unreadable", code: null, detail: "okunamadı" },
-      { name: "gymbox.hakkisagdic.dev", status: "unreadable", code: null, detail: "okunamadı" },
-      { name: "venizelos.hakkisagdic.dev", status: "unreadable", code: null, detail: "okunamadı" }
-    ],
+    sites: [],
     updatedAt: null,
     readOnly: true
   };
 }
-
 
 const STATUS_ROW_RANK = Object.freeze({
   bad: 0,
@@ -740,6 +735,166 @@ export function collectStatusBoard(ctx, options = {}) {
     sections,
     owner_needed: ownerNeeded
   };
+}
+
+/**
+ * Computes per-account 5h/7d quota burn-rate, estimated exhaustion time before reset,
+ * and recommends the most efficient account (prioritizing "use-it-or-lose-it" windows
+ * that reset soon with ample remaining headroom).
+ */
+export function computeQuotaForecast(accounts, options = {}) {
+  const nowMs =
+    typeof options.nowMs === "function" ? options.nowMs() : typeof options.nowMs === "number" ? options.nowMs : Date.now();
+  const FIVE_HOURS_MIN = 300;
+  if (!Array.isArray(accounts) || accounts.length === 0) {
+    return {
+      accounts: [],
+      recommendedAccount: null,
+      recommendationReason: null
+    };
+  }
+
+  const evaluated = accounts.map((acct) => {
+    const fivePct =
+      typeof acct?.usage?.fiveHour?.pct === "number"
+        ? acct.usage.fiveHour.pct
+        : typeof acct?.fiveHourPct === "number"
+          ? acct.fiveHourPct
+          : null;
+    const sevenPct =
+      typeof acct?.usage?.sevenDay?.pct === "number"
+        ? acct.usage.sevenDay.pct
+        : typeof acct?.sevenDayPct === "number"
+          ? acct.sevenDayPct
+          : null;
+    const resetsAtRaw = acct?.usage?.fiveHour?.resetsAt ?? acct?.fiveHourResetsAt ?? null;
+    const resetMs = resetsAtRaw ? Date.parse(String(resetsAtRaw)) : Number.NaN;
+    const minutesUntilReset =
+      Number.isFinite(resetMs) && resetMs > nowMs ? Math.max(1, Math.round((resetMs - nowMs) / 60000)) : null;
+
+    let burnRateRatio = null;
+    let minutesUntilExhaustion = null;
+    let willExhaustBeforeReset = false;
+    let pace = "unknown";
+
+    if (fivePct !== null && minutesUntilReset !== null && minutesUntilReset < FIVE_HOURS_MIN) {
+      const elapsedMin = Math.max(5, FIVE_HOURS_MIN - minutesUntilReset);
+      const elapsedPct = (elapsedMin / FIVE_HOURS_MIN) * 100;
+      burnRateRatio = elapsedPct > 0 ? Math.round((fivePct / elapsedPct) * 100) / 100 : null;
+      const pctPerMin = fivePct / elapsedMin;
+      if (pctPerMin > 0) {
+        const remainingPct = Math.max(0, 100 - fivePct);
+        minutesUntilExhaustion = Math.round(remainingPct / pctPerMin);
+        willExhaustBeforeReset = minutesUntilExhaustion < minutesUntilReset;
+      }
+      if (fivePct >= 95 || (willExhaustBeforeReset && minutesUntilExhaustion !== null && minutesUntilExhaustion <= 30)) {
+        pace = "critical";
+      } else if (willExhaustBeforeReset || (burnRateRatio !== null && burnRateRatio > 1.25)) {
+        pace = "fast";
+      } else {
+        pace = "safe";
+      }
+    } else if (fivePct !== null) {
+      pace = fivePct >= 95 ? "critical" : fivePct >= 80 ? "fast" : "safe";
+    }
+
+    const useItOrLoseIt =
+      fivePct !== null &&
+      fivePct <= 70 &&
+      (sevenPct === null || sevenPct < 90) &&
+      minutesUntilReset !== null &&
+      minutesUntilReset <= 90;
+
+    return {
+      name: String(acct?.name || ""),
+      active: Boolean(acct?.active),
+      fiveHourPct: fivePct,
+      sevenDayPct: sevenPct,
+      minutesUntilReset,
+      burnRateRatio,
+      minutesUntilExhaustion,
+      willExhaustBeforeReset,
+      pace,
+      useItOrLoseIt
+    };
+  });
+
+  // Pick recommended account:
+  // 1. Any non-exhausted "use-it-or-lose-it" account (resets <= 90m with >=30% free)
+  // 2. Otherwise the account with the lowest effective utilization
+  let recommendedAccount = null;
+  let recommendationReason = null;
+
+  const candidates = evaluated.filter(
+    (a) => (a.fiveHourPct === null || a.fiveHourPct < 95) && (a.sevenDayPct === null || a.sevenDayPct < 95)
+  );
+  const expiringWithHeadroom = candidates
+    .filter((a) => a.useItOrLoseIt)
+    .sort((a, b) => (a.minutesUntilReset ?? 999) - (b.minutesUntilReset ?? 999));
+
+  if (expiringWithHeadroom.length > 0) {
+    const pick = expiringWithHeadroom[0];
+    recommendedAccount = pick.name;
+    recommendationReason = `5s penceresi ${pick.minutesUntilReset} dk içinde sıfırlanıyor (%${Math.round(100 - (pick.fiveHourPct ?? 0))} boş kapasite)`;
+  } else if (candidates.length > 0) {
+    const sorted = [...candidates].sort((a, b) => {
+      const aMax = Math.max(a.fiveHourPct ?? 0, a.sevenDayPct ?? 0);
+      const bMax = Math.max(b.fiveHourPct ?? 0, b.sevenDayPct ?? 0);
+      return aMax - bMax;
+    });
+    recommendedAccount = sorted[0].name;
+    const rem = Math.round(100 - Math.max(sorted[0].fiveHourPct ?? 0, sorted[0].sevenDayPct ?? 0));
+    recommendationReason = `En yüksek kalan kapasite (%${rem} boş)`;
+  }
+
+  return {
+    accounts: evaluated,
+    recommendedAccount,
+    recommendationReason
+  };
+}
+
+/**
+ * Generates a privacy-safe Markdown summary of the control center and status board.
+ */
+export function buildControlCenterMarkdown(snapshot = {}) {
+  const lines = [];
+  lines.push(`# Keyflip Kontrol Merkezi Özeti`);
+  if (snapshot.generatedAt) {
+    lines.push(`Güncelleme: ${snapshot.generatedAt}`);
+  }
+  lines.push("");
+
+  if (snapshot.statusBoard) {
+    const sb = snapshot.statusBoard;
+    const ownerItems = Array.isArray(sb.owner_needed) ? sb.owner_needed : [];
+    lines.push(`## Durum Panosu${sb.stale ? " (VERİ ESKİ)" : ""}`);
+    if (ownerItems.length > 0) {
+      lines.push(`### Sahipten Bekleyen (${ownerItems.length})`);
+      for (const item of ownerItems) {
+        lines.push(`- **[${item.project}]** ${item.text}`);
+      }
+    }
+    const sections = Array.isArray(sb.sections) ? sb.sections : [];
+    for (const sec of sections) {
+      const alertRows = (sec.rows || []).filter((r) => r.status === "bad" || r.status === "warn");
+      if (alertRows.length > 0) {
+        lines.push(`### ${sec.title} (Sorun/Uyarı: ${alertRows.length})`);
+        for (const r of alertRows) {
+          lines.push(`- [${r.status.toUpperCase()}] **${r.label}**: ${r.value}${r.detail ? ` — ${r.detail}` : ""}`);
+        }
+      }
+    }
+    lines.push("");
+  }
+
+  if (snapshot.quotaForecast?.recommendedAccount) {
+    lines.push(
+      `## Akıllı Kota Önerisi\n- Önerilen Hesap: **${snapshot.quotaForecast.recommendedAccount}** (${snapshot.quotaForecast.recommendationReason || ""})\n`
+    );
+  }
+
+  return lines.join("\n").trim() + "\n";
 }
 
 export function collectPreferences(ctx) {

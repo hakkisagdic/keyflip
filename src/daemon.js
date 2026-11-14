@@ -801,7 +801,9 @@ async function buildControlCenter(ctx, scheduler, opts) {
   base.fleet = _controlcenter.collectFleetStatus(ctx, ccOpts);
   base.server = _controlcenter.collectServerStatus(ctx, ccOpts);
   base.statusBoard = _controlcenter.collectStatusBoard(ctx, ccOpts);
+  base.quotaForecast = _controlcenter.computeQuotaForecast(base.accounts, { nowMs: opts.nowMs || ctx.nowMs });
   base.preferences = _controlcenter.collectPreferences(ctx);
+  base.markdownReport = _controlcenter.buildControlCenterMarkdown(base);
   return redactSecrets(base);
 }
 

@@ -1,3 +1,4 @@
+import AppKit
 import Combine
 import Foundation
 import SwiftUI
@@ -14,6 +15,7 @@ public final class ControlCenterViewModel: ObservableObject {
     // External status board (watched from configured statusFile; nil if file does not exist)
     @Published public var statusBoard: StatusBoardPayload?
     @Published public var statusBoardStale: Bool = false
+    @Published public var showOnlyIssuesInStatusBoard: Bool = false
 
     // Editable preferences
     @Published public var prefThresholdPct: Double = 95
@@ -26,6 +28,9 @@ public final class ControlCenterViewModel: ObservableObject {
 
     private let client: DaemonClient
     private var timer: Timer?
+    private var fileWatchTimer: Timer?
+    private var lastObservedStatusMtime: Date?
+    private var lastObservedStatusExists: Bool = false
 
     public init(client: DaemonClient = DaemonClient(), startPolling: Bool = true) {
         self.client = client
@@ -43,10 +48,36 @@ public final class ControlCenterViewModel: ObservableObject {
                 self?.refresh()
             }
         }
+        fileWatchTimer?.invalidate()
+        fileWatchTimer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                self?.checkStatusFileIfChanged()
+            }
+        }
+    }
+
+    public func checkStatusFileIfChanged() {
+        let expanded = StatusBoardPayload.resolvePath(prefStatusFile)
+        let exists = FileManager.default.fileExists(atPath: expanded)
+        let attrs = exists ? (try? FileManager.default.attributesOfItem(atPath: expanded)) : nil
+        let mtime = attrs?[.modificationDate] as? Date
+        if exists != lastObservedStatusExists || mtime != lastObservedStatusMtime {
+            reloadStatusBoard()
+        } else if let board = statusBoard {
+            let newStale = board.isStale(now: Date(), fallbackModificationDate: mtime)
+            if newStale != statusBoardStale {
+                statusBoardStale = newStale
+            }
+        }
     }
 
     public func reloadStatusBoard(overridePath: String? = nil) {
         let configured = overridePath ?? prefStatusFile
+        let expanded = StatusBoardPayload.resolvePath(configured)
+        lastObservedStatusExists = FileManager.default.fileExists(atPath: expanded)
+        let attrs = lastObservedStatusExists ? (try? FileManager.default.attributesOfItem(atPath: expanded)) : nil
+        lastObservedStatusMtime = attrs?[.modificationDate] as? Date
+
         if let loaded = StatusBoardPayload.load(fromFile: configured) {
             self.statusBoard = loaded.board
             self.statusBoardStale = loaded.isStale
@@ -63,6 +94,21 @@ public final class ControlCenterViewModel: ObservableObject {
             self.statusBoard = nil
             self.statusBoardStale = false
         }
+    }
+
+    public func copySummaryToPasteboard() {
+        let text: String
+        if let report = payload.markdownReport, !report.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            text = report
+        } else if let board = statusBoard {
+            text = board.buildMarkdownSummary(isStale: statusBoardStale)
+        } else {
+            text = "# Keyflip Kontrol Merkezi\nEtkin Hesap: \(menuBarAccountTitle)\n"
+        }
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        pb.setString(text, forType: .string)
+        statusBanner = "Durum özeti panoya kopyalandı."
     }
 
     public func refresh() {

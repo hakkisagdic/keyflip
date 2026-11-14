@@ -9,7 +9,9 @@ import {
   restartManagedService,
   summarizeFleetSweep,
   collectServerStatus,
-  collectStatusBoard
+  collectStatusBoard,
+  computeQuotaForecast,
+  buildControlCenterMarkdown
 } from "../src/controlcenter.js";
 import * as daemon from "../src/daemon.js";
 
@@ -216,6 +218,7 @@ test("summarizeFleetSweep and collectServerStatus handle data and unreadable fal
     assert.equal(srvUnreadable.status, "unreadable");
     assert.equal(srvUnreadable.load, "okunamadı");
     assert.equal(srvUnreadable.readOnly, true);
+    assert.deepEqual(srvUnreadable.sites, []);
   } finally {
     env.cleanup();
   }
@@ -256,6 +259,43 @@ test("collectStatusBoard returns null when missing, sorts bad/warn first, and fl
   }
 });
 
+test("computeQuotaForecast calculates burn-rate and prioritizes expiring headroom (use-it-or-lose-it)", () => {
+  const nowMs = Date.parse("2026-11-14T18:00:00Z");
+  const forecast = computeQuotaForecast(
+    [
+      {
+        name: "acct-fast-burn",
+        active: true,
+        usage: {
+          fiveHour: { pct: 80, resetsAt: "2026-11-14T22:00:00Z" }, // 240m left (60m elapsed, 80% used -> fast burn)
+          sevenDay: { pct: 50 }
+        }
+      },
+      {
+        name: "acct-expiring-soon",
+        active: false,
+        usage: {
+          fiveHour: { pct: 35, resetsAt: "2026-11-14T18:45:00Z" }, // 45m left, 65% free -> use-it-or-lose-it!
+          sevenDay: { pct: 40 }
+        }
+      }
+    ],
+    { nowMs }
+  );
+
+  assert.equal(forecast.recommendedAccount, "acct-expiring-soon");
+  assert.match(forecast.recommendationReason, /45 dk içinde sıfırlanıyor/);
+  const fastAcct = forecast.accounts.find((a) => a.name === "acct-fast-burn");
+  assert.equal(fastAcct.willExhaustBeforeReset, true);
+  assert.equal(fastAcct.minutesUntilExhaustion, 15);
+
+  const md = buildControlCenterMarkdown({
+    generatedAt: "2026-11-14T18:00:00Z",
+    quotaForecast: forecast
+  });
+  assert.match(md, /acct-expiring-soon/);
+});
+
 test("daemon handleCommand serves control-center and service-restart endpoints", async () => {
   const env = makeTempEnv();
   try {
@@ -282,6 +322,7 @@ test("daemon handleCommand serves control-center and service-restart endpoints",
     assert.equal(ccRes.body.statusBoard, null);
     assert.equal(typeof ccRes.body.preferences.thresholdPct, "number");
     assert.equal(ccRes.body.preferences.statusFile, "~/.polyctl/admin/status.json");
+    assert.equal(typeof ccRes.body.markdownReport, "string");
 
     const restartNoConfirm = await daemon.handleCommand(
       env.ctx,

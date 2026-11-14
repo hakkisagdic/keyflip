@@ -63,13 +63,31 @@ public enum ModelsTestSuite {
             "total": 17
           },
           "server": {
-            "host": "Alastyr",
+            "host": "Uzak Sunucu",
             "status": "unreadable",
             "load": "okunamadı",
             "memory": "okunamadı",
             "disk": "okunamadı",
             "sites": [],
             "readOnly": true
+          },
+          "quotaForecast": {
+            "recommendedAccount": "gmail",
+            "recommendationReason": "5s penceresi 45 dk içinde sıfırlanıyor (%58 boş kapasite)",
+            "accounts": [
+              {
+                "name": "gmail",
+                "active": true,
+                "fiveHourPct": 42.0,
+                "sevenDayPct": 81.5,
+                "minutesUntilReset": 45,
+                "burnRateRatio": 0.5,
+                "minutesUntilExhaustion": 360,
+                "willExhaustBeforeReset": false,
+                "pace": "safe",
+                "useItOrLoseIt": true
+              }
+            ]
           },
           "preferences": {
             "thresholdPct": 95,
@@ -88,6 +106,7 @@ public enum ModelsTestSuite {
         precondition(decoded.otherQuotas?.last?.display == "okunamadı", "unreadable quota must display okunamadı")
         precondition(decoded.server?.load == "okunamadı", "unreadable server load must be okunamadı")
         precondition(decoded.server?.readOnly == true, "server must be readOnly")
+        precondition(decoded.quotaForecast?.recommendedAccount == "gmail", "quotaForecast.recommendedAccount must be gmail")
 
         precondition(QuotaSeverity.from(usedPct: nil) == .unknown, "nil pct -> unknown")
         precondition(QuotaSeverity.from(usedPct: 45.0) == .normal, "45% -> normal")
@@ -110,12 +129,24 @@ public enum ModelsTestSuite {
         let board = loaded.board
         precondition(board.ownerNeededCount == 2, "ownerNeededCount must be 2")
         precondition(board.sections.count == 2, "sections.count must be 2")
+        precondition(board.totalIssueCount == 2, "totalIssueCount must be 2 (1 bad + 1 warn)")
 
         let quotaRows = board.sections[0].sortedRows
         precondition(quotaRows.count == 3, "quotaRows.count must be 3")
         precondition(quotaRows[0].status == "bad", "first sorted row must be bad")
         precondition(quotaRows[1].status == "warn", "second sorted row must be warn")
         precondition(quotaRows[2].status == "ok", "third sorted row must be ok")
+
+        // Issue-only filter test: sections with no bad/warn rows are omitted
+        let onlyIssues = board.filteredSections(onlyIssues: true)
+        precondition(onlyIssues.count == 1, "only quotas section has bad/warn issues")
+        precondition(onlyIssues[0].id == "quotas", "filtered section must be quotas")
+        precondition(onlyIssues[0].rows.count == 2, "quotas section has 2 issue rows (bad + warn)")
+
+        // Markdown export test
+        let md = board.buildMarkdownSummary(isStale: true)
+        precondition(md.contains("(VERİ ESKİ)"), "markdown summary must indicate stale state")
+        precondition(md.contains("Sahipten Bekleyen (2)"), "markdown summary must list owner_needed count")
 
         // Staleness check: fixture updated is 2026-11-14T18:20:00Z
         let freshNow = StatusBoardPayload.parseISO8601("2026-11-14T18:35:00Z")! // 15 min later -> fresh
@@ -133,7 +164,7 @@ public enum ModelsTestSuite {
 struct StandaloneTestMain {
     static func main() throws {
         try ModelsTestSuite.runAll()
-        print("✔ KeyflipControlCenter Swift model, statusBoard fixture & confirmation tests passed")
+        print("✔ KeyflipControlCenter Swift model, statusBoard fixture, quotaForecast & confirmation tests passed")
     }
 }
 #else

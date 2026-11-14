@@ -13,6 +13,8 @@ public struct ControlCenterPayload: Codable {
     public var fleet: FleetSummary?
     public var server: ServerSummary?
     public var statusBoard: StatusBoardPayload?
+    public var quotaForecast: QuotaForecastSummary?
+    public var markdownReport: String?
     public var preferences: PreferencesSummary?
     public var warnings: [DaemonWarning]?
 
@@ -29,6 +31,8 @@ public struct ControlCenterPayload: Codable {
         fleet: FleetSummary? = nil,
         server: ServerSummary? = nil,
         statusBoard: StatusBoardPayload? = nil,
+        quotaForecast: QuotaForecastSummary? = nil,
+        markdownReport: String? = nil,
         preferences: PreferencesSummary? = nil,
         warnings: [DaemonWarning]? = []
     ) {
@@ -44,9 +48,41 @@ public struct ControlCenterPayload: Codable {
         self.fleet = fleet
         self.server = server
         self.statusBoard = statusBoard
+        self.quotaForecast = quotaForecast
+        self.markdownReport = markdownReport
         self.preferences = preferences
         self.warnings = warnings
     }
+}
+
+public struct QuotaForecastSummary: Codable {
+    public var accounts: [AccountQuotaForecast]?
+    public var recommendedAccount: String?
+    public var recommendationReason: String?
+
+    public init(
+        accounts: [AccountQuotaForecast]? = nil,
+        recommendedAccount: String? = nil,
+        recommendationReason: String? = nil
+    ) {
+        self.accounts = accounts
+        self.recommendedAccount = recommendedAccount
+        self.recommendationReason = recommendationReason
+    }
+}
+
+public struct AccountQuotaForecast: Codable, Identifiable {
+    public var id: String { name }
+    public var name: String
+    public var active: Bool
+    public var fiveHourPct: Double?
+    public var sevenDayPct: Double?
+    public var minutesUntilReset: Int?
+    public var burnRateRatio: Double?
+    public var minutesUntilExhaustion: Int?
+    public var willExhaustBeforeReset: Bool
+    public var pace: String
+    public var useItOrLoseIt: Bool
 }
 
 public struct DaemonMeta: Codable {
@@ -262,6 +298,43 @@ public struct StatusBoardPayload: Codable {
 
     public var ownerNeededCount: Int {
         ownerNeededItems.count
+    }
+
+    public var totalIssueCount: Int {
+        sections.reduce(0) { $0 + $1.badCount + $1.warnCount }
+    }
+
+    public func filteredSections(onlyIssues: Bool) -> [StatusBoardSection] {
+        guard onlyIssues else { return sections }
+        return sections.compactMap { sec in
+            let issueRows = sec.sortedRows.filter { $0.status == "bad" || $0.status == "warn" }
+            guard !issueRows.isEmpty else { return nil }
+            return StatusBoardSection(id: sec.id, title: sec.title, rows: issueRows)
+        }
+    }
+
+    public func buildMarkdownSummary(isStale: Bool = false) -> String {
+        var lines: [String] = []
+        lines.append("# Durum Panosu Özeti\(isStale ? " (VERİ ESKİ)" : "")")
+        if let u = updated {
+            lines.append("Güncelleme: \(u)")
+        }
+        if !ownerNeededItems.isEmpty {
+            lines.append("\n## Sahipten Bekleyen (\(ownerNeededItems.count))")
+            for item in ownerNeededItems {
+                lines.append("- **[\(item.project)]** \(item.text)")
+            }
+        }
+        for sec in sections {
+            let rows = sec.sortedRows
+            guard !rows.isEmpty else { continue }
+            lines.append("\n## \(sec.title)")
+            for r in rows {
+                let d = (r.detail?.isEmpty == false) ? " — \(r.detail!)" : ""
+                lines.append("- [\(r.status.uppercased())] **\(r.label)**: \(r.value)\(d)")
+            }
+        }
+        return lines.joined(separator: "\n")
     }
 
     public func isStale(now: Date = Date(), fallbackModificationDate: Date? = nil) -> Bool {
