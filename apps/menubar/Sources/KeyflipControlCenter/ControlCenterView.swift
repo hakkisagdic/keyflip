@@ -491,6 +491,35 @@ public struct ControlCenterView: View {
                         }
                     }
 
+                    if let sr = viewModel.payload.sessionReadiness, !sr.summary.isEmpty {
+                        HStack(spacing: 5) {
+                            Image(systemName: sr.status == "ready" ? "bolt.fill" : "checklist")
+                                .font(.system(size: 10))
+                                .foregroundColor(sr.status == "ready" ? .green : .orange)
+                            Text(sr.summary)
+                                .font(.system(size: 10, weight: .medium))
+                                .foregroundColor(sr.status == "ready" ? .green : .orange)
+                            if let roi = viewModel.payload.subscriptionRoi, !roi.summary.isEmpty {
+                                Text("· \(roi.summary)")
+                                    .font(.system(size: 10))
+                                    .foregroundColor(.secondary)
+                                    .lineLimit(1)
+                            }
+                        }
+                    }
+
+                    if let bw = viewModel.payload.bottleneckWindow, !bw.summary.isEmpty {
+                        HStack(spacing: 5) {
+                            Image(systemName: "gauge.with.dots.needle.67percent")
+                                .font(.system(size: 10))
+                                .foregroundColor(.secondary)
+                            Text(bw.summary)
+                                .font(.system(size: 10))
+                                .foregroundColor(.secondary)
+                                .lineLimit(1)
+                        }
+                    }
+
                     if let forecast = viewModel.payload.quotaForecast,
                        let rec = forecast.recommendedAccount,
                        !rec.isEmpty {
@@ -936,6 +965,17 @@ public struct ControlCenterView: View {
             }
             .buttonStyle(.borderless)
             .font(.system(size: 11))
+
+            HStack(spacing: 0) {
+                Button("") { viewModel.requestSwitchAccountBySlot(0) }
+                    .keyboardShortcut("1", modifiers: [.command])
+                Button("") { viewModel.requestSwitchAccountBySlot(1) }
+                    .keyboardShortcut("2", modifiers: [.command])
+                Button("") { viewModel.requestSwitchAccountBySlot(2) }
+                    .keyboardShortcut("3", modifiers: [.command])
+            }
+            .frame(width: 0, height: 0)
+            .opacity(0)
 
             Spacer()
 

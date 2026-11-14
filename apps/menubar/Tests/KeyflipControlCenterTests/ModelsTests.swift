@@ -113,6 +113,31 @@ public enum ModelsTestSuite {
             "failedLabels": [],
             "summary": "1/1 servis sağlıklı (%100)"
           },
+          "bottleneckWindow": {
+            "totalRotations": 4,
+            "peakHourUtc": 14,
+            "peakWindowLabel": "14:00-15:00 UTC",
+            "peakCount": 3,
+            "summary": "Darboğaz saati: 14:00-15:00 UTC (3/4 geçiş)"
+          },
+          "sessionReadiness": {
+            "status": "ready",
+            "passedCount": 5,
+            "totalCount": 5,
+            "checks": [
+              { "id": "headroom", "label": "Etkin hesap 5s boşluk ≥%25", "passed": true }
+            ],
+            "failedLabels": [],
+            "summary": "Oturuma Hazır (5/5 kontrol tam)"
+          },
+          "subscriptionRoi": {
+            "enabledSubscriptionCount": 1,
+            "avgWeeklyUtilizationPct": 81.5,
+            "estimatedWeeklyApiEquivalentUsd": 48.9,
+            "failoverSpentUsd": 3.4,
+            "apiCreditsStatus": "ok",
+            "summary": "Haftalık verim: %81.5 (~$49 eşdeğer API değeri)"
+          },
           "quotaForecast": {
             "recommendedAccount": "gmail",
             "recommendationReason": "5s penceresi 45 dk içinde sıfırlanıyor (%58 boş kapasite)",
@@ -171,6 +196,9 @@ public enum ModelsTestSuite {
         precondition(decoded.weeklyResetCalendar?.nextResetAccount == "gmail", "weeklyResetCalendar.nextResetAccount must be gmail")
         precondition(decoded.multiProviderContinuity?.score == 85, "multiProviderContinuity.score must be 85")
         precondition(decoded.servicesHealth?.score == 100, "servicesHealth.score must be 100")
+        precondition(decoded.sessionReadiness?.passedCount == 5, "sessionReadiness.passedCount must be 5")
+        precondition(decoded.subscriptionRoi?.avgWeeklyUtilizationPct == 81.5, "subscriptionRoi.avgWeeklyUtilizationPct must be 81.5")
+        precondition(decoded.bottleneckWindow?.peakHourUtc == 14, "bottleneckWindow.peakHourUtc must be 14")
 
         precondition(QuotaSeverity.from(usedPct: nil) == .unknown, "nil pct -> unknown")
         precondition(QuotaSeverity.from(usedPct: 45.0) == .normal, "45% -> normal")

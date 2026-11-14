@@ -1519,6 +1519,21 @@ async function cmdStatusBoard(ctx, rest) {
   if (sub === '--help' || sub === '-h' || sub === 'help') {
     print('usage: keyflip status-board validate [file] [--json]');
     print('       keyflip status-board diff <old.json> <new.json> [--json]');
+    print('       keyflip status-board snapshot [file] [--json]');
+    return;
+  }
+  if (sub === 'snapshot') {
+    const rawTarget = rest[1] || _cfg.get(ctx, 'menubar.statusFile') || '~/.polyctl/admin/status.json';
+    try {
+      const snap = _controlcenter.snapshotStatusBoard(ctx, { sourceFile: rawTarget, homeDir: ctx.home, configDir: ctx.configDir });
+      if (JSON_MODE) {
+        jsonOut({ statusBoardSnapshot: snap });
+      } else {
+        print(style.ok('✅') + ' saved status.json snapshot: ' + snap.snapshotPath);
+      }
+    } catch (e) {
+      return fail(e.message || String(e));
+    }
     return;
   }
   if (sub === 'diff') {

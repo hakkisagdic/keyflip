@@ -1856,3 +1856,228 @@ export function evaluateServicesHealthSummary(services = []) {
         : `${healthyCount}/${list.length} servis sağlıklı (%${score})`
   };
 }
+
+/**
+ * Analyzes recent switch and failover events from `events.jsonl` (or provided event array)
+ * to identify the peak UTC hour window where quota bottlenecks / forced rotations happen most frequently.
+ */
+export function predictDailyBottleneckWindow(ctxOrEvents, options = {}) {
+  const limit = typeof options.limit === "number" && options.limit > 0 ? options.limit : 100;
+  let events = [];
+  if (Array.isArray(ctxOrEvents)) {
+    events = ctxOrEvents;
+  } else if (ctxOrEvents?.configDir) {
+    events = _history.readEvents(ctxOrEvents, limit);
+  }
+
+  const hourCounts = new Array(24).fill(0);
+  let totalRotations = 0;
+
+  for (const ev of events) {
+    const kind = String(ev?.kind || "");
+    if (
+      kind === "daemon-switch" ||
+      kind === "autoswitch" ||
+      kind === "switch" ||
+      kind === "daemon-failover-on" ||
+      kind === "failover-on"
+    ) {
+      const ts = ev?.at ? Date.parse(String(ev.at)) : Number.NaN;
+      if (Number.isFinite(ts)) {
+        const hour = new Date(ts).getUTCHours();
+        hourCounts[hour] += 1;
+        totalRotations += 1;
+      }
+    }
+  }
+
+  if (totalRotations === 0) {
+    return {
+      totalRotations: 0,
+      peakHourUtc: null,
+      peakWindowLabel: null,
+      peakCount: 0,
+      summary: null
+    };
+  }
+
+  let peakHourUtc = 0;
+  let peakCount = 0;
+  for (let h = 0; h < 24; h += 1) {
+    if (hourCounts[h] > peakCount) {
+      peakCount = hourCounts[h];
+      peakHourUtc = h;
+    }
+  }
+
+  const nextHour = (peakHourUtc + 1) % 24;
+  const hh1 = String(peakHourUtc).padStart(2, "0");
+  const hh2 = String(nextHour).padStart(2, "0");
+  const peakWindowLabel = `${hh1}:00-${hh2}:00 UTC`;
+
+  return {
+    totalRotations,
+    peakHourUtc,
+    peakWindowLabel,
+    peakCount,
+    summary: `Darboğaz saati: ${peakWindowLabel} (${peakCount}/${totalRotations} geçiş)`
+  };
+}
+
+/**
+ * Saves a timestamped snapshot copy of a valid status.json into `<configDir>/status-snapshots/`
+ * so users or scripts can later compare transitions with `keyflip status-board diff`.
+ */
+export function snapshotStatusBoard(ctx, options = {}) {
+  const homeDir = options.homeDir || ctx?.home || ctx?.homeDir || os.homedir();
+  const configDir = options.configDir || ctx?.configDir || path.join(homeDir, ".config", "keyflip");
+  const rawSource =
+    options.sourceFile || process.env.KEYFLIP_STATUS_FILE || _config.get(ctx, "menubar.statusFile") || "~/.polyctl/admin/status.json";
+  const resolvedSource = expandHomePath(rawSource, homeDir);
+
+  if (!resolvedSource || !fs.existsSync(resolvedSource)) {
+    const err = new Error(`status.json file not found: ${resolvedSource}`);
+    err.code = "STATUS_FILE_MISSING";
+    throw err;
+  }
+
+  const content = fs.readFileSync(resolvedSource, "utf8");
+  const validation = validateStatusBoardSchema(content);
+  if (!validation.valid) {
+    const err = new Error(`Invalid status.json: ${validation.errors.join("; ")}`);
+    err.code = "STATUS_FILE_INVALID";
+    throw err;
+  }
+
+  const snapDir = options.outDir || path.join(configDir, "status-snapshots");
+  fs.mkdirSync(snapDir, { recursive: true, mode: 0o700 });
+  const nowIso = (typeof options.now === "function" ? options.now() : new Date().toISOString()).replace(/[:.]/g, "-");
+  const fileName = `status-${nowIso}.json`;
+  const snapshotPath = path.join(snapDir, fileName);
+  fs.writeFileSync(snapshotPath, content, { encoding: "utf8", mode: 0o600 });
+
+  const latestPath = path.join(snapDir, "latest.json");
+  fs.writeFileSync(latestPath, content, { encoding: "utf8", mode: 0o600 });
+
+  return {
+    ok: true,
+    sourcePath: resolvedSource,
+    snapshotPath,
+    latestPath,
+    stats: validation.stats
+  };
+}
+
+/**
+ * Evaluates a readiness checklist ("Work Session Readiness") before starting a long coding or agent session.
+ * Checks 5 pillars: (1) Active Claude 5h headroom >=25%, (2) Valid OAuth token >=30m,
+ * (3) Backup account or Failover ready, (4) Critical local services healthy, (5) Status board has 0 `bad` items.
+ */
+export function evaluateWorkSessionReadiness({
+  accounts = [],
+  failover = {},
+  services = [],
+  statusBoard = null
+} = {}) {
+  const enabled = (Array.isArray(accounts) ? accounts : []).filter((a) => a && a.enabled !== false);
+  const active = enabled.find((a) => a.active) || enabled[0] || null;
+
+  const activeFivePct =
+    typeof active?.usage?.fiveHour?.pct === "number"
+      ? active.usage.fiveHour.pct
+      : typeof active?.fiveHourPct === "number"
+        ? active.fiveHourPct
+        : 0;
+  const checkHeadroom = Boolean(active && activeFivePct <= 75);
+
+  const remMs = typeof active?.token?.remainingMs === "number" ? active.token.remainingMs : null;
+  const checkToken = Boolean(active && active?.token?.status === "valid" && (remMs === null || remMs >= 30 * 60 * 1000));
+
+  const backupReady =
+    enabled.length >= 2 || Boolean(failover?.enabled && failover?.gatewayReady && !failover?.cap?.exceeded);
+
+  const svcList = Array.isArray(services) ? services : [];
+  const checkServices = svcList.every((s) => s?.state !== "error");
+
+  let boardBadCount = 0;
+  if (statusBoard && Array.isArray(statusBoard.sections)) {
+    for (const sec of statusBoard.sections) {
+      for (const r of sec?.rows || []) {
+        if (r?.status === "bad") boardBadCount += 1;
+      }
+    }
+  }
+  const checkBoard = boardBadCount === 0;
+
+  const checks = [
+    { id: "headroom", label: "Etkin hesap 5s boşluk ≥%25", passed: checkHeadroom },
+    { id: "token", label: "OAuth belirteci ≥30 dk geçerli", passed: checkToken },
+    { id: "backup", label: "Yedek hesap veya Failover hazır", passed: backupReady },
+    { id: "services", label: "Yerel servislerde hata yok", passed: checkServices },
+    { id: "board", label: "Durum panosunda kritik (bad) satır yok", passed: checkBoard }
+  ];
+
+  const passedCount = checks.filter((c) => c.passed).length;
+  const totalCount = checks.length;
+  const status = passedCount === totalCount ? "ready" : passedCount >= 3 ? "caution" : "blocked";
+  const failedLabels = checks.filter((c) => !c.passed).map((c) => c.label);
+
+  return {
+    status,
+    passedCount,
+    totalCount,
+    checks,
+    failedLabels,
+    summary:
+      passedCount === totalCount
+        ? `Oturuma Hazır (${passedCount}/${totalCount} kontrol tam)`
+        : `Seans Kontrolü: ${passedCount}/${totalCount} hazır`
+  };
+}
+
+/**
+ * Estimates monthly subscription & API value realization (ROI) across active Claude subscriptions
+ * and monthly API promotional grants (`apicredits`), highlighting how much value is actively utilized.
+ */
+export function evaluateSubscriptionValueROI(accounts = [], otherQuotas = [], failoverInfo = {}) {
+  const enabled = (Array.isArray(accounts) ? accounts : []).filter((a) => a && a.enabled !== false);
+  let avgWeeklyUtilizationPct = 0;
+  if (enabled.length > 0) {
+    const sum = enabled.reduce((acc, a) => {
+      const seven =
+        typeof a?.usage?.sevenDay?.pct === "number"
+          ? a.usage.sevenDay.pct
+          : typeof a?.sevenDayPct === "number"
+            ? a.sevenDayPct
+            : 0;
+      return acc + seven;
+    }, 0);
+    avgWeeklyUtilizationPct = Math.round((sum / enabled.length) * 10) / 10;
+  }
+
+  // Estimate equivalent API value generated per week (~$60/wk at 100% Max utilization per account)
+  const estimatedWeeklyApiEquivalentUsd =
+    Math.round(enabled.reduce((acc, a) => {
+      const seven =
+        typeof a?.usage?.sevenDay?.pct === "number"
+          ? a.usage.sevenDay.pct
+          : typeof a?.sevenDayPct === "number"
+            ? a.sevenDayPct
+            : 0;
+      const tierMultiplier = String(a?.tier || "").toLowerCase().includes("max") ? 60 : 25;
+      return acc + (seven / 100) * tierMultiplier;
+    }, 0) * 100) / 100;
+
+  const apiCreditsItem = (Array.isArray(otherQuotas) ? otherQuotas : []).find((q) => q?.id === "apicredits") || null;
+  const failoverSpentUsd =
+    typeof failoverInfo?.cap?.spent === "number" && failoverInfo.cap.spent >= 0 ? failoverInfo.cap.spent : 0;
+
+  return {
+    enabledSubscriptionCount: enabled.length,
+    avgWeeklyUtilizationPct,
+    estimatedWeeklyApiEquivalentUsd,
+    failoverSpentUsd,
+    apiCreditsStatus: apiCreditsItem ? apiCreditsItem.status : "unreadable",
+    summary: `Haftalık verim: %${avgWeeklyUtilizationPct} (~$${estimatedWeeklyApiEquivalentUsd.toFixed(0)} eşdeğer API değeri)`
+  };
+}

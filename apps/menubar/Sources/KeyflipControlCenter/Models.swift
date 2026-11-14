@@ -20,6 +20,9 @@ public struct ControlCenterPayload: Codable {
     public var multiProviderContinuity: MultiProviderContinuitySummary?
     public var servicesHealth: ServicesHealthSummary?
     public var quotaForecast: QuotaForecastSummary?
+    public var bottleneckWindow: BottleneckWindowSummary?
+    public var sessionReadiness: WorkSessionReadinessSummary?
+    public var subscriptionRoi: SubscriptionValueROISummary?
     public var auditTimeline: [AuditEventItem]?
     public var markdownReport: String?
     public var preferences: PreferencesSummary?
@@ -45,6 +48,9 @@ public struct ControlCenterPayload: Codable {
         multiProviderContinuity: MultiProviderContinuitySummary? = nil,
         servicesHealth: ServicesHealthSummary? = nil,
         quotaForecast: QuotaForecastSummary? = nil,
+        bottleneckWindow: BottleneckWindowSummary? = nil,
+        sessionReadiness: WorkSessionReadinessSummary? = nil,
+        subscriptionRoi: SubscriptionValueROISummary? = nil,
         auditTimeline: [AuditEventItem]? = [],
         markdownReport: String? = nil,
         preferences: PreferencesSummary? = nil,
@@ -69,6 +75,9 @@ public struct ControlCenterPayload: Codable {
         self.multiProviderContinuity = multiProviderContinuity
         self.servicesHealth = servicesHealth
         self.quotaForecast = quotaForecast
+        self.bottleneckWindow = bottleneckWindow
+        self.sessionReadiness = sessionReadiness
+        self.subscriptionRoi = subscriptionRoi
         self.auditTimeline = auditTimeline
         self.markdownReport = markdownReport
         self.preferences = preferences
@@ -922,5 +931,94 @@ public enum PendingConfirmationAction: Identifiable {
         case .savePreferences(let threshold, let refreshIntervalSec, let notify, let statusFile):
             return "Otomatik geçiş eşiği %\(threshold), kontrol aralığı \(refreshIntervalSec) sn, bildirimler \(notify ? "açık" : "kapalı"), durum panosu yolu '\(statusFile)' olarak güncellenecek."
         }
+    }
+}
+
+public struct BottleneckWindowSummary: Codable {
+    public var sampleCount: Int?
+    public var peakHourUtc: Int?
+    public var peakWindowLabel: String?
+    public var peakCount: Int?
+    public var summary: String
+
+    public init(
+        sampleCount: Int? = 0,
+        peakHourUtc: Int? = nil,
+        peakWindowLabel: String? = nil,
+        peakCount: Int? = 0,
+        summary: String = ""
+    ) {
+        self.sampleCount = sampleCount
+        self.peakHourUtc = peakHourUtc
+        self.peakWindowLabel = peakWindowLabel
+        self.peakCount = peakCount
+        self.summary = summary
+    }
+}
+
+public struct WorkSessionCheckItem: Codable, Identifiable {
+    public var id: String
+    public var label: String
+    public var passed: Bool
+    public var detail: String?
+
+    public init(id: String, label: String, passed: Bool, detail: String? = nil) {
+        self.id = id
+        self.label = label
+        self.passed = passed
+        self.detail = detail
+    }
+}
+
+public struct WorkSessionReadinessSummary: Codable {
+    public var ready: Bool?
+    public var status: String
+    public var passedCount: Int
+    public var totalCount: Int?
+    public var totalChecks: Int?
+    public var checks: [WorkSessionCheckItem]?
+    public var summary: String
+
+    public init(
+        ready: Bool? = true,
+        status: String = "ready",
+        passedCount: Int = 5,
+        totalCount: Int? = 5,
+        totalChecks: Int? = 5,
+        checks: [WorkSessionCheckItem]? = [],
+        summary: String = ""
+    ) {
+        self.ready = ready
+        self.status = status
+        self.passedCount = passedCount
+        self.totalCount = totalCount
+        self.totalChecks = totalChecks
+        self.checks = checks
+        self.summary = summary
+    }
+}
+
+public struct SubscriptionValueROISummary: Codable {
+    public var enabledCount: Int?
+    public var avgWeeklyUtilizationPct: Double
+    public var estimatedWeeklyValueUsd: Double?
+    public var estimatedApiValueUsd: Double?
+    public var tier: String?
+    public var summary: String
+
+    public init(
+        enabledCount: Int? = 0,
+        avgWeeklyUtilizationPct: Double = 0,
+        estimatedWeeklyValueUsd: Double? = 0,
+        estimatedApiValueUsd: Double? = 0,
+        tier: String? = "high",
+        summary: String = ""
+    ) {
+        self.enabledCount = enabledCount
+        self.avgWeeklyUtilizationPct = avgWeeklyUtilizationPct
+        self.estimatedWeeklyValueUsd = estimatedWeeklyValueUsd
+        self.estimatedApiValueUsd = estimatedApiValueUsd
+        self.tier = tier
+        self.summary = summary
     }
 }

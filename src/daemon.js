@@ -813,6 +813,14 @@ async function buildControlCenter(ctx, scheduler, opts) {
   base.weeklyResetCalendar = _controlcenter.buildWeeklyResetCalendar(base.accounts, { nowMs: opts.nowMs || ctx.nowMs });
   base.multiProviderContinuity = _controlcenter.evaluateMultiProviderContinuity(base.accounts, base.failover, base.otherQuotas);
   base.servicesHealth = _controlcenter.evaluateServicesHealthSummary(base.services);
+  base.bottleneckWindow = _controlcenter.predictDailyBottleneckWindow(ctx);
+  base.sessionReadiness = _controlcenter.evaluateWorkSessionReadiness({
+    accounts: base.accounts,
+    failover: base.failover,
+    services: base.services,
+    statusBoard: base.statusBoard
+  });
+  base.subscriptionRoi = _controlcenter.evaluateSubscriptionValueROI(base.accounts, base.otherQuotas, base.failover);
   base.preferences = _controlcenter.collectPreferences(ctx);
   base.markdownReport = _controlcenter.buildControlCenterMarkdown(base);
   base.diagnosticBundle = _controlcenter.buildDiagnosticBundle(base);

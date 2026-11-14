@@ -1,6 +1,6 @@
 # Geliştirme Listesi ve Yaratıcı Özellik Önerileri (`GELISTIRME_LISTESI.md`)
 
-Bu liste, `docs/RAKIP_ANALIZI.md` sonucunda belirlenen tüm özelliklerin tamamlanma durumunu ve altıncı turda önerilen **beş yeni yaratıcı özelliği** (en değerli ikisi uygulanmış olarak) içerir.
+Bu liste, `docs/RAKIP_ANALIZI.md` sonucunda belirlenen tüm özelliklerin tamamlanma durumunu ve yedinci turda önerilen **beş yeni yaratıcı özelliği** (en değerli ikisi uygulanmış olarak) içerir.
 
 ---
 
@@ -30,27 +30,31 @@ Bu liste, `docs/RAKIP_ANALIZI.md` sonucunda belirlenen tüm özelliklerin tamaml
 - [x] **Durum Panosu JSON Şema Doğrulayıcı (`keyflip status-board validate [dosya] [--json]`):** Harici script yazarlarının ürettikleri `status.json` dosyasını şema ve ISO-8601 tarih formatı açısından CLI üzerinden doğrulaması.
 - [x] **Hesap Havuzu Dayanıklılık ve SPOF Riski Derecesi (`evaluatePoolResilienceScore` — `0-100` / `A`–`D`):** Hesap yedekliliği, OAuth geçerliliği, kota boşluğu ve failover hazırlığına göre dayanıklılık notu üretme.
 - [x] **Durum Panosu Ağırlıklı SLA / Sağlık Yüzdesi (`computeStatusBoardHealth` & `computedHealthPct`):** Tüm bölümlerdeki satırların ağırlıklı sağlık yüzdesini (`%65 sağlıklı`) hesaplayıp gösterme.
-- [x] **Olay Zaman Çizelgesi Tür Filtresi (`auditKindFilter` — `Tümü / Geçiş / Failover / Servis`):** `SON OLAYLAR (DENETİM)` bölümündeki kayıtları kategoriye göre filtreleme (`Models.swift`, `ControlCenterViewModel.swift`, `ControlCenterView.swift`).
+- [x] **Olay Zaman Çizelgesi Tür Filtresi (`auditKindFilter` — `Tümü / Geçiş / Failover / Servis`):** `SON OLAYLAR (DENETİM)` bölümündeki kayıtları kategoriye göre filtreleme.
 - [x] **Haftalık Sıfırlama Takvimi Özeti (`buildWeeklyResetCalendar`):** Etkin hesapların 7 günlük sıfırlama gün ve saatlerini kronolojik sıralayarak sıradaki sıfırlamayı (`Sıradaki 7g sıfırlama: ...`) gösterme.
 - [x] **Durum Panosu Fark Özeti CLI Komutu (`keyflip status-board diff <eski.json> <yeni.json> [--json]`):** İki `status.json` anlık görüntüsü arasındaki kötüleşen (`degraded`), iyileşen (`recovered`) satırları ve `owner_needed` farklarını karşılaştırma (`diffStatusBoards`).
+- [x] **Çoklu Sağlayıcı AI Süreklilik ve Çeşitlilik Endeksi (`evaluateMultiProviderContinuity`) & Birleşik Servis Filosu Sağlık Skoru (`evaluateServicesHealthSummary`):** Tüm aktif AI yüzeyleri ve yerel servis filosu için birleşik süreklilik ve sağlık puanları.
+- [x] **Kota Darboğaz Penceresi Tahmincisi (`predictDailyBottleneckWindow`):** `events.jsonl` içindeki hesap rotasyonu ve failover olaylarının yoğunlaştığı UTC saat dilimini (`14:00-15:00 UTC`) tespit edip `HESAPLAR` bölümünde gösterme.
+- [x] **Durum Panosu Anlık Görüntü Kaydedici (`keyflip status-board snapshot [dosya] [--json]`):** Mevcut `status.json` dosyasını doğrulayıp `<configDir>/status-snapshots/` altına zaman damgalı olarak yedekleme (`snapshotStatusBoard`).
+- [x] **Menü Çubuğu Klavye Navigasyon Kısayolları (`⌘1`..`⌘3` Hesap Seçimi):** Kontrol Merkezi açıkken ilk 3 etkin hesaba klavye kısayolu (`requestSwitchAccountBySlot`) ile kullanıcı onaylı geçiş başlatma.
 
 ---
 
 ## 2. Listedeki İşler Tamamlandığı İçin Önerilen Beş Yeni Yaratıcı Özellik (En Değerli İkisi Uygulandı)
 
-### ✅ Yeni Öneri 1 (UYGULANDI): Çoklu Sağlayıcı AI Süreklilik ve Çeşitlilik Endeksi (`evaluateMultiProviderContinuity`)
-- **Değer:** Yalnızca Claude aboneliklerini değil, Keysmith Failover zincirini ve ikincil AI kodlama araçlarını (Antigravity `agy`, Kiro, Copilot, EVREN, API Promosyonları) birlikte değerlendirerek kullanıcının toplam "kodlama sürekliliği" puanını (`0-100`, örn. `Süreklilik: %85 (3 aktif yüzey)`) hesaplar ve `DİĞER KOTALAR` başlığında canlı gösterir.
-- **Uygulama:** `src/controlcenter.js` (`evaluateMultiProviderContinuity`), `src/daemon.js` (`base.multiProviderContinuity`), `Models.swift` (`MultiProviderContinuitySummary`) ve `ControlCenterView.swift` (`otherQuotasSection`).
+### ✅ Yeni Öneri 1 (UYGULANDI): Derin Çalışma / Oturum Öncesi Hazırlık Kontrol Listesi (`evaluateWorkSessionReadiness`)
+- **Değer:** Kullanıcı 2 saatlik kesintisiz bir kodlama oturumuna başlamadan önce 5 kritik koşulu (aktif hesapta ≥%25 5s kota boşluğu, ≥30 dk geçerli OAuth belirteci, en az 1 yedek hesap veya hazır Failover zinciri, sıfır servis hatası ve sıfır `bad` durum panosu satırı) tek bakışta denetleyip `Oturuma Hazır (5/5 kontrol tam)` veya eksik kalemleri (`Dikkat (3/5): ...`) `HESAPLAR` bölümünde gösterir.
+- **Uygulama:** `src/controlcenter.js` (`evaluateWorkSessionReadiness`), `src/daemon.js` (`base.sessionReadiness`), `Models.swift` (`WorkSessionReadinessSummary`) ve `ControlCenterView.swift`.
 
-### ✅ Yeni Öneri 2 (UYGULANDI): Birleşik Servis Filosu Sağlık Skoru ve Hata Özeti (`evaluateServicesHealthSummary`)
-- **Değer:** İzlenen tüm yerel servislerin (`dev.keysmith.gateway`, `dev.keysmith.router`, `dev.polyctl.admin-tick`, `dev.polyctl.flowparts-backup`, `local.yargitay.embed-ensure`) çalışma ve çıkış kodlarını tek bir sağlık yüzdesinde (`1/1 servis sağlıklı (%100)` veya `1 serviste hata (...) · %67 sağlıklı`) birleştirerek `SERVİSLER` bölüm başlığında anında görünür kılar.
-- **Uygulama:** `src/controlcenter.js` (`evaluateServicesHealthSummary`), `src/daemon.js` (`base.servicesHealth`), `Models.swift` (`ServicesHealthSummary`) ve `ControlCenterView.swift` (`servicesSection`).
+### ✅ Yeni Öneri 2 (UYGULANDI): Abonelik Değer Gerçekleşmesi ve Eşdeğer API ROI Analizi (`evaluateSubscriptionValueROI`)
+- **Değer:** Etkin Claude aboneliklerinin 7 günlük kullanım yüzdelerini analiz ederek, sabit aboneliklerden bu hafta ne kadarlık eşdeğer API değeri üretildiğini (`Haftalık ort. %82 kullanım (~$49 eşdeğer API değeri)`) hesaplar ve atıl kalan abonelikleri görünür kılar.
+- **Uygulama:** `src/controlcenter.js` (`evaluateSubscriptionValueROI`), `src/daemon.js` (`base.subscriptionRoi`), `Models.swift` (`SubscriptionValueROISummary`) ve `ControlCenterView.swift`.
 
-### 📋 Yeni Öneri 3 (Gelecek Adayı): Kota Darboğaz Tahmincisi (`predictDailyBottleneckWindow`)
-- **Değer:** Son hesap geçişlerinin (`events.jsonl`) yoğunlaştığı saat dilimlerini analiz ederek günün hangi saatlerinde kota darboğazı yaşandığını tespit etme.
+### 📋 Yeni Öneri 3 (Gelecek Adayı): Durum Panosu Snapshot Geçmişi Listeleme ve Otomatik Son Snapshot ile Diff (`keyflip status-board history`)
+- **Değer:** `<configDir>/status-snapshots/` altında biriken anlık görüntüleri listeleme ve tek komutla mevcut `status.json` dosyasını en son kaydedilen snapshot ile karşılaştırma.
 
-### 📋 Yeni Öneri 4 (Gelecek Adayı): Durum Panosu Anlık Görüntü Kaydedici (`keyflip status-board snapshot`)
-- **Değer:** Mevcut `status.json` dosyasını zaman damgalı olarak yedekleyip daha sonra `keyflip status-board diff` ile otomatik karşılaştırma imkanı sunma.
+### 📋 Yeni Öneri 4 (Gelecek Adayı): Hesap Rotasyon Soğuma Süresi ve Ping-Pong Koruması Analizi (`evaluateRotationStability`)
+- **Değer:** Hesaplar arasında çok kısa sürede (örn. <15 dk) tekrarlayan geçiş ("ping-pong") olup olmadığını tespit ederek eşik (`threshold`) ince ayarı önerme.
 
-### 📋 Yeni Öneri 5 (Gelecek Adayı): Menü Çubuğu Klavye Navigasyon Kısayolları (`⌘1`..`⌘3` Hesap Seçimi)
-- **Değer:** Kontrol Merkezi penceresi açıkken ilk 3 etkin hesaba klavye kısayolu ile hızlı geçiş onayı başlatma.
+### 📋 Yeni Öneri 5 (Gelecek Adayı): Menü Çubuğu Hızlı Sorun Kopyalama (`copyIssuesOnlySummary`)
+- **Değer:** Durum panosunda yalnızca `bad` ve `warn` satırlarını ve `owner_needed` maddelerini içeren ultra-kısa olay özetini tek tıkla panoya kopyalama.

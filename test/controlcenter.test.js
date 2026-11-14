@@ -25,7 +25,11 @@ import {
   buildWeeklyResetCalendar,
   diffStatusBoards,
   evaluateMultiProviderContinuity,
-  evaluateServicesHealthSummary
+  evaluateServicesHealthSummary,
+  predictDailyBottleneckWindow,
+  snapshotStatusBoard,
+  evaluateWorkSessionReadiness,
+  evaluateSubscriptionValueROI
 } from "../src/controlcenter.js";
 import * as daemon from "../src/daemon.js";
 
@@ -636,4 +640,59 @@ test("buildWeeklyResetCalendar, diffStatusBoards, evaluateMultiProviderContinuit
   assert.equal(svcHealth.errorCount, 1);
   assert.deepEqual(svcHealth.failedLabels, ["local.yargitay.embed-ensure"]);
   assert.equal(svcHealth.score, 67);
+});
+
+test("predictDailyBottleneckWindow, snapshotStatusBoard, evaluateWorkSessionReadiness, and evaluateSubscriptionValueROI work accurately", () => {
+  const env = makeTempEnv();
+  try {
+    const bn = predictDailyBottleneckWindow([
+      { kind: "daemon-switch", at: "2026-11-14T14:10:00Z" },
+      { kind: "autoswitch", at: "2026-11-14T14:40:00Z" },
+      { kind: "failover-on", at: "2026-11-14T09:05:00Z" }
+    ]);
+    assert.equal(bn.totalRotations, 3);
+    assert.equal(bn.peakHourUtc, 14);
+    assert.equal(bn.peakWindowLabel, "14:00-15:00 UTC");
+    assert.equal(bn.peakCount, 2);
+
+    const fixturePath = path.resolve("test/fixtures/status.sample.json");
+    const snapRes = snapshotStatusBoard(env.ctx, {
+      sourceFile: fixturePath,
+      homeDir: env.home,
+      configDir: env.configDir,
+      now: () => "2026-11-14T20:00:00Z"
+    });
+    assert.equal(snapRes.ok, true);
+    assert.equal(fs.existsSync(snapRes.snapshotPath), true);
+    assert.equal(fs.existsSync(snapRes.latestPath), true);
+
+    const readyCheck = evaluateWorkSessionReadiness({
+      accounts: [
+        {
+          name: "gmail",
+          enabled: true,
+          active: true,
+          token: { status: "valid", remainingMs: 2 * 3600 * 1000 },
+          usage: { fiveHour: { pct: 40 }, sevenDay: { pct: 50 } }
+        }
+      ],
+      failover: { enabled: true, gatewayReady: true, cap: { exceeded: false } },
+      services: [{ id: "gw", state: "running" }],
+      statusBoard: { sections: [{ id: "s1", rows: [{ label: "API", status: "ok", value: "200" }] }] }
+    });
+    assert.equal(readyCheck.status, "ready");
+    assert.equal(readyCheck.passedCount, 5);
+    assert.equal(readyCheck.totalCount, 5);
+
+    const roi = evaluateSubscriptionValueROI(
+      [{ name: "gmail", enabled: true, tier: "max", usage: { sevenDay: { pct: 80 } } }],
+      [{ id: "apicredits", status: "ok", display: "$140 kalan" }],
+      { cap: { spent: 3.5 } }
+    );
+    assert.equal(roi.enabledSubscriptionCount, 1);
+    assert.equal(roi.avgWeeklyUtilizationPct, 80);
+    assert.equal(roi.estimatedWeeklyApiEquivalentUsd, 48);
+  } finally {
+    env.cleanup();
+  }
 });

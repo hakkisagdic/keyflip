@@ -250,6 +250,14 @@ public final class ControlCenterViewModel: ObservableObject {
         pendingConfirmation = .switchAccount(account: accountName)
     }
 
+    public func requestSwitchAccountBySlot(_ slotIndex: Int) {
+        let enabled = payload.accounts.filter { $0.enabled }
+        guard slotIndex >= 0 && slotIndex < enabled.count else { return }
+        let target = enabled[slotIndex]
+        guard !target.active else { return }
+        pendingConfirmation = .switchAccount(account: target.name)
+    }
+
     public func requestToggleFailover(enable: Bool) {
         pendingConfirmation = .toggleFailover(enable: enable)
     }
