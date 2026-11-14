@@ -1663,12 +1663,15 @@ async function cmdFailover(ctx, rest) {
         if (r.disabled) return fail('the API failover is disabled — keyflip config set failover.enabled true');
         return fail('could not engage the failover: ' + r.reason);
       }
+      const surf = r.surface || (r.state && r.state.surface) || 'cli-launcher';
       print(
         style.ok('✅') +
           ' API failover ' +
           (r.already
             ? 'was already on.'
-            : 'on (' + (r.surface || 'cli-launcher') + ') — Claude Code now uses the gateway.'),
+            : surf === 'cli-launcher'
+              ? 'on (cli-launcher) - start work through it with: keyflip failover run (or keyflip failover resume --last)'
+              : 'on (' + surf + ') — Claude Code now uses the gateway.'),
       );
       return;
     }

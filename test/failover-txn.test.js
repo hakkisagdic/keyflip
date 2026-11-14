@@ -496,7 +496,7 @@ test('T7: crash simulation: .failover-txn.json in probing -> next tick rolls bac
 
   let sawRolledBackDuringUsageFetch = false;
   const r = await autosw.tick(ctx, {
-    nowMs: 1700000007000,
+    nowMs: 1700000500000,
     cacheTtlMs: 0,
     fetch: async () => {
       // Prove rollback happened BEFORE the tick's usage work ran.
@@ -1596,7 +1596,7 @@ test('T30: end-to-end (engage -> tick -> verify -> off) with fake key ks_FAKE_GA
   const badEng = await failover.engage(
     ctx,
     { from: 'alice' },
-    { fetch: gwFetch, keysmithConfig: ksPath, spawn: failSp.spawn, notify: noteFn, nowMs: 1700000080000 },
+    { fetch: gwFetch, keysmithConfig: ksPath, spawn: failSp.spawn, notify: noteFn, nowMs: 1700000080000 - 31 * 60 * 1000 },
   );
   assert.strictEqual(badEng.ok, false);
 
@@ -1732,4 +1732,480 @@ test('T30: end-to-end (engage -> tick -> verify -> off) with fake key ks_FAKE_GA
   forbidden.forEach(function (sec) {
     assert.strictEqual(corpus.indexOf(sec), -1, 'secret leaked in output/files: ' + sec);
   });
+});
+
+test('A1: listProcesses passes -axEwwo and C locale env; parsePsOutput parses C-locale lstart', function () {
+  const calls = [];
+  const fakeRun = function (cmd, args, input, opts) {
+    calls.push({ cmd, args: args.slice(), input, opts });
+    return {
+      code: 0,
+      stdout:
+        '  4812 Sat Oct 31 03:24:31 2026 /Applications/Claude.app/Contents/Resources/claude-code/claude CLAUDE_CODE_ENTRYPOINT=claude-desktop ANTHROPIC_MODEL=claude-failover\n',
+      stderr: '',
+    };
+  };
+
+  const rows = fosurface.listProcesses({ run: fakeRun });
+  assert.strictEqual(calls.length, 1);
+  assert.strictEqual(calls[0].cmd, 'ps');
+  assert.strictEqual(calls[0].args[0].indexOf('-ax'), 0, 'first arg starts with -ax');
+  assert.deepStrictEqual(calls[0].args, ['-axEwwo', 'pid=,lstart=,command=']);
+  assert.ok(calls[0].opts && calls[0].opts.env, 'env passed in options');
+  assert.strictEqual(calls[0].opts.env.LC_ALL, 'C');
+  assert.strictEqual(calls[0].opts.env.LANG, 'C');
+
+  assert.strictEqual(rows.length, 1);
+  assert.strictEqual(rows[0].pid, 4812);
+  assert.strictEqual(rows[0].startedAt, Date.parse('Sat Oct 31 03:24:31 2026'));
+  assert.strictEqual(rows[0].env.CLAUDE_CODE_ENTRYPOINT, 'claude-desktop');
+  assert.strictEqual(rows[0].env.ANTHROPIC_MODEL, 'claude-failover');
+
+  const parsedDirect = fosurface.parsePsOutput(' 991 Sat Oct 31 03:24:31 2026 /usr/local/bin/claude FOO=bar\n');
+  assert.strictEqual(parsedDirect.length, 1);
+  assert.strictEqual(parsedDirect[0].pid, 991);
+  assert.strictEqual(parsedDirect[0].startedAt, Date.parse('Sat Oct 31 03:24:31 2026'));
+  assert.strictEqual(parsedDirect[0].command, '/usr/local/bin/claude');
+  assert.strictEqual(parsedDirect[0].env.FOO, 'bar');
+});
+
+test('A2: recoverCrashedTxn respects live pid & limit, missing backup does not delete target, mid-probe rollback aborts commit', async function () {
+  // (a) Live engage (pid = process.pid, fresh startedAt) + tick-style recoverCrashedTxn -> not rolled back, files intact.
+  const ctxA = makeCtx();
+  setupGateway(ctxA);
+  const t0 = 1700001000000;
+  const txnA = fosurface.beginTxn(ctxA, 'cli-launcher', { startedAt: t0 });
+  assert.strictEqual(txnA.pid, process.pid);
+  assert.strictEqual(txnA.phase, 'probing');
+  assert.ok(fs.existsSync(fosurface.envPath(ctxA)));
+
+  const recLive = fosurface.recoverCrashedTxn(ctxA, { nowMs: t0 + 5000 });
+  assert.deepStrictEqual(recLive, { rolledBack: false, skipped: 'in-progress' });
+  assert.ok(fs.existsSync(fosurface.envPath(ctxA)), '.failover-env.json still intact during live probe');
+  assert.strictEqual(fosurface.readTxn(ctxA).phase, 'probing');
+
+  // (b) Dead pid (2^22+ non-existent pid via override) -> rolled back; also old record without pid past limit -> rolled back.
+  const deadPid = 4194304 + 99999;
+  fosurface.writeTxn(ctxA, Object.assign({}, txnA, { pid: deadPid }));
+  const recDead = fosurface.recoverCrashedTxn(ctxA, {
+    nowMs: t0 + 5000,
+    pidAlive: (p) => p !== deadPid,
+  });
+  assert.strictEqual(recDead.rolledBack, true);
+  assert.strictEqual(fs.existsSync(fosurface.envPath(ctxA)), false);
+  assert.strictEqual(fosurface.readTxn(ctxA).phase, 'rolled-back');
+
+  // Old record without pid: within limit -> skipped; past limit (90 * 2 * 2 + 60 = 420s) -> rolled back.
+  const txnOld = fosurface.beginTxn(ctxA, 'cli-launcher', { startedAt: t0 });
+  delete txnOld.pid;
+  fosurface.writeTxn(ctxA, txnOld);
+  assert.deepStrictEqual(fosurface.recoverCrashedTxn(ctxA, { nowMs: t0 + 400 * 1000 }), {
+    rolledBack: false,
+    skipped: 'in-progress',
+  });
+  assert.strictEqual(fosurface.recoverCrashedTxn(ctxA, { nowMs: t0 + 421 * 1000 }).rolledBack, true);
+
+  // (c) rollbackTxn with missing backup but backup recorded does NOT delete settings.json.
+  const ctxC = makeCtx();
+  logmod.init(ctxC.configDir, false);
+  setupGateway(ctxC, { models: ['claude-failover', 'claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5'] });
+  fs.mkdirSync(path.dirname(ctxC.claudeSettingsPath), { recursive: true });
+  const userSettings = JSON.stringify({ theme: 'dark', env: { KEEP: '1' } }, null, 2) + '\n';
+  fs.writeFileSync(ctxC.claudeSettingsPath, userSettings, 'utf8');
+
+  const txnC = fosurface.beginTxn(ctxC, 'cli-settings', { startedAt: t0 + 1000 });
+  assert.ok(txnC.wrote[0].backup, 'backup path recorded');
+  // Simulate another process having deleted the backup file before rollbackTxn runs.
+  fs.unlinkSync(txnC.wrote[0].backup);
+  const currentSettingsBytes = fs.readFileSync(ctxC.claudeSettingsPath, 'utf8');
+  fosurface.rollbackTxn(ctxC, txnC, { at: t0 + 2000, ok: false, ms: 0, models: [], reason: 'test', costUsd: null });
+  assert.strictEqual(fs.existsSync(ctxC.claudeSettingsPath), true, 'settings.json must NOT be unlinked when backup is missing');
+  assert.strictEqual(fs.readFileSync(ctxC.claudeSettingsPath, 'utf8'), currentSettingsBytes);
+
+  // (d) engage with a probe stub that, mid-probe, runs recoverCrashedTxn-with-force or deletes the txn file:
+  // engage returns ok:false and no 'kept' state is written.
+  for (const mode of ['force-recover', 'delete-txn']) {
+    const ctxD = makeCtx();
+    const { ksPath, gwFetch } = setupGateway(ctxD);
+    const spD = makeFakeSpawn(function (rec, idx) {
+      if (idx === 0) {
+        if (mode === 'force-recover') {
+          fosurface.recoverCrashedTxn(ctxD, { force: true, nowMs: t0 + 3000 });
+        } else {
+          fs.unlinkSync(fosurface.txnPath(ctxD));
+        }
+      }
+      setImmediate(function () {
+        rec.child.stdout.emit('data', JSON.stringify({ type: 'result', is_error: false, result: 'OK', total_cost_usd: 0.001 }));
+        rec.child.emit('close', 0);
+      });
+    });
+
+    const resD = await failover.engage(
+      ctxD,
+      { from: 'gmail', manual: true },
+      { fetch: gwFetch, keysmithConfig: ksPath, spawn: spD.spawn, nowMs: t0 + 3000 },
+    );
+    assert.strictEqual(resD.ok, false, 'engage must fail when txn rolled back/deleted mid-probe (' + mode + ')');
+    assert.match(resD.reason, /transaction was rolled back during the probe/);
+    assert.strictEqual(failover.state(ctxD), null, 'no .failover-state.json written');
+    const afterTxn = fosurface.readTxn(ctxD);
+    assert.strictEqual(!afterTxn || afterTxn.phase !== 'kept', true, 'no kept phase written');
+  }
+});
+
+test('A3: checkDesktopLeak on kept cli-settings preserves user settings edits, restores overwritten prior ANTHROPIC keys, and keeps state degraded when launcher probe fails', async function () {
+  const ctx = makeCtx();
+  logmod.init(ctx.configDir, false);
+  const { ksPath, gwFetch } = setupGateway(ctx, {
+    models: ['claude-failover', 'claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5'],
+  });
+  config.set(ctx, 'failover.cliTarget', 'settings');
+
+  fs.mkdirSync(path.dirname(ctx.claudeSettingsPath), { recursive: true });
+  const preUserToken = 'sk-ant-USER-PREEXISTING-KEY-000111222';
+  fs.writeFileSync(
+    ctx.claudeSettingsPath,
+    JSON.stringify(
+      {
+        env: {
+          KEEP_EXISTING: '1',
+          ANTHROPIC_MODEL: 'claude-3-7-sonnet-custom',
+          ANTHROPIC_API_KEY: preUserToken,
+        },
+      },
+      null,
+      2,
+    ) + '\n',
+  );
+
+  const okSp = okSpawnRecorder();
+  const tEngage = 1700002000000;
+  const eng = await failover.engage(
+    ctx,
+    { from: 'alice', manual: true },
+    { fetch: gwFetch, keysmithConfig: ksPath, spawn: okSp.spawn, nowMs: tEngage },
+  );
+  assert.strictEqual(eng.ok, true);
+  assert.strictEqual(eng.surface, 'cli-settings');
+
+  // Verify txn JSON recorded priorKeys names only, never the preUserToken value.
+  const txnRaw = fs.readFileSync(fosurface.txnPath(ctx), 'utf8');
+  assert.strictEqual(txnRaw.indexOf(preUserToken), -1, 'pre-existing user secret never stored in txn JSON');
+  const txnObj = JSON.parse(txnRaw);
+  assert.deepStrictEqual(txnObj.priorKeys.slice().sort(), ['ANTHROPIC_API_KEY', 'ANTHROPIC_MODEL']);
+
+  // User edits settings.json hours later while cli-settings is kept: adds permissions.allow and NEW_USER_VAR.
+  const liveSettings = JSON.parse(fs.readFileSync(ctx.claudeSettingsPath, 'utf8'));
+  liveSettings.permissions = { allow: ['Bash(git status)'] };
+  liveSettings.env.NEW_USER_VAR = 'added-after-engage';
+  fs.writeFileSync(ctx.claudeSettingsPath, JSON.stringify(liveSettings, null, 2) + '\n');
+
+  // Trigger leak guard with a failing cli-launcher probe to verify both key-wise settings rollback AND degraded state preservation.
+  const failLauncherSpawn = makeFakeSpawn(function (rec) {
+    setImmediate(function () {
+      rec.child.stderr.emit('data', '500 upstream error on launcher probe');
+      rec.child.emit('close', 1);
+    });
+  });
+
+  const leakNotes = [];
+  const leakRes = await fosurface.checkDesktopLeak(ctx, {
+    nowMs: tEngage + 3600 * 1000,
+    spawn: failLauncherSpawn.spawn,
+    notify: async (ev, msg) => leakNotes.push({ ev, msg }),
+    listProcesses: () => [
+      {
+        pid: 5151,
+        startedAt: tEngage + 10000,
+        env: {
+          CLAUDE_CODE_ENTRYPOINT: 'claude-desktop',
+          ANTHROPIC_AUTH_TOKEN: FAKE_GW_KEY,
+        },
+      },
+    ],
+  });
+
+  assert.strictEqual(leakRes.leaked, true);
+  assert.strictEqual(leakRes.surface, 'cli-launcher');
+  assert.ok(leakRes.degraded && leakRes.degraded.at === tEngage + 3600 * 1000);
+
+  // Post-engage edits (permissions.allow, NEW_USER_VAR) survived; gateway keys removed; overwritten prior keys restored.
+  const afterSettings = JSON.parse(fs.readFileSync(ctx.claudeSettingsPath, 'utf8'));
+  assert.deepStrictEqual(afterSettings.permissions, { allow: ['Bash(git status)'] });
+  assert.strictEqual(afterSettings.env.KEEP_EXISTING, '1');
+  assert.strictEqual(afterSettings.env.NEW_USER_VAR, 'added-after-engage');
+  assert.strictEqual(afterSettings.env.ANTHROPIC_MODEL, 'claude-3-7-sonnet-custom');
+  assert.strictEqual(afterSettings.env.ANTHROPIC_API_KEY, preUserToken);
+  assert.strictEqual(afterSettings.env.ANTHROPIC_BASE_URL, undefined);
+  assert.strictEqual(afterSettings.env.ANTHROPIC_AUTH_TOKEN, undefined);
+
+  // Launcher txn committed (.failover-env.json stays) and .failover-state.json kept with surface='cli-launcher' and degraded={at, reason}.
+  assert.strictEqual(fs.existsSync(fosurface.envPath(ctx)), true, '.failover-env.json kept on disk');
+  assert.strictEqual(fosurface.readTxn(ctx).phase, 'kept');
+  assert.strictEqual(fosurface.readTxn(ctx).surface, 'cli-launcher');
+  const stAfter = failover.state(ctx);
+  assert.ok(stAfter && stAfter.engaged, '.failover-state.json must not be deleted');
+  assert.strictEqual(stAfter.surface, 'cli-launcher');
+  assert.ok(stAfter.degraded, 'state has degraded field');
+  assert.strictEqual(stAfter.degraded.at, tEngage + 3600 * 1000);
+  assert.match(stAfter.degraded.reason, /500 upstream error/);
+  assert.strictEqual(leakNotes.length, 1);
+  assert.match(leakNotes[0].msg, /degraded/i);
+});
+
+test(
+  'A4: rollbackTxn preserves original file mode (0644 -> 0644) and byte-identical contents',
+  { skip: process.platform === 'win32' },
+  async function () {
+    const ctx = makeCtx();
+    const { ksPath, gwFetch } = setupGateway(ctx, {
+      models: ['claude-failover', 'claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5'],
+    });
+    config.set(ctx, 'failover.cliTarget', 'settings');
+
+    fs.mkdirSync(path.dirname(ctx.claudeSettingsPath), { recursive: true });
+    const originalBytes = '{\n  "customOrder": 1,\n  "env": {\n    "A": "B"\n  }\n}\n';
+    fs.writeFileSync(ctx.claudeSettingsPath, originalBytes, { mode: 0o644 });
+    fs.chmodSync(ctx.claudeSettingsPath, 0o644);
+    assert.strictEqual(fs.statSync(ctx.claudeSettingsPath).mode & 0o777, 0o644);
+
+    const failSp = makeFakeSpawn(function (rec) {
+      setImmediate(function () {
+        rec.child.stderr.emit('data', '404 model_not_found');
+        rec.child.emit('close', 1);
+      });
+    });
+
+    const res = await failover.engage(
+      ctx,
+      { from: 'gmail', manual: true },
+      { fetch: gwFetch, keysmithConfig: ksPath, spawn: failSp.spawn, nowMs: 1700003000000 },
+    );
+    assert.strictEqual(res.ok, false);
+    assert.strictEqual(fs.readFileSync(ctx.claudeSettingsPath, 'utf8'), originalBytes);
+    assert.strictEqual(
+      fs.statSync(ctx.claudeSettingsPath).mode & 0o777,
+      0o644,
+      'settings.json mode restored to 0644 after rollback',
+    );
+  },
+);
+
+test('A5: failed engage records .failover-engage-fail.json backoff, skips non-manual ticks without probing or re-notifying, manual bypasses, class change re-notifies', async function () {
+  const ctx = makeCtx();
+  loginAccount(ctx, 'alice@example.com', 'u1', FAKE_OAUTH_TOK);
+  core.addCurrent(ctx);
+  const { ksPath, gwFetch } = setupGateway(ctx);
+
+  let currentFailureStderr = '404 model_not_found: claude-failover';
+  const sp = makeFakeSpawn(function (rec) {
+    setImmediate(function () {
+      rec.child.stderr.emit('data', currentFailureStderr);
+      rec.child.emit('close', 1);
+    });
+  });
+
+  const notes = [];
+  let nowMs = Date.UTC(2026, 10, 14, 15, 0, 0);
+
+  function makeTickFailoverAdapter() {
+    return {
+      enabled: true,
+      state: () => failover.state(ctx),
+      engage: (info) =>
+        failover.engage(ctx, info, {
+          fetch: gwFetch,
+          keysmithConfig: ksPath,
+          spawn: sp.spawn,
+          notify: async (ev, msg) => notes.push({ ev, msg }),
+          nowMs,
+        }),
+      release: (info) => failover.release(ctx, info, { nowMs }),
+    };
+  }
+
+  const exhaustedUsageFetch = async () => ({
+    ok: true,
+    status: 200,
+    headers: { get: () => null },
+    json: async () => ({ five_hour: { utilization: 99 } }),
+  });
+
+  // 3 consecutive ticks (2 min apart) with a failing probe -> exactly 1 probe spawn and 1 notification.
+  const t1 = await autosw.tick(ctx, {
+    nowMs,
+    cacheTtlMs: 0,
+    fetch: exhaustedUsageFetch,
+    failover: makeTickFailoverAdapter(),
+  });
+  assert.strictEqual(t1.state, 'no-candidate');
+  assert.strictEqual(sp.calls.length, 1, '1st tick spawned probe once');
+  assert.strictEqual(notes.length, 1, '1st tick notified once');
+  assertPrivateMode(failover.engageFailPath(ctx), '.failover-engage-fail.json');
+  assert.strictEqual(failover.readEngageFail(ctx).count, 1);
+  assert.strictEqual(failover.readEngageFail(ctx).class, 'model-not-found');
+
+  nowMs += 2 * 60 * 1000;
+  const t2 = await autosw.tick(ctx, {
+    nowMs,
+    cacheTtlMs: 0,
+    fetch: exhaustedUsageFetch,
+    failover: makeTickFailoverAdapter(),
+  });
+  assert.strictEqual(t2.state, 'no-candidate');
+  assert.match(t2.failoverError, /^engage failed at .* \(model-not-found\); next try after /);
+  assert.strictEqual(sp.calls.length, 1, '2nd tick skipped probe during backoff');
+  assert.strictEqual(notes.length, 1, '2nd tick did not re-notify');
+
+  nowMs += 2 * 60 * 1000;
+  const t3 = await autosw.tick(ctx, {
+    nowMs,
+    cacheTtlMs: 0,
+    fetch: exhaustedUsageFetch,
+    failover: makeTickFailoverAdapter(),
+  });
+  assert.strictEqual(t3.state, 'no-candidate');
+  assert.strictEqual(sp.calls.length, 1, '3rd tick skipped probe during backoff');
+  assert.strictEqual(notes.length, 1, '3rd tick did not re-notify');
+
+  // Advance nowMs past the 30m backoff -> a second attempt runs; same failure class does NOT re-notify.
+  nowMs += 30 * 60 * 1000;
+  await autosw.tick(ctx, {
+    nowMs,
+    cacheTtlMs: 0,
+    fetch: exhaustedUsageFetch,
+    failover: makeTickFailoverAdapter(),
+  });
+  assert.strictEqual(sp.calls.length, 2, 'probe spawned again after backoff elapsed');
+  assert.strictEqual(notes.length, 1, 'same failure class (model-not-found) does not re-notify');
+  assert.strictEqual(failover.readEngageFail(ctx).count, 2);
+
+  // Manual engage bypasses the backoff; changing failure class to quota re-notifies and caps backoff at 6h.
+  nowMs += 60 * 1000; // only 1 min into backoff
+  currentFailureStderr = 'Error: quota reached on leg. Resets in 48h';
+  const manualRes = await failover.engage(
+    ctx,
+    { from: 'alice', manual: true },
+    {
+      fetch: gwFetch,
+      keysmithConfig: ksPath,
+      spawn: sp.spawn,
+      notify: async (ev, msg) => notes.push({ ev, msg }),
+      nowMs,
+    },
+  );
+  assert.strictEqual(manualRes.ok, false);
+  assert.strictEqual(sp.calls.length, 3, 'manual engage bypassed backoff');
+  assert.strictEqual(notes.length, 2, 'class change (model-not-found -> quota) re-notified');
+  assert.strictEqual(failover.readEngageFail(ctx).class, 'quota');
+
+  // Quota with resetAt 48h in the future is capped at 6h backoff.
+  const skippedQuota = await failover.engage(
+    ctx,
+    { from: 'alice' },
+    { fetch: gwFetch, keysmithConfig: ksPath, spawn: sp.spawn, nowMs: nowMs + 2 * 3600 * 1000 },
+  );
+  assert.strictEqual(skippedQuota.ok, false);
+  assert.strictEqual(skippedQuota.backoff, true);
+  const expectedCapIso = new Date(nowMs + 6 * 3600 * 1000).toISOString();
+  assert.ok(skippedQuota.reason.endsWith('next try after ' + expectedCapIso), skippedQuota.reason);
+
+  // Successful engage deletes .failover-engage-fail.json.
+  const okSp = okSpawnRecorder();
+  const okRes = await failover.engage(
+    ctx,
+    { from: 'alice', manual: true },
+    { fetch: gwFetch, keysmithConfig: ksPath, spawn: okSp.spawn, nowMs: nowMs + 3 * 3600 * 1000 },
+  );
+  assert.strictEqual(okRes.ok, true);
+  assert.strictEqual(fs.existsSync(failover.engageFailPath(ctx)), false, 'deleted on successful engage');
+});
+
+test('A6: release() with another provider active leaves settings.json and .active.json untouched; release after engage still cleans', async function () {
+  const ctx = makeCtx();
+  setupGateway(ctx, {
+    models: ['claude-failover', 'claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5'],
+  });
+
+  // User adds and activates another provider ('openrouter') while failover is NOT engaged.
+  ctx.store.setProfile('provider__openrouter', 'sk-or-FAKE-OPENROUTER-KEY-12345');
+  provider.add(ctx, 'openrouter', {
+    baseUrl: 'https://openrouter.ai/api',
+    authScheme: 'bearer',
+    compat: 'anthropic',
+    models: { default: 'anthropic/claude-sonnet-4' },
+  });
+  provider.use(ctx, 'openrouter');
+
+  const settingsBefore = fs.readFileSync(ctx.claudeSettingsPath, 'utf8');
+  const activeBefore = fs.readFileSync(provider.activePath(ctx), 'utf8');
+
+  const rel = await failover.release(ctx, { by: 'cli', reason: 'turned off by hand' });
+  assert.strictEqual(rel.ok, true);
+  assert.strictEqual(fs.readFileSync(ctx.claudeSettingsPath, 'utf8'), settingsBefore, 'settings.json bytes unchanged');
+  assert.strictEqual(fs.readFileSync(provider.activePath(ctx), 'utf8'), activeBefore, '.active.json unchanged');
+  assert.strictEqual(provider.readActive(ctx).name, 'openrouter');
+
+  // Now engage failover on cli-settings and release -> cleans settings.json and .active.json.
+  config.set(ctx, 'failover.cliTarget', 'settings');
+  const sp = okSpawnRecorder();
+  const eng = await failover.engage(
+    ctx,
+    { from: 'gmail', manual: true },
+    {
+      fetch: setupGateway(ctx, {
+        models: ['claude-failover', 'claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5'],
+      }).gwFetch,
+      keysmithConfig: writeKeysmithCfg(ctx),
+      spawn: sp.spawn,
+      nowMs: 1700004000000,
+    },
+  );
+  assert.strictEqual(eng.ok, true);
+  assert.strictEqual(provider.readActive(ctx).name, 'keysmith-failover');
+
+  const relAfterEngage = await failover.release(ctx, { by: 'cli', reason: 'turned off by hand' });
+  assert.strictEqual(relAfterEngage.ok, true);
+  assert.strictEqual(provider.readActive(ctx), null, '.active.json cleaned for failover provider');
+  const afterCfg = JSON.parse(fs.readFileSync(ctx.claudeSettingsPath, 'utf8'));
+  assert.strictEqual(afterCfg.env, undefined, 'gateway env keys cleaned from settings.json');
+});
+
+test('A7: failover on prints surface-accurate message; failover run reports missing .failover-env.json clearly', async function () {
+  const ctx = makeCtx();
+  const { ksPath, gwFetch } = setupGateway(ctx, {
+    models: ['claude-failover', 'claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5'],
+  });
+  const sp = okSpawnRecorder();
+  const cliCtx = Object.assign({}, ctx, {
+    fetch: gwFetch,
+    keysmithConfig: ksPath,
+    spawn: sp.spawn,
+    nowMs: 1700005000000,
+  });
+
+  // 1) `failover on` on cli-launcher prints launcher instructions.
+  const onLauncher = await runCliCaptured(['failover', 'on'], cliCtx);
+  assert.strictEqual(onLauncher.exitCode, 0);
+  assert.match(
+    onLauncher.stdout,
+    /on \(cli-launcher\) - start work through it with: keyflip failover run \(or keyflip failover resume --last\)/,
+  );
+
+  // 2) When engaged on cli-launcher but .failover-env.json is missing, `failover run` reports the exact recovery command.
+  fs.unlinkSync(fosurface.envPath(ctx));
+  const missingEnvRun = failover.run(ctx, ['-p', 'hi'], {});
+  assert.strictEqual(missingEnvRun.ok, false);
+  assert.strictEqual(
+    missingEnvRun.error,
+    '.failover-env.json is missing; run: keyflip failover off && keyflip failover on',
+  );
+
+  // 3) `failover on` on cli-settings keeps the old wording.
+  await failover.release(ctx, { by: 'test' });
+  config.set(ctx, 'failover.cliTarget', 'settings');
+  const onSettings = await runCliCaptured(['failover', 'on'], cliCtx);
+  assert.strictEqual(onSettings.exitCode, 0);
+  assert.match(onSettings.stdout, /on \(cli-settings\) — Claude Code now uses the gateway\./);
 });

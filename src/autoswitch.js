@@ -126,7 +126,7 @@ async function tickInner(ctx, opts, out) {
   opts = opts || {};
   // §4.2: a record left in `phase:"probing"` (crash mid-transaction) is rolled back first.
   try {
-    const rec = _fosurface.recoverCrashedTxn(ctx);
+    const rec = _fosurface.recoverCrashedTxn(ctx, { nowMs: opts.nowMs, pidAlive: opts.pidAlive });
     if (rec && rec.rolledBack) out.recoveredTxn = rec;
   } catch {
     /* never break tick */
@@ -302,7 +302,7 @@ async function tickInner(ctx, opts, out) {
     if (opts.failover.enabled === false) return base;
     let e;
     try {
-      e = await opts.failover.engage({
+      const engageInfo = {
         from: active.name,
         reason: limitHit
           ? _limitsignal.formatLimitHitReason(limitHit, { timeZone: opts.timeZone })
@@ -314,7 +314,9 @@ async function tickInner(ctx, opts, out) {
           : activeDead
             ? null
             : recoverAtOf((activeInfo && (activeInfo.usage || activeInfo.lastGood)) || null, threshold),
-      });
+      };
+      if (opts.nowMs !== undefined) engageInfo.nowMs = opts.nowMs;
+      e = await opts.failover.engage(engageInfo);
     } catch (err) {
       e = { ok: false, reason: (err && err.message) || String(err) };
     }
@@ -322,6 +324,9 @@ async function tickInner(ctx, opts, out) {
     if (e && e.disabled) return base;
     if (e && e.retry) {
       return Object.assign(base, { failoverRetry: true, failoverError: e.reason || 'keychain unavailable' });
+    }
+    if (e && e.backoff) {
+      return Object.assign(base, { failoverError: e.reason || 'failover unavailable' });
     }
     return Object.assign(base, { failoverError: (e && e.reason) || 'failover unavailable' });
   }

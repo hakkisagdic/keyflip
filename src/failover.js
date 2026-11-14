@@ -34,6 +34,7 @@ import { redact, registerSecret } from './redact.js';
 import { writeLiveSince } from './livesince.js';
 
 const STATE_FILE = '.failover-state.json';
+const ENGAGE_FAIL_FILE = '.failover-engage-fail.json';
 const EXHAUSTED_FILE = '.exhausted.json';
 const DEFAULTS = {
   gatewayUrl: 'http://127.0.0.1:8787',
@@ -462,6 +463,30 @@ function capText(cap) {
 function statePath(ctx) {
   return path.join(ctx.configDir, STATE_FILE);
 }
+function engageFailPath(ctx) {
+  return path.join(ctx.configDir, ENGAGE_FAIL_FILE);
+}
+function readEngageFail(ctx) {
+  if (!ctx || !ctx.configDir) return null;
+  try {
+    const j = JSON.parse(fs.readFileSync(engageFailPath(ctx), 'utf8'));
+    return j && typeof j === 'object' ? j : null;
+  } catch {
+    return null;
+  }
+}
+function writeEngageFail(ctx, rec) {
+  if (!ctx || !ctx.configDir) return;
+  atomicWrite(engageFailPath(ctx), JSON.stringify(rec, null, 2) + '\n', 0o600);
+}
+function clearEngageFail(ctx) {
+  if (!ctx || !ctx.configDir) return;
+  try {
+    fs.unlinkSync(engageFailPath(ctx));
+  } catch {
+    /* absent */
+  }
+}
 function state(ctx) {
   try {
     const j = JSON.parse(fs.readFileSync(statePath(ctx), 'utf8'));
@@ -533,11 +558,6 @@ async function engage(ctx, info, deps) {
     }
     return { ok: true, already: true, state: cur };
   }
-  const rp = resolvePlan(ctx, { keysmithConfig: deps.keysmithConfig });
-  const ready = await gatewayReady(ctx, { plan: rp, fetch: deps.fetch });
-  if (!ready.ok) {
-    return ready.retry ? { ok: false, retry: true, reason: ready.reason } : { ok: false, reason: ready.reason };
-  }
 
   const nowFn =
     deps.now ||
@@ -545,9 +565,56 @@ async function engage(ctx, info, deps) {
       ? function () {
           return deps.nowMs;
         }
-      : function () {
-          return Date.now();
-        });
+      : info.nowMs !== undefined
+        ? function () {
+            return info.nowMs;
+          }
+        : ctx && ctx.nowMs !== undefined
+          ? function () {
+              return ctx.nowMs;
+            }
+          : function () {
+              return Date.now();
+            });
+  const nowMs = nowFn();
+
+  if (!info.manual) {
+    const prevFail = readEngageFail(ctx);
+    if (prevFail) {
+      const atMs = typeof prevFail.at === 'number' ? prevFail.at : Date.parse(prevFail.at);
+      if (isFinite(atMs)) {
+        const probeEveryMin = Number(cfg(ctx, 'failover.probeEveryMinutes', 10)) || 10;
+        const backoffMs = Math.max(probeEveryMin, 30) * 60 * 1000;
+        let nextTryMs = atMs + backoffMs;
+        if (prevFail.class === 'quota' && prevFail.resetAt) {
+          const resetMs = Date.parse(prevFail.resetAt);
+          if (isFinite(resetMs) && resetMs > nowMs) {
+            nextTryMs = Math.min(resetMs, atMs + 6 * 3600 * 1000);
+          }
+        }
+        if (nowMs < nextTryMs) {
+          const failClass = prevFail.class || 'other';
+          return {
+            ok: false,
+            backoff: true,
+            reason:
+              'engage failed at ' +
+              new Date(atMs).toISOString() +
+              ' (' +
+              failClass +
+              '); next try after ' +
+              new Date(nextTryMs).toISOString(),
+          };
+        }
+      }
+    }
+  }
+
+  const rp = resolvePlan(ctx, { keysmithConfig: deps.keysmithConfig });
+  const ready = await gatewayReady(ctx, { plan: rp, fetch: deps.fetch });
+  if (!ready.ok) {
+    return ready.retry ? { ok: false, retry: true, reason: ready.reason } : { ok: false, reason: ready.reason };
+  }
 
   const chosen = _fosurface.chooseSurface(ctx, ready.models || []);
   let fallbackReason = chosen.fallbackReason || null;
@@ -595,6 +662,17 @@ async function engage(ctx, info, deps) {
     if (pRes.resetAt) probeSummary.resetAt = pRes.resetAt;
 
     if (pRes.ok) {
+      const liveTxn = _fosurface.readTxn(ctx);
+      if (!liveTxn || liveTxn.phase !== 'probing' || liveTxn.startedAt !== txnRec.startedAt) {
+        return {
+          ok: false,
+          surface: surface,
+          startedAt: startedAt,
+          probe: probeSummary,
+          class: 'other',
+          reason: 'transaction was rolled back during the probe',
+        };
+      }
       _fosurface.commitTxn(ctx, txnRec, probeSummary);
       return { ok: true, surface: surface, startedAt: startedAt, probe: probeSummary };
     }
@@ -625,7 +703,17 @@ async function engage(ctx, info, deps) {
   }
 
   if (!attempt.ok) {
-    if (deps.notify) {
+    const prevFail = readEngageFail(ctx);
+    const failClass = attempt.class || 'other';
+    const shouldNotify = !prevFail || prevFail.class !== failClass;
+    writeEngageFail(ctx, {
+      at: attempt.startedAt !== undefined ? attempt.startedAt : nowFn(),
+      class: failClass,
+      reason: redact(stripUrlQuery(attempt.reason || 'probe failed')),
+      resetAt: (attempt.probe && attempt.probe.resetAt) || null,
+      count: (prevFail && typeof prevFail.count === 'number' ? prevFail.count : 0) + 1,
+    });
+    if (deps.notify && shouldNotify) {
       await deps.notify('quota', 'API failover could not be switched on: ' + attempt.reason);
     }
     return {
@@ -636,6 +724,8 @@ async function engage(ctx, info, deps) {
       fallbackReason: fallbackReason,
     };
   }
+
+  clearEngageFail(ctx);
 
   const cleanReason = redact(stripUrlQuery(info.reason || 'every Claude account is over the threshold'));
   const st = {
@@ -691,6 +781,9 @@ async function release(ctx, info, deps) {
   const cleaned = [];
   const failed = [];
 
+  const targetProvider = (cur && cur.provider) || p.provider;
+  const shouldCleanActive = !!(activeRec && (!activeRec.name || activeRec.name === targetProvider));
+
   // Step 1: settings.json — remove recorded keys + any unrecorded managed keys carrying our gateway URL/alias.
   try {
     if (typeof deps.useOfficial === 'function') {
@@ -709,7 +802,7 @@ async function release(ctx, info, deps) {
             }
           });
         }
-        if (activeRec && Array.isArray(activeRec.envKeys)) {
+        if (shouldCleanActive && Array.isArray(activeRec.envKeys)) {
           activeRec.envKeys.forEach(function (k) {
             if (_provider.ALL_MANAGED.indexOf(k) !== -1) recordedSet.add(k);
           });
@@ -769,8 +862,8 @@ async function release(ctx, info, deps) {
     });
   }
 
-  const targetProvider = (cur && cur.provider) || p.provider;
-  const shouldCleanActive = !!(activeRec && (!activeRec.name || activeRec.name === targetProvider));
+  clearEngageFail(ctx);
+
   const stateFiles = [
     ['.failover-env.json', _fosurface.envPath(ctx)],
     ['.failover-txn.json', _fosurface.txnPath(ctx)],
@@ -948,21 +1041,20 @@ function run(ctx, claudeArgs, opts) {
   }
 
   const st = state(ctx);
-  const onLauncher = !!(
-    st &&
-    st.engaged &&
-    (st.surface || 'cli-launcher') === 'cli-launcher' &&
-    _fosurface.readLauncherEnv(ctx)
-  );
+  const stSurface = st && st.engaged ? st.surface || 'cli-launcher' : null;
+  const hasLauncherEnv = !!_fosurface.readLauncherEnv(ctx);
+  const onLauncher = !!(stSurface === 'cli-launcher' && hasLauncherEnv);
   if (!onLauncher && !opts.forceGateway) {
     return {
       ok: false,
       exitCode: 1,
       error:
         st && st.engaged
-          ? 'failover is engaged on ' +
-            st.surface +
-            ', not cli-launcher — pass --force-gateway to launch through the gateway'
+          ? stSurface === 'cli-launcher'
+            ? '.failover-env.json is missing; run: keyflip failover off && keyflip failover on'
+            : 'failover is engaged on ' +
+              st.surface +
+              ', not cli-launcher — pass --force-gateway to launch through the gateway'
           : 'API failover is not engaged on cli-launcher (run `keyflip failover on` or pass --force-gateway)',
     };
   }
@@ -1747,6 +1839,9 @@ export {
   keysmithConfigPath,
   DEFAULTS,
   STATE_FILE,
+  ENGAGE_FAIL_FILE,
+  engageFailPath,
+  readEngageFail,
   EXHAUSTED_FILE,
   GATEWAY_TIMEOUT_MS,
   GATEWAY_RETRY_PAUSE_MS,

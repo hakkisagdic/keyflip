@@ -5,9 +5,11 @@ import { spawn as _nodeSpawn } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import { run as _run } from './exec.js';
-import { atomicWrite } from './fsutil.js';
+import { atomicWrite, writeJsonStable } from './fsutil.js';
+import { _pidAlive } from './lock.js';
 import * as _config from './config.js';
 import * as _provider from './provider.js';
+import * as _settings from './settings.js';
 import * as _history from './history.js';
 import * as _log from './log.js';
 import { redact, registerSecret } from './redact.js';
@@ -146,6 +148,15 @@ function chooseSurface(ctx, gatewayModelIds) {
   return { surface: 'cli-settings', fallbackReason: null };
 }
 
+function statFileMode(filePath) {
+  if (!filePath || !fs.existsSync(filePath)) return null;
+  try {
+    return fs.statSync(filePath).mode & 0o777;
+  } catch {
+    return null;
+  }
+}
+
 function makeBackupFile(ctx, startedAt, filePath, backupName) {
   if (!filePath || !fs.existsSync(filePath)) return null;
   const dir = path.join(ctx.configDir, 'backups', 'failover', String(startedAt));
@@ -162,6 +173,7 @@ function beginTxn(ctx, surface, opts) {
   opts = opts || {};
   const p = opts.plan || {};
   const startedAt = opts.startedAt !== undefined ? opts.startedAt : Date.now();
+  const pid = opts.pid !== undefined ? opts.pid : process.pid;
   const providerName = p.provider || cfg(ctx, 'failover.provider', 'keysmith-failover');
   const alias = p.alias || cfg(ctx, 'failover.alias', 'claude-failover');
   const gatewayUrl = String(p.gatewayUrl || cfg(ctx, 'failover.gatewayUrl', 'http://127.0.0.1:8787')).replace(
@@ -174,6 +186,7 @@ function beginTxn(ctx, surface, opts) {
 
   if (surface === 'cli-launcher') {
     const ep = envPath(ctx);
+    const epMode = statFileMode(ep);
     const backup = makeBackupFile(ctx, startedAt, ep, ENV_FILE);
     const modelEnv = {};
     Object.keys(_provider.MODEL_KEYS).forEach(function (role) {
@@ -181,12 +194,15 @@ function beginTxn(ctx, surface, opts) {
       modelEnv[envKey] = (meta && meta.models && meta.models[role]) || alias;
     });
     const keys = ['ANTHROPIC_BASE_URL', authKeyName].concat(Object.keys(modelEnv));
+    const wroteEntry = { path: ep, kind: 'launcher-env', keys: keys, backup: backup };
+    if (epMode !== null) wroteEntry.mode = epMode;
     const txnRec = {
       v: 1,
+      pid: pid,
       surface: 'cli-launcher',
       phase: 'probing',
       startedAt: startedAt,
-      wrote: [{ path: ep, kind: 'launcher-env', keys: keys, backup: backup }],
+      wrote: [wroteEntry],
       probe: null,
     };
     writeTxn(ctx, txnRec);
@@ -204,27 +220,48 @@ function beginTxn(ctx, surface, opts) {
   if (surface === 'cli-settings') {
     const settingsFile = ctx.claudeSettingsPath;
     const activeFile = _provider.activePath(ctx);
+    const settingsMode = statFileMode(settingsFile);
+    const activeMode = statFileMode(activeFile);
     const settingsBackup = makeBackupFile(ctx, startedAt, settingsFile, 'settings.json');
     const activeBackup = makeBackupFile(ctx, startedAt, activeFile, 'provider-active.json');
-    const wrote = [
-      {
-        path: settingsFile,
-        kind: 'settings-env',
-        keys: ['ANTHROPIC_BASE_URL', authKeyName],
-        backup: settingsBackup,
-      },
-      {
-        path: activeFile,
-        kind: 'provider-active',
-        keys: [],
-        backup: activeBackup,
-      },
-    ];
+    let preEnvKeys = [];
+    if (settingsBackup) {
+      try {
+        const preCfg = JSON.parse(fs.readFileSync(settingsBackup, 'utf8'));
+        if (preCfg && preCfg.env && typeof preCfg.env === 'object') {
+          preEnvKeys = Object.keys(preCfg.env);
+        }
+      } catch {
+        preEnvKeys = [];
+      }
+    }
+    const initialKeys = ['ANTHROPIC_BASE_URL', authKeyName];
+    const priorKeys = preEnvKeys.filter(function (k) {
+      return _provider.ALL_MANAGED.indexOf(k) !== -1 || initialKeys.indexOf(k) !== -1;
+    });
+    const settingsWrote = {
+      path: settingsFile,
+      kind: 'settings-env',
+      keys: initialKeys,
+      priorKeys: priorKeys,
+      backup: settingsBackup,
+    };
+    if (settingsMode !== null) settingsWrote.mode = settingsMode;
+    const activeWrote = {
+      path: activeFile,
+      kind: 'provider-active',
+      keys: [],
+      backup: activeBackup,
+    };
+    if (activeMode !== null) activeWrote.mode = activeMode;
+    const wrote = [settingsWrote, activeWrote];
     const txnRec = {
       v: 1,
+      pid: pid,
       surface: 'cli-settings',
       phase: 'probing',
       startedAt: startedAt,
+      priorKeys: priorKeys,
       wrote: wrote,
       probe: null,
     };
@@ -238,6 +275,11 @@ function beginTxn(ctx, surface, opts) {
       const res = useFn(providerName, { models: false });
       if (res && Array.isArray(res.injected)) {
         txnRec.wrote[0].keys = res.injected.slice();
+        const updatedPrior = preEnvKeys.filter(function (k) {
+          return _provider.ALL_MANAGED.indexOf(k) !== -1 || txnRec.wrote[0].keys.indexOf(k) !== -1;
+        });
+        txnRec.wrote[0].priorKeys = updatedPrior;
+        txnRec.priorKeys = updatedPrior;
         writeTxn(ctx, txnRec);
       }
     } catch (e) {
@@ -287,24 +329,72 @@ function cleanupBackupDir(txnRec) {
   });
 }
 
-function rollbackTxn(ctx, txnRec, probeSummary) {
+function rollbackTxn(ctx, txnRec, probeSummary, opts) {
+  opts = opts || {};
   if (!txnRec || !Array.isArray(txnRec.wrote)) return null;
+  const isKept = !!opts.kept || txnRec.phase === 'kept';
   for (let i = txnRec.wrote.length - 1; i >= 0; i--) {
     const w = txnRec.wrote[i];
     if (!w || !w.path) continue;
-    if (w.backup && fs.existsSync(w.backup)) {
-      try {
-        const raw = fs.readFileSync(w.backup);
-        atomicWrite(w.path, raw, 0o600);
-      } catch {
-        /* best effort */
+    const mode = typeof w.mode === 'number' ? w.mode : 0o600;
+    if (isKept && w.kind === 'settings-env') {
+      if (fs.existsSync(w.path)) {
+        try {
+          const cfgObj = _settings.read(w.path);
+          let backupEnv = null;
+          if (w.backup && fs.existsSync(w.backup)) {
+            try {
+              const bObj = JSON.parse(fs.readFileSync(w.backup, 'utf8'));
+              if (bObj && bObj.env && typeof bObj.env === 'object') backupEnv = bObj.env;
+            } catch {
+              backupEnv = null;
+            }
+          }
+          if (cfgObj && typeof cfgObj === 'object') {
+            if (cfgObj.env && typeof cfgObj.env === 'object') {
+              (Array.isArray(w.keys) ? w.keys : []).forEach(function (k) {
+                delete cfgObj.env[k];
+              });
+            }
+            const pKeys = Array.isArray(w.priorKeys)
+              ? w.priorKeys
+              : Array.isArray(txnRec.priorKeys)
+                ? txnRec.priorKeys
+                : [];
+            if (pKeys.length && backupEnv) {
+              if (!cfgObj.env || typeof cfgObj.env !== 'object') cfgObj.env = {};
+              pKeys.forEach(function (pk) {
+                if (Object.prototype.hasOwnProperty.call(backupEnv, pk)) {
+                  cfgObj.env[pk] = backupEnv[pk];
+                }
+              });
+            }
+            if (cfgObj.env && typeof cfgObj.env === 'object' && !Object.keys(cfgObj.env).length) {
+              delete cfgObj.env;
+            }
+            writeJsonStable(w.path, cfgObj, mode);
+          }
+        } catch {
+          /* best effort */
+        }
       }
-    } else {
+      continue;
+    }
+    if (w.backup === null || w.backup === undefined) {
       try {
         fs.unlinkSync(w.path);
       } catch {
         /* already absent */
       }
+    } else if (fs.existsSync(w.backup)) {
+      try {
+        const raw = fs.readFileSync(w.backup);
+        atomicWrite(w.path, raw, mode);
+      } catch {
+        /* best effort */
+      }
+    } else {
+      _log.log('failover: rollback warning — backup missing for ' + w.path + '; leaving file untouched');
     }
   }
   cleanupBackupDir(txnRec);
@@ -316,14 +406,49 @@ function rollbackTxn(ctx, txnRec, probeSummary) {
   return next;
 }
 
+function rollbackKeptTxn(ctx, txnRec, probeSummary) {
+  return rollbackTxn(ctx, txnRec, probeSummary, { kept: true });
+}
+
+function maxProbeLimitMs(ctx) {
+  const timeoutSec = Math.max(1, Number(cfg(ctx, 'failover.probeTimeoutSeconds', 90)) || 90);
+  const extraModels = parseCsv(cfg(ctx, 'failover.probeModels', 'sonnet'));
+  const numModels = extraModels.length + 1;
+  return (timeoutSec * numModels * 2 + 60) * 1000;
+}
+
 // §4.2: a record left in `phase:"probing"` (crash mid-transaction) is rolled back
-// by the next tick before anything else.
-function recoverCrashedTxn(ctx) {
+// by the next tick before anything else, only when the owner process is gone or past the probe limit.
+function recoverCrashedTxn(ctx, opts) {
+  opts = opts || {};
   if (!ctx || !ctx.configDir) return { rolledBack: false };
   const txnRec = readTxn(ctx);
   if (!txnRec || txnRec.phase !== 'probing') return { rolledBack: false };
+  const nowMs =
+    opts.nowMs !== undefined ? opts.nowMs : ctx && ctx.nowMs !== undefined ? ctx.nowMs : Date.now();
+  const pidAliveFn =
+    typeof opts.pidAlive === 'function'
+      ? opts.pidAlive
+      : ctx && typeof ctx.pidAlive === 'function'
+        ? ctx.pidAlive
+        : _pidAlive;
+  const limitMs = maxProbeLimitMs(ctx);
+  const startedAt = typeof txnRec.startedAt === 'number' && isFinite(txnRec.startedAt) ? txnRec.startedAt : 0;
+  const withinLimit = startedAt > 0 && nowMs - startedAt <= limitMs;
+  const hasPid = typeof txnRec.pid === 'number' && isFinite(txnRec.pid) && txnRec.pid > 0;
+  const ownerAlive = hasPid ? !!pidAliveFn(txnRec.pid) : false;
+
+  if (!opts.force) {
+    if (hasPid && ownerAlive && withinLimit) {
+      return { rolledBack: false, skipped: 'in-progress' };
+    }
+    if (!hasPid && withinLimit) {
+      return { rolledBack: false, skipped: 'in-progress' };
+    }
+  }
+
   rollbackTxn(ctx, txnRec, {
-    at: Date.now(),
+    at: nowMs,
     ok: false,
     ms: 0,
     models: [],
@@ -836,12 +961,15 @@ function parsePsOutput(stdout) {
   return rows;
 }
 
-// §4.4 default process lister (`ps -Ewwo pid=,lstart=,command=`).
+// §4.4 default process lister (`ps -axEwwo pid=,lstart=,command=`).
 function listProcesses(opts) {
   opts = opts || {};
   if (!opts.run && process.env.KEYFLIP_TEST_OFFLINE === '1') return [];
   const runner = opts.run || _run;
-  const r = runner('ps', ['-Ewwo', 'pid=,lstart=,command='], undefined, { timeoutMs: 8000 });
+  const r = runner('ps', ['-axEwwo', 'pid=,lstart=,command='], undefined, {
+    timeoutMs: 8000,
+    env: Object.assign({}, process.env, { LC_ALL: 'C', LANG: 'C' }),
+  });
   if (!r || r.code !== 0) return [];
   return parsePsOutput(r.stdout);
 }
@@ -937,9 +1065,9 @@ async function checkDesktopLeak(ctx, deps) {
   if (!leakedPids.length) return { leaked: false, pids: [] };
 
   const nowMs = deps.nowMs !== undefined ? deps.nowMs : Date.now();
-  // 1) Roll back the `cli-settings` transaction (restores settings.json).
+  // 1) Roll back the `cli-settings` transaction (key-wise removal for kept txn).
   if (txnRec) {
-    rollbackTxn(ctx, txnRec, txnRec.probe || null);
+    rollbackKeptTxn(ctx, txnRec, txnRec.probe || null);
   } else {
     try {
       _provider.useOfficial(ctx);
@@ -949,7 +1077,6 @@ async function checkDesktopLeak(ctx, deps) {
   }
 
   // 2) Start a new `cli-launcher` transaction.
-  let launcherKept = false;
   let launcherProbe;
   const newTxn = beginTxn(ctx, 'cli-launcher', {
     startedAt: nowMs,
@@ -978,44 +1105,42 @@ async function checkDesktopLeak(ctx, deps) {
       reason: pRes.reason || null,
       costUsd: pRes.costUsd,
     };
-    if (pRes.ok) {
-      commitTxn(ctx, newTxn, launcherProbe);
-      launcherKept = true;
-    } else {
-      rollbackTxn(ctx, newTxn, launcherProbe);
-    }
   } else {
     launcherProbe = { at: nowMs, ok: true, ms: 0, models: [], reason: null, costUsd: null };
-    commitTxn(ctx, newTxn, launcherProbe);
-    launcherKept = true;
   }
+  commitTxn(ctx, newTxn, launcherProbe);
 
-  if (launcherKept && st && st.engaged) {
+  const degraded = !launcherProbe.ok
+    ? { at: nowMs, reason: launcherProbe.reason || 'cli-launcher probe failed' }
+    : null;
+
+  if (st && st.engaged) {
     const nextState = Object.assign({}, st, {
       surface: 'cli-launcher',
       txn: launcherProbe,
       fallbackReason: 'desktop-leak (' + leakedPids.join(', ') + ')',
     });
+    if (degraded) nextState.degraded = degraded;
+    else delete nextState.degraded;
     atomicWrite(statePath(ctx), JSON.stringify(nextState, null, 2) + '\n', 0o600);
-  } else if (!launcherKept) {
-    try {
-      fs.unlinkSync(statePath(ctx));
-    } catch {
-      /* gone */
-    }
   }
 
   _history.recordEvent(ctx, {
     kind: 'failover-desktop-leak',
     pids: leakedPids,
     from: 'cli-settings',
-    to: launcherKept ? 'cli-launcher' : null,
+    to: 'cli-launcher',
   });
 
-  const msg =
-    'Claude Desktop picked up gateway env (pid ' +
-    leakedPids.join(', ') +
-    ') — rolled failover back from settings.json to cli-launcher.';
+  const msg = degraded
+    ? 'Claude Desktop picked up gateway env (pid ' +
+      leakedPids.join(', ') +
+      ') — rolled failover back from settings.json to cli-launcher (degraded: ' +
+      degraded.reason +
+      ').'
+    : 'Claude Desktop picked up gateway env (pid ' +
+      leakedPids.join(', ') +
+      ') — rolled failover back from settings.json to cli-launcher.';
   _log.log('failover: ' + msg);
   if (typeof deps.notify === 'function') {
     try {
@@ -1025,11 +1150,13 @@ async function checkDesktopLeak(ctx, deps) {
     }
   }
 
-  return {
+  const leakOut = {
     leaked: true,
     pids: leakedPids,
-    surface: launcherKept ? 'cli-launcher' : null,
+    surface: 'cli-launcher',
   };
+  if (degraded) leakOut.degraded = degraded;
+  return leakOut;
 }
 
 function resolvePidCwd(pid, proc, opts) {
@@ -1165,6 +1292,7 @@ export {
   beginTxn,
   commitTxn,
   rollbackTxn,
+  rollbackKeptTxn,
   recoverCrashedTxn,
   buildChildEnv,
   probe,
