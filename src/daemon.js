@@ -11,6 +11,7 @@
 // SECURITY INVARIANT: No secret (accessToken, refreshToken, sessionKey, cookie, apiKey)
 // may ever be returned over the socket or written to the daemon log. Every outbound
 // payload passes through `redactSecrets()`.
+import crypto from 'crypto';
 import fs from 'fs';
 import net from 'net';
 import path from 'path';
@@ -88,7 +89,13 @@ function redactSecrets(val, seen) {
 function socketPath(ctx, opts) {
   opts = opts || {};
   if (opts.socketPath) return opts.socketPath;
-  return path.join(ctx.configDir, SOCKET_NAME);
+  const candidate = path.join(ctx.configDir, SOCKET_NAME);
+  // macOS sockaddr_un.sun_path limit is 104 bytes; fall back to /tmp/kf-d-<hash>.sock when configDir is deep.
+  if (Buffer.byteLength(candidate, 'utf8') > 96) {
+    const h = crypto.createHash('sha256').update(candidate).digest('hex').slice(0, 12);
+    return path.join('/tmp', 'kf-d-' + h + '.sock');
+  }
+  return candidate;
 }
 
 function recordPath(ctx) {
