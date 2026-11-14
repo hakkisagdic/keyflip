@@ -12,7 +12,10 @@ import {
   collectStatusBoard,
   computeQuotaForecast,
   buildControlCenterMarkdown,
-  collectAuditTimeline
+  collectAuditTimeline,
+  evaluateFailoverSpendHealth,
+  evaluatePoolReadiness,
+  detectStatusBoardTransitions
 } from "../src/controlcenter.js";
 import * as daemon from "../src/daemon.js";
 
@@ -396,4 +399,58 @@ test("collectStatusBoard computes sinceAge, merges extraStatusFiles, and collect
   } finally {
     env.cleanup();
   }
+});
+
+test("evaluateFailoverSpendHealth, evaluatePoolReadiness, and detectStatusBoardTransitions detect anomalies accurately", () => {
+  const nowMs = Date.parse("2026-11-14T18:30:00Z");
+  const spendHealth = evaluateFailoverSpendHealth(
+    {
+      enabled: true,
+      engaged: true,
+      since: "2026-11-14T18:00:00Z", // 30m elapsed
+      cap: { max: 20, spent: 12, remaining: 8, exceeded: false } // $24/hr burn -> 20m to cap
+    },
+    { nowMs }
+  );
+  assert.equal(spendHealth.status, "critical");
+  assert.equal(spendHealth.utilizationPct, 60);
+  assert.equal(spendHealth.burnUsdPerHour, 24);
+  assert.equal(spendHealth.estimatedMinutesToCap, 20);
+  assert.match(spendHealth.alertReason, /tavan ~20 dk içinde dolabilir/);
+
+  const readiness = evaluatePoolReadiness([
+    {
+      name: "primary",
+      enabled: true,
+      token: { status: "valid", remainingMs: 2 * 3600 * 1000 },
+      usage: { fiveHour: { pct: 40 }, sevenDay: { pct: 50 } }
+    },
+    {
+      name: "expiring",
+      enabled: true,
+      token: { status: "valid", remainingMs: 20 * 60 * 1000 }, // <= 45m -> needsPreWarm
+      usage: { fiveHour: { pct: 10 }, sevenDay: { pct: 20 } }
+    }
+  ]);
+  assert.equal(readiness.totalEnabled, 2);
+  assert.equal(readiness.readyForRotation, 2);
+  assert.deepEqual(readiness.needsPreWarm, ["expiring"]);
+  assert.equal(readiness.status, "warning");
+
+  const prevBoard = {
+    sections: [{ id: "s1", title: "S1", rows: [{ label: "API", value: "OK", status: "ok" }] }],
+    owner_needed: [{ project: "p1", text: "t1" }]
+  };
+  const nextBoard = {
+    sections: [{ id: "s1", title: "S1", rows: [{ label: "API", value: "502", status: "bad" }] }],
+    owner_needed: [
+      { project: "p1", text: "t1" },
+      { project: "p2", text: "t2" }
+    ]
+  };
+  const diff = detectStatusBoardTransitions(prevBoard, nextBoard);
+  assert.equal(diff.hasAlert, true);
+  assert.equal(diff.newBadRows.length, 1);
+  assert.equal(diff.ownerNeededDelta, 1);
+  assert.match(diff.summary, /Yeni kritik satır: API/);
 });

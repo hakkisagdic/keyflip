@@ -181,7 +181,12 @@ public struct ControlCenterView: View {
     // MARK: - 0. Durum Panosu (External Status Board - hidden if file missing)
 
     private func statusBoardSection(_ board: StatusBoardPayload) -> some View {
-        let displayedSections = board.filteredSections(onlyIssues: viewModel.showOnlyIssuesInStatusBoard)
+        let displayedSections = board.orderedSections(
+            pinnedIds: viewModel.pinnedSectionIds,
+            onlyIssues: viewModel.showOnlyIssuesInStatusBoard,
+            searchQuery: viewModel.statusBoardSearchQuery
+        )
+        let displayedOwners = board.filteredOwnerNeeded(searchQuery: viewModel.statusBoardSearchQuery)
         let allCollapsed = !displayedSections.isEmpty && displayedSections.allSatisfy { collapsedSectionIds.contains($0.id) }
         return VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
@@ -242,16 +247,37 @@ public struct ControlCenterView: View {
             }
 
             VStack(alignment: .leading, spacing: 8) {
-                if !board.ownerNeededItems.isEmpty {
+                HStack(spacing: 6) {
+                    Image(systemName: "magnifyingglass")
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary)
+                    TextField("Durum panosunda filtrele…", text: $viewModel.statusBoardSearchQuery)
+                        .textFieldStyle(.plain)
+                        .font(.system(size: 11))
+                    if !viewModel.statusBoardSearchQuery.isEmpty {
+                        Button(action: { viewModel.statusBoardSearchQuery = "" }) {
+                            Image(systemName: "xmark.circle.fill")
+                                .font(.system(size: 10))
+                                .foregroundColor(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(.horizontal, 6)
+                .padding(.vertical, 4)
+                .background(Color.secondary.opacity(0.08))
+                .cornerRadius(4)
+
+                if !displayedOwners.isEmpty {
                     VStack(alignment: .leading, spacing: 4) {
                         HStack(spacing: 5) {
                             Image(systemName: "bell.badge.fill")
                                 .foregroundColor(.orange)
                                 .font(.system(size: 10))
-                            Text("Sahipten Bekleyen (\(board.ownerNeededItems.count))")
+                            Text("Sahipten Bekleyen (\(displayedOwners.count))")
                                 .font(.system(size: 11, weight: .semibold))
                         }
-                        ForEach(board.ownerNeededItems) { item in
+                        ForEach(displayedOwners) { item in
                             HStack(alignment: .top, spacing: 6) {
                                 Text(item.project)
                                     .font(.system(size: 10, weight: .semibold, design: .monospaced))
@@ -271,48 +297,60 @@ public struct ControlCenterView: View {
 
                 ForEach(displayedSections) { sec in
                     let isExpanded = !collapsedSectionIds.contains(sec.id)
+                    let isPinned = viewModel.pinnedSectionIds.contains(sec.id)
                     let sorted = sec.sortedRows
                     VStack(alignment: .leading, spacing: 4) {
-                        Button(action: {
-                            if isExpanded {
-                                collapsedSectionIds.insert(sec.id)
-                            } else {
-                                collapsedSectionIds.remove(sec.id)
+                        HStack(spacing: 6) {
+                            Button(action: {
+                                if isExpanded {
+                                    collapsedSectionIds.insert(sec.id)
+                                } else {
+                                    collapsedSectionIds.remove(sec.id)
+                                }
+                            }) {
+                                HStack(spacing: 6) {
+                                    Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                                        .font(.system(size: 9, weight: .semibold))
+                                        .foregroundColor(.secondary)
+                                        .frame(width: 10)
+                                    Text(sec.title)
+                                        .font(.system(size: 11, weight: .semibold))
+                                        .foregroundColor(.primary)
+                                    Spacer()
+                                }
                             }
-                        }) {
-                            HStack(spacing: 6) {
-                                Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                            .buttonStyle(.plain)
+
+                            Button(action: { viewModel.togglePinSection(sec.id) }) {
+                                Image(systemName: isPinned ? "pin.fill" : "pin")
+                                    .font(.system(size: 9))
+                                    .foregroundColor(isPinned ? .accentColor : .secondary)
+                            }
+                            .buttonStyle(.plain)
+                            .help(isPinned ? "Sabitlemeyi kaldır" : "Bu bölümü en üste sabitle")
+
+                            if sec.badCount > 0 {
+                                Text("\(sec.badCount) kritik")
                                     .font(.system(size: 9, weight: .semibold))
-                                    .foregroundColor(.secondary)
-                                    .frame(width: 10)
-                                Text(sec.title)
-                                    .font(.system(size: 11, weight: .semibold))
-                                    .foregroundColor(.primary)
-                                Spacer()
-                                if sec.badCount > 0 {
-                                    Text("\(sec.badCount) kritik")
-                                        .font(.system(size: 9, weight: .semibold))
-                                        .padding(.horizontal, 4)
-                                        .padding(.vertical, 1)
-                                        .background(Color.red.opacity(0.18))
-                                        .foregroundColor(.red)
-                                        .cornerRadius(3)
-                                }
-                                if sec.warnCount > 0 {
-                                    Text("\(sec.warnCount) uyarı")
-                                        .font(.system(size: 9, weight: .semibold))
-                                        .padding(.horizontal, 4)
-                                        .padding(.vertical, 1)
-                                        .background(Color.orange.opacity(0.18))
-                                        .foregroundColor(.orange)
-                                        .cornerRadius(3)
-                                }
-                                Text("\(sorted.count)")
-                                    .font(.system(size: 10, design: .monospaced))
-                                    .foregroundColor(.secondary)
+                                    .padding(.horizontal, 4)
+                                    .padding(.vertical, 1)
+                                    .background(Color.red.opacity(0.18))
+                                    .foregroundColor(.red)
+                                    .cornerRadius(3)
                             }
+                            if sec.warnCount > 0 {
+                                Text("\(sec.warnCount) uyarı")
+                                    .font(.system(size: 9, weight: .semibold))
+                                    .padding(.horizontal, 4)
+                                    .padding(.vertical, 1)
+                                    .background(Color.orange.opacity(0.18))
+                                    .foregroundColor(.orange)
+                                    .cornerRadius(3)
+                            }
+                            Text("\(sorted.count)")
+                                .font(.system(size: 10, design: .monospaced))
+                                .foregroundColor(.secondary)
                         }
-                        .buttonStyle(.plain)
 
                         if isExpanded {
                             VStack(alignment: .leading, spacing: 4) {
@@ -385,6 +423,18 @@ public struct ControlCenterView: View {
                     .foregroundColor(.secondary)
             } else {
                 VStack(alignment: .leading, spacing: 10) {
+                    if let pool = viewModel.payload.poolReadiness, !pool.summary.isEmpty {
+                        HStack(spacing: 6) {
+                            Image(systemName: pool.status == "ok" ? "checkmark.shield.fill" : "exclamationmark.shield.fill")
+                                .font(.system(size: 10))
+                                .foregroundColor(pool.status == "ok" ? .green : .orange)
+                            Text(pool.summary)
+                                .font(.system(size: 10, weight: .medium))
+                                .foregroundColor(.secondary)
+                            Spacer()
+                        }
+                    }
+
                     if let forecast = viewModel.payload.quotaForecast,
                        let rec = forecast.recommendedAccount,
                        !rec.isEmpty {
@@ -535,6 +585,12 @@ public struct ControlCenterView: View {
                             .font(.system(size: 11))
                             .foregroundColor(.secondary)
                     }
+                }
+
+                if let sh = fo.spendHealth, let alert = sh.alertReason, !alert.isEmpty {
+                    Text(alert)
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundColor(sh.status == "critical" ? .red : .orange)
                 }
 
                 if let reason = fo.reason, fo.engaged {

@@ -35,7 +35,8 @@ public enum ModelsTestSuite {
             "manual": false,
             "gatewayReady": true,
             "alias": "claude-sonnet-failover",
-            "cap": { "max": 25.0, "spent": 3.4, "remaining": 21.6, "exceeded": false }
+            "cap": { "max": 25.0, "spent": 3.4, "remaining": 21.6, "exceeded": false },
+            "spendHealth": { "status": "ok", "utilizationPct": 13.6, "burnUsdPerHour": null, "estimatedMinutesToCap": null, "alertReason": null }
           },
           "otherQuotas": [
             { "id": "kiro", "label": "Kiro Kredisi", "status": "ok", "display": "0.21 / 50 kredi", "usedPct": 0.4 },
@@ -70,6 +71,14 @@ public enum ModelsTestSuite {
             "disk": "okunamadı",
             "sites": [],
             "readOnly": true
+          },
+          "poolReadiness": {
+            "status": "ok",
+            "totalEnabled": 1,
+            "healthyTokens": 1,
+            "readyForRotation": 1,
+            "needsPreWarm": [],
+            "summary": "1/1 hesap rotasyona hazır"
           },
           "quotaForecast": {
             "recommendedAccount": "gmail",
@@ -118,6 +127,8 @@ public enum ModelsTestSuite {
         precondition(decoded.otherQuotas?.last?.display == "okunamadı", "unreadable quota must display okunamadı")
         precondition(decoded.server?.load == "okunamadı", "unreadable server load must be okunamadı")
         precondition(decoded.server?.readOnly == true, "server must be readOnly")
+        precondition(decoded.poolReadiness?.readyForRotation == 1, "poolReadiness.readyForRotation must be 1")
+        precondition(decoded.failover.spendHealth?.utilizationPct == 13.6, "failover.spendHealth.utilizationPct must be 13.6")
         precondition(decoded.quotaForecast?.recommendedAccount == "gmail", "quotaForecast.recommendedAccount must be gmail")
         precondition(decoded.auditTimeline?.first?.kind == "daemon-switch", "auditTimeline must decode daemon-switch")
 
@@ -163,6 +174,27 @@ public enum ModelsTestSuite {
         precondition(onlyIssues[0].id == "quotas", "filtered section must be quotas")
         precondition(onlyIssues[0].rows.count == 2, "quotas section has 2 issue rows (bad + warn)")
 
+        // Search query filter test + Pinned section ordering test
+        let searchFiltered = board.filteredSections(onlyIssues: false, searchQuery: "8787")
+        precondition(searchFiltered.count == 1 && searchFiltered[0].id == "services", "search query '8787' must match services section")
+
+        let pinnedOrder = board.orderedSections(pinnedIds: ["services"], onlyIssues: false, searchQuery: "")
+        precondition(pinnedOrder.first?.id == "services", "pinned 'services' section must appear first")
+
+        // Transition detection test: newlyDegradedRows(comparedTo:)
+        var cleanPrev = board
+        cleanPrev.sections = board.sections.map { sec in
+            var copy = sec
+            copy.rows = sec.rows.map { r in
+                var rCopy = r
+                if rCopy.status == "bad" { rCopy.status = "ok" }
+                return rCopy
+            }
+            return copy
+        }
+        let degraded = board.newlyDegradedRows(comparedTo: cleanPrev)
+        precondition(degraded.count == 1, "newlyDegradedRows must detect 1 newly bad row")
+
         // Markdown export test
         let md = board.buildMarkdownSummary(isStale: true)
         precondition(md.contains("(VERİ ESKİ)"), "markdown summary must indicate stale state")
@@ -184,7 +216,7 @@ public enum ModelsTestSuite {
 struct StandaloneTestMain {
     static func main() throws {
         try ModelsTestSuite.runAll()
-        print("✔ KeyflipControlCenter Swift model, statusBoard fixture, quotaForecast, auditTimeline & confirmation tests passed")
+        print("✔ KeyflipControlCenter Swift model, statusBoard fixture, search/pin, transitions, quotaForecast & confirmation tests passed")
     }
 }
 #else

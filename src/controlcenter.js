@@ -811,6 +811,191 @@ export function collectStatusBoard(ctx, options = {}) {
 }
 
 /**
+ * Detects newly degraded (`bad`) rows and increases in `owner_needed` between two StatusBoard snapshots.
+ */
+export function detectStatusBoardTransitions(prevBoard, nextBoard) {
+  if (!nextBoard || typeof nextBoard !== "object") {
+    return { hasAlert: false, newBadRows: [], ownerNeededDelta: 0, summary: null };
+  }
+  const prevBadKeys = new Set();
+  if (prevBoard && Array.isArray(prevBoard.sections)) {
+    for (const sec of prevBoard.sections) {
+      for (const r of sec?.rows || []) {
+        if (r?.status === "bad") {
+          prevBadKeys.add(`${sec.id}::${r.label}`);
+        }
+      }
+    }
+  }
+
+  const newBadRows = [];
+  if (Array.isArray(nextBoard.sections)) {
+    for (const sec of nextBoard.sections) {
+      for (const r of sec?.rows || []) {
+        const key = `${sec.id}::${r.label}`;
+        if (r?.status === "bad" && prevBoard && !prevBadKeys.has(key)) {
+          newBadRows.push({
+            sectionId: sec.id,
+            sectionTitle: sec.title,
+            label: r.label,
+            value: r.value,
+            detail: r.detail || null
+          });
+        }
+      }
+    }
+  }
+
+  const prevOwners = Array.isArray(prevBoard?.owner_needed) ? prevBoard.owner_needed.length : 0;
+  const nextOwners = Array.isArray(nextBoard?.owner_needed) ? nextBoard.owner_needed.length : 0;
+  const ownerNeededDelta = prevBoard ? Math.max(0, nextOwners - prevOwners) : 0;
+  const hasAlert = newBadRows.length > 0 || ownerNeededDelta > 0;
+
+  let summary = null;
+  if (hasAlert) {
+    const parts = [];
+    if (newBadRows.length > 0) {
+      parts.push(`Yeni kritik satır: ${newBadRows.map((r) => r.label).join(", ")}`);
+    }
+    if (ownerNeededDelta > 0) {
+      parts.push(`+${ownerNeededDelta} yeni sahiplik bekleyen iş`);
+    }
+    summary = parts.join(" · ");
+  }
+
+  return {
+    hasAlert,
+    newBadRows,
+    ownerNeededDelta,
+    summary
+  };
+}
+
+/**
+ * Evaluates failover spend utilization and hourly burn velocity (Hourly Spend Breaker).
+ */
+export function evaluateFailoverSpendHealth(failoverInfo, options = {}) {
+  const nowMs =
+    typeof options.nowMs === "function" ? options.nowMs() : typeof options.nowMs === "number" ? options.nowMs : Date.now();
+  const cap = failoverInfo?.cap || null;
+  const maxUsd = typeof cap?.max === "number" && cap.max > 0 ? cap.max : null;
+  const spentUsd = typeof cap?.spent === "number" && cap.spent >= 0 ? cap.spent : null;
+
+  const utilizationPct =
+    maxUsd !== null && spentUsd !== null ? Math.min(100, Math.round((spentUsd / maxUsd) * 1000) / 10) : null;
+
+  let burnUsdPerHour = null;
+  let estimatedMinutesToCap = null;
+
+  if (failoverInfo?.engaged && failoverInfo?.since && spentUsd !== null && spentUsd > 0) {
+    const sinceMs = Date.parse(String(failoverInfo.since));
+    if (Number.isFinite(sinceMs) && nowMs > sinceMs) {
+      const elapsedHours = Math.max(0.0833, (nowMs - sinceMs) / 3600000); // min 5m window
+      burnUsdPerHour = Math.round((spentUsd / elapsedHours) * 100) / 100;
+      if (maxUsd !== null && burnUsdPerHour > 0) {
+        const remUsd = Math.max(0, maxUsd - spentUsd);
+        estimatedMinutesToCap = Math.round((remUsd / burnUsdPerHour) * 60);
+      }
+    }
+  }
+
+  let status = "ok";
+  let alertReason = null;
+
+  if (cap?.exceeded || (utilizationPct !== null && utilizationPct >= 95)) {
+    status = "critical";
+    alertReason = "Failover harcama tavanına ulaşıldı";
+  } else if (estimatedMinutesToCap !== null && estimatedMinutesToCap <= 60) {
+    status = "critical";
+    alertReason = `Yüksek harcama hızı ($${burnUsdPerHour}/saat) — tavan ~${estimatedMinutesToCap} dk içinde dolabilir`;
+  } else if (utilizationPct !== null && utilizationPct >= 80) {
+    status = "warning";
+    alertReason = `Failover harcaması tavanın %${utilizationPct} seviyesinde`;
+  } else if (burnUsdPerHour !== null && burnUsdPerHour >= 5.0) {
+    status = "warning";
+    alertReason = `Hızlı failover tüketimi ($${burnUsdPerHour}/saat)`;
+  }
+
+  return {
+    status,
+    utilizationPct,
+    burnUsdPerHour,
+    estimatedMinutesToCap,
+    alertReason
+  };
+}
+
+/**
+ * Evaluates account pool OAuth token readiness and pre-warm needs before peak hours.
+ */
+export function evaluatePoolReadiness(accounts, options = {}) {
+  const list = Array.isArray(accounts) ? accounts : [];
+  const enabled = list.filter((a) => a && a.enabled !== false);
+  const preWarmWindowMs = (options.preWarmLeadMinutes ?? 45) * 60 * 1000;
+
+  let healthyTokens = 0;
+  let readyForRotation = 0;
+  const needsPreWarm = [];
+
+  for (const acct of enabled) {
+    const tok = acct.token || {};
+    const remMs = typeof tok.remainingMs === "number" ? tok.remainingMs : null;
+    const tokHealthy = tok.status === "valid" && (remMs === null || remMs > 15 * 60 * 1000);
+    if (tokHealthy) {
+      healthyTokens += 1;
+    }
+    if (
+      tok.status === "expired" ||
+      tok.lastResult === "failed" ||
+      tok.lastResult === "persist-failed" ||
+      (remMs !== null && remMs <= preWarmWindowMs)
+    ) {
+      needsPreWarm.push(acct.name);
+    }
+
+    const fivePct =
+      typeof acct?.usage?.fiveHour?.pct === "number"
+        ? acct.usage.fiveHour.pct
+        : typeof acct?.fiveHourPct === "number"
+          ? acct.fiveHourPct
+          : 0;
+    const sevenPct =
+      typeof acct?.usage?.sevenDay?.pct === "number"
+        ? acct.usage.sevenDay.pct
+        : typeof acct?.sevenDayPct === "number"
+          ? acct.sevenDayPct
+          : 0;
+
+    if (tokHealthy && fivePct < 90 && sevenPct < 90) {
+      readyForRotation += 1;
+    }
+  }
+
+  let status = "ok";
+  if (enabled.length > 0 && readyForRotation === 0) {
+    status = "critical";
+  } else if (needsPreWarm.length > 0 || (enabled.length > 1 && readyForRotation < 2)) {
+    status = "warning";
+  }
+
+  const summary =
+    enabled.length === 0
+      ? "Etkin hesap yok"
+      : needsPreWarm.length > 0
+        ? `${readyForRotation}/${enabled.length} rotasyona hazır · ${needsPreWarm.length} ön-yenileme bekliyor`
+        : `${readyForRotation}/${enabled.length} hesap rotasyona hazır`;
+
+  return {
+    status,
+    totalEnabled: enabled.length,
+    healthyTokens,
+    readyForRotation,
+    needsPreWarm,
+    summary
+  };
+}
+
+/**
  * Computes per-account 5h/7d quota burn-rate, estimated exhaustion time before reset,
  * and recommends the most efficient account (prioritizing "use-it-or-lose-it" windows
  * that reset soon with ample remaining headroom).
@@ -965,6 +1150,10 @@ export function buildControlCenterMarkdown(snapshot = {}) {
     lines.push(
       `## Akıllı Kota Önerisi\n- Önerilen Hesap: **${snapshot.quotaForecast.recommendedAccount}** (${snapshot.quotaForecast.recommendationReason || ""})\n`
     );
+  }
+
+  if (snapshot.poolReadiness?.summary) {
+    lines.push(`## Havuz Hazırlığı\n- Durum: **${snapshot.poolReadiness.summary}**\n`);
   }
 
   return lines.join("\n").trim() + "\n";

@@ -803,6 +803,8 @@ async function buildControlCenter(ctx, scheduler, opts) {
   base.fleet = _controlcenter.collectFleetStatus(ctx, ccOpts);
   base.server = _controlcenter.collectServerStatus(ctx, ccOpts);
   base.statusBoard = _controlcenter.collectStatusBoard(ctx, ccOpts);
+  base.failover.spendHealth = _controlcenter.evaluateFailoverSpendHealth(base.failover, { nowMs: opts.nowMs || ctx.nowMs });
+  base.poolReadiness = _controlcenter.evaluatePoolReadiness(base.accounts);
   base.quotaForecast = _controlcenter.computeQuotaForecast(base.accounts, { nowMs: opts.nowMs || ctx.nowMs });
   base.auditTimeline = _controlcenter.collectAuditTimeline(ctx, ccOpts);
   base.preferences = _controlcenter.collectPreferences(ctx);

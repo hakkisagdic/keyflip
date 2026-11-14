@@ -16,6 +16,10 @@ public final class ControlCenterViewModel: ObservableObject {
     @Published public var statusBoard: StatusBoardPayload?
     @Published public var statusBoardStale: Bool = false
     @Published public var showOnlyIssuesInStatusBoard: Bool = false
+    @Published public var statusBoardSearchQuery: String = ""
+    @Published public var pinnedSectionIds: Set<String> = Set(
+        UserDefaults.standard.stringArray(forKey: "menubar.pinnedSections") ?? []
+    )
 
     // Editable preferences
     @Published public var prefThresholdPct: Double = 95
@@ -41,6 +45,15 @@ public final class ControlCenterViewModel: ObservableObject {
             refresh()
             scheduleTimer()
         }
+    }
+
+    public func togglePinSection(_ sectionId: String) {
+        if pinnedSectionIds.contains(sectionId) {
+            pinnedSectionIds.remove(sectionId)
+        } else {
+            pinnedSectionIds.insert(sectionId)
+        }
+        UserDefaults.standard.set(Array(pinnedSectionIds).sorted(), forKey: "menubar.pinnedSections")
     }
 
     public func scheduleTimer() {
@@ -74,6 +87,7 @@ public final class ControlCenterViewModel: ObservableObject {
     }
 
     public func reloadStatusBoard(overridePath: String? = nil) {
+        let previousBoard = self.statusBoard
         let configured = overridePath ?? prefStatusFile
         let expanded = StatusBoardPayload.resolvePath(configured)
         lastObservedStatusExists = FileManager.default.fileExists(atPath: expanded)
@@ -81,6 +95,11 @@ public final class ControlCenterViewModel: ObservableObject {
         lastObservedStatusMtime = attrs?[.modificationDate] as? Date
 
         if let loaded = StatusBoardPayload.load(fromFile: configured, extraPaths: prefExtraStatusFiles) {
+            let freshBad = loaded.board.newlyDegradedRows(comparedTo: previousBoard)
+            if !freshBad.isEmpty {
+                let labels = freshBad.map { $0.label }.joined(separator: ", ")
+                self.statusBanner = "Yeni kritik durum tespit edildi: \(labels)"
+            }
             self.statusBoard = loaded.board
             self.statusBoardStale = loaded.isStale
         } else if let daemonBoard = payload.statusBoard {
