@@ -300,7 +300,19 @@ public struct ControlCenterView: View {
                 .background(Color.secondary.opacity(0.08))
                 .cornerRadius(4)
 
-                if let sbwd = viewModel.payload.statusBoardWarningDensity, sbwd.warnCount > 0 {
+                if let sbsok = viewModel.payload.statusBoardSectionOkCoverage, sbsok.totalSections > 0 {
+                    HStack(spacing: 5) {
+                        Image(systemName: "rectangle.checkered")
+                            .font(.system(size: 9))
+                            .foregroundColor(.secondary)
+                        Text(sbsok.summary)
+                            .font(.system(size: 9, design: .monospaced))
+                            .foregroundColor(.secondary)
+                            .lineLimit(1)
+                    }
+                }
+
+                                if let sbwd = viewModel.payload.statusBoardWarningDensity, sbwd.warnCount > 0 {
                     HStack(spacing: 5) {
                         Image(systemName: "exclamationmark.triangle")
                             .font(.system(size: 9))
@@ -750,7 +762,19 @@ public struct ControlCenterView: View {
                         }
                     }
 
-                    if let pdws = viewModel.payload.poolDualWindowSafe, pdws.enabledCount > 0 {
+                    if let pze = viewModel.payload.poolZeroExhaustion, pze.enabledCount > 0 {
+                        HStack(spacing: 5) {
+                            Image(systemName: "checkmark.shield")
+                                .font(.system(size: 10))
+                                .foregroundColor(pze.status == "all_clear" ? .green : .orange)
+                            Text(pze.summary)
+                                .font(.system(size: 10))
+                                .foregroundColor(pze.status == "all_clear" ? .secondary : .orange)
+                                .lineLimit(1)
+                        }
+                    }
+
+                                        if let pdws = viewModel.payload.poolDualWindowSafe, pdws.enabledCount > 0 {
                         HStack(spacing: 5) {
                             Image(systemName: "checkmark.seal.fill")
                                 .font(.system(size: 10))

@@ -128,6 +128,11 @@ public struct ControlCenterPayload: Codable {
     public var schedulerConfiguredJobs: SchedulerConfiguredJobsRatioSummary?
     public var poolDualWindowSafe: PoolDualWindowSafeRatioSummary?
     public var statusBoardWarningDensity: StatusBoardWarningRowDensitySummary?
+    public var serviceOperationalRatio: ServiceOperationalRatioSummary?
+    public var secondaryQuotaReadability: SecondaryQuotaReadabilityRatioSummary?
+    public var ownerQueueDiversity: OwnerQueueProjectDiversitySummary?
+    public var poolZeroExhaustion: PoolZeroExhaustionRatioSummary?
+    public var statusBoardSectionOkCoverage: StatusBoardSectionOkCoverageSummary?
     public var auditTimeline: [AuditEventItem]?
     public var markdownReport: String?
     public var preferences: PreferencesSummary?
@@ -261,6 +266,11 @@ public struct ControlCenterPayload: Codable {
         schedulerConfiguredJobs: SchedulerConfiguredJobsRatioSummary? = nil,
         poolDualWindowSafe: PoolDualWindowSafeRatioSummary? = nil,
         statusBoardWarningDensity: StatusBoardWarningRowDensitySummary? = nil,
+        serviceOperationalRatio: ServiceOperationalRatioSummary? = nil,
+        secondaryQuotaReadability: SecondaryQuotaReadabilityRatioSummary? = nil,
+        ownerQueueDiversity: OwnerQueueProjectDiversitySummary? = nil,
+        poolZeroExhaustion: PoolZeroExhaustionRatioSummary? = nil,
+        statusBoardSectionOkCoverage: StatusBoardSectionOkCoverageSummary? = nil,
         auditTimeline: [AuditEventItem]? = [],
         markdownReport: String? = nil,
         preferences: PreferencesSummary? = nil,
@@ -393,6 +403,11 @@ public struct ControlCenterPayload: Codable {
         self.schedulerConfiguredJobs = schedulerConfiguredJobs
         self.poolDualWindowSafe = poolDualWindowSafe
         self.statusBoardWarningDensity = statusBoardWarningDensity
+        self.serviceOperationalRatio = serviceOperationalRatio
+        self.secondaryQuotaReadability = secondaryQuotaReadability
+        self.ownerQueueDiversity = ownerQueueDiversity
+        self.poolZeroExhaustion = poolZeroExhaustion
+        self.statusBoardSectionOkCoverage = statusBoardSectionOkCoverage
         self.auditTimeline = auditTimeline
         self.markdownReport = markdownReport
         self.preferences = preferences
@@ -2390,6 +2405,48 @@ public struct StatusBoardWarningRowDensitySummary: Codable {
     public var warnCount: Int
     public var warningDensityPct: Int
     public var topWarnSectionTitle: String?
+    public var status: String
+    public var summary: String
+}
+
+public struct ServiceOperationalRatioSummary: Codable {
+    public var totalServices: Int
+    public var operationalCount: Int
+    public var operationalRatioPct: Int
+    public var status: String
+    public var summary: String
+}
+
+public struct SecondaryQuotaReadabilityRatioSummary: Codable {
+    public var totalProviders: Int
+    public var readableCount: Int
+    public var readabilityRatioPct: Int
+    public var status: String
+    public var summary: String
+}
+
+public struct OwnerQueueProjectDiversitySummary: Codable {
+    public var totalItems: Int
+    public var distinctProjectCount: Int
+    public var topProject: String?
+    public var topProjectCount: Int
+    public var status: String
+    public var summary: String
+}
+
+public struct PoolZeroExhaustionRatioSummary: Codable {
+    public var enabledCount: Int
+    public var nonExhaustedCount: Int
+    public var nonExhaustedRatioPct: Int
+    public var exhaustedAccounts: [String]?
+    public var status: String
+    public var summary: String
+}
+
+public struct StatusBoardSectionOkCoverageSummary: Codable {
+    public var totalSections: Int
+    public var sectionsWithOkCount: Int
+    public var coveragePct: Int
     public var status: String
     public var summary: String
 }

@@ -144,24 +144,29 @@ Bu liste, `docs/RAKIP_ANALIZI.md` sonucunda belirlenen tüm özelliklerin tamaml
 - [x] **Uzak Sunucu HTTP Site Erişim Hızı / Durum Özeti (`evaluateServerSiteReachabilityRatio`):** Uzak sunucuda izlenen web sitelerinin kaç tanesinin erişilebilir (`ok === true`) olduğunu yüzdesel olarak özetleme.
 - [x] **OAuth Belirteç Acil Yenileme (`<30 dk`) Oranı (`evaluateTokenImminentExpiryRatio`):** Etkin Claude hesaplarından kaç tanesinin OAuth belirtecinin 30 dakikadan kısa süre içinde dolacağını yüzdesel olarak özetleme.
 - [x] **Daemon Zamanlayıcı Aktif İş Kapsamı (`evaluateSchedulerConfiguredJobsRatio`):** Daemon zamanlayıcısındaki tanımlı işlerin kaç tanesinin en az bir kez çalıştırılmış (`lastRunAt`) olduğunu özetleme.
+- [x] **Hesap Havuzu Çift Pencere (`5s + 7g`) Güvenli Hesap Oranı Analizcisi (`evaluatePoolDualWindowSafeRatio`):** Etkin Claude hesaplarından kaç tanesinin hem 5 saatlik hem de 7 günlük pencerede `<%80` altında güvenli bölgede olduğunu `HESAPLAR` bölümünde gösterme.
+- [x] **Durum Panosu Uyarı (`warn`) Satırı Yoğunluğu Analizcisi (`evaluateStatusBoardWarningRowDensity`):** Durum panosundaki toplam satırlardan kaç tanesinin erken uyarı (`warn`) durumunda olduğunu ve odak bölümünü Durum Panosu kartında gösterme.
+- [x] **Yerel Servisler Çalışan/Zamanlanmış Oranı (`evaluateServiceOperationalRatio`):** İzlenen yerel servislerin kaç tanesinin `running` veya `scheduled` durumunda olduğunu yüzdesel olarak özetleme.
+- [x] **İkincil Sağlayıcılar Okunabilirlik Oranı (`evaluateSecondaryQuotaReadabilityRatio`):** `otherQuotas` içindeki sağlayıcıların kaç tanesinin başarıyla okunabildiğini (`status !== "unknown"`) yüzdesel olarak özetleme.
+- [x] **Sahiplik Kuyruğu Proje Çeşitliliği (`evaluateOwnerQueueProjectDiversity`):** `owner_needed` maddelerinin kaç farklı projeye dağıldığını ve en çok bekleyen işi olan projeyi özetleme.
 
 ---
 
 ## 2. Listedeki İşler Tamamlandığı İçin Önerilen Beş Yeni Yaratıcı Özellik (En Değerli İkisi Uygulandı)
 
-### ✅ Yeni Öneri 1 (UYGULANDI): Hesap Havuzu Çift Pencere (`5s + 7g`) Güvenli Hesap Oranı Analizcisi (`evaluatePoolDualWindowSafeRatio`)
-- **Değer:** Etkin Claude hesaplarından kaç tanesinin hem 5 saatlik hem de 7 günlük pencerede `<%80` altında güvenli bölgede olduğunu (`safeBothRatioPct`) hesaplayıp `HESAPLAR` bölümünde gösterir (`Çift pencere güvenli oranı (<%80 5s+7g): 1/2 hesap (%50)`).
-- **Uygulama:** `src/controlcenter.js` (`evaluatePoolDualWindowSafeRatio`), `src/daemon.js` (`base.poolDualWindowSafe`), `Models.swift` (`PoolDualWindowSafeRatioSummary`) ve `ControlCenterView.swift`.
+### ✅ Yeni Öneri 1 (UYGULANDI): Hesap Havuzu Tükenmemiş (`<%90` 5s/7g) Hesap Oranı Analizcisi (`evaluatePoolZeroExhaustionRatio`)
+- **Değer:** Etkin Claude hesaplarından kaç tanesinin hem 5 saatlik hem de 7 günlük pencerede `<%90` kritik sınırın altında tükenmemiş durumda olduğunu (`nonExhaustedRatioPct`) hesaplayıp `HESAPLAR` bölümünde gösterir (`Tükenmemiş hesap oranı (<%90 5s/7g): 1/2 hesap (%50)`).
+- **Uygulama:** `src/controlcenter.js` (`evaluatePoolZeroExhaustionRatio`), `src/daemon.js` (`base.poolZeroExhaustion`), `Models.swift` (`PoolZeroExhaustionRatioSummary`) ve `ControlCenterView.swift`.
 
-### ✅ Yeni Öneri 2 (UYGULANDI): Durum Panosu Uyarı (`warn`) Satırı Yoğunluğu Analizcisi (`evaluateStatusBoardWarningRowDensity`)
-- **Değer:** Durum panosundaki toplam satırlardan kaç tanesinin erken uyarı (`warn`) durumunda olduğunu (`warningDensityPct`) ve en çok uyarı içeren bölümü (`topWarnSectionTitle`) hesaplayarak Durum Panosu kartında gösterir (`Uyarı satırı yoğunluğu: 1/2 satır WARN (%50 · odak: Kotalar)`).
-- **Uygulama:** `src/controlcenter.js` (`evaluateStatusBoardWarningRowDensity`), `src/daemon.js` (`base.statusBoardWarningDensity`), `Models.swift` (`StatusBoardWarningRowDensitySummary`) ve `ControlCenterView.swift`.
+### ✅ Yeni Öneri 2 (UYGULANDI): Durum Panosu Bölüm Bazlı Sağlıklı (`ok`) Satır Kapsamı (`evaluateStatusBoardSectionOkCoverage`)
+- **Değer:** Durum panosundaki bölümlerden kaç tanesinin en az bir sağlıklı (`ok`) satır barındırdığını (`coveragePct`) hesaplayarak Durum Panosu kartında gösterir (`Bölüm OK kapsamı: 1/2 bölümde sağlıklı satır mevcut (%50)`).
+- **Uygulama:** `src/controlcenter.js` (`evaluateStatusBoardSectionOkCoverage`), `src/daemon.js` (`base.statusBoardSectionOkCoverage`), `Models.swift` (`StatusBoardSectionOkCoverageSummary`) ve `ControlCenterView.swift`.
 
-### 📋 Yeni Öneri 3 (Gelecek Adayı): Yerel Servisler Çalışan/Zamanlanmış Oranı (`evaluateServiceOperationalRatio`)
-- **Değer:** İzlenen yerel servislerin kaç tanesinin `running` veya `scheduled` durumunda olduğunu yüzdesel olarak özetleme.
+### 📋 Yeni Öneri 3 (Gelecek Adayı): Uzak Sunucu Disk ve RAM Ortalama Yük Yüzdesi (`evaluateServerCombinedUtilization`)
+- **Değer:** Uzak sunucudaki RAM ve disk kullanım yüzdelerinin bileşik ortalamasını (`combinedUtilPct`) hesaplama.
 
-### 📋 Yeni Öneri 4 (Gelecek Adayı): İkincil Sağlayıcılar Okunabilirlik Oranı (`evaluateSecondaryQuotaReadabilityRatio`)
-- **Değer:** `otherQuotas` içindeki sağlayıcıların kaç tanesinin başarıyla okunabildiğini (`status !== "unknown"`) yüzdesel olarak özetleme.
+### 📋 Yeni Öneri 4 (Gelecek Adayı): Denetim Günlüğü Özet Metni Doluluk Oranı (`evaluateAuditSummaryCompleteness`)
+- **Değer:** `auditTimeline` olaylarının kaç tanesinin anlamlı bir `summary` metnine sahip olduğunu yüzdesel olarak özetleme.
 
-### 📋 Yeni Öneri 5 (Gelecek Adayı): Sahiplik Kuyruğu Proje Çeşitliliği (`evaluateOwnerQueueProjectDiversity`)
-- **Değer:** `owner_needed` maddelerinin kaç farklı projeye dağıldığını ve en çok bekleyen işi olan projeyi özetleme.
+### 📋 Yeni Öneri 5 (Gelecek Adayı): Filo (Traycer) Çalışan Ajan Yoğunluğu Sınıflandırıcısı (`evaluateFleetBusyBand`)
+- **Değer:** Traycer filosundaki aktif çalışan ajan sayısına göre filo yoğunluk bandını (`idle`, `light`, `moderate`, `intense`) sınıflandırma.

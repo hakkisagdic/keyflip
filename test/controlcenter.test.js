@@ -138,7 +138,12 @@ import {
   evaluateTokenImminentExpiryRatio,
   evaluateSchedulerConfiguredJobsRatio,
   evaluatePoolDualWindowSafeRatio,
-  evaluateStatusBoardWarningRowDensity
+  evaluateStatusBoardWarningRowDensity,
+  evaluateServiceOperationalRatio,
+  evaluateSecondaryQuotaReadabilityRatio,
+  evaluateOwnerQueueProjectDiversity,
+  evaluatePoolZeroExhaustionRatio,
+  evaluateStatusBoardSectionOkCoverage
 } from "../src/controlcenter.js";
 import * as daemon from "../src/daemon.js";
 
@@ -2099,4 +2104,57 @@ test("evaluateServerSiteReachabilityRatio, evaluateTokenImminentExpiryRatio, eva
   assert.equal(sbwd.warningDensityPct, 50);
   assert.equal(sbwd.topWarnSectionTitle, "Kotalar");
   assert.equal(sbwd.status, "elevated_warnings");
+});
+
+test("evaluateServiceOperationalRatio, evaluateSecondaryQuotaReadabilityRatio, evaluateOwnerQueueProjectDiversity, evaluatePoolZeroExhaustionRatio, and evaluateStatusBoardSectionOkCoverage work accurately", () => {
+  const sor = evaluateServiceOperationalRatio([
+    { label: "daemon", state: "running" },
+    { label: "sync", state: "scheduled" },
+    { label: "legacy", state: "error" }
+  ]);
+  assert.equal(sor.totalServices, 3);
+  assert.equal(sor.operationalCount, 2);
+  assert.equal(sor.operationalRatioPct, 67);
+  assert.equal(sor.status, "partial_operational");
+
+  const sqrr = evaluateSecondaryQuotaReadabilityRatio([
+    { id: "codex", status: "ok" },
+    { id: "gemini", status: "unknown" }
+  ]);
+  assert.equal(sqrr.totalProviders, 2);
+  assert.equal(sqrr.readableCount, 1);
+  assert.equal(sqrr.readabilityRatioPct, 50);
+  assert.equal(sqrr.status, "partial_readable");
+
+  const oqpd = evaluateOwnerQueueProjectDiversity({
+    ownerNeeded: [
+      { project: "keyflip", summary: "a" },
+      { project: "keyflip", summary: "b" },
+      { project: "polyctl", summary: "c" }
+    ]
+  });
+  assert.equal(oqpd.totalItems, 3);
+  assert.equal(oqpd.distinctProjectCount, 2);
+  assert.equal(oqpd.topProject, "keyflip");
+  assert.equal(oqpd.topProjectCount, 2);
+
+  const pze = evaluatePoolZeroExhaustionRatio([
+    { name: "gmail", enabled: true, fiveHourPct: 70, sevenDayPct: 60 },
+    { name: "yahoo", enabled: true, fiveHourPct: 92, sevenDayPct: 50 }
+  ]);
+  assert.equal(pze.enabledCount, 2);
+  assert.equal(pze.nonExhaustedCount, 1);
+  assert.equal(pze.nonExhaustedRatioPct, 50);
+  assert.equal(pze.status, "some_exhausted");
+
+  const sbsok = evaluateStatusBoardSectionOkCoverage({
+    sections: [
+      { id: "s1", rows: [{ label: "r1", status: "ok" }] },
+      { id: "s2", rows: [{ label: "r2", status: "bad" }] }
+    ]
+  });
+  assert.equal(sbsok.totalSections, 2);
+  assert.equal(sbsok.sectionsWithOkCount, 1);
+  assert.equal(sbsok.coveragePct, 50);
+  assert.equal(sbsok.status, "partial_ok_coverage");
 });

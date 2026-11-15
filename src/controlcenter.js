@@ -6936,3 +6936,200 @@ export function evaluateStatusBoardWarningRowDensity(statusBoard) {
         : `Uyarı satırı yoğunluğu: 0/${totalRows} satır (uyarı yok)`
   };
 }
+
+/**
+ * Computes the count and percentage of monitored local services in running or scheduled operational state.
+ */
+export function evaluateServiceOperationalRatio(services) {
+  const list = Array.isArray(services) ? services : [];
+  if (list.length === 0) {
+    return {
+      totalServices: 0,
+      operationalCount: 0,
+      operationalRatioPct: 0,
+      status: "empty",
+      summary: "Operasyonel servis oranı: izlenen servis yok"
+    };
+  }
+
+  let operationalCount = 0;
+  for (const s of list) {
+    const st = String(s?.state || "").toLowerCase();
+    if (st === "running" || st === "scheduled") {
+      operationalCount += 1;
+    }
+  }
+
+  const operationalRatioPct = Math.round((operationalCount / list.length) * 100);
+  const status = operationalCount === list.length ? "all_operational" : operationalRatioPct >= 50 ? "partial_operational" : "degraded";
+
+  return {
+    totalServices: list.length,
+    operationalCount,
+    operationalRatioPct,
+    status,
+    summary: `Operasyonel servis oranı: ${operationalCount}/${list.length} servis çalışıyor/zamanlanmış (%${operationalRatioPct})`
+  };
+}
+
+/**
+ * Computes how many secondary quota providers in otherQuotas are readable (status !== 'unknown').
+ */
+export function evaluateSecondaryQuotaReadabilityRatio(otherQuotas) {
+  const list = Array.isArray(otherQuotas) ? otherQuotas : [];
+  if (list.length === 0) {
+    return {
+      totalProviders: 0,
+      readableCount: 0,
+      readabilityRatioPct: 0,
+      status: "empty",
+      summary: "İkincil kota okunabilirlik oranı: sağlayıcı yok"
+    };
+  }
+
+  let readableCount = 0;
+  for (const item of list) {
+    const st = String(item?.status || "unknown").toLowerCase();
+    if (st === "ok" || st === "warning" || st === "exhausted") {
+      readableCount += 1;
+    }
+  }
+
+  const readabilityRatioPct = Math.round((readableCount / list.length) * 100);
+  const status = readableCount === list.length ? "all_readable" : readableCount > 0 ? "partial_readable" : "none_readable";
+
+  return {
+    totalProviders: list.length,
+    readableCount,
+    readabilityRatioPct,
+    status,
+    summary: `İkincil kota okunabilirlik oranı: ${readableCount}/${list.length} sağlayıcı okunabildi (%${readabilityRatioPct})`
+  };
+}
+
+/**
+ * Summarizes distinct projects in statusBoard.ownerNeeded and identifies the project with the most pending items.
+ */
+export function evaluateOwnerQueueProjectDiversity(statusBoard) {
+  const items = Array.isArray(statusBoard?.ownerNeeded) ? statusBoard.ownerNeeded : [];
+  if (items.length === 0) {
+    return {
+      totalItems: 0,
+      distinctProjectCount: 0,
+      topProject: null,
+      topProjectCount: 0,
+      status: "empty",
+      summary: "Sahiplik kuyruğu: bekleyen proje yok"
+    };
+  }
+
+  const counts = new Map();
+  for (const item of items) {
+    const proj = String(item?.project || "genel").trim() || "genel";
+    counts.set(proj, (counts.get(proj) || 0) + 1);
+  }
+
+  let topProject = null;
+  let topProjectCount = 0;
+  for (const [proj, cnt] of counts.entries()) {
+    if (cnt > topProjectCount) {
+      topProjectCount = cnt;
+      topProject = proj;
+    }
+  }
+
+  const distinctProjectCount = counts.size;
+  const status = distinctProjectCount >= 3 ? "multi_project" : "focused";
+
+  return {
+    totalItems: items.length,
+    distinctProjectCount,
+    topProject,
+    topProjectCount,
+    status,
+    summary: `Sahiplik çeşitliliği: ${items.length} madde ${distinctProjectCount} projede (en yoğun: ${topProject} · ${topProjectCount})`
+  };
+}
+
+/**
+ * Computes the count and percentage of enabled Claude accounts that are below 90% utilization in BOTH 5h and 7d windows.
+ */
+export function evaluatePoolZeroExhaustionRatio(accounts) {
+  const list = Array.isArray(accounts) ? accounts : [];
+  const enabled = list.filter((a) => a && a.enabled !== false && !a.needsReauth);
+  if (enabled.length === 0) {
+    return {
+      enabledCount: 0,
+      nonExhaustedCount: 0,
+      nonExhaustedRatioPct: 0,
+      exhaustedAccounts: [],
+      status: "empty",
+      summary: "Tükenmemiş hesap oranı: etkin hesap yok"
+    };
+  }
+
+  let nonExhaustedCount = 0;
+  const exhaustedAccounts = [];
+
+  for (const acc of enabled) {
+    const fivePct = typeof acc.fiveHourPct === "number" && Number.isFinite(acc.fiveHourPct) ? acc.fiveHourPct : 0;
+    const sevenPct =
+      typeof acc?.usage?.sevenDay?.pct === "number" && Number.isFinite(acc.usage.sevenDay.pct)
+        ? acc.usage.sevenDay.pct
+        : typeof acc.sevenDayPct === "number" && Number.isFinite(acc.sevenDayPct)
+          ? acc.sevenDayPct
+          : 0;
+    if (fivePct < 90 && sevenPct < 90) {
+      nonExhaustedCount += 1;
+    } else {
+      exhaustedAccounts.push(acc.name || acc.id || "unknown");
+    }
+  }
+
+  const nonExhaustedRatioPct = Math.round((nonExhaustedCount / enabled.length) * 100);
+  const status = nonExhaustedCount === enabled.length ? "all_clear" : nonExhaustedCount > 0 ? "some_exhausted" : "all_exhausted";
+
+  return {
+    enabledCount: enabled.length,
+    nonExhaustedCount,
+    nonExhaustedRatioPct,
+    exhaustedAccounts,
+    status,
+    summary: `Tükenmemiş hesap oranı (<%90 5s/7g): ${nonExhaustedCount}/${enabled.length} hesap (%${nonExhaustedRatioPct})`
+  };
+}
+
+/**
+ * Computes how many Status Board sections have at least one 'ok' row.
+ */
+export function evaluateStatusBoardSectionOkCoverage(statusBoard) {
+  const sections = Array.isArray(statusBoard?.sections) ? statusBoard.sections : [];
+  if (sections.length === 0) {
+    return {
+      totalSections: 0,
+      sectionsWithOkCount: 0,
+      coveragePct: 0,
+      status: "empty",
+      summary: "Bölüm OK kapsamı: bölüm yok"
+    };
+  }
+
+  let sectionsWithOkCount = 0;
+  for (const sec of sections) {
+    const hasOk = (sec?.rows || []).some((r) => String(r?.status || "").toLowerCase() === "ok");
+    if (hasOk) {
+      sectionsWithOkCount += 1;
+    }
+  }
+
+  const coveragePct = Math.round((sectionsWithOkCount / sections.length) * 100);
+  const status = sectionsWithOkCount === sections.length ? "all_sections_have_ok" : coveragePct >= 50 ? "partial_ok_coverage" : "low_ok_coverage";
+
+  return {
+    totalSections: sections.length,
+    sectionsWithOkCount,
+    coveragePct,
+    status,
+    summary: `Bölüm OK kapsamı: ${sectionsWithOkCount}/${sections.length} bölümde sağlıklı satır mevcut (%${coveragePct})`
+  };
+}

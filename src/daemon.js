@@ -962,6 +962,11 @@ async function buildControlCenter(ctx, scheduler, opts) {
   base.schedulerConfiguredJobs = _controlcenter.evaluateSchedulerConfiguredJobsRatio(base.daemon && base.daemon.jobs);
   base.poolDualWindowSafe = _controlcenter.evaluatePoolDualWindowSafeRatio(base.accounts);
   base.statusBoardWarningDensity = _controlcenter.evaluateStatusBoardWarningRowDensity(base.statusBoard);
+  base.serviceOperationalRatio = _controlcenter.evaluateServiceOperationalRatio(base.services);
+  base.secondaryQuotaReadability = _controlcenter.evaluateSecondaryQuotaReadabilityRatio(base.otherQuotas);
+  base.ownerQueueDiversity = _controlcenter.evaluateOwnerQueueProjectDiversity(base.statusBoard);
+  base.poolZeroExhaustion = _controlcenter.evaluatePoolZeroExhaustionRatio(base.accounts);
+  base.statusBoardSectionOkCoverage = _controlcenter.evaluateStatusBoardSectionOkCoverage(base.statusBoard);
   base.compactSummary = _controlcenter.formatDaemonCompactSummary(base);
   base.preferences = _controlcenter.collectPreferences(ctx);
   base.notificationAutostartPosture = _controlcenter.evaluateNotificationAndAutostartPosture(base.preferences, base.config);
