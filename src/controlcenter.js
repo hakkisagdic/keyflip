@@ -2798,3 +2798,347 @@ export function evaluatePoolLoadBalance(accounts = []) {
       : `Dengesiz yük (%${spreadPct} fark): ${minAcct.name} (%${minAcct.sevenPct}) hesabına geçiş önerilir`
   };
 }
+
+
+/**
+ * Lists all degraded (`bad` / `warn`) rows across status board sections sorted chronologically
+ * from oldest to newest by `since` timestamp to highlight chronic issues.
+ */
+export function listAgingStatusBoardIssues(statusBoard, options = {}) {
+  const nowMs =
+    typeof options.nowMs === "function" ? options.nowMs() : typeof options.nowMs === "number" ? options.nowMs : Date.now();
+  const chronicThresholdMin = typeof options.chronicThresholdMin === "number" ? options.chronicThresholdMin : 120;
+  const sections = Array.isArray(statusBoard?.sections) ? statusBoard.sections : [];
+
+  const items = [];
+  for (const sec of sections) {
+    const secId = sec?.id || "section";
+    const secTitle = sec?.title || secId;
+    for (const r of sec?.rows || []) {
+      if (r?.status !== "bad" && r?.status !== "warn") continue;
+      const sinceMs = r?.since ? Date.parse(String(r.since)) : Number.NaN;
+      const ageMinutes =
+        Number.isFinite(sinceMs) && nowMs >= sinceMs ? Math.max(1, Math.round((nowMs - sinceMs) / 60000)) : null;
+      items.push({
+        sectionId: secId,
+        sectionTitle: secTitle,
+        label: String(r?.label ?? ""),
+        value: String(r?.value ?? ""),
+        status: r.status,
+        since: r?.since != null ? String(r.since) : null,
+        ageMinutes,
+        sinceAge: r?.sinceAge || formatSinceAge(r?.since, nowMs),
+        isChronic: ageMinutes !== null && ageMinutes >= chronicThresholdMin
+      });
+    }
+  }
+
+  items.sort((a, b) => {
+    if (a.ageMinutes !== null && b.ageMinutes !== null && b.ageMinutes !== a.ageMinutes) {
+      return b.ageMinutes - a.ageMinutes;
+    }
+    if (a.ageMinutes !== null && b.ageMinutes === null) return -1;
+    if (a.ageMinutes === null && b.ageMinutes !== null) return 1;
+    const rankA = a.status === "bad" ? 0 : 1;
+    const rankB = b.status === "bad" ? 0 : 1;
+    return rankA - rankB;
+  });
+
+  const chronicCount = items.filter((i) => i.isChronic).length;
+  const oldest = items.find((i) => i.ageMinutes !== null) || null;
+  const oldestIssueMinutes = oldest ? oldest.ageMinutes : null;
+
+  let summary = "Açık sorun yok";
+  if (items.length > 0) {
+    if (chronicCount > 0 && oldest) {
+      summary = `Kronik sorun: ${chronicCount} adet (en eski ${oldest.sinceAge || oldest.ageMinutes + " dk"} — ${oldest.label})`;
+    } else if (oldest) {
+      summary = `Açık sorun: ${items.length} adet (en eski ${oldest.sinceAge || oldest.ageMinutes + " dk"} — ${oldest.label})`;
+    } else {
+      summary = `Açık sorun: ${items.length} adet`;
+    }
+  }
+
+  return {
+    totalIssues: items.length,
+    chronicCount,
+    oldestIssueMinutes,
+    items,
+    summary
+  };
+}
+
+/**
+ * Computes the remaining countdown in minutes until failover automatically recovers
+ * or the earliest enabled Claude account resets its 5-hour quota window.
+ */
+export function evaluateFailoverRecoveryCountdown(failoverInfo = {}, accounts = [], options = {}) {
+  const nowMs =
+    typeof options.nowMs === "function" ? options.nowMs() : typeof options.nowMs === "number" ? options.nowMs : Date.now();
+
+  if (!failoverInfo?.engaged) {
+    return {
+      engaged: false,
+      remainingMinutes: null,
+      recoverTarget: null,
+      summary: "Failover beklemede"
+    };
+  }
+
+  const candidates = [];
+
+  if (failoverInfo.recoverAt) {
+    const recMs =
+      typeof failoverInfo.recoverAt === "number"
+        ? failoverInfo.recoverAt
+        : Date.parse(String(failoverInfo.recoverAt));
+    if (Number.isFinite(recMs) && recMs > nowMs) {
+      candidates.push({
+        target: failoverInfo.fromAccount || "recoverAt",
+        ms: recMs
+      });
+    }
+  }
+
+  const enabled = (Array.isArray(accounts) ? accounts : []).filter((a) => a && a.enabled !== false);
+  for (const acct of enabled) {
+    const rawReset = acct?.usage?.fiveHour?.resetsAt || acct?.fiveHourResetsAt || null;
+    if (!rawReset) continue;
+    const rMs = Date.parse(String(rawReset));
+    if (Number.isFinite(rMs) && rMs > nowMs) {
+      candidates.push({
+        target: acct.name,
+        ms: rMs
+      });
+    }
+  }
+
+  if (candidates.length === 0) {
+    return {
+      engaged: true,
+      remainingMinutes: null,
+      recoverTarget: null,
+      summary: "Failover devrede (otomatik dönüş zamanı belirsiz)"
+    };
+  }
+
+  candidates.sort((a, b) => a.ms - b.ms);
+  const earliest = candidates[0];
+  const remainingMinutes = Math.max(1, Math.round((earliest.ms - nowMs) / 60000));
+
+  return {
+    engaged: true,
+    remainingMinutes,
+    recoverTarget: earliest.target,
+    summary: `Havuz dönüşüne ~${remainingMinutes} dk kaldı (${earliest.target} sıfırlanması)`
+  };
+}
+
+/**
+ * Summarizes 24-hour audit event counts (switches, failover toggles, service restarts, config updates)
+ * from events.jsonl.
+ */
+export function summarizeDailyAuditActivity(ctx, options = {}) {
+  const nowMs =
+    typeof options.nowMs === "function"
+      ? options.nowMs()
+      : typeof options.nowMs === "number"
+        ? options.nowMs
+        : typeof ctx?.nowMs === "function"
+          ? ctx.nowMs()
+          : Date.now();
+  const windowHours = typeof options.windowHours === "number" && options.windowHours > 0 ? options.windowHours : 24;
+  const cutoffMs = nowMs - windowHours * 3600000;
+
+  let rawEvents = Array.isArray(options.events) ? options.events : null;
+  if (!rawEvents) {
+    const configDir = options.configDir || ctx?.configDir || path.join(os.homedir(), ".config", "keyflip");
+    const eventsPath = options.eventsPath || path.join(configDir, "events.jsonl");
+    const lines = readTailLines(eventsPath, 65536);
+    rawEvents = [];
+    for (const line of lines) {
+      try {
+        rawEvents.push(JSON.parse(line));
+      } catch {
+        /* ignore malformed line */
+      }
+    }
+  }
+
+  let switchCount = 0;
+  let failoverCount = 0;
+  let serviceRestartCount = 0;
+  let configChangeCount = 0;
+
+  for (const ev of rawEvents) {
+    if (!ev || typeof ev !== "object") continue;
+    const tsMs = ev.ts ? Date.parse(String(ev.ts)) : typeof ev.at === "number" ? ev.at : Number.NaN;
+    if (Number.isFinite(tsMs) && tsMs < cutoffMs) continue;
+    const kind = String(ev.kind || "").toLowerCase();
+    if (kind.includes("switch")) {
+      switchCount += 1;
+    } else if (kind.includes("failover")) {
+      failoverCount += 1;
+    } else if (kind === "service-restart") {
+      serviceRestartCount += 1;
+    } else if (kind === "daemon-config") {
+      configChangeCount += 1;
+    }
+  }
+
+  const totalEvents24h = switchCount + failoverCount + serviceRestartCount + configChangeCount;
+  const parts = [];
+  if (switchCount > 0) parts.push(`${switchCount} geçiş`);
+  if (failoverCount > 0) parts.push(`${failoverCount} failover`);
+  if (serviceRestartCount > 0) parts.push(`${serviceRestartCount} servis`);
+  if (configChangeCount > 0) parts.push(`${configChangeCount} ayar`);
+
+  return {
+    windowHours,
+    totalEvents24h,
+    switchCount,
+    failoverCount,
+    serviceRestartCount,
+    configChangeCount,
+    summary:
+      parts.length > 0
+        ? `Son ${windowHours}s aktivite: ${parts.join(" · ")}`
+        : `Son ${windowHours} saatte denetim olayı yok`
+  };
+}
+
+/**
+ * Evaluates the health, timeliness, and execution latency of the daemon internal job scheduler.
+ */
+export function evaluateDaemonSchedulerHealth(jobs = {}, options = {}) {
+  const nowMs =
+    typeof options.nowMs === "function" ? options.nowMs() : typeof options.nowMs === "number" ? options.nowMs : Date.now();
+  const entries = Object.entries(jobs && typeof jobs === "object" ? jobs : {});
+
+  if (entries.length === 0) {
+    return {
+      score: 100,
+      status: "healthy",
+      totalJobs: 0,
+      healthyJobs: 0,
+      failingJobs: [],
+      overdueJobs: [],
+      slowJobs: [],
+      summary: "Zamanlayıcı verisi yok"
+    };
+  }
+
+  const failingJobs = [];
+  const overdueJobs = [];
+  const slowJobs = [];
+  let healthyJobs = 0;
+
+  for (const [name, meta] of entries) {
+    if (!meta || typeof meta !== "object") continue;
+    let isHealthy = true;
+
+    if (meta.lastResult === "error" || meta.lastResult === "partial-error" || meta.lastError) {
+      failingJobs.push(name);
+      isHealthy = false;
+    }
+
+    const ivSec = typeof meta.intervalSeconds === "number" ? meta.intervalSeconds : 0;
+    if (ivSec > 0 && meta.lastRunAt && name !== "usage") {
+      const lastMs = Date.parse(String(meta.lastRunAt));
+      if (Number.isFinite(lastMs) && nowMs - lastMs > ivSec * 2.5 * 1000) {
+        overdueJobs.push(name);
+        isHealthy = false;
+      }
+    }
+
+    if (typeof meta.lastDurationMs === "number" && meta.lastDurationMs > 15000) {
+      slowJobs.push(name);
+    }
+
+    if (isHealthy) {
+      healthyJobs += 1;
+    }
+  }
+
+  const totalJobs = entries.length;
+  let score = totalJobs > 0 ? Math.round((healthyJobs / totalJobs) * 100) : 100;
+  if (slowJobs.length > 0) {
+    score = Math.max(0, score - slowJobs.length * 5);
+  }
+  const status = failingJobs.length > 0 ? "critical" : overdueJobs.length > 0 || slowJobs.length > 0 ? "degraded" : "healthy";
+
+  const issues = [];
+  if (failingJobs.length > 0) issues.push(`${failingJobs.join(", ")} hatalı`);
+  if (overdueJobs.length > 0) issues.push(`${overdueJobs.join(", ")} gecikti`);
+  if (slowJobs.length > 0) issues.push(`${slowJobs.join(", ")} yavaş`);
+
+  const summary =
+    issues.length > 0
+      ? `Zamanlayıcı uyarısı: ${issues.join(" · ")}`
+      : `Zamanlayıcı sağlıklı (${healthyJobs}/${totalJobs} iş zamanında)`;
+
+  return {
+    score,
+    status,
+    totalJobs,
+    healthyJobs,
+    failingJobs,
+    overdueJobs,
+    slowJobs,
+    summary
+  };
+}
+
+/**
+ * Detects enabled Claude accounts whose 7-day quota window resets within 48 hours
+ * while still having substantial unused weekly quota ("Use-Before-Weekly-Reset" Advisor).
+ */
+export function evaluateWeeklyUnclaimedQuota(accounts = [], options = {}) {
+  const nowMs =
+    typeof options.nowMs === "function" ? options.nowMs() : typeof options.nowMs === "number" ? options.nowMs : Date.now();
+  const windowHours = typeof options.windowHours === "number" && options.windowHours > 0 ? options.windowHours : 48;
+  const maxUsedPct = typeof options.maxUsedPct === "number" ? options.maxUsedPct : 65;
+
+  const enabled = (Array.isArray(accounts) ? accounts : []).filter((a) => a && a.enabled !== false);
+  const candidates = [];
+
+  for (const acct of enabled) {
+    const seven = acct?.usage?.sevenDay;
+    if (!seven || typeof seven.pct !== "number" || !seven.resetsAt) continue;
+    const resetMs = Date.parse(String(seven.resetsAt));
+    if (!Number.isFinite(resetMs) || resetMs <= nowMs) continue;
+    const hoursUntilReset = Math.round(((resetMs - nowMs) / 3600000) * 10) / 10;
+    if (hoursUntilReset <= windowHours && seven.pct <= maxUsedPct) {
+      const unclaimedPct = Math.round((100 - seven.pct) * 10) / 10;
+      const estimatedUnclaimedUsd = Math.round((unclaimedPct / 100) * 15 * 100) / 100;
+      candidates.push({
+        name: acct.name,
+        usedPct: seven.pct,
+        unclaimedPct,
+        hoursUntilReset,
+        estimatedUnclaimedUsd
+      });
+    }
+  }
+
+  candidates.sort((a, b) => {
+    if (a.hoursUntilReset !== b.hoursUntilReset) return a.hoursUntilReset - b.hoursUntilReset;
+    return b.unclaimedPct - a.unclaimedPct;
+  });
+
+  const totalUnclaimedPct = Math.round(candidates.reduce((acc, c) => acc + c.unclaimedPct, 0) * 10) / 10;
+  const estimatedUnclaimedUsd = Math.round(candidates.reduce((acc, c) => acc + c.estimatedUnclaimedUsd, 0) * 100) / 100;
+  const top = candidates[0] || null;
+
+  return {
+    hasUnclaimed: candidates.length > 0,
+    candidateCount: candidates.length,
+    priorityAccount: top ? top.name : null,
+    totalUnclaimedPct,
+    estimatedUnclaimedUsd,
+    candidates,
+    summary: top
+      ? `Haftalık sıfırlanmadan kullan: ${top.name} (%${top.unclaimedPct} boş, ~${Math.round(top.hoursUntilReset)} saat kaldı)`
+      : "Sıfırlanma öncesi atıl haftalık kota yok"
+  };
+}

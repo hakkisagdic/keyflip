@@ -43,7 +43,12 @@ import {
   recommendAdaptiveAutoswitchThreshold,
   summarizeSectionHealthBreakdown,
   buildRemediationPlaybook,
-  evaluatePoolLoadBalance
+  evaluatePoolLoadBalance,
+  listAgingStatusBoardIssues,
+  evaluateFailoverRecoveryCountdown,
+  summarizeDailyAuditActivity,
+  evaluateDaemonSchedulerHealth,
+  evaluateWeeklyUnclaimedQuota
 } from "../src/controlcenter.js";
 import * as daemon from "../src/daemon.js";
 
@@ -867,4 +872,80 @@ test("evaluateOAuthRefreshReliability, recommendAdaptiveAutoswitchThreshold, sum
   assert.equal(loadBal.balanced, false);
   assert.equal(loadBal.spreadPct, 70);
   assert.equal(loadBal.underutilizedAccount, "yahoo");
+});
+
+
+test("listAgingStatusBoardIssues, evaluateFailoverRecoveryCountdown, summarizeDailyAuditActivity, evaluateDaemonSchedulerHealth, and evaluateWeeklyUnclaimedQuota work accurately", () => {
+  const nowMs = Date.parse("2026-11-15T10:00:00Z");
+
+  const aging = listAgingStatusBoardIssues(
+    {
+      sections: [
+        {
+          id: "infra",
+          title: "Altyapı",
+          rows: [
+            { label: "Redis", value: "Yavaş", status: "warn", since: "2026-11-15T09:30:00Z" },
+            { label: "Postgres", value: "Çöktü", status: "bad", since: "2026-11-15T06:00:00Z" },
+            { label: "Nginx", value: "200 OK", status: "ok" }
+          ]
+        }
+      ]
+    },
+    { nowMs }
+  );
+  assert.equal(aging.totalIssues, 2);
+  assert.equal(aging.chronicCount, 1);
+  assert.equal(aging.oldestIssueMinutes, 240);
+  assert.equal(aging.items[0].label, "Postgres");
+
+  const foCountdown = evaluateFailoverRecoveryCountdown(
+    { engaged: true, fromAccount: "gmail" },
+    [
+      { name: "gmail", enabled: true, usage: { fiveHour: { pct: 98, resetsAt: "2026-11-15T10:35:00Z" } } },
+      { name: "yahoo", enabled: true, usage: { fiveHour: { pct: 96, resetsAt: "2026-11-15T11:15:00Z" } } }
+    ],
+    { nowMs }
+  );
+  assert.equal(foCountdown.engaged, true);
+  assert.equal(foCountdown.remainingMinutes, 35);
+  assert.equal(foCountdown.recoverTarget, "gmail");
+
+  const dailyAct = summarizeDailyAuditActivity(null, {
+    nowMs,
+    events: [
+      { kind: "daemon-switch", ts: "2026-11-15T08:00:00Z" },
+      { kind: "autoswitch", ts: "2026-11-15T09:00:00Z" },
+      { kind: "daemon-failover-on", ts: "2026-11-15T09:15:00Z" },
+      { kind: "service-restart", ts: "2026-11-15T09:30:00Z" },
+      { kind: "daemon-switch", ts: "2026-11-13T08:00:00Z" } // older than 24h
+    ]
+  });
+  assert.equal(dailyAct.switchCount, 2);
+  assert.equal(dailyAct.failoverCount, 1);
+  assert.equal(dailyAct.serviceRestartCount, 1);
+  assert.equal(dailyAct.totalEvents24h, 4);
+
+  const sched = evaluateDaemonSchedulerHealth(
+    {
+      autoswitch: { intervalSeconds: 120, lastRunAt: "2026-11-15T09:59:00Z", lastResult: "ok", lastDurationMs: 400 },
+      refresh: { intervalSeconds: 900, lastRunAt: "2026-11-15T08:00:00Z", lastResult: "ok", lastDurationMs: 500 },
+      "conv-index": { intervalSeconds: 1800, lastRunAt: "2026-11-15T09:50:00Z", lastResult: "error", lastDurationMs: 1200 }
+    },
+    { nowMs }
+  );
+  assert.equal(sched.status, "critical");
+  assert.deepEqual(sched.failingJobs, ["conv-index"]);
+  assert.deepEqual(sched.overdueJobs, ["refresh"]);
+
+  const unclaimed = evaluateWeeklyUnclaimedQuota(
+    [
+      { name: "gmail", enabled: true, usage: { sevenDay: { pct: 85, resetsAt: "2026-11-16T04:00:00Z" } } },
+      { name: "yahoo", enabled: true, usage: { sevenDay: { pct: 30, resetsAt: "2026-11-16T02:00:00Z" } } }
+    ],
+    { nowMs }
+  );
+  assert.equal(unclaimed.hasUnclaimed, true);
+  assert.equal(unclaimed.priorityAccount, "yahoo");
+  assert.equal(unclaimed.candidates[0].unclaimedPct, 70);
 });

@@ -33,6 +33,11 @@ public struct ControlCenterPayload: Codable {
     public var adaptiveThreshold: AdaptiveThresholdSummary?
     public var remediationPlaybook: RemediationPlaybookSummary?
     public var poolLoadBalance: PoolLoadBalanceSummary?
+    public var agingIssues: AgingStatusBoardIssuesSummary?
+    public var failoverRecovery: FailoverRecoveryCountdownSummary?
+    public var dailyAuditActivity: DailyAuditActivitySummary?
+    public var schedulerHealth: DaemonSchedulerHealthSummary?
+    public var weeklyUnclaimedQuota: WeeklyUnclaimedQuotaSummary?
     public var auditTimeline: [AuditEventItem]?
     public var markdownReport: String?
     public var preferences: PreferencesSummary?
@@ -71,6 +76,11 @@ public struct ControlCenterPayload: Codable {
         adaptiveThreshold: AdaptiveThresholdSummary? = nil,
         remediationPlaybook: RemediationPlaybookSummary? = nil,
         poolLoadBalance: PoolLoadBalanceSummary? = nil,
+        agingIssues: AgingStatusBoardIssuesSummary? = nil,
+        failoverRecovery: FailoverRecoveryCountdownSummary? = nil,
+        dailyAuditActivity: DailyAuditActivitySummary? = nil,
+        schedulerHealth: DaemonSchedulerHealthSummary? = nil,
+        weeklyUnclaimedQuota: WeeklyUnclaimedQuotaSummary? = nil,
         auditTimeline: [AuditEventItem]? = [],
         markdownReport: String? = nil,
         preferences: PreferencesSummary? = nil,
@@ -108,6 +118,11 @@ public struct ControlCenterPayload: Codable {
         self.adaptiveThreshold = adaptiveThreshold
         self.remediationPlaybook = remediationPlaybook
         self.poolLoadBalance = poolLoadBalance
+        self.agingIssues = agingIssues
+        self.failoverRecovery = failoverRecovery
+        self.dailyAuditActivity = dailyAuditActivity
+        self.schedulerHealth = schedulerHealth
+        self.weeklyUnclaimedQuota = weeklyUnclaimedQuota
         self.auditTimeline = auditTimeline
         self.markdownReport = markdownReport
         self.preferences = preferences
@@ -1191,5 +1206,74 @@ public struct PoolLoadBalanceSummary: Codable {
     public var score: Int
     public var underutilizedAccount: String?
     public var overloadedAccount: String?
+    public var summary: String
+}
+
+
+public struct AgingIssueItem: Codable, Identifiable {
+    public var id: String { "\(sectionId)::\(label)" }
+    public var sectionId: String
+    public var sectionTitle: String?
+    public var label: String
+    public var value: String
+    public var status: String
+    public var since: String?
+    public var ageMinutes: Int?
+    public var sinceAge: String?
+    public var isChronic: Bool?
+}
+
+public struct AgingStatusBoardIssuesSummary: Codable {
+    public var totalIssues: Int
+    public var chronicCount: Int
+    public var oldestIssueMinutes: Int?
+    public var items: [AgingIssueItem]?
+    public var summary: String
+}
+
+public struct FailoverRecoveryCountdownSummary: Codable {
+    public var engaged: Bool
+    public var remainingMinutes: Int?
+    public var recoverTarget: String?
+    public var summary: String
+}
+
+public struct DailyAuditActivitySummary: Codable {
+    public var windowHours: Int?
+    public var totalEvents24h: Int
+    public var switchCount: Int
+    public var failoverCount: Int
+    public var serviceRestartCount: Int
+    public var configChangeCount: Int?
+    public var summary: String
+}
+
+public struct DaemonSchedulerHealthSummary: Codable {
+    public var score: Int
+    public var status: String
+    public var totalJobs: Int
+    public var healthyJobs: Int
+    public var failingJobs: [String]?
+    public var overdueJobs: [String]?
+    public var slowJobs: [String]?
+    public var summary: String
+}
+
+public struct WeeklyUnclaimedCandidateItem: Codable, Identifiable {
+    public var id: String { name }
+    public var name: String
+    public var usedPct: Double
+    public var unclaimedPct: Double
+    public var hoursUntilReset: Double
+    public var estimatedUnclaimedUsd: Double?
+}
+
+public struct WeeklyUnclaimedQuotaSummary: Codable {
+    public var hasUnclaimed: Bool
+    public var candidateCount: Int
+    public var priorityAccount: String?
+    public var totalUnclaimedPct: Double?
+    public var estimatedUnclaimedUsd: Double?
+    public var candidates: [WeeklyUnclaimedCandidateItem]?
     public var summary: String
 }

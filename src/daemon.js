@@ -849,6 +849,18 @@ async function buildControlCenter(ctx, scheduler, opts) {
     statusBoard: base.statusBoard
   });
   base.poolLoadBalance = _controlcenter.evaluatePoolLoadBalance(base.accounts);
+  base.agingIssues = _controlcenter.listAgingStatusBoardIssues(base.statusBoard, { nowMs: opts.nowMs || ctx.nowMs });
+  base.failoverRecovery = _controlcenter.evaluateFailoverRecoveryCountdown(base.failover, base.accounts, {
+    nowMs: opts.nowMs || ctx.nowMs
+  });
+  base.dailyAuditActivity = _controlcenter.summarizeDailyAuditActivity(ctx, {
+    configDir: ctx.configDir,
+    nowMs: opts.nowMs || ctx.nowMs
+  });
+  base.schedulerHealth = _controlcenter.evaluateDaemonSchedulerHealth(base.jobs, { nowMs: opts.nowMs || ctx.nowMs });
+  base.weeklyUnclaimedQuota = _controlcenter.evaluateWeeklyUnclaimedQuota(base.accounts, {
+    nowMs: opts.nowMs || ctx.nowMs
+  });
   base.compactSummary = _controlcenter.formatDaemonCompactSummary(base);
   base.preferences = _controlcenter.collectPreferences(ctx);
   base.markdownReport = _controlcenter.buildControlCenterMarkdown(base);

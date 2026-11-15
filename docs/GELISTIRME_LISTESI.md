@@ -1,6 +1,6 @@
 # Geliştirme Listesi ve Yaratıcı Özellik Önerileri (`GELISTIRME_LISTESI.md`)
 
-Bu liste, `docs/RAKIP_ANALIZI.md` sonucunda belirlenen tüm özelliklerin tamamlanma durumunu ve onuncu turda önerilen **beş yeni yaratıcı özelliği** (en değerli ikisi uygulanmış olarak) içerir.
+Bu liste, `docs/RAKIP_ANALIZI.md` sonucunda belirlenen tüm özelliklerin tamamlanma durumunu ve on birinci turda önerilen **beş yeni yaratıcı özelliği** (en değerli ikisi uygulanmış olarak) içerir.
 
 ---
 
@@ -50,23 +50,29 @@ Bu liste, `docs/RAKIP_ANALIZI.md` sonucunda belirlenen tüm özelliklerin tamaml
 - [x] **Gün İçi Dinamik Eşik Önericisi (`recommendAdaptiveAutoswitchThreshold`):** Darboğaz saat penceresine (`bottleneckWindow`) ve aktif tüketim hızına (`burnRateRatio`) göre optimal `autoswitch.threshold` değerini (`%85` vs `%95`) önerme.
 - [x] **Durum Panosu Bölüm Bazlı Sağlık Özeti (`summarizeSectionHealthBreakdown`):** Her durum panosu bölümünün (`sections`) kendi ağırlıklı sağlık yüzdesini ve en eski sorun yaşını (`oldestIssueMinutes`) hesaplama.
 
+- [x] **Otomatik Sorun Giderme ve Müdahale Eylem Planı (`buildRemediationPlaybook`):** Açık sorunlar için en kritik 1–3 müdahale adımını ve CLI komutunu oluşturup `HESAPLAR` bölümünde gösterme.
+- [x] **Hesap Havuzu 7 Günlük Yük Dengesi ve Adillik Endeksi (`evaluatePoolLoadBalance`):** Etkin abonelikler arasındaki 7 günlük kota kullanım farkını (`spreadPct`) analiz ederek atıl kalan hesaba geçiş önerme.
+- [x] **Durum Panosu Kronolojik Yaşlanan Sorunlar Listesi (`listAgingStatusBoardIssues`):** Tüm bölümlerdeki `bad` ve `warn` satırlarını `since` zaman damgasına göre en eskiden en yeniye sıralayarak `>=120 dk` kronik sorunları öne çıkarma.
+- [x] **Yedek Zincir (Failover) Otomatik Kurtarma Zamanlayıcı Özeti (`evaluateFailoverRecoveryCountdown`):** Failover devredeyken `recoverAt` zamanına veya en erken 5 saatlik hesap sıfırlanmasına kalan dakikayı (`Havuz dönüşüne ~35 dk kaldı`) hesaplama.
+- [x] **Günlük Denetim Olayları Yoğunluk Özeti (`summarizeDailyAuditActivity`):** Son 24 saat içindeki toplam hesap geçişi, failover tetiklemesi ve servis yeniden başlatma sayılarını tek satırlık aktivite özetinde toplama.
+
 ---
 
 ## 2. Listedeki İşler Tamamlandığı İçin Önerilen Beş Yeni Yaratıcı Özellik (En Değerli İkisi Uygulandı)
 
-### ✅ Yeni Öneri 1 (UYGULANDI): Otomatik Sorun Giderme ve Müdahale Eylem Planı (`buildRemediationPlaybook`)
-- **Değer:** Süresi dolmuş OAuth belirteci, aşım sınırındaki Failover harcama tavanı, hata durumundaki yerel servis veya `bad` durum panosu satırı tespit edildiğinde en kritik 1–3 müdahale adımını ve tam CLI komutunu (`Önerilen eylem (3): yahoo OAuth belirtecini yenile`) otomatik oluşturup `HESAPLAR` bölümünde gösterir.
-- **Uygulama:** `src/controlcenter.js` (`buildRemediationPlaybook`), `src/daemon.js` (`base.remediationPlaybook`), `Models.swift` (`RemediationPlaybookSummary`, `RemediationStepItem`) ve `ControlCenterView.swift`.
+### ✅ Yeni Öneri 1 (UYGULANDI): Daemon İş Zamanlayıcı Gecikme ve Tutarlılık Analizcisi (`evaluateDaemonSchedulerHealth`)
+- **Değer:** `com.keyflip.daemon` içindeki periyodik işlerin (`autoswitch`, `refresh`, `surface-refresh`, `conv-index`) son çalışma zamanlarını, sürelerini (`lastDurationMs`) ve hata durumlarını (`lastResult`) denetleyerek geciken (`overdueJobs`), yavaşlayan (`slowJobs`) veya hata veren (`failingJobs`) işleri anında `SERVİSLER` bölümünde (`Zamanlayıcı sağlıklı (4/4 iş zamanında)`) raporlar.
+- **Uygulama:** `src/controlcenter.js` (`evaluateDaemonSchedulerHealth`), `src/daemon.js` (`base.schedulerHealth`), `Models.swift` (`DaemonSchedulerHealthSummary`) ve `ControlCenterView.swift`.
 
-### ✅ Yeni Öneri 2 (UYGULANDI): Hesap Havuzu 7 Günlük Yük Dengesi ve Adillik Endeksi (`evaluatePoolLoadBalance`)
-- **Değer:** Etkin Claude abonelikleri arasındaki 7 günlük kota kullanım farkını (`spreadPct`) analiz ederek bir hesap `%90` doluyken diğerinin `%20`'de atıl kalmasını tespit eder (`Dengesiz yük (%70 fark): yahoo (%20) hesabına geçiş önerilir`) ve dengeli tüketimi teşvik eder.
-- **Uygulama:** `src/controlcenter.js` (`evaluatePoolLoadBalance`), `src/daemon.js` (`base.poolLoadBalance`), `Models.swift` (`PoolLoadBalanceSummary`) ve `ControlCenterView.swift`.
+### ✅ Yeni Öneri 2 (UYGULANDI): Haftalık Abonelik İsraf Önleme / "Sıfırlanmadan Tüket" Hesaplayıcısı (`evaluateWeeklyUnclaimedQuota`)
+- **Değer:** 7 günlük kota penceresinin sıfırlanmasına `<=48 saat` kalmış olmasına rağmen hâlâ `%35+` boş haftalık kapasitesi bulunan etkin Claude aboneliklerini tespit eder (`Haftalık sıfırlanmadan kullan: yahoo (%70 boş, ~16 saat kaldı)`), eşdeğer dolar değerini (`estimatedUnclaimedUsd`) hesaplar ve sıfırlanma öncesi bu kapasitenin yanmasını önler.
+- **Uygulama:** `src/controlcenter.js` (`evaluateWeeklyUnclaimedQuota`), `src/daemon.js` (`base.weeklyUnclaimedQuota`), `Models.swift` (`WeeklyUnclaimedQuotaSummary`, `WeeklyUnclaimedCandidateItem`) ve `ControlCenterView.swift`.
 
-### 📋 Yeni Öneri 3 (Gelecek Adayı): Durum Panosu Kronolojik Yaşlanan Sorunlar Listesi (`listAgingStatusBoardIssues`)
-- **Değer:** Tüm bölümlerdeki `bad` ve `warn` satırlarını `since` zaman damgasına göre en eskiden en yeniye doğru sıralayarak uzun süredir açık kalan ("kronik") sorunları öne çıkarma.
+### 📋 Yeni Öneri 3 (Gelecek Adayı): Durum Panosu Sahiplik Bekleyen İşleri Proje Bazlı Gruplama (`groupOwnerNeededByProject`)
+- **Değer:** `owner_needed` maddelerini `project` adına göre gruplayarak hangi projede kaç adet acil veya normal sahiplik kararı biriktiğini özetleme.
 
-### 📋 Yeni Öneri 4 (Gelecek Adayı): Yedek Zincir (Failover) Otomatik Kurtarma Zamanlayıcı Özeti (`evaluateFailoverRecoveryCountdown`)
-- **Değer:** Failover devredeyken `recoverAt` zamanına veya birincil hesabın 5 saatlik sıfırlanma zamanına kaç dakika kaldığını hesaplayarak abonelik havuzuna dönüş geri sayımı sunma.
+### 📋 Yeni Öneri 4 (Gelecek Adayı): Uzak Sunucu Kaynak Baskısı (CPU/RAM/Disk) Analizcisi (`evaluateServerResourcePressure`)
+- **Değer:** `server-status.json` içindeki `load`, `memory` ve `disk` metriklerini sayısal olarak ayrıştırarak disk doluluğu veya bellek baskısı kritik eşiğe ulaşmadan önce erken uyarı üretme.
 
-### 📋 Yeni Öneri 5 (Gelecek Adayı): Günlük Denetim Olayları Yoğunluk Özeti (`summarizeDailyAuditActivity`)
-- **Değer:** Son 24 saat içindeki toplam hesap geçişi, failover tetiklemesi ve servis yeniden başlatma sayılarını tek satırlık aktivite özetinde toplama.
+### 📋 Yeni Öneri 5 (Gelecek Adayı): Masaüstü Otomatik Yeniden Başlatma Hazırlık ve Güvenlik Kontrolü (`evaluateDesktopRestartSafety`)
+- **Değer:** Bekleyen bir Claude Desktop yeniden başlatma isteğinin Odak/Toplantı ertelemesi (`desktop.snoozeUntil`) nedeniyle mi yoksa aktif oturum nedeniyle mi beklediğini ve kalan erteleme süresini dakika cinsinden raporlama.

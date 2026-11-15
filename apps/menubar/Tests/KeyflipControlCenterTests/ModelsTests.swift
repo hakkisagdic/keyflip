@@ -274,6 +274,21 @@ public enum ModelsTestSuite {
         let degraded = board.newlyDegradedRows(comparedTo: cleanPrev)
         precondition(degraded.count == 1, "newlyDegradedRows must detect 1 newly bad row")
 
+        // Round 11 decoding check for DaemonSchedulerHealthSummary & WeeklyUnclaimedQuotaSummary
+        let r11Json = """
+        {
+          "score": 100,
+          "status": "healthy",
+          "totalJobs": 4,
+          "healthyJobs": 4,
+          "failingJobs": [],
+          "overdueJobs": [],
+          "summary": "Zamanlayıcı sağlıklı (4/4 iş zamanında)"
+        }
+        """.data(using: .utf8)!
+        let r11Decoded = try JSONDecoder().decode(DaemonSchedulerHealthSummary.self, from: r11Json)
+        precondition(r11Decoded.score == 100 && r11Decoded.status == "healthy", "DaemonSchedulerHealthSummary must decode accurately")
+
         // Urgent owner_needed classification test
         let urgentOwner = StatusBoardOwnerItem(project: "prod", text: "ACİL müdahale")
         let normalOwner = StatusBoardOwnerItem(project: "docs", text: "Not ekle")

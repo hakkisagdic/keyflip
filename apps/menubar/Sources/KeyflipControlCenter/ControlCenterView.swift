@@ -564,6 +564,18 @@ public struct ControlCenterView: View {
                         }
                     }
 
+                    if let wuq = viewModel.payload.weeklyUnclaimedQuota, wuq.hasUnclaimed {
+                        HStack(spacing: 5) {
+                            Image(systemName: "hourglass.bottomhalf.filled")
+                                .font(.system(size: 10))
+                                .foregroundColor(.accentColor)
+                            Text(wuq.summary)
+                                .font(.system(size: 10, weight: .medium))
+                                .foregroundColor(.accentColor)
+                                .lineLimit(1)
+                        }
+                    }
+
                     if let bw = viewModel.payload.bottleneckWindow, !bw.summary.isEmpty {
                         HStack(spacing: 5) {
                             Image(systemName: "gauge.with.dots.needle.67percent")
@@ -745,6 +757,12 @@ public struct ControlCenterView: View {
                         .font(.system(size: 10))
                         .foregroundColor(.secondary)
                 }
+
+                if let rec = viewModel.payload.failoverRecovery, rec.engaged {
+                    Text(rec.summary)
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundColor(.accentColor)
+                }
             }
         }
     }
@@ -793,6 +811,17 @@ public struct ControlCenterView: View {
                     .foregroundColor(.secondary)
             } else {
                 VStack(alignment: .leading, spacing: 8) {
+                    if let sch = viewModel.payload.schedulerHealth, !sch.summary.isEmpty {
+                        HStack(spacing: 5) {
+                            Image(systemName: sch.status == "healthy" ? "timer" : "exclamationmark.triangle.fill")
+                                .font(.system(size: 10))
+                                .foregroundColor(sch.status == "healthy" ? .secondary : .orange)
+                            Text(sch.summary)
+                                .font(.system(size: 10))
+                                .foregroundColor(sch.status == "healthy" ? .secondary : .orange)
+                                .lineLimit(1)
+                        }
+                    }
                     ForEach(services) { svc in
                         VStack(alignment: .leading, spacing: 3) {
                             HStack {
