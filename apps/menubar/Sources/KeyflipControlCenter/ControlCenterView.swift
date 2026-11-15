@@ -300,7 +300,19 @@ public struct ControlCenterView: View {
                 .background(Color.secondary.opacity(0.08))
                 .cornerRadius(4)
 
-                if !displayedOwners.isEmpty {
+                if let sbr = viewModel.payload.statusBoardWarnBadRatio, sbr.totalProblemRows > 0 {
+                    HStack(spacing: 5) {
+                        Image(systemName: "exclamationmark.I")
+                            .font(.system(size: 9))
+                            .foregroundColor(sbr.badCount > 0 ? .red : .orange)
+                        Text(sbr.summary)
+                            .font(.system(size: 9, design: .monospaced))
+                            .foregroundColor(.secondary)
+                            .lineLimit(1)
+                    }
+                }
+
+                                if !displayedOwners.isEmpty {
                     VStack(alignment: .leading, spacing: 4) {
                         HStack(spacing: 5) {
                             Image(systemName: "bell.badge.fill")
@@ -666,7 +678,31 @@ public struct ControlCenterView: View {
                         }
                     }
 
-                    if let wpr = viewModel.payload.weeklyPoolReserve, wpr.enabledCount > 0 {
+                    if let paf = viewModel.payload.poolAvgFiveHourUtil, paf.enabledCount > 0 {
+                        HStack(spacing: 5) {
+                            Image(systemName: "chart.bar.xaxis")
+                                .font(.system(size: 10))
+                                .foregroundColor(paf.status == "high" ? .orange : .secondary)
+                            Text(paf.summary)
+                                .font(.system(size: 10))
+                                .foregroundColor(paf.status == "high" ? .orange : .secondary)
+                                .lineLimit(1)
+                        }
+                    }
+
+                    if let avs = viewModel.payload.activeVsStandbySpread, avs.recommendEarlySwitch {
+                        HStack(spacing: 5) {
+                            Image(systemName: "arrow.left.arrow.right.circle.fill")
+                                .font(.system(size: 10))
+                                .foregroundColor(.orange)
+                            Text(avs.summary)
+                                .font(.system(size: 10, weight: .medium))
+                                .foregroundColor(.orange)
+                                .lineLimit(1)
+                        }
+                    }
+
+                                        if let wpr = viewModel.payload.weeklyPoolReserve, wpr.enabledCount > 0 {
                         HStack(spacing: 5) {
                             Image(systemName: "battery.75")
                                 .font(.system(size: 10))

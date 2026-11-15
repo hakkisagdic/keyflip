@@ -471,6 +471,20 @@ public enum ModelsTestSuite {
         precondition(!board.isStale(now: freshNow), "15-minute-old board must NOT be stale")
         precondition(board.isStale(now: staleNow), "25-minute-old board MUST be stale (>20 min)")
 
+        // Round 23 struct decoding check
+        let r23Json = """
+        {
+          "enabledCount": 2,
+          "avgFiveHourPct": 42.5,
+          "maxFiveHourPct": 65.0,
+          "minFiveHourPct": 20.0,
+          "status": "low",
+          "summary": "5s havuz ortalaması: %42.5 kullanım"
+        }
+        """.data(using: .utf8)!
+        let r23Decoded = try JSONDecoder().decode(PoolAverageFiveHourUtilizationSummary.self, from: r23Json)
+        precondition(r23Decoded.enabledCount == 2 && r23Decoded.avgFiveHourPct == 42.5, "PoolAverageFiveHourUtilizationSummary must decode")
+
         // Missing file must return nil so section is hidden
         precondition(StatusBoardPayload.load(fromFile: "/tmp/definitely-missing-status-board-99999.json") == nil, "missing file must return nil")
     }

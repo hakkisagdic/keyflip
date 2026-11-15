@@ -103,7 +103,12 @@ import {
   evaluateFailoverEngagementFrequency,
   evaluateSecondarySourceDiversity,
   evaluateWeeklyPoolReserveCapacity,
-  evaluateStatusBoardSinceCoverage
+  evaluateStatusBoardSinceCoverage,
+  evaluateActiveVsStandbySpread,
+  evaluateServerSafetyHeadroom,
+  summarizeAuditCategoryBreakdown,
+  evaluatePoolAverageFiveHourUtilization,
+  evaluateStatusBoardWarningToBadRatio
 } from "../src/controlcenter.js";
 import * as daemon from "../src/daemon.js";
 
@@ -1662,4 +1667,71 @@ test("summarizeServiceProcessCoverage, evaluateFailoverEngagementFrequency, eval
   assert.equal(sbsc.coveragePct, 50);
   assert.equal(sbsc.maxDurationMinutes, 90);
   assert.equal(sbsc.longestTrackedLabel, "Gateway");
+});
+
+test("evaluateActiveVsStandbySpread, evaluateServerSafetyHeadroom, summarizeAuditCategoryBreakdown, evaluatePoolAverageFiveHourUtilization, and evaluateStatusBoardWarningToBadRatio work accurately", () => {
+  const avs = evaluateActiveVsStandbySpread([
+    { name: "gmail", isActive: true, enabled: true, fiveHourPct: 78 },
+    { name: "yahoo", isActive: false, enabled: true, fiveHourPct: 22 },
+    { name: "work", isActive: false, enabled: true, fiveHourPct: 45 }
+  ]);
+  assert.equal(avs.activeAccount, "gmail");
+  assert.equal(avs.lowestStandbyAccount, "yahoo");
+  assert.equal(avs.spreadPct, 56);
+  assert.equal(avs.recommendEarlySwitch, true);
+  assert.equal(avs.status, "opportunity");
+
+  const ssh = evaluateServerSafetyHeadroom({
+    reachable: true,
+    memoryUsedPct: 68,
+    diskUsedPct: 81
+  });
+  assert.equal(ssh.reachable, true);
+  assert.equal(ssh.freeMemoryPct, 32);
+  assert.equal(ssh.freeDiskPct, 19);
+  assert.equal(ssh.memorySafetyCushionPct, 22);
+  assert.equal(ssh.diskSafetyCushionPct, 9);
+  assert.equal(ssh.tightestResource, "disk");
+  assert.equal(ssh.status, "tight");
+
+  const acb = summarizeAuditCategoryBreakdown([
+    { category: "switch", type: "account_switch" },
+    { category: "switch", type: "account_switch" },
+    { category: "failover", type: "failover_engaged" },
+    { category: "service", type: "service_restart" }
+  ]);
+  assert.equal(acb.totalEvents, 4);
+  assert.equal(acb.switchCount, 2);
+  assert.equal(acb.failoverCount, 1);
+  assert.equal(acb.serviceCount, 1);
+  assert.equal(acb.dominantCategory, "switch");
+
+  const paf = evaluatePoolAverageFiveHourUtilization([
+    { name: "gmail", enabled: true, fiveHourPct: 60 },
+    { name: "yahoo", enabled: true, fiveHourPct: 20 }
+  ]);
+  assert.equal(paf.enabledCount, 2);
+  assert.equal(paf.avgFiveHourPct, 40);
+  assert.equal(paf.maxFiveHourPct, 60);
+  assert.equal(paf.minFiveHourPct, 20);
+  assert.equal(paf.status, "low");
+
+  const sbr = evaluateStatusBoardWarningToBadRatio({
+    sections: [
+      {
+        id: "s1",
+        rows: [
+          { label: "r1", status: "warn" },
+          { label: "r2", status: "warn" },
+          { label: "r3", status: "bad" },
+          { label: "r4", status: "ok" }
+        ]
+      }
+    ]
+  });
+  assert.equal(sbr.warnCount, 2);
+  assert.equal(sbr.badCount, 1);
+  assert.equal(sbr.totalProblemRows, 3);
+  assert.equal(sbr.earlyWarningRatioPct, 67);
+  assert.equal(sbr.status, "critical_present");
 });

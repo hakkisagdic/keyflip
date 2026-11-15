@@ -927,6 +927,11 @@ async function buildControlCenter(ctx, scheduler, opts) {
   base.statusBoardSinceCoverage = _controlcenter.evaluateStatusBoardSinceCoverage(base.statusBoard, {
     nowMs: opts.nowMs || ctx.nowMs
   });
+  base.activeVsStandbySpread = _controlcenter.evaluateActiveVsStandbySpread(base.accounts);
+  base.serverSafetyHeadroom = _controlcenter.evaluateServerSafetyHeadroom(base.server);
+  base.auditCategoryBreakdown = _controlcenter.summarizeAuditCategoryBreakdown(base.auditTimeline);
+  base.poolAvgFiveHourUtil = _controlcenter.evaluatePoolAverageFiveHourUtilization(base.accounts);
+  base.statusBoardWarnBadRatio = _controlcenter.evaluateStatusBoardWarningToBadRatio(base.statusBoard);
   base.compactSummary = _controlcenter.formatDaemonCompactSummary(base);
   base.preferences = _controlcenter.collectPreferences(ctx);
   base.notificationAutostartPosture = _controlcenter.evaluateNotificationAndAutostartPosture(base.preferences, base.config);

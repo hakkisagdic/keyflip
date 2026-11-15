@@ -49,3 +49,4 @@ Bu analiz, AI kodlama abonelikleri (Claude Code, Claude Desktop, Cursor, Codex, 
 ### C. Raycast / Sistem Kontrol Merkezleri
 - **Rakipte ne var?** Klavye kısayolları ile hızlı profil/hesap seçimi (`⌘1`–`⌘3`), derin çalışma öncesi sistem hazırlık kontrolü ("Pre-flight Readiness Check") ve yalnızca açık sorunları panoya kopyalama.
 - **Bizim avantajımız ve yanıtımız:** `evaluateWorkSessionReadiness`, `⌘1`–`⌘3` klavye kısayolları ve `buildIssuesOnlySummary` / `copyIssuesOnlySummary` ile tam kontrol sağlandı.
+- **Tur 23 Güncellemesi:** Rakiplerdeki havuz doluluk ortalaması ve erken uyarı / kritik alarm oranı analizlerine karşılık `evaluateActiveVsStandbySpread`, `evaluateServerSafetyHeadroom`, `summarizeAuditCategoryBreakdown`, `evaluatePoolAverageFiveHourUtilization` ve `evaluateStatusBoardWarningToBadRatio` eklendi.

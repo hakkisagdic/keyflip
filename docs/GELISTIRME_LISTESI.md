@@ -109,24 +109,29 @@ Bu liste, `docs/RAKIP_ANALIZI.md` sonucunda belirlenen tüm özelliklerin tamaml
 - [x] **Yerel Servis Aktif Süreç (PID) Kapsam Özeti (`summarizeServiceProcessCoverage`):** İzlenen `daemon` türündeki yerel servislerin kaç tanesinin aktif bir işletim sistemi süreç kimliğine (`pid > 0`) sahip olduğunu özetleme ve `SERVİSLER` bölümünde gösterme.
 - [x] **Yedek Zincir (Failover) Son 24 Saatlik Devreye Girme Sıklığı (`evaluateFailoverEngagementFrequency`):** Günlük denetim olaylarından (`dailyAuditActivity`) son 24 saatteki failover geçiş sıklığını sınıflandırma.
 - [x] **İkincil Kota Veri Kaynağı Çeşitlilik Özeti (`evaluateSecondarySourceDiversity`):** `otherQuotas` içindeki sağlayıcıların veri kaynağı dağılımını (`plugin-json`, `polyctl-quota`, `apicredits`) özetleme.
+- [x] **Hesap Havuzu 7 Günlük Toplam Boş Kapasite Rezervi (`evaluateWeeklyPoolReserveCapacity`):** Etkin Claude hesaplarının 7 günlük pencerelerindeki toplam ve ortalama boş kapasite yüzdesini ve en geniş rezerve sahip hesabı `HESAPLAR` bölümünde gösterme.
+- [x] **Durum Panosu Zaman Damgası (`since`) Kapsam Analizcisi (`evaluateStatusBoardSinceCoverage`):** Durum panosundaki toplam satırlardan kaç tanesinin aktif `since` zaman damgasına sahip olduğunu ve en uzun süredir devam eden durumu hesaplama.
+- [x] **Hesap Havuzu Aktif vs Yedek Hesap Kota Makası (`evaluateActiveVsStandbySpread`):** Aktif Claude hesabının 5 saatlik doluluk yüzdesi ile en boş yedek hesabın doluluk yüzdesi arasındaki farkı (`spreadPct`) analiz ederek erken geçiş fırsatını `HESAPLAR` bölümünde gösterme.
+- [x] **Uzak Sunucu Disk ve Bellek Güvenlik Tamponu (`evaluateServerSafetyHeadroom`):** Uzak sunucudaki boş RAM ve boş disk yüzdesini (`freeMemoryPct`, `freeDiskPct`) hesaplayarak kritik doygunluk sınırına (`%90`) kalan güvenlik payını özetleme.
+- [x] **Denetim Olayları Kategori Dağılım Özeti (`summarizeAuditCategoryBreakdown`):** `auditTimeline` içindeki olayları `switch`, `failover`, `service` ve `other` kategorilerine göre sayarak baskın operasyon türünü raporlama.
 
 ---
 
 ## 2. Listedeki İşler Tamamlandığı İçin Önerilen Beş Yeni Yaratıcı Özellik (En Değerli İkisi Uygulandı)
 
-### ✅ Yeni Öneri 1 (UYGULANDI): Hesap Havuzu 7 Günlük Toplam Boş Kapasite Rezervi (`evaluateWeeklyPoolReserveCapacity`)
-- **Değer:** Etkin Claude hesaplarının 7 günlük pencerelerindeki toplam kalan boş kapasite yüzdesini (`totalRemainingSevenDayPct`), ortalama boşluğu (`avgRemainingSevenDayPct`) ve en geniş haftalık rezerve sahip hesabı (`topReserveAccount`) hesaplayıp `HESAPLAR` bölümünde gösterir (`7g havuz rezervi: toplam %110 boş (ort. %55 · en geniş: yahoo %80)`).
-- **Uygulama:** `src/controlcenter.js` (`evaluateWeeklyPoolReserveCapacity`), `src/daemon.js` (`base.weeklyPoolReserve`), `Models.swift` (`WeeklyPoolReserveCapacitySummary`) ve `ControlCenterView.swift`.
+### ✅ Yeni Öneri 1 (UYGULANDI): Hesap Havuzu 5 Saatlik Ortalama Kullanım Yoğunluğu (`evaluatePoolAverageFiveHourUtilization`)
+- **Değer:** Etkin Claude hesaplarının 5 saatlik pencerelerindeki ortalama, minimum ve maksimum kullanım yüzdesini (`avgFiveHourPct`, `minFiveHourPct`, `maxFiveHourPct`) hesaplayıp `HESAPLAR` bölümünde gösterir (`5s havuz ortalaması: %40 kullanım (min %20 · maks %60)`).
+- **Uygulama:** `src/controlcenter.js` (`evaluatePoolAverageFiveHourUtilization`), `src/daemon.js` (`base.poolAvgFiveHourUtil`), `Models.swift` (`PoolAverageFiveHourUtilizationSummary`) ve `ControlCenterView.swift`.
 
-### ✅ Yeni Öneri 2 (UYGULANDI): Durum Panosu Zaman Damgası (`since`) Kapsam ve En Uzun Süreklilik Analizcisi (`evaluateStatusBoardSinceCoverage`)
-- **Değer:** Durum panosundaki toplam satırlardan kaç tanesinin aktif bir `since` başlangıç zaman damgasına sahip olduğunu (`coveragePct`) ve en uzun süredir devam eden durumu (`longestTrackedLabel`, `maxDurationMinutes`) hesaplar (`Süreklilik takibi: 1/2 satır zaman damgalı (en uzun: Gateway · 90 dk)`).
-- **Uygulama:** `src/controlcenter.js` (`evaluateStatusBoardSinceCoverage`), `src/daemon.js` (`base.statusBoardSinceCoverage`), `Models.swift` (`StatusBoardSinceCoverageSummary`).
+### ✅ Yeni Öneri 2 (UYGULANDI): Durum Panosu Erken Uyarı / Kritik Sorun Dengesi Analizcisi (`evaluateStatusBoardWarningToBadRatio`)
+- **Değer:** Durum panosundaki toplam sorunlu satırlar içinde erken uyarı (`warn`) satırlarının kritik (`bad`) satırlara oranını (`earlyWarningRatioPct`) hesaplayarak Durum Panosu özetinde gösterir (`Sorun satırı dengesi: 2 uyarı / 1 kritik (%67 erken uyarı)`).
+- **Uygulama:** `src/controlcenter.js` (`evaluateStatusBoardWarningToBadRatio`), `src/daemon.js` (`base.statusBoardWarnBadRatio`), `Models.swift` (`StatusBoardWarningToBadRatioSummary`) ve `ControlCenterView.swift`.
 
-### 📋 Yeni Öneri 3 (Gelecek Adayı): Hesap Havuzu Aktif vs Yedek Hesap Kota Makası (`evaluateActiveVsStandbySpread`)
-- **Değer:** Aktif Claude hesabının 5 saatlik doluluk yüzdesi ile en boş yedek hesabın doluluk yüzdesi arasındaki farkı (`spreadPct`) analiz ederek erken geçiş fırsatını özetleme.
+### 📋 Yeni Öneri 3 (Gelecek Adayı): Masaüstü Otomatik Yeniden Başlatma Hazırlık Denetçisi (`evaluateDaemonAutoRestartPosture`)
+- **Değer:** `desktop.autoRestart` yapılandırmasını ve bekleyen masaüstü yeniden başlatma durumunu özetleme.
 
-### 📋 Yeni Öneri 4 (Gelecek Adayı): Uzak Sunucu Disk ve Bellek Güvenlik Tamponu (`evaluateServerSafetyHeadroom`)
-- **Değer:** Uzak sunucudaki boş RAM ve boş disk yüzdesini (`freeMemoryPct`, `freeDiskPct`) hesaplayarak kritik doygunluk sınırına (`%90`) kalan güvenlik payını özetleme.
+### 📋 Yeni Öneri 4 (Gelecek Adayı): Failover Gateway Hazırlık ve Yanıt Durumu Özeti (`evaluateFailoverGatewayReadiness`)
+- **Değer:** Keysmith gateway yoklamasının hazırlık durumunu (`gatewayReady`, `gatewayReason`) ve failover zinciri sağlığını tek satırda özetleme.
 
-### 📋 Yeni Öneri 5 (Gelecek Adayı): Denetim Olayları Kategori Dağılım Özeti (`summarizeAuditCategoryBreakdown`)
-- **Değer:** `auditTimeline` içindeki olayları `switch`, `failover`, `service` ve `other` kategorilerine göre sayarak baskın operasyon türünü raporlama.
+### 📋 Yeni Öneri 5 (Gelecek Adayı): Filo (Traycer) Aktif+Boşta vs Uyuyan Ajan Oranı (`evaluateFleetActiveVsDormantRatio`)
+- **Değer:** Traycer ajan filosundaki aktif/boşta ajanların uyuyan (`dormant`) ajanlara oranını hesaplama.

@@ -93,6 +93,11 @@ public struct ControlCenterPayload: Codable {
     public var secondarySourceDiversity: SecondarySourceDiversitySummary?
     public var weeklyPoolReserve: WeeklyPoolReserveCapacitySummary?
     public var statusBoardSinceCoverage: StatusBoardSinceCoverageSummary?
+    public var activeVsStandbySpread: ActiveVsStandbySpreadSummary?
+    public var serverSafetyHeadroom: ServerSafetyHeadroomSummary?
+    public var auditCategoryBreakdown: AuditCategoryBreakdownSummary?
+    public var poolAvgFiveHourUtil: PoolAverageFiveHourUtilizationSummary?
+    public var statusBoardWarnBadRatio: StatusBoardWarningToBadRatioSummary?
     public var auditTimeline: [AuditEventItem]?
     public var markdownReport: String?
     public var preferences: PreferencesSummary?
@@ -191,6 +196,11 @@ public struct ControlCenterPayload: Codable {
         secondarySourceDiversity: SecondarySourceDiversitySummary? = nil,
         weeklyPoolReserve: WeeklyPoolReserveCapacitySummary? = nil,
         statusBoardSinceCoverage: StatusBoardSinceCoverageSummary? = nil,
+        activeVsStandbySpread: ActiveVsStandbySpreadSummary? = nil,
+        serverSafetyHeadroom: ServerSafetyHeadroomSummary? = nil,
+        auditCategoryBreakdown: AuditCategoryBreakdownSummary? = nil,
+        poolAvgFiveHourUtil: PoolAverageFiveHourUtilizationSummary? = nil,
+        statusBoardWarnBadRatio: StatusBoardWarningToBadRatioSummary? = nil,
         auditTimeline: [AuditEventItem]? = [],
         markdownReport: String? = nil,
         preferences: PreferencesSummary? = nil,
@@ -288,6 +298,11 @@ public struct ControlCenterPayload: Codable {
         self.secondarySourceDiversity = secondarySourceDiversity
         self.weeklyPoolReserve = weeklyPoolReserve
         self.statusBoardSinceCoverage = statusBoardSinceCoverage
+        self.activeVsStandbySpread = activeVsStandbySpread
+        self.serverSafetyHeadroom = serverSafetyHeadroom
+        self.auditCategoryBreakdown = auditCategoryBreakdown
+        self.poolAvgFiveHourUtil = poolAvgFiveHourUtil
+        self.statusBoardWarnBadRatio = statusBoardWarnBadRatio
         self.auditTimeline = auditTimeline
         self.markdownReport = markdownReport
         self.preferences = preferences
@@ -1975,5 +1990,55 @@ public struct StatusBoardSinceCoverageSummary: Codable {
     public var coveragePct: Int
     public var maxDurationMinutes: Int?
     public var longestTrackedLabel: String?
+    public var summary: String
+}
+
+public struct ActiveVsStandbySpreadSummary: Codable {
+    public var activeAccount: String?
+    public var activeFiveHourPct: Double?
+    public var lowestStandbyAccount: String?
+    public var lowestStandbyFiveHourPct: Double?
+    public var spreadPct: Double
+    public var recommendEarlySwitch: Bool
+    public var status: String
+    public var summary: String
+}
+
+public struct ServerSafetyHeadroomSummary: Codable {
+    public var reachable: Bool
+    public var freeMemoryPct: Double?
+    public var freeDiskPct: Double?
+    public var memorySafetyCushionPct: Double?
+    public var diskSafetyCushionPct: Double?
+    public var tightestResource: String?
+    public var status: String
+    public var summary: String
+}
+
+public struct AuditCategoryBreakdownSummary: Codable {
+    public var totalEvents: Int
+    public var switchCount: Int
+    public var failoverCount: Int
+    public var serviceCount: Int
+    public var otherCount: Int
+    public var dominantCategory: String
+    public var summary: String
+}
+
+public struct PoolAverageFiveHourUtilizationSummary: Codable {
+    public var enabledCount: Int
+    public var avgFiveHourPct: Double
+    public var maxFiveHourPct: Double
+    public var minFiveHourPct: Double
+    public var status: String
+    public var summary: String
+}
+
+public struct StatusBoardWarningToBadRatioSummary: Codable {
+    public var warnCount: Int
+    public var badCount: Int
+    public var totalProblemRows: Int
+    public var earlyWarningRatioPct: Int
+    public var status: String
     public var summary: String
 }

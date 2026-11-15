@@ -5607,3 +5607,220 @@ export function evaluateStatusBoardSinceCoverage(statusBoard, options = {}) {
         : "Zaman damgalı (since) satır yok"
   };
 }
+
+/**
+ * Analyzes the 5-hour quota usage spread between the active Claude account and the lowest-used standby enabled account.
+ */
+export function evaluateActiveVsStandbySpread(accounts) {
+  const list = Array.isArray(accounts) ? accounts : [];
+  const active = list.find((a) => a && a.isActive);
+  const standbys = list.filter((a) => a && a.enabled !== false && !a.isActive && !a.needsReauth);
+
+  if (!active || standbys.length === 0) {
+    return {
+      activeAccount: active ? active.name || active.id || null : null,
+      activeFiveHourPct: active && typeof active.fiveHourPct === "number" ? Math.round(active.fiveHourPct * 10) / 10 : null,
+      lowestStandbyAccount: null,
+      lowestStandbyFiveHourPct: null,
+      spreadPct: 0,
+      recommendEarlySwitch: false,
+      status: "single_or_no_standby",
+      summary: "Aktif/yedek 5s farkı: karşılaştırılabilir yedek hesap yok"
+    };
+  }
+
+  const activePct = typeof active.fiveHourPct === "number" && Number.isFinite(active.fiveHourPct) ? active.fiveHourPct : 0;
+  let lowestStandby = null;
+  let lowestPct = Infinity;
+
+  for (const s of standbys) {
+    const pct = typeof s.fiveHourPct === "number" && Number.isFinite(s.fiveHourPct) ? s.fiveHourPct : 0;
+    if (pct < lowestPct) {
+      lowestPct = pct;
+      lowestStandby = s.name || s.id || "unknown";
+    }
+  }
+
+  const spreadPct = Math.round((activePct - lowestPct) * 10) / 10;
+  const recommendEarlySwitch = spreadPct >= 30;
+  const status = recommendEarlySwitch ? "opportunity" : spreadPct >= 15 ? "moderate" : "balanced";
+
+  return {
+    activeAccount: active.name || active.id || "unknown",
+    activeFiveHourPct: Math.round(activePct * 10) / 10,
+    lowestStandbyAccount: lowestStandby,
+    lowestStandbyFiveHourPct: Math.round(lowestPct * 10) / 10,
+    spreadPct,
+    recommendEarlySwitch,
+    status,
+    summary: recommendEarlySwitch
+      ? `Erken geçiş fırsatı: aktif %${Math.round(activePct)} vs yedek ${lowestStandby} %${Math.round(lowestPct)} (fark %${spreadPct})`
+      : `Aktif/yedek 5s farkı: %${spreadPct} (en boş yedek: ${lowestStandby} %${Math.round(lowestPct)})`
+  };
+}
+
+/**
+ * Computes free RAM and free disk percentage on the remote server and Remaining Safety Cushion before reaching the 90% saturation limit.
+ */
+export function evaluateServerSafetyHeadroom(server) {
+  if (!server || server.reachable === false) {
+    return {
+      reachable: false,
+      freeMemoryPct: null,
+      freeDiskPct: null,
+      memorySafetyCushionPct: null,
+      diskSafetyCushionPct: null,
+      tightestResource: null,
+      status: "unreachable",
+      summary: "Sunucu güvenlik payı hesaplanamadı (sunucu erişilemez)"
+    };
+  }
+
+  const memUsed = typeof server.memoryUsedPct === "number" && Number.isFinite(server.memoryUsedPct) ? server.memoryUsedPct : 0;
+  const diskUsed = typeof server.diskUsedPct === "number" && Number.isFinite(server.diskUsedPct) ? server.diskUsedPct : 0;
+
+  const freeMemoryPct = Math.max(0, Math.round((100 - memUsed) * 10) / 10);
+  const freeDiskPct = Math.max(0, Math.round((100 - diskUsed) * 10) / 10);
+  const memorySafetyCushionPct = Math.round((90 - memUsed) * 10) / 10;
+  const diskSafetyCushionPct = Math.round((90 - diskUsed) * 10) / 10;
+
+  const minCushion = Math.min(memorySafetyCushionPct, diskSafetyCushionPct);
+  const tightestResource = memorySafetyCushionPct <= diskSafetyCushionPct ? "memory" : "disk";
+  const status = minCushion < 0 ? "breached" : minCushion < 15 ? "tight" : "safe";
+
+  return {
+    reachable: true,
+    freeMemoryPct,
+    freeDiskPct,
+    memorySafetyCushionPct,
+    diskSafetyCushionPct,
+    tightestResource,
+    status,
+    summary: `Sunucu güvenlik payı (%90 sınırına): RAM %${memorySafetyCushionPct} · Disk %${diskSafetyCushionPct} (${status === "safe" ? "güvenli" : status === "tight" ? "dar" : "aşıldı"})`
+  };
+}
+
+/**
+ * Counts auditTimeline events across switch, failover, service, and other categories and reports the dominant operation category.
+ */
+export function summarizeAuditCategoryBreakdown(auditTimeline) {
+  const list = Array.isArray(auditTimeline) ? auditTimeline : [];
+  let switchCount = 0;
+  let failoverCount = 0;
+  let serviceCount = 0;
+  let otherCount = 0;
+
+  for (const item of list) {
+    const cat = String(item?.category || "").toLowerCase();
+    const type = String(item?.type || "").toLowerCase();
+    if (cat === "switch" || type.includes("switch")) {
+      switchCount += 1;
+    } else if (cat === "failover" || type.includes("failover")) {
+      failoverCount += 1;
+    } else if (cat === "service" || type.includes("service") || type.includes("daemon") || type.includes("restart")) {
+      serviceCount += 1;
+    } else {
+      otherCount += 1;
+    }
+  }
+
+  const totalEvents = list.length;
+  const counts = [
+    { name: "switch", count: switchCount },
+    { name: "failover", count: failoverCount },
+    { name: "service", count: serviceCount },
+    { name: "other", count: otherCount }
+  ].sort((a, b) => b.count - a.count);
+
+  const dominantCategory = totalEvents > 0 && counts[0].count > 0 ? counts[0].name : "none";
+
+  return {
+    totalEvents,
+    switchCount,
+    failoverCount,
+    serviceCount,
+    otherCount,
+    dominantCategory,
+    summary:
+      totalEvents > 0
+        ? `Denetim dağılımı (${totalEvents}): geçiş ${switchCount} · failover ${failoverCount} · servis ${serviceCount} · diğer ${otherCount} (baskın: ${dominantCategory})`
+        : "Denetim kaydı yok"
+  };
+}
+
+/**
+ * Computes average, minimum, and maximum 5-hour quota utilization across enabled Claude accounts.
+ */
+export function evaluatePoolAverageFiveHourUtilization(accounts) {
+  const list = Array.isArray(accounts) ? accounts : [];
+  const enabled = list.filter((a) => a && a.enabled !== false && !a.needsReauth);
+  if (enabled.length === 0) {
+    return {
+      enabledCount: 0,
+      avgFiveHourPct: 0,
+      maxFiveHourPct: 0,
+      minFiveHourPct: 0,
+      status: "empty",
+      summary: "5s havuz ortalaması: etkin hesap yok"
+    };
+  }
+
+  let sum = 0;
+  let maxPct = 0;
+  let minPct = Infinity;
+
+  for (const acc of enabled) {
+    const pct = typeof acc.fiveHourPct === "number" && Number.isFinite(acc.fiveHourPct) ? Math.max(0, Math.min(100, acc.fiveHourPct)) : 0;
+    sum += pct;
+    if (pct > maxPct) maxPct = pct;
+    if (pct < minPct) minPct = pct;
+  }
+
+  if (!Number.isFinite(minPct)) minPct = 0;
+  const avgFiveHourPct = Math.round((sum / enabled.length) * 10) / 10;
+  maxPct = Math.round(maxPct * 10) / 10;
+  minPct = Math.round(minPct * 10) / 10;
+  const status = avgFiveHourPct >= 80 ? "high" : avgFiveHourPct >= 50 ? "moderate" : "low";
+
+  return {
+    enabledCount: enabled.length,
+    avgFiveHourPct,
+    maxFiveHourPct: maxPct,
+    minFiveHourPct: minPct,
+    status,
+    summary: `5s havuz ortalaması: %${avgFiveHourPct} kullanım (min %${minPct} · maks %${maxPct})`
+  };
+}
+
+/**
+ * Computes the ratio of early-warning (warn) rows vs critical (bad) rows across Status Board sections.
+ */
+export function evaluateStatusBoardWarningToBadRatio(statusBoard) {
+  const sections = Array.isArray(statusBoard?.sections) ? statusBoard.sections : [];
+  let warnCount = 0;
+  let badCount = 0;
+
+  for (const sec of sections) {
+    for (const r of sec?.rows || []) {
+      const st = String(r?.status || "").toLowerCase();
+      if (st === "warn") warnCount += 1;
+      else if (st === "bad") badCount += 1;
+    }
+  }
+
+  const totalProblemRows = warnCount + badCount;
+  const earlyWarningRatioPct = totalProblemRows > 0 ? Math.round((warnCount / totalProblemRows) * 100) : 100;
+  const status = badCount > 0 ? "critical_present" : warnCount > 0 ? "warnings_only" : "clean";
+
+  return {
+    warnCount,
+    badCount,
+    totalProblemRows,
+    earlyWarningRatioPct,
+    status,
+    summary:
+      totalProblemRows > 0
+        ? `Sorun satırı dengesi: ${warnCount} uyarı / ${badCount} kritik (%${earlyWarningRatioPct} erken uyarı)`
+        : "Sorunlu (warn/bad) satır yok"
+  };
+}
