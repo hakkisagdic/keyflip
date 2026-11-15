@@ -861,6 +861,13 @@ async function buildControlCenter(ctx, scheduler, opts) {
   base.weeklyUnclaimedQuota = _controlcenter.evaluateWeeklyUnclaimedQuota(base.accounts, {
     nowMs: opts.nowMs || ctx.nowMs
   });
+  base.ownerProjectGroups = _controlcenter.groupOwnerNeededByProject(base.statusBoard);
+  base.serverResourcePressure = _controlcenter.evaluateServerResourcePressure(base.server);
+  base.desktopRestartSafety = _controlcenter.evaluateDesktopRestartSafety(base.desktopRestart, base.config, {
+    nowMs: opts.nowMs || ctx.nowMs
+  });
+  base.sonnetModelSplit = _controlcenter.evaluateSonnetModelSplitHealth(base.accounts);
+  base.serviceLogHygiene = _controlcenter.evaluateServiceLogHygiene(base.services);
   base.compactSummary = _controlcenter.formatDaemonCompactSummary(base);
   base.preferences = _controlcenter.collectPreferences(ctx);
   base.markdownReport = _controlcenter.buildControlCenterMarkdown(base);

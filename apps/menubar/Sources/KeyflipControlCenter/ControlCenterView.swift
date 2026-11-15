@@ -576,6 +576,18 @@ public struct ControlCenterView: View {
                         }
                     }
 
+                    if let sms = viewModel.payload.sonnetModelSplit, sms.hasBottleneck {
+                        HStack(spacing: 5) {
+                            Image(systemName: "cpu.fill")
+                                .font(.system(size: 10))
+                                .foregroundColor(.orange)
+                            Text(sms.summary)
+                                .font(.system(size: 10, weight: .medium))
+                                .foregroundColor(.orange)
+                                .lineLimit(1)
+                        }
+                    }
+
                     if let bw = viewModel.payload.bottleneckWindow, !bw.summary.isEmpty {
                         HStack(spacing: 5) {
                             Image(systemName: "gauge.with.dots.needle.67percent")
@@ -819,6 +831,17 @@ public struct ControlCenterView: View {
                             Text(sch.summary)
                                 .font(.system(size: 10))
                                 .foregroundColor(sch.status == "healthy" ? .secondary : .orange)
+                                .lineLimit(1)
+                        }
+                    }
+                    if let hyg = viewModel.payload.serviceLogHygiene, hyg.noisyServiceCount > 0 {
+                        HStack(spacing: 5) {
+                            Image(systemName: "doc.text.magnifyingglass")
+                                .font(.system(size: 10))
+                                .foregroundColor(.orange)
+                            Text(hyg.summary)
+                                .font(.system(size: 10))
+                                .foregroundColor(.orange)
                                 .lineLimit(1)
                         }
                     }

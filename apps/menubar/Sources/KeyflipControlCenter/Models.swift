@@ -38,6 +38,11 @@ public struct ControlCenterPayload: Codable {
     public var dailyAuditActivity: DailyAuditActivitySummary?
     public var schedulerHealth: DaemonSchedulerHealthSummary?
     public var weeklyUnclaimedQuota: WeeklyUnclaimedQuotaSummary?
+    public var ownerProjectGroups: OwnerProjectGroupsSummary?
+    public var serverResourcePressure: ServerResourcePressureSummary?
+    public var desktopRestartSafety: DesktopRestartSafetySummary?
+    public var sonnetModelSplit: SonnetModelSplitSummary?
+    public var serviceLogHygiene: ServiceLogHygieneSummary?
     public var auditTimeline: [AuditEventItem]?
     public var markdownReport: String?
     public var preferences: PreferencesSummary?
@@ -81,6 +86,11 @@ public struct ControlCenterPayload: Codable {
         dailyAuditActivity: DailyAuditActivitySummary? = nil,
         schedulerHealth: DaemonSchedulerHealthSummary? = nil,
         weeklyUnclaimedQuota: WeeklyUnclaimedQuotaSummary? = nil,
+        ownerProjectGroups: OwnerProjectGroupsSummary? = nil,
+        serverResourcePressure: ServerResourcePressureSummary? = nil,
+        desktopRestartSafety: DesktopRestartSafetySummary? = nil,
+        sonnetModelSplit: SonnetModelSplitSummary? = nil,
+        serviceLogHygiene: ServiceLogHygieneSummary? = nil,
         auditTimeline: [AuditEventItem]? = [],
         markdownReport: String? = nil,
         preferences: PreferencesSummary? = nil,
@@ -123,6 +133,11 @@ public struct ControlCenterPayload: Codable {
         self.dailyAuditActivity = dailyAuditActivity
         self.schedulerHealth = schedulerHealth
         self.weeklyUnclaimedQuota = weeklyUnclaimedQuota
+        self.ownerProjectGroups = ownerProjectGroups
+        self.serverResourcePressure = serverResourcePressure
+        self.desktopRestartSafety = desktopRestartSafety
+        self.sonnetModelSplit = sonnetModelSplit
+        self.serviceLogHygiene = serviceLogHygiene
         self.auditTimeline = auditTimeline
         self.markdownReport = markdownReport
         self.preferences = preferences
@@ -1275,5 +1290,73 @@ public struct WeeklyUnclaimedQuotaSummary: Codable {
     public var totalUnclaimedPct: Double?
     public var estimatedUnclaimedUsd: Double?
     public var candidates: [WeeklyUnclaimedCandidateItem]?
+    public var summary: String
+}
+
+
+public struct OwnerProjectGroupItem: Codable, Identifiable {
+    public var id: String { project }
+    public var project: String
+    public var count: Int
+    public var urgentCount: Int
+}
+
+public struct OwnerProjectGroupsSummary: Codable {
+    public var projectCount: Int
+    public var totalItems: Int
+    public var topProject: String?
+    public var groups: [OwnerProjectGroupItem]?
+    public var summary: String
+}
+
+public struct ServerResourcePressureSummary: Codable {
+    public var status: String
+    public var score: Int
+    public var loadAvg1m: Double?
+    public var memoryPct: Double?
+    public var diskPct: Double?
+    public var pressures: [String]?
+    public var summary: String
+}
+
+public struct DesktopRestartSafetySummary: Codable {
+    public var pending: Bool
+    public var autoRestart: Bool
+    public var snoozed: Bool
+    public var snoozeRemainingMin: Int
+    public var actionCount: Int
+    public var status: String
+    public var summary: String
+}
+
+public struct SonnetConstrainedAccountItem: Codable, Identifiable {
+    public var id: String { name }
+    public var name: String
+    public var sonnetPct: Double
+    public var sevenDayPct: Double?
+    public var divergencePct: Double?
+}
+
+public struct SonnetModelSplitSummary: Codable {
+    public var hasBottleneck: Bool
+    public var constrainedCount: Int
+    public var maxDivergencePct: Double
+    public var topConstrainedAccount: String?
+    public var constrainedAccounts: [SonnetConstrainedAccountItem]?
+    public var summary: String
+}
+
+public struct NoisyServiceItem: Codable, Identifiable {
+    public var id: String
+    public var title: String
+    public var errorBars: Int
+    public var lastError: String?
+}
+
+public struct ServiceLogHygieneSummary: Codable {
+    public var score: Int
+    public var status: String
+    public var noisyServiceCount: Int
+    public var noisyServices: [NoisyServiceItem]?
     public var summary: String
 }

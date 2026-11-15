@@ -1,6 +1,6 @@
 # Geliştirme Listesi ve Yaratıcı Özellik Önerileri (`GELISTIRME_LISTESI.md`)
 
-Bu liste, `docs/RAKIP_ANALIZI.md` sonucunda belirlenen tüm özelliklerin tamamlanma durumunu ve on birinci turda önerilen **beş yeni yaratıcı özelliği** (en değerli ikisi uygulanmış olarak) içerir.
+Bu liste, `docs/RAKIP_ANALIZI.md` sonucunda belirlenen tüm özelliklerin tamamlanma durumunu ve on ikinci turda önerilen **beş yeni yaratıcı özelliği** (en değerli ikisi uygulanmış olarak) içerir.
 
 ---
 
@@ -56,23 +56,29 @@ Bu liste, `docs/RAKIP_ANALIZI.md` sonucunda belirlenen tüm özelliklerin tamaml
 - [x] **Yedek Zincir (Failover) Otomatik Kurtarma Zamanlayıcı Özeti (`evaluateFailoverRecoveryCountdown`):** Failover devredeyken `recoverAt` zamanına veya en erken 5 saatlik hesap sıfırlanmasına kalan dakikayı (`Havuz dönüşüne ~35 dk kaldı`) hesaplama.
 - [x] **Günlük Denetim Olayları Yoğunluk Özeti (`summarizeDailyAuditActivity`):** Son 24 saat içindeki toplam hesap geçişi, failover tetiklemesi ve servis yeniden başlatma sayılarını tek satırlık aktivite özetinde toplama.
 
+- [x] **Daemon İş Zamanlayıcı Gecikme ve Tutarlılık Analizcisi (`evaluateDaemonSchedulerHealth`):** `com.keyflip.daemon` içindeki periyodik işlerin çalışma zamanlarını, sürelerini ve hata durumlarını denetleyerek `SERVİSLER` bölümünde raporlama.
+- [x] **Haftalık Abonelik İsraf Önleme / "Sıfırlanmadan Tüket" Hesaplayıcısı (`evaluateWeeklyUnclaimedQuota`):** 7 günlük sıfırlanmasına `<=48 saat` kalmış ve `%35+` boş haftalık kapasitesi bulunan etkin Claude aboneliklerini `HESAPLAR` bölümünde önerme.
+- [x] **Durum Panosu Sahiplik Bekleyen İşleri Proje Bazlı Gruplama (`groupOwnerNeededByProject`):** `owner_needed` maddelerini `project` adına göre gruplayarak en yoğun projeyi ve acil iş sayılarını özetleme.
+- [x] **Uzak Sunucu Kaynak Baskısı (CPU/RAM/Disk) Analizcisi (`evaluateServerResourcePressure`):** `server-status.json` içindeki `load`, `memory` ve `disk` metriklerini sayısal ayrıştırarak kaynak baskısı uyarısı üretme.
+- [x] **Masaüstü Otomatik Yeniden Başlatma Hazırlık ve Güvenlik Kontrolü (`evaluateDesktopRestartSafety`):** Bekleyen Claude Desktop yeniden başlatma isteğinin Odak/Toplantı ertelemesi (`desktop.snoozeUntil`) durumunu ve kalan dakikayı raporlama.
+
 ---
 
 ## 2. Listedeki İşler Tamamlandığı İçin Önerilen Beş Yeni Yaratıcı Özellik (En Değerli İkisi Uygulandı)
 
-### ✅ Yeni Öneri 1 (UYGULANDI): Daemon İş Zamanlayıcı Gecikme ve Tutarlılık Analizcisi (`evaluateDaemonSchedulerHealth`)
-- **Değer:** `com.keyflip.daemon` içindeki periyodik işlerin (`autoswitch`, `refresh`, `surface-refresh`, `conv-index`) son çalışma zamanlarını, sürelerini (`lastDurationMs`) ve hata durumlarını (`lastResult`) denetleyerek geciken (`overdueJobs`), yavaşlayan (`slowJobs`) veya hata veren (`failingJobs`) işleri anında `SERVİSLER` bölümünde (`Zamanlayıcı sağlıklı (4/4 iş zamanında)`) raporlar.
-- **Uygulama:** `src/controlcenter.js` (`evaluateDaemonSchedulerHealth`), `src/daemon.js` (`base.schedulerHealth`), `Models.swift` (`DaemonSchedulerHealthSummary`) ve `ControlCenterView.swift`.
+### ✅ Yeni Öneri 1 (UYGULANDI): Claude Sonnet 7 Günlük Alt-Kota Darboğaz ve Model Ayrışma Analizcisi (`evaluateSonnetModelSplitHealth`)
+- **Değer:** Claude Pro/Max aboneliklerinde genel 7 günlük kota (`sevenDay`) henüz düşükken `sevenDaySonnet` alt-kotasının `%80+` doluluğa ulaşmasını veya genel kotadan `>=%20` daha hızlı tükenmesini (`Sonnet alt-kota darboğazı: gmail (Sonnet %84, genel %45)`) tespit eder ve `HESAPLAR` bölümünde uyarır.
+- **Uygulama:** `src/controlcenter.js` (`evaluateSonnetModelSplitHealth`), `src/daemon.js` (`base.sonnetModelSplit`), `Models.swift` (`SonnetModelSplitSummary`, `SonnetConstrainedAccountItem`) ve `ControlCenterView.swift`.
 
-### ✅ Yeni Öneri 2 (UYGULANDI): Haftalık Abonelik İsraf Önleme / "Sıfırlanmadan Tüket" Hesaplayıcısı (`evaluateWeeklyUnclaimedQuota`)
-- **Değer:** 7 günlük kota penceresinin sıfırlanmasına `<=48 saat` kalmış olmasına rağmen hâlâ `%35+` boş haftalık kapasitesi bulunan etkin Claude aboneliklerini tespit eder (`Haftalık sıfırlanmadan kullan: yahoo (%70 boş, ~16 saat kaldı)`), eşdeğer dolar değerini (`estimatedUnclaimedUsd`) hesaplar ve sıfırlanma öncesi bu kapasitenin yanmasını önler.
-- **Uygulama:** `src/controlcenter.js` (`evaluateWeeklyUnclaimedQuota`), `src/daemon.js` (`base.weeklyUnclaimedQuota`), `Models.swift` (`WeeklyUnclaimedQuotaSummary`, `WeeklyUnclaimedCandidateItem`) ve `ControlCenterView.swift`.
+### ✅ Yeni Öneri 2 (UYGULANDI): Yerel Servis Log Hijyeni ve Hata Yoğunluğu Analizcisi (`evaluateServiceLogHygiene`)
+- **Değer:** İzlenen `launchd` servislerinin son log satırlarındaki kıvılcım dizisi (`sparkline` `█/▁`) ve `lastError` kayıtlarını analiz ederek tekrarlayan hata üreten ("gürültülü") servisleri (`Log uyarısı (1 servis): Gateway`) `SERVİSLER` bölümünde öne çıkarır.
+- **Uygulama:** `src/controlcenter.js` (`evaluateServiceLogHygiene`), `src/daemon.js` (`base.serviceLogHygiene`), `Models.swift` (`ServiceLogHygieneSummary`, `NoisyServiceItem`) ve `ControlCenterView.swift`.
 
-### 📋 Yeni Öneri 3 (Gelecek Adayı): Durum Panosu Sahiplik Bekleyen İşleri Proje Bazlı Gruplama (`groupOwnerNeededByProject`)
-- **Değer:** `owner_needed` maddelerini `project` adına göre gruplayarak hangi projede kaç adet acil veya normal sahiplik kararı biriktiğini özetleme.
+### 📋 Yeni Öneri 3 (Gelecek Adayı): Çoklu Makine (`extraStatusFiles`) Host Sağlık Karşılaştırıcısı (`summarizeMultiHostStatusBreakdown`)
+- **Değer:** Birden fazla makineden birleştirilen `status.json` satırlarını `[host]` etiketine göre ayrıştırarak hangi makinede kaç `bad`/`warn` satırı bulunduğunu özetleme.
 
-### 📋 Yeni Öneri 4 (Gelecek Adayı): Uzak Sunucu Kaynak Baskısı (CPU/RAM/Disk) Analizcisi (`evaluateServerResourcePressure`)
-- **Değer:** `server-status.json` içindeki `load`, `memory` ve `disk` metriklerini sayısal olarak ayrıştırarak disk doluluğu veya bellek baskısı kritik eşiğe ulaşmadan önce erken uyarı üretme.
+### 📋 Yeni Öneri 4 (Gelecek Adayı): Kullanım Uç Noktası Hız Sınırı (`usageThrottle`) Kurtarma Sayacı (`evaluateUsageThrottleRecovery`)
+- **Değer:** `Retry-After` sessiz penceresi devredeyken (`usageThrottle.throttled`) kalan saniye/dakikayı ve `strike` seviyesini kullanıcı dostu bir geri sayım özetine dönüştürme.
 
-### 📋 Yeni Öneri 5 (Gelecek Adayı): Masaüstü Otomatik Yeniden Başlatma Hazırlık ve Güvenlik Kontrolü (`evaluateDesktopRestartSafety`)
-- **Değer:** Bekleyen bir Claude Desktop yeniden başlatma isteğinin Odak/Toplantı ertelemesi (`desktop.snoozeUntil`) nedeniyle mi yoksa aktif oturum nedeniyle mi beklediğini ve kalan erteleme süresini dakika cinsinden raporlama.
+### 📋 Yeni Öneri 5 (Gelecek Adayı): Hesaplar Arası Ek Kullanım Kredisi (`extraUsage`) Havuz Özeti (`summarizeExtraUsageCreditsPool`)
+- **Değer:** Etkin Claude hesaplarında tanımlı `extraUsage` (`usedCredits` / `monthlyLimit`) bakiyelerini toplayarak toplam ek kredi limitini ve kalan bakiyeyi tek satırda raporlama.

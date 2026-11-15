@@ -48,7 +48,12 @@ import {
   evaluateFailoverRecoveryCountdown,
   summarizeDailyAuditActivity,
   evaluateDaemonSchedulerHealth,
-  evaluateWeeklyUnclaimedQuota
+  evaluateWeeklyUnclaimedQuota,
+  groupOwnerNeededByProject,
+  evaluateServerResourcePressure,
+  evaluateDesktopRestartSafety,
+  evaluateSonnetModelSplitHealth,
+  evaluateServiceLogHygiene
 } from "../src/controlcenter.js";
 import * as daemon from "../src/daemon.js";
 
@@ -948,4 +953,66 @@ test("listAgingStatusBoardIssues, evaluateFailoverRecoveryCountdown, summarizeDa
   assert.equal(unclaimed.hasUnclaimed, true);
   assert.equal(unclaimed.priorityAccount, "yahoo");
   assert.equal(unclaimed.candidates[0].unclaimedPct, 70);
+});
+
+
+test("groupOwnerNeededByProject, evaluateServerResourcePressure, evaluateDesktopRestartSafety, evaluateSonnetModelSplitHealth, and evaluateServiceLogHygiene work accurately", () => {
+  const nowMs = Date.parse("2026-11-15T10:00:00Z");
+
+  const projGroups = groupOwnerNeededByProject({
+    owner_needed: [
+      { project: "keyflip", text: "Doküman kontrolü" },
+      { project: "billing", text: "ACİL prod ödeme hatası" },
+      { project: "billing", text: "Fatura şablonu" }
+    ]
+  });
+  assert.equal(projGroups.projectCount, 2);
+  assert.equal(projGroups.totalItems, 3);
+  assert.equal(projGroups.topProject, "billing");
+  assert.equal(projGroups.groups[0].urgentCount, 1);
+
+  const srvPressure = evaluateServerResourcePressure({
+    host: "hetzner-1",
+    status: "ok",
+    load: "4.50, 3.20, 2.10",
+    memory: "14.8 GB / 16.0 GB (92.5%)",
+    disk: "85% used"
+  });
+  assert.equal(srvPressure.status, "critical");
+  assert.equal(srvPressure.loadAvg1m, 4.5);
+  assert.equal(srvPressure.memoryPct, 92.5);
+  assert.equal(srvPressure.diskPct, 85);
+  assert.equal(srvPressure.pressures.length, 3);
+
+  const deskSafety = evaluateDesktopRestartSafety(
+    { pending: true, actions: [{ kind: "account", target: "yahoo" }] },
+    { "desktop.autoRestart": true, "desktop.snoozeUntil": "2026-11-15T10:40:00Z" },
+    { nowMs }
+  );
+  assert.equal(deskSafety.status, "snoozed");
+  assert.equal(deskSafety.snoozeRemainingMin, 40);
+
+  const sonnetSplit = evaluateSonnetModelSplitHealth([
+    {
+      name: "gmail",
+      enabled: true,
+      usage: { sevenDay: { pct: 45 }, sevenDaySonnet: { pct: 84 } }
+    },
+    {
+      name: "yahoo",
+      enabled: true,
+      usage: { sevenDay: { pct: 30 }, sevenDaySonnet: { pct: 32 } }
+    }
+  ]);
+  assert.equal(sonnetSplit.hasBottleneck, true);
+  assert.equal(sonnetSplit.topConstrainedAccount, "gmail");
+  assert.equal(sonnetSplit.maxDivergencePct, 39);
+
+  const logHyg = evaluateServiceLogHygiene([
+    { id: "gw", title: "Gateway", state: "running", sparkline: "██▁▁█▁", lastError: "ECONNREFUSED" },
+    { id: "rt", title: "Router", state: "running", sparkline: "██████", lastError: null }
+  ]);
+  assert.equal(logHyg.noisyServiceCount, 1);
+  assert.equal(logHyg.status, "warning");
+  assert.equal(logHyg.noisyServices[0].title, "Gateway");
 });

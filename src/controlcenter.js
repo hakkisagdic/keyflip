@@ -3142,3 +3142,282 @@ export function evaluateWeeklyUnclaimedQuota(accounts = [], options = {}) {
       : "Sıfırlanma öncesi atıl haftalık kota yok"
   };
 }
+
+
+/**
+ * Groups `owner_needed` items from the Status Board by project name, counting total and urgent items per project.
+ */
+export function groupOwnerNeededByProject(statusBoard) {
+  const raw = Array.isArray(statusBoard?.owner_needed) ? statusBoard.owner_needed : [];
+  if (raw.length === 0) {
+    return {
+      projectCount: 0,
+      totalItems: 0,
+      topProject: null,
+      groups: [],
+      summary: "Proje bazlı bekleyen iş yok"
+    };
+  }
+
+  const urgentRe = /\b(acil|urgent|kritik|blocker|prod|down|çöktü|kırık|deploy|onay|expired|tükendi)\b/i;
+  const map = new Map();
+
+  for (const item of raw) {
+    if (!item || (!item.project && !item.text)) continue;
+    const project = String(item.project || "genel").trim() || "genel";
+    const text = String(item.text || "").trim();
+    const isUrgent = urgentRe.test(`${project} ${text}`);
+    const existing = map.get(project) || { project, count: 0, urgentCount: 0, items: [] };
+    existing.count += 1;
+    if (isUrgent) existing.urgentCount += 1;
+    existing.items.push({ text, isUrgent });
+    map.set(project, existing);
+  }
+
+  const groups = Array.from(map.values()).sort((a, b) => {
+    if (b.urgentCount !== a.urgentCount) return b.urgentCount - a.urgentCount;
+    if (b.count !== a.count) return b.count - a.count;
+    return a.project.localeCompare(b.project);
+  });
+
+  const totalItems = groups.reduce((acc, g) => acc + g.count, 0);
+  const top = groups[0] || null;
+
+  return {
+    projectCount: groups.length,
+    totalItems,
+    topProject: top ? top.project : null,
+    groups,
+    summary: top
+      ? `${groups.length} projede ${totalItems} iş (en yoğun: ${top.project} [${top.count}])`
+      : "Proje bazlı bekleyen iş yok"
+  };
+}
+
+/**
+ * Parses numeric CPU load, RAM percentage, and Disk percentage from the read-only server status snapshot
+ * to surface early resource pressure alerts.
+ */
+export function evaluateServerResourcePressure(server = {}) {
+  if (!server || server.status === "unreadable") {
+    return {
+      status: "unreadable",
+      score: 0,
+      loadAvg1m: null,
+      memoryPct: null,
+      diskPct: null,
+      pressures: [],
+      summary: "Sunucu kaynak verisi okunamadı"
+    };
+  }
+
+  const parsePct = (str) => {
+    if (typeof str !== "string") return null;
+    const pctMatch = str.match(/(\d+(?:\.\d+)?)\s*%/);
+    if (pctMatch) return Number.parseFloat(pctMatch[1]);
+    const ratioMatch = str.match(/(\d+(?:\.\d+)?)\s*(?:GB|GiB|MB|MiB)?\s*\/\s*(\d+(?:\.\d+)?)/i);
+    if (ratioMatch) {
+      const used = Number.parseFloat(ratioMatch[1]);
+      const total = Number.parseFloat(ratioMatch[2]);
+      if (total > 0) return Math.round((used / total) * 1000) / 10;
+    }
+    return null;
+  };
+
+  let loadAvg1m = null;
+  if (typeof server.load === "string") {
+    const m = server.load.match(/(\d+(?:\.\d+)?)/);
+    if (m) loadAvg1m = Number.parseFloat(m[1]);
+  }
+
+  const memoryPct = parsePct(server.memory);
+  const diskPct = parsePct(server.disk);
+
+  const pressures = [];
+  let status = "ok";
+  let score = 100;
+
+  if (diskPct !== null) {
+    if (diskPct >= 90) {
+      status = "critical";
+      score -= 45;
+      pressures.push(`Disk kritik (%${diskPct})`);
+    } else if (diskPct >= 80) {
+      if (status === "ok") status = "warning";
+      score -= 20;
+      pressures.push(`Disk yüksek (%${diskPct})`);
+    }
+  }
+
+  if (memoryPct !== null) {
+    if (memoryPct >= 90) {
+      status = "critical";
+      score -= 35;
+      pressures.push(`RAM kritik (%${memoryPct})`);
+    } else if (memoryPct >= 80) {
+      if (status === "ok") status = "warning";
+      score -= 15;
+      pressures.push(`RAM yüksek (%${memoryPct})`);
+    }
+  }
+
+  if (loadAvg1m !== null) {
+    if (loadAvg1m >= 4.0) {
+      status = "critical";
+      score -= 30;
+      pressures.push(`Yük kritik (${loadAvg1m})`);
+    } else if (loadAvg1m >= 2.0) {
+      if (status === "ok") status = "warning";
+      score -= 15;
+      pressures.push(`Yük yüksek (${loadAvg1m})`);
+    }
+  }
+
+  score = Math.max(0, Math.min(100, score));
+
+  return {
+    status,
+    score,
+    loadAvg1m,
+    memoryPct,
+    diskPct,
+    pressures,
+    summary:
+      pressures.length > 0
+        ? `Kaynak baskısı: ${pressures.join(" · ")}`
+        : `Kaynaklar dengeli (% ${score} sağlık)`
+  };
+}
+
+/**
+ * Evaluates pending Claude Desktop restart state and Focus/Snooze window remaining minutes.
+ */
+export function evaluateDesktopRestartSafety(desktopRestart = {}, config = {}, options = {}) {
+  const nowMs =
+    typeof options.nowMs === "function" ? options.nowMs() : typeof options.nowMs === "number" ? options.nowMs : Date.now();
+  const autoRestart = Boolean(config?.["desktop.autoRestart"]);
+  const snoozeRaw = config?.["desktop.snoozeUntil"] || "";
+  const snoozeMs = snoozeRaw ? Date.parse(String(snoozeRaw)) : Number.NaN;
+  const snoozed = Number.isFinite(snoozeMs) && snoozeMs > nowMs;
+  const snoozeRemainingMin = snoozed ? Math.max(1, Math.round((snoozeMs - nowMs) / 60000)) : 0;
+
+  const pending = Boolean(desktopRestart?.pending);
+  const actionCount = Array.isArray(desktopRestart?.actions) ? desktopRestart.actions.length : 0;
+
+  let status = "idle";
+  let summary = "Bekleyen masaüstü yeniden başlatması yok";
+
+  if (pending && snoozed) {
+    status = "snoozed";
+    summary = `Yeniden başlatma ertelendi (Odak modu: ${snoozeRemainingMin} dk kaldı)`;
+  } else if (pending) {
+    status = "pending-idle";
+    summary = `Masaüstü yeniden başlatma sırada (${actionCount || 1} eylem boşta kalmayı bekliyor)`;
+  } else if (snoozed) {
+    status = "snoozed";
+    summary = `Odak modu aktif (${snoozeRemainingMin} dk boyunca yeniden başlatma kapalı)`;
+  } else if (!autoRestart) {
+    status = "disabled";
+    summary = "Otomatik masaüstü yeniden başlatma kapalı";
+  }
+
+  return {
+    pending,
+    autoRestart,
+    snoozed,
+    snoozeRemainingMin,
+    actionCount,
+    status,
+    summary
+  };
+}
+
+/**
+ * Evaluates Claude Sonnet 7-day sub-quota divergence vs overall 7-day quota across enabled accounts
+ * ("Sonnet Bottleneck & Model Split Advisor").
+ */
+export function evaluateSonnetModelSplitHealth(accounts = []) {
+  const enabled = (Array.isArray(accounts) ? accounts : []).filter((a) => a && a.enabled !== false);
+  const constrainedAccounts = [];
+  let maxDivergencePct = 0;
+
+  for (const acct of enabled) {
+    const sevenPct =
+      typeof acct?.usage?.sevenDay?.pct === "number" ? acct.usage.sevenDay.pct : null;
+    const sonnetPct =
+      typeof acct?.usage?.sevenDaySonnet?.pct === "number" ? acct.usage.sevenDaySonnet.pct : null;
+    if (sonnetPct === null) continue;
+    const div = sevenPct !== null ? Math.round((sonnetPct - sevenPct) * 10) / 10 : 0;
+    if (div > maxDivergencePct) maxDivergencePct = div;
+    if (sonnetPct >= 80 || div >= 20) {
+      constrainedAccounts.push({
+        name: acct.name,
+        sonnetPct,
+        sevenDayPct: sevenPct,
+        divergencePct: div
+      });
+    }
+  }
+
+  constrainedAccounts.sort((a, b) => b.sonnetPct - a.sonnetPct);
+  const top = constrainedAccounts[0] || null;
+  const hasBottleneck = constrainedAccounts.length > 0;
+
+  return {
+    hasBottleneck,
+    constrainedCount: constrainedAccounts.length,
+    maxDivergencePct,
+    topConstrainedAccount: top ? top.name : null,
+    constrainedAccounts,
+    summary: top
+      ? `Sonnet alt-kota darboğazı: ${top.name} (Sonnet %${top.sonnetPct}${top.sevenDayPct !== null ? `, genel %${top.sevenDayPct}` : ""})`
+      : "Sonnet 7g alt-kotaları dengeli"
+  };
+}
+
+/**
+ * Evaluates Local Service Log Hygiene & Error Density across monitored launchd services.
+ */
+export function evaluateServiceLogHygiene(services = []) {
+  const list = Array.isArray(services) ? services : [];
+  if (list.length === 0) {
+    return {
+      score: 100,
+      status: "clean",
+      noisyServiceCount: 0,
+      noisyServices: [],
+      summary: "Log kirliliği yok"
+    };
+  }
+
+  const noisyServices = [];
+  for (const svc of list) {
+    if (!svc || typeof svc !== "object") continue;
+    const spark = typeof svc.sparkline === "string" ? svc.sparkline : "";
+    const errBars = (spark.match(/▁/g) || []).length;
+    const hasRecentError = Boolean(svc.lastError);
+    if (errBars >= 2 || (hasRecentError && svc.state !== "running" && svc.state !== "scheduled")) {
+      noisyServices.push({
+        id: svc.id || svc.label || "service",
+        title: svc.title || svc.label || "Servis",
+        errorBars: errBars,
+        lastError: svc.lastError || null
+      });
+    }
+  }
+
+  const noisyServiceCount = noisyServices.length;
+  const score = Math.max(0, Math.min(100, Math.round(((list.length - noisyServiceCount) / list.length) * 100)));
+  const status = noisyServiceCount >= 2 ? "degraded" : noisyServiceCount === 1 ? "warning" : "clean";
+
+  return {
+    score,
+    status,
+    noisyServiceCount,
+    noisyServices,
+    summary:
+      noisyServiceCount > 0
+        ? `Log uyarısı (${noisyServiceCount} servis): ${noisyServices.map((s) => s.title).join(", ")}`
+        : `Servis logları temiz (%${score})`
+  };
+}

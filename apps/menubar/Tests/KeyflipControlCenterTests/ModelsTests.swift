@@ -289,6 +289,19 @@ public enum ModelsTestSuite {
         let r11Decoded = try JSONDecoder().decode(DaemonSchedulerHealthSummary.self, from: r11Json)
         precondition(r11Decoded.score == 100 && r11Decoded.status == "healthy", "DaemonSchedulerHealthSummary must decode accurately")
 
+        // Round 12 decoding check for SonnetModelSplitSummary & ServiceLogHygieneSummary
+        let r12Json = """
+        {
+          "hasBottleneck": true,
+          "constrainedCount": 1,
+          "maxDivergencePct": 39.0,
+          "topConstrainedAccount": "gmail",
+          "summary": "Sonnet alt-kota darboğazı: gmail (Sonnet %84, genel %45)"
+        }
+        """.data(using: .utf8)!
+        let r12Decoded = try JSONDecoder().decode(SonnetModelSplitSummary.self, from: r12Json)
+        precondition(r12Decoded.hasBottleneck == true && r12Decoded.topConstrainedAccount == "gmail", "SonnetModelSplitSummary must decode accurately")
+
         // Urgent owner_needed classification test
         let urgentOwner = StatusBoardOwnerItem(project: "prod", text: "ACİL müdahale")
         let normalOwner = StatusBoardOwnerItem(project: "docs", text: "Not ekle")
