@@ -916,8 +916,13 @@ async function buildControlCenter(ctx, scheduler, opts) {
   base.failoverCapHeadroom = _controlcenter.evaluateFailoverCapHeadroomUsd(base.failover);
   base.thresholdCompliance = _controlcenter.evaluateAutoswitchThresholdCompliance(base.accounts, base.config);
   base.fleetIdleReserve = _controlcenter.evaluateFleetIdleReserveRatio(base.fleet);
+  base.statusBoardRowDensity = _controlcenter.evaluateStatusBoardRowDensity(base.statusBoard);
+  base.tokenExpiryHorizon = _controlcenter.summarizeTokenExpiryHorizon(base.accounts);
+  base.sustainableBurnRate = _controlcenter.evaluateSustainablePoolBurnRate(base.quotaForecast);
+  base.urgentOwnerRatio = _controlcenter.evaluateUrgentOwnerRatio(base.statusBoard);
   base.compactSummary = _controlcenter.formatDaemonCompactSummary(base);
   base.preferences = _controlcenter.collectPreferences(ctx);
+  base.notificationAutostartPosture = _controlcenter.evaluateNotificationAndAutostartPosture(base.preferences, base.config);
   base.markdownReport = _controlcenter.buildControlCenterMarkdown(base);
   base.diagnosticBundle = _controlcenter.buildDiagnosticBundle(base);
   return redactSecrets(base);

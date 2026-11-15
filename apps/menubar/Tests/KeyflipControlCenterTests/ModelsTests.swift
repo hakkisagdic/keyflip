@@ -418,6 +418,21 @@ public enum ModelsTestSuite {
         let r20Decoded = try JSONDecoder().decode(AutoswitchThresholdComplianceSummary.self, from: r20Json)
         precondition(r20Decoded.belowThresholdCount == 1 && r20Decoded.exceedingAccounts == ["gmail"], "AutoswitchThresholdComplianceSummary must decode accurately")
 
+        // Round 21 decoding check for SustainablePoolBurnRateSummary & UrgentOwnerRatioSummary
+        let r21Json = """
+        {
+          "measuredCount": 2,
+          "avgBurnRateRatio": 1.2,
+          "maxBurnRateRatio": 1.5,
+          "fastestBurningAccount": "gmail",
+          "sustainable": false,
+          "status": "accelerated",
+          "summary": "Yüksek tüketim ivmesi: ort. 1.2x (en hızlı: gmail 1.5x)"
+        }
+        """.data(using: .utf8)!
+        let r21Decoded = try JSONDecoder().decode(SustainablePoolBurnRateSummary.self, from: r21Json)
+        precondition(r21Decoded.sustainable == false && r21Decoded.fastestBurningAccount == "gmail", "SustainablePoolBurnRateSummary must decode accurately")
+
         // Urgent owner_needed classification test
         let urgentOwner = StatusBoardOwnerItem(project: "prod", text: "ACİL müdahale")
         let normalOwner = StatusBoardOwnerItem(project: "docs", text: "Not ekle")

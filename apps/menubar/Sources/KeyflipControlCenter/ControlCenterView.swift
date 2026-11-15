@@ -308,6 +308,12 @@ public struct ControlCenterView: View {
                                 .font(.system(size: 10))
                             Text("Sahipten Bekleyen (\(displayedOwners.count))")
                                 .font(.system(size: 11, weight: .semibold))
+                            if let uor = viewModel.payload.urgentOwnerRatio, uor.urgentCount > 0 {
+                                Spacer()
+                                Text("\(uor.urgentCount)/\(uor.totalCount) acil (%\(uor.urgentRatioPct))")
+                                    .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                                    .foregroundColor(.red)
+                            }
                         }
                         ForEach(displayedOwners.sorted { ($0.isUrgent ? 0 : 1) < ($1.isUrgent ? 0 : 1) }) { item in
                             HStack(alignment: .top, spacing: 6) {
@@ -632,6 +638,18 @@ public struct ControlCenterView: View {
                             Text(asc.summary)
                                 .font(.system(size: 10, weight: .medium))
                                 .foregroundColor(asc.status == "breached" ? .red : .orange)
+                                .lineLimit(1)
+                        }
+                    }
+
+                    if let sbr = viewModel.payload.sustainableBurnRate, sbr.measuredCount > 0, !sbr.sustainable {
+                        HStack(spacing: 5) {
+                            Image(systemName: "flame.circle.fill")
+                                .font(.system(size: 10))
+                                .foregroundColor(.orange)
+                            Text(sbr.summary)
+                                .font(.system(size: 10, weight: .medium))
+                                .foregroundColor(.orange)
                                 .lineLimit(1)
                         }
                     }

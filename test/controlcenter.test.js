@@ -93,7 +93,12 @@ import {
   evaluateAuditErrorRate,
   evaluateFailoverCapHeadroomUsd,
   evaluateAutoswitchThresholdCompliance,
-  evaluateFleetIdleReserveRatio
+  evaluateFleetIdleReserveRatio,
+  evaluateStatusBoardRowDensity,
+  summarizeTokenExpiryHorizon,
+  evaluateNotificationAndAutostartPosture,
+  evaluateSustainablePoolBurnRate,
+  evaluateUrgentOwnerRatio
 } from "../src/controlcenter.js";
 import * as daemon from "../src/daemon.js";
 
@@ -1536,4 +1541,63 @@ test("evaluateServerSiteResponseCodeSummary, evaluateAuditErrorRate, evaluateFai
   assert.equal(reserve.idleCount, 1);
   assert.equal(reserve.reserveRatioPct, 25);
   assert.equal(reserve.status, "has-reserve");
+});
+
+test("evaluateStatusBoardRowDensity, summarizeTokenExpiryHorizon, evaluateNotificationAndAutostartPosture, evaluateSustainablePoolBurnRate, and evaluateUrgentOwnerRatio work accurately", () => {
+  const dens = evaluateStatusBoardRowDensity({
+    sections: [
+      { id: "s1", title: "Altyapı", rows: [{ label: "a", value: "1", status: "ok" }, { label: "b", value: "2", status: "ok" }] },
+      { id: "s2", title: "Servisler", rows: new Array(6).fill({ label: "x", value: "ok", status: "ok" }) }
+    ]
+  });
+  assert.equal(dens.sectionCount, 2);
+  assert.equal(dens.totalRows, 8);
+  assert.equal(dens.avgRowsPerSection, 4);
+  assert.equal(dens.maxRowsInSection, 6);
+  assert.equal(dens.densestSectionTitle, "Servisler");
+  assert.equal(dens.status, "moderate");
+
+  const hor = summarizeTokenExpiryHorizon([
+    { name: "gmail", enabled: true, token: { status: "valid", remainingMs: 12 * 60000 } },
+    { name: "yahoo", enabled: true, token: { status: "valid", remainingMs: 108 * 60000 } }
+  ]);
+  assert.equal(hor.enabledCount, 2);
+  assert.equal(hor.validCount, 2);
+  assert.equal(hor.minRemainingMinutes, 12);
+  assert.equal(hor.avgRemainingMinutes, 60);
+  assert.equal(hor.soonestAccount, "gmail");
+  assert.equal(hor.status, "expiring-soon");
+
+  const post = evaluateNotificationAndAutostartPosture(
+    { notify: true, launchAtLogin: false },
+    { "notify.desktop": true }
+  );
+  assert.equal(post.notifyEnabled, true);
+  assert.equal(post.launchAtLogin, false);
+  assert.equal(post.status, "partial");
+
+  const sbr = evaluateSustainablePoolBurnRate({
+    accounts: [
+      { name: "gmail", burnRateRatio: 1.5 },
+      { name: "yahoo", burnRateRatio: 0.9 }
+    ]
+  });
+  assert.equal(sbr.measuredCount, 2);
+  assert.equal(sbr.avgBurnRateRatio, 1.2);
+  assert.equal(sbr.maxBurnRateRatio, 1.5);
+  assert.equal(sbr.fastestBurningAccount, "gmail");
+  assert.equal(sbr.sustainable, false);
+  assert.equal(sbr.status, "accelerated");
+
+  const uor = evaluateUrgentOwnerRatio({
+    owner_needed: [
+      { project: "api", text: "ACİL 502 hatası" },
+      { project: "docs", text: "README güncelle" }
+    ]
+  });
+  assert.equal(uor.totalCount, 2);
+  assert.equal(uor.urgentCount, 1);
+  assert.equal(uor.normalCount, 1);
+  assert.equal(uor.urgentRatioPct, 50);
+  assert.equal(uor.status, "has-urgent");
 });

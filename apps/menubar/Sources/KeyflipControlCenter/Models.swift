@@ -83,6 +83,11 @@ public struct ControlCenterPayload: Codable {
     public var failoverCapHeadroom: FailoverCapHeadroomSummary?
     public var thresholdCompliance: AutoswitchThresholdComplianceSummary?
     public var fleetIdleReserve: FleetIdleReserveSummary?
+    public var statusBoardRowDensity: StatusBoardRowDensitySummary?
+    public var tokenExpiryHorizon: TokenExpiryHorizonSummary?
+    public var notificationAutostartPosture: NotificationAutostartPostureSummary?
+    public var sustainableBurnRate: SustainablePoolBurnRateSummary?
+    public var urgentOwnerRatio: UrgentOwnerRatioSummary?
     public var auditTimeline: [AuditEventItem]?
     public var markdownReport: String?
     public var preferences: PreferencesSummary?
@@ -171,6 +176,11 @@ public struct ControlCenterPayload: Codable {
         failoverCapHeadroom: FailoverCapHeadroomSummary? = nil,
         thresholdCompliance: AutoswitchThresholdComplianceSummary? = nil,
         fleetIdleReserve: FleetIdleReserveSummary? = nil,
+        statusBoardRowDensity: StatusBoardRowDensitySummary? = nil,
+        tokenExpiryHorizon: TokenExpiryHorizonSummary? = nil,
+        notificationAutostartPosture: NotificationAutostartPostureSummary? = nil,
+        sustainableBurnRate: SustainablePoolBurnRateSummary? = nil,
+        urgentOwnerRatio: UrgentOwnerRatioSummary? = nil,
         auditTimeline: [AuditEventItem]? = [],
         markdownReport: String? = nil,
         preferences: PreferencesSummary? = nil,
@@ -258,6 +268,11 @@ public struct ControlCenterPayload: Codable {
         self.failoverCapHeadroom = failoverCapHeadroom
         self.thresholdCompliance = thresholdCompliance
         self.fleetIdleReserve = fleetIdleReserve
+        self.statusBoardRowDensity = statusBoardRowDensity
+        self.tokenExpiryHorizon = tokenExpiryHorizon
+        self.notificationAutostartPosture = notificationAutostartPosture
+        self.sustainableBurnRate = sustainableBurnRate
+        self.urgentOwnerRatio = urgentOwnerRatio
         self.auditTimeline = auditTimeline
         self.markdownReport = markdownReport
         self.preferences = preferences
@@ -1855,5 +1870,51 @@ public struct FleetIdleReserveSummary: Codable {
     public var workingCount: Int
     public var idleCount: Int
     public var reserveRatioPct: Int?
+    public var summary: String
+}
+
+public struct StatusBoardRowDensitySummary: Codable {
+    public var sectionCount: Int
+    public var totalRows: Int
+    public var avgRowsPerSection: Double
+    public var maxRowsInSection: Int
+    public var densestSectionTitle: String?
+    public var status: String
+    public var summary: String
+}
+
+public struct TokenExpiryHorizonSummary: Codable {
+    public var enabledCount: Int
+    public var validCount: Int
+    public var minRemainingMinutes: Int?
+    public var avgRemainingMinutes: Int?
+    public var soonestAccount: String?
+    public var status: String
+    public var summary: String
+}
+
+public struct NotificationAutostartPostureSummary: Codable {
+    public var notifyEnabled: Bool
+    public var launchAtLogin: Bool
+    public var status: String
+    public var summary: String
+}
+
+public struct SustainablePoolBurnRateSummary: Codable {
+    public var measuredCount: Int
+    public var avgBurnRateRatio: Double
+    public var maxBurnRateRatio: Double
+    public var fastestBurningAccount: String?
+    public var sustainable: Bool
+    public var status: String
+    public var summary: String
+}
+
+public struct UrgentOwnerRatioSummary: Codable {
+    public var totalCount: Int
+    public var urgentCount: Int
+    public var normalCount: Int
+    public var urgentRatioPct: Int
+    public var status: String
     public var summary: String
 }

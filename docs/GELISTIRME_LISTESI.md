@@ -1,6 +1,6 @@
 # Geliştirme Listesi ve Yaratıcı Özellik Önerileri (`GELISTIRME_LISTESI.md`)
 
-Bu liste, `docs/RAKIP_ANALIZI.md` sonucunda belirlenen tüm özelliklerin tamamlanma durumunu ve yirminci turda önerilen **beş yeni yaratıcı özelliği** (en değerli ikisi uygulanmış olarak) içerir.
+Bu liste, `docs/RAKIP_ANALIZI.md` sonucunda belirlenen tüm özelliklerin tamamlanma durumunu ve yirmi birinci turda önerilen **beş yeni yaratıcı özelliği** (en değerli ikisi uygulanmış olarak) içerir.
 
 ---
 
@@ -99,24 +99,29 @@ Bu liste, `docs/RAKIP_ANALIZI.md` sonucunda belirlenen tüm özelliklerin tamaml
 - [x] **Uzak Sunucu HTTP Yanıt Kodu Dağılım Analizcisi (`evaluateServerSiteResponseCodeSummary`):** `server.sites` içindeki HTTP durum kodlarını (`2xx`, `3xx`, `4xx`, `5xx`) sınıflandırarak erişim hatalarını özetleme.
 - [x] **Denetim Günlüğü (`auditTimeline`) Hata Oranı Analizcisi (`evaluateAuditErrorRate`):** Son denetim olaylarındaki başarısız (`bad`/`warn`/`error`) işlemlerin oranını hesaplama.
 - [x] **Failover Günlük Güvenli Bütçe Payı (`evaluateFailoverCapHeadroomUsd`):** Kalan Keysmith harcama tavanını (`remainingUsd`) ve 8 saatlik seans için güvenli saatlik bütçe payını (`safeHourlyAllowanceUsd`) özetleme.
+- [x] **Hesap Havuzu Otomatik Geçiş Eşiği Uyum Oranı (`evaluateAutoswitchThresholdCompliance`):** Etkin Claude hesaplarından kaçının mevcut `autoswitch.threshold` sınırının altında veya üstünde olduğunu hesaplayıp `HESAPLAR` bölümünde gösterme.
+- [x] **Filo (Traycer) Yedek / Boşta Ajan Kapasite Oranı (`evaluateFleetIdleReserveRatio`):** Traycer ajan filosundaki hazır boşta ajan sayısını ve rezerv oranını hesaplayarak `FİLO (TRAYCER)` bölümünde gösterme.
+- [x] **Durum Panosu Bölüm Başına Ortalama Satır Yoğunluğu (`evaluateStatusBoardRowDensity`):** Durum panosundaki bölümlerin ortalama ve maksimum satır yoğunluğunu analiz ederek aşırı kalabalık bölümleri raporlama.
+- [x] **OAuth Belirteç Kalan Süre Dağılım Özeti (`summarizeTokenExpiryHorizon`):** Etkin Claude hesaplarındaki OAuth belirteçlerinin en kısa ve ortalama kalan geçerlilik dakikasını özetleme.
+- [x] **Tercihler ve Bildirim Hazırlık Denetçisi (`evaluateNotificationAndAutostartPosture`):** Masaüstü bildirimleri (`notify.desktop`) ve oturum açılışında otomatik başlatma (`launchAtLogin`) ayarlarının operasyonel hazırlığını özetleme.
 
 ---
 
 ## 2. Listedeki İşler Tamamlandığı İçin Önerilen Beş Yeni Yaratıcı Özellik (En Değerli İkisi Uygulandı)
 
-### ✅ Yeni Öneri 1 (UYGULANDI): Hesap Havuzu Otomatik Geçiş Eşiği Uyum Oranı (`evaluateAutoswitchThresholdCompliance`)
-- **Değer:** Etkin Claude hesaplarından kaçının mevcut `autoswitch.threshold` sınırının altında (`belowThresholdCount`) veya üstünde (`exceedingAccounts`) olduğunu hesaplayıp `HESAPLAR` bölümünde gösterir (`Eşik uyumu: 1/2 hesap %90 altında (aşan: gmail)`).
-- **Uygulama:** `src/controlcenter.js` (`evaluateAutoswitchThresholdCompliance`), `src/daemon.js` (`base.thresholdCompliance`), `Models.swift` (`AutoswitchThresholdComplianceSummary`) ve `ControlCenterView.swift`.
+### ✅ Yeni Öneri 1 (UYGULANDI): Hesap Havuzu Sürdürülebilir Tüketim İvmesi Analizcisi (`evaluateSustainablePoolBurnRate`)
+- **Değer:** Etkin Claude hesaplarının 5 saatlik pencerelerindeki ortalama kullanım hızı oranını (`avgBurnRateRatio` — geçen pencere süresine göre kullanılan yüzde oranı) hesaplar; `<=1.0x` ise sürdürülebilir (`sustainable`), `>1.0x` ise hızlandırılmış (`accelerated` / `unsustainable`) olarak sınıflandırıp `HESAPLAR` bölümünde gösterir (`Yüksek tüketim ivmesi: ort. 1.2x (en hızlı: gmail 1.5x)`).
+- **Uygulama:** `src/controlcenter.js` (`evaluateSustainablePoolBurnRate`), `src/daemon.js` (`base.sustainableBurnRate`), `Models.swift` (`SustainablePoolBurnRateSummary`) ve `ControlCenterView.swift`.
 
-### ✅ Yeni Öneri 2 (UYGULANDI): Filo (Traycer) Yedek / Boşta Ajan Kapasite Oranı (`evaluateFleetIdleReserveRatio`)
-- **Değer:** Traycer ajan filosundaki hazır boşta ajan sayısını (`idleCount`) ve toplam aktif+boşta havuz içindeki rezerv oranını (`reserveRatioPct`) hesaplayarak `FİLO (TRAYCER)` bölümünde gösterir (`Filo yedek kapasitesi: 1 boşta ajan (%25 hazır rezerv)`).
-- **Uygulama:** `src/controlcenter.js` (`evaluateFleetIdleReserveRatio`), `src/daemon.js` (`base.fleetIdleReserve`), `Models.swift` (`FleetIdleReserveSummary`) ve `ControlCenterView.swift`.
+### ✅ Yeni Öneri 2 (UYGULANDI): Durum Panosu Acil / Normal Sahiplik Oranı Analizcisi (`evaluateUrgentOwnerRatio`)
+- **Değer:** Durum panosundaki `owner_needed` maddelerinin kaç tanesinin acil/kritik (`urgentCount`) ve kaç tanesinin rutin (`normalCount`) olduğunu oranlayarak (`urgentRatioPct`) `Sahipten Bekleyen` başlığında gösterir (`1/2 acil (%50)`).
+- **Uygulama:** `src/controlcenter.js` (`evaluateUrgentOwnerRatio`), `src/daemon.js` (`base.urgentOwnerRatio`), `Models.swift` (`UrgentOwnerRatioSummary`) ve `ControlCenterView.swift`.
 
-### 📋 Yeni Öneri 3 (Gelecek Adayı): Durum Panosu Bölüm Başına Ortalama Satır Yoğunluğu (`evaluateStatusBoardRowDensity`)
-- **Değer:** Durum panosundaki bölümlerin ortalama ve maksimum satır yoğunluğunu analiz ederek aşırı kalabalık bölümleri raporlama.
+### 📋 Yeni Öneri 3 (Gelecek Adayı): Yerel Servis Aktif Süreç (PID) Kapsam Özeti (`summarizeServiceProcessCoverage`)
+- **Değer:** İzlenen `daemon` türündeki yerel servislerin kaç tanesinin aktif bir işletim sistemi süreç kimliğine (`pid > 0`) sahip olduğunu özetleme.
 
-### 📋 Yeni Öneri 4 (Gelecek Adayı): OAuth Belirteç Kalan Süre Dağılım Özeti (`summarizeTokenExpiryHorizon`)
-- **Değer:** Etkin Claude hesaplarındaki OAuth belirteçlerinin en kısa ve ortalama kalan geçerlilik dakikasını özetleme.
+### 📋 Yeni Öneri 4 (Gelecek Adayı): Yedek Zincir (Failover) Son 24 Saatlik Devreye Girme Sıklığı (`evaluateFailoverEngagementFrequency`)
+- **Değer:** Günlük denetim olaylarından (`dailyAuditActivity`) son 24 saatteki failover geçiş sıklığını sınıflandırma.
 
-### 📋 Yeni Öneri 5 (Gelecek Adayı): Tercihler ve Bildirim Hazırlık Denetçisi (`evaluateNotificationAndAutostartPosture`)
-- **Değer:** Masaüstü bildirimleri (`notify.desktop`) ve oturum açılışında otomatik başlatma (`launchAtLogin`) ayarlarının operasyonel hazırlığını özetleme.
+### 📋 Yeni Öneri 5 (Gelecek Adayı): İkincil Kota Veri Kaynağı Çeşitlilik Özeti (`evaluateSecondarySourceDiversity`)
+- **Değer:** `otherQuotas` içindeki sağlayıcıların veri kaynağı dağılımını (`plugin-json`, `polyctl-quota`, `apicredits`) özetleme.

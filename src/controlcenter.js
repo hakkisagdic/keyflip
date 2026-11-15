@@ -5179,3 +5179,230 @@ export function evaluateFleetIdleReserveRatio(fleet = {}) {
         : `Filo yedek kapasitesi: ${idleCount} boşta ajan (%${reserveRatioPct} hazır rezerv)`
   };
 }
+
+/**
+ * Evaluates average and maximum row count per Status Board section to highlight overcrowded sections.
+ */
+export function evaluateStatusBoardRowDensity(statusBoard) {
+  const sections = Array.isArray(statusBoard?.sections) ? statusBoard.sections : [];
+  const sectionCount = sections.length;
+
+  if (sectionCount === 0) {
+    return {
+      sectionCount: 0,
+      totalRows: 0,
+      avgRowsPerSection: 0,
+      maxRowsInSection: 0,
+      densestSectionTitle: null,
+      status: "empty",
+      summary: "Durum panosu bölümü yok"
+    };
+  }
+
+  let totalRows = 0;
+  let maxRowsInSection = 0;
+  let densestSectionTitle = null;
+
+  for (const sec of sections) {
+    const count = Array.isArray(sec?.rows) ? sec.rows.length : 0;
+    totalRows += count;
+    if (count > maxRowsInSection) {
+      maxRowsInSection = count;
+      densestSectionTitle = sec?.title || sec?.id || "Bölüm";
+    }
+  }
+
+  const avgRowsPerSection = Math.round((totalRows / sectionCount) * 10) / 10;
+  const status = maxRowsInSection >= 12 ? "crowded" : maxRowsInSection >= 6 ? "moderate" : "compact";
+
+  return {
+    sectionCount,
+    totalRows,
+    avgRowsPerSection,
+    maxRowsInSection,
+    densestSectionTitle,
+    status,
+    summary: `Bölüm yoğunluğu: ort. ${avgRowsPerSection} satır (en yoğun: ${densestSectionTitle || "-"} · ${maxRowsInSection} satır)`
+  };
+}
+
+/**
+ * Summarizes the minimum and average remaining OAuth token validity minutes across enabled Claude accounts.
+ */
+export function summarizeTokenExpiryHorizon(accounts = []) {
+  const enabled = (Array.isArray(accounts) ? accounts : []).filter((a) => a && a.enabled !== false);
+  if (enabled.length === 0) {
+    return {
+      enabledCount: 0,
+      validCount: 0,
+      minRemainingMinutes: null,
+      avgRemainingMinutes: null,
+      soonestAccount: null,
+      status: "empty",
+      summary: "Etkin hesap yok"
+    };
+  }
+
+  let validCount = 0;
+  let sumMin = 0;
+  let minRemainingMinutes = null;
+  let soonestAccount = null;
+
+  for (const acct of enabled) {
+    const remMs = typeof acct?.token?.remainingMs === "number" ? acct.token.remainingMs : null;
+    if (remMs !== null && Number.isFinite(remMs)) {
+      const mins = Math.max(0, Math.round(remMs / 60000));
+      if (acct?.token?.status === "valid" && mins > 0) {
+        validCount += 1;
+      }
+      sumMin += mins;
+      if (minRemainingMinutes === null || mins < minRemainingMinutes) {
+        minRemainingMinutes = mins;
+        soonestAccount = acct.name;
+      }
+    }
+  }
+
+  const avgRemainingMinutes = minRemainingMinutes !== null ? Math.round(sumMin / enabled.length) : null;
+  const status =
+    minRemainingMinutes === null
+      ? "unknown"
+      : minRemainingMinutes <= 15
+        ? "expiring-soon"
+        : minRemainingMinutes <= 60
+          ? "watch"
+          : "comfortable";
+
+  return {
+    enabledCount: enabled.length,
+    validCount,
+    minRemainingMinutes,
+    avgRemainingMinutes,
+    soonestAccount,
+    status,
+    summary:
+      minRemainingMinutes !== null
+        ? `Token ufku: en yakın ${soonestAccount} (${minRemainingMinutes} dk) · ort. ${avgRemainingMinutes} dk`
+        : "Token kalan süre verisi yok"
+  };
+}
+
+/**
+ * Evaluates operational readiness of desktop notifications (`notify.desktop`) and login autostart (`launchAtLogin`).
+ */
+export function evaluateNotificationAndAutostartPosture(preferences = {}, config = {}) {
+  const notifyEnabled =
+    typeof preferences?.notify === "boolean"
+      ? preferences.notify
+      : Boolean(config?.["notify.desktop"]);
+  const launchAtLogin = Boolean(preferences?.launchAtLogin);
+
+  const status =
+    notifyEnabled && launchAtLogin
+      ? "fully-armed"
+      : notifyEnabled || launchAtLogin
+        ? "partial"
+        : "manual";
+
+  return {
+    notifyEnabled,
+    launchAtLogin,
+    status,
+    summary: `Otomasyon duruşu: Bildirim ${notifyEnabled ? "açık" : "kapalı"} · Oturumda başlatma ${launchAtLogin ? "etkin" : "kapalı"}`
+  };
+}
+
+/**
+ * Evaluates the average 5-hour quota burn-rate ratio across enabled Claude accounts to determine
+ * whether the pool is consuming quota at a sustainable pace (<= 1.0x) or an accelerated pace (> 1.0x).
+ */
+export function evaluateSustainablePoolBurnRate(quotaForecast = {}) {
+  const list = Array.isArray(quotaForecast?.accounts) ? quotaForecast.accounts : [];
+  const measured = list.filter((a) => a && typeof a.burnRateRatio === "number" && Number.isFinite(a.burnRateRatio));
+
+  if (measured.length === 0) {
+    return {
+      measuredCount: 0,
+      avgBurnRateRatio: 0,
+      maxBurnRateRatio: 0,
+      fastestBurningAccount: null,
+      sustainable: true,
+      status: "idle",
+      summary: "Tüketim hızı verisi henüz oluşmadı"
+    };
+  }
+
+  let sum = 0;
+  let maxBurnRateRatio = 0;
+  let fastestBurningAccount = null;
+
+  for (const item of measured) {
+    sum += item.burnRateRatio;
+    if (item.burnRateRatio > maxBurnRateRatio) {
+      maxBurnRateRatio = item.burnRateRatio;
+      fastestBurningAccount = item.name;
+    }
+  }
+
+  const avgBurnRateRatio = Math.round((sum / measured.length) * 100) / 100;
+  maxBurnRateRatio = Math.round(maxBurnRateRatio * 100) / 100;
+  const sustainable = avgBurnRateRatio <= 1.0;
+  const status = avgBurnRateRatio > 1.3 ? "unsustainable" : avgBurnRateRatio > 1.0 ? "accelerated" : "sustainable";
+
+  return {
+    measuredCount: measured.length,
+    avgBurnRateRatio,
+    maxBurnRateRatio,
+    fastestBurningAccount,
+    sustainable,
+    status,
+    summary: sustainable
+      ? `Sürdürülebilir tüketim hızı: ort. ${avgBurnRateRatio}x (dengeli)`
+      : `Yüksek tüketim ivmesi: ort. ${avgBurnRateRatio}x (en hızlı: ${fastestBurningAccount} ${maxBurnRateRatio}x)`
+  };
+}
+
+/**
+ * Evaluates the ratio of urgent/critical `owner_needed` items vs normal items in the Status Board.
+ */
+export function evaluateUrgentOwnerRatio(statusBoard) {
+  const owners = Array.isArray(statusBoard?.owner_needed) ? statusBoard.owner_needed : [];
+  const totalCount = owners.length;
+
+  if (totalCount === 0) {
+    return {
+      totalCount: 0,
+      urgentCount: 0,
+      normalCount: 0,
+      urgentRatioPct: 0,
+      status: "clear",
+      summary: "Bekleyen sahiplik maddesi yok"
+    };
+  }
+
+  const keywords = ["acil", "kritik", "blocker", "down", "prod", "fatura", "payment", "expired", "süresi doldu", "500", "502", "503"];
+  let urgentCount = 0;
+
+  for (const item of owners) {
+    const combined = `${item?.project || ""} ${item?.text || ""}`.toLowerCase();
+    if (keywords.some((kw) => combined.includes(kw))) {
+      urgentCount += 1;
+    }
+  }
+
+  const normalCount = totalCount - urgentCount;
+  const urgentRatioPct = Math.round((urgentCount / totalCount) * 100);
+  const status = urgentCount > 0 ? "has-urgent" : "routine-only";
+
+  return {
+    totalCount,
+    urgentCount,
+    normalCount,
+    urgentRatioPct,
+    status,
+    summary:
+      urgentCount > 0
+        ? `Acil sahiplik oranı: ${urgentCount}/${totalCount} (% ${urgentRatioPct} acil müdahale)`
+        : `Tüm sahiplik maddeleri rutin (${totalCount} madde)`
+  };
+}
