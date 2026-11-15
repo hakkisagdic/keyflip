@@ -78,7 +78,12 @@ import {
   evaluateSurfaceRefreshCoordHealth,
   summarizeDaemonWarningsBySeverity,
   evaluateDualWindowBottleneck,
-  evaluateServerOverallReadiness
+  evaluateServerOverallReadiness,
+  evaluateServiceRestartCoverage,
+  evaluateOwnerToSectionRatio,
+  summarizeAutoswitchPolicy,
+  evaluateSecondaryPoolHeadroom,
+  evaluateServiceHeartbeatFreshness
 } from "../src/controlcenter.js";
 import * as daemon from "../src/daemon.js";
 
@@ -1356,4 +1361,63 @@ test("evaluateConvIndexCadenceHealth, evaluateSurfaceRefreshCoordHealth, summari
   assert.equal(srvReady.grade, "A");
   assert.equal(srvReady.score, 100);
   assert.equal(srvReady.status, "healthy");
+});
+
+
+test("evaluateServiceRestartCoverage, evaluateOwnerToSectionRatio, summarizeAutoswitchPolicy, evaluateSecondaryPoolHeadroom, and evaluateServiceHeartbeatFreshness work accurately", () => {
+  const cov = evaluateServiceRestartCoverage([
+    { id: "keysmith-gateway", title: "Keysmith Gateway", state: "error", restartable: true },
+    { id: "custom-job", title: "Özel Servis", state: "warning", restartable: false },
+    { id: "keysmith-router", title: "Keysmith Router", state: "running", restartable: true }
+  ]);
+  assert.equal(cov.totalDegraded, 2);
+  assert.equal(cov.restartableDegraded, 1);
+  assert.equal(cov.coveragePct, 50);
+  assert.equal(cov.status, "partial-coverage");
+
+  const ratio = evaluateOwnerToSectionRatio({
+    sections: [
+      { id: "s1", rows: [{ label: "a", value: "1", status: "ok" }] },
+      { id: "s2", rows: [{ label: "b", value: "2", status: "warn" }] }
+    ],
+    owner_needed: [
+      { project: "p1", text: "iş 1" },
+      { project: "p2", text: "iş 2" },
+      { project: "p3", text: "iş 3" }
+    ]
+  });
+  assert.equal(ratio.ownerNeededCount, 3);
+  assert.equal(ratio.sectionCount, 2);
+  assert.equal(ratio.itemsPerSection, 1.5);
+  assert.equal(ratio.loadTier, "moderate");
+
+  const pol = summarizeAutoswitchPolicy({
+    "autoswitch.strategy": "round-robin",
+    "autoswitch.threshold": 85,
+    "failover.enabled": true,
+    "failover.capUsd": 30
+  });
+  assert.equal(pol.strategy, "round-robin");
+  assert.equal(pol.thresholdPct, 85);
+  assert.equal(pol.failoverEnabled, true);
+  assert.equal(pol.capUsd, 30);
+
+  const secHeadroom = evaluateSecondaryPoolHeadroom([
+    { id: "kiro", label: "Kiro Kredisi", status: "ok", usedPct: 20, source: "polyctl-quota" },
+    { id: "agy", label: "Antigravity", status: "ok", usedPct: 40, source: "polyctl-quota" },
+    { id: "evren", label: "EVREN", status: "unreadable", usedPct: null, source: "none" }
+  ]);
+  assert.equal(secHeadroom.readableCount, 2);
+  assert.equal(secHeadroom.avgRemainingPct, 70);
+  assert.equal(secHeadroom.bestFallbackId, "kiro");
+  assert.equal(secHeadroom.status, "ample");
+
+  const hb = evaluateServiceHeartbeatFreshness([
+    { id: "polyctl-admin-tick", title: "Polyctl Admin Tick", heartbeatAgeMin: 52 },
+    { id: "embedding-guardian", title: "Embedding Koruyucu", heartbeatAgeMin: 8 }
+  ]);
+  assert.equal(hb.monitoredCount, 2);
+  assert.equal(hb.freshCount, 1);
+  assert.equal(hb.maxHeartbeatAgeMin, 52);
+  assert.equal(hb.status, "critical");
 });

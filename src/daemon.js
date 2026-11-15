@@ -901,6 +901,11 @@ async function buildControlCenter(ctx, scheduler, opts) {
   base.warningsSummary = _controlcenter.summarizeDaemonWarningsBySeverity(base.warnings);
   base.dualWindowBottleneck = _controlcenter.evaluateDualWindowBottleneck(base.accounts);
   base.serverOverallReadiness = _controlcenter.evaluateServerOverallReadiness(base.server);
+  base.serviceRestartCoverage = _controlcenter.evaluateServiceRestartCoverage(base.services);
+  base.ownerToSectionRatio = _controlcenter.evaluateOwnerToSectionRatio(base.statusBoard);
+  base.autoswitchPolicy = _controlcenter.summarizeAutoswitchPolicy(base.config);
+  base.secondaryPoolHeadroom = _controlcenter.evaluateSecondaryPoolHeadroom(base.otherQuotas);
+  base.serviceHeartbeatFreshness = _controlcenter.evaluateServiceHeartbeatFreshness(base.services);
   base.compactSummary = _controlcenter.formatDaemonCompactSummary(base);
   base.preferences = _controlcenter.collectPreferences(ctx);
   base.markdownReport = _controlcenter.buildControlCenterMarkdown(base);

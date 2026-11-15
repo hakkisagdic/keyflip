@@ -4510,3 +4510,234 @@ export function evaluateServerOverallReadiness(server = {}) {
     summary: `Sunucu genel hazırlık: ${grade} (% ${score})`
   };
 }
+
+/**
+ * Evaluates how many degraded (`error`, `warning`, `stopped`) local services are whitelisted
+ * (`restartable: true`) for one-click recovery from the menu bar.
+ */
+export function evaluateServiceRestartCoverage(services = []) {
+  const list = Array.isArray(services) ? services : [];
+  const degraded = list.filter(
+    (s) => s && typeof s === "object" && s.state !== "running" && s.state !== "scheduled"
+  );
+  const totalDegraded = degraded.length;
+
+  if (totalDegraded === 0) {
+    return {
+      totalDegraded: 0,
+      restartableDegraded: 0,
+      coveragePct: 100,
+      nonRestartableLabels: [],
+      status: "all-healthy",
+      summary: "Tüm servisler çalışıyor (kurtarma gerekmiyor)"
+    };
+  }
+
+  let restartableDegraded = 0;
+  const nonRestartableLabels = [];
+  for (const svc of degraded) {
+    if (svc.restartable) {
+      restartableDegraded += 1;
+    } else {
+      nonRestartableLabels.push(svc.title || svc.label || svc.id || "Servis");
+    }
+  }
+
+  const coveragePct = Math.round((restartableDegraded / totalDegraded) * 100);
+  const status =
+    restartableDegraded === totalDegraded
+      ? "full-coverage"
+      : restartableDegraded > 0
+        ? "partial-coverage"
+        : "manual-only";
+
+  return {
+    totalDegraded,
+    restartableDegraded,
+    coveragePct,
+    nonRestartableLabels,
+    status,
+    summary:
+      restartableDegraded === totalDegraded
+        ? `Kurtarma kapsamı: ${restartableDegraded}/${totalDegraded} sorunlu servis tek tıkla yeniden başlatılabilir`
+        : `Kurtarma kapsamı: ${restartableDegraded}/${totalDegraded} tek tıkla (${nonRestartableLabels.join(", ")} manuel)`
+  };
+}
+
+/**
+ * Computes the ratio of `owner_needed` items to Status Board sections and rows to classify admin intervention load.
+ */
+export function evaluateOwnerToSectionRatio(statusBoard) {
+  const sections = Array.isArray(statusBoard?.sections) ? statusBoard.sections : [];
+  const owners = Array.isArray(statusBoard?.owner_needed) ? statusBoard.owner_needed : [];
+  const ownerNeededCount = owners.length;
+  const sectionCount = sections.length;
+  const rowCount = sections.reduce((acc, s) => acc + (Array.isArray(s?.rows) ? s.rows.length : 0), 0);
+
+  if (ownerNeededCount === 0) {
+    return {
+      ownerNeededCount: 0,
+      sectionCount,
+      rowCount,
+      itemsPerSection: 0,
+      loadTier: "idle",
+      summary: "Yönetici müdahalesi bekleyen iş yok"
+    };
+  }
+
+  const itemsPerSection =
+    sectionCount > 0 ? Math.round((ownerNeededCount / sectionCount) * 10) / 10 : ownerNeededCount;
+  const loadTier =
+    ownerNeededCount >= 5 || itemsPerSection >= 2.0
+      ? "heavy"
+      : ownerNeededCount >= 2 || itemsPerSection >= 1.0
+        ? "moderate"
+        : "light";
+
+  return {
+    ownerNeededCount,
+    sectionCount,
+    rowCount,
+    itemsPerSection,
+    loadTier,
+    summary: `Müdahale yoğunluğu: ${ownerNeededCount} iş / ${sectionCount} bölüm (bölüm başına ${itemsPerSection})`
+  };
+}
+
+/**
+ * Summarizes `autoswitch.strategy`, `autoswitch.threshold`, `failover.enabled`, and `failover.capUsd`
+ * into a concise human-readable policy summary.
+ */
+export function summarizeAutoswitchPolicy(config = {}) {
+  const strategy = String(config?.["autoswitch.strategy"] || "best").trim() || "best";
+  const thresholdPct =
+    typeof config?.["autoswitch.threshold"] === "number" && config["autoswitch.threshold"] > 0
+      ? config["autoswitch.threshold"]
+      : 90;
+  const failoverEnabled = Boolean(config?.["failover.enabled"]);
+  const capUsd =
+    typeof config?.["failover.capUsd"] === "number" && config["failover.capUsd"] > 0
+      ? config["failover.capUsd"]
+      : null;
+
+  const failoverText = failoverEnabled
+    ? `Failover açık${capUsd !== null ? ` ($${capUsd} tavan)` : ""}`
+    : "Failover kapalı";
+
+  return {
+    strategy,
+    thresholdPct,
+    failoverEnabled,
+    capUsd,
+    summary: `Politika: ${strategy} stratejisi · %${thresholdPct} eşik · ${failoverText}`
+  };
+}
+
+/**
+ * Evaluates average remaining headroom percentage across readable secondary AI quotas (`otherQuotas`)
+ * and identifies the healthiest fallback surface.
+ */
+export function evaluateSecondaryPoolHeadroom(otherQuotas = []) {
+  const list = Array.isArray(otherQuotas) ? otherQuotas : [];
+  const readable = list.filter((q) => q && q.status !== "unreadable" && q.source !== "none");
+
+  if (readable.length === 0) {
+    return {
+      status: "unreadable",
+      readableCount: 0,
+      avgRemainingPct: null,
+      bestFallbackId: null,
+      bestFallbackLabel: null,
+      summary: "İkincil AI kota havuzu okunamadı"
+    };
+  }
+
+  let sumRem = 0;
+  let best = null;
+  let bestRem = -1;
+
+  for (const q of readable) {
+    let rem = 100;
+    if (typeof q.usedPct === "number" && Number.isFinite(q.usedPct)) {
+      rem = Math.max(0, Math.min(100, 100 - q.usedPct));
+    } else if (q.status === "exhausted") {
+      rem = 0;
+    } else if (q.status === "warning") {
+      rem = 20;
+    } else {
+      rem = 85;
+    }
+    sumRem += rem;
+    if (rem > bestRem) {
+      bestRem = rem;
+      best = q;
+    }
+  }
+
+  const avgRemainingPct = Math.round((sumRem / readable.length) * 10) / 10;
+  const status = avgRemainingPct >= 50 ? "ample" : avgRemainingPct >= 20 ? "tight" : "critical";
+
+  return {
+    status,
+    readableCount: readable.length,
+    avgRemainingPct,
+    bestFallbackId: best ? best.id : null,
+    bestFallbackLabel: best ? best.label || best.id : null,
+    summary: `İkincil havuz boşluğu: ort. %${avgRemainingPct} (${readable.length} yüzey · en geniş: ${best ? best.label || best.id : "-"}) `
+      .trim()
+  };
+}
+
+/**
+ * Evaluates heartbeat freshness across local services that emit a heartbeat file (`heartbeatAgeMin`).
+ */
+export function evaluateServiceHeartbeatFreshness(services = []) {
+  const list = Array.isArray(services) ? services : [];
+  const monitored = list.filter(
+    (s) => s && typeof s === "object" && typeof s.heartbeatAgeMin === "number" && Number.isFinite(s.heartbeatAgeMin)
+  );
+
+  if (monitored.length === 0) {
+    return {
+      status: "none",
+      monitoredCount: 0,
+      freshCount: 0,
+      maxHeartbeatAgeMin: null,
+      staleServices: [],
+      summary: "Kalp atışı (heartbeat) izlenen servis yok"
+    };
+  }
+
+  let freshCount = 0;
+  let maxHeartbeatAgeMin = 0;
+  const staleServices = [];
+
+  for (const svc of monitored) {
+    const age = Math.max(0, Math.round(svc.heartbeatAgeMin));
+    if (age > maxHeartbeatAgeMin) maxHeartbeatAgeMin = age;
+    if (age <= 30) {
+      freshCount += 1;
+    } else {
+      staleServices.push(svc.title || svc.label || svc.id || "Servis");
+    }
+  }
+
+  const status =
+    staleServices.length === 0
+      ? "fresh"
+      : maxHeartbeatAgeMin > 45
+        ? "critical"
+        : "stale";
+
+  return {
+    status,
+    monitoredCount: monitored.length,
+    freshCount,
+    maxHeartbeatAgeMin,
+    staleServices,
+    summary:
+      staleServices.length > 0
+        ? `Kalp atışı gecikmesi: ${staleServices.join(", ")} (${maxHeartbeatAgeMin} dk önce)`
+        : `Servis kalp atışları güncel (en yaşlı ${maxHeartbeatAgeMin} dk)`
+  };
+}

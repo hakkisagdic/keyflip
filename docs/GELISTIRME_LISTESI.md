@@ -1,6 +1,6 @@
 # Geliştirme Listesi ve Yaratıcı Özellik Önerileri (`GELISTIRME_LISTESI.md`)
 
-Bu liste, `docs/RAKIP_ANALIZI.md` sonucunda belirlenen tüm özelliklerin tamamlanma durumunu ve on yedinci turda önerilen **beş yeni yaratıcı özelliği** (en değerli ikisi uygulanmış olarak) içerir.
+Bu liste, `docs/RAKIP_ANALIZI.md` sonucunda belirlenen tüm özelliklerin tamamlanma durumunu ve on sekizinci turda önerilen **beş yeni yaratıcı özelliği** (en değerli ikisi uygulanmış olarak) içerir.
 
 ---
 
@@ -49,66 +49,64 @@ Bu liste, `docs/RAKIP_ANALIZI.md` sonucunda belirlenen tüm özelliklerin tamaml
 - [x] **OAuth Yenileme Başarı Oranı ve Güvenilirlik Analizcisi (`evaluateOAuthRefreshReliability`):** Etkin hesapların son OAuth yenileme sonuçlarını (`lastResult`, `remainingMs`) analiz ederek kimlik doğrulama güvenilirlik yüzdesini hesaplama.
 - [x] **Gün İçi Dinamik Eşik Önericisi (`recommendAdaptiveAutoswitchThreshold`):** Darboğaz saat penceresine (`bottleneckWindow`) ve aktif tüketim hızına (`burnRateRatio`) göre optimal `autoswitch.threshold` değerini (`%85` vs `%95`) önerme.
 - [x] **Durum Panosu Bölüm Bazlı Sağlık Özeti (`summarizeSectionHealthBreakdown`):** Her durum panosu bölümünün (`sections`) kendi ağırlıklı sağlık yüzdesini ve en eski sorun yaşını (`oldestIssueMinutes`) hesaplama.
-
 - [x] **Otomatik Sorun Giderme ve Müdahale Eylem Planı (`buildRemediationPlaybook`):** Açık sorunlar için en kritik 1–3 müdahale adımını ve CLI komutunu oluşturup `HESAPLAR` bölümünde gösterme.
 - [x] **Hesap Havuzu 7 Günlük Yük Dengesi ve Adillik Endeksi (`evaluatePoolLoadBalance`):** Etkin abonelikler arasındaki 7 günlük kota kullanım farkını (`spreadPct`) analiz ederek atıl kalan hesaba geçiş önerme.
 - [x] **Durum Panosu Kronolojik Yaşlanan Sorunlar Listesi (`listAgingStatusBoardIssues`):** Tüm bölümlerdeki `bad` ve `warn` satırlarını `since` zaman damgasına göre en eskiden en yeniye sıralayarak `>=120 dk` kronik sorunları öne çıkarma.
 - [x] **Yedek Zincir (Failover) Otomatik Kurtarma Zamanlayıcı Özeti (`evaluateFailoverRecoveryCountdown`):** Failover devredeyken `recoverAt` zamanına veya en erken 5 saatlik hesap sıfırlanmasına kalan dakikayı (`Havuz dönüşüne ~35 dk kaldı`) hesaplama.
 - [x] **Günlük Denetim Olayları Yoğunluk Özeti (`summarizeDailyAuditActivity`):** Son 24 saat içindeki toplam hesap geçişi, failover tetiklemesi ve servis yeniden başlatma sayılarını tek satırlık aktivite özetinde toplama.
-
 - [x] **Daemon İş Zamanlayıcı Gecikme ve Tutarlılık Analizcisi (`evaluateDaemonSchedulerHealth`):** `com.keyflip.daemon` içindeki periyodik işlerin çalışma zamanlarını, sürelerini ve hata durumlarını denetleyerek `SERVİSLER` bölümünde raporlama.
 - [x] **Haftalık Abonelik İsraf Önleme / "Sıfırlanmadan Tüket" Hesaplayıcısı (`evaluateWeeklyUnclaimedQuota`):** 7 günlük sıfırlanmasına `<=48 saat` kalmış ve `%35+` boş haftalık kapasitesi bulunan etkin Claude aboneliklerini `HESAPLAR` bölümünde önerme.
 - [x] **Durum Panosu Sahiplik Bekleyen İşleri Proje Bazlı Gruplama (`groupOwnerNeededByProject`):** `owner_needed` maddelerini `project` adına göre gruplayarak en yoğun projeyi ve acil iş sayılarını özetleme.
 - [x] **Uzak Sunucu Kaynak Baskısı (CPU/RAM/Disk) Analizcisi (`evaluateServerResourcePressure`):** `server-status.json` içindeki `load`, `memory` ve `disk` metriklerini sayısal ayrıştırarak kaynak baskısı uyarısı üretme.
 - [x] **Masaüstü Otomatik Yeniden Başlatma Hazırlık ve Güvenlik Kontrolü (`evaluateDesktopRestartSafety`):** Bekleyen Claude Desktop yeniden başlatma isteğinin Odak/Toplantı ertelemesi (`desktop.snoozeUntil`) durumunu ve kalan dakikayı raporlama.
-
 - [x] **Claude Sonnet 7 Günlük Alt-Kota Darboğaz ve Model Ayrışma Analizcisi (`evaluateSonnetModelSplitHealth`):** Genel 7 günlük kota henüz düşükken `sevenDaySonnet` alt-kotasının `%80+` doluluğa ulaşmasını veya `>=%20` hızlı erimesini `HESAPLAR` bölümünde gösterme.
 - [x] **Yerel Servis Log Hijyeni ve Hata Yoğunluğu Analizcisi (`evaluateServiceLogHygiene`):** İzlenen `launchd` servislerinin kıvılcım dizisi (`sparkline`) ve `lastError` kayıtlarından gürültülü servisleri `SERVİSLER` bölümünde öne çıkarma.
 - [x] **Çoklu Makine (`extraStatusFiles`) Host Sağlık Karşılaştırıcısı (`summarizeMultiHostStatusBreakdown`):** Birden fazla makineden birleştirilen `status.json` satırlarını `[host]` etiketine göre ayrıştırarak makine bazlı sağlık yüzdesi üretme.
 - [x] **Kullanım Uç Noktası Hız Sınırı (`usageThrottle`) Kurtarma Sayacı (`evaluateUsageThrottleRecovery`):** `Retry-After` sessiz penceresi devredeyken kalan dakikayı ve `strike` seviyesini geri sayım özetine dönüştürme.
 - [x] **Hesaplar Arası Ek Kullanım Kredisi (`extraUsage`) Havuz Özeti (`summarizeExtraUsageCreditsPool`):** Etkin Claude hesaplarında tanımlı `extraUsage` (`usedCredits` / `monthlyLimit`) bakiyelerini toplayarak toplam kalan krediyi raporlama.
-
 - [x] **Hesap Bazlı Kota Önbellek Tazeliği ve Senkronizasyon Sağlığı (`evaluateUsageCacheFreshness`):** Etkin Claude hesaplarının `.usage-cache.json` zaman damgalarını denetleyerek bayatlayan hesapları `HESAPLAR` bölümünde gösterme.
 - [x] **Gece Yedekleri ve Koruyucu Servisler Süreklilik Güvencesi (`evaluateBackupAndGuardianContinuity`):** Zamanlanmış koruyucu işlerin (`nightly-backup`, `embedding-guardian`, `polyctl-admin-tick`) son çıkış kodlarını denetleyerek `SERVİSLER` bölümünde güvence özeti sunma.
 - [x] **Eski Launchd Plist Göç ve Temizlik Denetçisi (`evaluateLegacyLaunchdCleanliness`):** Daemon uyarılarındaki `legacy-launchd` kayıtlarını analiz ederek göç temizlik durumu ve düzeltme komutu üretme.
 - [x] **İkincil AI Sağlayıcıları Kaynak Tazeliği Denetçisi (`evaluateOtherQuotasFreshness`):** `DİĞER KOTALAR` altındaki sağlayıcıların `updatedAt` ve `source` bilgilerini denetleyerek okunamayan veya bayatlayan kaynakları raporlama.
 - [x] **Filo (Traycer) Boşta / Uyuyan Ajan Kapasite Geri Kazanım Önericisi (`evaluateFleetCapacityReclaim`):** `fleet` özetindeki `stuck` ve `dormant` ajan sayılarını analiz ederek geri kazanılabilir ajan yuvası sayısını özetleme.
-
 - [x] **Hesap Katman (Tier) ve Kapasite Öncelik Hizalaması (`evaluateAccountTierAlignment`):** Yüksek kapasiteli `max-20x`/`team` abonelikleri boşta beklerken `pro` hesabın aktif kullanılmasını tespit edip `HESAPLAR` bölümünde önerme.
 - [x] **Yedek Zincir (Failover) Ayak Çeşitliliği ve Yedeklilik Analizcisi (`evaluateFailoverChainRedundancy`):** Keysmith failover zincirindeki yedek sağlayıcı ayağı sayısını ve gateway hazırlığını `YEDEK ZİNCİR` bölümünde gösterme.
 - [x] **Daemon Çalışma Süresi (Uptime) ve Soket Kararlılık Özeti (`evaluateDaemonUptimeStability`):** `daemon.uptimeSeconds` ve `socketPath` bilgilerini analiz ederek daemon çalışma süresini ve kararlılığını sınıflandırma.
 - [x] **5 Saatlik Pencere Senkronize Sıfırlanma Çakışma Tespiti (`detectFiveHourResetCollision`):** Birden fazla etkin Claude hesabının 5 saatlik sıfırlanma zamanlarının `<=20 dk` yakın olup olmadığını tespit etme.
 - [x] **Durum Panosu `unknown` / Belirsiz Satır Temizlik Denetçisi (`evaluateStatusBoardUnknownNoise`):** Durum panosundaki `unknown` durumlu satırların oranını ve hangi bölümlerde yoğunlaştığını hesaplama.
-
 - [x] **Hesap Havuzu 5 Saatlik Pencere Kademelendirme (Staggering) Analizcisi (`evaluateFiveHourWindowStaggering`):** Etkin Claude hesaplarının 5 saatlik sıfırlanma pencereleri arasındaki minimum dakika farkını puanlayarak `HESAPLAR` bölümünde gösterme.
 - [x] **Durum Panosu Kritik Bölüm Darboğaz Odaklayıcısı (`evaluateStatusBoardHotspot`):** Durum panosundaki `bad` ve `warn` satırlarının yoğunlaştığı darboğaz bölümünü menü çubuğunda öne çıkarma.
 - [x] **OAuth Belirteç Yenileme Ön-Süre (`refresh.leadMinutes`) Marj Denetçisi (`evaluateRefreshLeadTimeMargin`):** `refresh.leadMinutes` ile `daemon.refreshIntervalSeconds` arasındaki güvenlik marjını denetleyerek en az 2 yenileme döngüsü payı olduğunu doğrulama.
 - [x] **Yerel Servis Tür Dağılımı (`daemon` / `interval` / `scheduled`) Sağlık Matrisi (`summarizeServicesByKind`):** İzlenen yerel servisleri çalışma türüne göre gruplayarak her kategorideki sağlıklı servis sayısını özetleme.
 - [x] **İkincil Kota API Promosyon Hibe Tükenme Analizcisi (`evaluateApiPromoGrantHealth`):** `otherQuotas` içindeki `apicredits` kaynağının kalan dolar bakiyesini ve kullanım yüzdesini ayrıştırma.
-
 - [x] **Aktif Hesap Otomatik Geçiş Eşiği Güvenlik Payı (`evaluateActiveAccountSafetyCushion`):** Aktif Claude hesabının 5 saatlik kullanım yüzdesi ile `autoswitch.threshold` arasındaki kalan yüzde tamponunu hesaplayıp `HESAPLAR` bölümünde gösterme.
 - [x] **Filo (Traycer) Aktif Ajan Çalışma Yoğunluğu Oranı (`evaluateFleetWorkingUtilization`):** Uyuyan ajanlar hariç aktif filo havuzundaki çalışma oranını `FİLO (TRAYCER)` bölümünde gösterme.
 - [x] **Konuşma İndeksleme ve Embedding (`conv-index`) İş Ritmi Denetçisi (`evaluateConvIndexCadenceHealth`):** `jobs["conv-index"]` meta verilerini inceleyerek son indeksleme zamanını ve sağlığını raporlama.
 - [x] **Yüzey Yenileme (`surface-refresh`) ve İkincil Kota Eşgüdüm Analizcisi (`evaluateSurfaceRefreshCoordHealth`):** `surface-refresh` işinin son çalışma sonucu ile `otherQuotas` okunabilirliğini karşılaştırarak yüzey eşgüdüm sağlığını değerlendirme.
 - [x] **Daemon Uyarıları Şiddet ve Düzeltme Komutu Özetleyicisi (`summarizeDaemonWarningsBySeverity`):** `warnings` dizisindeki `error` ve `warn` kayıtlarını sayarak en öncelikli düzeltme komutunu (`topFixCommand`) özetleme.
+- [x] **Çift Pencere (5s + 7g) Darboğaz ve Efektif Boşluk Analizcisi (`evaluateDualWindowBottleneck`):** Etkin Claude hesaplarında daralmanın 5 saatlik pencereden mi yoksa 7 günlük pencereden mi kaynaklandığını belirleyip `HESAPLAR` bölümünde öne çıkarma.
+- [x] **Uzak Sunucu Birleşik (Kaynak + Site) Hazırlık Notu (`evaluateServerOverallReadiness`):** Uzak sunucunun CPU/RAM/Disk kaynak sağlığı ile izlenen web sitelerinin SLA skorunu tek bir `A`–`D` (`%0–100`) hazırlık notunda birleştirip `SUNUCU` bölümünde gösterme.
+- [x] **Yerel Servis Yeniden Başlatılabilirlik ve Kurtarma Kapsamı (`evaluateServiceRestartCoverage`):** Hata veya uyarı durumundaki yerel servislerin kaçının beyaz listede (`restartable: true`) olduğunu analiz ederek tek tıkla kurtarılabilirlik oranını (`coveragePct`) raporlama.
+- [x] **Durum Panosu Sahiplik Bekleyen İş Yoğunluğu / Bölüm Oranı (`evaluateOwnerToSectionRatio`):** `owner_needed` sayısını durum panosundaki toplam bölüm ve satır sayısıyla oranlayarak yönetici müdahale yükünü (`idle`, `light`, `moderate`, `heavy`) sınıflandırma.
+- [x] **Otomatik Geçiş (`autoswitch`) Strateji ve Grup Yapılandırma Özeti (`summarizeAutoswitchPolicy`):** `autoswitch.strategy`, `autoswitch.threshold` ve `failover.enabled` ayarlarını tek bir insan-okunur politika cümlesinde özetleme.
 
 ---
 
 ## 2. Listedeki İşler Tamamlandığı İçin Önerilen Beş Yeni Yaratıcı Özellik (En Değerli İkisi Uygulandı)
 
-### ✅ Yeni Öneri 1 (UYGULANDI): Çift Pencere (5s + 7g) Darboğaz ve Efektif Boşluk Analizcisi (`evaluateDualWindowBottleneck`)
-- **Değer:** Etkin Claude hesaplarında daralmanın 5 saatlik kısa pencereden mi (`five-hour`) yoksa 7 günlük haftalık pencereden mi (`seven-day`) kaynaklandığını belirler ve en yüksek birleşik efektif boşluğa (`effectiveHeadroom`) sahip hesabı (`Çift pencere daralması: 1 hesapta 7g limit baskın (en geniş: yahoo %70 boş)`) `HESAPLAR` bölümünde öne çıkarır.
-- **Uygulama:** `src/controlcenter.js` (`evaluateDualWindowBottleneck`), `src/daemon.js` (`base.dualWindowBottleneck`), `Models.swift` (`DualWindowBottleneckSummary`) ve `ControlCenterView.swift`.
+### ✅ Yeni Öneri 1 (UYGULANDI): İkincil AI Sağlayıcıları Ortalama Boşluk ve Yedek Kapasite Endeksi (`evaluateSecondaryPoolHeadroom`)
+- **Değer:** `DİĞER KOTALAR` altındaki okunabilir ikincil sağlayıcıların (Kiro, Copilot, Antigravity, EVREN, API Promosyonları) ortalama kalan boş kapasite yüzdesini (`avgRemainingPct`) hesaplar ve en geniş boşluğa sahip yedek yüzeyi (`İkincil havuz boşluğu: ort. %70 (2 yüzey · en geniş: Kiro Kredisi)`) öne çıkarır.
+- **Uygulama:** `src/controlcenter.js` (`evaluateSecondaryPoolHeadroom`), `src/daemon.js` (`base.secondaryPoolHeadroom`), `Models.swift` (`SecondaryPoolHeadroomSummary`) ve `ControlCenterView.swift`.
 
-### ✅ Yeni Öneri 2 (UYGULANDI): Uzak Sunucu Birleşik (Kaynak + Site) Hazırlık Notu (`evaluateServerOverallReadiness`)
-- **Değer:** Uzak sunucunun CPU/RAM/Disk kaynak sağlığı (`evaluateServerResourcePressure`) ile izlenen web sitelerinin SLA skorunu (`evaluateServerSitesHealth`) tek bir `0-100` (`A`–`D`) hazırlık notunda (`Sunucu genel hazırlık: A (%100)`) birleştirip `SUNUCU` bölümünde gösterir.
-- **Uygulama:** `src/controlcenter.js` (`evaluateServerOverallReadiness`), `src/daemon.js` (`base.serverOverallReadiness`), `Models.swift` (`ServerOverallReadinessSummary`) ve `ControlCenterView.swift`.
+### ✅ Yeni Öneri 2 (UYGULANDI): Servis Kalp Atışı (Heartbeat) Tazelik Denetçisi (`evaluateServiceHeartbeatFreshness`)
+- **Değer:** Kalp atışı dosyası (`heartbeatAgeMin`) üreten yerel servislerin (ör. `polyctl-admin-tick`) kalp atışı tazeliğini denetler; `>30 dk` gecikmeleri `stale`, `>45 dk` gecikmeleri `critical` olarak sınıflandırıp `SERVİSLER` bölümünde uyarı (`Kalp atışı gecikmesi: Polyctl Admin Tick (52 dk önce)`) gösterir.
+- **Uygulama:** `src/controlcenter.js` (`evaluateServiceHeartbeatFreshness`), `src/daemon.js` (`base.serviceHeartbeatFreshness`), `Models.swift` (`ServiceHeartbeatFreshnessSummary`) ve `ControlCenterView.swift`.
 
-### 📋 Yeni Öneri 3 (Gelecek Adayı): Yerel Servis Yeniden Başlatılabilirlik ve Kurtarma Kapsamı (`evaluateServiceRestartCoverage`)
-- **Değer:** Hata veya uyarı durumundaki yerel servislerin kaçının beyaz listede (`restartable: true`) olduğunu analiz ederek tek tıkla kurtarılabilirlik oranını raporlama.
+### 📋 Yeni Öneri 3 (Gelecek Adayı): Failover Manuel Zorlama ve Birincil Havuz Dönüş Önericisi (`evaluateFailoverManualOverrideState`)
+- **Değer:** Failover manuel olarak açık bırakılmışken (`failover.manual === true`) birincil Claude hesaplarında yeterli boşluk (`<%50` kullanım) oluştuğunda gereksiz API harcamasını önlemek için `keyflip failover off` önerisi üretme.
 
-### 📋 Yeni Öneri 4 (Gelecek Adayı): Durum Panosu Sahiplik Bekleyen İş Yoğunluğu / Bölüm Oranı (`evaluateOwnerToSectionRatio`)
-- **Değer:** `owner_needed` sayısını durum panosundaki toplam bölüm ve satır sayısıyla oranlayarak yönetici müdahale yükünü sınıflandırma.
+### 📋 Yeni Öneri 4 (Gelecek Adayı): Hesap Havuzu E-Posta Sağlayıcı Dağılım Özeti (`summarizeAccountEmailDomains`)
+- **Değer:** Tam e-posta adreslerini ifşa etmeden hesap havuzunun hangi sağlayıcı alan adlarına (`gmail.com`, `yahoo.com` vb.) dağıldığını özetleme.
 
-### 📋 Yeni Öneri 5 (Gelecek Adayı): Otomatik Geçiş (`autoswitch`) Strateji ve Grup Yapılandırma Özeti (`summarizeAutoswitchPolicy`)
-- **Değer:** `autoswitch.strategy`, `autoswitch.threshold` ve `failover.enabled` ayarlarını tek bir insan-okunur politika cümlesinde özetleme.
+### 📋 Yeni Öneri 5 (Gelecek Adayı): Daemon İşleri Ortalama Çalışma Süresi (Latency) Analizcisi (`evaluateDaemonJobDurationHealth`)
+- **Değer:** `jobs` içindeki `lastDurationMs` ölçümlerini analiz ederek ortalama çalışma gecikmesini ve yavaşlayan işleri raporlama.

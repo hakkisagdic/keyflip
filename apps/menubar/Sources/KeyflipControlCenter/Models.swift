@@ -68,6 +68,11 @@ public struct ControlCenterPayload: Codable {
     public var warningsSummary: DaemonWarningsSeveritySummary?
     public var dualWindowBottleneck: DualWindowBottleneckSummary?
     public var serverOverallReadiness: ServerOverallReadinessSummary?
+    public var serviceRestartCoverage: ServiceRestartCoverageSummary?
+    public var ownerToSectionRatio: OwnerToSectionRatioSummary?
+    public var autoswitchPolicy: AutoswitchPolicySummary?
+    public var secondaryPoolHeadroom: SecondaryPoolHeadroomSummary?
+    public var serviceHeartbeatFreshness: ServiceHeartbeatFreshnessSummary?
     public var auditTimeline: [AuditEventItem]?
     public var markdownReport: String?
     public var preferences: PreferencesSummary?
@@ -141,6 +146,11 @@ public struct ControlCenterPayload: Codable {
         warningsSummary: DaemonWarningsSeveritySummary? = nil,
         dualWindowBottleneck: DualWindowBottleneckSummary? = nil,
         serverOverallReadiness: ServerOverallReadinessSummary? = nil,
+        serviceRestartCoverage: ServiceRestartCoverageSummary? = nil,
+        ownerToSectionRatio: OwnerToSectionRatioSummary? = nil,
+        autoswitchPolicy: AutoswitchPolicySummary? = nil,
+        secondaryPoolHeadroom: SecondaryPoolHeadroomSummary? = nil,
+        serviceHeartbeatFreshness: ServiceHeartbeatFreshnessSummary? = nil,
         auditTimeline: [AuditEventItem]? = [],
         markdownReport: String? = nil,
         preferences: PreferencesSummary? = nil,
@@ -213,6 +223,11 @@ public struct ControlCenterPayload: Codable {
         self.warningsSummary = warningsSummary
         self.dualWindowBottleneck = dualWindowBottleneck
         self.serverOverallReadiness = serverOverallReadiness
+        self.serviceRestartCoverage = serviceRestartCoverage
+        self.ownerToSectionRatio = ownerToSectionRatio
+        self.autoswitchPolicy = autoswitchPolicy
+        self.secondaryPoolHeadroom = secondaryPoolHeadroom
+        self.serviceHeartbeatFreshness = serviceHeartbeatFreshness
         self.auditTimeline = auditTimeline
         self.markdownReport = markdownReport
         self.preferences = preferences
@@ -1671,5 +1686,49 @@ public struct ServerOverallReadinessSummary: Codable {
     public var score: Int
     public var grade: String
     public var status: String
+    public var summary: String
+}
+
+public struct ServiceRestartCoverageSummary: Codable {
+    public var totalDegraded: Int
+    public var restartableDegraded: Int
+    public var coveragePct: Int
+    public var nonRestartableLabels: [String]?
+    public var status: String
+    public var summary: String
+}
+
+public struct OwnerToSectionRatioSummary: Codable {
+    public var ownerNeededCount: Int
+    public var sectionCount: Int
+    public var rowCount: Int
+    public var itemsPerSection: Double
+    public var loadTier: String
+    public var summary: String
+}
+
+public struct AutoswitchPolicySummary: Codable {
+    public var strategy: String
+    public var thresholdPct: Double
+    public var failoverEnabled: Bool
+    public var capUsd: Double?
+    public var summary: String
+}
+
+public struct SecondaryPoolHeadroomSummary: Codable {
+    public var status: String
+    public var readableCount: Int
+    public var avgRemainingPct: Double?
+    public var bestFallbackId: String?
+    public var bestFallbackLabel: String?
+    public var summary: String
+}
+
+public struct ServiceHeartbeatFreshnessSummary: Codable {
+    public var status: String
+    public var monitoredCount: Int
+    public var freshCount: Int
+    public var maxHeartbeatAgeMin: Int?
+    public var staleServices: [String]?
     public var summary: String
 }

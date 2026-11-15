@@ -858,6 +858,12 @@ public struct ControlCenterView: View {
                     .foregroundColor(.secondary)
             } else {
                 VStack(alignment: .leading, spacing: 6) {
+                    if let sph = viewModel.payload.secondaryPoolHeadroom, sph.status != "unreadable" {
+                        Text(sph.summary)
+                            .font(.system(size: 10))
+                            .foregroundColor(sph.status == "critical" ? .orange : .secondary)
+                            .lineLimit(1)
+                    }
                     ForEach(quotas) { item in
                         HStack(alignment: .firstTextBaseline) {
                             Circle()
@@ -919,6 +925,17 @@ public struct ControlCenterView: View {
                             Text(bgc.summary)
                                 .font(.system(size: 10))
                                 .foregroundColor(bgc.status == "ok" ? .secondary : .orange)
+                                .lineLimit(1)
+                        }
+                    }
+                    if let shf = viewModel.payload.serviceHeartbeatFreshness, shf.status == "stale" || shf.status == "critical" {
+                        HStack(spacing: 5) {
+                            Image(systemName: "waveform.path.ecg")
+                                .font(.system(size: 10))
+                                .foregroundColor(shf.status == "critical" ? .red : .orange)
+                            Text(shf.summary)
+                                .font(.system(size: 10))
+                                .foregroundColor(shf.status == "critical" ? .red : .orange)
                                 .lineLimit(1)
                         }
                     }

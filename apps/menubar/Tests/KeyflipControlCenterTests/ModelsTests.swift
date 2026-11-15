@@ -376,6 +376,20 @@ public enum ModelsTestSuite {
         let r17Decoded = try JSONDecoder().decode(DualWindowBottleneckSummary.self, from: r17Json)
         precondition(r17Decoded.dominantConstraint == "seven-day" && r17Decoded.bestEffectiveAccount == "yahoo", "DualWindowBottleneckSummary must decode accurately")
 
+        // Round 18 decoding check for SecondaryPoolHeadroomSummary & ServiceHeartbeatFreshnessSummary
+        let r18Json = """
+        {
+          "status": "ample",
+          "readableCount": 2,
+          "avgRemainingPct": 70.0,
+          "bestFallbackId": "kiro",
+          "bestFallbackLabel": "Kiro Kredisi",
+          "summary": "İkincil havuz boşluğu: ort. %70 (2 yüzey · en geniş: Kiro Kredisi)"
+        }
+        """.data(using: .utf8)!
+        let r18Decoded = try JSONDecoder().decode(SecondaryPoolHeadroomSummary.self, from: r18Json)
+        precondition(r18Decoded.status == "ample" && r18Decoded.bestFallbackId == "kiro", "SecondaryPoolHeadroomSummary must decode accurately")
+
         // Urgent owner_needed classification test
         let urgentOwner = StatusBoardOwnerItem(project: "prod", text: "ACİL müdahale")
         let normalOwner = StatusBoardOwnerItem(project: "docs", text: "Not ekle")
