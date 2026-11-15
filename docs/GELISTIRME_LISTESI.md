@@ -1,6 +1,6 @@
 # Geliştirme Listesi ve Yaratıcı Özellik Önerileri (`GELISTIRME_LISTESI.md`)
 
-Bu liste, `docs/RAKIP_ANALIZI.md` sonucunda belirlenen tüm özelliklerin tamamlanma durumunu ve on ikinci turda önerilen **beş yeni yaratıcı özelliği** (en değerli ikisi uygulanmış olarak) içerir.
+Bu liste, `docs/RAKIP_ANALIZI.md` sonucunda belirlenen tüm özelliklerin tamamlanma durumunu ve on üçüncü turda önerilen **beş yeni yaratıcı özelliği** (en değerli ikisi uygulanmış olarak) içerir.
 
 ---
 
@@ -62,23 +62,29 @@ Bu liste, `docs/RAKIP_ANALIZI.md` sonucunda belirlenen tüm özelliklerin tamaml
 - [x] **Uzak Sunucu Kaynak Baskısı (CPU/RAM/Disk) Analizcisi (`evaluateServerResourcePressure`):** `server-status.json` içindeki `load`, `memory` ve `disk` metriklerini sayısal ayrıştırarak kaynak baskısı uyarısı üretme.
 - [x] **Masaüstü Otomatik Yeniden Başlatma Hazırlık ve Güvenlik Kontrolü (`evaluateDesktopRestartSafety`):** Bekleyen Claude Desktop yeniden başlatma isteğinin Odak/Toplantı ertelemesi (`desktop.snoozeUntil`) durumunu ve kalan dakikayı raporlama.
 
+- [x] **Claude Sonnet 7 Günlük Alt-Kota Darboğaz ve Model Ayrışma Analizcisi (`evaluateSonnetModelSplitHealth`):** Genel 7 günlük kota henüz düşükken `sevenDaySonnet` alt-kotasının `%80+` doluluğa ulaşmasını veya `>=%20` hızlı erimesini `HESAPLAR` bölümünde gösterme.
+- [x] **Yerel Servis Log Hijyeni ve Hata Yoğunluğu Analizcisi (`evaluateServiceLogHygiene`):** İzlenen `launchd` servislerinin kıvılcım dizisi (`sparkline`) ve `lastError` kayıtlarından gürültülü servisleri `SERVİSLER` bölümünde öne çıkarma.
+- [x] **Çoklu Makine (`extraStatusFiles`) Host Sağlık Karşılaştırıcısı (`summarizeMultiHostStatusBreakdown`):** Birden fazla makineden birleştirilen `status.json` satırlarını `[host]` etiketine göre ayrıştırarak makine bazlı sağlık yüzdesi üretme.
+- [x] **Kullanım Uç Noktası Hız Sınırı (`usageThrottle`) Kurtarma Sayacı (`evaluateUsageThrottleRecovery`):** `Retry-After` sessiz penceresi devredeyken kalan dakikayı ve `strike` seviyesini geri sayım özetine dönüştürme.
+- [x] **Hesaplar Arası Ek Kullanım Kredisi (`extraUsage`) Havuz Özeti (`summarizeExtraUsageCreditsPool`):** Etkin Claude hesaplarında tanımlı `extraUsage` (`usedCredits` / `monthlyLimit`) bakiyelerini toplayarak toplam kalan krediyi raporlama.
+
 ---
 
 ## 2. Listedeki İşler Tamamlandığı İçin Önerilen Beş Yeni Yaratıcı Özellik (En Değerli İkisi Uygulandı)
 
-### ✅ Yeni Öneri 1 (UYGULANDI): Claude Sonnet 7 Günlük Alt-Kota Darboğaz ve Model Ayrışma Analizcisi (`evaluateSonnetModelSplitHealth`)
-- **Değer:** Claude Pro/Max aboneliklerinde genel 7 günlük kota (`sevenDay`) henüz düşükken `sevenDaySonnet` alt-kotasının `%80+` doluluğa ulaşmasını veya genel kotadan `>=%20` daha hızlı tükenmesini (`Sonnet alt-kota darboğazı: gmail (Sonnet %84, genel %45)`) tespit eder ve `HESAPLAR` bölümünde uyarır.
-- **Uygulama:** `src/controlcenter.js` (`evaluateSonnetModelSplitHealth`), `src/daemon.js` (`base.sonnetModelSplit`), `Models.swift` (`SonnetModelSplitSummary`, `SonnetConstrainedAccountItem`) ve `ControlCenterView.swift`.
+### ✅ Yeni Öneri 1 (UYGULANDI): Hesap Bazlı Kota Önbellek Tazeliği ve Senkronizasyon Sağlığı (`evaluateUsageCacheFreshness`)
+- **Değer:** Etkin Claude hesaplarının `.usage-cache.json` zaman damgalarını (`fetchedAt`, `stale`) denetleyerek hangi hesapların kota verisinin bayatladığını (`Kota verisi bayat (1/2 hesap): yahoo`) tespit eder ve `HESAPLAR` bölümünde uyarır.
+- **Uygulama:** `src/controlcenter.js` (`evaluateUsageCacheFreshness`), `src/daemon.js` (`base.usageCacheFreshness`), `Models.swift` (`UsageCacheFreshnessSummary`) ve `ControlCenterView.swift`.
 
-### ✅ Yeni Öneri 2 (UYGULANDI): Yerel Servis Log Hijyeni ve Hata Yoğunluğu Analizcisi (`evaluateServiceLogHygiene`)
-- **Değer:** İzlenen `launchd` servislerinin son log satırlarındaki kıvılcım dizisi (`sparkline` `█/▁`) ve `lastError` kayıtlarını analiz ederek tekrarlayan hata üreten ("gürültülü") servisleri (`Log uyarısı (1 servis): Gateway`) `SERVİSLER` bölümünde öne çıkarır.
-- **Uygulama:** `src/controlcenter.js` (`evaluateServiceLogHygiene`), `src/daemon.js` (`base.serviceLogHygiene`), `Models.swift` (`ServiceLogHygieneSummary`, `NoisyServiceItem`) ve `ControlCenterView.swift`.
+### ✅ Yeni Öneri 2 (UYGULANDI): Gece Yedekleri ve Koruyucu Servisler Süreklilik Güvencesi (`evaluateBackupAndGuardianContinuity`)
+- **Değer:** Zamanlanmış koruyucu işlerin (`nightly-backup`, `embedding-guardian`, `polyctl-admin-tick`) son çıkış kodlarını (`lastExitStatus`) ve durumlarını denetleyerek (`Yedekleme ve koruyucu işler sağlıklı (3/3)`) `SERVİSLER` bölümünde güvence özeti sunar.
+- **Uygulama:** `src/controlcenter.js` (`evaluateBackupAndGuardianContinuity`), `src/daemon.js` (`base.backupGuardianContinuity`), `Models.swift` (`BackupGuardianContinuitySummary`) ve `ControlCenterView.swift`.
 
-### 📋 Yeni Öneri 3 (Gelecek Adayı): Çoklu Makine (`extraStatusFiles`) Host Sağlık Karşılaştırıcısı (`summarizeMultiHostStatusBreakdown`)
-- **Değer:** Birden fazla makineden birleştirilen `status.json` satırlarını `[host]` etiketine göre ayrıştırarak hangi makinede kaç `bad`/`warn` satırı bulunduğunu özetleme.
+### 📋 Yeni Öneri 3 (Gelecek Adayı): Eski Launchd Plist Göç ve Temizlik Denetçisi (`evaluateLegacyLaunchdCleanliness`)
+- **Değer:** Daemon uyarılarındaki `legacy-launchd` kayıtlarını ve eski 4 plist durumunu analiz ederek göç temizlik puanı ve tek komutluk düzeltme özeti üretme.
 
-### 📋 Yeni Öneri 4 (Gelecek Adayı): Kullanım Uç Noktası Hız Sınırı (`usageThrottle`) Kurtarma Sayacı (`evaluateUsageThrottleRecovery`)
-- **Değer:** `Retry-After` sessiz penceresi devredeyken (`usageThrottle.throttled`) kalan saniye/dakikayı ve `strike` seviyesini kullanıcı dostu bir geri sayım özetine dönüştürme.
+### 📋 Yeni Öneri 4 (Gelecek Adayı): İkincil AI Sağlayıcıları Kaynak Tazeliği Denetçisi (`evaluateOtherQuotasFreshness`)
+- **Değer:** `DİĞER KOTALAR` altındaki Kiro, Copilot, Antigravity, EVREN ve API Promosyon kaynaklarının `updatedAt` ve `source` bilgilerini denetleyerek okunamayan veya bayatlayan ikincil sağlayıcıları raporlama.
 
-### 📋 Yeni Öneri 5 (Gelecek Adayı): Hesaplar Arası Ek Kullanım Kredisi (`extraUsage`) Havuz Özeti (`summarizeExtraUsageCreditsPool`)
-- **Değer:** Etkin Claude hesaplarında tanımlı `extraUsage` (`usedCredits` / `monthlyLimit`) bakiyelerini toplayarak toplam ek kredi limitini ve kalan bakiyeyi tek satırda raporlama.
+### 📋 Yeni Öneri 5 (Gelecek Adayı): Filo (Traycer) Boşta / Uyuyan Ajan Kapasite Geri Kazanım Önericisi (`evaluateFleetCapacityReclaim`)
+- **Değer:** `fleet` özetindeki `idle`, `dormant` ve `stuck` ajan sayılarını analiz ederek geri kazanılabilir ajan yuvası veya temizlenebilir uyuyan ajan sayısını özetleme.

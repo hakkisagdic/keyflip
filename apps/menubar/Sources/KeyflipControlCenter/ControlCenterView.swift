@@ -588,6 +588,18 @@ public struct ControlCenterView: View {
                         }
                     }
 
+                    if let ucf = viewModel.payload.usageCacheFreshness, ucf.status != "fresh" {
+                        HStack(spacing: 5) {
+                            Image(systemName: "clock.badge.exclamationmark")
+                                .font(.system(size: 10))
+                                .foregroundColor(.orange)
+                            Text(ucf.summary)
+                                .font(.system(size: 10, weight: .medium))
+                                .foregroundColor(.orange)
+                                .lineLimit(1)
+                        }
+                    }
+
                     if let bw = viewModel.payload.bottleneckWindow, !bw.summary.isEmpty {
                         HStack(spacing: 5) {
                             Image(systemName: "gauge.with.dots.needle.67percent")
@@ -842,6 +854,17 @@ public struct ControlCenterView: View {
                             Text(hyg.summary)
                                 .font(.system(size: 10))
                                 .foregroundColor(.orange)
+                                .lineLimit(1)
+                        }
+                    }
+                    if let bgc = viewModel.payload.backupGuardianContinuity, bgc.checkedCount > 0 {
+                        HStack(spacing: 5) {
+                            Image(systemName: bgc.status == "ok" ? "externaldrive.badge.checkmark" : "externaldrive.badge.exclamationmark")
+                                .font(.system(size: 10))
+                                .foregroundColor(bgc.status == "ok" ? .secondary : .orange)
+                            Text(bgc.summary)
+                                .font(.system(size: 10))
+                                .foregroundColor(bgc.status == "ok" ? .secondary : .orange)
                                 .lineLimit(1)
                         }
                     }

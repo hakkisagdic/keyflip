@@ -43,6 +43,11 @@ public struct ControlCenterPayload: Codable {
     public var desktopRestartSafety: DesktopRestartSafetySummary?
     public var sonnetModelSplit: SonnetModelSplitSummary?
     public var serviceLogHygiene: ServiceLogHygieneSummary?
+    public var multiHostBreakdown: MultiHostStatusBreakdownSummary?
+    public var usageThrottleRecovery: UsageThrottleRecoverySummary?
+    public var extraUsagePool: ExtraUsageCreditsPoolSummary?
+    public var usageCacheFreshness: UsageCacheFreshnessSummary?
+    public var backupGuardianContinuity: BackupGuardianContinuitySummary?
     public var auditTimeline: [AuditEventItem]?
     public var markdownReport: String?
     public var preferences: PreferencesSummary?
@@ -91,6 +96,11 @@ public struct ControlCenterPayload: Codable {
         desktopRestartSafety: DesktopRestartSafetySummary? = nil,
         sonnetModelSplit: SonnetModelSplitSummary? = nil,
         serviceLogHygiene: ServiceLogHygieneSummary? = nil,
+        multiHostBreakdown: MultiHostStatusBreakdownSummary? = nil,
+        usageThrottleRecovery: UsageThrottleRecoverySummary? = nil,
+        extraUsagePool: ExtraUsageCreditsPoolSummary? = nil,
+        usageCacheFreshness: UsageCacheFreshnessSummary? = nil,
+        backupGuardianContinuity: BackupGuardianContinuitySummary? = nil,
         auditTimeline: [AuditEventItem]? = [],
         markdownReport: String? = nil,
         preferences: PreferencesSummary? = nil,
@@ -138,6 +148,11 @@ public struct ControlCenterPayload: Codable {
         self.desktopRestartSafety = desktopRestartSafety
         self.sonnetModelSplit = sonnetModelSplit
         self.serviceLogHygiene = serviceLogHygiene
+        self.multiHostBreakdown = multiHostBreakdown
+        self.usageThrottleRecovery = usageThrottleRecovery
+        self.extraUsagePool = extraUsagePool
+        self.usageCacheFreshness = usageCacheFreshness
+        self.backupGuardianContinuity = backupGuardianContinuity
         self.auditTimeline = auditTimeline
         self.markdownReport = markdownReport
         self.preferences = preferences
@@ -1358,5 +1373,63 @@ public struct ServiceLogHygieneSummary: Codable {
     public var status: String
     public var noisyServiceCount: Int
     public var noisyServices: [NoisyServiceItem]?
+    public var summary: String
+}
+
+
+public struct MultiHostStatusItem: Codable, Identifiable {
+    public var id: String { host }
+    public var host: String
+    public var totalRows: Int
+    public var okRows: Int
+    public var warnRows: Int
+    public var badRows: Int
+    public var healthPct: Int
+    public var status: String
+}
+
+public struct MultiHostStatusBreakdownSummary: Codable {
+    public var hostCount: Int
+    public var unhealthyHostCount: Int
+    public var hosts: [MultiHostStatusItem]?
+    public var summary: String
+}
+
+public struct UsageThrottleRecoverySummary: Codable {
+    public var throttled: Bool
+    public var remainingMinutes: Int
+    public var remainingSeconds: Int
+    public var strike: Int
+    public var severity: String
+    public var summary: String
+}
+
+public struct ExtraUsageCreditsPoolSummary: Codable {
+    public var hasExtraUsage: Bool
+    public var enabledAccountCount: Int
+    public var totalLimitUsd: Double
+    public var totalUsedUsd: Double
+    public var totalRemainingUsd: Double
+    public var utilizationPct: Double
+    public var summary: String
+}
+
+public struct UsageCacheFreshnessSummary: Codable {
+    public var score: Int
+    public var status: String
+    public var freshCount: Int
+    public var staleCount: Int
+    public var missingCount: Int
+    public var maxAgeMinutes: Int?
+    public var staleAccounts: [String]?
+    public var summary: String
+}
+
+public struct BackupGuardianContinuitySummary: Codable {
+    public var score: Int
+    public var status: String
+    public var checkedCount: Int
+    public var healthyCount: Int
+    public var degradedJobs: [String]?
     public var summary: String
 }

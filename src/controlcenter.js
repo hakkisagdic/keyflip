@@ -3421,3 +3421,249 @@ export function evaluateServiceLogHygiene(services = []) {
         : `Servis logları temiz (%${score})`
   };
 }
+
+
+/**
+ * Summarizes Status Board health breakdown by host tag (`[host]`) when `menubar.extraStatusFiles`
+ * aggregates multiple machines into the Status Board.
+ */
+export function summarizeMultiHostStatusBreakdown(statusBoard) {
+  const sections = Array.isArray(statusBoard?.sections) ? statusBoard.sections : [];
+  if (sections.length === 0) {
+    return {
+      hostCount: 0,
+      unhealthyHostCount: 0,
+      hosts: [],
+      summary: "Çoklu makine verisi yok"
+    };
+  }
+
+  const hostMap = new Map();
+  const hostRe = /^\[([^\]]+)\]\s*(.*)$/;
+
+  for (const sec of sections) {
+    for (const r of sec?.rows || []) {
+      const rawLabel = String(r?.label ?? "");
+      const m = rawLabel.match(hostRe);
+      const host = m ? m[1].trim() : "local";
+      const entry = hostMap.get(host) || { host, totalRows: 0, okRows: 0, warnRows: 0, badRows: 0 };
+      entry.totalRows += 1;
+      if (r?.status === "ok") entry.okRows += 1;
+      else if (r?.status === "warn") entry.warnRows += 1;
+      else if (r?.status === "bad") entry.badRows += 1;
+      hostMap.set(host, entry);
+    }
+  }
+
+  const hosts = Array.from(hostMap.values())
+    .map((h) => {
+      const weighted = h.okRows * 1.0 + h.warnRows * 0.5;
+      const healthPct = h.totalRows > 0 ? Math.round((weighted / h.totalRows) * 100) : 100;
+      const status = h.badRows > 0 ? "bad" : h.warnRows > 0 ? "warn" : "ok";
+      return { ...h, healthPct, status };
+    })
+    .sort((a, b) => a.healthPct - b.healthPct);
+
+  const unhealthyHostCount = hosts.filter((h) => h.status !== "ok").length;
+
+  return {
+    hostCount: hosts.length,
+    unhealthyHostCount,
+    hosts,
+    summary:
+      unhealthyHostCount > 0
+        ? `${hosts.length} makineden ${unhealthyHostCount} tanesinde sorun var (en düşük: ${hosts[0].host} %${hosts[0].healthPct})`
+        : `Tüm makineler sağlıklı (${hosts.length} host)`
+  };
+}
+
+/**
+ * Evaluates the Usage Endpoint Retry-After quiet window (`usageThrottle`) and computes remaining cooldown minutes.
+ */
+export function evaluateUsageThrottleRecovery(usageThrottle = {}, options = {}) {
+  const nowMs =
+    typeof options.nowMs === "function" ? options.nowMs() : typeof options.nowMs === "number" ? options.nowMs : Date.now();
+  const throttled = Boolean(usageThrottle?.throttled);
+  const strike = typeof usageThrottle?.strike === "number" ? usageThrottle.strike : 0;
+
+  if (!throttled) {
+    return {
+      throttled: false,
+      remainingMinutes: 0,
+      remainingSeconds: 0,
+      strike: 0,
+      severity: "ok",
+      summary: "Kullanım uç noktası açık (hız sınırı yok)"
+    };
+  }
+
+  const retryMs = usageThrottle?.retryAt ? Date.parse(String(usageThrottle.retryAt)) : Number.NaN;
+  const diffMs = Number.isFinite(retryMs) && retryMs > nowMs ? retryMs - nowMs : 0;
+  const remainingSeconds = Math.max(1, Math.round(diffMs / 1000));
+  const remainingMinutes = Math.max(1, Math.round(diffMs / 60000));
+  const severity = strike >= 3 || remainingMinutes >= 15 ? "critical" : "warning";
+
+  return {
+    throttled: true,
+    remainingMinutes,
+    remainingSeconds,
+    strike,
+    severity,
+    summary: `Retry-After sessiz penceresi: ~${remainingMinutes} dk kaldı (strike ${strike || 1})`
+  };
+}
+
+/**
+ * Aggregates `extraUsage` credits (`usedCredits` / `monthlyLimit`) across enabled Claude accounts.
+ */
+export function summarizeExtraUsageCreditsPool(accounts = []) {
+  const enabled = (Array.isArray(accounts) ? accounts : []).filter((a) => a && a.enabled !== false);
+  let enabledCount = 0;
+  let totalLimitUsd = 0;
+  let totalUsedUsd = 0;
+
+  for (const acct of enabled) {
+    const ex = acct?.usage?.extraUsage;
+    if (!ex || !ex.isEnabled) continue;
+    enabledCount += 1;
+    if (typeof ex.monthlyLimit === "number" && ex.monthlyLimit > 0) {
+      totalLimitUsd += ex.monthlyLimit;
+    }
+    if (typeof ex.usedCredits === "number" && ex.usedCredits >= 0) {
+      totalUsedUsd += ex.usedCredits;
+    }
+  }
+
+  totalLimitUsd = Math.round(totalLimitUsd * 100) / 100;
+  totalUsedUsd = Math.round(totalUsedUsd * 100) / 100;
+  const totalRemainingUsd = Math.max(0, Math.round((totalLimitUsd - totalUsedUsd) * 100) / 100);
+  const utilizationPct =
+    totalLimitUsd > 0 ? Math.min(100, Math.round((totalUsedUsd / totalLimitUsd) * 1000) / 10) : 0;
+
+  return {
+    hasExtraUsage: enabledCount > 0,
+    enabledAccountCount: enabledCount,
+    totalLimitUsd,
+    totalUsedUsd,
+    totalRemainingUsd,
+    utilizationPct,
+    summary:
+      enabledCount > 0
+        ? `Ek kullanım kredisi: $${totalRemainingUsd.toFixed(2)} kalan / $${totalLimitUsd.toFixed(2)} limit (${enabledCount} hesap)`
+        : "Etkin ek kullanım kredisi (extraUsage) yok"
+  };
+}
+
+/**
+ * Evaluates Claude Usage Cache Freshness & Sync Health across enabled accounts.
+ */
+export function evaluateUsageCacheFreshness(accounts = [], options = {}) {
+  const nowMs =
+    typeof options.nowMs === "function" ? options.nowMs() : typeof options.nowMs === "number" ? options.nowMs : Date.now();
+  const enabled = (Array.isArray(accounts) ? accounts : []).filter((a) => a && a.enabled !== false);
+
+  if (enabled.length === 0) {
+    return {
+      score: 100,
+      status: "fresh",
+      freshCount: 0,
+      staleCount: 0,
+      missingCount: 0,
+      maxAgeMinutes: null,
+      staleAccounts: [],
+      summary: "Etkin hesap yok"
+    };
+  }
+
+  let freshCount = 0;
+  let staleCount = 0;
+  let missingCount = 0;
+  let maxAgeMinutes = null;
+  const staleAccounts = [];
+
+  for (const acct of enabled) {
+    const u = acct?.usage;
+    if (!u || !u.fetchedAt) {
+      missingCount += 1;
+      staleAccounts.push(acct.name);
+      continue;
+    }
+    const fMs = Date.parse(String(u.fetchedAt));
+    const ageMin = Number.isFinite(fMs) && nowMs >= fMs ? Math.max(0, Math.round((nowMs - fMs) / 60000)) : null;
+    if (ageMin !== null && (maxAgeMinutes === null || ageMin > maxAgeMinutes)) {
+      maxAgeMinutes = ageMin;
+    }
+    if (u.stale === true || (ageMin !== null && ageMin > 25)) {
+      staleCount += 1;
+      staleAccounts.push(acct.name);
+    } else {
+      freshCount += 1;
+    }
+  }
+
+  const score = Math.round((freshCount / enabled.length) * 100);
+  const status = freshCount === 0 ? "critical" : staleAccounts.length > 0 ? "stale" : "fresh";
+
+  return {
+    score,
+    status,
+    freshCount,
+    staleCount,
+    missingCount,
+    maxAgeMinutes,
+    staleAccounts,
+    summary:
+      staleAccounts.length > 0
+        ? `Kota verisi bayat (${staleAccounts.length}/${enabled.length} hesap): ${staleAccounts.join(", ")}`
+        : `Kota önbelleği güncel (${freshCount}/${enabled.length} hesap)`
+  };
+}
+
+/**
+ * Evaluates Backup & Embedding Guardian Continuity across scheduled local maintenance jobs.
+ */
+export function evaluateBackupAndGuardianContinuity(services = []) {
+  const list = Array.isArray(services) ? services : [];
+  const targetIds = new Set(["nightly-backup", "embedding-guardian", "polyctl-admin-tick"]);
+  const targets = list.filter((s) => s && (targetIds.has(s.id) || s.kind === "scheduled" || s.kind === "interval"));
+
+  if (targets.length === 0) {
+    return {
+      score: 100,
+      status: "ok",
+      checkedCount: 0,
+      healthyCount: 0,
+      degradedJobs: [],
+      summary: "Zamanlanmış koruyucu servis tanımlı değil"
+    };
+  }
+
+  const degradedJobs = [];
+  let healthyCount = 0;
+
+  for (const svc of targets) {
+    const isOk =
+      (svc.state === "running" || svc.state === "scheduled") &&
+      (svc.lastExitStatus === 0 || svc.lastExitStatus === null || svc.lastExitStatus === undefined);
+    if (isOk) {
+      healthyCount += 1;
+    } else {
+      degradedJobs.push(svc.title || svc.id || svc.label || "Servis");
+    }
+  }
+
+  const score = Math.round((healthyCount / targets.length) * 100);
+  const status = degradedJobs.length >= 2 ? "critical" : degradedJobs.length === 1 ? "warning" : "ok";
+
+  return {
+    score,
+    status,
+    checkedCount: targets.length,
+    healthyCount,
+    degradedJobs,
+    summary:
+      degradedJobs.length > 0
+        ? `Koruyucu servis uyarısı: ${degradedJobs.join(", ")}`
+        : `Yedekleme ve koruyucu işler sağlıklı (${healthyCount}/${targets.length})`
+  };
+}

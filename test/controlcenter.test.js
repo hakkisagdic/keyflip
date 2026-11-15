@@ -53,7 +53,12 @@ import {
   evaluateServerResourcePressure,
   evaluateDesktopRestartSafety,
   evaluateSonnetModelSplitHealth,
-  evaluateServiceLogHygiene
+  evaluateServiceLogHygiene,
+  summarizeMultiHostStatusBreakdown,
+  evaluateUsageThrottleRecovery,
+  summarizeExtraUsageCreditsPool,
+  evaluateUsageCacheFreshness,
+  evaluateBackupAndGuardianContinuity
 } from "../src/controlcenter.js";
 import * as daemon from "../src/daemon.js";
 
@@ -1015,4 +1020,71 @@ test("groupOwnerNeededByProject, evaluateServerResourcePressure, evaluateDesktop
   assert.equal(logHyg.noisyServiceCount, 1);
   assert.equal(logHyg.status, "warning");
   assert.equal(logHyg.noisyServices[0].title, "Gateway");
+});
+
+
+test("summarizeMultiHostStatusBreakdown, evaluateUsageThrottleRecovery, summarizeExtraUsageCreditsPool, evaluateUsageCacheFreshness, and evaluateBackupAndGuardianContinuity work accurately", () => {
+  const nowMs = Date.parse("2026-11-15T10:00:00Z");
+
+  const multiHost = summarizeMultiHostStatusBreakdown({
+    sections: [
+      {
+        id: "infra",
+        rows: [
+          { label: "Local Gateway", value: "OK", status: "ok" },
+          { label: "[hetzner] Nginx", value: "502", status: "bad" },
+          { label: "[hetzner] Postgres", value: "OK", status: "ok" }
+        ]
+      }
+    ]
+  });
+  assert.equal(multiHost.hostCount, 2);
+  assert.equal(multiHost.unhealthyHostCount, 1);
+  assert.equal(multiHost.hosts[0].host, "hetzner");
+  assert.equal(multiHost.hosts[0].healthPct, 50);
+
+  const throttleRec = evaluateUsageThrottleRecovery(
+    { throttled: true, retryAt: "2026-11-15T10:12:00Z", strike: 2 },
+    { nowMs }
+  );
+  assert.equal(throttleRec.throttled, true);
+  assert.equal(throttleRec.remainingMinutes, 12);
+  assert.equal(throttleRec.severity, "warning");
+
+  const extraPool = summarizeExtraUsageCreditsPool([
+    {
+      name: "gmail",
+      enabled: true,
+      usage: { extraUsage: { isEnabled: true, monthlyLimit: 50, usedCredits: 12.5 } }
+    },
+    {
+      name: "yahoo",
+      enabled: true,
+      usage: { extraUsage: { isEnabled: true, monthlyLimit: 30, usedCredits: 7.5 } }
+    }
+  ]);
+  assert.equal(extraPool.hasExtraUsage, true);
+  assert.equal(extraPool.totalLimitUsd, 80);
+  assert.equal(extraPool.totalUsedUsd, 20);
+  assert.equal(extraPool.totalRemainingUsd, 60);
+
+  const freshness = evaluateUsageCacheFreshness(
+    [
+      { name: "gmail", enabled: true, usage: { stale: false, fetchedAt: "2026-11-15T09:55:00Z" } },
+      { name: "yahoo", enabled: true, usage: { stale: true, fetchedAt: "2026-11-15T09:10:00Z" } }
+    ],
+    { nowMs }
+  );
+  assert.equal(freshness.status, "stale");
+  assert.equal(freshness.freshCount, 1);
+  assert.equal(freshness.staleCount, 1);
+  assert.deepEqual(freshness.staleAccounts, ["yahoo"]);
+
+  const guardian = evaluateBackupAndGuardianContinuity([
+    { id: "nightly-backup", title: "Gece Yedekleri", kind: "scheduled", state: "scheduled", lastExitStatus: 0 },
+    { id: "embedding-guardian", title: "Embedding Koruyucu", kind: "interval", state: "error", lastExitStatus: 1 }
+  ]);
+  assert.equal(guardian.status, "warning");
+  assert.equal(guardian.healthyCount, 1);
+  assert.deepEqual(guardian.degradedJobs, ["Embedding Koruyucu"]);
 });

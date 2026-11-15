@@ -868,6 +868,15 @@ async function buildControlCenter(ctx, scheduler, opts) {
   });
   base.sonnetModelSplit = _controlcenter.evaluateSonnetModelSplitHealth(base.accounts);
   base.serviceLogHygiene = _controlcenter.evaluateServiceLogHygiene(base.services);
+  base.multiHostBreakdown = _controlcenter.summarizeMultiHostStatusBreakdown(base.statusBoard);
+  base.usageThrottleRecovery = _controlcenter.evaluateUsageThrottleRecovery(base.usageThrottle, {
+    nowMs: opts.nowMs || ctx.nowMs
+  });
+  base.extraUsagePool = _controlcenter.summarizeExtraUsageCreditsPool(base.accounts);
+  base.usageCacheFreshness = _controlcenter.evaluateUsageCacheFreshness(base.accounts, {
+    nowMs: opts.nowMs || ctx.nowMs
+  });
+  base.backupGuardianContinuity = _controlcenter.evaluateBackupAndGuardianContinuity(base.services);
   base.compactSummary = _controlcenter.formatDaemonCompactSummary(base);
   base.preferences = _controlcenter.collectPreferences(ctx);
   base.markdownReport = _controlcenter.buildControlCenterMarkdown(base);
