@@ -83,7 +83,12 @@ import {
   evaluateOwnerToSectionRatio,
   summarizeAutoswitchPolicy,
   evaluateSecondaryPoolHeadroom,
-  evaluateServiceHeartbeatFreshness
+  evaluateServiceHeartbeatFreshness,
+  evaluateFailoverManualOverrideState,
+  summarizeAccountEmailDomains,
+  evaluateDaemonJobDurationHealth,
+  evaluateStatusBoardCleanSectionRatio,
+  evaluateEffectivePoolMultiplier
 } from "../src/controlcenter.js";
 import * as daemon from "../src/daemon.js";
 
@@ -1420,4 +1425,54 @@ test("evaluateServiceRestartCoverage, evaluateOwnerToSectionRatio, summarizeAuto
   assert.equal(hb.freshCount, 1);
   assert.equal(hb.maxHeartbeatAgeMin, 52);
   assert.equal(hb.status, "critical");
+});
+
+
+test("evaluateFailoverManualOverrideState, summarizeAccountEmailDomains, evaluateDaemonJobDurationHealth, evaluateStatusBoardCleanSectionRatio, and evaluateEffectivePoolMultiplier work accurately", () => {
+  const fmo = evaluateFailoverManualOverrideState(
+    { engaged: true, manual: true },
+    [
+      { name: "gmail", enabled: true, token: { status: "valid" }, usage: { fiveHour: { pct: 20 }, sevenDay: { pct: 40 } } }
+    ]
+  );
+  assert.equal(fmo.canReleaseManual, true);
+  assert.equal(fmo.recommendedAccount, "gmail");
+
+  const dom = summarizeAccountEmailDomains([
+    { name: "a1", email: "user1@gmail.com", enabled: true },
+    { name: "a2", email: "user2@gmail.com", enabled: true },
+    { name: "a3", email: "user3@yahoo.com", enabled: true }
+  ]);
+  assert.equal(dom.totalEnabled, 3);
+  assert.equal(dom.domainCount, 2);
+  assert.equal(dom.domains[0].domain, "gmail.com");
+  assert.equal(dom.domains[0].count, 2);
+
+  const dur = evaluateDaemonJobDurationHealth({
+    autoswitch: { lastDurationMs: 420 },
+    "conv-index": { lastDurationMs: 4100 }
+  });
+  assert.equal(dur.status, "slow");
+  assert.equal(dur.maxDurationMs, 4100);
+  assert.deepEqual(dur.slowJobs, ["conv-index"]);
+
+  const cleanSec = evaluateStatusBoardCleanSectionRatio({
+    sections: [
+      { id: "s1", rows: [{ label: "a", value: "1", status: "ok" }] },
+      { id: "s2", rows: [{ label: "b", value: "2", status: "bad" }] },
+      { id: "s3", rows: [{ label: "c", value: "3", status: "ok" }] }
+    ]
+  });
+  assert.equal(cleanSec.totalSections, 3);
+  assert.equal(cleanSec.cleanSections, 2);
+  assert.equal(cleanSec.cleanRatioPct, 67);
+  assert.equal(cleanSec.status, "mixed");
+
+  const mult = evaluateEffectivePoolMultiplier([
+    { name: "max1", tier: "max-5x", enabled: true, usage: { fiveHour: { pct: 20 }, sevenDay: { pct: 40 } } },
+    { name: "pro1", tier: "pro", enabled: true, usage: { fiveHour: { pct: 50 }, sevenDay: { pct: 50 } } }
+  ]);
+  assert.equal(mult.totalMultiplier, 6);
+  assert.equal(mult.remainingMultiplier, 3.5);
+  assert.equal(mult.utilizationPct, 42);
 });

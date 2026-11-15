@@ -636,6 +636,18 @@ public struct ControlCenterView: View {
                         }
                     }
 
+                    if let epm = viewModel.payload.effectivePoolMultiplier, epm.enabledCount > 0 {
+                        HStack(spacing: 5) {
+                            Image(systemName: "bolt.horizontal.circle.fill")
+                                .font(.system(size: 10))
+                                .foregroundColor(.secondary)
+                            Text(epm.summary)
+                                .font(.system(size: 10))
+                                .foregroundColor(.secondary)
+                                .lineLimit(1)
+                        }
+                    }
+
                     if let dwb = viewModel.payload.dualWindowBottleneck, dwb.status == "constrained" {
                         HStack(spacing: 5) {
                             Image(systemName: "rectangle.split.2x1.fill")
@@ -834,6 +846,12 @@ public struct ControlCenterView: View {
                     Text("Neden: \(reason)")
                         .font(.system(size: 10))
                         .foregroundColor(.secondary)
+                }
+
+                if let fmo = viewModel.payload.failoverManualOverride, fmo.canReleaseManual {
+                    Text(fmo.summary)
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundColor(.orange)
                 }
 
                 if let rec = viewModel.payload.failoverRecovery, rec.engaged {

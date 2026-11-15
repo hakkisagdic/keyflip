@@ -73,6 +73,11 @@ public struct ControlCenterPayload: Codable {
     public var autoswitchPolicy: AutoswitchPolicySummary?
     public var secondaryPoolHeadroom: SecondaryPoolHeadroomSummary?
     public var serviceHeartbeatFreshness: ServiceHeartbeatFreshnessSummary?
+    public var failoverManualOverride: FailoverManualOverrideSummary?
+    public var accountEmailDomains: AccountEmailDomainsSummary?
+    public var jobDurationHealth: DaemonJobDurationHealthSummary?
+    public var statusBoardCleanRatio: StatusBoardCleanSectionSummary?
+    public var effectivePoolMultiplier: EffectivePoolMultiplierSummary?
     public var auditTimeline: [AuditEventItem]?
     public var markdownReport: String?
     public var preferences: PreferencesSummary?
@@ -151,6 +156,11 @@ public struct ControlCenterPayload: Codable {
         autoswitchPolicy: AutoswitchPolicySummary? = nil,
         secondaryPoolHeadroom: SecondaryPoolHeadroomSummary? = nil,
         serviceHeartbeatFreshness: ServiceHeartbeatFreshnessSummary? = nil,
+        failoverManualOverride: FailoverManualOverrideSummary? = nil,
+        accountEmailDomains: AccountEmailDomainsSummary? = nil,
+        jobDurationHealth: DaemonJobDurationHealthSummary? = nil,
+        statusBoardCleanRatio: StatusBoardCleanSectionSummary? = nil,
+        effectivePoolMultiplier: EffectivePoolMultiplierSummary? = nil,
         auditTimeline: [AuditEventItem]? = [],
         markdownReport: String? = nil,
         preferences: PreferencesSummary? = nil,
@@ -228,6 +238,11 @@ public struct ControlCenterPayload: Codable {
         self.autoswitchPolicy = autoswitchPolicy
         self.secondaryPoolHeadroom = secondaryPoolHeadroom
         self.serviceHeartbeatFreshness = serviceHeartbeatFreshness
+        self.failoverManualOverride = failoverManualOverride
+        self.accountEmailDomains = accountEmailDomains
+        self.jobDurationHealth = jobDurationHealth
+        self.statusBoardCleanRatio = statusBoardCleanRatio
+        self.effectivePoolMultiplier = effectivePoolMultiplier
         self.auditTimeline = auditTimeline
         self.markdownReport = markdownReport
         self.preferences = preferences
@@ -1730,5 +1745,53 @@ public struct ServiceHeartbeatFreshnessSummary: Codable {
     public var freshCount: Int
     public var maxHeartbeatAgeMin: Int?
     public var staleServices: [String]?
+    public var summary: String
+}
+
+public struct FailoverManualOverrideSummary: Codable {
+    public var engaged: Bool
+    public var manual: Bool
+    public var canReleaseManual: Bool
+    public var readyPrimaryCount: Int
+    public var recommendedAccount: String?
+    public var summary: String
+}
+
+public struct AccountEmailDomainItem: Codable, Identifiable {
+    public var id: String { domain }
+    public var domain: String
+    public var count: Int
+}
+
+public struct AccountEmailDomainsSummary: Codable {
+    public var totalEnabled: Int
+    public var domainCount: Int
+    public var domains: [AccountEmailDomainItem]?
+    public var summary: String
+}
+
+public struct DaemonJobDurationHealthSummary: Codable {
+    public var status: String
+    public var measuredCount: Int
+    public var avgDurationMs: Int
+    public var maxDurationMs: Int
+    public var slowJobs: [String]?
+    public var summary: String
+}
+
+public struct StatusBoardCleanSectionSummary: Codable {
+    public var totalSections: Int
+    public var cleanSections: Int
+    public var degradedSections: Int
+    public var cleanRatioPct: Int
+    public var status: String
+    public var summary: String
+}
+
+public struct EffectivePoolMultiplierSummary: Codable {
+    public var enabledCount: Int
+    public var totalMultiplier: Double
+    public var remainingMultiplier: Double
+    public var utilizationPct: Int
     public var summary: String
 }

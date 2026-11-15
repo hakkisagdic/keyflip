@@ -906,6 +906,11 @@ async function buildControlCenter(ctx, scheduler, opts) {
   base.autoswitchPolicy = _controlcenter.summarizeAutoswitchPolicy(base.config);
   base.secondaryPoolHeadroom = _controlcenter.evaluateSecondaryPoolHeadroom(base.otherQuotas);
   base.serviceHeartbeatFreshness = _controlcenter.evaluateServiceHeartbeatFreshness(base.services);
+  base.failoverManualOverride = _controlcenter.evaluateFailoverManualOverrideState(base.failover, base.accounts);
+  base.accountEmailDomains = _controlcenter.summarizeAccountEmailDomains(base.accounts);
+  base.jobDurationHealth = _controlcenter.evaluateDaemonJobDurationHealth(base.jobs);
+  base.statusBoardCleanRatio = _controlcenter.evaluateStatusBoardCleanSectionRatio(base.statusBoard);
+  base.effectivePoolMultiplier = _controlcenter.evaluateEffectivePoolMultiplier(base.accounts);
   base.compactSummary = _controlcenter.formatDaemonCompactSummary(base);
   base.preferences = _controlcenter.collectPreferences(ctx);
   base.markdownReport = _controlcenter.buildControlCenterMarkdown(base);

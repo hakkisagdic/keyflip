@@ -390,6 +390,19 @@ public enum ModelsTestSuite {
         let r18Decoded = try JSONDecoder().decode(SecondaryPoolHeadroomSummary.self, from: r18Json)
         precondition(r18Decoded.status == "ample" && r18Decoded.bestFallbackId == "kiro", "SecondaryPoolHeadroomSummary must decode accurately")
 
+        // Round 19 decoding check for EffectivePoolMultiplierSummary & StatusBoardCleanSectionSummary
+        let r19Json = """
+        {
+          "enabledCount": 2,
+          "totalMultiplier": 6.0,
+          "remainingMultiplier": 3.5,
+          "utilizationPct": 42,
+          "summary": "Havuz kapasite çarpanı: 6x (etkin kalan: 3.5x)"
+        }
+        """.data(using: .utf8)!
+        let r19Decoded = try JSONDecoder().decode(EffectivePoolMultiplierSummary.self, from: r19Json)
+        precondition(r19Decoded.totalMultiplier == 6.0 && r19Decoded.remainingMultiplier == 3.5, "EffectivePoolMultiplierSummary must decode accurately")
+
         // Urgent owner_needed classification test
         let urgentOwner = StatusBoardOwnerItem(project: "prod", text: "ACİL müdahale")
         let normalOwner = StatusBoardOwnerItem(project: "docs", text: "Not ekle")

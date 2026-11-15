@@ -1,6 +1,6 @@
 # Geliştirme Listesi ve Yaratıcı Özellik Önerileri (`GELISTIRME_LISTESI.md`)
 
-Bu liste, `docs/RAKIP_ANALIZI.md` sonucunda belirlenen tüm özelliklerin tamamlanma durumunu ve on sekizinci turda önerilen **beş yeni yaratıcı özelliği** (en değerli ikisi uygulanmış olarak) içerir.
+Bu liste, `docs/RAKIP_ANALIZI.md` sonucunda belirlenen tüm özelliklerin tamamlanma durumunu ve on dokuzuncu turda önerilen **beş yeni yaratıcı özelliği** (en değerli ikisi uygulanmış olarak) içerir.
 
 ---
 
@@ -89,24 +89,29 @@ Bu liste, `docs/RAKIP_ANALIZI.md` sonucunda belirlenen tüm özelliklerin tamaml
 - [x] **Yerel Servis Yeniden Başlatılabilirlik ve Kurtarma Kapsamı (`evaluateServiceRestartCoverage`):** Hata veya uyarı durumundaki yerel servislerin kaçının beyaz listede (`restartable: true`) olduğunu analiz ederek tek tıkla kurtarılabilirlik oranını (`coveragePct`) raporlama.
 - [x] **Durum Panosu Sahiplik Bekleyen İş Yoğunluğu / Bölüm Oranı (`evaluateOwnerToSectionRatio`):** `owner_needed` sayısını durum panosundaki toplam bölüm ve satır sayısıyla oranlayarak yönetici müdahale yükünü (`idle`, `light`, `moderate`, `heavy`) sınıflandırma.
 - [x] **Otomatik Geçiş (`autoswitch`) Strateji ve Grup Yapılandırma Özeti (`summarizeAutoswitchPolicy`):** `autoswitch.strategy`, `autoswitch.threshold` ve `failover.enabled` ayarlarını tek bir insan-okunur politika cümlesinde özetleme.
+- [x] **İkincil AI Sağlayıcıları Ortalama Boşluk ve Yedek Kapasite Endeksi (`evaluateSecondaryPoolHeadroom`):** `DİĞER KOTALAR` altındaki okunabilir ikincil sağlayıcıların ortalama kalan boş kapasite yüzdesini hesaplayıp en geniş yedek yüzeyi gösterme.
+- [x] **Servis Kalp Atışı (Heartbeat) Tazelik Denetçisi (`evaluateServiceHeartbeatFreshness`):** Kalp atışı dosyası (`heartbeatAgeMin`) üreten yerel servislerin tazeliğini denetleyip gecikmeleri `SERVİSLER` bölümünde uyarı olarak gösterme.
+- [x] **Failover Manuel Zorlama ve Birincil Havuz Dönüş Önericisi (`evaluateFailoverManualOverrideState`):** Failover manuel açıkken birincil Claude hesaplarında yeterli boşluk (`<%50` 5s ve `<%75` 7g) oluştuğunda `keyflip failover off` önerisi üretme.
+- [x] **Hesap Havuzu E-Posta Sağlayıcı Dağılım Özeti (`summarizeAccountEmailDomains`):** Tam e-posta adreslerini ifşa etmeden hesap havuzunun hangi sağlayıcı alan adlarına (`gmail.com`, `yahoo.com`) dağıldığını özetleme.
+- [x] **Daemon İşleri Ortalama Çalışma Süresi (Latency) Analizcisi (`evaluateDaemonJobDurationHealth`):** `jobs` içindeki `lastDurationMs` ölçümlerini analiz ederek ortalama çalışma gecikmesini ve yavaşlayan işleri (`>=3000 ms`) raporlama.
 
 ---
 
 ## 2. Listedeki İşler Tamamlandığı İçin Önerilen Beş Yeni Yaratıcı Özellik (En Değerli İkisi Uygulandı)
 
-### ✅ Yeni Öneri 1 (UYGULANDI): İkincil AI Sağlayıcıları Ortalama Boşluk ve Yedek Kapasite Endeksi (`evaluateSecondaryPoolHeadroom`)
-- **Değer:** `DİĞER KOTALAR` altındaki okunabilir ikincil sağlayıcıların (Kiro, Copilot, Antigravity, EVREN, API Promosyonları) ortalama kalan boş kapasite yüzdesini (`avgRemainingPct`) hesaplar ve en geniş boşluğa sahip yedek yüzeyi (`İkincil havuz boşluğu: ort. %70 (2 yüzey · en geniş: Kiro Kredisi)`) öne çıkarır.
-- **Uygulama:** `src/controlcenter.js` (`evaluateSecondaryPoolHeadroom`), `src/daemon.js` (`base.secondaryPoolHeadroom`), `Models.swift` (`SecondaryPoolHeadroomSummary`) ve `ControlCenterView.swift`.
+### ✅ Yeni Öneri 1 (UYGULANDI): Durum Panosu Temiz Bölüm Oranı (`evaluateStatusBoardCleanSectionRatio`)
+- **Değer:** Durum panosundaki bölümlerden kaçının %100 sorunsuz (`bad` veya `warn` içermeyen) olduğunu hesaplar (`Temiz bölümler: 2/3 (%67 sorunsuz)`).
+- **Uygulama:** `src/controlcenter.js` (`evaluateStatusBoardCleanSectionRatio`), `src/daemon.js` (`base.statusBoardCleanRatio`), `Models.swift` (`StatusBoardCleanSectionSummary`).
 
-### ✅ Yeni Öneri 2 (UYGULANDI): Servis Kalp Atışı (Heartbeat) Tazelik Denetçisi (`evaluateServiceHeartbeatFreshness`)
-- **Değer:** Kalp atışı dosyası (`heartbeatAgeMin`) üreten yerel servislerin (ör. `polyctl-admin-tick`) kalp atışı tazeliğini denetler; `>30 dk` gecikmeleri `stale`, `>45 dk` gecikmeleri `critical` olarak sınıflandırıp `SERVİSLER` bölümünde uyarı (`Kalp atışı gecikmesi: Polyctl Admin Tick (52 dk önce)`) gösterir.
-- **Uygulama:** `src/controlcenter.js` (`evaluateServiceHeartbeatFreshness`), `src/daemon.js` (`base.serviceHeartbeatFreshness`), `Models.swift` (`ServiceHeartbeatFreshnessSummary`) ve `ControlCenterView.swift`.
+### ✅ Yeni Öneri 2 (UYGULANDI): Hesap Havuzu Ağırlıklı Kapasite Çarpanı (`evaluateEffectivePoolMultiplier`)
+- **Değer:** Etkin Claude hesaplarının katman ağırlıklarına göre (`pro` = `1x`, `team` = `2x`, `max-5x` = `5x`, `max-20x` = `20x`) toplam kapasite çarpanını ve kalan etkin çarpanı (`Havuz kapasite çarpanı: 6x (etkin kalan: 3.5x)`) hesaplayıp `HESAPLAR` bölümünde gösterir.
+- **Uygulama:** `src/controlcenter.js` (`evaluateEffectivePoolMultiplier`), `src/daemon.js` (`base.effectivePoolMultiplier`), `Models.swift` (`EffectivePoolMultiplierSummary`) ve `ControlCenterView.swift`.
 
-### 📋 Yeni Öneri 3 (Gelecek Adayı): Failover Manuel Zorlama ve Birincil Havuz Dönüş Önericisi (`evaluateFailoverManualOverrideState`)
-- **Değer:** Failover manuel olarak açık bırakılmışken (`failover.manual === true`) birincil Claude hesaplarında yeterli boşluk (`<%50` kullanım) oluştuğunda gereksiz API harcamasını önlemek için `keyflip failover off` önerisi üretme.
+### 📋 Yeni Öneri 3 (Gelecek Adayı): Uzak Sunucu HTTP Yanıt Kodu Dağılım Analizcisi (`evaluateServerSiteResponseCodeSummary`)
+- **Değer:** `server.sites` içindeki HTTP durum kodlarını (`2xx`, `3xx`, `4xx`, `5xx`) sınıflandırarak erişim hatalarını özetleme.
 
-### 📋 Yeni Öneri 4 (Gelecek Adayı): Hesap Havuzu E-Posta Sağlayıcı Dağılım Özeti (`summarizeAccountEmailDomains`)
-- **Değer:** Tam e-posta adreslerini ifşa etmeden hesap havuzunun hangi sağlayıcı alan adlarına (`gmail.com`, `yahoo.com` vb.) dağıldığını özetleme.
+### 📋 Yeni Öneri 4 (Gelecek Adayı): Denetim Günlüğü (`auditTimeline`) Hata Oranı Analizcisi (`evaluateAuditErrorRate`)
+- **Değer:** Son denetim olaylarındaki başarısız (`error`/`warn`) işlemlerin oranını hesaplama.
 
-### 📋 Yeni Öneri 5 (Gelecek Adayı): Daemon İşleri Ortalama Çalışma Süresi (Latency) Analizcisi (`evaluateDaemonJobDurationHealth`)
-- **Değer:** `jobs` içindeki `lastDurationMs` ölçümlerini analiz ederek ortalama çalışma gecikmesini ve yavaşlayan işleri raporlama.
+### 📋 Yeni Öneri 5 (Gelecek Adayı): Failover Günlük Güvenli Bütçe Payı (`evaluateFailoverCapHeadroomUsd`)
+- **Değer:** Kalan Keysmith harcama tavanını (`remainingUsd`) ve güvenli saatlik bütçe payını özetleme.

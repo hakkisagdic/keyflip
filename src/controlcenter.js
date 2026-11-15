@@ -4741,3 +4741,215 @@ export function evaluateServiceHeartbeatFreshness(services = []) {
         : `Servis kalp atışları güncel (en yaşlı ${maxHeartbeatAgeMin} dk)`
   };
 }
+
+/**
+ * Checks whether failover is manually forced on (`engaged && manual`) while at least one enabled
+ * primary Claude account has ample quota headroom (<50% 5h and <75% 7d) and a valid token.
+ */
+export function evaluateFailoverManualOverrideState(failoverInfo = {}, accounts = []) {
+  const engaged = Boolean(failoverInfo?.engaged);
+  const manual = Boolean(failoverInfo?.manual);
+  const enabled = (Array.isArray(accounts) ? accounts : []).filter((a) => a && a.enabled !== false);
+
+  const readyAccounts = enabled.filter((a) => {
+    const tokOk = !a.token || a.token.status === "valid";
+    const five =
+      typeof a?.usage?.fiveHour?.pct === "number"
+        ? a.usage.fiveHour.pct
+        : typeof a?.fiveHourPct === "number"
+          ? a.fiveHourPct
+          : 0;
+    const seven =
+      typeof a?.usage?.sevenDay?.pct === "number"
+        ? a.usage.sevenDay.pct
+        : typeof a?.sevenDayPct === "number"
+          ? a.sevenDayPct
+          : 0;
+    return tokOk && five < 50 && seven < 75;
+  });
+
+  const canReleaseManual = engaged && manual && readyAccounts.length > 0;
+  const recommendedAccount = readyAccounts[0]?.name || null;
+
+  return {
+    engaged,
+    manual,
+    canReleaseManual,
+    readyPrimaryCount: readyAccounts.length,
+    recommendedAccount,
+    summary: canReleaseManual
+      ? `Manuel failover açık ancak birincil havuz müsait (${recommendedAccount}) — kapatılabilir (keyflip failover off)`
+      : engaged && manual
+        ? "Manuel failover devrede (birincil hesaplar henüz yoğun)"
+        : "Manuel failover zorlaması yok"
+  };
+}
+
+/**
+ * Summarizes email provider domains across enabled accounts without exposing full PII email addresses.
+ */
+export function summarizeAccountEmailDomains(accounts = []) {
+  const enabled = (Array.isArray(accounts) ? accounts : []).filter((a) => a && a.enabled !== false);
+  const counts = new Map();
+
+  for (const acct of enabled) {
+    const raw = String(acct?.email || "").trim().toLowerCase();
+    const atIdx = raw.lastIndexOf("@");
+    const domain = atIdx > 0 && atIdx < raw.length - 1 ? raw.slice(atIdx + 1) : "belirsiz";
+    counts.set(domain, (counts.get(domain) || 0) + 1);
+  }
+
+  const domains = Array.from(counts.entries())
+    .map(([domain, count]) => ({ domain, count }))
+    .sort((a, b) => b.count - a.count || a.domain.localeCompare(b.domain));
+
+  return {
+    totalEnabled: enabled.length,
+    domainCount: domains.length,
+    domains,
+    summary:
+      domains.length > 0
+        ? `E-posta dağılımı: ${domains.map((d) => `${d.domain} (${d.count})`).join(", ")}`
+        : "Etkin hesap e-posta verisi yok"
+  };
+}
+
+/**
+ * Evaluates average and maximum execution duration (`lastDurationMs`) across scheduled daemon jobs.
+ */
+export function evaluateDaemonJobDurationHealth(jobs = {}, options = {}) {
+  const slowThresholdMs = typeof options.slowThresholdMs === "number" ? options.slowThresholdMs : 3000;
+  const entries = Object.entries(jobs || {}).filter(([, meta]) => meta && typeof meta === "object");
+
+  let measuredCount = 0;
+  let sumMs = 0;
+  let maxDurationMs = 0;
+  const slowJobs = [];
+
+  for (const [name, meta] of entries) {
+    if (typeof meta.lastDurationMs === "number" && Number.isFinite(meta.lastDurationMs) && meta.lastDurationMs >= 0) {
+      measuredCount += 1;
+      sumMs += meta.lastDurationMs;
+      if (meta.lastDurationMs > maxDurationMs) maxDurationMs = meta.lastDurationMs;
+      if (meta.lastDurationMs >= slowThresholdMs) {
+        slowJobs.push(name);
+      }
+    }
+  }
+
+  const avgDurationMs = measuredCount > 0 ? Math.round(sumMs / measuredCount) : 0;
+  const status = slowJobs.length > 0 ? "slow" : "fast";
+
+  return {
+    status,
+    measuredCount,
+    avgDurationMs,
+    maxDurationMs,
+    slowJobs,
+    summary:
+      slowJobs.length > 0
+        ? `Yavaş daemon işi: ${slowJobs.join(", ")} (maks ${maxDurationMs} ms)`
+        : `Daemon iş gecikmesi düşük (ort. ${avgDurationMs} ms)`
+  };
+}
+
+/**
+ * Computes the ratio of 100% issue-free Status Board sections vs total sections.
+ */
+export function evaluateStatusBoardCleanSectionRatio(statusBoard) {
+  const sections = Array.isArray(statusBoard?.sections) ? statusBoard.sections : [];
+  const totalSections = sections.length;
+
+  if (totalSections === 0) {
+    return {
+      totalSections: 0,
+      cleanSections: 0,
+      degradedSections: 0,
+      cleanRatioPct: 100,
+      status: "empty",
+      summary: "Durum panosu bölümü yok"
+    };
+  }
+
+  let cleanSections = 0;
+  for (const sec of sections) {
+    const rows = Array.isArray(sec?.rows) ? sec.rows : [];
+    const hasIssue = rows.some((r) => r?.status === "bad" || r?.status === "warn");
+    if (!hasIssue) cleanSections += 1;
+  }
+
+  const degradedSections = totalSections - cleanSections;
+  const cleanRatioPct = Math.round((cleanSections / totalSections) * 100);
+  const status = degradedSections === 0 ? "all-clean" : cleanSections === 0 ? "all-degraded" : "mixed";
+
+  return {
+    totalSections,
+    cleanSections,
+    degradedSections,
+    cleanRatioPct,
+    status,
+    summary: `Temiz bölümler: ${cleanSections}/${totalSections} (%${cleanRatioPct} sorunsuz)`
+  };
+}
+
+/**
+ * Computes the tier-weighted capacity multiplier of the enabled Claude account pool
+ * (e.g., pro = 1x, team = 2x, max-5x = 5x, max-20x = 20x) and remaining effective multiplier.
+ */
+export function evaluateEffectivePoolMultiplier(accounts = []) {
+  const enabled = (Array.isArray(accounts) ? accounts : []).filter((a) => a && a.enabled !== false);
+  const weightForTier = (tierRaw) => {
+    const t = String(tierRaw || "").toLowerCase();
+    if (t.includes("20x")) return 20;
+    if (t.includes("5x") || t.includes("max")) return 5;
+    if (t.includes("team")) return 2;
+    return 1;
+  };
+
+  if (enabled.length === 0) {
+    return {
+      enabledCount: 0,
+      totalMultiplier: 0,
+      remainingMultiplier: 0,
+      utilizationPct: 0,
+      summary: "Etkin havuz kapasitesi yok"
+    };
+  }
+
+  let totalMultiplier = 0;
+  let remainingMultiplier = 0;
+
+  for (const acct of enabled) {
+    const w = weightForTier(acct.tier);
+    totalMultiplier += w;
+    const five =
+      typeof acct?.usage?.fiveHour?.pct === "number"
+        ? acct.usage.fiveHour.pct
+        : typeof acct?.fiveHourPct === "number"
+          ? acct.fiveHourPct
+          : 0;
+    const seven =
+      typeof acct?.usage?.sevenDay?.pct === "number"
+        ? acct.usage.sevenDay.pct
+        : typeof acct?.sevenDayPct === "number"
+          ? acct.sevenDayPct
+          : 0;
+    const remRatio = Math.max(0, Math.min(100, 100 - Math.max(five, seven))) / 100;
+    remainingMultiplier += w * remRatio;
+  }
+
+  totalMultiplier = Math.round(totalMultiplier * 10) / 10;
+  remainingMultiplier = Math.round(remainingMultiplier * 10) / 10;
+  const utilizationPct =
+    totalMultiplier > 0
+      ? Math.max(0, Math.min(100, Math.round(((totalMultiplier - remainingMultiplier) / totalMultiplier) * 100)))
+      : 0;
+
+  return {
+    enabledCount: enabled.length,
+    totalMultiplier,
+    remainingMultiplier,
+    utilizationPct,
+    summary: `Havuz kapasite çarpanı: ${totalMultiplier}x (etkin kalan: ${remainingMultiplier}x)`
+  };
+}
