@@ -113,7 +113,12 @@ import {
   evaluateFailoverGatewayReadiness,
   evaluateFleetActiveVsDormantRatio,
   evaluatePoolHealthyStandbyRatio,
-  evaluateStatusBoardSectionAlertSpread
+  evaluateStatusBoardSectionAlertSpread,
+  evaluateServerLoadTrend,
+  evaluateSecondaryQuotaWarningRatio,
+  evaluateDaemonActiveWarningPosture,
+  evaluatePoolPeakVsFloorSpread,
+  evaluateStatusBoardHealthyRowRatio
 } from "../src/controlcenter.js";
 import * as daemon from "../src/daemon.js";
 
@@ -1790,4 +1795,63 @@ test("evaluateDaemonAutoRestartPosture, evaluateFailoverGatewayReadiness, evalua
   assert.equal(sbas.spreadPct, 50);
   assert.equal(sbas.mostImpactedSectionTitle, "Kotalar");
   assert.equal(sbas.status, "widespread");
+});
+
+test("evaluateServerLoadTrend, evaluateSecondaryQuotaWarningRatio, evaluateDaemonActiveWarningPosture, evaluatePoolPeakVsFloorSpread, and evaluateStatusBoardHealthyRowRatio work accurately", () => {
+  const slt = evaluateServerLoadTrend({
+    reachable: true,
+    load: "0.85 / 0.50 / 0.35"
+  });
+  assert.equal(slt.parsed, true);
+  assert.equal(slt.load1m, 0.85);
+  assert.equal(slt.load15m, 0.35);
+  assert.equal(slt.delta1mTo15m, 0.5);
+  assert.equal(slt.trend, "rising");
+
+  const sqwr = evaluateSecondaryQuotaWarningRatio([
+    { id: "codex", status: "ok" },
+    { id: "gemini", status: "warning" },
+    { id: "cursor", status: "exhausted" }
+  ]);
+  assert.equal(sqwr.readableCount, 3);
+  assert.equal(sqwr.warningCount, 1);
+  assert.equal(sqwr.exhaustedCount, 1);
+  assert.equal(sqwr.atRiskCount, 2);
+  assert.equal(sqwr.atRiskRatioPct, 67);
+  assert.equal(sqwr.status, "critical");
+
+  const dawp = evaluateDaemonActiveWarningPosture(true, [{ code: "w1", message: "warn" }]);
+  assert.equal(dawp.daemonRunning, true);
+  assert.equal(dawp.warningCount, 1);
+  assert.equal(dawp.status, "warnings_active");
+
+  const ppf = evaluatePoolPeakVsFloorSpread([
+    { name: "gmail", enabled: true, sevenDayPct: 75 },
+    { name: "yahoo", enabled: true, sevenDayPct: 20 }
+  ]);
+  assert.equal(ppf.enabledCount, 2);
+  assert.equal(ppf.maxSevenDayPct, 75);
+  assert.equal(ppf.minSevenDayPct, 20);
+  assert.equal(ppf.spreadSevenDayPct, 55);
+  assert.equal(ppf.highestAccount, "gmail");
+  assert.equal(ppf.lowestAccount, "yahoo");
+  assert.equal(ppf.status, "skewed");
+
+  const sbhr = evaluateStatusBoardHealthyRowRatio({
+    sections: [
+      {
+        id: "s1",
+        rows: [
+          { label: "r1", status: "ok" },
+          { label: "r2", status: "ok" },
+          { label: "r3", status: "ok" },
+          { label: "r4", status: "warn" }
+        ]
+      }
+    ]
+  });
+  assert.equal(sbhr.totalRows, 4);
+  assert.equal(sbhr.okCount, 3);
+  assert.equal(sbhr.healthyRatioPct, 75);
+  assert.equal(sbhr.status, "moderate");
 });

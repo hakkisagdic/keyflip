@@ -119,24 +119,29 @@ Bu liste, `docs/RAKIP_ANALIZI.md` sonucunda belirlenen tüm özelliklerin tamaml
 - [x] **Masaüstü Otomatik Yeniden Başlatma Hazırlık Denetçisi (`evaluateDaemonAutoRestartPosture`):** `desktop.autoRestart` yapılandırmasını ve bekleyen masaüstü yeniden başlatma durumunu özetleme.
 - [x] **Failover Gateway Hazırlık ve Yanıt Durumu Özeti (`evaluateFailoverGatewayReadiness`):** Keysmith gateway yoklamasının hazırlık durumunu (`gatewayReady`, `gatewayReason`) ve failover zinciri sağlığını özetleme.
 - [x] **Filo (Traycer) Aktif+Boşta vs Uyuyan Ajan Oranı (`evaluateFleetActiveVsDormantRatio`):** Traycer ajan filosundaki aktif/boşta ajanların uyuyan (`dormant`) ajanlara oranını hesaplayıp `FİLO (TRAYCER)` bölümünde gösterme.
+- [x] **Hesap Havuzu Sağlıklı Yedek Hesap Oranı Analizcisi (`evaluatePoolHealthyStandbyRatio`):** Aktif olmayan etkin yedek Claude hesaplarından kaçının `<%70` kota kullanımıyla sağlıklı ve hazır olduğunu `HESAPLAR` bölümünde gösterme.
+- [x] **Durum Panosu Bölüm Bazlı Uyarı Yayılım Analizcisi (`evaluateStatusBoardSectionAlertSpread`):** Durum panosundaki bölümlerden kaç tanesinin en az bir `bad` veya `warn` satırından etkilendiğini ve en yoğun sorunlu bölümü gösterme.
+- [x] **Uzak Sunucu Load Average Eğilim Analizcisi (`evaluateServerLoadTrend`):** Uzak sunucunun `1m / 5m / 15m` yük ortalaması dizgesini ayrıştırarak yükün yükselişte (`rising`), dengede (`steady`) veya düşüşte (`falling`) olduğunu `SUNUCU` bölümünde gösterme.
+- [x] **İkincil Sağlayıcılar Uyarı/Tükenmişlik Oranı (`evaluateSecondaryQuotaWarningRatio`):** Okunabilen ikincil kota sağlayıcılarından (`otherQuotas`) kaçının `warning` veya `exhausted` durumunda olduğunu `DİĞER KOTALAR` bölümünde gösterme.
+- [x] **Daemon Aktif Uyarı ve Sağlık Durumu Özeti (`evaluateDaemonActiveWarningPosture`):** Daemon üzerindeki aktif uyarı sayısını ve çalışma sağlığını tek satırlık özet olarak raporlama.
 
 ---
 
 ## 2. Listedeki İşler Tamamlandığı İçin Önerilen Beş Yeni Yaratıcı Özellik (En Değerli İkisi Uygulandı)
 
-### ✅ Yeni Öneri 1 (UYGULANDI): Hesap Havuzu Sağlıklı Yedek Hesap Oranı Analizcisi (`evaluatePoolHealthyStandbyRatio`)
-- **Değer:** Aktif olmayan etkin yedek Claude hesaplarından kaç tanesinin hem yeniden kimlik doğrulaması gerektirmediğini hem de 5s/7g kotalarının `<%70` altında sağlıklı olduğunu (`healthyStandbyRatioPct`) hesaplayıp `HESAPLAR` bölümünde gösterir (`Sağlıklı yedek oranı: 1/2 yedek hesap hazır (<%70 kota · %50)`).
-- **Uygulama:** `src/controlcenter.js` (`evaluatePoolHealthyStandbyRatio`), `src/daemon.js` (`base.poolHealthyStandby`), `Models.swift` (`PoolHealthyStandbyRatioSummary`) ve `ControlCenterView.swift`.
+### ✅ Yeni Öneri 1 (UYGULANDI): Hesap Havuzu 7 Günlük Tavan / Taban Kota Makası Analizcisi (`evaluatePoolPeakVsFloorSpread`)
+- **Değer:** Etkin Claude hesapları arasında en yüksek 7 günlük kota kullanımına sahip hesap ile en düşük 7 günlük kota kullanımına sahip hesap arasındaki farkı (`spreadSevenDayPct`) hesaplayıp `HESAPLAR` bölümünde gösterir (`7g tavan/taban makası: %55 (gmail %75 vs yahoo %20)`).
+- **Uygulama:** `src/controlcenter.js` (`evaluatePoolPeakVsFloorSpread`), `src/daemon.js` (`base.poolPeakVsFloorSpread`), `Models.swift` (`PoolPeakVsFloorSpreadSummary`) ve `ControlCenterView.swift`.
 
-### ✅ Yeni Öneri 2 (UYGULANDI): Durum Panosu Bölüm Bazlı Uyarı Yayılım Analizcisi (`evaluateStatusBoardSectionAlertSpread`)
-- **Değer:** Durum panosundaki toplam bölümlerden kaç tanesinin en az bir `bad` veya `warn` satırı içerdiğini (`spreadPct`) ve en çok sorun barındıran bölümü (`mostImpactedSectionTitle`) hesaplayarak Durum Panosu kartında gösterir (`Bölüm uyarı yayılımı: 1/2 bölüm etkileniyor (%50 · en yoğun: Kotalar)`).
-- **Uygulama:** `src/controlcenter.js` (`evaluateStatusBoardSectionAlertSpread`), `src/daemon.js` (`base.statusBoardAlertSpread`), `Models.swift` (`StatusBoardSectionAlertSpreadSummary`) ve `ControlCenterView.swift`.
+### ✅ Yeni Öneri 2 (UYGULANDI): Durum Panosu Sağlıklı (`ok`) Satır Oranı Analizcisi (`evaluateStatusBoardHealthyRowRatio`)
+- **Değer:** Durum panosundaki toplam satırlardan kaç tanesinin `ok` durumunda olduğunu (`healthyRatioPct`) hesaplayarak Durum Panosu kartında gösterir (`Sağlıklı satır oranı: 3/4 satır OK (%75)`).
+- **Uygulama:** `src/controlcenter.js` (`evaluateStatusBoardHealthyRowRatio`), `src/daemon.js` (`base.statusBoardHealthyRowRatio`), `Models.swift` (`StatusBoardHealthyRowRatioSummary`) ve `ControlCenterView.swift`.
 
-### 📋 Yeni Öneri 3 (Gelecek Adayı): Uzak Sunucu Load Average Eğilim Analizcisi (`evaluateServerLoadTrend`)
-- **Değer:** Uzak sunucunun `1m / 5m / 15m` yük ortalaması dizgesini ayrıştırarak yükün yükselişte (`rising`), dengede (`steady`) veya düşüşte (`falling`) olduğunu özetleme.
+### 📋 Yeni Öneri 3 (Gelecek Adayı): Yerel Servisler Sıfır Çıkış Kodu (`lastExit === 0`) Oranı (`evaluateServiceZeroExitRatio`)
+- **Değer:** İzlenen yerel servislerin kaç tanesinin son çıkış kodunun `0` (hatasız) olduğunu yüzdesel olarak özetleme.
 
-### 📋 Yeni Öneri 4 (Gelecek Adayı): İkincil Sağlayıcılar Uyarı/Tükenmişlik Oranı (`evaluateSecondaryQuotaWarningRatio`)
-- **Değer:** Okunabilen ikincil kota sağlayıcılarından (`otherQuotas`) kaçının `warning` veya `exhausted` durumunda olduğunu yüzdesel olarak özetleme.
+### 📋 Yeni Öneri 4 (Gelecek Adayı): Failover Kalan Seans Kapasitesi Tahmincisi (`evaluateFailoverRemainingSessionsEstimate`)
+- **Değer:** Kalan günlük failover bütçesi ile ortalama 2 saatlik kaç standart geliştirme seansının karşılanabileceğini özetleme.
 
-### 📋 Yeni Öneri 5 (Gelecek Adayı): Daemon Aktif Uyarı ve Sağlık Durumu Özeti (`evaluateDaemonActiveWarningPosture`)
-- **Değer:** Daemon üzerindeki aktif uyarı sayısını ve çalışma sağlığını tek satırlık özet olarak raporlama.
+### 📋 Yeni Öneri 5 (Gelecek Adayı): Denetim Günlüğü Kesintisiz Başarı Serisi (`evaluateAuditRecentSuccessStreak`)
+- **Değer:** `auditTimeline` içindeki en güncel olaydan geriye doğru kaç ardışık işlemin hatasız (`status === "ok"`) tamamlandığını sayma.

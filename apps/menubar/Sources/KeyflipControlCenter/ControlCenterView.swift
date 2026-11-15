@@ -300,7 +300,19 @@ public struct ControlCenterView: View {
                 .background(Color.secondary.opacity(0.08))
                 .cornerRadius(4)
 
-                if let sbas = viewModel.payload.statusBoardAlertSpread, sbas.affectedSectionCount > 0 {
+                if let sbhr = viewModel.payload.statusBoardHealthyRowRatio, sbhr.totalRows > 0 {
+                    HStack(spacing: 5) {
+                        Image(systemName: "checkmark.circle")
+                            .font(.system(size: 9))
+                            .foregroundColor(sbhr.status == "strong" ? .green : .secondary)
+                        Text(sbhr.summary)
+                            .font(.system(size: 9, design: .monospaced))
+                            .foregroundColor(.secondary)
+                            .lineLimit(1)
+                    }
+                }
+
+                                if let sbas = viewModel.payload.statusBoardAlertSpread, sbas.affectedSectionCount > 0 {
                     HStack(spacing: 5) {
                         Image(systemName: "square.grid.2x2")
                             .font(.system(size: 9))
@@ -690,7 +702,19 @@ public struct ControlCenterView: View {
                         }
                     }
 
-                    if let phs = viewModel.payload.poolHealthyStandby, phs.totalStandbyCount > 0 {
+                    if let ppf = viewModel.payload.poolPeakVsFloorSpread, ppf.enabledCount >= 2 {
+                        HStack(spacing: 5) {
+                            Image(systemName: "arrow.up.and.down.text.horizontal")
+                                .font(.system(size: 10))
+                                .foregroundColor(ppf.status == "skewed" ? .orange : .secondary)
+                            Text(ppf.summary)
+                                .font(.system(size: 10))
+                                .foregroundColor(ppf.status == "skewed" ? .orange : .secondary)
+                                .lineLimit(1)
+                        }
+                    }
+
+                                        if let phs = viewModel.payload.poolHealthyStandby, phs.totalStandbyCount > 0 {
                         HStack(spacing: 5) {
                             Image(systemName: "person.2.badge.gearshape")
                                 .font(.system(size: 10))
@@ -978,7 +1002,13 @@ public struct ControlCenterView: View {
                     .foregroundColor(.secondary)
             } else {
                 VStack(alignment: .leading, spacing: 6) {
-                    if let sph = viewModel.payload.secondaryPoolHeadroom, sph.status != "unreadable" {
+                    if let sqwr = viewModel.payload.secondaryQuotaWarningRatio, sqwr.atRiskCount > 0 {
+                        Text(sqwr.summary)
+                            .font(.system(size: 10))
+                            .foregroundColor(sqwr.status == "critical" ? .red : .orange)
+                            .lineLimit(1)
+                    }
+                                        if let sph = viewModel.payload.secondaryPoolHeadroom, sph.status != "unreadable" {
                         Text(sph.summary)
                             .font(.system(size: 10))
                             .foregroundColor(sph.status == "critical" ? .orange : .secondary)
@@ -1177,7 +1207,12 @@ public struct ControlCenterView: View {
                             Text("\(srv.load) · \(srv.memory) · \(srv.disk)")
                                 .font(.system(size: 11, design: .monospaced))
                         }
-                        if let sor = viewModel.payload.serverOverallReadiness, sor.status != "unreadable" {
+                        if let slt = viewModel.payload.serverLoadTrend, slt.parsed {
+                            Text(slt.summary)
+                                .font(.system(size: 10))
+                                .foregroundColor(slt.trend == "rising" ? .orange : .secondary)
+                        }
+                                                if let sor = viewModel.payload.serverOverallReadiness, sor.status != "unreadable" {
                             Text(sor.summary)
                                 .font(.system(size: 10))
                                 .foregroundColor(sor.status == "healthy" ? .secondary : .orange)

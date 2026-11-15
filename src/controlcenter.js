@@ -6007,3 +6007,200 @@ export function evaluateStatusBoardSectionAlertSpread(statusBoard) {
         : `Bölüm uyarı yayılımı: 0/${sections.length} bölüm sorunsuz`
   };
 }
+
+/**
+ * Parses server.load (1m / 5m / 15m) to determine whether remote server load is rising, falling, or steady.
+ */
+export function evaluateServerLoadTrend(server) {
+  const rawLoad = server && typeof server.load === "string" ? server.load.trim() : "";
+  if (!server || server.reachable === false || !rawLoad || rawLoad === "okunamadı") {
+    return {
+      parsed: false,
+      load1m: null,
+      load5m: null,
+      load15m: null,
+      delta1mTo15m: null,
+      trend: "unknown",
+      summary: "Sunucu yük eğilimi okunamadı"
+    };
+  }
+
+  const nums = rawLoad
+    .split(/[\s,/]+/)
+    .map((s) => Number.parseFloat(s))
+    .filter((n) => Number.isFinite(n));
+
+  if (nums.length < 3) {
+    return {
+      parsed: false,
+      load1m: nums[0] ?? null,
+      load5m: nums[1] ?? null,
+      load15m: null,
+      delta1mTo15m: null,
+      trend: "unknown",
+      summary: "Sunucu yük eğilimi ayrıştırılamadı"
+    };
+  }
+
+  const [l1, l5, l15] = nums;
+  const delta1mTo15m = Math.round((l1 - l15) * 100) / 100;
+  const trend = delta1mTo15m >= 0.25 ? "rising" : delta1mTo15m <= -0.25 ? "falling" : "steady";
+  const trendLabel = trend === "rising" ? "yükselişte" : trend === "falling" ? "düşüşte" : "dengeli";
+
+  return {
+    parsed: true,
+    load1m: l1,
+    load5m: l5,
+    load15m: l15,
+    delta1mTo15m,
+    trend,
+    summary: `Yük eğilimi (1d/15d): ${l1.toFixed(2)} → ${l15.toFixed(2)} (${trendLabel})`
+  };
+}
+
+/**
+ * Computes the count and percentage of readable secondary quota providers in warning or exhausted state.
+ */
+export function evaluateSecondaryQuotaWarningRatio(otherQuotas) {
+  const list = Array.isArray(otherQuotas) ? otherQuotas : [];
+  let readableCount = 0;
+  let warningCount = 0;
+  let exhaustedCount = 0;
+
+  for (const item of list) {
+    const st = String(item?.status || "").toLowerCase();
+    if (st === "ok" || st === "warning" || st === "exhausted") {
+      readableCount += 1;
+      if (st === "warning") warningCount += 1;
+      else if (st === "exhausted") exhaustedCount += 1;
+    }
+  }
+
+  const atRiskCount = warningCount + exhaustedCount;
+  const atRiskRatioPct = readableCount > 0 ? Math.round((atRiskCount / readableCount) * 100) : 0;
+  const status = readableCount === 0 ? "unreadable" : exhaustedCount > 0 ? "critical" : warningCount > 0 ? "warning" : "healthy";
+
+  return {
+    readableCount,
+    warningCount,
+    exhaustedCount,
+    atRiskCount,
+    atRiskRatioPct,
+    status,
+    summary:
+      readableCount > 0
+        ? `İkincil kota risk oranı: ${atRiskCount}/${readableCount} sağlayıcı uyarıda/tükendi (%${atRiskRatioPct})`
+        : "İkincil kota risk oranı okunamadı"
+  };
+}
+
+/**
+ * Summarizes daemon active warning count and runtime posture.
+ */
+export function evaluateDaemonActiveWarningPosture(daemonRunning, warnings) {
+  const running = daemonRunning !== false;
+  const list = Array.isArray(warnings) ? warnings : [];
+  const warningCount = list.length;
+  const status = !running ? "offline" : warningCount > 0 ? "warnings_active" : "clean_online";
+
+  return {
+    daemonRunning: running,
+    warningCount,
+    status,
+    summary: !running
+      ? "Daemon çevrimdışı"
+      : warningCount > 0
+        ? `Daemon çevrimiçi (${warningCount} aktif uyarı)`
+        : "Daemon çevrimiçi ve uyarısız"
+  };
+}
+
+/**
+ * Computes the 7-day utilization spread between the highest-used and lowest-used enabled Claude accounts.
+ */
+export function evaluatePoolPeakVsFloorSpread(accounts) {
+  const list = Array.isArray(accounts) ? accounts : [];
+  const enabled = list.filter((a) => a && a.enabled !== false && !a.needsReauth);
+  if (enabled.length < 2) {
+    return {
+      enabledCount: enabled.length,
+      maxSevenDayPct: 0,
+      minSevenDayPct: 0,
+      spreadSevenDayPct: 0,
+      highestAccount: null,
+      lowestAccount: null,
+      status: "insufficient_accounts",
+      summary: "7g tavan/taban farkı: karşılaştırma için en az 2 etkin hesap gerekli"
+    };
+  }
+
+  let maxPct = -Infinity;
+  let minPct = Infinity;
+  let highestAccount = null;
+  let lowestAccount = null;
+
+  for (const acc of enabled) {
+    const pct =
+      typeof acc?.usage?.sevenDay?.pct === "number" && Number.isFinite(acc.usage.sevenDay.pct)
+        ? acc.usage.sevenDay.pct
+        : typeof acc.sevenDayPct === "number" && Number.isFinite(acc.sevenDayPct)
+          ? acc.sevenDayPct
+          : 0;
+    if (pct > maxPct) {
+      maxPct = pct;
+      highestAccount = acc.name || acc.id || "unknown";
+    }
+    if (pct < minPct) {
+      minPct = pct;
+      lowestAccount = acc.name || acc.id || "unknown";
+    }
+  }
+
+  maxPct = Math.round(maxPct * 10) / 10;
+  minPct = Math.round(minPct * 10) / 10;
+  const spreadSevenDayPct = Math.round((maxPct - minPct) * 10) / 10;
+  const status = spreadSevenDayPct >= 40 ? "skewed" : spreadSevenDayPct >= 20 ? "moderate" : "balanced";
+
+  return {
+    enabledCount: enabled.length,
+    maxSevenDayPct: maxPct,
+    minSevenDayPct: minPct,
+    spreadSevenDayPct,
+    highestAccount,
+    lowestAccount,
+    status,
+    summary: `7g tavan/taban makası: %${spreadSevenDayPct} (${highestAccount} %${maxPct} vs ${lowestAccount} %${minPct})`
+  };
+}
+
+/**
+ * Computes the exact count and percentage of 'ok' rows across all Status Board rows.
+ */
+export function evaluateStatusBoardHealthyRowRatio(statusBoard) {
+  const sections = Array.isArray(statusBoard?.sections) ? statusBoard.sections : [];
+  let totalRows = 0;
+  let okCount = 0;
+
+  for (const sec of sections) {
+    for (const r of sec?.rows || []) {
+      totalRows += 1;
+      if (String(r?.status || "").toLowerCase() === "ok") {
+        okCount += 1;
+      }
+    }
+  }
+
+  const healthyRatioPct = totalRows > 0 ? Math.round((okCount / totalRows) * 100) : 100;
+  const status = totalRows === 0 ? "empty" : healthyRatioPct >= 85 ? "strong" : healthyRatioPct >= 60 ? "moderate" : "degraded";
+
+  return {
+    totalRows,
+    okCount,
+    healthyRatioPct,
+    status,
+    summary:
+      totalRows > 0
+        ? `Sağlıklı satır oranı: ${okCount}/${totalRows} satır OK (%${healthyRatioPct})`
+        : "Durum panosunda satır yok"
+  };
+}

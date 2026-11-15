@@ -103,6 +103,11 @@ public struct ControlCenterPayload: Codable {
     public var fleetActiveVsDormant: FleetActiveVsDormantRatioSummary?
     public var poolHealthyStandby: PoolHealthyStandbyRatioSummary?
     public var statusBoardAlertSpread: StatusBoardSectionAlertSpreadSummary?
+    public var serverLoadTrend: ServerLoadTrendSummary?
+    public var secondaryQuotaWarningRatio: SecondaryQuotaWarningRatioSummary?
+    public var daemonActiveWarningPosture: DaemonActiveWarningPostureSummary?
+    public var poolPeakVsFloorSpread: PoolPeakVsFloorSpreadSummary?
+    public var statusBoardHealthyRowRatio: StatusBoardHealthyRowRatioSummary?
     public var auditTimeline: [AuditEventItem]?
     public var markdownReport: String?
     public var preferences: PreferencesSummary?
@@ -211,6 +216,11 @@ public struct ControlCenterPayload: Codable {
         fleetActiveVsDormant: FleetActiveVsDormantRatioSummary? = nil,
         poolHealthyStandby: PoolHealthyStandbyRatioSummary? = nil,
         statusBoardAlertSpread: StatusBoardSectionAlertSpreadSummary? = nil,
+        serverLoadTrend: ServerLoadTrendSummary? = nil,
+        secondaryQuotaWarningRatio: SecondaryQuotaWarningRatioSummary? = nil,
+        daemonActiveWarningPosture: DaemonActiveWarningPostureSummary? = nil,
+        poolPeakVsFloorSpread: PoolPeakVsFloorSpreadSummary? = nil,
+        statusBoardHealthyRowRatio: StatusBoardHealthyRowRatioSummary? = nil,
         auditTimeline: [AuditEventItem]? = [],
         markdownReport: String? = nil,
         preferences: PreferencesSummary? = nil,
@@ -318,6 +328,11 @@ public struct ControlCenterPayload: Codable {
         self.fleetActiveVsDormant = fleetActiveVsDormant
         self.poolHealthyStandby = poolHealthyStandby
         self.statusBoardAlertSpread = statusBoardAlertSpread
+        self.serverLoadTrend = serverLoadTrend
+        self.secondaryQuotaWarningRatio = secondaryQuotaWarningRatio
+        self.daemonActiveWarningPosture = daemonActiveWarningPosture
+        self.poolPeakVsFloorSpread = poolPeakVsFloorSpread
+        self.statusBoardHealthyRowRatio = statusBoardHealthyRowRatio
         self.auditTimeline = auditTimeline
         self.markdownReport = markdownReport
         self.preferences = preferences
@@ -2098,6 +2113,52 @@ public struct StatusBoardSectionAlertSpreadSummary: Codable {
     public var affectedSectionCount: Int
     public var spreadPct: Int
     public var mostImpactedSectionTitle: String?
+    public var status: String
+    public var summary: String
+}
+
+public struct ServerLoadTrendSummary: Codable {
+    public var parsed: Bool
+    public var load1m: Double?
+    public var load5m: Double?
+    public var load15m: Double?
+    public var delta1mTo15m: Double?
+    public var trend: String
+    public var summary: String
+}
+
+public struct SecondaryQuotaWarningRatioSummary: Codable {
+    public var readableCount: Int
+    public var warningCount: Int
+    public var exhaustedCount: Int
+    public var atRiskCount: Int
+    public var atRiskRatioPct: Int
+    public var status: String
+    public var summary: String
+}
+
+public struct DaemonActiveWarningPostureSummary: Codable {
+    public var daemonRunning: Bool
+    public var warningCount: Int
+    public var status: String
+    public var summary: String
+}
+
+public struct PoolPeakVsFloorSpreadSummary: Codable {
+    public var enabledCount: Int
+    public var maxSevenDayPct: Double
+    public var minSevenDayPct: Double
+    public var spreadSevenDayPct: Double
+    public var highestAccount: String?
+    public var lowestAccount: String?
+    public var status: String
+    public var summary: String
+}
+
+public struct StatusBoardHealthyRowRatioSummary: Codable {
+    public var totalRows: Int
+    public var okCount: Int
+    public var healthyRatioPct: Int
     public var status: String
     public var summary: String
 }
