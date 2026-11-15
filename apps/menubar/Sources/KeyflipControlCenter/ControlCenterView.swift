@@ -300,7 +300,19 @@ public struct ControlCenterView: View {
                 .background(Color.secondary.opacity(0.08))
                 .cornerRadius(4)
 
-                if let sbzb = viewModel.payload.statusBoardZeroBadRatio, sbzb.totalSections > 0 {
+                if let sbwd = viewModel.payload.statusBoardWarningDensity, sbwd.warnCount > 0 {
+                    HStack(spacing: 5) {
+                        Image(systemName: "exclamationmark.triangle")
+                            .font(.system(size: 9))
+                            .foregroundColor(.orange)
+                        Text(sbwd.summary)
+                            .font(.system(size: 9, design: .monospaced))
+                            .foregroundColor(.orange)
+                            .lineLimit(1)
+                    }
+                }
+
+                                if let sbzb = viewModel.payload.statusBoardZeroBadRatio, sbzb.totalSections > 0 {
                     HStack(spacing: 5) {
                         Image(systemName: "shield.lefthalf.filled")
                             .font(.system(size: 9))
@@ -738,7 +750,19 @@ public struct ControlCenterView: View {
                         }
                     }
 
-                    if let psda = viewModel.payload.poolSevenDayAvgUtil, psda.enabledCount > 0 {
+                    if let pdws = viewModel.payload.poolDualWindowSafe, pdws.enabledCount > 0 {
+                        HStack(spacing: 5) {
+                            Image(systemName: "checkmark.seal.fill")
+                                .font(.system(size: 10))
+                                .foregroundColor(pdws.status == "all_strained" ? .orange : .secondary)
+                            Text(pdws.summary)
+                                .font(.system(size: 10))
+                                .foregroundColor(pdws.status == "all_strained" ? .orange : .secondary)
+                                .lineLimit(1)
+                        }
+                    }
+
+                                        if let psda = viewModel.payload.poolSevenDayAvgUtil, psda.enabledCount > 0 {
                         HStack(spacing: 5) {
                             Image(systemName: "calendar.badge.clock")
                                 .font(.system(size: 10))

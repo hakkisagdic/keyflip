@@ -133,7 +133,12 @@ import {
   evaluateFailoverBudgetUtilizationBand,
   evaluateAuditDetailRichness,
   evaluatePoolSevenDayAverageUtilization,
-  evaluateStatusBoardZeroBadSectionRatio
+  evaluateStatusBoardZeroBadSectionRatio,
+  evaluateServerSiteReachabilityRatio,
+  evaluateTokenImminentExpiryRatio,
+  evaluateSchedulerConfiguredJobsRatio,
+  evaluatePoolDualWindowSafeRatio,
+  evaluateStatusBoardWarningRowDensity
 } from "../src/controlcenter.js";
 import * as daemon from "../src/daemon.js";
 
@@ -2035,4 +2040,63 @@ test("evaluateServiceLogPresenceRatio, evaluateFailoverBudgetUtilizationBand, ev
   assert.equal(sbzb.zeroBadSectionCount, 1);
   assert.equal(sbzb.zeroBadRatioPct, 50);
   assert.equal(sbzb.status, "mostly_free_of_bad");
+});
+
+test("evaluateServerSiteReachabilityRatio, evaluateTokenImminentExpiryRatio, evaluateSchedulerConfiguredJobsRatio, evaluatePoolDualWindowSafeRatio, and evaluateStatusBoardWarningRowDensity work accurately", () => {
+  const ssrr = evaluateServerSiteReachabilityRatio({
+    reachable: true,
+    sites: [
+      { url: "https://a.test", ok: true },
+      { url: "https://b.test", ok: false }
+    ]
+  });
+  assert.equal(ssrr.totalSites, 2);
+  assert.equal(ssrr.reachableSites, 1);
+  assert.equal(ssrr.reachabilityRatioPct, 50);
+  assert.equal(ssrr.status, "partial_up");
+
+  const tier = evaluateTokenImminentExpiryRatio([
+    { name: "gmail", enabled: true, token: { remainingMinutes: 120 } },
+    { name: "yahoo", enabled: true, token: { remainingMinutes: 15 } }
+  ]);
+  assert.equal(tier.enabledCount, 2);
+  assert.equal(tier.imminentCount, 1);
+  assert.equal(tier.imminentRatioPct, 50);
+  assert.equal(tier.status, "high_urgency");
+
+  const scjr = evaluateSchedulerConfiguredJobsRatio({
+    usage: { lastRunAt: "2026-11-15T10:00:00Z" },
+    refresh: { lastRunAt: null }
+  });
+  assert.equal(scjr.totalJobs, 2);
+  assert.equal(scjr.executedJobsCount, 1);
+  assert.equal(scjr.executedRatioPct, 50);
+  assert.equal(scjr.status, "warming_up");
+
+  const pdws = evaluatePoolDualWindowSafeRatio([
+    { name: "gmail", enabled: true, fiveHourPct: 55, sevenDayPct: 65 },
+    { name: "yahoo", enabled: true, fiveHourPct: 85, sevenDayPct: 40 }
+  ]);
+  assert.equal(pdws.enabledCount, 2);
+  assert.equal(pdws.safeBothCount, 1);
+  assert.equal(pdws.safeBothRatioPct, 50);
+  assert.equal(pdws.status, "partial_safe");
+
+  const sbwd = evaluateStatusBoardWarningRowDensity({
+    sections: [
+      {
+        id: "s1",
+        title: "Kotalar",
+        rows: [
+          { label: "r1", status: "warn" },
+          { label: "r2", status: "ok" }
+        ]
+      }
+    ]
+  });
+  assert.equal(sbwd.totalRows, 2);
+  assert.equal(sbwd.warnCount, 1);
+  assert.equal(sbwd.warningDensityPct, 50);
+  assert.equal(sbwd.topWarnSectionTitle, "Kotalar");
+  assert.equal(sbwd.status, "elevated_warnings");
 });

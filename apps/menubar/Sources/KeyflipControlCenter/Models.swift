@@ -123,6 +123,11 @@ public struct ControlCenterPayload: Codable {
     public var auditDetailRichness: AuditDetailRichnessSummary?
     public var poolSevenDayAvgUtil: PoolSevenDayAverageUtilizationSummary?
     public var statusBoardZeroBadRatio: StatusBoardZeroBadSectionRatioSummary?
+    public var serverSiteReachability: ServerSiteReachabilityRatioSummary?
+    public var tokenImminentExpiry: TokenImminentExpiryRatioSummary?
+    public var schedulerConfiguredJobs: SchedulerConfiguredJobsRatioSummary?
+    public var poolDualWindowSafe: PoolDualWindowSafeRatioSummary?
+    public var statusBoardWarningDensity: StatusBoardWarningRowDensitySummary?
     public var auditTimeline: [AuditEventItem]?
     public var markdownReport: String?
     public var preferences: PreferencesSummary?
@@ -251,6 +256,11 @@ public struct ControlCenterPayload: Codable {
         auditDetailRichness: AuditDetailRichnessSummary? = nil,
         poolSevenDayAvgUtil: PoolSevenDayAverageUtilizationSummary? = nil,
         statusBoardZeroBadRatio: StatusBoardZeroBadSectionRatioSummary? = nil,
+        serverSiteReachability: ServerSiteReachabilityRatioSummary? = nil,
+        tokenImminentExpiry: TokenImminentExpiryRatioSummary? = nil,
+        schedulerConfiguredJobs: SchedulerConfiguredJobsRatioSummary? = nil,
+        poolDualWindowSafe: PoolDualWindowSafeRatioSummary? = nil,
+        statusBoardWarningDensity: StatusBoardWarningRowDensitySummary? = nil,
         auditTimeline: [AuditEventItem]? = [],
         markdownReport: String? = nil,
         preferences: PreferencesSummary? = nil,
@@ -378,6 +388,11 @@ public struct ControlCenterPayload: Codable {
         self.auditDetailRichness = auditDetailRichness
         self.poolSevenDayAvgUtil = poolSevenDayAvgUtil
         self.statusBoardZeroBadRatio = statusBoardZeroBadRatio
+        self.serverSiteReachability = serverSiteReachability
+        self.tokenImminentExpiry = tokenImminentExpiry
+        self.schedulerConfiguredJobs = schedulerConfiguredJobs
+        self.poolDualWindowSafe = poolDualWindowSafe
+        self.statusBoardWarningDensity = statusBoardWarningDensity
         self.auditTimeline = auditTimeline
         self.markdownReport = markdownReport
         self.preferences = preferences
@@ -2333,6 +2348,48 @@ public struct StatusBoardZeroBadSectionRatioSummary: Codable {
     public var totalSections: Int
     public var zeroBadSectionCount: Int
     public var zeroBadRatioPct: Int
+    public var status: String
+    public var summary: String
+}
+
+public struct ServerSiteReachabilityRatioSummary: Codable {
+    public var totalSites: Int
+    public var reachableSites: Int
+    public var reachabilityRatioPct: Int
+    public var status: String
+    public var summary: String
+}
+
+public struct TokenImminentExpiryRatioSummary: Codable {
+    public var enabledCount: Int
+    public var imminentCount: Int
+    public var imminentRatioPct: Int
+    public var imminentAccounts: [String]?
+    public var status: String
+    public var summary: String
+}
+
+public struct SchedulerConfiguredJobsRatioSummary: Codable {
+    public var totalJobs: Int
+    public var executedJobsCount: Int
+    public var executedRatioPct: Int
+    public var status: String
+    public var summary: String
+}
+
+public struct PoolDualWindowSafeRatioSummary: Codable {
+    public var enabledCount: Int
+    public var safeBothCount: Int
+    public var safeBothRatioPct: Int
+    public var status: String
+    public var summary: String
+}
+
+public struct StatusBoardWarningRowDensitySummary: Codable {
+    public var totalRows: Int
+    public var warnCount: Int
+    public var warningDensityPct: Int
+    public var topWarnSectionTitle: String?
     public var status: String
     public var summary: String
 }

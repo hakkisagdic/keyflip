@@ -6737,3 +6737,202 @@ export function evaluateStatusBoardZeroBadSectionRatio(statusBoard) {
     summary: `Kritiksiz bölüm oranı: ${zeroBadSectionCount}/${sections.length} bölümde BAD satır yok (%${zeroBadRatioPct})`
   };
 }
+
+/**
+ * Computes how many monitored web sites on the remote server responded with ok === true.
+ */
+export function evaluateServerSiteReachabilityRatio(server) {
+  const sites = Array.isArray(server?.sites) ? server.sites : [];
+  if (!server || server.reachable === false || sites.length === 0) {
+    return {
+      totalSites: sites.length,
+      reachableSites: 0,
+      reachabilityRatioPct: 0,
+      status: "unreadable",
+      summary: "Site erişilebilirlik oranı okunamadı"
+    };
+  }
+
+  let reachableSites = 0;
+  for (const s of sites) {
+    if (s?.ok === true) reachableSites += 1;
+  }
+
+  const reachabilityRatioPct = Math.round((reachableSites / sites.length) * 100);
+  const status = reachabilityRatioPct === 100 ? "all_up" : reachabilityRatioPct >= 50 ? "partial_up" : "major_outage";
+
+  return {
+    totalSites: sites.length,
+    reachableSites,
+    reachabilityRatioPct,
+    status,
+    summary: `Site erişilebilirlik oranı: ${reachableSites}/${sites.length} site erişilebilir (%${reachabilityRatioPct})`
+  };
+}
+
+/**
+ * Computes the count and percentage of enabled Claude accounts whose OAuth token expires within 30 minutes or is already expired.
+ */
+export function evaluateTokenImminentExpiryRatio(accounts) {
+  const list = Array.isArray(accounts) ? accounts : [];
+  const enabled = list.filter((a) => a && a.enabled !== false);
+  if (enabled.length === 0) {
+    return {
+      enabledCount: 0,
+      imminentCount: 0,
+      imminentRatioPct: 0,
+      imminentAccounts: [],
+      status: "empty",
+      summary: "Acil token yenileme oranı: etkin hesap yok"
+    };
+  }
+
+  let imminentCount = 0;
+  const imminentAccounts = [];
+
+  for (const acc of enabled) {
+    const remMin =
+      typeof acc?.token?.remainingMinutes === "number" && Number.isFinite(acc.token.remainingMinutes)
+        ? acc.token.remainingMinutes
+        : typeof acc.tokenRemainingMinutes === "number" && Number.isFinite(acc.tokenRemainingMinutes)
+          ? acc.tokenRemainingMinutes
+          : null;
+    if (acc.needsReauth || (remMin !== null && remMin < 30)) {
+      imminentCount += 1;
+      imminentAccounts.push(acc.name || acc.id || "unknown");
+    }
+  }
+
+  const imminentRatioPct = Math.round((imminentCount / enabled.length) * 100);
+  const status = imminentCount === 0 ? "all_fresh" : imminentRatioPct >= 50 ? "high_urgency" : "some_imminent";
+
+  return {
+    enabledCount: enabled.length,
+    imminentCount,
+    imminentRatioPct,
+    imminentAccounts,
+    status,
+    summary:
+      imminentCount === 0
+        ? `Token aciliyet oranı: 0/${enabled.length} hesap (<30 dk dolacak token yok)`
+        : `Token aciliyet oranı: ${imminentCount}/${enabled.length} hesap <30 dk içinde yenilenmeli (${imminentAccounts.join(", ")})`
+  };
+}
+
+/**
+ * Computes how many configured daemon scheduler jobs have executed at least once (lastRunAt present).
+ */
+export function evaluateSchedulerConfiguredJobsRatio(jobs) {
+  const jobMap = jobs && typeof jobs === "object" ? jobs : {};
+  const names = Object.keys(jobMap);
+  if (names.length === 0) {
+    return {
+      totalJobs: 0,
+      executedJobsCount: 0,
+      executedRatioPct: 0,
+      status: "empty",
+      summary: "Zamanlayıcı iş kapsamı: tanımlı iş yok"
+    };
+  }
+
+  let executedJobsCount = 0;
+  for (const name of names) {
+    if (jobMap[name]?.lastRunAt) {
+      executedJobsCount += 1;
+    }
+  }
+
+  const executedRatioPct = Math.round((executedJobsCount / names.length) * 100);
+  const status = executedJobsCount === names.length ? "all_executed" : executedJobsCount > 0 ? "warming_up" : "cold";
+
+  return {
+    totalJobs: names.length,
+    executedJobsCount,
+    executedRatioPct,
+    status,
+    summary: `Zamanlayıcı iş kapsamı: ${executedJobsCount}/${names.length} iş en az bir kez çalıştı (%${executedRatioPct})`
+  };
+}
+
+/**
+ * Computes the count and percentage of enabled Claude accounts that are below 80% utilization in BOTH 5h and 7d windows.
+ */
+export function evaluatePoolDualWindowSafeRatio(accounts) {
+  const list = Array.isArray(accounts) ? accounts : [];
+  const enabled = list.filter((a) => a && a.enabled !== false && !a.needsReauth);
+  if (enabled.length === 0) {
+    return {
+      enabledCount: 0,
+      safeBothCount: 0,
+      safeBothRatioPct: 0,
+      status: "empty",
+      summary: "Çift pencere güvenli oranı: etkin hesap yok"
+    };
+  }
+
+  let safeBothCount = 0;
+  for (const acc of enabled) {
+    const fivePct = typeof acc.fiveHourPct === "number" && Number.isFinite(acc.fiveHourPct) ? acc.fiveHourPct : 0;
+    const sevenPct =
+      typeof acc?.usage?.sevenDay?.pct === "number" && Number.isFinite(acc.usage.sevenDay.pct)
+        ? acc.usage.sevenDay.pct
+        : typeof acc.sevenDayPct === "number" && Number.isFinite(acc.sevenDayPct)
+          ? acc.sevenDayPct
+          : 0;
+    if (fivePct < 80 && sevenPct < 80) {
+      safeBothCount += 1;
+    }
+  }
+
+  const safeBothRatioPct = Math.round((safeBothCount / enabled.length) * 100);
+  const status = safeBothCount === enabled.length ? "all_safe" : safeBothCount > 0 ? "partial_safe" : "all_strained";
+
+  return {
+    enabledCount: enabled.length,
+    safeBothCount,
+    safeBothRatioPct,
+    status,
+    summary: `Çift pencere güvenli oranı (<%80 5s+7g): ${safeBothCount}/${enabled.length} hesap (%${safeBothRatioPct})`
+  };
+}
+
+/**
+ * Computes the percentage of Status Board rows specifically in early-warning ('warn') state and identifies the section with the most warnings.
+ */
+export function evaluateStatusBoardWarningRowDensity(statusBoard) {
+  const sections = Array.isArray(statusBoard?.sections) ? statusBoard.sections : [];
+  let totalRows = 0;
+  let warnCount = 0;
+  let maxSectionWarn = 0;
+  let topWarnSectionTitle = null;
+
+  for (const sec of sections) {
+    let secWarn = 0;
+    for (const r of sec?.rows || []) {
+      totalRows += 1;
+      if (String(r?.status || "").toLowerCase() === "warn") {
+        warnCount += 1;
+        secWarn += 1;
+      }
+    }
+    if (secWarn > maxSectionWarn) {
+      maxSectionWarn = secWarn;
+      topWarnSectionTitle = sec?.title || sec?.id || "Bölüm";
+    }
+  }
+
+  const warningDensityPct = totalRows > 0 ? Math.round((warnCount / totalRows) * 100) : 0;
+  const status = warnCount === 0 ? "zero_warnings" : warningDensityPct >= 25 ? "elevated_warnings" : "minor_warnings";
+
+  return {
+    totalRows,
+    warnCount,
+    warningDensityPct,
+    topWarnSectionTitle,
+    status,
+    summary:
+      warnCount > 0
+        ? `Uyarı satırı yoğunluğu: ${warnCount}/${totalRows} satır WARN (%${warningDensityPct} · odak: ${topWarnSectionTitle})`
+        : `Uyarı satırı yoğunluğu: 0/${totalRows} satır (uyarı yok)`
+  };
+}

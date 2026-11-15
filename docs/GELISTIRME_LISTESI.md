@@ -139,24 +139,29 @@ Bu liste, `docs/RAKIP_ANALIZI.md` sonucunda belirlenen tüm özelliklerin tamaml
 - [x] **Yerel Servisler Aktif Log Satırı Kapsamı (`evaluateServiceLogPresenceRatio`):** İzlenen yerel servislerin kaç tanesinin boş olmayan bir `lastLogLine` kaydına sahip olduğunu yüzdesel olarak özetleme.
 - [x] **Failover Bütçe Kullanım Durumu Özeti (`evaluateFailoverBudgetUtilizationBand`):** Günlük failover harcamasının bütçe bandını (`zero`, `light`, `moderate`, `heavy`) sınıflandırma.
 - [x] **Denetim Günlüğü Detay Metni Doluluk Oranı (`evaluateAuditDetailRichness`):** `auditTimeline` olaylarının kaç tanesinin açıklayıcı `detail` bilgisi içerdiğini yüzdesel olarak özetleme.
+- [x] **Hesap Havuzu 7 Günlük Ortalama Kullanım Yoğunluğu Analizcisi (`evaluatePoolSevenDayAverageUtilization`):** Etkin Claude hesaplarının 7 günlük pencerelerindeki ortalama, minimum ve maksimum kullanım yüzdesini `HESAPLAR` bölümünde gösterme.
+- [x] **Durum Panosu Kritiksiz (`bad` İçermeyen) Bölüm Oranı Analizcisi (`evaluateStatusBoardZeroBadSectionRatio`):** Durum panosundaki bölümlerden kaç tanesinin hiçbir kritik (`bad`) satır içermediğini Durum Panosu kartında gösterme.
+- [x] **Uzak Sunucu HTTP Site Erişim Hızı / Durum Özeti (`evaluateServerSiteReachabilityRatio`):** Uzak sunucuda izlenen web sitelerinin kaç tanesinin erişilebilir (`ok === true`) olduğunu yüzdesel olarak özetleme.
+- [x] **OAuth Belirteç Acil Yenileme (`<30 dk`) Oranı (`evaluateTokenImminentExpiryRatio`):** Etkin Claude hesaplarından kaç tanesinin OAuth belirtecinin 30 dakikadan kısa süre içinde dolacağını yüzdesel olarak özetleme.
+- [x] **Daemon Zamanlayıcı Aktif İş Kapsamı (`evaluateSchedulerConfiguredJobsRatio`):** Daemon zamanlayıcısındaki tanımlı işlerin kaç tanesinin en az bir kez çalıştırılmış (`lastRunAt`) olduğunu özetleme.
 
 ---
 
 ## 2. Listedeki İşler Tamamlandığı İçin Önerilen Beş Yeni Yaratıcı Özellik (En Değerli İkisi Uygulandı)
 
-### ✅ Yeni Öneri 1 (UYGULANDI): Hesap Havuzu 7 Günlük Ortalama Kullanım Yoğunluğu Analizcisi (`evaluatePoolSevenDayAverageUtilization`)
-- **Değer:** Etkin Claude hesaplarının 7 günlük pencerelerindeki ortalama, minimum ve maksimum kullanım yüzdesini (`avgSevenDayPct`, `minSevenDayPct`, `maxSevenDayPct`) hesaplayıp `HESAPLAR` bölümünde gösterir (`7g havuz ortalaması: %50 kullanım (min %30 · maks %70)`).
-- **Uygulama:** `src/controlcenter.js` (`evaluatePoolSevenDayAverageUtilization`), `src/daemon.js` (`base.poolSevenDayAvgUtil`), `Models.swift` (`PoolSevenDayAverageUtilizationSummary`) ve `ControlCenterView.swift`.
+### ✅ Yeni Öneri 1 (UYGULANDI): Hesap Havuzu Çift Pencere (`5s + 7g`) Güvenli Hesap Oranı Analizcisi (`evaluatePoolDualWindowSafeRatio`)
+- **Değer:** Etkin Claude hesaplarından kaç tanesinin hem 5 saatlik hem de 7 günlük pencerede `<%80` altında güvenli bölgede olduğunu (`safeBothRatioPct`) hesaplayıp `HESAPLAR` bölümünde gösterir (`Çift pencere güvenli oranı (<%80 5s+7g): 1/2 hesap (%50)`).
+- **Uygulama:** `src/controlcenter.js` (`evaluatePoolDualWindowSafeRatio`), `src/daemon.js` (`base.poolDualWindowSafe`), `Models.swift` (`PoolDualWindowSafeRatioSummary`) ve `ControlCenterView.swift`.
 
-### ✅ Yeni Öneri 2 (UYGULANDI): Durum Panosu Kritiksiz (`bad` İçermeyen) Bölüm Oranı Analizcisi (`evaluateStatusBoardZeroBadSectionRatio`)
-- **Değer:** Durum panosundaki bölümlerden kaç tanesinin hiçbir kritik (`bad`) satır içermediğini (`zeroBadRatioPct`) hesaplayarak Durum Panosu kartında gösterir (`Kritiksiz bölüm oranı: 1/2 bölümde BAD satır yok (%50)`).
-- **Uygulama:** `src/controlcenter.js` (`evaluateStatusBoardZeroBadSectionRatio`), `src/daemon.js` (`base.statusBoardZeroBadRatio`), `Models.swift` (`StatusBoardZeroBadSectionRatioSummary`) ve `ControlCenterView.swift`.
+### ✅ Yeni Öneri 2 (UYGULANDI): Durum Panosu Uyarı (`warn`) Satırı Yoğunluğu Analizcisi (`evaluateStatusBoardWarningRowDensity`)
+- **Değer:** Durum panosundaki toplam satırlardan kaç tanesinin erken uyarı (`warn`) durumunda olduğunu (`warningDensityPct`) ve en çok uyarı içeren bölümü (`topWarnSectionTitle`) hesaplayarak Durum Panosu kartında gösterir (`Uyarı satırı yoğunluğu: 1/2 satır WARN (%50 · odak: Kotalar)`).
+- **Uygulama:** `src/controlcenter.js` (`evaluateStatusBoardWarningRowDensity`), `src/daemon.js` (`base.statusBoardWarningDensity`), `Models.swift` (`StatusBoardWarningRowDensitySummary`) ve `ControlCenterView.swift`.
 
-### 📋 Yeni Öneri 3 (Gelecek Adayı): Uzak Sunucu HTTP Site Erişim Hızı / Durum Özeti (`evaluateServerSiteReachabilityRatio`)
-- **Değer:** Uzak sunucuda izlenen web sitelerinin kaç tanesinin erişilebilir (`ok === true`) olduğunu yüzdesel olarak özetleme.
+### 📋 Yeni Öneri 3 (Gelecek Adayı): Yerel Servisler Çalışan/Zamanlanmış Oranı (`evaluateServiceOperationalRatio`)
+- **Değer:** İzlenen yerel servislerin kaç tanesinin `running` veya `scheduled` durumunda olduğunu yüzdesel olarak özetleme.
 
-### 📋 Yeni Öneri 4 (Gelecek Adayı): OAuth Belirteç Acil Yenileme (`<30 dk`) Oranı (`evaluateTokenImminentExpiryRatio`)
-- **Değer:** Etkin Claude hesaplarından kaç tanesinin OAuth belirtecinin 30 dakikadan kısa süre içinde dolacağını yüzdesel olarak özetleme.
+### 📋 Yeni Öneri 4 (Gelecek Adayı): İkincil Sağlayıcılar Okunabilirlik Oranı (`evaluateSecondaryQuotaReadabilityRatio`)
+- **Değer:** `otherQuotas` içindeki sağlayıcıların kaç tanesinin başarıyla okunabildiğini (`status !== "unknown"`) yüzdesel olarak özetleme.
 
-### 📋 Yeni Öneri 5 (Gelecek Adayı): Daemon Zamanlayıcı Aktif İş Kapsamı (`evaluateSchedulerConfiguredJobsRatio`)
-- **Değer:** Daemon zamanlayıcısındaki tanımlı işlerin kaç tanesinin en az bir kez çalıştırılmış (`lastRunAt`) olduğunu özetleme.
+### 📋 Yeni Öneri 5 (Gelecek Adayı): Sahiplik Kuyruğu Proje Çeşitliliği (`evaluateOwnerQueueProjectDiversity`)
+- **Değer:** `owner_needed` maddelerinin kaç farklı projeye dağıldığını ve en çok bekleyen işi olan projeyi özetleme.
