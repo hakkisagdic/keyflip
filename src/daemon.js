@@ -894,6 +894,13 @@ async function buildControlCenter(ctx, scheduler, opts) {
   base.apiPromoGrant = _controlcenter.evaluateApiPromoGrantHealth(base.otherQuotas);
   base.activeSafetyCushion = _controlcenter.evaluateActiveAccountSafetyCushion(base.accounts, base.config);
   base.fleetWorkingUtilization = _controlcenter.evaluateFleetWorkingUtilization(base.fleet);
+  base.convIndexCadence = _controlcenter.evaluateConvIndexCadenceHealth(base.jobs, base.config, {
+    nowMs: opts.nowMs || ctx.nowMs
+  });
+  base.surfaceRefreshCoord = _controlcenter.evaluateSurfaceRefreshCoordHealth(base.jobs, base.otherQuotas);
+  base.warningsSummary = _controlcenter.summarizeDaemonWarningsBySeverity(base.warnings);
+  base.dualWindowBottleneck = _controlcenter.evaluateDualWindowBottleneck(base.accounts);
+  base.serverOverallReadiness = _controlcenter.evaluateServerOverallReadiness(base.server);
   base.compactSummary = _controlcenter.formatDaemonCompactSummary(base);
   base.preferences = _controlcenter.collectPreferences(ctx);
   base.markdownReport = _controlcenter.buildControlCenterMarkdown(base);

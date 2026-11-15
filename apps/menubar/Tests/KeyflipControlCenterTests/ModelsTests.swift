@@ -361,6 +361,21 @@ public enum ModelsTestSuite {
         let r16Decoded = try JSONDecoder().decode(ActiveAccountSafetyCushionSummary.self, from: r16Json)
         precondition(r16Decoded.status == "imminent" && r16Decoded.cushionPct == 6.0, "ActiveAccountSafetyCushionSummary must decode accurately")
 
+        // Round 17 decoding check for DualWindowBottleneckSummary & ServerOverallReadinessSummary
+        let r17Json = """
+        {
+          "status": "constrained",
+          "dominantConstraint": "seven-day",
+          "sevenDayConstrainedCount": 1,
+          "fiveHourConstrainedCount": 0,
+          "bestEffectiveAccount": "yahoo",
+          "bestEffectiveHeadroomPct": 70.0,
+          "summary": "Çift pencere daralması: 1 hesapta 7g limit baskın (en geniş: yahoo %70 boş)"
+        }
+        """.data(using: .utf8)!
+        let r17Decoded = try JSONDecoder().decode(DualWindowBottleneckSummary.self, from: r17Json)
+        precondition(r17Decoded.dominantConstraint == "seven-day" && r17Decoded.bestEffectiveAccount == "yahoo", "DualWindowBottleneckSummary must decode accurately")
+
         // Urgent owner_needed classification test
         let urgentOwner = StatusBoardOwnerItem(project: "prod", text: "ACİL müdahale")
         let normalOwner = StatusBoardOwnerItem(project: "docs", text: "Not ekle")

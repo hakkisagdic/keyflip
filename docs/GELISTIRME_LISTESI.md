@@ -1,6 +1,6 @@
 # Geliştirme Listesi ve Yaratıcı Özellik Önerileri (`GELISTIRME_LISTESI.md`)
 
-Bu liste, `docs/RAKIP_ANALIZI.md` sonucunda belirlenen tüm özelliklerin tamamlanma durumunu ve on altıncı turda önerilen **beş yeni yaratıcı özelliği** (en değerli ikisi uygulanmış olarak) içerir.
+Bu liste, `docs/RAKIP_ANALIZI.md` sonucunda belirlenen tüm özelliklerin tamamlanma durumunu ve on yedinci turda önerilen **beş yeni yaratıcı özelliği** (en değerli ikisi uygulanmış olarak) içerir.
 
 ---
 
@@ -86,23 +86,29 @@ Bu liste, `docs/RAKIP_ANALIZI.md` sonucunda belirlenen tüm özelliklerin tamaml
 - [x] **Yerel Servis Tür Dağılımı (`daemon` / `interval` / `scheduled`) Sağlık Matrisi (`summarizeServicesByKind`):** İzlenen yerel servisleri çalışma türüne göre gruplayarak her kategorideki sağlıklı servis sayısını özetleme.
 - [x] **İkincil Kota API Promosyon Hibe Tükenme Analizcisi (`evaluateApiPromoGrantHealth`):** `otherQuotas` içindeki `apicredits` kaynağının kalan dolar bakiyesini ve kullanım yüzdesini ayrıştırma.
 
+- [x] **Aktif Hesap Otomatik Geçiş Eşiği Güvenlik Payı (`evaluateActiveAccountSafetyCushion`):** Aktif Claude hesabının 5 saatlik kullanım yüzdesi ile `autoswitch.threshold` arasındaki kalan yüzde tamponunu hesaplayıp `HESAPLAR` bölümünde gösterme.
+- [x] **Filo (Traycer) Aktif Ajan Çalışma Yoğunluğu Oranı (`evaluateFleetWorkingUtilization`):** Uyuyan ajanlar hariç aktif filo havuzundaki çalışma oranını `FİLO (TRAYCER)` bölümünde gösterme.
+- [x] **Konuşma İndeksleme ve Embedding (`conv-index`) İş Ritmi Denetçisi (`evaluateConvIndexCadenceHealth`):** `jobs["conv-index"]` meta verilerini inceleyerek son indeksleme zamanını ve sağlığını raporlama.
+- [x] **Yüzey Yenileme (`surface-refresh`) ve İkincil Kota Eşgüdüm Analizcisi (`evaluateSurfaceRefreshCoordHealth`):** `surface-refresh` işinin son çalışma sonucu ile `otherQuotas` okunabilirliğini karşılaştırarak yüzey eşgüdüm sağlığını değerlendirme.
+- [x] **Daemon Uyarıları Şiddet ve Düzeltme Komutu Özetleyicisi (`summarizeDaemonWarningsBySeverity`):** `warnings` dizisindeki `error` ve `warn` kayıtlarını sayarak en öncelikli düzeltme komutunu (`topFixCommand`) özetleme.
+
 ---
 
 ## 2. Listedeki İşler Tamamlandığı İçin Önerilen Beş Yeni Yaratıcı Özellik (En Değerli İkisi Uygulandı)
 
-### ✅ Yeni Öneri 1 (UYGULANDI): Aktif Hesap Otomatik Geçiş Eşiği Güvenlik Payı (`evaluateActiveAccountSafetyCushion`)
-- **Değer:** Aktif Claude hesabının 5 saatlik kullanım yüzdesi ile `autoswitch.threshold` arasındaki kalan yüzde tamponunu (`cushionPct`) hesaplar ve eşiğe `<=%10` yaklaşıldığında (`Otomatik geçişe %6 kaldı (gmail: %84 / eşik %90)`) `HESAPLAR` bölümünde erken uyarı gösterir.
-- **Uygulama:** `src/controlcenter.js` (`evaluateActiveAccountSafetyCushion`), `src/daemon.js` (`base.activeSafetyCushion`), `Models.swift` (`ActiveAccountSafetyCushionSummary`) ve `ControlCenterView.swift`.
+### ✅ Yeni Öneri 1 (UYGULANDI): Çift Pencere (5s + 7g) Darboğaz ve Efektif Boşluk Analizcisi (`evaluateDualWindowBottleneck`)
+- **Değer:** Etkin Claude hesaplarında daralmanın 5 saatlik kısa pencereden mi (`five-hour`) yoksa 7 günlük haftalık pencereden mi (`seven-day`) kaynaklandığını belirler ve en yüksek birleşik efektif boşluğa (`effectiveHeadroom`) sahip hesabı (`Çift pencere daralması: 1 hesapta 7g limit baskın (en geniş: yahoo %70 boş)`) `HESAPLAR` bölümünde öne çıkarır.
+- **Uygulama:** `src/controlcenter.js` (`evaluateDualWindowBottleneck`), `src/daemon.js` (`base.dualWindowBottleneck`), `Models.swift` (`DualWindowBottleneckSummary`) ve `ControlCenterView.swift`.
 
-### ✅ Yeni Öneri 2 (UYGULANDI): Filo (Traycer) Aktif Ajan Çalışma Yoğunluğu Oranı (`evaluateFleetWorkingUtilization`)
-- **Değer:** Uyuyan (`dormant`) ajanlar hariç aktif filo havuzundaki (`working + idle + stuck`) çalışma oranını (`Aktif filo kullanımı: %75 (3/4 ajan çalışıyor)`) hesaplar ve `FİLO (TRAYCER)` bölümünde gösterir.
-- **Uygulama:** `src/controlcenter.js` (`evaluateFleetWorkingUtilization`), `src/daemon.js` (`base.fleetWorkingUtilization`), `Models.swift` (`FleetWorkingUtilizationSummary`) ve `ControlCenterView.swift`.
+### ✅ Yeni Öneri 2 (UYGULANDI): Uzak Sunucu Birleşik (Kaynak + Site) Hazırlık Notu (`evaluateServerOverallReadiness`)
+- **Değer:** Uzak sunucunun CPU/RAM/Disk kaynak sağlığı (`evaluateServerResourcePressure`) ile izlenen web sitelerinin SLA skorunu (`evaluateServerSitesHealth`) tek bir `0-100` (`A`–`D`) hazırlık notunda (`Sunucu genel hazırlık: A (%100)`) birleştirip `SUNUCU` bölümünde gösterir.
+- **Uygulama:** `src/controlcenter.js` (`evaluateServerOverallReadiness`), `src/daemon.js` (`base.serverOverallReadiness`), `Models.swift` (`ServerOverallReadinessSummary`) ve `ControlCenterView.swift`.
 
-### 📋 Yeni Öneri 3 (Gelecek Adayı): Konuşma İndeksleme ve Embedding (`conv-index`) İş Ritmi Denetçisi (`evaluateConvIndexCadenceHealth`)
-- **Değer:** `jobs["conv-index"]` мета verilerini ve `daemon.convIndexIntervalSeconds` ayarını inceleyerek son indeksleme zamanını ve sağlığını raporlama.
+### 📋 Yeni Öneri 3 (Gelecek Adayı): Yerel Servis Yeniden Başlatılabilirlik ve Kurtarma Kapsamı (`evaluateServiceRestartCoverage`)
+- **Değer:** Hata veya uyarı durumundaki yerel servislerin kaçının beyaz listede (`restartable: true`) olduğunu analiz ederek tek tıkla kurtarılabilirlik oranını raporlama.
 
-### 📋 Yeni Öneri 4 (Gelecek Adayı): Yüzey Yenileme (`surface-refresh`) ve İkincil Kota Eşgüdüm Analizcisi (`evaluateSurfaceRefreshCoordHealth`)
-- **Değer:** `surface-refresh` işinin son çalışma sonucu ile `otherQuotas` okunabilirliğini karşılaştırarak yüzey yenileme sağlığını değerlendirme.
+### 📋 Yeni Öneri 4 (Gelecek Adayı): Durum Panosu Sahiplik Bekleyen İş Yoğunluğu / Bölüm Oranı (`evaluateOwnerToSectionRatio`)
+- **Değer:** `owner_needed` sayısını durum panosundaki toplam bölüm ve satır sayısıyla oranlayarak yönetici müdahale yükünü sınıflandırma.
 
-### 📋 Yeni Öneri 5 (Gelecek Adayı): Daemon Uyarıları Şiddet ve Düzeltme Komutu Özetleyicisi (`summarizeDaemonWarningsBySeverity`)
-- **Değer:** `warnings` dizisindeki `error` ve `warn` kayıtlarını sayarak en öncelikli düzeltme komutunu (`topFixCommand`) tek satırda özetleme.
+### 📋 Yeni Öneri 5 (Gelecek Adayı): Otomatik Geçiş (`autoswitch`) Strateji ve Grup Yapılandırma Özeti (`summarizeAutoswitchPolicy`)
+- **Değer:** `autoswitch.strategy`, `autoswitch.threshold` ve `failover.enabled` ayarlarını tek bir insan-okunur politika cümlesinde özetleme.

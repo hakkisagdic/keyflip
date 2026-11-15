@@ -4281,3 +4281,232 @@ export function evaluateFleetWorkingUtilization(fleet = {}) {
     summary: `Aktif filo kullanımı: %${utilizationPct} (${working}/${activePoolSize} ajan çalışıyor)`
   };
 }
+
+
+/**
+ * Evaluates the cadence and health of the `conv-index` conversation indexing and embedding job.
+ */
+export function evaluateConvIndexCadenceHealth(jobs = {}, config = {}, options = {}) {
+  const nowMs =
+    typeof options.nowMs === "function" ? options.nowMs() : typeof options.nowMs === "number" ? options.nowMs : Date.now();
+  const meta = jobs?.["conv-index"] || null;
+  const intervalSeconds =
+    typeof meta?.intervalSeconds === "number"
+      ? meta.intervalSeconds
+      : typeof config?.["daemon.convIndexIntervalSeconds"] === "number"
+        ? config["daemon.convIndexIntervalSeconds"]
+        : 1800;
+
+  if (!meta || !meta.lastRunAt) {
+    return {
+      status: "pending",
+      intervalMinutes: Math.round(intervalSeconds / 60),
+      ageMinutes: null,
+      runCount: meta?.runCount || 0,
+      summary: "Konuşma indeksleme (conv-index) henüz çalışmadı"
+    };
+  }
+
+  const lastMs = Date.parse(String(meta.lastRunAt));
+  const ageMinutes = Number.isFinite(lastMs) && nowMs >= lastMs ? Math.max(0, Math.round((nowMs - lastMs) / 60000)) : null;
+  const intervalMinutes = Math.max(1, Math.round(intervalSeconds / 60));
+
+  let status = "healthy";
+  if (meta.lastResult === "error" || meta.lastError) {
+    status = "error";
+  } else if (ageMinutes !== null && ageMinutes > intervalMinutes * 2.5) {
+    status = "overdue";
+  }
+
+  return {
+    status,
+    intervalMinutes,
+    ageMinutes,
+    runCount: meta.runCount || 0,
+    summary:
+      status === "error"
+        ? `Konuşma indeksleme hatası: ${meta.lastError || "bilinmeyen hata"}`
+        : status === "overdue"
+          ? `Konuşma indeksleme gecikti (${ageMinutes} dk önce / döngü ${intervalMinutes} dk)`
+          : `Konuşma indeksleme güncel (${ageMinutes ?? 0} dk önce)`
+  };
+}
+
+/**
+ * Evaluates coordination between the `surface-refresh` job and secondary quotas readability.
+ */
+export function evaluateSurfaceRefreshCoordHealth(jobs = {}, otherQuotas = []) {
+  const meta = jobs?.["surface-refresh"] || null;
+  const list = Array.isArray(otherQuotas) ? otherQuotas : [];
+  const readableCount = list.filter((q) => q && q.status !== "unreadable" && q.source !== "none").length;
+  const jobOk = !meta || (meta.lastResult !== "error" && !meta.lastError);
+
+  let status = "ok";
+  if (!jobOk) {
+    status = "job-error";
+  } else if (list.length > 0 && readableCount === 0) {
+    status = "unreadable-surfaces";
+  }
+
+  return {
+    status,
+    jobOk,
+    readableSurfaces: readableCount,
+    totalSurfaces: list.length,
+    summary:
+      status === "job-error"
+        ? "Yüzey yenileme (surface-refresh) hata verdi"
+        : `Yüzey eşgüdümü: ${readableCount}/${list.length} ikincil yüzey okunabilir`
+  };
+}
+
+/**
+ * Summarizes daemon warnings by severity (`error` vs `warn`) and extracts the highest-priority CLI fix command.
+ */
+export function summarizeDaemonWarningsBySeverity(warnings = []) {
+  const list = Array.isArray(warnings) ? warnings : [];
+  let errorCount = 0;
+  let warnCount = 0;
+  let topFixCommand = null;
+  let topWarningTitle = null;
+
+  for (const w of list) {
+    if (!w || typeof w !== "object") continue;
+    if (w.severity === "error") {
+      errorCount += 1;
+      if (!topFixCommand && w.fix) {
+        topFixCommand = w.fix;
+        topWarningTitle = w.title || w.id;
+      }
+    } else {
+      warnCount += 1;
+    }
+  }
+
+  if (!topFixCommand) {
+    const firstWithFix = list.find((w) => w && w.fix) || null;
+    if (firstWithFix) {
+      topFixCommand = firstWithFix.fix;
+      topWarningTitle = firstWithFix.title || firstWithFix.id;
+    }
+  }
+
+  const totalCount = errorCount + warnCount;
+  return {
+    totalCount,
+    errorCount,
+    warnCount,
+    topFixCommand,
+    topWarningTitle,
+    summary:
+      totalCount > 0
+        ? `Daemon uyarıları: ${errorCount} kritik, ${warnCount} uyarı${topFixCommand ? ` (Öneri: ${topFixCommand})` : ""}`
+        : "Aktif daemon uyarısı yok"
+  };
+}
+
+/**
+ * Evaluates Combined 5-Hour + 7-Day Dual-Window Bottleneck & Effective Headroom across enabled accounts.
+ */
+export function evaluateDualWindowBottleneck(accounts = []) {
+  const enabled = (Array.isArray(accounts) ? accounts : []).filter((a) => a && a.enabled !== false);
+  if (enabled.length === 0) {
+    return {
+      status: "empty",
+      dominantConstraint: "none",
+      sevenDayConstrainedCount: 0,
+      fiveHourConstrainedCount: 0,
+      bestEffectiveAccount: null,
+      bestEffectiveHeadroomPct: 0,
+      summary: "Etkin hesap yok"
+    };
+  }
+
+  let sevenDayConstrainedCount = 0;
+  let fiveHourConstrainedCount = 0;
+  let bestAcct = null;
+  let bestHeadroom = -1;
+
+  for (const acct of enabled) {
+    const five =
+      typeof acct?.usage?.fiveHour?.pct === "number"
+        ? acct.usage.fiveHour.pct
+        : typeof acct?.fiveHourPct === "number"
+          ? acct.fiveHourPct
+          : 0;
+    const seven =
+      typeof acct?.usage?.sevenDay?.pct === "number"
+        ? acct.usage.sevenDay.pct
+        : typeof acct?.sevenDayPct === "number"
+          ? acct.sevenDayPct
+          : 0;
+    if (seven > five && seven >= 70) {
+      sevenDayConstrainedCount += 1;
+    } else if (five >= 70) {
+      fiveHourConstrainedCount += 1;
+    }
+
+    const effHeadroom =
+      typeof acct?.usage?.effectiveHeadroom === "number"
+        ? acct.usage.effectiveHeadroom
+        : Math.max(0, 100 - Math.max(five, seven));
+    if (effHeadroom > bestHeadroom) {
+      bestHeadroom = effHeadroom;
+      bestAcct = acct.name;
+    }
+  }
+
+  const dominantConstraint =
+    sevenDayConstrainedCount > 0
+      ? "seven-day"
+      : fiveHourConstrainedCount > 0
+        ? "five-hour"
+        : "none";
+  const status = dominantConstraint === "none" ? "unconstrained" : "constrained";
+  const bestEffectiveHeadroomPct = Math.max(0, Math.round(bestHeadroom * 10) / 10);
+
+  return {
+    status,
+    dominantConstraint,
+    sevenDayConstrainedCount,
+    fiveHourConstrainedCount,
+    bestEffectiveAccount: bestAcct,
+    bestEffectiveHeadroomPct,
+    summary:
+      dominantConstraint === "seven-day"
+        ? `Çift pencere daralması: ${sevenDayConstrainedCount} hesapta 7g limit baskın (en geniş: ${bestAcct} %${bestEffectiveHeadroomPct} boş)`
+        : dominantConstraint === "five-hour"
+          ? `Çift pencere daralması: ${fiveHourConstrainedCount} hesapta 5s limit baskın (en geniş: ${bestAcct} %${bestEffectiveHeadroomPct} boş)`
+          : `Çift pencere dengeli (en geniş: ${bestAcct} %${bestEffectiveHeadroomPct} efektif boşluk)`
+  };
+}
+
+/**
+ * Evaluates Remote Server Combined Host + Sites Operational Readiness Score (0-100).
+ */
+export function evaluateServerOverallReadiness(server = {}) {
+  if (!server || server.status === "unreadable") {
+    return {
+      score: 0,
+      grade: "D",
+      status: "unreadable",
+      summary: "Uzak sunucu verisi okunamadı"
+    };
+  }
+
+  const pressure = evaluateServerResourcePressure(server);
+  const sitesHealth = evaluateServerSitesHealth(server);
+
+  const hostScore = typeof pressure.score === "number" ? pressure.score : 100;
+  const siteScore = typeof sitesHealth.score === "number" ? sitesHealth.score : 100;
+  const score = Math.max(0, Math.min(100, Math.round(hostScore * 0.5 + siteScore * 0.5)));
+  const grade = score >= 85 ? "A" : score >= 70 ? "B" : score >= 50 ? "C" : "D";
+  const status = score >= 85 ? "healthy" : score >= 60 ? "warning" : "critical";
+
+  return {
+    score,
+    grade,
+    status,
+    summary: `Sunucu genel hazırlık: ${grade} (% ${score})`
+  };
+}

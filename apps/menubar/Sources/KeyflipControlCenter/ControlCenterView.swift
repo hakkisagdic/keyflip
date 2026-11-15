@@ -636,6 +636,18 @@ public struct ControlCenterView: View {
                         }
                     }
 
+                    if let dwb = viewModel.payload.dualWindowBottleneck, dwb.status == "constrained" {
+                        HStack(spacing: 5) {
+                            Image(systemName: "rectangle.split.2x1.fill")
+                                .font(.system(size: 10))
+                                .foregroundColor(.orange)
+                            Text(dwb.summary)
+                                .font(.system(size: 10, weight: .medium))
+                                .foregroundColor(.orange)
+                                .lineLimit(1)
+                        }
+                    }
+
                     if let bw = viewModel.payload.bottleneckWindow, !bw.summary.isEmpty {
                         HStack(spacing: 5) {
                             Image(systemName: "gauge.with.dots.needle.67percent")
@@ -1006,6 +1018,11 @@ public struct ControlCenterView: View {
                             Spacer()
                             Text("\(srv.load) · \(srv.memory) · \(srv.disk)")
                                 .font(.system(size: 11, design: .monospaced))
+                        }
+                        if let sor = viewModel.payload.serverOverallReadiness, sor.status != "unreadable" {
+                            Text(sor.summary)
+                                .font(.system(size: 10))
+                                .foregroundColor(sor.status == "healthy" ? .secondary : .orange)
                         }
                         ForEach(srv.sites) { site in
                             HStack {

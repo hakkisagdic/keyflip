@@ -73,7 +73,12 @@ import {
   summarizeServicesByKind,
   evaluateApiPromoGrantHealth,
   evaluateActiveAccountSafetyCushion,
-  evaluateFleetWorkingUtilization
+  evaluateFleetWorkingUtilization,
+  evaluateConvIndexCadenceHealth,
+  evaluateSurfaceRefreshCoordHealth,
+  summarizeDaemonWarningsBySeverity,
+  evaluateDualWindowBottleneck,
+  evaluateServerOverallReadiness
 } from "../src/controlcenter.js";
 import * as daemon from "../src/daemon.js";
 
@@ -1285,4 +1290,70 @@ test("evaluateRefreshLeadTimeMargin, summarizeServicesByKind, evaluateApiPromoGr
   assert.equal(fleetUtil.utilizationPct, 75);
   assert.equal(fleetUtil.activePoolSize, 4);
   assert.equal(fleetUtil.status, "high-throughput");
+});
+
+
+test("evaluateConvIndexCadenceHealth, evaluateSurfaceRefreshCoordHealth, summarizeDaemonWarningsBySeverity, evaluateDualWindowBottleneck, and evaluateServerOverallReadiness work accurately", () => {
+  const nowMs = Date.parse("2026-11-15T10:00:00Z");
+
+  const conv = evaluateConvIndexCadenceHealth(
+    { "conv-index": { intervalSeconds: 1800, lastRunAt: "2026-11-15T09:45:00Z", lastResult: "ok", runCount: 5 } },
+    {},
+    { nowMs }
+  );
+  assert.equal(conv.status, "healthy");
+  assert.equal(conv.ageMinutes, 15);
+  assert.equal(conv.runCount, 5);
+
+  const surf = evaluateSurfaceRefreshCoordHealth(
+    { "surface-refresh": { lastResult: "ok" } },
+    [
+      { id: "kiro", status: "ok", source: "polyctl-quota" },
+      { id: "evren", status: "unreadable", source: "none" }
+    ]
+  );
+  assert.equal(surf.status, "ok");
+  assert.equal(surf.readableSurfaces, 1);
+  assert.equal(surf.totalSurfaces, 2);
+
+  const warns = summarizeDaemonWarningsBySeverity([
+    { id: "quota-gmail", severity: "warn", title: "Kota yüksek", fix: "keyflip next" },
+    { id: "token-yahoo", severity: "error", title: "Token süresi doldu", fix: "keyflip login yahoo" }
+  ]);
+  assert.equal(warns.totalCount, 2);
+  assert.equal(warns.errorCount, 1);
+  assert.equal(warns.warnCount, 1);
+  assert.equal(warns.topFixCommand, "keyflip login yahoo");
+
+  const dual = evaluateDualWindowBottleneck([
+    {
+      name: "gmail",
+      enabled: true,
+      usage: { fiveHour: { pct: 40 }, sevenDay: { pct: 85 }, effectiveHeadroom: 15 }
+    },
+    {
+      name: "yahoo",
+      enabled: true,
+      usage: { fiveHour: { pct: 25 }, sevenDay: { pct: 30 }, effectiveHeadroom: 70 }
+    }
+  ]);
+  assert.equal(dual.status, "constrained");
+  assert.equal(dual.dominantConstraint, "seven-day");
+  assert.equal(dual.bestEffectiveAccount, "yahoo");
+  assert.equal(dual.bestEffectiveHeadroomPct, 70);
+
+  const srvReady = evaluateServerOverallReadiness({
+    host: "hetzner-1",
+    status: "ok",
+    load: "0.80",
+    memory: "45%",
+    disk: "50%",
+    sites: [
+      { name: "api", status: "ok" },
+      { name: "web", status: "ok" }
+    ]
+  });
+  assert.equal(srvReady.grade, "A");
+  assert.equal(srvReady.score, 100);
+  assert.equal(srvReady.status, "healthy");
 });
