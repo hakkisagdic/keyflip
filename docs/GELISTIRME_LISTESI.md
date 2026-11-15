@@ -1,6 +1,6 @@
 # Geliştirme Listesi ve Yaratıcı Özellik Önerileri (`GELISTIRME_LISTESI.md`)
 
-Bu liste, `docs/RAKIP_ANALIZI.md` sonucunda belirlenen tüm özelliklerin tamamlanma durumunu ve yedinci turda önerilen **beş yeni yaratıcı özelliği** (en değerli ikisi uygulanmış olarak) içerir.
+Bu liste, `docs/RAKIP_ANALIZI.md` sonucunda belirlenen tüm özelliklerin tamamlanma durumunu ve sekizinci turda önerilen **beş yeni yaratıcı özelliği** (en değerli ikisi uygulanmış olarak) içerir.
 
 ---
 
@@ -37,24 +37,28 @@ Bu liste, `docs/RAKIP_ANALIZI.md` sonucunda belirlenen tüm özelliklerin tamaml
 - [x] **Kota Darboğaz Penceresi Tahmincisi (`predictDailyBottleneckWindow`):** `events.jsonl` içindeki hesap rotasyonu ve failover olaylarının yoğunlaştığı UTC saat dilimini (`14:00-15:00 UTC`) tespit edip `HESAPLAR` bölümünde gösterme.
 - [x] **Durum Panosu Anlık Görüntü Kaydedici (`keyflip status-board snapshot [dosya] [--json]`):** Mevcut `status.json` dosyasını doğrulayıp `<configDir>/status-snapshots/` altına zaman damgalı olarak yedekleme (`snapshotStatusBoard`).
 - [x] **Menü Çubuğu Klavye Navigasyon Kısayolları (`⌘1`..`⌘3` Hesap Seçimi):** Kontrol Merkezi açıkken ilk 3 etkin hesaba klavye kısayolu (`requestSwitchAccountBySlot`) ile kullanıcı onaylı geçiş başlatma.
+- [x] **Derin Çalışma / Oturum Öncesi Hazırlık Kontrol Listesi (`evaluateWorkSessionReadiness`) & Abonelik Değer / ROI Analizi (`evaluateSubscriptionValueROI`):** 5 maddelik oturum hazırlık kontrolü (`Oturuma Hazır (5/5 kontrol tam)`) ve 7 günlük abonelik kullanımından üretilen eşdeğer API değeri (`~$48 eşdeğer API değeri`).
+- [x] **Durum Panosu Snapshot Geçmişi ve Canlı Diff (`keyflip status-board history [--json]` / `listStatusBoardSnapshots`):** `<configDir>/status-snapshots/` altındaki anlık görüntüleri listeleme ve en son snapshot ile canlı `status.json` dosyasını otomatik karşılaştırma.
+- [x] **Hesap Rotasyon Soğuma Süresi ve Ping-Pong Koruması Analizi (`evaluateRotationStability`):** Hesaplar arasında `<15 dk` içinde tekrarlayan hızlı geçişleri (`thrashing`) tespit edip menü çubuğunda uyarı gösterme.
+- [x] **Menü Çubuğu Hızlı Sorun Kopyalama (`buildIssuesOnlySummary` / `copyIssuesOnlySummary`):** Durum panosunda yalnızca sessize alınmamış `bad`/`warn` satırlarını ve `owner_needed` maddelerini içeren kısa özeti üretip panoya kopyalama.
 
 ---
 
 ## 2. Listedeki İşler Tamamlandığı İçin Önerilen Beş Yeni Yaratıcı Özellik (En Değerli İkisi Uygulandı)
 
-### ✅ Yeni Öneri 1 (UYGULANDI): Derin Çalışma / Oturum Öncesi Hazırlık Kontrol Listesi (`evaluateWorkSessionReadiness`)
-- **Değer:** Kullanıcı 2 saatlik kesintisiz bir kodlama oturumuna başlamadan önce 5 kritik koşulu (aktif hesapta ≥%25 5s kota boşluğu, ≥30 dk geçerli OAuth belirteci, en az 1 yedek hesap veya hazır Failover zinciri, sıfır servis hatası ve sıfır `bad` durum panosu satırı) tek bakışta denetleyip `Oturuma Hazır (5/5 kontrol tam)` veya eksik kalemleri (`Dikkat (3/5): ...`) `HESAPLAR` bölümünde gösterir.
-- **Uygulama:** `src/controlcenter.js` (`evaluateWorkSessionReadiness`), `src/daemon.js` (`base.sessionReadiness`), `Models.swift` (`WorkSessionReadinessSummary`) ve `ControlCenterView.swift`.
+### ✅ Yeni Öneri 1 (UYGULANDI): Traycer Ajan Filosu Verimlilik ve Takılı Ajan Sağlık Skoru (`evaluateFleetEfficiency`)
+- **Değer:** `FİLO (TRAYCER)` bölümünde yalnızca ham sayıları (`3 çalışıyor · 1 boşta · 1 takılı`) göstermek yerine, aktif çalışma oranını (`activeRatioPct`) ve takılı (`stuck`) ajanların oluşturduğu darboğazı `0-100` arasında bir sağlık puanına (`Filo sağlığı: %75 (1 takılı ajan incelenmeli)`) dönüştürerek bölüm başlığında anında görünür kılar.
+- **Uygulama:** `src/controlcenter.js` (`evaluateFleetEfficiency`), `src/daemon.js` (`base.fleetEfficiency`), `Models.swift` (`FleetEfficiencySummary`) ve `ControlCenterView.swift` (`fleetAndServerSection`).
 
-### ✅ Yeni Öneri 2 (UYGULANDI): Abonelik Değer Gerçekleşmesi ve Eşdeğer API ROI Analizi (`evaluateSubscriptionValueROI`)
-- **Değer:** Etkin Claude aboneliklerinin 7 günlük kullanım yüzdelerini analiz ederek, sabit aboneliklerden bu hafta ne kadarlık eşdeğer API değeri üretildiğini (`Haftalık ort. %82 kullanım (~$49 eşdeğer API değeri)`) hesaplar ve atıl kalan abonelikleri görünür kılar.
-- **Uygulama:** `src/controlcenter.js` (`evaluateSubscriptionValueROI`), `src/daemon.js` (`base.subscriptionRoi`), `Models.swift` (`SubscriptionValueROISummary`) ve `ControlCenterView.swift`.
+### ✅ Yeni Öneri 2 (UYGULANDI): Uzak Sunucu ve Barındırılan Siteler Birleşik SLA Skoru (`evaluateServerSitesHealth`)
+- **Değer:** `SUNUCU` bölümünde izlenen web sitelerinin (`sites`) erişilebilirlik durumlarını ve sunucu genel durumunu (`ok` / `warning` / `down`) birleştirerek `0-100` arasında bir **Site SLA Puanı** (`Site SLA: %100 (3/3 site aktif)` veya `Site SLA: %50 (api.example.com sorunlu)`) hesaplar ve bölüm başlığında gösterir.
+- **Uygulama:** `src/controlcenter.js` (`evaluateServerSitesHealth`), `src/daemon.js` (`base.serverSitesHealth`), `Models.swift` (`ServerSitesHealthSummary`) ve `ControlCenterView.swift` (`fleetAndServerSection`).
 
-### 📋 Yeni Öneri 3 (Gelecek Adayı): Durum Panosu Snapshot Geçmişi Listeleme ve Otomatik Son Snapshot ile Diff (`keyflip status-board history`)
-- **Değer:** `<configDir>/status-snapshots/` altında biriken anlık görüntüleri listeleme ve tek komutla mevcut `status.json` dosyasını en son kaydedilen snapshot ile karşılaştırma.
+### 📋 Yeni Öneri 3 (Gelecek Adayı): Durum Panosu Otomatik Snapshot Budama (`pruneStatusBoardSnapshots`)
+- **Değer:** `<configDir>/status-snapshots/` altında biriken eski anlık görüntüleri yapılandırılabilir bir sınırda (örn. son 20 snapshot) tutarak disk şişmesini önleme (`keyflip status-board prune`).
 
-### 📋 Yeni Öneri 4 (Gelecek Adayı): Hesap Rotasyon Soğuma Süresi ve Ping-Pong Koruması Analizi (`evaluateRotationStability`)
-- **Değer:** Hesaplar arasında çok kısa sürede (örn. <15 dk) tekrarlayan geçiş ("ping-pong") olup olmadığını tespit ederek eşik (`threshold`) ince ayarı önerme.
+### 📋 Yeni Öneri 4 (Gelecek Adayı): İkincil AI Araçları Tükenme Riski Uyarıcısı (`evaluateSecondaryQuotasAlert`)
+- **Değer:** `DİĞER KOTALAR` altındaki ikincil sağlayıcılardan (Kiro, Antigravity `agy`, API Promosyonları) herhangi biri `%90+` kullanıma ulaştığında veya tükendiğinde üst uyarı listesine (`warnings`) otomatik bildirim ekleme.
 
-### 📋 Yeni Öneri 5 (Gelecek Adayı): Menü Çubuğu Hızlı Sorun Kopyalama (`copyIssuesOnlySummary`)
-- **Değer:** Durum panosunda yalnızca `bad` ve `warn` satırlarını ve `owner_needed` maddelerini içeren ultra-kısa olay özetini tek tıkla panoya kopyalama.
+### 📋 Yeni Öneri 5 (Gelecek Adayı): Birleşik Kontrol Merkezi Sağlık Özeti CLI Komutu (`keyflip daemon summary`)
+- **Değer:** Terminal kullanıcıları için tüm alt sistemlerin (Hesap Havuzu, Failover, Durum Panosu, Servisler, Filo ve Sunucu) sağlık puanlarını 6 satırlık kompakt bir tabloda özetleyen hızlı CLI alt komutu.

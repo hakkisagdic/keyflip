@@ -2081,3 +2081,203 @@ export function evaluateSubscriptionValueROI(accounts = [], otherQuotas = [], fa
     summary: `Haftalık verim: %${avgWeeklyUtilizationPct} (~$${estimatedWeeklyApiEquivalentUsd.toFixed(0)} eşdeğer API değeri)`
   };
 }
+
+/**
+ * Lists saved status.json snapshots in `<configDir>/status-snapshots/` and optionally diffs
+ * the latest saved snapshot against the live status.json file.
+ */
+export function listStatusBoardSnapshots(ctx, options = {}) {
+  const homeDir = options.homeDir || ctx?.home || ctx?.homeDir || os.homedir();
+  const configDir = options.configDir || ctx?.configDir || path.join(homeDir, ".config", "keyflip");
+  const snapDir = options.outDir || path.join(configDir, "status-snapshots");
+  if (!fs.existsSync(snapDir)) {
+    return { snapshots: [], latestPath: null, diffWithLive: null };
+  }
+  const files = fs
+    .readdirSync(snapDir)
+    .filter((f) => f.startsWith("status-") && f.endsWith(".json"))
+    .sort()
+    .reverse();
+
+  const snapshots = files.map((fileName) => {
+    const fullPath = path.join(snapDir, fileName);
+    let sizeBytes = 0;
+    try {
+      sizeBytes = fs.statSync(fullPath).size;
+    } catch {}
+    return {
+      fileName,
+      path: fullPath,
+      sizeBytes
+    };
+  });
+
+  const latestPath = snapshots.length > 0 ? snapshots[0].path : null;
+  let diffWithLive = null;
+
+  const rawLive =
+    options.sourceFile || process.env.KEYFLIP_STATUS_FILE || _config.get(ctx, "menubar.statusFile") || "~/.polyctl/admin/status.json";
+  const resolvedLive = expandHomePath(rawLive, homeDir);
+  if (latestPath && resolvedLive && fs.existsSync(latestPath) && fs.existsSync(resolvedLive)) {
+    try {
+      diffWithLive = diffStatusBoards(fs.readFileSync(latestPath, "utf8"), fs.readFileSync(resolvedLive, "utf8"));
+    } catch {
+      diffWithLive = null;
+    }
+  }
+
+  return {
+    snapshots,
+    latestPath,
+    diffWithLive
+  };
+}
+
+/**
+ * Evaluates account rotation stability ("Ping-Pong / Thrashing Guard") by inspecting recent switch events.
+ * Detects rapid back-and-forth account switches (<15 min apart) and recommends threshold tuning.
+ */
+export function evaluateRotationStability(ctxOrEvents, options = {}) {
+  const limit = typeof options.limit === "number" && options.limit > 0 ? options.limit : 50;
+  const rapidWindowMin = typeof options.rapidWindowMin === "number" ? options.rapidWindowMin : 15;
+  let events = [];
+  if (Array.isArray(ctxOrEvents)) {
+    events = ctxOrEvents;
+  } else if (ctxOrEvents?.configDir) {
+    events = _history.readEvents(ctxOrEvents, limit);
+  }
+
+  const switchEvents = events
+    .filter((ev) => {
+      const k = String(ev?.kind || "");
+      return k === "daemon-switch" || k === "autoswitch" || k === "switch";
+    })
+    .map((ev) => ({
+      ...ev,
+      ts: ev?.at ? Date.parse(String(ev.at)) : Number.NaN
+    }))
+    .filter((ev) => Number.isFinite(ev.ts))
+    .sort((a, b) => a.ts - b.ts);
+
+  let rapidSwitchCount = 0;
+  let minIntervalMinutes = null;
+
+  for (let i = 1; i < switchEvents.length; i += 1) {
+    const deltaMin = Math.max(0, Math.round((switchEvents[i].ts - switchEvents[i - 1].ts) / 60000));
+    if (minIntervalMinutes === null || deltaMin < minIntervalMinutes) {
+      minIntervalMinutes = deltaMin;
+    }
+    if (deltaMin < rapidWindowMin) {
+      rapidSwitchCount += 1;
+    }
+  }
+
+  const status = rapidSwitchCount >= 2 ? "thrashing" : rapidSwitchCount === 1 ? "warning" : "stable";
+  const summary =
+    switchEvents.length < 2
+      ? "Rotasyon kararlı (충분 geçiş verisi bekleniyor)".replace("충분 ", "")
+      : status === "thrashing"
+        ? `Ping-pong uyarısı: ${rapidSwitchCount} hızlı geçiş (<15 dk) · eşiği düşürün`
+        : status === "warning"
+          ? `1 hızlı geçiş tespit edildi (en kısa aralık: ${minIntervalMinutes} dk)`
+          : `Rotasyon kararlı (en kısa aralık: ${minIntervalMinutes} dk)`;
+
+  return {
+    status,
+    totalSwitches: switchEvents.length,
+    rapidSwitchCount,
+    minIntervalMinutes,
+    summary
+  };
+}
+
+/**
+ * Evaluates overall Fleet Agent Health & Efficiency Score (0-100) from fleet status counts.
+ * Highlights stuck/dormant ratio and active agent utilization.
+ */
+export function evaluateFleetEfficiency(fleetStatus = null) {
+  if (!fleetStatus || fleetStatus.status === "unreadable" || typeof fleetStatus.total !== "number") {
+    return {
+      status: "unreadable",
+      score: null,
+      activeRatioPct: null,
+      stuckCount: 0,
+      summary: null
+    };
+  }
+  const working = typeof fleetStatus.working === "number" ? fleetStatus.working : 0;
+  const idle = typeof fleetStatus.idle === "number" ? fleetStatus.idle : 0;
+  const stuck = typeof fleetStatus.stuck === "number" ? fleetStatus.stuck : 0;
+  const activePool = working + idle + stuck;
+  const activeRatioPct = activePool > 0 ? Math.round((working / activePool) * 100) : 0;
+
+  let score = 100;
+  if (stuck > 0) {
+    score -= Math.min(60, stuck * 25);
+  }
+  if (activePool > 0 && working === 0) {
+    score -= 15;
+  }
+  score = Math.max(0, Math.min(100, score));
+  const status = stuck > 0 ? "warning" : "ok";
+
+  return {
+    status,
+    score,
+    activeRatioPct,
+    stuckCount: stuck,
+    summary:
+      stuck > 0
+        ? `Filo sağlığı: %${score} (${stuck} takılı ajan incelenmeli)`
+        : `Filo sağlığı: %${score} (aktif kullanım %${activeRatioPct})`
+  };
+}
+
+/**
+ * Evaluates Remote Server & Hosted Sites SLA Health Score (0-100) from server snapshot.
+ */
+export function evaluateServerSitesHealth(serverStatus = null) {
+  if (!serverStatus || serverStatus.status === "unreadable") {
+    return {
+      status: "unreadable",
+      score: null,
+      healthySites: 0,
+      totalSites: 0,
+      downSites: [],
+      summary: null
+    };
+  }
+  const sites = Array.isArray(serverStatus.sites) ? serverStatus.sites : [];
+  const totalSites = sites.length;
+  let healthySites = 0;
+  const downSites = [];
+
+  for (const s of sites) {
+    if (s?.status === "ok") {
+      healthySites += 1;
+    } else if (s?.status === "down" || s?.status === "warning") {
+      downSites.push(s.name || "site");
+    }
+  }
+
+  let score = totalSites > 0 ? Math.round((healthySites / totalSites) * 100) : 100;
+  if (serverStatus.status === "down") score = Math.min(score, 20);
+  else if (serverStatus.status === "warning") score = Math.min(score, 75);
+
+  const status = downSites.length > 0 || serverStatus.status === "down" ? "warning" : "ok";
+  const summary =
+    totalSites === 0
+      ? `Sunucu: ${serverStatus.status === "ok" ? "Sağlıklı" : serverStatus.status}`
+      : downSites.length > 0
+        ? `Site SLA: %${score} (${downSites.join(", ")} sorunlu)`
+        : `Site SLA: %${score} (${healthySites}/${totalSites} site aktif)`;
+
+  return {
+    status,
+    score,
+    healthySites,
+    totalSites,
+    downSites,
+    summary
+  };
+}

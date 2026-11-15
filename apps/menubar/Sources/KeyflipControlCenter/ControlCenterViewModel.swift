@@ -147,6 +147,15 @@ public final class ControlCenterViewModel: ObservableObject {
         }
     }
 
+    public func copyIssuesOnlySummary() {
+        guard let board = statusBoard else { return }
+        let text = board.buildIssuesOnlySummary(mutedRowKeys: mutedRowKeys)
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        pb.setString(text, forType: .string)
+        statusBanner = "Açık sorun özeti panoya kopyalandı."
+    }
+
     public func copySummaryToPasteboard() {
         let text: String
         if let report = payload.markdownReport, !report.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {

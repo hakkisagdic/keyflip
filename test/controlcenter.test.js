@@ -28,8 +28,12 @@ import {
   evaluateServicesHealthSummary,
   predictDailyBottleneckWindow,
   snapshotStatusBoard,
+  listStatusBoardSnapshots,
   evaluateWorkSessionReadiness,
-  evaluateSubscriptionValueROI
+  evaluateSubscriptionValueROI,
+  evaluateRotationStability,
+  evaluateFleetEfficiency,
+  evaluateServerSitesHealth
 } from "../src/controlcenter.js";
 import * as daemon from "../src/daemon.js";
 
@@ -692,6 +696,60 @@ test("predictDailyBottleneckWindow, snapshotStatusBoard, evaluateWorkSessionRead
     assert.equal(roi.enabledSubscriptionCount, 1);
     assert.equal(roi.avgWeeklyUtilizationPct, 80);
     assert.equal(roi.estimatedWeeklyApiEquivalentUsd, 48);
+  } finally {
+    env.cleanup();
+  }
+});
+
+test("listStatusBoardSnapshots, evaluateRotationStability, evaluateFleetEfficiency, and evaluateServerSitesHealth work accurately", () => {
+  const env = makeTempEnv();
+  try {
+    const fixturePath = path.resolve("test/fixtures/status.sample.json");
+    snapshotStatusBoard(env.ctx, {
+      sourceFile: fixturePath,
+      homeDir: env.home,
+      configDir: env.configDir,
+      now: () => "2026-11-15T01:00:00Z"
+    });
+    const hist = listStatusBoardSnapshots(env.ctx, {
+      sourceFile: fixturePath,
+      homeDir: env.home,
+      configDir: env.configDir
+    });
+    assert.equal(hist.snapshots.length, 1);
+    assert.equal(hist.diffWithLive.hasChanges, false);
+
+    const rot = evaluateRotationStability([
+      { kind: "daemon-switch", at: "2026-11-15T01:00:00Z" },
+      { kind: "autoswitch", at: "2026-11-15T01:05:00Z" },
+      { kind: "switch", at: "2026-11-15T01:12:00Z" }
+    ]);
+    assert.equal(rot.status, "thrashing");
+    assert.equal(rot.rapidSwitchCount, 2);
+    assert.equal(rot.minIntervalMinutes, 5);
+
+    const fleetEff = evaluateFleetEfficiency({
+      status: "warning",
+      working: 3,
+      idle: 1,
+      stuck: 1,
+      total: 5
+    });
+    assert.equal(fleetEff.status, "warning");
+    assert.equal(fleetEff.score, 75);
+    assert.equal(fleetEff.activeRatioPct, 60);
+
+    const srvHealth = evaluateServerSitesHealth({
+      host: "Uzak Sunucu",
+      status: "ok",
+      sites: [
+        { name: "app.example.com", status: "ok" },
+        { name: "api.example.com", status: "down" }
+      ]
+    });
+    assert.equal(srvHealth.status, "warning");
+    assert.equal(srvHealth.score, 50);
+    assert.deepEqual(srvHealth.downSites, ["api.example.com"]);
   } finally {
     env.cleanup();
   }

@@ -23,6 +23,9 @@ public struct ControlCenterPayload: Codable {
     public var bottleneckWindow: BottleneckWindowSummary?
     public var sessionReadiness: WorkSessionReadinessSummary?
     public var subscriptionRoi: SubscriptionValueROISummary?
+    public var rotationStability: RotationStabilitySummary?
+    public var fleetEfficiency: FleetEfficiencySummary?
+    public var serverSitesHealth: ServerSitesHealthSummary?
     public var auditTimeline: [AuditEventItem]?
     public var markdownReport: String?
     public var preferences: PreferencesSummary?
@@ -51,6 +54,9 @@ public struct ControlCenterPayload: Codable {
         bottleneckWindow: BottleneckWindowSummary? = nil,
         sessionReadiness: WorkSessionReadinessSummary? = nil,
         subscriptionRoi: SubscriptionValueROISummary? = nil,
+        rotationStability: RotationStabilitySummary? = nil,
+        fleetEfficiency: FleetEfficiencySummary? = nil,
+        serverSitesHealth: ServerSitesHealthSummary? = nil,
         auditTimeline: [AuditEventItem]? = [],
         markdownReport: String? = nil,
         preferences: PreferencesSummary? = nil,
@@ -78,6 +84,9 @@ public struct ControlCenterPayload: Codable {
         self.bottleneckWindow = bottleneckWindow
         self.sessionReadiness = sessionReadiness
         self.subscriptionRoi = subscriptionRoi
+        self.rotationStability = rotationStability
+        self.fleetEfficiency = fleetEfficiency
+        self.serverSitesHealth = serverSitesHealth
         self.auditTimeline = auditTimeline
         self.markdownReport = markdownReport
         self.preferences = preferences
@@ -628,6 +637,31 @@ public struct StatusBoardPayload: Codable {
         return freshBad
     }
 
+    public func buildIssuesOnlySummary(mutedRowKeys: Set<String> = []) -> String {
+        var lines: [String] = []
+        lines.append("# Durum Panosu — Açık Sorunlar")
+        if !ownerNeededItems.isEmpty {
+            lines.append("Bekleyen Sahiplik (\(ownerNeededItems.count)):")
+            for item in ownerNeededItems {
+                lines.append("- [\(item.project)] \(item.text)")
+            }
+        }
+        for sec in sections {
+            let issueRows = sec.sortedRows.filter { row in
+                (row.status == "bad" || row.status == "warn") && !mutedRowKeys.contains("\(sec.id)::\(row.label)")
+            }
+            guard !issueRows.isEmpty else { continue }
+            lines.append("[\(sec.title)]")
+            for r in issueRows {
+                lines.append("- [\(r.status.uppercased())] \(r.label): \(r.value)")
+            }
+        }
+        if lines.count == 1 {
+            lines.append("Açık sorun bulunmuyor.")
+        }
+        return lines.joined(separator: "\n")
+    }
+
     public func buildMarkdownSummary(isStale: Bool = false) -> String {
         var lines: [String] = []
         lines.append("# Durum Panosu Özeti\(isStale ? " (VERİ ESKİ)" : "")")
@@ -1021,4 +1055,43 @@ public struct SubscriptionValueROISummary: Codable {
         self.tier = tier
         self.summary = summary
     }
+}
+
+public struct RotationStabilitySummary: Codable {
+    public var status: String
+    public var totalSwitches: Int?
+    public var rapidSwitchCount: Int
+    public var minIntervalMinutes: Int?
+    public var summary: String
+
+    public init(
+        status: String = "stable",
+        totalSwitches: Int? = 0,
+        rapidSwitchCount: Int = 0,
+        minIntervalMinutes: Int? = nil,
+        summary: String = ""
+    ) {
+        self.status = status
+        self.totalSwitches = totalSwitches
+        self.rapidSwitchCount = rapidSwitchCount
+        self.minIntervalMinutes = minIntervalMinutes
+        self.summary = summary
+    }
+}
+
+public struct FleetEfficiencySummary: Codable {
+    public var status: String
+    public var score: Int?
+    public var activeRatioPct: Int?
+    public var stuckCount: Int?
+    public var summary: String?
+}
+
+public struct ServerSitesHealthSummary: Codable {
+    public var status: String
+    public var score: Int?
+    public var healthySites: Int?
+    public var totalSites: Int?
+    public var downSites: [String]?
+    public var summary: String?
 }

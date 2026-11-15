@@ -508,6 +508,18 @@ public struct ControlCenterView: View {
                         }
                     }
 
+                    if let rs = viewModel.payload.rotationStability, !rs.summary.isEmpty {
+                        HStack(spacing: 5) {
+                            Image(systemName: rs.status == "stable" ? "arrow.triangle.2.circlepath.circle.fill" : "exclamationmark.arrow.triangle.2.circlepath")
+                                .font(.system(size: 10))
+                                .foregroundColor(rs.status == "stable" ? .secondary : .orange)
+                            Text(rs.summary)
+                                .font(.system(size: 10))
+                                .foregroundColor(rs.status == "stable" ? .secondary : .orange)
+                                .lineLimit(1)
+                        }
+                    }
+
                     if let bw = viewModel.payload.bottleneckWindow, !bw.summary.isEmpty {
                         HStack(spacing: 5) {
                             Image(systemName: "gauge.with.dots.needle.67percent")
@@ -786,7 +798,9 @@ public struct ControlCenterView: View {
     private var fleetAndServerSection: some View {
         let serverHostTitle = (viewModel.payload.server?.host ?? "UZAK SUNUCU").uppercased()
         return VStack(alignment: .leading, spacing: 14) {
-            sectionBox(title: "FİLO (TRAYCER)") {
+            let fleetEff = viewModel.payload.fleetEfficiency?.summary
+            let fleetTitle = (fleetEff != nil && !fleetEff!.isEmpty) ? "FİLO (TRAYCER) · \(fleetEff!.uppercased())" : "FİLO (TRAYCER)"
+            sectionBox(title: fleetTitle) {
                 if let fleet = viewModel.payload.fleet {
                     HStack {
                         Text("Ajan Durumu:")
@@ -803,7 +817,9 @@ public struct ControlCenterView: View {
                 }
             }
 
-            sectionBox(title: "SUNUCU (\(serverHostTitle) · SALT OKUNUR)") {
+            let srvSla = viewModel.payload.serverSitesHealth?.summary
+            let srvTitle = (srvSla != nil && !srvSla!.isEmpty) ? "SUNUCU (\(serverHostTitle) · \(srvSla!.uppercased()))" : "SUNUCU (\(serverHostTitle) · SALT OKUNUR)"
+            sectionBox(title: srvTitle) {
                 if let srv = viewModel.payload.server {
                     VStack(alignment: .leading, spacing: 4) {
                         HStack {

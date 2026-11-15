@@ -1520,6 +1520,22 @@ async function cmdStatusBoard(ctx, rest) {
     print('usage: keyflip status-board validate [file] [--json]');
     print('       keyflip status-board diff <old.json> <new.json> [--json]');
     print('       keyflip status-board snapshot [file] [--json]');
+    print('       keyflip status-board history [--json]');
+    return;
+  }
+  if (sub === 'history') {
+    const hist = _controlcenter.listStatusBoardSnapshots(ctx, { homeDir: ctx.home, configDir: ctx.configDir });
+    if (JSON_MODE) {
+      jsonOut({ statusBoardHistory: hist });
+      return;
+    }
+    print(style.bold('status-board history') + ' — ' + hist.snapshots.length + ' saved snapshot(s)');
+    hist.snapshots.slice(0, 10).forEach(function (s) {
+      print('  ' + s.fileName + ' (' + s.sizeBytes + ' B)');
+    });
+    if (hist.diffWithLive) {
+      print(style.dim('  latest vs live: ') + hist.diffWithLive.summary);
+    }
     return;
   }
   if (sub === 'snapshot') {

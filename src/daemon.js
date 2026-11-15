@@ -821,6 +821,9 @@ async function buildControlCenter(ctx, scheduler, opts) {
     statusBoard: base.statusBoard
   });
   base.subscriptionRoi = _controlcenter.evaluateSubscriptionValueROI(base.accounts, base.otherQuotas, base.failover);
+  base.rotationStability = _controlcenter.evaluateRotationStability(ctx);
+  base.fleetEfficiency = _controlcenter.evaluateFleetEfficiency(base.fleet);
+  base.serverSitesHealth = _controlcenter.evaluateServerSitesHealth(base.server);
   base.preferences = _controlcenter.collectPreferences(ctx);
   base.markdownReport = _controlcenter.buildControlCenterMarkdown(base);
   base.diagnosticBundle = _controlcenter.buildDiagnosticBundle(base);

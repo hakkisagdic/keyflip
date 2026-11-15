@@ -274,6 +274,12 @@ public enum ModelsTestSuite {
         let degraded = board.newlyDegradedRows(comparedTo: cleanPrev)
         precondition(degraded.count == 1, "newlyDegradedRows must detect 1 newly bad row")
 
+        // Issues-only summary test
+        let issuesOnlyMd = board.buildIssuesOnlySummary()
+        precondition(issuesOnlyMd.contains("Açık Sorunlar"), "issues-only summary must include header")
+        precondition(issuesOnlyMd.contains("[BAD]"), "issues-only summary must include BAD rows")
+        precondition(!issuesOnlyMd.contains("[OK]"), "issues-only summary must exclude OK rows")
+
         // Markdown export test
         let md = board.buildMarkdownSummary(isStale: true)
         precondition(md.contains("(VERİ ESKİ)"), "markdown summary must indicate stale state")
