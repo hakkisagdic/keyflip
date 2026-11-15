@@ -666,6 +666,18 @@ public struct ControlCenterView: View {
                         }
                     }
 
+                    if let wpr = viewModel.payload.weeklyPoolReserve, wpr.enabledCount > 0 {
+                        HStack(spacing: 5) {
+                            Image(systemName: "battery.75")
+                                .font(.system(size: 10))
+                                .foregroundColor(wpr.status == "low" ? .orange : .secondary)
+                            Text(wpr.summary)
+                                .font(.system(size: 10))
+                                .foregroundColor(wpr.status == "low" ? .orange : .secondary)
+                                .lineLimit(1)
+                        }
+                    }
+
                     if let epm = viewModel.payload.effectivePoolMultiplier, epm.enabledCount > 0 {
                         HStack(spacing: 5) {
                             Image(systemName: "bolt.horizontal.circle.fill")
@@ -984,6 +996,17 @@ public struct ControlCenterView: View {
                             Text(shf.summary)
                                 .font(.system(size: 10))
                                 .foregroundColor(shf.status == "critical" ? .red : .orange)
+                                .lineLimit(1)
+                        }
+                    }
+                    if let spc = viewModel.payload.serviceProcessCoverage, spc.totalDaemons > 0, spc.status != "all-running" {
+                        HStack(spacing: 5) {
+                            Image(systemName: "cpu")
+                                .font(.system(size: 10))
+                                .foregroundColor(.orange)
+                            Text(spc.summary)
+                                .font(.system(size: 10))
+                                .foregroundColor(.orange)
                                 .lineLimit(1)
                         }
                     }

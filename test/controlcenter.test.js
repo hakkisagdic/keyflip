@@ -98,7 +98,12 @@ import {
   summarizeTokenExpiryHorizon,
   evaluateNotificationAndAutostartPosture,
   evaluateSustainablePoolBurnRate,
-  evaluateUrgentOwnerRatio
+  evaluateUrgentOwnerRatio,
+  summarizeServiceProcessCoverage,
+  evaluateFailoverEngagementFrequency,
+  evaluateSecondarySourceDiversity,
+  evaluateWeeklyPoolReserveCapacity,
+  evaluateStatusBoardSinceCoverage
 } from "../src/controlcenter.js";
 import * as daemon from "../src/daemon.js";
 
@@ -1600,4 +1605,61 @@ test("evaluateStatusBoardRowDensity, summarizeTokenExpiryHorizon, evaluateNotifi
   assert.equal(uor.normalCount, 1);
   assert.equal(uor.urgentRatioPct, 50);
   assert.equal(uor.status, "has-urgent");
+});
+
+test("summarizeServiceProcessCoverage, evaluateFailoverEngagementFrequency, evaluateSecondarySourceDiversity, evaluateWeeklyPoolReserveCapacity, and evaluateStatusBoardSinceCoverage work accurately", () => {
+  const spc = summarizeServiceProcessCoverage([
+    { id: "keysmith-gateway", title: "Keysmith Gateway", kind: "daemon", pid: 4120 },
+    { id: "keysmith-router", title: "Keysmith Yerel Router", kind: "daemon", pid: null },
+    { id: "nightly-backup", title: "Gece Yedekleri", kind: "scheduled", pid: null }
+  ]);
+  assert.equal(spc.totalDaemons, 2);
+  assert.equal(spc.activePidCount, 1);
+  assert.equal(spc.coveragePct, 50);
+  assert.equal(spc.status, "partial");
+
+  const fef = evaluateFailoverEngagementFrequency({ failoverCount: 3 });
+  assert.equal(fef.failoverCount24h, 3);
+  assert.equal(fef.status, "moderate");
+
+  const ssd = evaluateSecondarySourceDiversity([
+    { id: "kiro", source: "polyctl-quota" },
+    { id: "copilot", source: "plugin-json" },
+    { id: "apicredits", source: "apicredits" },
+    { id: "evren", source: "none" }
+  ]);
+  assert.equal(ssd.totalProviders, 4);
+  assert.equal(ssd.distinctActiveSources, 3);
+  assert.equal(ssd.unreadableCount, 1);
+
+  const wpr = evaluateWeeklyPoolReserveCapacity([
+    { name: "gmail", enabled: true, usage: { sevenDay: { pct: 70 } } },
+    { name: "yahoo", enabled: true, usage: { sevenDay: { pct: 20 } } }
+  ]);
+  assert.equal(wpr.enabledCount, 2);
+  assert.equal(wpr.totalRemainingSevenDayPct, 110);
+  assert.equal(wpr.avgRemainingSevenDayPct, 55);
+  assert.equal(wpr.topReserveAccount, "yahoo");
+  assert.equal(wpr.topReservePct, 80);
+  assert.equal(wpr.status, "ample");
+
+  const sbsc = evaluateStatusBoardSinceCoverage(
+    {
+      sections: [
+        {
+          id: "s1",
+          rows: [
+            { label: "Gateway", value: "down", status: "bad", since: "2026-11-15T08:00:00Z" },
+            { label: "DB", value: "ok", status: "ok", since: null }
+          ]
+        }
+      ]
+    },
+    { nowMs: Date.parse("2026-11-15T09:30:00Z") }
+  );
+  assert.equal(sbsc.totalRows, 2);
+  assert.equal(sbsc.trackedRows, 1);
+  assert.equal(sbsc.coveragePct, 50);
+  assert.equal(sbsc.maxDurationMinutes, 90);
+  assert.equal(sbsc.longestTrackedLabel, "Gateway");
 });

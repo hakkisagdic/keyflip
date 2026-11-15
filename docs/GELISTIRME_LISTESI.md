@@ -1,6 +1,6 @@
 # Geliştirme Listesi ve Yaratıcı Özellik Önerileri (`GELISTIRME_LISTESI.md`)
 
-Bu liste, `docs/RAKIP_ANALIZI.md` sonucunda belirlenen tüm özelliklerin tamamlanma durumunu ve yirmi birinci turda önerilen **beş yeni yaratıcı özelliği** (en değerli ikisi uygulanmış olarak) içerir.
+Bu liste, `docs/RAKIP_ANALIZI.md` sonucunda belirlenen tüm özelliklerin tamamlanma durumunu ve yirmi ikinci turda önerilen **beş yeni yaratıcı özelliği** (en değerli ikisi uygulanmış olarak) içerir.
 
 ---
 
@@ -104,24 +104,29 @@ Bu liste, `docs/RAKIP_ANALIZI.md` sonucunda belirlenen tüm özelliklerin tamaml
 - [x] **Durum Panosu Bölüm Başına Ortalama Satır Yoğunluğu (`evaluateStatusBoardRowDensity`):** Durum panosundaki bölümlerin ortalama ve maksimum satır yoğunluğunu analiz ederek aşırı kalabalık bölümleri raporlama.
 - [x] **OAuth Belirteç Kalan Süre Dağılım Özeti (`summarizeTokenExpiryHorizon`):** Etkin Claude hesaplarındaki OAuth belirteçlerinin en kısa ve ortalama kalan geçerlilik dakikasını özetleme.
 - [x] **Tercihler ve Bildirim Hazırlık Denetçisi (`evaluateNotificationAndAutostartPosture`):** Masaüstü bildirimleri (`notify.desktop`) ve oturum açılışında otomatik başlatma (`launchAtLogin`) ayarlarının operasyonel hazırlığını özetleme.
+- [x] **Hesap Havuzu Sürdürülebilir Tüketim İvmesi Analizcisi (`evaluateSustainablePoolBurnRate`):** Etkin Claude hesaplarının 5 saatlik pencerelerindeki ortalama kullanım hızı oranını (`avgBurnRateRatio`) hesaplayıp `HESAPLAR` bölümünde gösterme.
+- [x] **Durum Panosu Acil / Normal Sahiplik Oranı Analizcisi (`evaluateUrgentOwnerRatio`):** `owner_needed` maddelerinin kaçının acil/kritik olduğunu oranlayarak `Sahipten Bekleyen` başlığında gösterme.
+- [x] **Yerel Servis Aktif Süreç (PID) Kapsam Özeti (`summarizeServiceProcessCoverage`):** İzlenen `daemon` türündeki yerel servislerin kaç tanesinin aktif bir işletim sistemi süreç kimliğine (`pid > 0`) sahip olduğunu özetleme ve `SERVİSLER` bölümünde gösterme.
+- [x] **Yedek Zincir (Failover) Son 24 Saatlik Devreye Girme Sıklığı (`evaluateFailoverEngagementFrequency`):** Günlük denetim olaylarından (`dailyAuditActivity`) son 24 saatteki failover geçiş sıklığını sınıflandırma.
+- [x] **İkincil Kota Veri Kaynağı Çeşitlilik Özeti (`evaluateSecondarySourceDiversity`):** `otherQuotas` içindeki sağlayıcıların veri kaynağı dağılımını (`plugin-json`, `polyctl-quota`, `apicredits`) özetleme.
 
 ---
 
 ## 2. Listedeki İşler Tamamlandığı İçin Önerilen Beş Yeni Yaratıcı Özellik (En Değerli İkisi Uygulandı)
 
-### ✅ Yeni Öneri 1 (UYGULANDI): Hesap Havuzu Sürdürülebilir Tüketim İvmesi Analizcisi (`evaluateSustainablePoolBurnRate`)
-- **Değer:** Etkin Claude hesaplarının 5 saatlik pencerelerindeki ortalama kullanım hızı oranını (`avgBurnRateRatio` — geçen pencere süresine göre kullanılan yüzde oranı) hesaplar; `<=1.0x` ise sürdürülebilir (`sustainable`), `>1.0x` ise hızlandırılmış (`accelerated` / `unsustainable`) olarak sınıflandırıp `HESAPLAR` bölümünde gösterir (`Yüksek tüketim ivmesi: ort. 1.2x (en hızlı: gmail 1.5x)`).
-- **Uygulama:** `src/controlcenter.js` (`evaluateSustainablePoolBurnRate`), `src/daemon.js` (`base.sustainableBurnRate`), `Models.swift` (`SustainablePoolBurnRateSummary`) ve `ControlCenterView.swift`.
+### ✅ Yeni Öneri 1 (UYGULANDI): Hesap Havuzu 7 Günlük Toplam Boş Kapasite Rezervi (`evaluateWeeklyPoolReserveCapacity`)
+- **Değer:** Etkin Claude hesaplarının 7 günlük pencerelerindeki toplam kalan boş kapasite yüzdesini (`totalRemainingSevenDayPct`), ortalama boşluğu (`avgRemainingSevenDayPct`) ve en geniş haftalık rezerve sahip hesabı (`topReserveAccount`) hesaplayıp `HESAPLAR` bölümünde gösterir (`7g havuz rezervi: toplam %110 boş (ort. %55 · en geniş: yahoo %80)`).
+- **Uygulama:** `src/controlcenter.js` (`evaluateWeeklyPoolReserveCapacity`), `src/daemon.js` (`base.weeklyPoolReserve`), `Models.swift` (`WeeklyPoolReserveCapacitySummary`) ve `ControlCenterView.swift`.
 
-### ✅ Yeni Öneri 2 (UYGULANDI): Durum Panosu Acil / Normal Sahiplik Oranı Analizcisi (`evaluateUrgentOwnerRatio`)
-- **Değer:** Durum panosundaki `owner_needed` maddelerinin kaç tanesinin acil/kritik (`urgentCount`) ve kaç tanesinin rutin (`normalCount`) olduğunu oranlayarak (`urgentRatioPct`) `Sahipten Bekleyen` başlığında gösterir (`1/2 acil (%50)`).
-- **Uygulama:** `src/controlcenter.js` (`evaluateUrgentOwnerRatio`), `src/daemon.js` (`base.urgentOwnerRatio`), `Models.swift` (`UrgentOwnerRatioSummary`) ve `ControlCenterView.swift`.
+### ✅ Yeni Öneri 2 (UYGULANDI): Durum Panosu Zaman Damgası (`since`) Kapsam ve En Uzun Süreklilik Analizcisi (`evaluateStatusBoardSinceCoverage`)
+- **Değer:** Durum panosundaki toplam satırlardan kaç tanesinin aktif bir `since` başlangıç zaman damgasına sahip olduğunu (`coveragePct`) ve en uzun süredir devam eden durumu (`longestTrackedLabel`, `maxDurationMinutes`) hesaplar (`Süreklilik takibi: 1/2 satır zaman damgalı (en uzun: Gateway · 90 dk)`).
+- **Uygulama:** `src/controlcenter.js` (`evaluateStatusBoardSinceCoverage`), `src/daemon.js` (`base.statusBoardSinceCoverage`), `Models.swift` (`StatusBoardSinceCoverageSummary`).
 
-### 📋 Yeni Öneri 3 (Gelecek Adayı): Yerel Servis Aktif Süreç (PID) Kapsam Özeti (`summarizeServiceProcessCoverage`)
-- **Değer:** İzlenen `daemon` türündeki yerel servislerin kaç tanesinin aktif bir işletim sistemi süreç kimliğine (`pid > 0`) sahip olduğunu özetleme.
+### 📋 Yeni Öneri 3 (Gelecek Adayı): Hesap Havuzu Aktif vs Yedek Hesap Kota Makası (`evaluateActiveVsStandbySpread`)
+- **Değer:** Aktif Claude hesabının 5 saatlik doluluk yüzdesi ile en boş yedek hesabın doluluk yüzdesi arasındaki farkı (`spreadPct`) analiz ederek erken geçiş fırsatını özetleme.
 
-### 📋 Yeni Öneri 4 (Gelecek Adayı): Yedek Zincir (Failover) Son 24 Saatlik Devreye Girme Sıklığı (`evaluateFailoverEngagementFrequency`)
-- **Değer:** Günlük denetim olaylarından (`dailyAuditActivity`) son 24 saatteki failover geçiş sıklığını sınıflandırma.
+### 📋 Yeni Öneri 4 (Gelecek Adayı): Uzak Sunucu Disk ve Bellek Güvenlik Tamponu (`evaluateServerSafetyHeadroom`)
+- **Değer:** Uzak sunucudaki boş RAM ve boş disk yüzdesini (`freeMemoryPct`, `freeDiskPct`) hesaplayarak kritik doygunluk sınırına (`%90`) kalan güvenlik payını özetleme.
 
-### 📋 Yeni Öneri 5 (Gelecek Adayı): İkincil Kota Veri Kaynağı Çeşitlilik Özeti (`evaluateSecondarySourceDiversity`)
-- **Değer:** `otherQuotas` içindeki sağlayıcıların veri kaynağı dağılımını (`plugin-json`, `polyctl-quota`, `apicredits`) özetleme.
+### 📋 Yeni Öneri 5 (Gelecek Adayı): Denetim Olayları Kategori Dağılım Özeti (`summarizeAuditCategoryBreakdown`)
+- **Değer:** `auditTimeline` içindeki olayları `switch`, `failover`, `service` ve `other` kategorilerine göre sayarak baskın operasyon türünü raporlama.

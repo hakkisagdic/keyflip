@@ -88,6 +88,11 @@ public struct ControlCenterPayload: Codable {
     public var notificationAutostartPosture: NotificationAutostartPostureSummary?
     public var sustainableBurnRate: SustainablePoolBurnRateSummary?
     public var urgentOwnerRatio: UrgentOwnerRatioSummary?
+    public var serviceProcessCoverage: ServiceProcessCoverageSummary?
+    public var failoverEngagementFreq: FailoverEngagementFrequencySummary?
+    public var secondarySourceDiversity: SecondarySourceDiversitySummary?
+    public var weeklyPoolReserve: WeeklyPoolReserveCapacitySummary?
+    public var statusBoardSinceCoverage: StatusBoardSinceCoverageSummary?
     public var auditTimeline: [AuditEventItem]?
     public var markdownReport: String?
     public var preferences: PreferencesSummary?
@@ -181,6 +186,11 @@ public struct ControlCenterPayload: Codable {
         notificationAutostartPosture: NotificationAutostartPostureSummary? = nil,
         sustainableBurnRate: SustainablePoolBurnRateSummary? = nil,
         urgentOwnerRatio: UrgentOwnerRatioSummary? = nil,
+        serviceProcessCoverage: ServiceProcessCoverageSummary? = nil,
+        failoverEngagementFreq: FailoverEngagementFrequencySummary? = nil,
+        secondarySourceDiversity: SecondarySourceDiversitySummary? = nil,
+        weeklyPoolReserve: WeeklyPoolReserveCapacitySummary? = nil,
+        statusBoardSinceCoverage: StatusBoardSinceCoverageSummary? = nil,
         auditTimeline: [AuditEventItem]? = [],
         markdownReport: String? = nil,
         preferences: PreferencesSummary? = nil,
@@ -273,6 +283,11 @@ public struct ControlCenterPayload: Codable {
         self.notificationAutostartPosture = notificationAutostartPosture
         self.sustainableBurnRate = sustainableBurnRate
         self.urgentOwnerRatio = urgentOwnerRatio
+        self.serviceProcessCoverage = serviceProcessCoverage
+        self.failoverEngagementFreq = failoverEngagementFreq
+        self.secondarySourceDiversity = secondarySourceDiversity
+        self.weeklyPoolReserve = weeklyPoolReserve
+        self.statusBoardSinceCoverage = statusBoardSinceCoverage
         self.auditTimeline = auditTimeline
         self.markdownReport = markdownReport
         self.preferences = preferences
@@ -1916,5 +1931,49 @@ public struct UrgentOwnerRatioSummary: Codable {
     public var normalCount: Int
     public var urgentRatioPct: Int
     public var status: String
+    public var summary: String
+}
+
+public struct ServiceProcessCoverageSummary: Codable {
+    public var totalDaemons: Int
+    public var activePidCount: Int
+    public var coveragePct: Int
+    public var missingPidLabels: [String]?
+    public var status: String
+    public var summary: String
+}
+
+public struct FailoverEngagementFrequencySummary: Codable {
+    public var failoverCount24h: Int
+    public var status: String
+    public var summary: String
+}
+
+public struct SecondarySourceDiversitySummary: Codable {
+    public var totalProviders: Int
+    public var distinctActiveSources: Int
+    public var pluginJsonCount: Int
+    public var polyctlQuotaCount: Int
+    public var apicreditsCount: Int
+    public var unreadableCount: Int
+    public var summary: String
+}
+
+public struct WeeklyPoolReserveCapacitySummary: Codable {
+    public var enabledCount: Int
+    public var totalRemainingSevenDayPct: Double
+    public var avgRemainingSevenDayPct: Double
+    public var topReserveAccount: String?
+    public var topReservePct: Double
+    public var status: String
+    public var summary: String
+}
+
+public struct StatusBoardSinceCoverageSummary: Codable {
+    public var totalRows: Int
+    public var trackedRows: Int
+    public var coveragePct: Int
+    public var maxDurationMinutes: Int?
+    public var longestTrackedLabel: String?
     public var summary: String
 }

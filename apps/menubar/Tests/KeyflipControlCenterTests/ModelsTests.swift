@@ -433,6 +433,21 @@ public enum ModelsTestSuite {
         let r21Decoded = try JSONDecoder().decode(SustainablePoolBurnRateSummary.self, from: r21Json)
         precondition(r21Decoded.sustainable == false && r21Decoded.fastestBurningAccount == "gmail", "SustainablePoolBurnRateSummary must decode accurately")
 
+        // Round 22 decoding check for WeeklyPoolReserveCapacitySummary & StatusBoardSinceCoverageSummary
+        let r22Json = """
+        {
+          "enabledCount": 2,
+          "totalRemainingSevenDayPct": 110.0,
+          "avgRemainingSevenDayPct": 55.0,
+          "topReserveAccount": "yahoo",
+          "topReservePct": 80.0,
+          "status": "ample",
+          "summary": "7g havuz rezervi: toplam %110 boş (ort. %55 · en geniş: yahoo %80)"
+        }
+        """.data(using: .utf8)!
+        let r22Decoded = try JSONDecoder().decode(WeeklyPoolReserveCapacitySummary.self, from: r22Json)
+        precondition(r22Decoded.topReserveAccount == "yahoo" && r22Decoded.totalRemainingSevenDayPct == 110.0, "WeeklyPoolReserveCapacitySummary must decode accurately")
+
         // Urgent owner_needed classification test
         let urgentOwner = StatusBoardOwnerItem(project: "prod", text: "ACİL müdahale")
         let normalOwner = StatusBoardOwnerItem(project: "docs", text: "Not ekle")

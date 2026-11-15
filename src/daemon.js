@@ -920,6 +920,13 @@ async function buildControlCenter(ctx, scheduler, opts) {
   base.tokenExpiryHorizon = _controlcenter.summarizeTokenExpiryHorizon(base.accounts);
   base.sustainableBurnRate = _controlcenter.evaluateSustainablePoolBurnRate(base.quotaForecast);
   base.urgentOwnerRatio = _controlcenter.evaluateUrgentOwnerRatio(base.statusBoard);
+  base.serviceProcessCoverage = _controlcenter.summarizeServiceProcessCoverage(base.services);
+  base.failoverEngagementFreq = _controlcenter.evaluateFailoverEngagementFrequency(base.dailyAuditActivity);
+  base.secondarySourceDiversity = _controlcenter.evaluateSecondarySourceDiversity(base.otherQuotas);
+  base.weeklyPoolReserve = _controlcenter.evaluateWeeklyPoolReserveCapacity(base.accounts);
+  base.statusBoardSinceCoverage = _controlcenter.evaluateStatusBoardSinceCoverage(base.statusBoard, {
+    nowMs: opts.nowMs || ctx.nowMs
+  });
   base.compactSummary = _controlcenter.formatDaemonCompactSummary(base);
   base.preferences = _controlcenter.collectPreferences(ctx);
   base.notificationAutostartPosture = _controlcenter.evaluateNotificationAndAutostartPosture(base.preferences, base.config);

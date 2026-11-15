@@ -5406,3 +5406,204 @@ export function evaluateUrgentOwnerRatio(statusBoard) {
         : `Tüm sahiplik maddeleri rutin (${totalCount} madde)`
   };
 }
+
+/**
+ * Summarizes how many daemon-kind local services have an active OS process ID (`pid > 0`).
+ */
+export function summarizeServiceProcessCoverage(services = []) {
+  const list = Array.isArray(services) ? services : [];
+  const daemons = list.filter((s) => s && typeof s === "object" && (s.kind === "daemon" || !s.kind));
+  const totalDaemons = daemons.length;
+
+  if (totalDaemons === 0) {
+    return {
+      totalDaemons: 0,
+      activePidCount: 0,
+      coveragePct: 100,
+      missingPidLabels: [],
+      status: "none",
+      summary: "Daemon türünde izlenen servis yok"
+    };
+  }
+
+  let activePidCount = 0;
+  const missingPidLabels = [];
+  for (const svc of daemons) {
+    if (typeof svc.pid === "number" && svc.pid > 0) {
+      activePidCount += 1;
+    } else {
+      missingPidLabels.push(svc.title || svc.label || svc.id || "Servis");
+    }
+  }
+
+  const coveragePct = Math.round((activePidCount / totalDaemons) * 100);
+  const status = activePidCount === totalDaemons ? "all-running" : activePidCount > 0 ? "partial" : "down";
+
+  return {
+    totalDaemons,
+    activePidCount,
+    coveragePct,
+    missingPidLabels,
+    status,
+    summary:
+      missingPidLabels.length > 0
+        ? `Süreç kapsamı: ${activePidCount}/${totalDaemons} daemon PID aktif (eksik: ${missingPidLabels.join(", ")})`
+        : `Tüm daemon süreçleri aktif (${activePidCount}/${totalDaemons} PID)`
+  };
+}
+
+/**
+ * Classifies 24-hour failover engagement frequency from `dailyAuditActivity`.
+ */
+export function evaluateFailoverEngagementFrequency(dailyAuditActivity = {}) {
+  const failoverCount =
+    typeof dailyAuditActivity?.failoverCount === "number" && dailyAuditActivity.failoverCount >= 0
+      ? dailyAuditActivity.failoverCount
+      : 0;
+  const status =
+    failoverCount >= 4 ? "frequent" : failoverCount >= 2 ? "moderate" : failoverCount === 1 ? "single" : "none";
+
+  return {
+    failoverCount24h: failoverCount,
+    status,
+    summary:
+      failoverCount === 0
+        ? "Son 24 saatte failover tetiklenmedi"
+        : `Son 24s failover sıklığı: ${failoverCount} kez (${status === "frequent" ? "yüksek" : "normal"})`
+  };
+}
+
+/**
+ * Summarizes telemetry source diversity (`plugin-json`, `polyctl-quota`, `apicredits`, `none`) across `otherQuotas`.
+ */
+export function evaluateSecondarySourceDiversity(otherQuotas = []) {
+  const list = Array.isArray(otherQuotas) ? otherQuotas : [];
+  const counts = {
+    pluginJsonCount: 0,
+    polyctlQuotaCount: 0,
+    apicreditsCount: 0,
+    unreadableCount: 0
+  };
+  const activeSources = new Set();
+
+  for (const q of list) {
+    if (!q || typeof q !== "object") continue;
+    const src = String(q.source || "none");
+    if (src === "plugin-json") {
+      counts.pluginJsonCount += 1;
+      activeSources.add("plugin-json");
+    } else if (src === "polyctl-quota") {
+      counts.polyctlQuotaCount += 1;
+      activeSources.add("polyctl-quota");
+    } else if (src === "apicredits") {
+      counts.apicreditsCount += 1;
+      activeSources.add("apicredits");
+    } else {
+      counts.unreadableCount += 1;
+    }
+  }
+
+  return {
+    totalProviders: list.length,
+    distinctActiveSources: activeSources.size,
+    ...counts,
+    summary: `İkincil kaynak dağılımı: ${activeSources.size} aktif kaynak türü (plugin ${counts.pluginJsonCount}, polyctl ${counts.polyctlQuotaCount}, api ${counts.apicreditsCount})`
+  };
+}
+
+/**
+ * Computes the combined 7-day remaining capacity across enabled Claude accounts and identifies
+ * the account with the largest weekly reserve.
+ */
+export function evaluateWeeklyPoolReserveCapacity(accounts = []) {
+  const enabled = (Array.isArray(accounts) ? accounts : []).filter((a) => a && a.enabled !== false);
+  if (enabled.length === 0) {
+    return {
+      enabledCount: 0,
+      totalRemainingSevenDayPct: 0,
+      avgRemainingSevenDayPct: 0,
+      topReserveAccount: null,
+      topReservePct: 0,
+      status: "empty",
+      summary: "Etkin hesap yok"
+    };
+  }
+
+  let totalRemainingSevenDayPct = 0;
+  let topReserveAccount = null;
+  let topReservePct = -1;
+
+  for (const acct of enabled) {
+    const seven =
+      typeof acct?.usage?.sevenDay?.pct === "number"
+        ? acct.usage.sevenDay.pct
+        : typeof acct?.sevenDayPct === "number"
+          ? acct.sevenDayPct
+          : 0;
+    const rem = Math.max(0, Math.min(100, 100 - seven));
+    totalRemainingSevenDayPct += rem;
+    if (rem > topReservePct) {
+      topReservePct = rem;
+      topReserveAccount = acct.name;
+    }
+  }
+
+  totalRemainingSevenDayPct = Math.round(totalRemainingSevenDayPct * 10) / 10;
+  const avgRemainingSevenDayPct = Math.round((totalRemainingSevenDayPct / enabled.length) * 10) / 10;
+  topReservePct = Math.max(0, Math.round(topReservePct * 10) / 10);
+  const status = avgRemainingSevenDayPct >= 40 ? "ample" : avgRemainingSevenDayPct >= 15 ? "moderate" : "low";
+
+  return {
+    enabledCount: enabled.length,
+    totalRemainingSevenDayPct,
+    avgRemainingSevenDayPct,
+    topReserveAccount,
+    topReservePct,
+    status,
+    summary: `7g havuz rezervi: toplam %${totalRemainingSevenDayPct} boş (ort. %${avgRemainingSevenDayPct} · en geniş: ${topReserveAccount} %${topReservePct})`
+  };
+}
+
+/**
+ * Computes how many Status Board rows have an active `since` duration timestamp and identifies the longest-running state.
+ */
+export function evaluateStatusBoardSinceCoverage(statusBoard, options = {}) {
+  const nowMs =
+    typeof options.nowMs === "function" ? options.nowMs() : typeof options.nowMs === "number" ? options.nowMs : Date.now();
+  const sections = Array.isArray(statusBoard?.sections) ? statusBoard.sections : [];
+  let totalRows = 0;
+  let trackedRows = 0;
+  let maxDurationMinutes = null;
+  let longestTrackedLabel = null;
+
+  for (const sec of sections) {
+    for (const r of sec?.rows || []) {
+      totalRows += 1;
+      if (r?.since) {
+        const ms = Date.parse(String(r.since));
+        if (Number.isFinite(ms) && nowMs >= ms) {
+          trackedRows += 1;
+          const mins = Math.max(1, Math.round((nowMs - ms) / 60000));
+          if (maxDurationMinutes === null || mins > maxDurationMinutes) {
+            maxDurationMinutes = mins;
+            longestTrackedLabel = r.label || sec?.title || "Satır";
+          }
+        }
+      }
+    }
+  }
+
+  const coveragePct = totalRows > 0 ? Math.round((trackedRows / totalRows) * 100) : 0;
+
+  return {
+    totalRows,
+    trackedRows,
+    coveragePct,
+    maxDurationMinutes,
+    longestTrackedLabel,
+    summary:
+      trackedRows > 0
+        ? `Süreklilik takibi: ${trackedRows}/${totalRows} satır zaman damgalı (en uzun: ${longestTrackedLabel} · ${maxDurationMinutes} dk)`
+        : "Zaman damgalı (since) satır yok"
+  };
+}
