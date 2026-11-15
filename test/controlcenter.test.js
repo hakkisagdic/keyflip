@@ -118,7 +118,12 @@ import {
   evaluateSecondaryQuotaWarningRatio,
   evaluateDaemonActiveWarningPosture,
   evaluatePoolPeakVsFloorSpread,
-  evaluateStatusBoardHealthyRowRatio
+  evaluateStatusBoardHealthyRowRatio,
+  evaluateServiceZeroExitRatio,
+  evaluateFailoverRemainingSessionsEstimate,
+  evaluateAuditRecentSuccessStreak,
+  evaluatePoolLowUtilizationAccountRatio,
+  evaluateStatusBoardDetailCoverage
 } from "../src/controlcenter.js";
 import * as daemon from "../src/daemon.js";
 
@@ -1854,4 +1859,59 @@ test("evaluateServerLoadTrend, evaluateSecondaryQuotaWarningRatio, evaluateDaemo
   assert.equal(sbhr.okCount, 3);
   assert.equal(sbhr.healthyRatioPct, 75);
   assert.equal(sbhr.status, "moderate");
+});
+
+test("evaluateServiceZeroExitRatio, evaluateFailoverRemainingSessionsEstimate, evaluateAuditRecentSuccessStreak, evaluatePoolLowUtilizationAccountRatio, and evaluateStatusBoardDetailCoverage work accurately", () => {
+  const sze = evaluateServiceZeroExitRatio([
+    { label: "daemon", lastExit: 0 },
+    { label: "bridge", lastExit: 1 }
+  ]);
+  assert.equal(sze.totalServices, 2);
+  assert.equal(sze.cleanExitCount, 1);
+  assert.equal(sze.nonZeroExitCount, 1);
+  assert.equal(sze.cleanExitRatioPct, 50);
+  assert.equal(sze.status, "degraded");
+
+  const frs = evaluateFailoverRemainingSessionsEstimate({
+    dailyCapUsd: 15,
+    dailySpentUsd: 3
+  });
+  assert.equal(frs.remainingUsd, 12);
+  assert.equal(frs.estimatedTwoHourSessions, 4);
+  assert.equal(frs.status, "ample");
+
+  const arss = evaluateAuditRecentSuccessStreak([
+    { id: "1", status: "ok" },
+    { id: "2", status: "ok" },
+    { id: "3", status: "bad" },
+    { id: "4", status: "ok" }
+  ]);
+  assert.equal(arss.totalEvents, 4);
+  assert.equal(arss.streakCount, 2);
+  assert.equal(arss.status, "interrupted");
+
+  const plu = evaluatePoolLowUtilizationAccountRatio([
+    { name: "gmail", enabled: true, fiveHourPct: 30, sevenDayPct: 40 },
+    { name: "yahoo", enabled: true, fiveHourPct: 75, sevenDayPct: 60 }
+  ]);
+  assert.equal(plu.enabledCount, 2);
+  assert.equal(plu.lowUtilCount, 1);
+  assert.equal(plu.lowUtilRatioPct, 50);
+  assert.equal(plu.status, "ample_fresh");
+
+  const sbdc = evaluateStatusBoardDetailCoverage({
+    sections: [
+      {
+        id: "s1",
+        rows: [
+          { label: "r1", status: "ok", detail: "healthy" },
+          { label: "r2", status: "ok", detail: "" }
+        ]
+      }
+    ]
+  });
+  assert.equal(sbdc.totalRows, 2);
+  assert.equal(sbdc.detailedRows, 1);
+  assert.equal(sbdc.coveragePct, 50);
+  assert.equal(sbdc.status, "moderate");
 });

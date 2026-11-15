@@ -6204,3 +6204,175 @@ export function evaluateStatusBoardHealthyRowRatio(statusBoard) {
         : "Durum panosunda satır yok"
   };
 }
+
+/**
+ * Computes how many monitored local services have a clean last exit code (lastExit === 0 or null while running).
+ */
+export function evaluateServiceZeroExitRatio(services) {
+  const list = Array.isArray(services) ? services : [];
+  if (list.length === 0) {
+    return {
+      totalServices: 0,
+      cleanExitCount: 0,
+      nonZeroExitCount: 0,
+      cleanExitRatioPct: 100,
+      nonZeroLabels: [],
+      status: "empty",
+      summary: "Servis çıkış kodu oranı: izlenen servis yok"
+    };
+  }
+
+  let cleanExitCount = 0;
+  const nonZeroLabels = [];
+
+  for (const s of list) {
+    const code = s?.lastExit;
+    if (code === 0 || code === null || code === undefined) {
+      cleanExitCount += 1;
+    } else {
+      nonZeroLabels.push(`${s.label || "servis"}(${code})`);
+    }
+  }
+
+  const nonZeroExitCount = list.length - cleanExitCount;
+  const cleanExitRatioPct = Math.round((cleanExitCount / list.length) * 100);
+  const status = nonZeroExitCount === 0 ? "all_clean" : cleanExitRatioPct >= 75 ? "minor_errors" : "degraded";
+
+  return {
+    totalServices: list.length,
+    cleanExitCount,
+    nonZeroExitCount,
+    cleanExitRatioPct,
+    nonZeroLabels,
+    status,
+    summary:
+      nonZeroExitCount === 0
+        ? `Servis çıkış kodları: ${cleanExitCount}/${list.length} hatasız (exit 0 · %100)`
+        : `Servis çıkış kodları: ${nonZeroExitCount}/${list.length} hatalı çıkış (${nonZeroLabels.join(", ")})`
+  };
+}
+
+/**
+ * Estimates how many standard 2-hour coding sessions ($3.00 each) remain within the daily failover spend cap.
+ */
+export function evaluateFailoverRemainingSessionsEstimate(failover) {
+  const f = failover || {};
+  const capUsd = typeof f.dailyCapUsd === "number" && Number.isFinite(f.dailyCapUsd) && f.dailyCapUsd > 0 ? f.dailyCapUsd : 15;
+  const spentUsd = typeof f.dailySpentUsd === "number" && Number.isFinite(f.dailySpentUsd) && f.dailySpentUsd >= 0 ? f.dailySpentUsd : 0;
+  const remainingUsd = Math.max(0, Math.round((capUsd - spentUsd) * 100) / 100);
+  const sessionCostUsd = 3.0;
+  const estimatedTwoHourSessions = Math.round((remainingUsd / sessionCostUsd) * 10) / 10;
+  const status = estimatedTwoHourSessions >= 3 ? "ample" : estimatedTwoHourSessions >= 1 ? "limited" : "exhausted";
+
+  return {
+    remainingUsd,
+    sessionCostUsd,
+    estimatedTwoHourSessions,
+    status,
+    summary: `Failover seans kapasitesi: ~%${Math.round((remainingUsd / capUsd) * 100)} bütçe ile ~${estimatedTwoHourSessions} adet 2s seans ($${remainingUsd.toFixed(2)} kalan)`
+  };
+}
+
+/**
+ * Counts consecutive successful (status === 'ok') events from the start of auditTimeline.
+ */
+export function evaluateAuditRecentSuccessStreak(auditTimeline) {
+  const list = Array.isArray(auditTimeline) ? auditTimeline : [];
+  let streakCount = 0;
+
+  for (const item of list) {
+    const st = String(item?.status || "ok").toLowerCase();
+    if (st === "ok" || st === "success" || st === "good") {
+      streakCount += 1;
+    } else {
+      break;
+    }
+  }
+
+  const totalEvents = list.length;
+  const status = totalEvents === 0 ? "empty" : streakCount === totalEvents ? "unbroken" : streakCount >= 5 ? "solid" : "interrupted";
+
+  return {
+    totalEvents,
+    streakCount,
+    status,
+    summary:
+      totalEvents > 0
+        ? `Denetim başarı serisi: son ${streakCount}/${totalEvents} işlem kesintisiz başarılı`
+        : "Denetim başarı serisi: kayıt yok"
+  };
+}
+
+/**
+ * Computes the count and percentage of enabled Claude accounts that have comfortable headroom (<50% in both 5h and 7d windows).
+ */
+export function evaluatePoolLowUtilizationAccountRatio(accounts) {
+  const list = Array.isArray(accounts) ? accounts : [];
+  const enabled = list.filter((a) => a && a.enabled !== false && !a.needsReauth);
+  if (enabled.length === 0) {
+    return {
+      enabledCount: 0,
+      lowUtilCount: 0,
+      lowUtilRatioPct: 0,
+      status: "empty",
+      summary: "Ferah hesap oranı: etkin hesap yok"
+    };
+  }
+
+  let lowUtilCount = 0;
+  for (const acc of enabled) {
+    const fivePct = typeof acc.fiveHourPct === "number" && Number.isFinite(acc.fiveHourPct) ? acc.fiveHourPct : 0;
+    const sevenPct =
+      typeof acc?.usage?.sevenDay?.pct === "number" && Number.isFinite(acc.usage.sevenDay.pct)
+        ? acc.usage.sevenDay.pct
+        : typeof acc.sevenDayPct === "number" && Number.isFinite(acc.sevenDayPct)
+          ? acc.sevenDayPct
+          : 0;
+    if (fivePct < 50 && sevenPct < 50) {
+      lowUtilCount += 1;
+    }
+  }
+
+  const lowUtilRatioPct = Math.round((lowUtilCount / enabled.length) * 100);
+  const status = lowUtilRatioPct >= 50 ? "ample_fresh" : lowUtilCount > 0 ? "some_fresh" : "all_loaded";
+
+  return {
+    enabledCount: enabled.length,
+    lowUtilCount,
+    lowUtilRatioPct,
+    status,
+    summary: `Ferah hesap oranı (<%50 5s/7g): ${lowUtilCount}/${enabled.length} hesap (%${lowUtilRatioPct})`
+  };
+}
+
+/**
+ * Computes the percentage of Status Board rows that carry non-empty detail context.
+ */
+export function evaluateStatusBoardDetailCoverage(statusBoard) {
+  const sections = Array.isArray(statusBoard?.sections) ? statusBoard.sections : [];
+  let totalRows = 0;
+  let detailedRows = 0;
+
+  for (const sec of sections) {
+    for (const r of sec?.rows || []) {
+      totalRows += 1;
+      if (typeof r?.detail === "string" && r.detail.trim().length > 0) {
+        detailedRows += 1;
+      }
+    }
+  }
+
+  const coveragePct = totalRows > 0 ? Math.round((detailedRows / totalRows) * 100) : 0;
+  const status = totalRows === 0 ? "empty" : coveragePct >= 60 ? "rich" : coveragePct >= 30 ? "moderate" : "sparse";
+
+  return {
+    totalRows,
+    detailedRows,
+    coveragePct,
+    status,
+    summary:
+      totalRows > 0
+        ? `Detay açıklama kapsamı: ${detailedRows}/${totalRows} satır detaylı (%${coveragePct})`
+        : "Durum panosunda satır yok"
+  };
+}

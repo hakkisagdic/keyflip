@@ -108,6 +108,11 @@ public struct ControlCenterPayload: Codable {
     public var daemonActiveWarningPosture: DaemonActiveWarningPostureSummary?
     public var poolPeakVsFloorSpread: PoolPeakVsFloorSpreadSummary?
     public var statusBoardHealthyRowRatio: StatusBoardHealthyRowRatioSummary?
+    public var serviceZeroExitRatio: ServiceZeroExitRatioSummary?
+    public var failoverRemainingSessions: FailoverRemainingSessionsEstimateSummary?
+    public var auditRecentSuccessStreak: AuditRecentSuccessStreakSummary?
+    public var poolLowUtilRatio: PoolLowUtilizationAccountRatioSummary?
+    public var statusBoardDetailCoverage: StatusBoardDetailCoverageSummary?
     public var auditTimeline: [AuditEventItem]?
     public var markdownReport: String?
     public var preferences: PreferencesSummary?
@@ -221,6 +226,11 @@ public struct ControlCenterPayload: Codable {
         daemonActiveWarningPosture: DaemonActiveWarningPostureSummary? = nil,
         poolPeakVsFloorSpread: PoolPeakVsFloorSpreadSummary? = nil,
         statusBoardHealthyRowRatio: StatusBoardHealthyRowRatioSummary? = nil,
+        serviceZeroExitRatio: ServiceZeroExitRatioSummary? = nil,
+        failoverRemainingSessions: FailoverRemainingSessionsEstimateSummary? = nil,
+        auditRecentSuccessStreak: AuditRecentSuccessStreakSummary? = nil,
+        poolLowUtilRatio: PoolLowUtilizationAccountRatioSummary? = nil,
+        statusBoardDetailCoverage: StatusBoardDetailCoverageSummary? = nil,
         auditTimeline: [AuditEventItem]? = [],
         markdownReport: String? = nil,
         preferences: PreferencesSummary? = nil,
@@ -333,6 +343,11 @@ public struct ControlCenterPayload: Codable {
         self.daemonActiveWarningPosture = daemonActiveWarningPosture
         self.poolPeakVsFloorSpread = poolPeakVsFloorSpread
         self.statusBoardHealthyRowRatio = statusBoardHealthyRowRatio
+        self.serviceZeroExitRatio = serviceZeroExitRatio
+        self.failoverRemainingSessions = failoverRemainingSessions
+        self.auditRecentSuccessStreak = auditRecentSuccessStreak
+        self.poolLowUtilRatio = poolLowUtilRatio
+        self.statusBoardDetailCoverage = statusBoardDetailCoverage
         self.auditTimeline = auditTimeline
         self.markdownReport = markdownReport
         self.preferences = preferences
@@ -2159,6 +2174,47 @@ public struct StatusBoardHealthyRowRatioSummary: Codable {
     public var totalRows: Int
     public var okCount: Int
     public var healthyRatioPct: Int
+    public var status: String
+    public var summary: String
+}
+
+public struct ServiceZeroExitRatioSummary: Codable {
+    public var totalServices: Int
+    public var cleanExitCount: Int
+    public var nonZeroExitCount: Int
+    public var cleanExitRatioPct: Int
+    public var nonZeroLabels: [String]?
+    public var status: String
+    public var summary: String
+}
+
+public struct FailoverRemainingSessionsEstimateSummary: Codable {
+    public var remainingUsd: Double
+    public var sessionCostUsd: Double
+    public var estimatedTwoHourSessions: Double
+    public var status: String
+    public var summary: String
+}
+
+public struct AuditRecentSuccessStreakSummary: Codable {
+    public var totalEvents: Int
+    public var streakCount: Int
+    public var status: String
+    public var summary: String
+}
+
+public struct PoolLowUtilizationAccountRatioSummary: Codable {
+    public var enabledCount: Int
+    public var lowUtilCount: Int
+    public var lowUtilRatioPct: Int
+    public var status: String
+    public var summary: String
+}
+
+public struct StatusBoardDetailCoverageSummary: Codable {
+    public var totalRows: Int
+    public var detailedRows: Int
+    public var coveragePct: Int
     public var status: String
     public var summary: String
 }

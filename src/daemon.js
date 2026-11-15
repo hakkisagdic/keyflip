@@ -942,6 +942,11 @@ async function buildControlCenter(ctx, scheduler, opts) {
   base.daemonActiveWarningPosture = _controlcenter.evaluateDaemonActiveWarningPosture(base.daemonRunning, base.warnings);
   base.poolPeakVsFloorSpread = _controlcenter.evaluatePoolPeakVsFloorSpread(base.accounts);
   base.statusBoardHealthyRowRatio = _controlcenter.evaluateStatusBoardHealthyRowRatio(base.statusBoard);
+  base.serviceZeroExitRatio = _controlcenter.evaluateServiceZeroExitRatio(base.services);
+  base.failoverRemainingSessions = _controlcenter.evaluateFailoverRemainingSessionsEstimate(base.failover);
+  base.auditRecentSuccessStreak = _controlcenter.evaluateAuditRecentSuccessStreak(base.auditTimeline);
+  base.poolLowUtilRatio = _controlcenter.evaluatePoolLowUtilizationAccountRatio(base.accounts);
+  base.statusBoardDetailCoverage = _controlcenter.evaluateStatusBoardDetailCoverage(base.statusBoard);
   base.compactSummary = _controlcenter.formatDaemonCompactSummary(base);
   base.preferences = _controlcenter.collectPreferences(ctx);
   base.notificationAutostartPosture = _controlcenter.evaluateNotificationAndAutostartPosture(base.preferences, base.config);

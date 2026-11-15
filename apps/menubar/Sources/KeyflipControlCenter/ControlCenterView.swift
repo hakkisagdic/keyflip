@@ -300,7 +300,19 @@ public struct ControlCenterView: View {
                 .background(Color.secondary.opacity(0.08))
                 .cornerRadius(4)
 
-                if let sbhr = viewModel.payload.statusBoardHealthyRowRatio, sbhr.totalRows > 0 {
+                if let sbdc = viewModel.payload.statusBoardDetailCoverage, sbdc.totalRows > 0 {
+                    HStack(spacing: 5) {
+                        Image(systemName: "text.alignleft")
+                            .font(.system(size: 9))
+                            .foregroundColor(.secondary)
+                        Text(sbdc.summary)
+                            .font(.system(size: 9, design: .monospaced))
+                            .foregroundColor(.secondary)
+                            .lineLimit(1)
+                    }
+                }
+
+                                if let sbhr = viewModel.payload.statusBoardHealthyRowRatio, sbhr.totalRows > 0 {
                     HStack(spacing: 5) {
                         Image(systemName: "checkmark.circle")
                             .font(.system(size: 9))
@@ -702,7 +714,19 @@ public struct ControlCenterView: View {
                         }
                     }
 
-                    if let ppf = viewModel.payload.poolPeakVsFloorSpread, ppf.enabledCount >= 2 {
+                    if let plu = viewModel.payload.poolLowUtilRatio, plu.enabledCount > 0 {
+                        HStack(spacing: 5) {
+                            Image(systemName: "leaf.fill")
+                                .font(.system(size: 10))
+                                .foregroundColor(plu.lowUtilCount > 0 ? .green : .secondary)
+                            Text(plu.summary)
+                                .font(.system(size: 10))
+                                .foregroundColor(.secondary)
+                                .lineLimit(1)
+                        }
+                    }
+
+                                        if let ppf = viewModel.payload.poolPeakVsFloorSpread, ppf.enabledCount >= 2 {
                         HStack(spacing: 5) {
                             Image(systemName: "arrow.up.and.down.text.horizontal")
                                 .font(.system(size: 10))
@@ -1089,7 +1113,18 @@ public struct ControlCenterView: View {
                                 .lineLimit(1)
                         }
                     }
-                    if let spc = viewModel.payload.serviceProcessCoverage, spc.totalDaemons > 0, spc.status != "all-running" {
+                    if let sze = viewModel.payload.serviceZeroExitRatio, sze.nonZeroExitCount > 0 {
+                        HStack(spacing: 5) {
+                            Image(systemName: "exclamationmark.octagon")
+                                .font(.system(size: 10))
+                                .foregroundColor(.orange)
+                            Text(sze.summary)
+                                .font(.system(size: 10))
+                                .foregroundColor(.orange)
+                                .lineLimit(1)
+                        }
+                    }
+                                        if let spc = viewModel.payload.serviceProcessCoverage, spc.totalDaemons > 0, spc.status != "all-running" {
                         HStack(spacing: 5) {
                             Image(systemName: "cpu")
                                 .font(.system(size: 10))
