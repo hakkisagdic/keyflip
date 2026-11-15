@@ -108,7 +108,12 @@ import {
   evaluateServerSafetyHeadroom,
   summarizeAuditCategoryBreakdown,
   evaluatePoolAverageFiveHourUtilization,
-  evaluateStatusBoardWarningToBadRatio
+  evaluateStatusBoardWarningToBadRatio,
+  evaluateDaemonAutoRestartPosture,
+  evaluateFailoverGatewayReadiness,
+  evaluateFleetActiveVsDormantRatio,
+  evaluatePoolHealthyStandbyRatio,
+  evaluateStatusBoardSectionAlertSpread
 } from "../src/controlcenter.js";
 import * as daemon from "../src/daemon.js";
 
@@ -1734,4 +1739,55 @@ test("evaluateActiveVsStandbySpread, evaluateServerSafetyHeadroom, summarizeAudi
   assert.equal(sbr.totalProblemRows, 3);
   assert.equal(sbr.earlyWarningRatioPct, 67);
   assert.equal(sbr.status, "critical_present");
+});
+
+test("evaluateDaemonAutoRestartPosture, evaluateFailoverGatewayReadiness, evaluateFleetActiveVsDormantRatio, evaluatePoolHealthyStandbyRatio, and evaluateStatusBoardSectionAlertSpread work accurately", () => {
+  const darp = evaluateDaemonAutoRestartPosture({ "desktop.autoRestart": true }, { pendingRestart: true, safeToRestart: false });
+  assert.equal(darp.autoRestartEnabled, true);
+  assert.equal(darp.pendingRestart, true);
+  assert.equal(darp.safeToRestart, false);
+  assert.equal(darp.status, "pending_deferred");
+
+  const fgr = evaluateFailoverGatewayReadiness({
+    enabled: true,
+    gatewayReady: true,
+    gatewayReason: "ok",
+    engaged: false
+  });
+  assert.equal(fgr.gatewayReady, true);
+  assert.equal(fgr.status, "standby_ready");
+
+  const fav = evaluateFleetActiveVsDormantRatio({
+    readable: true,
+    active: 2,
+    idle: 1,
+    dormant: 3
+  });
+  assert.equal(fav.liveCount, 3);
+  assert.equal(fav.dormantCount, 3);
+  assert.equal(fav.totalCount, 6);
+  assert.equal(fav.liveRatioPct, 50);
+  assert.equal(fav.status, "mostly_live");
+
+  const phs = evaluatePoolHealthyStandbyRatio([
+    { name: "gmail", isActive: true, enabled: true, fiveHourPct: 80, sevenDayPct: 60 },
+    { name: "yahoo", isActive: false, enabled: true, fiveHourPct: 25, sevenDayPct: 30 },
+    { name: "work", isActive: false, enabled: true, fiveHourPct: 85, sevenDayPct: 40 }
+  ]);
+  assert.equal(phs.totalStandbyCount, 2);
+  assert.equal(phs.healthyStandbyCount, 1);
+  assert.equal(phs.healthyStandbyRatioPct, 50);
+  assert.equal(phs.status, "partial");
+
+  const sbas = evaluateStatusBoardSectionAlertSpread({
+    sections: [
+      { id: "s1", title: "Kotalar", rows: [{ label: "r1", status: "warn" }, { label: "r2", status: "bad" }] },
+      { id: "s2", title: "Servisler", rows: [{ label: "r3", status: "ok" }] }
+    ]
+  });
+  assert.equal(sbas.totalSections, 2);
+  assert.equal(sbas.affectedSectionCount, 1);
+  assert.equal(sbas.spreadPct, 50);
+  assert.equal(sbas.mostImpactedSectionTitle, "Kotalar");
+  assert.equal(sbas.status, "widespread");
 });

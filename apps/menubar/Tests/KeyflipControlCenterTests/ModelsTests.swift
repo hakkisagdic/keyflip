@@ -485,6 +485,19 @@ public enum ModelsTestSuite {
         let r23Decoded = try JSONDecoder().decode(PoolAverageFiveHourUtilizationSummary.self, from: r23Json)
         precondition(r23Decoded.enabledCount == 2 && r23Decoded.avgFiveHourPct == 42.5, "PoolAverageFiveHourUtilizationSummary must decode")
 
+        // Round 24 struct decoding check
+        let r24Json = """
+        {
+          "totalStandbyCount": 2,
+          "healthyStandbyCount": 1,
+          "healthyStandbyRatioPct": 50,
+          "status": "partial",
+          "summary": "Sağlıklı yedek oranı: 1/2 yedek hesap hazır"
+        }
+        """.data(using: .utf8)!
+        let r24Decoded = try JSONDecoder().decode(PoolHealthyStandbyRatioSummary.self, from: r24Json)
+        precondition(r24Decoded.totalStandbyCount == 2 && r24Decoded.healthyStandbyRatioPct == 50, "PoolHealthyStandbyRatioSummary must decode")
+
         // Missing file must return nil so section is hidden
         precondition(StatusBoardPayload.load(fromFile: "/tmp/definitely-missing-status-board-99999.json") == nil, "missing file must return nil")
     }

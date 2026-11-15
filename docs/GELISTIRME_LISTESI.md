@@ -114,24 +114,29 @@ Bu liste, `docs/RAKIP_ANALIZI.md` sonucunda belirlenen tüm özelliklerin tamaml
 - [x] **Hesap Havuzu Aktif vs Yedek Hesap Kota Makası (`evaluateActiveVsStandbySpread`):** Aktif Claude hesabının 5 saatlik doluluk yüzdesi ile en boş yedek hesabın doluluk yüzdesi arasındaki farkı (`spreadPct`) analiz ederek erken geçiş fırsatını `HESAPLAR` bölümünde gösterme.
 - [x] **Uzak Sunucu Disk ve Bellek Güvenlik Tamponu (`evaluateServerSafetyHeadroom`):** Uzak sunucudaki boş RAM ve boş disk yüzdesini (`freeMemoryPct`, `freeDiskPct`) hesaplayarak kritik doygunluk sınırına (`%90`) kalan güvenlik payını özetleme.
 - [x] **Denetim Olayları Kategori Dağılım Özeti (`summarizeAuditCategoryBreakdown`):** `auditTimeline` içindeki olayları `switch`, `failover`, `service` ve `other` kategorilerine göre sayarak baskın operasyon türünü raporlama.
+- [x] **Hesap Havuzu 5 Saatlik Ortalama Kullanım Yoğunluğu (`evaluatePoolAverageFiveHourUtilization`):** Etkin Claude hesaplarının 5 saatlik pencerelerindeki ortalama, minimum ve maksimum kullanım yüzdesini `HESAPLAR` bölümünde gösterme.
+- [x] **Durum Panosu Erken Uyarı / Kritik Sorun Dengesi Analizcisi (`evaluateStatusBoardWarningToBadRatio`):** Durum panosundaki toplam sorunlu satırlar içinde erken uyarı (`warn`) satırlarının kritik (`bad`) satırlara oranını gösterme.
+- [x] **Masaüstü Otomatik Yeniden Başlatma Hazırlık Denetçisi (`evaluateDaemonAutoRestartPosture`):** `desktop.autoRestart` yapılandırmasını ve bekleyen masaüstü yeniden başlatma durumunu özetleme.
+- [x] **Failover Gateway Hazırlık ve Yanıt Durumu Özeti (`evaluateFailoverGatewayReadiness`):** Keysmith gateway yoklamasının hazırlık durumunu (`gatewayReady`, `gatewayReason`) ve failover zinciri sağlığını özetleme.
+- [x] **Filo (Traycer) Aktif+Boşta vs Uyuyan Ajan Oranı (`evaluateFleetActiveVsDormantRatio`):** Traycer ajan filosundaki aktif/boşta ajanların uyuyan (`dormant`) ajanlara oranını hesaplayıp `FİLO (TRAYCER)` bölümünde gösterme.
 
 ---
 
 ## 2. Listedeki İşler Tamamlandığı İçin Önerilen Beş Yeni Yaratıcı Özellik (En Değerli İkisi Uygulandı)
 
-### ✅ Yeni Öneri 1 (UYGULANDI): Hesap Havuzu 5 Saatlik Ortalama Kullanım Yoğunluğu (`evaluatePoolAverageFiveHourUtilization`)
-- **Değer:** Etkin Claude hesaplarının 5 saatlik pencerelerindeki ortalama, minimum ve maksimum kullanım yüzdesini (`avgFiveHourPct`, `minFiveHourPct`, `maxFiveHourPct`) hesaplayıp `HESAPLAR` bölümünde gösterir (`5s havuz ortalaması: %40 kullanım (min %20 · maks %60)`).
-- **Uygulama:** `src/controlcenter.js` (`evaluatePoolAverageFiveHourUtilization`), `src/daemon.js` (`base.poolAvgFiveHourUtil`), `Models.swift` (`PoolAverageFiveHourUtilizationSummary`) ve `ControlCenterView.swift`.
+### ✅ Yeni Öneri 1 (UYGULANDI): Hesap Havuzu Sağlıklı Yedek Hesap Oranı Analizcisi (`evaluatePoolHealthyStandbyRatio`)
+- **Değer:** Aktif olmayan etkin yedek Claude hesaplarından kaç tanesinin hem yeniden kimlik doğrulaması gerektirmediğini hem de 5s/7g kotalarının `<%70` altında sağlıklı olduğunu (`healthyStandbyRatioPct`) hesaplayıp `HESAPLAR` bölümünde gösterir (`Sağlıklı yedek oranı: 1/2 yedek hesap hazır (<%70 kota · %50)`).
+- **Uygulama:** `src/controlcenter.js` (`evaluatePoolHealthyStandbyRatio`), `src/daemon.js` (`base.poolHealthyStandby`), `Models.swift` (`PoolHealthyStandbyRatioSummary`) ve `ControlCenterView.swift`.
 
-### ✅ Yeni Öneri 2 (UYGULANDI): Durum Panosu Erken Uyarı / Kritik Sorun Dengesi Analizcisi (`evaluateStatusBoardWarningToBadRatio`)
-- **Değer:** Durum panosundaki toplam sorunlu satırlar içinde erken uyarı (`warn`) satırlarının kritik (`bad`) satırlara oranını (`earlyWarningRatioPct`) hesaplayarak Durum Panosu özetinde gösterir (`Sorun satırı dengesi: 2 uyarı / 1 kritik (%67 erken uyarı)`).
-- **Uygulama:** `src/controlcenter.js` (`evaluateStatusBoardWarningToBadRatio`), `src/daemon.js` (`base.statusBoardWarnBadRatio`), `Models.swift` (`StatusBoardWarningToBadRatioSummary`) ve `ControlCenterView.swift`.
+### ✅ Yeni Öneri 2 (UYGULANDI): Durum Panosu Bölüm Bazlı Uyarı Yayılım Analizcisi (`evaluateStatusBoardSectionAlertSpread`)
+- **Değer:** Durum panosundaki toplam bölümlerden kaç tanesinin en az bir `bad` veya `warn` satırı içerdiğini (`spreadPct`) ve en çok sorun barındıran bölümü (`mostImpactedSectionTitle`) hesaplayarak Durum Panosu kartında gösterir (`Bölüm uyarı yayılımı: 1/2 bölüm etkileniyor (%50 · en yoğun: Kotalar)`).
+- **Uygulama:** `src/controlcenter.js` (`evaluateStatusBoardSectionAlertSpread`), `src/daemon.js` (`base.statusBoardAlertSpread`), `Models.swift` (`StatusBoardSectionAlertSpreadSummary`) ve `ControlCenterView.swift`.
 
-### 📋 Yeni Öneri 3 (Gelecek Adayı): Masaüstü Otomatik Yeniden Başlatma Hazırlık Denetçisi (`evaluateDaemonAutoRestartPosture`)
-- **Değer:** `desktop.autoRestart` yapılandırmasını ve bekleyen masaüstü yeniden başlatma durumunu özetleme.
+### 📋 Yeni Öneri 3 (Gelecek Adayı): Uzak Sunucu Load Average Eğilim Analizcisi (`evaluateServerLoadTrend`)
+- **Değer:** Uzak sunucunun `1m / 5m / 15m` yük ortalaması dizgesini ayrıştırarak yükün yükselişte (`rising`), dengede (`steady`) veya düşüşte (`falling`) olduğunu özetleme.
 
-### 📋 Yeni Öneri 4 (Gelecek Adayı): Failover Gateway Hazırlık ve Yanıt Durumu Özeti (`evaluateFailoverGatewayReadiness`)
-- **Değer:** Keysmith gateway yoklamasının hazırlık durumunu (`gatewayReady`, `gatewayReason`) ve failover zinciri sağlığını tek satırda özetleme.
+### 📋 Yeni Öneri 4 (Gelecek Adayı): İkincil Sağlayıcılar Uyarı/Tükenmişlik Oranı (`evaluateSecondaryQuotaWarningRatio`)
+- **Değer:** Okunabilen ikincil kota sağlayıcılarından (`otherQuotas`) kaçının `warning` veya `exhausted` durumunda olduğunu yüzdesel olarak özetleme.
 
-### 📋 Yeni Öneri 5 (Gelecek Adayı): Filo (Traycer) Aktif+Boşta vs Uyuyan Ajan Oranı (`evaluateFleetActiveVsDormantRatio`)
-- **Değer:** Traycer ajan filosundaki aktif/boşta ajanların uyuyan (`dormant`) ajanlara oranını hesaplama.
+### 📋 Yeni Öneri 5 (Gelecek Adayı): Daemon Aktif Uyarı ve Sağlık Durumu Özeti (`evaluateDaemonActiveWarningPosture`)
+- **Değer:** Daemon üzerindeki aktif uyarı sayısını ve çalışma sağlığını tek satırlık özet olarak raporlama.

@@ -98,6 +98,11 @@ public struct ControlCenterPayload: Codable {
     public var auditCategoryBreakdown: AuditCategoryBreakdownSummary?
     public var poolAvgFiveHourUtil: PoolAverageFiveHourUtilizationSummary?
     public var statusBoardWarnBadRatio: StatusBoardWarningToBadRatioSummary?
+    public var daemonAutoRestartPosture: DaemonAutoRestartPostureSummary?
+    public var failoverGatewayReadiness: FailoverGatewayReadinessSummary?
+    public var fleetActiveVsDormant: FleetActiveVsDormantRatioSummary?
+    public var poolHealthyStandby: PoolHealthyStandbyRatioSummary?
+    public var statusBoardAlertSpread: StatusBoardSectionAlertSpreadSummary?
     public var auditTimeline: [AuditEventItem]?
     public var markdownReport: String?
     public var preferences: PreferencesSummary?
@@ -201,6 +206,11 @@ public struct ControlCenterPayload: Codable {
         auditCategoryBreakdown: AuditCategoryBreakdownSummary? = nil,
         poolAvgFiveHourUtil: PoolAverageFiveHourUtilizationSummary? = nil,
         statusBoardWarnBadRatio: StatusBoardWarningToBadRatioSummary? = nil,
+        daemonAutoRestartPosture: DaemonAutoRestartPostureSummary? = nil,
+        failoverGatewayReadiness: FailoverGatewayReadinessSummary? = nil,
+        fleetActiveVsDormant: FleetActiveVsDormantRatioSummary? = nil,
+        poolHealthyStandby: PoolHealthyStandbyRatioSummary? = nil,
+        statusBoardAlertSpread: StatusBoardSectionAlertSpreadSummary? = nil,
         auditTimeline: [AuditEventItem]? = [],
         markdownReport: String? = nil,
         preferences: PreferencesSummary? = nil,
@@ -303,6 +313,11 @@ public struct ControlCenterPayload: Codable {
         self.auditCategoryBreakdown = auditCategoryBreakdown
         self.poolAvgFiveHourUtil = poolAvgFiveHourUtil
         self.statusBoardWarnBadRatio = statusBoardWarnBadRatio
+        self.daemonAutoRestartPosture = daemonAutoRestartPosture
+        self.failoverGatewayReadiness = failoverGatewayReadiness
+        self.fleetActiveVsDormant = fleetActiveVsDormant
+        self.poolHealthyStandby = poolHealthyStandby
+        self.statusBoardAlertSpread = statusBoardAlertSpread
         self.auditTimeline = auditTimeline
         self.markdownReport = markdownReport
         self.preferences = preferences
@@ -2039,6 +2054,50 @@ public struct StatusBoardWarningToBadRatioSummary: Codable {
     public var badCount: Int
     public var totalProblemRows: Int
     public var earlyWarningRatioPct: Int
+    public var status: String
+    public var summary: String
+}
+
+public struct DaemonAutoRestartPostureSummary: Codable {
+    public var autoRestartEnabled: Bool
+    public var pendingRestart: Bool
+    public var safeToRestart: Bool
+    public var status: String
+    public var summary: String
+}
+
+public struct FailoverGatewayReadinessSummary: Codable {
+    public var enabled: Bool
+    public var gatewayReady: Bool
+    public var gatewayReason: String
+    public var engaged: Bool
+    public var status: String
+    public var summary: String
+}
+
+public struct FleetActiveVsDormantRatioSummary: Codable {
+    public var readable: Bool
+    public var liveCount: Int
+    public var dormantCount: Int
+    public var totalCount: Int
+    public var liveRatioPct: Int?
+    public var status: String
+    public var summary: String
+}
+
+public struct PoolHealthyStandbyRatioSummary: Codable {
+    public var totalStandbyCount: Int
+    public var healthyStandbyCount: Int
+    public var healthyStandbyRatioPct: Int
+    public var status: String
+    public var summary: String
+}
+
+public struct StatusBoardSectionAlertSpreadSummary: Codable {
+    public var totalSections: Int
+    public var affectedSectionCount: Int
+    public var spreadPct: Int
+    public var mostImpactedSectionTitle: String?
     public var status: String
     public var summary: String
 }

@@ -300,7 +300,19 @@ public struct ControlCenterView: View {
                 .background(Color.secondary.opacity(0.08))
                 .cornerRadius(4)
 
-                if let sbr = viewModel.payload.statusBoardWarnBadRatio, sbr.totalProblemRows > 0 {
+                if let sbas = viewModel.payload.statusBoardAlertSpread, sbas.affectedSectionCount > 0 {
+                    HStack(spacing: 5) {
+                        Image(systemName: "square.grid.2x2")
+                            .font(.system(size: 9))
+                            .foregroundColor(sbas.status == "widespread" ? .orange : .secondary)
+                        Text(sbas.summary)
+                            .font(.system(size: 9, design: .monospaced))
+                            .foregroundColor(.secondary)
+                            .lineLimit(1)
+                    }
+                }
+
+                                if let sbr = viewModel.payload.statusBoardWarnBadRatio, sbr.totalProblemRows > 0 {
                     HStack(spacing: 5) {
                         Image(systemName: "exclamationmark.I")
                             .font(.system(size: 9))
@@ -678,7 +690,19 @@ public struct ControlCenterView: View {
                         }
                     }
 
-                    if let paf = viewModel.payload.poolAvgFiveHourUtil, paf.enabledCount > 0 {
+                    if let phs = viewModel.payload.poolHealthyStandby, phs.totalStandbyCount > 0 {
+                        HStack(spacing: 5) {
+                            Image(systemName: "person.2.badge.gearshape")
+                                .font(.system(size: 10))
+                                .foregroundColor(phs.status == "depleted" ? .orange : .secondary)
+                            Text(phs.summary)
+                                .font(.system(size: 10))
+                                .foregroundColor(phs.status == "depleted" ? .orange : .secondary)
+                                .lineLimit(1)
+                        }
+                    }
+
+                                        if let paf = viewModel.payload.poolAvgFiveHourUtil, paf.enabledCount > 0 {
                         HStack(spacing: 5) {
                             Image(systemName: "chart.bar.xaxis")
                                 .font(.system(size: 10))
@@ -1123,7 +1147,12 @@ public struct ControlCenterView: View {
                             .font(.system(size: 10))
                             .foregroundColor(.secondary)
                     }
-                    if let fir = viewModel.payload.fleetIdleReserve, fir.status != "unreadable" {
+                    if let fav = viewModel.payload.fleetActiveVsDormant, fav.readable && fav.totalCount > 0 {
+                        Text(fav.summary)
+                            .font(.system(size: 10))
+                            .foregroundColor(.secondary)
+                    }
+                                        if let fir = viewModel.payload.fleetIdleReserve, fir.status != "unreadable" {
                         Text(fir.summary)
                             .font(.system(size: 10))
                             .foregroundColor(fir.status == "saturated" ? .orange : .secondary)

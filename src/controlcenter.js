@@ -5824,3 +5824,186 @@ export function evaluateStatusBoardWarningToBadRatio(statusBoard) {
         : "Sorunlu (warn/bad) satır yok"
   };
 }
+
+/**
+ * Summarizes desktop.autoRestart setting and pending desktop restart posture.
+ */
+export function evaluateDaemonAutoRestartPosture(config, desktopRestartSafety) {
+  const autoRestartEnabled = Boolean(config && config["desktop.autoRestart"]);
+  const pendingRestart = Boolean(desktopRestartSafety && desktopRestartSafety.pendingRestart);
+  const safeToRestart = desktopRestartSafety ? Boolean(desktopRestartSafety.safeToRestart) : true;
+  const status = pendingRestart
+    ? safeToRestart
+      ? "pending_ready"
+      : "pending_deferred"
+    : autoRestartEnabled
+      ? "armed"
+      : "manual_only";
+
+  return {
+    autoRestartEnabled,
+    pendingRestart,
+    safeToRestart,
+    status,
+    summary: pendingRestart
+      ? `Masaüstü yeniden başlatma bekliyor (${safeToRestart ? "uygun" : "ertelendi"})`
+      : `Masaüstü oto-yeniden başlatma: ${autoRestartEnabled ? "açık" : "manuel"}`
+  };
+}
+
+/**
+ * Summarizes Keysmith gateway probe readiness and failover chain status.
+ */
+export function evaluateFailoverGatewayReadiness(failover) {
+  const f = failover || {};
+  const enabled = Boolean(f.enabled);
+  const gatewayReady = Boolean(f.gatewayReady);
+  const gatewayReason = f.gatewayReason ? String(f.gatewayReason) : gatewayReady ? "ok" : "unprobed";
+  const engaged = Boolean(f.engaged);
+  const status = gatewayReady ? (engaged ? "engaged_ready" : "standby_ready") : enabled ? "degraded" : "disabled";
+
+  return {
+    enabled,
+    gatewayReady,
+    gatewayReason,
+    engaged,
+    status,
+    summary: gatewayReady
+      ? `Failover ağ geçidi hazır (${engaged ? "aktif devrede" : "beklemede"})`
+      : enabled
+        ? `Failover ağ geçidi hazır değil (${gatewayReason})`
+        : "Failover devre dışı"
+  };
+}
+
+/**
+ * Computes the ratio of active+idle (live) agents vs dormant agents in the Traycer fleet.
+ */
+export function evaluateFleetActiveVsDormantRatio(fleet) {
+  if (!fleet || fleet.readable === false) {
+    return {
+      readable: false,
+      liveCount: 0,
+      dormantCount: 0,
+      totalCount: 0,
+      liveRatioPct: null,
+      status: "unreadable",
+      summary: "Filo canlı/uyuyan oranı okunamadı"
+    };
+  }
+
+  const active = typeof fleet.active === "number" && Number.isFinite(fleet.active) ? Math.max(0, fleet.active) : 0;
+  const idle = typeof fleet.idle === "number" && Number.isFinite(fleet.idle) ? Math.max(0, fleet.idle) : 0;
+  const dormant = typeof fleet.dormant === "number" && Number.isFinite(fleet.dormant) ? Math.max(0, fleet.dormant) : 0;
+  const liveCount = active + idle;
+  const totalCount = liveCount + dormant;
+  const liveRatioPct = totalCount > 0 ? Math.round((liveCount / totalCount) * 100) : 0;
+  const status = totalCount === 0 ? "empty" : liveRatioPct >= 50 ? "mostly_live" : "mostly_dormant";
+
+  return {
+    readable: true,
+    liveCount,
+    dormantCount: dormant,
+    totalCount,
+    liveRatioPct,
+    status,
+    summary:
+      totalCount > 0
+        ? `Filo canlılık oranı: ${liveCount} canlı / ${dormant} uyuyan (%${liveRatioPct} hazır/aktif)`
+        : "Filo ajanı kayıtlı değil"
+  };
+}
+
+/**
+ * Computes the count and percentage of standby (non-active, enabled) Claude accounts that are healthy and below 70% usage.
+ */
+export function evaluatePoolHealthyStandbyRatio(accounts) {
+  const list = Array.isArray(accounts) ? accounts : [];
+  const standbys = list.filter((a) => a && a.enabled !== false && !a.isActive);
+  if (standbys.length === 0) {
+    return {
+      totalStandbyCount: 0,
+      healthyStandbyCount: 0,
+      healthyStandbyRatioPct: 0,
+      status: "no_standby",
+      summary: "Yedek hesap sağlığı: etkin yedek hesap yok"
+    };
+  }
+
+  let healthyStandbyCount = 0;
+  for (const s of standbys) {
+    const fivePct = typeof s.fiveHourPct === "number" && Number.isFinite(s.fiveHourPct) ? s.fiveHourPct : 0;
+    const sevenPct = typeof s?.usage?.sevenDay?.pct === "number" && Number.isFinite(s.usage.sevenDay.pct)
+      ? s.usage.sevenDay.pct
+      : typeof s.sevenDayPct === "number" && Number.isFinite(s.sevenDayPct)
+        ? s.sevenDayPct
+        : 0;
+    if (!s.needsReauth && fivePct < 70 && sevenPct < 70) {
+      healthyStandbyCount += 1;
+    }
+  }
+
+  const healthyStandbyRatioPct = Math.round((healthyStandbyCount / standbys.length) * 100);
+  const status = healthyStandbyCount === standbys.length ? "all_healthy" : healthyStandbyCount > 0 ? "partial" : "depleted";
+
+  return {
+    totalStandbyCount: standbys.length,
+    healthyStandbyCount,
+    healthyStandbyRatioPct,
+    status,
+    summary: `Sağlıklı yedek oranı: ${healthyStandbyCount}/${standbys.length} yedek hesap hazır (<%70 kota · %${healthyStandbyRatioPct})`
+  };
+}
+
+/**
+ * Computes how many distinct Status Board sections have at least one bad or warn row.
+ */
+export function evaluateStatusBoardSectionAlertSpread(statusBoard) {
+  const sections = Array.isArray(statusBoard?.sections) ? statusBoard.sections : [];
+  if (sections.length === 0) {
+    return {
+      totalSections: 0,
+      affectedSectionCount: 0,
+      spreadPct: 0,
+      mostImpactedSectionTitle: null,
+      status: "empty",
+      summary: "Bölüm uyarı yayılımı: bölüm yok"
+    };
+  }
+
+  let affectedSectionCount = 0;
+  let maxIssues = 0;
+  let mostImpactedSectionTitle = null;
+
+  for (const sec of sections) {
+    let secIssues = 0;
+    for (const r of sec?.rows || []) {
+      const st = String(r?.status || "").toLowerCase();
+      if (st === "bad" || st === "warn") {
+        secIssues += 1;
+      }
+    }
+    if (secIssues > 0) {
+      affectedSectionCount += 1;
+      if (secIssues > maxIssues) {
+        maxIssues = secIssues;
+        mostImpactedSectionTitle = sec?.title || sec?.id || "Bölüm";
+      }
+    }
+  }
+
+  const spreadPct = Math.round((affectedSectionCount / sections.length) * 100);
+  const status = affectedSectionCount === 0 ? "clean" : spreadPct >= 50 ? "widespread" : "localized";
+
+  return {
+    totalSections: sections.length,
+    affectedSectionCount,
+    spreadPct,
+    mostImpactedSectionTitle,
+    status,
+    summary:
+      affectedSectionCount > 0
+        ? `Bölüm uyarı yayılımı: ${affectedSectionCount}/${sections.length} bölüm etkileniyor (%${spreadPct} · en yoğun: ${mostImpactedSectionTitle})`
+        : `Bölüm uyarı yayılımı: 0/${sections.length} bölüm sorunsuz`
+  };
+}
