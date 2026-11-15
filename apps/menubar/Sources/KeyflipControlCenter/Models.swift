@@ -48,6 +48,11 @@ public struct ControlCenterPayload: Codable {
     public var extraUsagePool: ExtraUsageCreditsPoolSummary?
     public var usageCacheFreshness: UsageCacheFreshnessSummary?
     public var backupGuardianContinuity: BackupGuardianContinuitySummary?
+    public var legacyLaunchdCleanliness: LegacyLaunchdCleanlinessSummary?
+    public var otherQuotasFreshness: OtherQuotasFreshnessSummary?
+    public var fleetCapacityReclaim: FleetCapacityReclaimSummary?
+    public var accountTierAlignment: AccountTierAlignmentSummary?
+    public var failoverChainRedundancy: FailoverChainRedundancySummary?
     public var auditTimeline: [AuditEventItem]?
     public var markdownReport: String?
     public var preferences: PreferencesSummary?
@@ -101,6 +106,11 @@ public struct ControlCenterPayload: Codable {
         extraUsagePool: ExtraUsageCreditsPoolSummary? = nil,
         usageCacheFreshness: UsageCacheFreshnessSummary? = nil,
         backupGuardianContinuity: BackupGuardianContinuitySummary? = nil,
+        legacyLaunchdCleanliness: LegacyLaunchdCleanlinessSummary? = nil,
+        otherQuotasFreshness: OtherQuotasFreshnessSummary? = nil,
+        fleetCapacityReclaim: FleetCapacityReclaimSummary? = nil,
+        accountTierAlignment: AccountTierAlignmentSummary? = nil,
+        failoverChainRedundancy: FailoverChainRedundancySummary? = nil,
         auditTimeline: [AuditEventItem]? = [],
         markdownReport: String? = nil,
         preferences: PreferencesSummary? = nil,
@@ -153,6 +163,11 @@ public struct ControlCenterPayload: Codable {
         self.extraUsagePool = extraUsagePool
         self.usageCacheFreshness = usageCacheFreshness
         self.backupGuardianContinuity = backupGuardianContinuity
+        self.legacyLaunchdCleanliness = legacyLaunchdCleanliness
+        self.otherQuotasFreshness = otherQuotasFreshness
+        self.fleetCapacityReclaim = fleetCapacityReclaim
+        self.accountTierAlignment = accountTierAlignment
+        self.failoverChainRedundancy = failoverChainRedundancy
         self.auditTimeline = auditTimeline
         self.markdownReport = markdownReport
         self.preferences = preferences
@@ -1431,5 +1446,48 @@ public struct BackupGuardianContinuitySummary: Codable {
     public var checkedCount: Int
     public var healthyCount: Int
     public var degradedJobs: [String]?
+    public var summary: String
+}
+
+
+public struct LegacyLaunchdCleanlinessSummary: Codable {
+    public var clean: Bool
+    public var lingeringCount: Int
+    public var lingeringLabels: [String]?
+    public var fixCommand: String?
+    public var summary: String
+}
+
+public struct OtherQuotasFreshnessSummary: Codable {
+    public var totalCount: Int
+    public var readableCount: Int
+    public var freshCount: Int
+    public var staleProviders: [String]?
+    public var unreadableProviders: [String]?
+    public var status: String
+    public var summary: String
+}
+
+public struct FleetCapacityReclaimSummary: Codable {
+    public var reclaimableCount: Int
+    public var stuckCount: Int
+    public var dormantCount: Int
+    public var hasReclaimable: Bool
+    public var summary: String
+}
+
+public struct AccountTierAlignmentSummary: Codable {
+    public var aligned: Bool
+    public var activeTier: String?
+    public var recommendedHigherTierAccount: String?
+    public var summary: String
+}
+
+public struct FailoverChainRedundancySummary: Codable {
+    public var enabled: Bool
+    public var legCount: Int
+    public var gatewayReady: Bool
+    public var score: Int
+    public var status: String
     public var summary: String
 }

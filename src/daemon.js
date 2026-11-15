@@ -877,6 +877,13 @@ async function buildControlCenter(ctx, scheduler, opts) {
     nowMs: opts.nowMs || ctx.nowMs
   });
   base.backupGuardianContinuity = _controlcenter.evaluateBackupAndGuardianContinuity(base.services);
+  base.legacyLaunchdCleanliness = _controlcenter.evaluateLegacyLaunchdCleanliness(base.warnings);
+  base.otherQuotasFreshness = _controlcenter.evaluateOtherQuotasFreshness(base.otherQuotas, {
+    nowMs: opts.nowMs || ctx.nowMs
+  });
+  base.fleetCapacityReclaim = _controlcenter.evaluateFleetCapacityReclaim(base.fleet);
+  base.accountTierAlignment = _controlcenter.evaluateAccountTierAlignment(base.accounts);
+  base.failoverChainRedundancy = _controlcenter.evaluateFailoverChainRedundancy(base.failover);
   base.compactSummary = _controlcenter.formatDaemonCompactSummary(base);
   base.preferences = _controlcenter.collectPreferences(ctx);
   base.markdownReport = _controlcenter.buildControlCenterMarkdown(base);

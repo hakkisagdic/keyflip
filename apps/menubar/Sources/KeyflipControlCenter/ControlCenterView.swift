@@ -600,6 +600,18 @@ public struct ControlCenterView: View {
                         }
                     }
 
+                    if let ata = viewModel.payload.accountTierAlignment, !ata.aligned {
+                        HStack(spacing: 5) {
+                            Image(systemName: "arrow.up.right.circle.fill")
+                                .font(.system(size: 10))
+                                .foregroundColor(.accentColor)
+                            Text(ata.summary)
+                                .font(.system(size: 10, weight: .medium))
+                                .foregroundColor(.accentColor)
+                                .lineLimit(1)
+                        }
+                    }
+
                     if let bw = viewModel.payload.bottleneckWindow, !bw.summary.isEmpty {
                         HStack(spacing: 5) {
                             Image(systemName: "gauge.with.dots.needle.67percent")
@@ -768,6 +780,12 @@ public struct ControlCenterView: View {
                     Text(sim.summary)
                         .font(.system(size: 10))
                         .foregroundColor(.secondary)
+                }
+
+                if let fcr = viewModel.payload.failoverChainRedundancy, fcr.enabled {
+                    Text(fcr.summary)
+                        .font(.system(size: 10))
+                        .foregroundColor(fcr.status == "redundant" ? .secondary : .orange)
                 }
 
                 if let sh = fo.spendHealth, let alert = sh.alertReason, !alert.isEmpty {

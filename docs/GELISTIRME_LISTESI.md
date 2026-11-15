@@ -1,6 +1,6 @@
 # Geliştirme Listesi ve Yaratıcı Özellik Önerileri (`GELISTIRME_LISTESI.md`)
 
-Bu liste, `docs/RAKIP_ANALIZI.md` sonucunda belirlenen tüm özelliklerin tamamlanma durumunu ve on üçüncü turda önerilen **beş yeni yaratıcı özelliği** (en değerli ikisi uygulanmış olarak) içerir.
+Bu liste, `docs/RAKIP_ANALIZI.md` sonucunda belirlenen tüm özelliklerin tamamlanma durumunu ve on dördüncü turda önerilen **beş yeni yaratıcı özelliği** (en değerli ikisi uygulanmış olarak) içerir.
 
 ---
 
@@ -68,23 +68,29 @@ Bu liste, `docs/RAKIP_ANALIZI.md` sonucunda belirlenen tüm özelliklerin tamaml
 - [x] **Kullanım Uç Noktası Hız Sınırı (`usageThrottle`) Kurtarma Sayacı (`evaluateUsageThrottleRecovery`):** `Retry-After` sessiz penceresi devredeyken kalan dakikayı ve `strike` seviyesini geri sayım özetine dönüştürme.
 - [x] **Hesaplar Arası Ek Kullanım Kredisi (`extraUsage`) Havuz Özeti (`summarizeExtraUsageCreditsPool`):** Etkin Claude hesaplarında tanımlı `extraUsage` (`usedCredits` / `monthlyLimit`) bakiyelerini toplayarak toplam kalan krediyi raporlama.
 
+- [x] **Hesap Bazlı Kota Önbellek Tazeliği ve Senkronizasyon Sağlığı (`evaluateUsageCacheFreshness`):** Etkin Claude hesaplarının `.usage-cache.json` zaman damgalarını denetleyerek bayatlayan hesapları `HESAPLAR` bölümünde gösterme.
+- [x] **Gece Yedekleri ve Koruyucu Servisler Süreklilik Güvencesi (`evaluateBackupAndGuardianContinuity`):** Zamanlanmış koruyucu işlerin (`nightly-backup`, `embedding-guardian`, `polyctl-admin-tick`) son çıkış kodlarını denetleyerek `SERVİSLER` bölümünde güvence özeti sunma.
+- [x] **Eski Launchd Plist Göç ve Temizlik Denetçisi (`evaluateLegacyLaunchdCleanliness`):** Daemon uyarılarındaki `legacy-launchd` kayıtlarını analiz ederek göç temizlik durumu ve düzeltme komutu üretme.
+- [x] **İkincil AI Sağlayıcıları Kaynak Tazeliği Denetçisi (`evaluateOtherQuotasFreshness`):** `DİĞER KOTALAR` altındaki sağlayıcıların `updatedAt` ve `source` bilgilerini denetleyerek okunamayan veya bayatlayan kaynakları raporlama.
+- [x] **Filo (Traycer) Boşta / Uyuyan Ajan Kapasite Geri Kazanım Önericisi (`evaluateFleetCapacityReclaim`):** `fleet` özetindeki `stuck` ve `dormant` ajan sayılarını analiz ederek geri kazanılabilir ajan yuvası sayısını özetleme.
+
 ---
 
 ## 2. Listedeki İşler Tamamlandığı İçin Önerilen Beş Yeni Yaratıcı Özellik (En Değerli İkisi Uygulandı)
 
-### ✅ Yeni Öneri 1 (UYGULANDI): Hesap Bazlı Kota Önbellek Tazeliği ve Senkronizasyon Sağlığı (`evaluateUsageCacheFreshness`)
-- **Değer:** Etkin Claude hesaplarının `.usage-cache.json` zaman damgalarını (`fetchedAt`, `stale`) denetleyerek hangi hesapların kota verisinin bayatladığını (`Kota verisi bayat (1/2 hesap): yahoo`) tespit eder ve `HESAPLAR` bölümünde uyarır.
-- **Uygulama:** `src/controlcenter.js` (`evaluateUsageCacheFreshness`), `src/daemon.js` (`base.usageCacheFreshness`), `Models.swift` (`UsageCacheFreshnessSummary`) ve `ControlCenterView.swift`.
+### ✅ Yeni Öneri 1 (UYGULANDI): Hesap Katman (Tier) ve Kapasite Öncelik Hizalaması (`evaluateAccountTierAlignment`)
+- **Değer:** Etkin Claude hesapları arasında daha yüksek kapasiteli bir `max-20x` / `max-5x` / `team` aboneliği düşük dolulukla boşta beklerken `pro` katmanındaki bir hesabın aktif kullanılmasını tespit eder (`Katman optimizasyonu: yahoo (max-20x) hesabına geçiş önerilir`) ve `HESAPLAR` bölümünde önerir.
+- **Uygulama:** `src/controlcenter.js` (`evaluateAccountTierAlignment`), `src/daemon.js` (`base.accountTierAlignment`), `Models.swift` (`AccountTierAlignmentSummary`) ve `ControlCenterView.swift`.
 
-### ✅ Yeni Öneri 2 (UYGULANDI): Gece Yedekleri ve Koruyucu Servisler Süreklilik Güvencesi (`evaluateBackupAndGuardianContinuity`)
-- **Değer:** Zamanlanmış koruyucu işlerin (`nightly-backup`, `embedding-guardian`, `polyctl-admin-tick`) son çıkış kodlarını (`lastExitStatus`) ve durumlarını denetleyerek (`Yedekleme ve koruyucu işler sağlıklı (3/3)`) `SERVİSLER` bölümünde güvence özeti sunar.
-- **Uygulama:** `src/controlcenter.js` (`evaluateBackupAndGuardianContinuity`), `src/daemon.js` (`base.backupGuardianContinuity`), `Models.swift` (`BackupGuardianContinuitySummary`) ve `ControlCenterView.swift`.
+### ✅ Yeni Öneri 2 (UYGULANDI): Yedek Zincir (Failover) Ayak Çeşitliliği ve Yedeklilik Analizcisi (`evaluateFailoverChainRedundancy`)
+- **Değer:** Keysmith failover zincirinde (`failover.legs`) kaç adet yedek sağlayıcı ayağı tanımlandığını ve gateway hazırlığını denetleyerek tek ayaklı (`single-leg`) veya çok ayaklı (`Failover zinciri yedekli (2 ayak hazır)`) durumu `YEDEK ZİNCİR` bölümünde gösterir.
+- **Uygulama:** `src/controlcenter.js` (`evaluateFailoverChainRedundancy`), `src/daemon.js` (`base.failoverChainRedundancy`), `Models.swift` (`FailoverChainRedundancySummary`) ve `ControlCenterView.swift`.
 
-### 📋 Yeni Öneri 3 (Gelecek Adayı): Eski Launchd Plist Göç ve Temizlik Denetçisi (`evaluateLegacyLaunchdCleanliness`)
-- **Değer:** Daemon uyarılarındaki `legacy-launchd` kayıtlarını ve eski 4 plist durumunu analiz ederek göç temizlik puanı ve tek komutluk düzeltme özeti üretme.
+### 📋 Yeni Öneri 3 (Gelecek Adayı): Daemon Çalışma Süresi (Uptime) ve Soket Kararlılık Özeti (`evaluateDaemonUptimeStability`)
+- **Değer:** `daemon.uptimeSeconds`, `startedAt` ve `socketPath` bilgilerini analiz ederek daemon çalışma süresini ve yeniden başlatma kararlılığını sınıflandırma.
 
-### 📋 Yeni Öneri 4 (Gelecek Adayı): İkincil AI Sağlayıcıları Kaynak Tazeliği Denetçisi (`evaluateOtherQuotasFreshness`)
-- **Değer:** `DİĞER KOTALAR` altındaki Kiro, Copilot, Antigravity, EVREN ve API Promosyon kaynaklarının `updatedAt` ve `source` bilgilerini denetleyerek okunamayan veya bayatlayan ikincil sağlayıcıları raporlama.
+### 📋 Yeni Öneri 4 (Gelecek Adayı): 5 Saatlik Pencere Senkronize Sıfırlanma Çakışma Tespiti (`detectFiveHourResetCollision`)
+- **Değer:** Birden fazla etkin Claude hesabının 5 saatlik sıfırlanma zamanlarının (`fiveHour.resetsAt`) birbirine `<=20 dk` yakın olup olmadığını tespit ederek aynı anda tükenme riskini raporlama.
 
-### 📋 Yeni Öneri 5 (Gelecek Adayı): Filo (Traycer) Boşta / Uyuyan Ajan Kapasite Geri Kazanım Önericisi (`evaluateFleetCapacityReclaim`)
-- **Değer:** `fleet` özetindeki `idle`, `dormant` ve `stuck` ajan sayılarını analiz ederek geri kazanılabilir ajan yuvası veya temizlenebilir uyuyan ajan sayısını özetleme.
+### 📋 Yeni Öneri 5 (Gelecek Adayı): Durum Panosu `unknown` / Belirsiz Satır Temizlik Denetçisi (`evaluateStatusBoardUnknownNoise`)
+- **Değer:** Durum panosundaki `unknown` durumlu satırların oranını ve hangi bölümlerde yoğunlaştığını hesaplayarak eksik telemetri noktalarını öne çıkarma.

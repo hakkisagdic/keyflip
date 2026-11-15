@@ -58,7 +58,12 @@ import {
   evaluateUsageThrottleRecovery,
   summarizeExtraUsageCreditsPool,
   evaluateUsageCacheFreshness,
-  evaluateBackupAndGuardianContinuity
+  evaluateBackupAndGuardianContinuity,
+  evaluateLegacyLaunchdCleanliness,
+  evaluateOtherQuotasFreshness,
+  evaluateFleetCapacityReclaim,
+  evaluateAccountTierAlignment,
+  evaluateFailoverChainRedundancy
 } from "../src/controlcenter.js";
 import * as daemon from "../src/daemon.js";
 
@@ -1087,4 +1092,78 @@ test("summarizeMultiHostStatusBreakdown, evaluateUsageThrottleRecovery, summariz
   assert.equal(guardian.status, "warning");
   assert.equal(guardian.healthyCount, 1);
   assert.deepEqual(guardian.degradedJobs, ["Embedding Koruyucu"]);
+});
+
+
+test("evaluateLegacyLaunchdCleanliness, evaluateOtherQuotasFreshness, evaluateFleetCapacityReclaim, evaluateAccountTierAlignment, and evaluateFailoverChainRedundancy work accurately", () => {
+  const nowMs = Date.parse("2026-11-15T10:00:00Z");
+
+  const legClean = evaluateLegacyLaunchdCleanliness([
+    {
+      id: "legacy-launchd",
+      severity: "warn",
+      detail: "com.keyflip.refresh, com.keyflip.autoswitch",
+      fix: "keyflip daemon install -y"
+    }
+  ]);
+  assert.equal(legClean.clean, false);
+  assert.equal(legClean.lingeringCount, 2);
+  assert.deepEqual(legClean.lingeringLabels, ["com.keyflip.refresh", "com.keyflip.autoswitch"]);
+
+  const oqFresh = evaluateOtherQuotasFreshness(
+    [
+      { id: "kiro", label: "Kiro", status: "ok", source: "polyctl-quota", updatedAt: "2026-11-15T09:45:00Z" },
+      { id: "agy", label: "Antigravity", status: "ok", source: "polyctl-quota", updatedAt: "2026-11-15T05:00:00Z" },
+      { id: "evren", label: "EVREN", status: "unreadable", source: "none", updatedAt: null }
+    ],
+    { nowMs, maxAgeMinutes: 180 }
+  );
+  assert.equal(oqFresh.totalCount, 3);
+  assert.equal(oqFresh.readableCount, 2);
+  assert.equal(oqFresh.freshCount, 1);
+  assert.deepEqual(oqFresh.staleProviders, ["Antigravity"]);
+  assert.deepEqual(oqFresh.unreadableProviders, ["EVREN"]);
+
+  const fleetRec = evaluateFleetCapacityReclaim({
+    status: "warning",
+    working: 2,
+    idle: 1,
+    stuck: 1,
+    dormant: 2,
+    total: 6
+  });
+  assert.equal(fleetRec.hasReclaimable, true);
+  assert.equal(fleetRec.reclaimableCount, 3);
+  assert.equal(fleetRec.stuckCount, 1);
+  assert.equal(fleetRec.dormantCount, 2);
+
+  const tierAlign = evaluateAccountTierAlignment([
+    {
+      name: "gmail",
+      tier: "pro",
+      enabled: true,
+      active: true,
+      token: { status: "valid" },
+      usage: { fiveHour: { pct: 55 }, sevenDay: { pct: 40 } }
+    },
+    {
+      name: "yahoo",
+      tier: "max-20x",
+      enabled: true,
+      active: false,
+      token: { status: "valid" },
+      usage: { fiveHour: { pct: 15 }, sevenDay: { pct: 25 } }
+    }
+  ]);
+  assert.equal(tierAlign.aligned, false);
+  assert.equal(tierAlign.recommendedHigherTierAccount, "yahoo");
+
+  const foRed = evaluateFailoverChainRedundancy({
+    enabled: true,
+    gatewayReady: true,
+    legs: ["openrouter/claude-3.7-sonnet", "anthropic/claude-3-7-sonnet"]
+  });
+  assert.equal(foRed.status, "redundant");
+  assert.equal(foRed.legCount, 2);
+  assert.equal(foRed.score, 100);
 });

@@ -318,6 +318,20 @@ public enum ModelsTestSuite {
         let r13Decoded = try JSONDecoder().decode(UsageCacheFreshnessSummary.self, from: r13Json)
         precondition(r13Decoded.status == "stale" && r13Decoded.staleCount == 1, "UsageCacheFreshnessSummary must decode accurately")
 
+        // Round 14 decoding check for AccountTierAlignmentSummary & FailoverChainRedundancySummary
+        let r14Json = """
+        {
+          "enabled": true,
+          "legCount": 2,
+          "gatewayReady": true,
+          "score": 100,
+          "status": "redundant",
+          "summary": "Failover zinciri yedekli (2 ayak hazır)"
+        }
+        """.data(using: .utf8)!
+        let r14Decoded = try JSONDecoder().decode(FailoverChainRedundancySummary.self, from: r14Json)
+        precondition(r14Decoded.legCount == 2 && r14Decoded.status == "redundant", "FailoverChainRedundancySummary must decode accurately")
+
         // Urgent owner_needed classification test
         let urgentOwner = StatusBoardOwnerItem(project: "prod", text: "ACİL müdahale")
         let normalOwner = StatusBoardOwnerItem(project: "docs", text: "Not ekle")

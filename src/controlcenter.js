@@ -3667,3 +3667,239 @@ export function evaluateBackupAndGuardianContinuity(services = []) {
         : `Yedekleme ve koruyucu işler sağlıklı (${healthyCount}/${targets.length})`
   };
 }
+
+
+/**
+ * Evaluates whether legacy launchd plist files remain on disk based on daemon warnings.
+ */
+export function evaluateLegacyLaunchdCleanliness(warnings = []) {
+  const list = Array.isArray(warnings) ? warnings : [];
+  const legacyWarn = list.find((w) => w && w.id === "legacy-launchd") || null;
+
+  if (!legacyWarn) {
+    return {
+      clean: true,
+      lingeringCount: 0,
+      lingeringLabels: [],
+      fixCommand: null,
+      summary: "Eski launchd plist kalıntısı yok"
+    };
+  }
+
+  const rawDetail = String(legacyWarn.detail || "");
+  const lingeringLabels = rawDetail
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const lingeringCount = lingeringLabels.length || 1;
+  const fixCommand = legacyWarn.fix || "keyflip daemon install -y";
+
+  return {
+    clean: false,
+    lingeringCount,
+    lingeringLabels,
+    fixCommand,
+    summary: `${lingeringCount} eski launchd plist kalıntısı mevcut (${fixCommand})`
+  };
+}
+
+/**
+ * Evaluates telemetry readability and timestamp freshness across secondary AI quotas (`otherQuotas`).
+ */
+export function evaluateOtherQuotasFreshness(otherQuotas = [], options = {}) {
+  const nowMs =
+    typeof options.nowMs === "function" ? options.nowMs() : typeof options.nowMs === "number" ? options.nowMs : Date.now();
+  const maxAgeMin = typeof options.maxAgeMinutes === "number" ? options.maxAgeMinutes : 180;
+  const list = Array.isArray(otherQuotas) ? otherQuotas : [];
+
+  if (list.length === 0) {
+    return {
+      totalCount: 0,
+      readableCount: 0,
+      freshCount: 0,
+      staleProviders: [],
+      unreadableProviders: [],
+      status: "empty",
+      summary: "İkincil kota kaynağı yok"
+    };
+  }
+
+  let readableCount = 0;
+  let freshCount = 0;
+  const staleProviders = [];
+  const unreadableProviders = [];
+
+  for (const q of list) {
+    if (!q || typeof q !== "object") continue;
+    const label = q.label || q.id || "Sağlayıcı";
+    if (q.status === "unreadable" || q.source === "none") {
+      unreadableProviders.push(label);
+      continue;
+    }
+    readableCount += 1;
+    if (q.updatedAt) {
+      const ts = Date.parse(String(q.updatedAt));
+      if (Number.isFinite(ts) && nowMs >= ts && (nowMs - ts) / 60000 > maxAgeMin) {
+        staleProviders.push(label);
+        continue;
+      }
+    }
+    freshCount += 1;
+  }
+
+  const status =
+    readableCount === 0
+      ? "unreadable"
+      : staleProviders.length > 0 || unreadableProviders.length > 0
+        ? "partial"
+        : "fresh";
+
+  return {
+    totalCount: list.length,
+    readableCount,
+    freshCount,
+    staleProviders,
+    unreadableProviders,
+    status,
+    summary:
+      staleProviders.length > 0
+        ? `İkincil kotalar: ${freshCount}/${list.length} güncel (${staleProviders.join(", ")} eski)`
+        : `İkincil kotalar: ${readableCount}/${list.length} okunabilir`
+  };
+}
+
+/**
+ * Evaluates reclaimable agent slots from stuck or dormant Traycer fleet agents.
+ */
+export function evaluateFleetCapacityReclaim(fleet = {}) {
+  if (!fleet || fleet.status === "unreadable" || typeof fleet.total !== "number") {
+    return {
+      reclaimableCount: 0,
+      stuckCount: 0,
+      dormantCount: 0,
+      hasReclaimable: false,
+      summary: "Filo kapasite verisi okunamadı"
+    };
+  }
+
+  const stuckCount = typeof fleet.stuck === "number" ? fleet.stuck : 0;
+  const dormantCount = typeof fleet.dormant === "number" ? fleet.dormant : 0;
+  const reclaimableCount = stuckCount + dormantCount;
+  const hasReclaimable = reclaimableCount > 0;
+
+  const parts = [];
+  if (stuckCount > 0) parts.push(`${stuckCount} takılı`);
+  if (dormantCount > 0) parts.push(`${dormantCount} uyuyan`);
+
+  return {
+    reclaimableCount,
+    stuckCount,
+    dormantCount,
+    hasReclaimable,
+    summary: hasReclaimable
+      ? `Geri kazanılabilir ajan: ${reclaimableCount} (${parts.join(", ")})`
+      : "Tüm ajan yuvaları verimli (takılı/uyuyan yok)"
+  };
+}
+
+/**
+ * Evaluates Claude Account Tier & Priority Alignment (checking whether a higher-capacity Max/Team
+ * subscription sits idle with ample headroom while a lower tier account is active).
+ */
+export function evaluateAccountTierAlignment(accounts = []) {
+  const enabled = (Array.isArray(accounts) ? accounts : []).filter((a) => a && a.enabled !== false);
+  const rankForTier = (tierRaw) => {
+    const t = String(tierRaw || "").toLowerCase();
+    if (t.includes("max") || t.includes("20x") || t.includes("5x") || t.includes("enterprise")) return 3;
+    if (t.includes("team")) return 2;
+    if (t.includes("pro")) return 1;
+    return 1;
+  };
+
+  const active = enabled.find((a) => a.active) || null;
+  if (!active || enabled.length < 2) {
+    return {
+      aligned: true,
+      activeTier: active?.tier || "pro",
+      recommendedHigherTierAccount: null,
+      summary: "Hesap katman hizalaması uygun"
+    };
+  }
+
+  const activeRank = rankForTier(active.tier);
+  const activeFivePct =
+    typeof active?.usage?.fiveHour?.pct === "number" ? active.usage.fiveHour.pct : 0;
+
+  let betterCandidate = null;
+  for (const acct of enabled) {
+    if (acct.name === active.name) continue;
+    const r = rankForTier(acct.tier);
+    const five = typeof acct?.usage?.fiveHour?.pct === "number" ? acct.usage.fiveHour.pct : 0;
+    const seven = typeof acct?.usage?.sevenDay?.pct === "number" ? acct.usage.sevenDay.pct : 0;
+    const tokOk = !acct.token || acct.token.status === "valid";
+    if (tokOk && r > activeRank && five <= 60 && seven <= 75) {
+      betterCandidate = acct;
+      break;
+    }
+    if (tokOk && r === activeRank && activeFivePct >= 75 && five <= 35 && seven <= 75) {
+      betterCandidate = acct;
+    }
+  }
+
+  const aligned = !betterCandidate;
+  return {
+    aligned,
+    activeTier: active.tier || "pro",
+    recommendedHigherTierAccount: betterCandidate ? betterCandidate.name : null,
+    summary: betterCandidate
+      ? `Katman optimizasyonu: ${betterCandidate.name} (${betterCandidate.tier || "yüksek kapasite"}) hesabına geçiş önerilir`
+      : `Hesap katman hizalaması uygun (${active.name})`
+  };
+}
+
+/**
+ * Evaluates Failover Chain Leg Diversity & Gateway Readiness (checking how many backup provider legs
+ * are configured in the Keysmith failover chain).
+ */
+export function evaluateFailoverChainRedundancy(failoverInfo = {}) {
+  if (!failoverInfo || !failoverInfo.enabled) {
+    return {
+      enabled: false,
+      legCount: 0,
+      gatewayReady: false,
+      score: 0,
+      status: "disabled",
+      summary: "Failover zinciri kapalı"
+    };
+  }
+
+  const rawLegs = failoverInfo.legs;
+  const legList = Array.isArray(rawLegs)
+    ? rawLegs.filter(Boolean)
+    : typeof rawLegs === "string" && rawLegs.trim()
+      ? rawLegs.split(/[,+>→]/).map((s) => s.trim()).filter(Boolean)
+      : [];
+  const legCount = legList.length;
+  const gatewayReady = Boolean(failoverInfo.gatewayReady);
+
+  let score = 0;
+  if (gatewayReady) score += 50;
+  if (legCount >= 2) score += 50;
+  else if (legCount === 1) score += 30;
+  else score += 15;
+
+  const status = !gatewayReady ? "degraded" : legCount >= 2 ? "redundant" : "single-leg";
+
+  return {
+    enabled: true,
+    legCount,
+    gatewayReady,
+    score,
+    status,
+    summary: !gatewayReady
+      ? "Failover gateway hazır değil"
+      : legCount >= 2
+        ? `Failover zinciri yedekli (${legCount} ayak hazır)`
+        : "Failover tek ayaklı (ikincil sağlayıcı ayağı önerilir)"
+  };
+}
