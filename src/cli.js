@@ -1521,6 +1521,22 @@ async function cmdStatusBoard(ctx, rest) {
     print('       keyflip status-board diff <old.json> <new.json> [--json]');
     print('       keyflip status-board snapshot [file] [--json]');
     print('       keyflip status-board history [--json]');
+    print('       keyflip status-board prune [--keep N] [--json]');
+    return;
+  }
+  if (sub === 'prune') {
+    let keep = 20;
+    const keepIdx = rest.indexOf('--keep');
+    if (keepIdx !== -1 && rest[keepIdx + 1]) {
+      const parsed = Number.parseInt(rest[keepIdx + 1], 10);
+      if (Number.isFinite(parsed) && parsed >= 1) keep = parsed;
+    }
+    const res = _controlcenter.pruneStatusBoardSnapshots(ctx, { homeDir: ctx.home, configDir: ctx.configDir, keep });
+    if (JSON_MODE) {
+      jsonOut({ statusBoardPrune: res });
+      return;
+    }
+    print(style.ok('✅') + ' pruned status-board snapshots: kept ' + res.keptCount + ', deleted ' + res.deletedCount);
     return;
   }
   if (sub === 'history') {
@@ -1623,7 +1639,25 @@ async function cmdDaemon(ctx, rest) {
     print('       keyflip daemon uninstall');
     print('       keyflip daemon run-now <autoswitch|refresh|surface-refresh|conv-index|usage>');
     print('       keyflip daemon control-center [--json]');
+    print('       keyflip daemon summary [--json]');
     print('       keyflip daemon run');
+    return;
+  }
+  if (sub === 'summary') {
+    const q = await _daemon.querySocket(ctx, { cmd: 'control-center' });
+    let payload;
+    if (q.ok && q.response) {
+      payload = Object.assign({}, q.response, { daemonRunning: true });
+    } else {
+      payload = await _daemon.buildControlCenter(ctx, null, { home: ctx.home });
+      payload.daemonRunning = false;
+    }
+    const summaryObj = _controlcenter.formatDaemonCompactSummary(payload);
+    if (JSON_MODE) {
+      jsonOut({ daemonSummary: summaryObj });
+      return;
+    }
+    print(summaryObj.text);
     return;
   }
   if (sub === 'control-center') {

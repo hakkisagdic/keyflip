@@ -274,6 +274,12 @@ public enum ModelsTestSuite {
         let degraded = board.newlyDegradedRows(comparedTo: cleanPrev)
         precondition(degraded.count == 1, "newlyDegradedRows must detect 1 newly bad row")
 
+        // Urgent owner_needed classification test
+        let urgentOwner = StatusBoardOwnerItem(project: "prod", text: "ACİL müdahale")
+        let normalOwner = StatusBoardOwnerItem(project: "docs", text: "Not ekle")
+        precondition(urgentOwner.isUrgent == true, "urgentOwner must be classified as urgent")
+        precondition(normalOwner.isUrgent == false, "normalOwner must not be classified as urgent")
+
         // Issues-only summary test
         let issuesOnlyMd = board.buildIssuesOnlySummary()
         precondition(issuesOnlyMd.contains("Açık Sorunlar"), "issues-only summary must include header")

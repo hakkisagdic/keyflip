@@ -824,6 +824,16 @@ async function buildControlCenter(ctx, scheduler, opts) {
   base.rotationStability = _controlcenter.evaluateRotationStability(ctx);
   base.fleetEfficiency = _controlcenter.evaluateFleetEfficiency(base.fleet);
   base.serverSitesHealth = _controlcenter.evaluateServerSitesHealth(base.server);
+  base.secondaryQuotasAlert = _controlcenter.evaluateSecondaryQuotasAlert(base.otherQuotas);
+  base.autonomousPosture = _controlcenter.evaluateAutonomousOpsPosture({
+    poolResilience: base.poolResilience,
+    sessionReadiness: base.sessionReadiness,
+    multiProviderContinuity: base.multiProviderContinuity,
+    servicesHealth: base.servicesHealth,
+    statusBoard: base.statusBoard
+  });
+  base.ownerQueue = _controlcenter.prioritizeOwnerNeededQueue(base.statusBoard);
+  base.compactSummary = _controlcenter.formatDaemonCompactSummary(base);
   base.preferences = _controlcenter.collectPreferences(ctx);
   base.markdownReport = _controlcenter.buildControlCenterMarkdown(base);
   base.diagnosticBundle = _controlcenter.buildDiagnosticBundle(base);

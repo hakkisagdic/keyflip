@@ -33,7 +33,12 @@ import {
   evaluateSubscriptionValueROI,
   evaluateRotationStability,
   evaluateFleetEfficiency,
-  evaluateServerSitesHealth
+  evaluateServerSitesHealth,
+  pruneStatusBoardSnapshots,
+  evaluateSecondaryQuotasAlert,
+  formatDaemonCompactSummary,
+  evaluateAutonomousOpsPosture,
+  prioritizeOwnerNeededQueue
 } from "../src/controlcenter.js";
 import * as daemon from "../src/daemon.js";
 
@@ -750,6 +755,63 @@ test("listStatusBoardSnapshots, evaluateRotationStability, evaluateFleetEfficien
     assert.equal(srvHealth.status, "warning");
     assert.equal(srvHealth.score, 50);
     assert.deepEqual(srvHealth.downSites, ["api.example.com"]);
+  } finally {
+    env.cleanup();
+  }
+});
+
+test("pruneStatusBoardSnapshots, evaluateSecondaryQuotasAlert, formatDaemonCompactSummary, evaluateAutonomousOpsPosture, and prioritizeOwnerNeededQueue work accurately", () => {
+  const env = makeTempEnv();
+  try {
+    const fixturePath = path.resolve("test/fixtures/status.sample.json");
+    snapshotStatusBoard(env.ctx, { sourceFile: fixturePath, homeDir: env.home, configDir: env.configDir, now: () => "2026-11-15T01:00:00Z" });
+    snapshotStatusBoard(env.ctx, { sourceFile: fixturePath, homeDir: env.home, configDir: env.configDir, now: () => "2026-11-15T02:00:00Z" });
+    snapshotStatusBoard(env.ctx, { sourceFile: fixturePath, homeDir: env.home, configDir: env.configDir, now: () => "2026-11-15T03:00:00Z" });
+
+    const pruned = pruneStatusBoardSnapshots(env.ctx, { homeDir: env.home, configDir: env.configDir, keep: 2 });
+    assert.equal(pruned.keptCount, 2);
+    assert.equal(pruned.deletedCount, 1);
+
+    const secAlert = evaluateSecondaryQuotasAlert([
+      { id: "kiro", label: "Kiro Kredisi", status: "ok", usedPct: 30 },
+      { id: "agy", label: "Antigravity (agy)", status: "exhausted", usedPct: 98 },
+      { id: "apicredits", label: "API Promosyonları", status: "warning", usedPct: 90 }
+    ]);
+    assert.equal(secAlert.hasAlert, true);
+    assert.equal(secAlert.severity, "critical");
+    assert.deepEqual(secAlert.exhausted, ["Antigravity (agy)"]);
+    assert.deepEqual(secAlert.warning, ["API Promosyonları"]);
+
+    const posture = evaluateAutonomousOpsPosture({
+      poolResilience: { score: 90 },
+      sessionReadiness: { passedCount: 5, totalCount: 5 },
+      multiProviderContinuity: { score: 80 },
+      servicesHealth: { score: 100 },
+      statusBoard: { healthPct: 80 }
+    });
+    assert.equal(posture.grade, "A");
+    assert.equal(posture.score >= 85, true);
+
+    const queue = prioritizeOwnerNeededQueue({
+      owner_needed: [
+        { project: "docs", text: "README guncelle" },
+        { project: "billing", text: "ACIL fatura odemesi gerekiyor" }
+      ]
+    });
+    assert.equal(queue.totalCount, 2);
+    assert.equal(queue.urgentCount, 1);
+    assert.equal(queue.topItem.project, "billing");
+
+    const compact = formatDaemonCompactSummary({
+      activeAccount: { name: "gmail" },
+      accounts: [{ name: "gmail", active: true, usage: { fiveHour: { pct: 40 }, sevenDay: { pct: 55 } } }],
+      poolReadiness: { status: "ok" },
+      poolResilience: { summary: "Dayanıklılık: A (90/100)" },
+      failover: { enabled: true, engaged: false, costEstimate: { summary: "~$2.40/saat" } },
+      servicesHealth: { status: "ok", summary: "5/5 servis sağlıklı" }
+    });
+    assert.equal(compact.pillars.length, 6);
+    assert.equal(compact.text.includes("Hesap Havuzu"), true);
   } finally {
     env.cleanup();
   }

@@ -69,6 +69,17 @@ public struct ControlCenterView: View {
             Text("Keyflip Kontrol Merkezi")
                 .font(.system(size: 13, weight: .semibold))
 
+            if let posture = viewModel.payload.autonomousPosture {
+                Text("\(posture.grade) · %\(posture.score)")
+                    .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 1)
+                    .background((posture.score >= 80 ? Color.green : (posture.score >= 60 ? Color.orange : Color.red)).opacity(0.18))
+                    .foregroundColor(posture.score >= 80 ? .green : (posture.score >= 60 ? .orange : .red))
+                    .cornerRadius(3)
+                    .help(posture.summary)
+            }
+
             if viewModel.isFailoverEngaged {
                 Text("YEDEK ZİNCİR")
                     .font(.system(size: 10, weight: .semibold))
@@ -298,8 +309,17 @@ public struct ControlCenterView: View {
                             Text("Sahipten Bekleyen (\(displayedOwners.count))")
                                 .font(.system(size: 11, weight: .semibold))
                         }
-                        ForEach(displayedOwners) { item in
+                        ForEach(displayedOwners.sorted { ($0.isUrgent ? 0 : 1) < ($1.isUrgent ? 0 : 1) }) { item in
                             HStack(alignment: .top, spacing: 6) {
+                                if item.isUrgent {
+                                    Text("ACİL")
+                                        .font(.system(size: 8, weight: .bold))
+                                        .padding(.horizontal, 3)
+                                        .padding(.vertical, 1)
+                                        .background(Color.red.opacity(0.2))
+                                        .foregroundColor(.red)
+                                        .cornerRadius(2)
+                                }
                                 Text(item.project)
                                     .font(.system(size: 10, weight: .semibold, design: .monospaced))
                                     .foregroundColor(.orange)

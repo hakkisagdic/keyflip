@@ -2281,3 +2281,243 @@ export function evaluateServerSitesHealth(serverStatus = null) {
     summary
   };
 }
+
+/**
+ * Prunes old status.json snapshots in `<configDir>/status-snapshots/`, keeping at most `keep` latest snapshots.
+ */
+export function pruneStatusBoardSnapshots(ctx, options = {}) {
+  const homeDir = options.homeDir || ctx?.home || ctx?.homeDir || os.homedir();
+  const configDir = options.configDir || ctx?.configDir || path.join(homeDir, ".config", "keyflip");
+  const snapDir = options.outDir || path.join(configDir, "status-snapshots");
+  const keep = typeof options.keep === "number" && options.keep >= 1 ? Math.floor(options.keep) : 20;
+
+  if (!fs.existsSync(snapDir)) {
+    return { keptCount: 0, deletedCount: 0, deletedFiles: [] };
+  }
+
+  const files = fs
+    .readdirSync(snapDir)
+    .filter((f) => f.startsWith("status-") && f.endsWith(".json"))
+    .sort()
+    .reverse();
+
+  const toKeep = files.slice(0, keep);
+  const toDelete = files.slice(keep);
+  const deletedFiles = [];
+
+  for (const fileName of toDelete) {
+    try {
+      fs.unlinkSync(path.join(snapDir, fileName));
+      deletedFiles.push(fileName);
+    } catch {
+      /* ignore individual unlink errors */
+    }
+  }
+
+  return {
+    keptCount: toKeep.length,
+    deletedCount: deletedFiles.length,
+    deletedFiles
+  };
+}
+
+/**
+ * Evaluates secondary AI tool quotas (Kiro, Copilot, Antigravity `agy`, EVREN, API Promos)
+ * and produces a structured alert summary when any secondary provider is >=90% used or exhausted.
+ */
+export function evaluateSecondaryQuotasAlert(otherQuotas = []) {
+  const list = Array.isArray(otherQuotas) ? otherQuotas : [];
+  const exhausted = [];
+  const warning = [];
+  const healthy = [];
+
+  for (const q of list) {
+    if (!q || q.status === "unreadable") continue;
+    const pct = typeof q.usedPct === "number" ? q.usedPct : null;
+    if (q.status === "exhausted" || (pct !== null && pct >= 95)) {
+      exhausted.push(q.label || q.id);
+    } else if (q.status === "warning" || (pct !== null && pct >= 85)) {
+      warning.push(q.label || q.id);
+    } else if (q.status === "ok") {
+      healthy.push(q.label || q.id);
+    }
+  }
+
+  const hasAlert = exhausted.length > 0 || warning.length > 0;
+  const severity = exhausted.length > 0 ? "critical" : warning.length > 0 ? "warning" : "ok";
+
+  let summary = null;
+  if (exhausted.length > 0) {
+    summary = `İkincil kota tükendi: ${exhausted.join(", ")}`;
+  } else if (warning.length > 0) {
+    summary = `İkincil kota uyarısı (%85+): ${warning.join(", ")}`;
+  } else if (healthy.length > 0) {
+    summary = `${healthy.length} ikincil kota sağlıklı`;
+  }
+
+  return {
+    hasAlert,
+    severity,
+    exhausted,
+    warning,
+    healthyCount: healthy.length,
+    summary
+  };
+}
+
+/**
+ * Builds a compact 6-pillar terminal health summary table for `keyflip daemon summary`.
+ */
+export function formatDaemonCompactSummary(ccPayload = {}) {
+  const activeName = ccPayload?.activeAccount?.name || "yok";
+  const activeAcct = (ccPayload?.accounts || []).find((a) => a.active) || null;
+  const fivePct = activeAcct?.usage?.fiveHour?.pct ?? null;
+  const sevenPct = activeAcct?.usage?.sevenDay?.pct ?? null;
+
+  const pillars = [
+    {
+      pillar: "Hesap Havuzu",
+      status: ccPayload?.poolReadiness?.status || "ok",
+      detail: `Etkin: ${activeName} (5s: ${fivePct !== null ? "%" + fivePct : "?"}, 7g: ${sevenPct !== null ? "%" + sevenPct : "?"}) · ${ccPayload?.poolResilience?.summary || ""}`.trim()
+    },
+    {
+      pillar: "Yedek Zincir",
+      status: ccPayload?.failover?.spendHealth?.status || (ccPayload?.failover?.engaged ? "warning" : "ok"),
+      detail: ccPayload?.failover?.engaged
+        ? `Devrede (${ccPayload?.failover?.costEstimate?.summary || ""})`
+        : ccPayload?.failover?.enabled
+          ? `Hazır · ${ccPayload?.failover?.costEstimate?.summary || ""}`
+          : "Devre dışı"
+    },
+    {
+      pillar: "Durum Panosu",
+      status: ccPayload?.statusBoard
+        ? ccPayload.statusBoard.stale
+          ? "warning"
+          : (ccPayload.statusBoard.healthPct ?? 100) < 80
+            ? "warning"
+            : "ok"
+        : "unreadable",
+      detail: ccPayload?.statusBoard
+        ? `${ccPayload.statusBoard.healthSummary || ""} · Bekleyen: ${(ccPayload.statusBoard.owner_needed || []).length}`
+        : "status.json tanımlı değil"
+    },
+    {
+      pillar: "Servis Filosu",
+      status: ccPayload?.servicesHealth?.status || "ok",
+      detail: ccPayload?.servicesHealth?.summary || "Veri yok"
+    },
+    {
+      pillar: "Traycer Filo",
+      status: ccPayload?.fleetEfficiency?.status || ccPayload?.fleet?.status || "unreadable",
+      detail: ccPayload?.fleetEfficiency?.summary || ccPayload?.fleet?.display || "okunamadı"
+    },
+    {
+      pillar: "Uzak Sunucu",
+      status: ccPayload?.serverSitesHealth?.status || ccPayload?.server?.status || "unreadable",
+      detail: ccPayload?.serverSitesHealth?.summary || (ccPayload?.server ? `${ccPayload.server.host}: ${ccPayload.server.load}` : "okunamadı")
+    }
+  ];
+
+  const lines = ["# Keyflip Kontrol Merkezi — 6 Sütunlu Sağlık Özeti"];
+  for (const p of pillars) {
+    const badge = p.status === "ok" ? "[OK]" : p.status === "critical" || p.status === "error" ? "[KRİTİK]" : p.status === "warning" ? "[UYARI]" : "[BİLGİ]";
+    lines.push(`${badge.padEnd(9)} ${p.pillar.padEnd(15)} : ${p.detail}`);
+  }
+  return {
+    pillars,
+    text: lines.join("\n")
+  };
+}
+
+/**
+ * Evaluates a unified 0-100 Autonomous Operations Posture ("Otonom Çalışma Sağlığı")
+ * combining Pool Resilience, Session Readiness, Multi-Provider Continuity, Services Health, and Status Board SLA.
+ */
+export function evaluateAutonomousOpsPosture({
+  poolResilience = null,
+  sessionReadiness = null,
+  multiProviderContinuity = null,
+  servicesHealth = null,
+  statusBoard = null
+} = {}) {
+  const resilienceScore = typeof poolResilience?.score === "number" ? poolResilience.score : 80;
+  const readinessScore =
+    sessionReadiness && typeof sessionReadiness.totalCount === "number" && sessionReadiness.totalCount > 0
+      ? Math.round((sessionReadiness.passedCount / sessionReadiness.totalCount) * 100)
+      : 100;
+  const continuityScore = typeof multiProviderContinuity?.score === "number" ? multiProviderContinuity.score : 75;
+  const svcScore = typeof servicesHealth?.score === "number" ? servicesHealth.score : 100;
+  const boardScore = statusBoard && typeof statusBoard.healthPct === "number" ? statusBoard.healthPct : 100;
+
+  const overallScore = Math.round(
+    resilienceScore * 0.25 +
+      readinessScore * 0.25 +
+      continuityScore * 0.15 +
+      svcScore * 0.2 +
+      boardScore * 0.15
+  );
+
+  const grade = overallScore >= 85 ? "A" : overallScore >= 70 ? "B" : overallScore >= 55 ? "C" : "D";
+  const status = overallScore >= 80 ? "optimal" : overallScore >= 60 ? "caution" : "degraded";
+
+  return {
+    score: overallScore,
+    grade,
+    status,
+    summary: `Otonom Sağlık: ${grade} (%${overallScore})`
+  };
+}
+
+/**
+ * Prioritizes `owner_needed` items from Status Board by urgency keywords (prod/down/acil/blocker/kritik/key/fatura)
+ * and groups them by project so the operator knows which human-blocked action to resolve first.
+ */
+export function prioritizeOwnerNeededQueue(statusBoard = null) {
+  const items = Array.isArray(statusBoard?.owner_needed) ? statusBoard.owner_needed : [];
+  if (items.length === 0) {
+    return {
+      totalCount: 0,
+      urgentCount: 0,
+      projectCount: 0,
+      topItem: null,
+      items: [],
+      summary: null
+    };
+  }
+
+  const urgentRegex = /\b(acil|kritik|blocker|down|prod|fatura|payment|expired|süresi doldu|500|502|503)\b/i;
+  const projects = new Set();
+
+  const ranked = items
+    .map((item, idx) => {
+      const project = String(item?.project || "genel").trim();
+      const text = String(item?.text || "").trim();
+      projects.add(project);
+      const urgent = urgentRegex.test(text) || urgentRegex.test(project);
+      return {
+        index: idx,
+        project,
+        text,
+        priority: urgent ? "urgent" : "normal",
+        priorityRank: urgent ? 0 : 1
+      };
+    })
+    .sort((a, b) => (a.priorityRank !== b.priorityRank ? a.priorityRank - b.priorityRank : a.index - b.index))
+    .map(({ project, text, priority }) => ({ project, text, priority }));
+
+  const urgentCount = ranked.filter((r) => r.priority === "urgent").length;
+  const topItem = ranked[0] || null;
+
+  return {
+    totalCount: ranked.length,
+    urgentCount,
+    projectCount: projects.size,
+    topItem,
+    items: ranked,
+    summary:
+      urgentCount > 0
+        ? `${ranked.length} bekleyen iş (${urgentCount} acil · ${projects.size} proje)`
+        : `${ranked.length} bekleyen iş (${projects.size} proje)`
+  };
+}

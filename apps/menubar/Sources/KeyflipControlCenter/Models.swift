@@ -26,6 +26,9 @@ public struct ControlCenterPayload: Codable {
     public var rotationStability: RotationStabilitySummary?
     public var fleetEfficiency: FleetEfficiencySummary?
     public var serverSitesHealth: ServerSitesHealthSummary?
+    public var secondaryQuotasAlert: SecondaryQuotasAlertSummary?
+    public var autonomousPosture: AutonomousOpsPostureSummary?
+    public var ownerQueue: OwnerQueueSummary?
     public var auditTimeline: [AuditEventItem]?
     public var markdownReport: String?
     public var preferences: PreferencesSummary?
@@ -57,6 +60,9 @@ public struct ControlCenterPayload: Codable {
         rotationStability: RotationStabilitySummary? = nil,
         fleetEfficiency: FleetEfficiencySummary? = nil,
         serverSitesHealth: ServerSitesHealthSummary? = nil,
+        secondaryQuotasAlert: SecondaryQuotasAlertSummary? = nil,
+        autonomousPosture: AutonomousOpsPostureSummary? = nil,
+        ownerQueue: OwnerQueueSummary? = nil,
         auditTimeline: [AuditEventItem]? = [],
         markdownReport: String? = nil,
         preferences: PreferencesSummary? = nil,
@@ -87,6 +93,9 @@ public struct ControlCenterPayload: Codable {
         self.rotationStability = rotationStability
         self.fleetEfficiency = fleetEfficiency
         self.serverSitesHealth = serverSitesHealth
+        self.secondaryQuotasAlert = secondaryQuotasAlert
+        self.autonomousPosture = autonomousPosture
+        self.ownerQueue = ownerQueue
         self.auditTimeline = auditTimeline
         self.markdownReport = markdownReport
         self.preferences = preferences
@@ -875,6 +884,12 @@ public struct StatusBoardOwnerItem: Codable, Identifiable {
         self.project = project
         self.text = text
     }
+
+    public var isUrgent: Bool {
+        let combined = "\(project) \(text)".lowercased()
+        let keywords = ["acil", "kritik", "blocker", "down", "prod", "fatura", "payment", "expired", "süresi doldu", "500", "502", "503"]
+        return keywords.contains { combined.contains($0) }
+    }
 }
 
 public struct PreferencesSummary: Codable {
@@ -1093,5 +1108,35 @@ public struct ServerSitesHealthSummary: Codable {
     public var healthySites: Int?
     public var totalSites: Int?
     public var downSites: [String]?
+    public var summary: String?
+}
+
+public struct SecondaryQuotasAlertSummary: Codable {
+    public var hasAlert: Bool
+    public var severity: String
+    public var exhausted: [String]?
+    public var warning: [String]?
+    public var healthyCount: Int?
+    public var summary: String?
+}
+
+public struct AutonomousOpsPostureSummary: Codable {
+    public var score: Int
+    public var grade: String
+    public var status: String
+    public var summary: String
+
+    public init(score: Int = 100, grade: String = "A", status: String = "optimal", summary: String = "") {
+        self.score = score
+        self.grade = grade
+        self.status = status
+        self.summary = summary
+    }
+}
+
+public struct OwnerQueueSummary: Codable {
+    public var totalCount: Int
+    public var urgentCount: Int
+    public var projectCount: Int
     public var summary: String?
 }

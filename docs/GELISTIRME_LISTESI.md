@@ -1,6 +1,6 @@
 # Geliştirme Listesi ve Yaratıcı Özellik Önerileri (`GELISTIRME_LISTESI.md`)
 
-Bu liste, `docs/RAKIP_ANALIZI.md` sonucunda belirlenen tüm özelliklerin tamamlanma durumunu ve sekizinci turda önerilen **beş yeni yaratıcı özelliği** (en değerli ikisi uygulanmış olarak) içerir.
+Bu liste, `docs/RAKIP_ANALIZI.md` sonucunda belirlenen tüm özelliklerin tamamlanma durumunu ve dokuzuncu turda önerilen **beş yeni yaratıcı özelliği** (en değerli ikisi uygulanmış olarak) içerir.
 
 ---
 
@@ -37,28 +37,32 @@ Bu liste, `docs/RAKIP_ANALIZI.md` sonucunda belirlenen tüm özelliklerin tamaml
 - [x] **Kota Darboğaz Penceresi Tahmincisi (`predictDailyBottleneckWindow`):** `events.jsonl` içindeki hesap rotasyonu ve failover olaylarının yoğunlaştığı UTC saat dilimini (`14:00-15:00 UTC`) tespit edip `HESAPLAR` bölümünde gösterme.
 - [x] **Durum Panosu Anlık Görüntü Kaydedici (`keyflip status-board snapshot [dosya] [--json]`):** Mevcut `status.json` dosyasını doğrulayıp `<configDir>/status-snapshots/` altına zaman damgalı olarak yedekleme (`snapshotStatusBoard`).
 - [x] **Menü Çubuğu Klavye Navigasyon Kısayolları (`⌘1`..`⌘3` Hesap Seçimi):** Kontrol Merkezi açıkken ilk 3 etkin hesaba klavye kısayolu (`requestSwitchAccountBySlot`) ile kullanıcı onaylı geçiş başlatma.
-- [x] **Derin Çalışma / Oturum Öncesi Hazırlık Kontrol Listesi (`evaluateWorkSessionReadiness`) & Abonelik Değer / ROI Analizi (`evaluateSubscriptionValueROI`):** 5 maddelik oturum hazırlık kontrolü (`Oturuma Hazır (5/5 kontrol tam)`) ve 7 günlük abonelik kullanımından üretilen eşdeğer API değeri (`~$48 eşdeğer API değeri`).
+- [x] **Derin Çalışma / Oturum Öncesi Hazırlık Kontrol Listesi (`evaluateWorkSessionReadiness`) & Abonelik Değer / ROI Analizi (`evaluateSubscriptionValueROI`):** 5 maddelik oturum hazırlık kontrolü ve 7 günlük abonelik kullanımından üretilen eşdeğer API değeri.
 - [x] **Durum Panosu Snapshot Geçmişi ve Canlı Diff (`keyflip status-board history [--json]` / `listStatusBoardSnapshots`):** `<configDir>/status-snapshots/` altındaki anlık görüntüleri listeleme ve en son snapshot ile canlı `status.json` dosyasını otomatik karşılaştırma.
 - [x] **Hesap Rotasyon Soğuma Süresi ve Ping-Pong Koruması Analizi (`evaluateRotationStability`):** Hesaplar arasında `<15 dk` içinde tekrarlayan hızlı geçişleri (`thrashing`) tespit edip menü çubuğunda uyarı gösterme.
 - [x] **Menü Çubuğu Hızlı Sorun Kopyalama (`buildIssuesOnlySummary` / `copyIssuesOnlySummary`):** Durum panosunda yalnızca sessize alınmamış `bad`/`warn` satırlarını ve `owner_needed` maddelerini içeren kısa özeti üretip panoya kopyalama.
+- [x] **Traycer Ajan Filosu Verimlilik Skoru (`evaluateFleetEfficiency`) & Uzak Sunucu Site SLA Skoru (`evaluateServerSitesHealth`):** Filo aktif/takılı ajan sağlık puanı (`Filo sağlığı: %75`) ve izlenen web siteleri SLA puanı (`Site SLA: %50`).
+- [x] **Durum Panosu Otomatik Snapshot Budama (`pruneStatusBoardSnapshots` / `keyflip status-board prune [--keep N]`):** `<configDir>/status-snapshots/` altında biriken eski anlık görüntüleri yapılandırılabilir sınırda tutarak disk şişmesini önleme.
+- [x] **İkincil AI Araçları Tükenme Riski Uyarıcısı (`evaluateSecondaryQuotasAlert`):** `DİĞER KOTALAR` altındaki ikincil sağlayıcılardan herhangi biri `%85+` kullanıma ulaştığında veya tükendiğinde yapılandırılmış uyarı üretme.
+- [x] **Birleşik Kontrol Merkezi 6 Sütunlu CLI Sağlık Özeti (`keyflip daemon summary` / `formatDaemonCompactSummary`):** Terminal kullanıcıları için 6 ana sütunun (Hesap Havuzu, Yedek Zincir, Durum Panosu, Servis Filosu, Traycer Filo, Uzak Sunucu) durumunu tek tabloda özetleme.
 
 ---
 
 ## 2. Listedeki İşler Tamamlandığı İçin Önerilen Beş Yeni Yaratıcı Özellik (En Değerli İkisi Uygulandı)
 
-### ✅ Yeni Öneri 1 (UYGULANDI): Traycer Ajan Filosu Verimlilik ve Takılı Ajan Sağlık Skoru (`evaluateFleetEfficiency`)
-- **Değer:** `FİLO (TRAYCER)` bölümünde yalnızca ham sayıları (`3 çalışıyor · 1 boşta · 1 takılı`) göstermek yerine, aktif çalışma oranını (`activeRatioPct`) ve takılı (`stuck`) ajanların oluşturduğu darboğazı `0-100` arasında bir sağlık puanına (`Filo sağlığı: %75 (1 takılı ajan incelenmeli)`) dönüştürerek bölüm başlığında anında görünür kılar.
-- **Uygulama:** `src/controlcenter.js` (`evaluateFleetEfficiency`), `src/daemon.js` (`base.fleetEfficiency`), `Models.swift` (`FleetEfficiencySummary`) ve `ControlCenterView.swift` (`fleetAndServerSection`).
+### ✅ Yeni Öneri 1 (UYGULANDI): Birleşik Otonom Operasyonel Sağlık Notu (`evaluateAutonomousOpsPosture` — `A`–`D` / `%0–100`)
+- **Değer:** Hesap Havuzu Dayanıklılığı (`%25`), Oturum Hazırlığı (`%25`), Çoklu Sağlayıcı Sürekliliği (`%15`), Servis Filosu Sağlığı (`%20`) ve Durum Panosu SLA (`%15`) puanlarını ağırlıklı olarak birleştirerek tek bakışlık **Otonom Sağlık Notu** (`Otonom Sağlık: A (%91)`) üretir ve Kontrol Merkezi üst başlığında rozet (`A · %91`) olarak gösterir.
+- **Uygulama:** `src/controlcenter.js` (`evaluateAutonomousOpsPosture`), `src/daemon.js` (`base.autonomousPosture`), `Models.swift` (`AutonomousOpsPostureSummary`) ve `ControlCenterView.swift` (`headerBar`).
 
-### ✅ Yeni Öneri 2 (UYGULANDI): Uzak Sunucu ve Barındırılan Siteler Birleşik SLA Skoru (`evaluateServerSitesHealth`)
-- **Değer:** `SUNUCU` bölümünde izlenen web sitelerinin (`sites`) erişilebilirlik durumlarını ve sunucu genel durumunu (`ok` / `warning` / `down`) birleştirerek `0-100` arasında bir **Site SLA Puanı** (`Site SLA: %100 (3/3 site aktif)` veya `Site SLA: %50 (api.example.com sorunlu)`) hesaplar ve bölüm başlığında gösterir.
-- **Uygulama:** `src/controlcenter.js` (`evaluateServerSitesHealth`), `src/daemon.js` (`base.serverSitesHealth`), `Models.swift` (`ServerSitesHealthSummary`) ve `ControlCenterView.swift` (`fleetAndServerSection`).
+### ✅ Yeni Öneri 2 (UYGULANDI): Sahiplik Bekleyen İşler (`owner_needed`) Akıllı Aciliyet Sıralayıcı (`prioritizeOwnerNeededQueue` & `isUrgent`)
+- **Değer:** `status.json` içindeki `owner_needed` maddelerini aciliyet anahtar kelimelerine (`acil`, `kritik`, `blocker`, `down`, `prod`, `fatura`, `expired`, `500/502/503`) göre otomatik sınıflandırıp acil maddeleri en üste taşır ve menü çubuğunda kırmızı **`ACİL`** rozetiyle vurgular.
+- **Uygulama:** `src/controlcenter.js` (`prioritizeOwnerNeededQueue`), `src/daemon.js` (`base.ownerQueue`), `Models.swift` (`StatusBoardOwnerItem.isUrgent`, `OwnerQueueSummary`) ve `ControlCenterView.swift` (`statusBoardSection`).
 
-### 📋 Yeni Öneri 3 (Gelecek Adayı): Durum Panosu Otomatik Snapshot Budama (`pruneStatusBoardSnapshots`)
-- **Değer:** `<configDir>/status-snapshots/` altında biriken eski anlık görüntüleri yapılandırılabilir bir sınırda (örn. son 20 snapshot) tutarak disk şişmesini önleme (`keyflip status-board prune`).
+### 📋 Yeni Öneri 3 (Gelecek Adayı): OAuth Yenileme Başarı Oranı ve Hata Eğilimi Analizcisi (`evaluateOAuthRefreshReliability`)
+- **Değer:** Etkin hesapların son OAuth yenileme sonuçlarını (`lastResult`, `lastError`) ve kalan sürelerini analiz ederek kimlik doğrulama güvenilirlik yüzdesini hesaplama.
 
-### 📋 Yeni Öneri 4 (Gelecek Adayı): İkincil AI Araçları Tükenme Riski Uyarıcısı (`evaluateSecondaryQuotasAlert`)
-- **Değer:** `DİĞER KOTALAR` altındaki ikincil sağlayıcılardan (Kiro, Antigravity `agy`, API Promosyonları) herhangi biri `%90+` kullanıma ulaştığında veya tükendiğinde üst uyarı listesine (`warnings`) otomatik bildirim ekleme.
+### 📋 Yeni Öneri 4 (Gelecek Adayı): Gün İçi Dinamik Eşik Önericisi (`recommendAdaptiveAutoswitchThreshold`)
+- **Değer:** Darboğaz saat penceresine (`bottleneckWindow`) ve aktif tüketim hızına (`burnRateRatio`) göre optimal `autoswitch.threshold` değerini (`%85` vs `%95`) önerme.
 
-### 📋 Yeni Öneri 5 (Gelecek Adayı): Birleşik Kontrol Merkezi Sağlık Özeti CLI Komutu (`keyflip daemon summary`)
-- **Değer:** Terminal kullanıcıları için tüm alt sistemlerin (Hesap Havuzu, Failover, Durum Panosu, Servisler, Filo ve Sunucu) sağlık puanlarını 6 satırlık kompakt bir tabloda özetleyen hızlı CLI alt komutu.
+### 📋 Yeni Öneri 5 (Gelecek Adayı): Durum Panosu Bölüm Bazlı Sağlık Özeti (`summarizeSectionHealthBreakdown`)
+- **Değer:** Her durum panosu bölümünün (`sections`) kendi ağırlıklı sağlık yüzdesini ve en eski sorun yaşını (`maxSinceAge`) hesaplayıp raporlama.
