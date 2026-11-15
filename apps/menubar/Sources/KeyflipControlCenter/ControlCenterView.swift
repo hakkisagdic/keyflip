@@ -636,6 +636,18 @@ public struct ControlCenterView: View {
                         }
                     }
 
+                    if let tc = viewModel.payload.thresholdCompliance, tc.atOrAboveThresholdCount > 0 {
+                        HStack(spacing: 5) {
+                            Image(systemName: "exclamationmark.arrow.triangle.2.circlepath")
+                                .font(.system(size: 10))
+                                .foregroundColor(.orange)
+                            Text(tc.summary)
+                                .font(.system(size: 10, weight: .medium))
+                                .foregroundColor(.orange)
+                                .lineLimit(1)
+                        }
+                    }
+
                     if let epm = viewModel.payload.effectivePoolMultiplier, epm.enabledCount > 0 {
                         HStack(spacing: 5) {
                             Image(systemName: "bolt.horizontal.circle.fill")
@@ -1033,6 +1045,11 @@ public struct ControlCenterView: View {
                         Text(fwu.summary)
                             .font(.system(size: 10))
                             .foregroundColor(.secondary)
+                    }
+                    if let fir = viewModel.payload.fleetIdleReserve, fir.status != "unreadable" {
+                        Text(fir.summary)
+                            .font(.system(size: 10))
+                            .foregroundColor(fir.status == "saturated" ? .orange : .secondary)
                     }
                 } else {
                     Text("okunamadı")

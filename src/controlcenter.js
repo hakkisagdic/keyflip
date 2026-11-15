@@ -4953,3 +4953,229 @@ export function evaluateEffectivePoolMultiplier(accounts = []) {
     summary: `Havuz kapasite çarpanı: ${totalMultiplier}x (etkin kalan: ${remainingMultiplier}x)`
   };
 }
+
+/**
+ * Categorizes remote server sites by HTTP status code class (2xx, 3xx, 4xx, 5xx) or unreachable state.
+ */
+export function evaluateServerSiteResponseCodeSummary(server = {}) {
+  const sites = Array.isArray(server?.sites) ? server.sites : [];
+  if (!server || server.status === "unreadable" || sites.length === 0) {
+    return {
+      totalSites: 0,
+      ok2xxCount: 0,
+      redirect3xxCount: 0,
+      client4xxCount: 0,
+      server5xxCount: 0,
+      errorSites: [],
+      status: "unreadable",
+      summary: "Site HTTP yanıt kodu verisi yok"
+    };
+  }
+
+  let ok2xxCount = 0;
+  let redirect3xxCount = 0;
+  let client4xxCount = 0;
+  let server5xxCount = 0;
+  const errorSites = [];
+
+  for (const s of sites) {
+    const code = typeof s?.code === "number" ? s.code : null;
+    if (code !== null && code >= 200 && code < 300) {
+      ok2xxCount += 1;
+    } else if (code !== null && code >= 300 && code < 400) {
+      redirect3xxCount += 1;
+    } else if (code !== null && code >= 400 && code < 500) {
+      client4xxCount += 1;
+      errorSites.push(`${s.name || "site"} (${code})`);
+    } else if (code !== null && code >= 500) {
+      server5xxCount += 1;
+      errorSites.push(`${s.name || "site"} (${code})`);
+    } else if (s?.status === "ok") {
+      ok2xxCount += 1;
+    } else {
+      server5xxCount += 1;
+      errorSites.push(`${s?.name || "site"} (${s?.detail || "down"})`);
+    }
+  }
+
+  const status =
+    server5xxCount > 0 ? "critical" : client4xxCount > 0 ? "warning" : "ok";
+
+  return {
+    totalSites: sites.length,
+    ok2xxCount,
+    redirect3xxCount,
+    client4xxCount,
+    server5xxCount,
+    errorSites,
+    status,
+    summary:
+      errorSites.length > 0
+        ? `HTTP hatası: ${errorSites.join(", ")} (${ok2xxCount}/${sites.length} 2xx)`
+        : `HTTP yanıtları temiz: ${ok2xxCount}/${sites.length} 2xx OK`
+  };
+}
+
+/**
+ * Evaluates the failure/warning rate across recent audit timeline items (`auditTimeline`).
+ */
+export function evaluateAuditErrorRate(auditTimeline = []) {
+  const list = Array.isArray(auditTimeline) ? auditTimeline : [];
+  if (list.length === 0) {
+    return {
+      totalEvents: 0,
+      failedEvents: 0,
+      errorRatePct: 0,
+      status: "clean",
+      summary: "Denetim günlüğünde olay yok"
+    };
+  }
+
+  const failedEvents = list.filter(
+    (ev) => ev && (ev.status === "bad" || ev.status === "warn" || ev.status === "error")
+  ).length;
+  const errorRatePct = Math.round((failedEvents / list.length) * 100);
+  const status = errorRatePct >= 40 ? "degraded" : failedEvents > 0 ? "warning" : "clean";
+
+  return {
+    totalEvents: list.length,
+    failedEvents,
+    errorRatePct,
+    status,
+    summary:
+      failedEvents > 0
+        ? `Denetim hata oranı: %${errorRatePct} (${failedEvents}/${list.length} olayda hata/uyarı)`
+        : `Denetim işlemleri hatasız (${list.length}/${list.length} başarılı)`
+  };
+}
+
+/**
+ * Computes remaining USD budget and safe hourly allowance for the Keysmith failover spending cap.
+ */
+export function evaluateFailoverCapHeadroomUsd(failoverInfo = {}) {
+  const cap = failoverInfo?.cap || null;
+  const maxUsd = typeof cap?.max === "number" && cap.max > 0 ? cap.max : null;
+  const spentUsd = typeof cap?.spent === "number" && cap.spent >= 0 ? cap.spent : 0;
+
+  if (maxUsd === null) {
+    return {
+      hasCap: false,
+      maxUsd: null,
+      spentUsd: null,
+      remainingUsd: null,
+      safeHourlyAllowanceUsd: null,
+      status: "unconfigured",
+      summary: "Failover harcama tavanı tanımlı değil"
+    };
+  }
+
+  const remainingUsd =
+    typeof cap?.remaining === "number" && cap.remaining >= 0
+      ? Math.round(cap.remaining * 100) / 100
+      : Math.max(0, Math.round((maxUsd - spentUsd) * 100) / 100);
+  const safeHourlyAllowanceUsd = Math.round((remainingUsd / 8) * 100) / 100;
+  const status = remainingUsd <= 2 ? "critical" : remainingUsd <= 5 ? "tight" : "comfortable";
+
+  return {
+    hasCap: true,
+    maxUsd,
+    spentUsd,
+    remainingUsd,
+    safeHourlyAllowanceUsd,
+    status,
+    summary: `Kalan bütçe payı: $${remainingUsd.toFixed(2)} (8s seans için güvenli ~$${safeHourlyAllowanceUsd.toFixed(2)}/saat)`
+  };
+}
+
+/**
+ * Evaluates how many enabled Claude accounts are currently below `autoswitch.threshold` in their 5-hour window.
+ */
+export function evaluateAutoswitchThresholdCompliance(accounts = [], config = {}) {
+  const thresholdPct =
+    typeof config?.["autoswitch.threshold"] === "number" && config["autoswitch.threshold"] > 0
+      ? config["autoswitch.threshold"]
+      : 90;
+  const enabled = (Array.isArray(accounts) ? accounts : []).filter((a) => a && a.enabled !== false);
+
+  if (enabled.length === 0) {
+    return {
+      thresholdPct,
+      totalEnabled: 0,
+      belowThresholdCount: 0,
+      atOrAboveThresholdCount: 0,
+      exceedingAccounts: [],
+      status: "empty",
+      summary: "Etkin hesap yok"
+    };
+  }
+
+  const exceedingAccounts = [];
+  let belowThresholdCount = 0;
+
+  for (const acct of enabled) {
+    const five =
+      typeof acct?.usage?.fiveHour?.pct === "number"
+        ? acct.usage.fiveHour.pct
+        : typeof acct?.fiveHourPct === "number"
+          ? acct.fiveHourPct
+          : 0;
+    if (five >= thresholdPct) {
+      exceedingAccounts.push(acct.name);
+    } else {
+      belowThresholdCount += 1;
+    }
+  }
+
+  const atOrAboveThresholdCount = exceedingAccounts.length;
+  const status =
+    belowThresholdCount === 0
+      ? "all-exceeded"
+      : atOrAboveThresholdCount > 0
+        ? "partial"
+        : "compliant";
+
+  return {
+    thresholdPct,
+    totalEnabled: enabled.length,
+    belowThresholdCount,
+    atOrAboveThresholdCount,
+    exceedingAccounts,
+    status,
+    summary:
+      atOrAboveThresholdCount > 0
+        ? `Eşik uyumu: ${belowThresholdCount}/${enabled.length} hesap %${thresholdPct} altında (aşan: ${exceedingAccounts.join(", ")})`
+        : `Tüm hesaplar %${thresholdPct} otomatik geçiş eşiğinin altında (${belowThresholdCount}/${enabled.length})`
+  };
+}
+
+/**
+ * Evaluates idle-to-working reserve capacity ratio across the Traycer agent fleet.
+ */
+export function evaluateFleetIdleReserveRatio(fleet = {}) {
+  if (!fleet || fleet.status === "unreadable" || typeof fleet.working !== "number") {
+    return {
+      status: "unreadable",
+      workingCount: 0,
+      idleCount: 0,
+      reserveRatioPct: null,
+      summary: "Filo yedek kapasite verisi okunamadı"
+    };
+  }
+
+  const workingCount = Math.max(0, fleet.working || 0);
+  const idleCount = Math.max(0, fleet.idle || 0);
+  const totalReady = workingCount + idleCount;
+  const reserveRatioPct = totalReady > 0 ? Math.round((idleCount / totalReady) * 100) : 0;
+  const status = idleCount === 0 && workingCount > 0 ? "saturated" : idleCount > 0 ? "has-reserve" : "empty";
+
+  return {
+    status,
+    workingCount,
+    idleCount,
+    reserveRatioPct,
+    summary:
+      idleCount === 0 && workingCount > 0
+        ? `Filo tam kapasite dolu (boşta yedek ajan yok · ${workingCount} aktif)`
+        : `Filo yedek kapasitesi: ${idleCount} boşta ajan (%${reserveRatioPct} hazır rezerv)`
+  };
+}

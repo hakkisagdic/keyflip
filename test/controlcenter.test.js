@@ -88,7 +88,12 @@ import {
   summarizeAccountEmailDomains,
   evaluateDaemonJobDurationHealth,
   evaluateStatusBoardCleanSectionRatio,
-  evaluateEffectivePoolMultiplier
+  evaluateEffectivePoolMultiplier,
+  evaluateServerSiteResponseCodeSummary,
+  evaluateAuditErrorRate,
+  evaluateFailoverCapHeadroomUsd,
+  evaluateAutoswitchThresholdCompliance,
+  evaluateFleetIdleReserveRatio
 } from "../src/controlcenter.js";
 import * as daemon from "../src/daemon.js";
 
@@ -1475,4 +1480,60 @@ test("evaluateFailoverManualOverrideState, summarizeAccountEmailDomains, evaluat
   assert.equal(mult.totalMultiplier, 6);
   assert.equal(mult.remainingMultiplier, 3.5);
   assert.equal(mult.utilizationPct, 42);
+});
+
+
+test("evaluateServerSiteResponseCodeSummary, evaluateAuditErrorRate, evaluateFailoverCapHeadroomUsd, evaluateAutoswitchThresholdCompliance, and evaluateFleetIdleReserveRatio work accurately", () => {
+  const codes = evaluateServerSiteResponseCodeSummary({
+    status: "warning",
+    sites: [
+      { name: "api", status: "ok", code: 200 },
+      { name: "admin", status: "down", code: 502 }
+    ]
+  });
+  assert.equal(codes.totalSites, 2);
+  assert.equal(codes.ok2xxCount, 1);
+  assert.equal(codes.server5xxCount, 1);
+  assert.equal(codes.status, "critical");
+
+  const aud = evaluateAuditErrorRate([
+    { id: "1", status: "ok", summary: "switch ok" },
+    { id: "2", status: "bad", summary: "restart failed" },
+    { id: "3", status: "ok", summary: "failover ok" },
+    { id: "4", status: "ok", summary: "refresh ok" }
+  ]);
+  assert.equal(aud.totalEvents, 4);
+  assert.equal(aud.failedEvents, 1);
+  assert.equal(aud.errorRatePct, 25);
+  assert.equal(aud.status, "warning");
+
+  const capHeadroom = evaluateFailoverCapHeadroomUsd({
+    cap: { max: 25, spent: 9, remaining: 16 }
+  });
+  assert.equal(capHeadroom.hasCap, true);
+  assert.equal(capHeadroom.remainingUsd, 16);
+  assert.equal(capHeadroom.safeHourlyAllowanceUsd, 2);
+  assert.equal(capHeadroom.status, "comfortable");
+
+  const comp = evaluateAutoswitchThresholdCompliance(
+    [
+      { name: "gmail", enabled: true, usage: { fiveHour: { pct: 92 } } },
+      { name: "yahoo", enabled: true, usage: { fiveHour: { pct: 35 } } }
+    ],
+    { "autoswitch.threshold": 90 }
+  );
+  assert.equal(comp.belowThresholdCount, 1);
+  assert.equal(comp.atOrAboveThresholdCount, 1);
+  assert.deepEqual(comp.exceedingAccounts, ["gmail"]);
+  assert.equal(comp.status, "partial");
+
+  const reserve = evaluateFleetIdleReserveRatio({
+    status: "ok",
+    working: 3,
+    idle: 1
+  });
+  assert.equal(reserve.workingCount, 3);
+  assert.equal(reserve.idleCount, 1);
+  assert.equal(reserve.reserveRatioPct, 25);
+  assert.equal(reserve.status, "has-reserve");
 });

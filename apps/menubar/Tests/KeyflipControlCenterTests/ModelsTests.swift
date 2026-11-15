@@ -403,6 +403,21 @@ public enum ModelsTestSuite {
         let r19Decoded = try JSONDecoder().decode(EffectivePoolMultiplierSummary.self, from: r19Json)
         precondition(r19Decoded.totalMultiplier == 6.0 && r19Decoded.remainingMultiplier == 3.5, "EffectivePoolMultiplierSummary must decode accurately")
 
+        // Round 20 decoding check for AutoswitchThresholdComplianceSummary & FleetIdleReserveSummary
+        let r20Json = """
+        {
+          "thresholdPct": 90.0,
+          "totalEnabled": 2,
+          "belowThresholdCount": 1,
+          "atOrAboveThresholdCount": 1,
+          "exceedingAccounts": ["gmail"],
+          "status": "partial",
+          "summary": "Eşik uyumu: 1/2 hesap %90 altında (aşan: gmail)"
+        }
+        """.data(using: .utf8)!
+        let r20Decoded = try JSONDecoder().decode(AutoswitchThresholdComplianceSummary.self, from: r20Json)
+        precondition(r20Decoded.belowThresholdCount == 1 && r20Decoded.exceedingAccounts == ["gmail"], "AutoswitchThresholdComplianceSummary must decode accurately")
+
         // Urgent owner_needed classification test
         let urgentOwner = StatusBoardOwnerItem(project: "prod", text: "ACİL müdahale")
         let normalOwner = StatusBoardOwnerItem(project: "docs", text: "Not ekle")

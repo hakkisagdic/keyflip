@@ -78,6 +78,11 @@ public struct ControlCenterPayload: Codable {
     public var jobDurationHealth: DaemonJobDurationHealthSummary?
     public var statusBoardCleanRatio: StatusBoardCleanSectionSummary?
     public var effectivePoolMultiplier: EffectivePoolMultiplierSummary?
+    public var serverSiteResponseCodes: ServerSiteResponseCodeSummary?
+    public var auditErrorRate: AuditErrorRateSummary?
+    public var failoverCapHeadroom: FailoverCapHeadroomSummary?
+    public var thresholdCompliance: AutoswitchThresholdComplianceSummary?
+    public var fleetIdleReserve: FleetIdleReserveSummary?
     public var auditTimeline: [AuditEventItem]?
     public var markdownReport: String?
     public var preferences: PreferencesSummary?
@@ -161,6 +166,11 @@ public struct ControlCenterPayload: Codable {
         jobDurationHealth: DaemonJobDurationHealthSummary? = nil,
         statusBoardCleanRatio: StatusBoardCleanSectionSummary? = nil,
         effectivePoolMultiplier: EffectivePoolMultiplierSummary? = nil,
+        serverSiteResponseCodes: ServerSiteResponseCodeSummary? = nil,
+        auditErrorRate: AuditErrorRateSummary? = nil,
+        failoverCapHeadroom: FailoverCapHeadroomSummary? = nil,
+        thresholdCompliance: AutoswitchThresholdComplianceSummary? = nil,
+        fleetIdleReserve: FleetIdleReserveSummary? = nil,
         auditTimeline: [AuditEventItem]? = [],
         markdownReport: String? = nil,
         preferences: PreferencesSummary? = nil,
@@ -243,6 +253,11 @@ public struct ControlCenterPayload: Codable {
         self.jobDurationHealth = jobDurationHealth
         self.statusBoardCleanRatio = statusBoardCleanRatio
         self.effectivePoolMultiplier = effectivePoolMultiplier
+        self.serverSiteResponseCodes = serverSiteResponseCodes
+        self.auditErrorRate = auditErrorRate
+        self.failoverCapHeadroom = failoverCapHeadroom
+        self.thresholdCompliance = thresholdCompliance
+        self.fleetIdleReserve = fleetIdleReserve
         self.auditTimeline = auditTimeline
         self.markdownReport = markdownReport
         self.preferences = preferences
@@ -1793,5 +1808,52 @@ public struct EffectivePoolMultiplierSummary: Codable {
     public var totalMultiplier: Double
     public var remainingMultiplier: Double
     public var utilizationPct: Int
+    public var summary: String
+}
+
+public struct ServerSiteResponseCodeSummary: Codable {
+    public var totalSites: Int
+    public var ok2xxCount: Int
+    public var redirect3xxCount: Int
+    public var client4xxCount: Int
+    public var server5xxCount: Int
+    public var errorSites: [String]?
+    public var status: String
+    public var summary: String
+}
+
+public struct AuditErrorRateSummary: Codable {
+    public var totalEvents: Int
+    public var failedEvents: Int
+    public var errorRatePct: Int
+    public var status: String
+    public var summary: String
+}
+
+public struct FailoverCapHeadroomSummary: Codable {
+    public var hasCap: Bool
+    public var maxUsd: Double?
+    public var spentUsd: Double?
+    public var remainingUsd: Double?
+    public var safeHourlyAllowanceUsd: Double?
+    public var status: String
+    public var summary: String
+}
+
+public struct AutoswitchThresholdComplianceSummary: Codable {
+    public var thresholdPct: Double
+    public var totalEnabled: Int
+    public var belowThresholdCount: Int
+    public var atOrAboveThresholdCount: Int
+    public var exceedingAccounts: [String]?
+    public var status: String
+    public var summary: String
+}
+
+public struct FleetIdleReserveSummary: Codable {
+    public var status: String
+    public var workingCount: Int
+    public var idleCount: Int
+    public var reserveRatioPct: Int?
     public var summary: String
 }

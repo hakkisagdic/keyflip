@@ -1,6 +1,6 @@
 # Geliştirme Listesi ve Yaratıcı Özellik Önerileri (`GELISTIRME_LISTESI.md`)
 
-Bu liste, `docs/RAKIP_ANALIZI.md` sonucunda belirlenen tüm özelliklerin tamamlanma durumunu ve on dokuzuncu turda önerilen **beş yeni yaratıcı özelliği** (en değerli ikisi uygulanmış olarak) içerir.
+Bu liste, `docs/RAKIP_ANALIZI.md` sonucunda belirlenen tüm özelliklerin tamamlanma durumunu ve yirminci turda önerilen **beş yeni yaratıcı özelliği** (en değerli ikisi uygulanmış olarak) içerir.
 
 ---
 
@@ -94,24 +94,29 @@ Bu liste, `docs/RAKIP_ANALIZI.md` sonucunda belirlenen tüm özelliklerin tamaml
 - [x] **Failover Manuel Zorlama ve Birincil Havuz Dönüş Önericisi (`evaluateFailoverManualOverrideState`):** Failover manuel açıkken birincil Claude hesaplarında yeterli boşluk (`<%50` 5s ve `<%75` 7g) oluştuğunda `keyflip failover off` önerisi üretme.
 - [x] **Hesap Havuzu E-Posta Sağlayıcı Dağılım Özeti (`summarizeAccountEmailDomains`):** Tam e-posta adreslerini ifşa etmeden hesap havuzunun hangi sağlayıcı alan adlarına (`gmail.com`, `yahoo.com`) dağıldığını özetleme.
 - [x] **Daemon İşleri Ortalama Çalışma Süresi (Latency) Analizcisi (`evaluateDaemonJobDurationHealth`):** `jobs` içindeki `lastDurationMs` ölçümlerini analiz ederek ortalama çalışma gecikmesini ve yavaşlayan işleri (`>=3000 ms`) raporlama.
+- [x] **Durum Panosu Temiz Bölüm Oranı (`evaluateStatusBoardCleanSectionRatio`):** Durum panosundaki bölümlerden kaçının %100 sorunsuz (`bad` veya `warn` içermeyen) olduğunu hesaplama.
+- [x] **Hesap Havuzu Ağırlıklı Kapasite Çarpanı (`evaluateEffectivePoolMultiplier`):** Etkin Claude hesaplarının katman ağırlıklarına göre toplam kapasite çarpanını ve kalan etkin çarpanı `HESAPLAR` bölümünde gösterme.
+- [x] **Uzak Sunucu HTTP Yanıt Kodu Dağılım Analizcisi (`evaluateServerSiteResponseCodeSummary`):** `server.sites` içindeki HTTP durum kodlarını (`2xx`, `3xx`, `4xx`, `5xx`) sınıflandırarak erişim hatalarını özetleme.
+- [x] **Denetim Günlüğü (`auditTimeline`) Hata Oranı Analizcisi (`evaluateAuditErrorRate`):** Son denetim olaylarındaki başarısız (`bad`/`warn`/`error`) işlemlerin oranını hesaplama.
+- [x] **Failover Günlük Güvenli Bütçe Payı (`evaluateFailoverCapHeadroomUsd`):** Kalan Keysmith harcama tavanını (`remainingUsd`) ve 8 saatlik seans için güvenli saatlik bütçe payını (`safeHourlyAllowanceUsd`) özetleme.
 
 ---
 
 ## 2. Listedeki İşler Tamamlandığı İçin Önerilen Beş Yeni Yaratıcı Özellik (En Değerli İkisi Uygulandı)
 
-### ✅ Yeni Öneri 1 (UYGULANDI): Durum Panosu Temiz Bölüm Oranı (`evaluateStatusBoardCleanSectionRatio`)
-- **Değer:** Durum panosundaki bölümlerden kaçının %100 sorunsuz (`bad` veya `warn` içermeyen) olduğunu hesaplar (`Temiz bölümler: 2/3 (%67 sorunsuz)`).
-- **Uygulama:** `src/controlcenter.js` (`evaluateStatusBoardCleanSectionRatio`), `src/daemon.js` (`base.statusBoardCleanRatio`), `Models.swift` (`StatusBoardCleanSectionSummary`).
+### ✅ Yeni Öneri 1 (UYGULANDI): Hesap Havuzu Otomatik Geçiş Eşiği Uyum Oranı (`evaluateAutoswitchThresholdCompliance`)
+- **Değer:** Etkin Claude hesaplarından kaçının mevcut `autoswitch.threshold` sınırının altında (`belowThresholdCount`) veya üstünde (`exceedingAccounts`) olduğunu hesaplayıp `HESAPLAR` bölümünde gösterir (`Eşik uyumu: 1/2 hesap %90 altında (aşan: gmail)`).
+- **Uygulama:** `src/controlcenter.js` (`evaluateAutoswitchThresholdCompliance`), `src/daemon.js` (`base.thresholdCompliance`), `Models.swift` (`AutoswitchThresholdComplianceSummary`) ve `ControlCenterView.swift`.
 
-### ✅ Yeni Öneri 2 (UYGULANDI): Hesap Havuzu Ağırlıklı Kapasite Çarpanı (`evaluateEffectivePoolMultiplier`)
-- **Değer:** Etkin Claude hesaplarının katman ağırlıklarına göre (`pro` = `1x`, `team` = `2x`, `max-5x` = `5x`, `max-20x` = `20x`) toplam kapasite çarpanını ve kalan etkin çarpanı (`Havuz kapasite çarpanı: 6x (etkin kalan: 3.5x)`) hesaplayıp `HESAPLAR` bölümünde gösterir.
-- **Uygulama:** `src/controlcenter.js` (`evaluateEffectivePoolMultiplier`), `src/daemon.js` (`base.effectivePoolMultiplier`), `Models.swift` (`EffectivePoolMultiplierSummary`) ve `ControlCenterView.swift`.
+### ✅ Yeni Öneri 2 (UYGULANDI): Filo (Traycer) Yedek / Boşta Ajan Kapasite Oranı (`evaluateFleetIdleReserveRatio`)
+- **Değer:** Traycer ajan filosundaki hazır boşta ajan sayısını (`idleCount`) ve toplam aktif+boşta havuz içindeki rezerv oranını (`reserveRatioPct`) hesaplayarak `FİLO (TRAYCER)` bölümünde gösterir (`Filo yedek kapasitesi: 1 boşta ajan (%25 hazır rezerv)`).
+- **Uygulama:** `src/controlcenter.js` (`evaluateFleetIdleReserveRatio`), `src/daemon.js` (`base.fleetIdleReserve`), `Models.swift` (`FleetIdleReserveSummary`) ve `ControlCenterView.swift`.
 
-### 📋 Yeni Öneri 3 (Gelecek Adayı): Uzak Sunucu HTTP Yanıt Kodu Dağılım Analizcisi (`evaluateServerSiteResponseCodeSummary`)
-- **Değer:** `server.sites` içindeki HTTP durum kodlarını (`2xx`, `3xx`, `4xx`, `5xx`) sınıflandırarak erişim hatalarını özetleme.
+### 📋 Yeni Öneri 3 (Gelecek Adayı): Durum Panosu Bölüm Başına Ortalama Satır Yoğunluğu (`evaluateStatusBoardRowDensity`)
+- **Değer:** Durum panosundaki bölümlerin ortalama ve maksimum satır yoğunluğunu analiz ederek aşırı kalabalık bölümleri raporlama.
 
-### 📋 Yeni Öneri 4 (Gelecek Adayı): Denetim Günlüğü (`auditTimeline`) Hata Oranı Analizcisi (`evaluateAuditErrorRate`)
-- **Değer:** Son denetim olaylarındaki başarısız (`error`/`warn`) işlemlerin oranını hesaplama.
+### 📋 Yeni Öneri 4 (Gelecek Adayı): OAuth Belirteç Kalan Süre Dağılım Özeti (`summarizeTokenExpiryHorizon`)
+- **Değer:** Etkin Claude hesaplarındaki OAuth belirteçlerinin en kısa ve ortalama kalan geçerlilik dakikasını özetleme.
 
-### 📋 Yeni Öneri 5 (Gelecek Adayı): Failover Günlük Güvenli Bütçe Payı (`evaluateFailoverCapHeadroomUsd`)
-- **Değer:** Kalan Keysmith harcama tavanını (`remainingUsd`) ve güvenli saatlik bütçe payını özetleme.
+### 📋 Yeni Öneri 5 (Gelecek Adayı): Tercihler ve Bildirim Hazırlık Denetçisi (`evaluateNotificationAndAutostartPosture`)
+- **Değer:** Masaüstü bildirimleri (`notify.desktop`) ve oturum açılışında otomatik başlatma (`launchAtLogin`) ayarlarının operasyonel hazırlığını özetleme.

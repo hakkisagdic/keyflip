@@ -911,6 +911,11 @@ async function buildControlCenter(ctx, scheduler, opts) {
   base.jobDurationHealth = _controlcenter.evaluateDaemonJobDurationHealth(base.jobs);
   base.statusBoardCleanRatio = _controlcenter.evaluateStatusBoardCleanSectionRatio(base.statusBoard);
   base.effectivePoolMultiplier = _controlcenter.evaluateEffectivePoolMultiplier(base.accounts);
+  base.serverSiteResponseCodes = _controlcenter.evaluateServerSiteResponseCodeSummary(base.server);
+  base.auditErrorRate = _controlcenter.evaluateAuditErrorRate(base.auditTimeline);
+  base.failoverCapHeadroom = _controlcenter.evaluateFailoverCapHeadroomUsd(base.failover);
+  base.thresholdCompliance = _controlcenter.evaluateAutoswitchThresholdCompliance(base.accounts, base.config);
+  base.fleetIdleReserve = _controlcenter.evaluateFleetIdleReserveRatio(base.fleet);
   base.compactSummary = _controlcenter.formatDaemonCompactSummary(base);
   base.preferences = _controlcenter.collectPreferences(ctx);
   base.markdownReport = _controlcenter.buildControlCenterMarkdown(base);
