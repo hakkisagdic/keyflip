@@ -2521,3 +2521,280 @@ export function prioritizeOwnerNeededQueue(statusBoard = null) {
         : `${ranked.length} bekleyen iş (${projects.size} proje)`
   };
 }
+
+/**
+ * Evaluates OAuth token refresh reliability across enabled accounts by inspecting token status,
+ * refreshable flags, remainingMs, and lastResult ("failed" / "persist-failed" / "dead").
+ */
+export function evaluateOAuthRefreshReliability(accounts = []) {
+  const enabled = (Array.isArray(accounts) ? accounts : []).filter((a) => a && a.enabled !== false);
+  if (enabled.length === 0) {
+    return {
+      score: 100,
+      status: "ok",
+      healthyCount: 0,
+      failedAccounts: [],
+      expiringSoonAccounts: [],
+      summary: "Etkin hesap yok"
+    };
+  }
+
+  let scoreSum = 0;
+  const failedAccounts = [];
+  const expiringSoonAccounts = [];
+
+  for (const a of enabled) {
+    const tok = a?.token || {};
+    const remMs = typeof tok.remainingMs === "number" ? tok.remainingMs : null;
+    if (
+      tok.status === "expired" ||
+      tok.lastResult === "failed" ||
+      tok.lastResult === "persist-failed" ||
+      tok.lastResult === "dead"
+    ) {
+      failedAccounts.push(a.name);
+      scoreSum += 0;
+    } else if (remMs !== null && remMs <= 45 * 60 * 1000) {
+      expiringSoonAccounts.push(a.name);
+      scoreSum += 65;
+    } else if (tok.status === "valid") {
+      scoreSum += 100;
+    } else {
+      scoreSum += 50;
+    }
+  }
+
+  const score = Math.round(scoreSum / enabled.length);
+  const status = failedAccounts.length > 0 ? "critical" : expiringSoonAccounts.length > 0 ? "warning" : "ok";
+  const healthyCount = enabled.length - failedAccounts.length - expiringSoonAccounts.length;
+
+  let summary = `OAuth güvenilirliği: %${score} (${healthyCount}/${enabled.length} sağlıklı)`;
+  if (failedAccounts.length > 0) {
+    summary = `OAuth hatası: ${failedAccounts.join(", ")} · %${score} güvenilirlik`;
+  } else if (expiringSoonAccounts.length > 0) {
+    summary = `OAuth yakında doluyor: ${expiringSoonAccounts.join(", ")} (%${score})`;
+  }
+
+  return {
+    score,
+    status,
+    healthyCount,
+    failedAccounts,
+    expiringSoonAccounts,
+    summary
+  };
+}
+
+/**
+ * Recommends an adaptive autoswitch threshold (%) based on active burn-rate velocity,
+ * pool size, and whether the current UTC hour falls inside the historical bottleneck window.
+ */
+export function recommendAdaptiveAutoswitchThreshold({
+  currentThreshold = 95,
+  accounts = [],
+  quotaForecast = null,
+  bottleneckWindow = null,
+  nowMs = Date.now()
+} = {}) {
+  const enabled = (Array.isArray(accounts) ? accounts : []).filter((a) => a && a.enabled !== false);
+  const currentUtcHour = new Date(typeof nowMs === "function" ? nowMs() : nowMs).getUTCHours();
+  const inBottleneckHour =
+    bottleneckWindow && typeof bottleneckWindow.peakHourUtc === "number" && bottleneckWindow.peakHourUtc === currentUtcHour;
+
+  const activeForecast = (quotaForecast?.accounts || []).find((a) => a.active) || null;
+  const highBurn = activeForecast && typeof activeForecast.burnRateRatio === "number" && activeForecast.burnRateRatio >= 1.4;
+
+  let recommendedThreshold = currentThreshold;
+  let reason = "Mevcut eşik dengeli";
+
+  if (enabled.length >= 2 && (highBurn || inBottleneckHour)) {
+    recommendedThreshold = 85;
+    reason = highBurn
+      ? "Yüksek tüketim hızı nedeniyle erken rotasyon (%85) önerilir"
+      : "Darboğaz saat diliminde erken rotasyon (%85) önerilir";
+  } else if (enabled.length >= 2 && currentThreshold > 90) {
+    recommendedThreshold = 90;
+    reason = "Çoklu hesap havuzunda %90 eşiği daha yumuşak geçiş sağlar";
+  } else if (enabled.length === 1) {
+    recommendedThreshold = 95;
+    reason = "Tek hesapta son kapasiteye kadar (%95) kullanım önerilir";
+  }
+
+  return {
+    currentThreshold,
+    recommendedThreshold,
+    inBottleneckHour: Boolean(inBottleneckHour),
+    highBurn: Boolean(highBurn),
+    needsAdjustment: recommendedThreshold !== currentThreshold,
+    reason,
+    summary:
+      recommendedThreshold !== currentThreshold
+        ? `Önerilen eşik: %${recommendedThreshold} (mevcut %${currentThreshold})`
+        : `Eşik optimal (%${currentThreshold})`
+  };
+}
+
+/**
+ * Computes per-section SLA health breakdown and oldest active issue age for the Status Board.
+ */
+export function summarizeSectionHealthBreakdown(statusBoard = null, nowMs = Date.now()) {
+  const sections = Array.isArray(statusBoard?.sections) ? statusBoard.sections : [];
+  const breakdown = sections.map((sec) => {
+    const rows = Array.isArray(sec?.rows) ? sec.rows : [];
+    const h = computeStatusBoardHealth([sec]);
+    let oldestIssueMinutes = null;
+    for (const r of rows) {
+      if (r?.status === "bad" || r?.status === "warn") {
+        const ts = r?.since ? Date.parse(String(r.since)) : Number.NaN;
+        if (Number.isFinite(ts) && ts <= nowMs) {
+          const mins = Math.max(1, Math.round((nowMs - ts) / 60000));
+          if (oldestIssueMinutes === null || mins > oldestIssueMinutes) {
+            oldestIssueMinutes = mins;
+          }
+        }
+      }
+    }
+    return {
+      id: sec.id,
+      title: sec.title,
+      healthPct: h.healthPct,
+      badCount: h.badRows,
+      warnCount: h.warnRows,
+      totalRows: h.totalRows,
+      oldestIssueMinutes
+    };
+  });
+
+  const weakestSection =
+    breakdown.length > 0
+      ? [...breakdown].sort((a, b) => a.healthPct - b.healthPct || b.badCount - a.badCount)[0]
+      : null;
+
+  return {
+    sections: breakdown,
+    weakestSectionId: weakestSection ? weakestSection.id : null,
+    weakestSectionHealthPct: weakestSection ? weakestSection.healthPct : 100,
+    summary:
+      weakestSection && weakestSection.healthPct < 100
+        ? `En düşük bölüm: ${weakestSection.title} (%${weakestSection.healthPct})`
+        : "Tüm bölümler %100 sağlıklı"
+  };
+}
+
+/**
+ * Computes a prioritized 1-to-3 step Incident Triage & Remediation Playbook ("Eylem Planı")
+ * whenever any degraded condition is detected across accounts, OAuth tokens, failover, services, or status board.
+ */
+export function buildRemediationPlaybook({
+  accounts = [],
+  failover = {},
+  services = [],
+  statusBoard = null
+} = {}) {
+  const steps = [];
+
+  for (const a of Array.isArray(accounts) ? accounts : []) {
+    if (a?.enabled !== false && (a?.token?.status === "expired" || a?.token?.lastResult === "failed")) {
+      steps.push({
+        priority: 1,
+        target: a.name,
+        title: `${a.name} OAuth belirtecini yenile`,
+        command: `keyflip refresh ${a.name}`
+      });
+    }
+  }
+
+  if (failover?.cap?.exceeded || failover?.spendHealth?.status === "critical") {
+    steps.push({
+      priority: 1,
+      target: "failover",
+      title: "Failover harcama tavanını kontrol et veya yedek zinciri kapat",
+      command: "keyflip failover status"
+    });
+  }
+
+  for (const s of Array.isArray(services) ? services : []) {
+    if (s?.state === "error" && s?.restartable) {
+      steps.push({
+        priority: 2,
+        target: s.label,
+        title: `${s.title} servisini yeniden başlat`,
+        command: `launchctl kickstart -k gui/$UID/${s.label}`
+      });
+    }
+  }
+
+  if (statusBoard && Array.isArray(statusBoard.sections)) {
+    for (const sec of statusBoard.sections) {
+      for (const r of sec?.rows || []) {
+        if (r?.status === "bad") {
+          steps.push({
+            priority: 2,
+            target: `${sec.id}::${r.label}`,
+            title: `Durum panosu kritik satırı incele: ${r.label} (${r.value})`,
+            command: "keyflip status-board validate"
+          });
+        }
+      }
+    }
+  }
+
+  steps.sort((a, b) => a.priority - b.priority);
+  const topSteps = steps.slice(0, 3);
+
+  return {
+    hasActions: topSteps.length > 0,
+    actionCount: steps.length,
+    topSteps,
+    summary:
+      topSteps.length > 0
+        ? `Önerilen eylem (${steps.length}): ${topSteps[0].title}`
+        : "Müdahale gerektiren açık sorun yok"
+  };
+}
+
+/**
+ * Evaluates Cross-Account Load Balance & Fairness Index (0-100) across enabled Claude accounts
+ * to detect lopsided 7-day quota consumption (e.g. one account at 95% while another sits at 10%).
+ */
+export function evaluatePoolLoadBalance(accounts = []) {
+  const enabled = (Array.isArray(accounts) ? accounts : []).filter((a) => a && a.enabled !== false);
+  if (enabled.length < 2) {
+    return {
+      balanced: true,
+      spreadPct: 0,
+      score: 100,
+      underutilizedAccount: null,
+      overloadedAccount: null,
+      summary: "Tek etkin hesap (yük dengeleme uygulanamaz)"
+    };
+  }
+
+  const withPct = enabled.map((a) => {
+    const seven =
+      typeof a?.usage?.sevenDay?.pct === "number"
+        ? a.usage.sevenDay.pct
+        : typeof a?.sevenDayPct === "number"
+          ? a.sevenDayPct
+          : 0;
+    return { name: a.name, sevenPct: seven };
+  });
+
+  withPct.sort((a, b) => a.sevenPct - b.sevenPct);
+  const minAcct = withPct[0];
+  const maxAcct = withPct[withPct.length - 1];
+  const spreadPct = Math.round((maxAcct.sevenPct - minAcct.sevenPct) * 10) / 10;
+  const score = Math.max(0, Math.min(100, Math.round(100 - spreadPct)));
+  const balanced = spreadPct <= 35;
+
+  return {
+    balanced,
+    spreadPct,
+    score,
+    underutilizedAccount: !balanced ? minAcct.name : null,
+    overloadedAccount: !balanced ? maxAcct.name : null,
+    summary: balanced
+      ? `Havuz yük dengesi: %${score} (fark %${spreadPct})`
+      : `Dengesiz yük (%${spreadPct} fark): ${minAcct.name} (%${minAcct.sevenPct}) hesabına geçiş önerilir`
+  };
+}

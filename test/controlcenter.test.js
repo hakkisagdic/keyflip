@@ -38,7 +38,12 @@ import {
   evaluateSecondaryQuotasAlert,
   formatDaemonCompactSummary,
   evaluateAutonomousOpsPosture,
-  prioritizeOwnerNeededQueue
+  prioritizeOwnerNeededQueue,
+  evaluateOAuthRefreshReliability,
+  recommendAdaptiveAutoswitchThreshold,
+  summarizeSectionHealthBreakdown,
+  buildRemediationPlaybook,
+  evaluatePoolLoadBalance
 } from "../src/controlcenter.js";
 import * as daemon from "../src/daemon.js";
 
@@ -815,4 +820,51 @@ test("pruneStatusBoardSnapshots, evaluateSecondaryQuotasAlert, formatDaemonCompa
   } finally {
     env.cleanup();
   }
+});
+
+test("evaluateOAuthRefreshReliability, recommendAdaptiveAutoswitchThreshold, summarizeSectionHealthBreakdown, buildRemediationPlaybook, and evaluatePoolLoadBalance work accurately", () => {
+  const oauthRel = evaluateOAuthRefreshReliability([
+    { name: "gmail", enabled: true, token: { status: "valid", remainingMs: 2 * 3600 * 1000, lastResult: "ok" } },
+    { name: "yahoo", enabled: true, token: { status: "expired", remainingMs: 0, lastResult: "failed" } }
+  ]);
+  assert.equal(oauthRel.status, "critical");
+  assert.equal(oauthRel.score, 50);
+  assert.deepEqual(oauthRel.failedAccounts, ["yahoo"]);
+
+  const adaptive = recommendAdaptiveAutoswitchThreshold({
+    currentThreshold: 95,
+    accounts: [{ name: "gmail", enabled: true }, { name: "yahoo", enabled: true }],
+    quotaForecast: { accounts: [{ name: "gmail", active: true, burnRateRatio: 1.8 }] },
+    bottleneckWindow: { peakHourUtc: 14 },
+    nowMs: Date.parse("2026-11-15T14:20:00Z")
+  });
+  assert.equal(adaptive.recommendedThreshold, 85);
+  assert.equal(adaptive.needsAdjustment, true);
+
+  const secBreakdown = summarizeSectionHealthBreakdown({
+    sections: [
+      { id: "s1", title: "Kotalar", rows: [{ label: "A", status: "bad", value: "99%", since: "2026-11-15T05:00:00Z" }] },
+      { id: "s2", title: "Servisler", rows: [{ label: "B", status: "ok", value: "200" }] }
+    ]
+  }, Date.parse("2026-11-15T06:00:00Z"));
+  assert.equal(secBreakdown.weakestSectionId, "s1");
+  assert.equal(secBreakdown.weakestSectionHealthPct, 0);
+
+  const playbook = buildRemediationPlaybook({
+    accounts: [{ name: "yahoo", enabled: true, token: { status: "expired", lastResult: "failed" } }],
+    failover: { cap: { exceeded: true } },
+    services: [{ label: "dev.keysmith.gateway", title: "Gateway", state: "error", restartable: true }],
+    statusBoard: { sections: [{ id: "s1", rows: [{ label: "DB", status: "bad", value: "down" }] }] }
+  });
+  assert.equal(playbook.hasActions, true);
+  assert.equal(playbook.topSteps.length, 3);
+  assert.equal(playbook.topSteps[0].target, "yahoo");
+
+  const loadBal = evaluatePoolLoadBalance([
+    { name: "gmail", enabled: true, usage: { sevenDay: { pct: 90 } } },
+    { name: "yahoo", enabled: true, usage: { sevenDay: { pct: 20 } } }
+  ]);
+  assert.equal(loadBal.balanced, false);
+  assert.equal(loadBal.spreadPct, 70);
+  assert.equal(loadBal.underutilizedAccount, "yahoo");
 });

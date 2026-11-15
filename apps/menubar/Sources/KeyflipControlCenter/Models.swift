@@ -29,6 +29,10 @@ public struct ControlCenterPayload: Codable {
     public var secondaryQuotasAlert: SecondaryQuotasAlertSummary?
     public var autonomousPosture: AutonomousOpsPostureSummary?
     public var ownerQueue: OwnerQueueSummary?
+    public var oauthReliability: OAuthReliabilitySummary?
+    public var adaptiveThreshold: AdaptiveThresholdSummary?
+    public var remediationPlaybook: RemediationPlaybookSummary?
+    public var poolLoadBalance: PoolLoadBalanceSummary?
     public var auditTimeline: [AuditEventItem]?
     public var markdownReport: String?
     public var preferences: PreferencesSummary?
@@ -63,6 +67,10 @@ public struct ControlCenterPayload: Codable {
         secondaryQuotasAlert: SecondaryQuotasAlertSummary? = nil,
         autonomousPosture: AutonomousOpsPostureSummary? = nil,
         ownerQueue: OwnerQueueSummary? = nil,
+        oauthReliability: OAuthReliabilitySummary? = nil,
+        adaptiveThreshold: AdaptiveThresholdSummary? = nil,
+        remediationPlaybook: RemediationPlaybookSummary? = nil,
+        poolLoadBalance: PoolLoadBalanceSummary? = nil,
         auditTimeline: [AuditEventItem]? = [],
         markdownReport: String? = nil,
         preferences: PreferencesSummary? = nil,
@@ -96,6 +104,10 @@ public struct ControlCenterPayload: Codable {
         self.secondaryQuotasAlert = secondaryQuotasAlert
         self.autonomousPosture = autonomousPosture
         self.ownerQueue = ownerQueue
+        self.oauthReliability = oauthReliability
+        self.adaptiveThreshold = adaptiveThreshold
+        self.remediationPlaybook = remediationPlaybook
+        self.poolLoadBalance = poolLoadBalance
         self.auditTimeline = auditTimeline
         self.markdownReport = markdownReport
         self.preferences = preferences
@@ -1139,4 +1151,45 @@ public struct OwnerQueueSummary: Codable {
     public var urgentCount: Int
     public var projectCount: Int
     public var summary: String?
+}
+
+public struct OAuthReliabilitySummary: Codable {
+    public var score: Int
+    public var status: String
+    public var healthyCount: Int?
+    public var failedAccounts: [String]?
+    public var expiringSoonAccounts: [String]?
+    public var summary: String
+}
+
+public struct AdaptiveThresholdSummary: Codable {
+    public var currentThreshold: Double
+    public var recommendedThreshold: Double
+    public var needsAdjustment: Bool
+    public var reason: String?
+    public var summary: String
+}
+
+public struct RemediationStepItem: Codable, Identifiable {
+    public var id: String { "\(priority)-\(target)" }
+    public var priority: Int
+    public var target: String
+    public var title: String
+    public var command: String?
+}
+
+public struct RemediationPlaybookSummary: Codable {
+    public var hasActions: Bool
+    public var actionCount: Int
+    public var topSteps: [RemediationStepItem]?
+    public var summary: String
+}
+
+public struct PoolLoadBalanceSummary: Codable {
+    public var balanced: Bool
+    public var spreadPct: Double
+    public var score: Int
+    public var underutilizedAccount: String?
+    public var overloadedAccount: String?
+    public var summary: String
 }

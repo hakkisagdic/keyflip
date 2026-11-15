@@ -540,6 +540,30 @@ public struct ControlCenterView: View {
                         }
                     }
 
+                    if let lb = viewModel.payload.poolLoadBalance, !lb.summary.isEmpty {
+                        HStack(spacing: 5) {
+                            Image(systemName: lb.balanced ? "scalemass.fill" : "scalemass")
+                                .font(.system(size: 10))
+                                .foregroundColor(lb.balanced ? .secondary : .orange)
+                            Text(lb.summary)
+                                .font(.system(size: 10))
+                                .foregroundColor(lb.balanced ? .secondary : .orange)
+                                .lineLimit(1)
+                        }
+                    }
+
+                    if let pb = viewModel.payload.remediationPlaybook, pb.hasActions {
+                        HStack(spacing: 5) {
+                            Image(systemName: "wrench.and.screwdriver.fill")
+                                .font(.system(size: 10))
+                                .foregroundColor(.orange)
+                            Text(pb.summary)
+                                .font(.system(size: 10, weight: .medium))
+                                .foregroundColor(.orange)
+                                .lineLimit(1)
+                        }
+                    }
+
                     if let bw = viewModel.payload.bottleneckWindow, !bw.summary.isEmpty {
                         HStack(spacing: 5) {
                             Image(systemName: "gauge.with.dots.needle.67percent")

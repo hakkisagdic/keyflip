@@ -1,6 +1,6 @@
 # Geliştirme Listesi ve Yaratıcı Özellik Önerileri (`GELISTIRME_LISTESI.md`)
 
-Bu liste, `docs/RAKIP_ANALIZI.md` sonucunda belirlenen tüm özelliklerin tamamlanma durumunu ve dokuzuncu turda önerilen **beş yeni yaratıcı özelliği** (en değerli ikisi uygulanmış olarak) içerir.
+Bu liste, `docs/RAKIP_ANALIZI.md` sonucunda belirlenen tüm özelliklerin tamamlanma durumunu ve onuncu turda önerilen **beş yeni yaratıcı özelliği** (en değerli ikisi uygulanmış olarak) içerir.
 
 ---
 
@@ -45,24 +45,28 @@ Bu liste, `docs/RAKIP_ANALIZI.md` sonucunda belirlenen tüm özelliklerin tamaml
 - [x] **Durum Panosu Otomatik Snapshot Budama (`pruneStatusBoardSnapshots` / `keyflip status-board prune [--keep N]`):** `<configDir>/status-snapshots/` altında biriken eski anlık görüntüleri yapılandırılabilir sınırda tutarak disk şişmesini önleme.
 - [x] **İkincil AI Araçları Tükenme Riski Uyarıcısı (`evaluateSecondaryQuotasAlert`):** `DİĞER KOTALAR` altındaki ikincil sağlayıcılardan herhangi biri `%85+` kullanıma ulaştığında veya tükendiğinde yapılandırılmış uyarı üretme.
 - [x] **Birleşik Kontrol Merkezi 6 Sütunlu CLI Sağlık Özeti (`keyflip daemon summary` / `formatDaemonCompactSummary`):** Terminal kullanıcıları için 6 ana sütunun (Hesap Havuzu, Yedek Zincir, Durum Panosu, Servis Filosu, Traycer Filo, Uzak Sunucu) durumunu tek tabloda özetleme.
+- [x] **Birleşik Otonom Operasyonel Sağlık Notu (`evaluateAutonomousOpsPosture`) & Sahiplik Bekleyen İş Önceliklendirici (`prioritizeOwnerNeededQueue`):** 5 boyutlu `A`–`D` (`%0–100`) Otonom Sağlık Notu ve `owner_needed` aciliyet (`ACİL`) sıralaması.
+- [x] **OAuth Yenileme Başarı Oranı ve Güvenilirlik Analizcisi (`evaluateOAuthRefreshReliability`):** Etkin hesapların son OAuth yenileme sonuçlarını (`lastResult`, `remainingMs`) analiz ederek kimlik doğrulama güvenilirlik yüzdesini hesaplama.
+- [x] **Gün İçi Dinamik Eşik Önericisi (`recommendAdaptiveAutoswitchThreshold`):** Darboğaz saat penceresine (`bottleneckWindow`) ve aktif tüketim hızına (`burnRateRatio`) göre optimal `autoswitch.threshold` değerini (`%85` vs `%95`) önerme.
+- [x] **Durum Panosu Bölüm Bazlı Sağlık Özeti (`summarizeSectionHealthBreakdown`):** Her durum panosu bölümünün (`sections`) kendi ağırlıklı sağlık yüzdesini ve en eski sorun yaşını (`oldestIssueMinutes`) hesaplama.
 
 ---
 
 ## 2. Listedeki İşler Tamamlandığı İçin Önerilen Beş Yeni Yaratıcı Özellik (En Değerli İkisi Uygulandı)
 
-### ✅ Yeni Öneri 1 (UYGULANDI): Birleşik Otonom Operasyonel Sağlık Notu (`evaluateAutonomousOpsPosture` — `A`–`D` / `%0–100`)
-- **Değer:** Hesap Havuzu Dayanıklılığı (`%25`), Oturum Hazırlığı (`%25`), Çoklu Sağlayıcı Sürekliliği (`%15`), Servis Filosu Sağlığı (`%20`) ve Durum Panosu SLA (`%15`) puanlarını ağırlıklı olarak birleştirerek tek bakışlık **Otonom Sağlık Notu** (`Otonom Sağlık: A (%91)`) üretir ve Kontrol Merkezi üst başlığında rozet (`A · %91`) olarak gösterir.
-- **Uygulama:** `src/controlcenter.js` (`evaluateAutonomousOpsPosture`), `src/daemon.js` (`base.autonomousPosture`), `Models.swift` (`AutonomousOpsPostureSummary`) ve `ControlCenterView.swift` (`headerBar`).
+### ✅ Yeni Öneri 1 (UYGULANDI): Otomatik Sorun Giderme ve Müdahale Eylem Planı (`buildRemediationPlaybook`)
+- **Değer:** Süresi dolmuş OAuth belirteci, aşım sınırındaki Failover harcama tavanı, hata durumundaki yerel servis veya `bad` durum panosu satırı tespit edildiğinde en kritik 1–3 müdahale adımını ve tam CLI komutunu (`Önerilen eylem (3): yahoo OAuth belirtecini yenile`) otomatik oluşturup `HESAPLAR` bölümünde gösterir.
+- **Uygulama:** `src/controlcenter.js` (`buildRemediationPlaybook`), `src/daemon.js` (`base.remediationPlaybook`), `Models.swift` (`RemediationPlaybookSummary`, `RemediationStepItem`) ve `ControlCenterView.swift`.
 
-### ✅ Yeni Öneri 2 (UYGULANDI): Sahiplik Bekleyen İşler (`owner_needed`) Akıllı Aciliyet Sıralayıcı (`prioritizeOwnerNeededQueue` & `isUrgent`)
-- **Değer:** `status.json` içindeki `owner_needed` maddelerini aciliyet anahtar kelimelerine (`acil`, `kritik`, `blocker`, `down`, `prod`, `fatura`, `expired`, `500/502/503`) göre otomatik sınıflandırıp acil maddeleri en üste taşır ve menü çubuğunda kırmızı **`ACİL`** rozetiyle vurgular.
-- **Uygulama:** `src/controlcenter.js` (`prioritizeOwnerNeededQueue`), `src/daemon.js` (`base.ownerQueue`), `Models.swift` (`StatusBoardOwnerItem.isUrgent`, `OwnerQueueSummary`) ve `ControlCenterView.swift` (`statusBoardSection`).
+### ✅ Yeni Öneri 2 (UYGULANDI): Hesap Havuzu 7 Günlük Yük Dengesi ve Adillik Endeksi (`evaluatePoolLoadBalance`)
+- **Değer:** Etkin Claude abonelikleri arasındaki 7 günlük kota kullanım farkını (`spreadPct`) analiz ederek bir hesap `%90` doluyken diğerinin `%20`'de atıl kalmasını tespit eder (`Dengesiz yük (%70 fark): yahoo (%20) hesabına geçiş önerilir`) ve dengeli tüketimi teşvik eder.
+- **Uygulama:** `src/controlcenter.js` (`evaluatePoolLoadBalance`), `src/daemon.js` (`base.poolLoadBalance`), `Models.swift` (`PoolLoadBalanceSummary`) ve `ControlCenterView.swift`.
 
-### 📋 Yeni Öneri 3 (Gelecek Adayı): OAuth Yenileme Başarı Oranı ve Hata Eğilimi Analizcisi (`evaluateOAuthRefreshReliability`)
-- **Değer:** Etkin hesapların son OAuth yenileme sonuçlarını (`lastResult`, `lastError`) ve kalan sürelerini analiz ederek kimlik doğrulama güvenilirlik yüzdesini hesaplama.
+### 📋 Yeni Öneri 3 (Gelecek Adayı): Durum Panosu Kronolojik Yaşlanan Sorunlar Listesi (`listAgingStatusBoardIssues`)
+- **Değer:** Tüm bölümlerdeki `bad` ve `warn` satırlarını `since` zaman damgasına göre en eskiden en yeniye doğru sıralayarak uzun süredir açık kalan ("kronik") sorunları öne çıkarma.
 
-### 📋 Yeni Öneri 4 (Gelecek Adayı): Gün İçi Dinamik Eşik Önericisi (`recommendAdaptiveAutoswitchThreshold`)
-- **Değer:** Darboğaz saat penceresine (`bottleneckWindow`) ve aktif tüketim hızına (`burnRateRatio`) göre optimal `autoswitch.threshold` değerini (`%85` vs `%95`) önerme.
+### 📋 Yeni Öneri 4 (Gelecek Adayı): Yedek Zincir (Failover) Otomatik Kurtarma Zamanlayıcı Özeti (`evaluateFailoverRecoveryCountdown`)
+- **Değer:** Failover devredeyken `recoverAt` zamanına veya birincil hesabın 5 saatlik sıfırlanma zamanına kaç dakika kaldığını hesaplayarak abonelik havuzuna dönüş geri sayımı sunma.
 
-### 📋 Yeni Öneri 5 (Gelecek Adayı): Durum Panosu Bölüm Bazlı Sağlık Özeti (`summarizeSectionHealthBreakdown`)
-- **Değer:** Her durum panosu bölümünün (`sections`) kendi ağırlıklı sağlık yüzdesini ve en eski sorun yaşını (`maxSinceAge`) hesaplayıp raporlama.
+### 📋 Yeni Öneri 5 (Gelecek Adayı): Günlük Denetim Olayları Yoğunluk Özeti (`summarizeDailyAuditActivity`)
+- **Değer:** Son 24 saat içindeki toplam hesap geçişi, failover tetiklemesi ve servis yeniden başlatma sayılarını tek satırlık aktivite özetinde toplama.

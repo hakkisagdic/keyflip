@@ -833,6 +833,22 @@ async function buildControlCenter(ctx, scheduler, opts) {
     statusBoard: base.statusBoard
   });
   base.ownerQueue = _controlcenter.prioritizeOwnerNeededQueue(base.statusBoard);
+  base.oauthReliability = _controlcenter.evaluateOAuthRefreshReliability(base.accounts);
+  base.adaptiveThreshold = _controlcenter.recommendAdaptiveAutoswitchThreshold({
+    currentThreshold: base.config['autoswitch.threshold'],
+    accounts: base.accounts,
+    quotaForecast: base.quotaForecast,
+    bottleneckWindow: base.bottleneckWindow,
+    nowMs: opts.nowMs || ctx.nowMs
+  });
+  base.sectionHealthBreakdown = _controlcenter.summarizeSectionHealthBreakdown(base.statusBoard);
+  base.remediationPlaybook = _controlcenter.buildRemediationPlaybook({
+    accounts: base.accounts,
+    failover: base.failover,
+    services: base.services,
+    statusBoard: base.statusBoard
+  });
+  base.poolLoadBalance = _controlcenter.evaluatePoolLoadBalance(base.accounts);
   base.compactSummary = _controlcenter.formatDaemonCompactSummary(base);
   base.preferences = _controlcenter.collectPreferences(ctx);
   base.markdownReport = _controlcenter.buildControlCenterMarkdown(base);
