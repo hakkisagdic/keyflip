@@ -3903,3 +3903,202 @@ export function evaluateFailoverChainRedundancy(failoverInfo = {}) {
         : "Failover tek ayaklı (ikincil sağlayıcı ayağı önerilir)"
   };
 }
+
+
+/**
+ * Evaluates daemon uptime stability and socket readiness based on `daemon` metadata.
+ */
+export function evaluateDaemonUptimeStability(daemonMeta = {}) {
+  const uptimeSeconds = typeof daemonMeta?.uptimeSeconds === "number" ? Math.max(0, daemonMeta.uptimeSeconds) : 0;
+  const hasSocket = Boolean(daemonMeta?.socketPath);
+  const uptimeHours = Math.round((uptimeSeconds / 3600) * 10) / 10;
+
+  let status = "healthy";
+  if (!hasSocket) {
+    status = "offline";
+  } else if (uptimeSeconds > 0 && uptimeSeconds < 120) {
+    status = "just-restarted";
+  }
+
+  let humanUptime = `${uptimeSeconds} sn`;
+  if (uptimeSeconds >= 86400) {
+    const days = Math.floor(uptimeSeconds / 86400);
+    const remHours = Math.round((uptimeSeconds % 86400) / 3600);
+    humanUptime = remHours > 0 ? `${days}g ${remHours}s` : `${days} gün`;
+  } else if (uptimeSeconds >= 3600) {
+    humanUptime = `${uptimeHours} saat`;
+  } else if (uptimeSeconds >= 60) {
+    humanUptime = `${Math.round(uptimeSeconds / 60)} dk`;
+  }
+
+  return {
+    status,
+    uptimeSeconds,
+    uptimeHours,
+    humanUptime,
+    hasSocket,
+    summary:
+      status === "offline"
+        ? "Daemon soketi bağlı değil"
+        : status === "just-restarted"
+          ? `Daemon yeni başlatıldı (${humanUptime})`
+          : `Daemon kararlı (çalışma süresi: ${humanUptime})`
+  };
+}
+
+/**
+ * Detects whether two or more enabled Claude accounts have their 5-hour quota reset times
+ * within `collisionWindowMin` (default 20 minutes) of each other.
+ */
+export function detectFiveHourResetCollision(accounts = [], options = {}) {
+  const collisionWindowMin = typeof options.collisionWindowMin === "number" ? options.collisionWindowMin : 20;
+  const enabled = (Array.isArray(accounts) ? accounts : []).filter((a) => a && a.enabled !== false);
+
+  const withResets = [];
+  for (const acct of enabled) {
+    const raw = acct?.usage?.fiveHour?.resetsAt || acct?.fiveHourResetsAt || null;
+    if (!raw) continue;
+    const ms = Date.parse(String(raw));
+    if (Number.isFinite(ms)) {
+      withResets.push({ name: acct.name, ms });
+    }
+  }
+
+  withResets.sort((a, b) => a.ms - b.ms);
+  const collidingPairs = [];
+  let minGapMinutes = null;
+
+  for (let i = 1; i < withResets.length; i += 1) {
+    const prev = withResets[i - 1];
+    const cur = withResets[i];
+    const gapMin = Math.round((cur.ms - prev.ms) / 60000);
+    if (minGapMinutes === null || gapMin < minGapMinutes) {
+      minGapMinutes = gapMin;
+    }
+    if (gapMin <= collisionWindowMin) {
+      collidingPairs.push({
+        first: prev.name,
+        second: cur.name,
+        gapMinutes: gapMin
+      });
+    }
+  }
+
+  const hasCollision = collidingPairs.length > 0;
+  return {
+    hasCollision,
+    collisionCount: collidingPairs.length,
+    minGapMinutes,
+    collidingPairs,
+    summary: hasCollision
+      ? `5s sıfırlanma çakışması: ${collidingPairs[0].first} & ${collidingPairs[0].second} (${collidingPairs[0].gapMinutes} dk ara)`
+      : "5s sıfırlanma zamanları ayrık"
+  };
+}
+
+/**
+ * Evaluates the proportion of `unknown` rows in the Status Board to identify telemetry blind spots.
+ */
+export function evaluateStatusBoardUnknownNoise(statusBoard) {
+  const sections = Array.isArray(statusBoard?.sections) ? statusBoard.sections : [];
+  let totalRows = 0;
+  let unknownRows = 0;
+  const affectedSections = [];
+
+  for (const sec of sections) {
+    let secUnknown = 0;
+    for (const r of sec?.rows || []) {
+      totalRows += 1;
+      if (!["ok", "warn", "bad"].includes(r?.status)) {
+        unknownRows += 1;
+        secUnknown += 1;
+      }
+    }
+    if (secUnknown > 0) {
+      affectedSections.push(sec?.title || sec?.id || "Bölüm");
+    }
+  }
+
+  const unknownPct = totalRows > 0 ? Math.round((unknownRows / totalRows) * 100) : 0;
+  const hasBlindSpots = unknownRows > 0;
+
+  return {
+    hasBlindSpots,
+    totalRows,
+    unknownRows,
+    unknownPct,
+    affectedSections,
+    summary: hasBlindSpots
+      ? `Belirsiz telemetri: ${unknownRows}/${totalRows} satır (% ${unknownPct} — ${affectedSections.join(", ")})`
+      : "Tüm durum panosu satırları net"
+  };
+}
+
+/**
+ * Evaluates 5-Hour Quota Window Staggering Quality across enabled Claude accounts,
+ * scoring how well staggered the 5-hour reset windows are.
+ */
+export function evaluateFiveHourWindowStaggering(accounts = [], options = {}) {
+  const idealGapMin = typeof options.idealGapMin === "number" ? options.idealGapMin : 45;
+  const col = detectFiveHourResetCollision(accounts, { collisionWindowMin: 20 });
+
+  if (col.minGapMinutes === null) {
+    return {
+      staggered: true,
+      minGapMinutes: null,
+      score: 100,
+      summary: "Tek aktif 5s penceresi"
+    };
+  }
+
+  const minGapMinutes = col.minGapMinutes;
+  const score = Math.max(0, Math.min(100, Math.round((minGapMinutes / idealGapMin) * 100)));
+  const staggered = minGapMinutes >= 25;
+
+  return {
+    staggered,
+    minGapMinutes,
+    score,
+    summary: staggered
+      ? `5s pencere kademelenmesi iyi (en yakın fark ${minGapMinutes} dk)`
+      : `5s pencereleri çakışıyor (${minGapMinutes} dk fark) — erken rotasyon önerilir`
+  };
+}
+
+/**
+ * Identifies the most degraded section ("Hotspot") in the Status Board based on weighted `bad` and `warn` counts.
+ */
+export function evaluateStatusBoardHotspot(statusBoard) {
+  const sections = Array.isArray(statusBoard?.sections) ? statusBoard.sections : [];
+  let hotspot = null;
+
+  for (const sec of sections) {
+    let badCount = 0;
+    let warnCount = 0;
+    for (const r of sec?.rows || []) {
+      if (r?.status === "bad") badCount += 1;
+      else if (r?.status === "warn") warnCount += 1;
+    }
+    const severityScore = badCount * 3 + warnCount * 1;
+    if (severityScore > 0 && (!hotspot || severityScore > hotspot.severityScore)) {
+      hotspot = {
+        sectionId: sec?.id || "section",
+        sectionTitle: sec?.title || sec?.id || "Bölüm",
+        badCount,
+        warnCount,
+        severityScore
+      };
+    }
+  }
+
+  return {
+    hasHotspot: Boolean(hotspot),
+    sectionId: hotspot ? hotspot.sectionId : null,
+    sectionTitle: hotspot ? hotspot.sectionTitle : null,
+    badCount: hotspot ? hotspot.badCount : 0,
+    warnCount: hotspot ? hotspot.warnCount : 0,
+    summary: hotspot
+      ? `Odak darboğazı: ${hotspot.sectionTitle} (${hotspot.badCount} kritik, ${hotspot.warnCount} uyarı)`
+      : "Durum panosunda darboğaz bölüm yok"
+  };
+}

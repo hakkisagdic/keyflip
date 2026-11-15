@@ -1,6 +1,6 @@
 # Geliştirme Listesi ve Yaratıcı Özellik Önerileri (`GELISTIRME_LISTESI.md`)
 
-Bu liste, `docs/RAKIP_ANALIZI.md` sonucunda belirlenen tüm özelliklerin tamamlanma durumunu ve on dördüncü turda önerilen **beş yeni yaratıcı özelliği** (en değerli ikisi uygulanmış olarak) içerir.
+Bu liste, `docs/RAKIP_ANALIZI.md` sonucunda belirlenen tüm özelliklerin tamamlanma durumunu ve on beşinci turda önerilen **beş yeni yaratıcı özelliği** (en değerli ikisi uygulanmış olarak) içerir.
 
 ---
 
@@ -74,23 +74,29 @@ Bu liste, `docs/RAKIP_ANALIZI.md` sonucunda belirlenen tüm özelliklerin tamaml
 - [x] **İkincil AI Sağlayıcıları Kaynak Tazeliği Denetçisi (`evaluateOtherQuotasFreshness`):** `DİĞER KOTALAR` altındaki sağlayıcıların `updatedAt` ve `source` bilgilerini denetleyerek okunamayan veya bayatlayan kaynakları raporlama.
 - [x] **Filo (Traycer) Boşta / Uyuyan Ajan Kapasite Geri Kazanım Önericisi (`evaluateFleetCapacityReclaim`):** `fleet` özetindeki `stuck` ve `dormant` ajan sayılarını analiz ederek geri kazanılabilir ajan yuvası sayısını özetleme.
 
+- [x] **Hesap Katman (Tier) ve Kapasite Öncelik Hizalaması (`evaluateAccountTierAlignment`):** Yüksek kapasiteli `max-20x`/`team` abonelikleri boşta beklerken `pro` hesabın aktif kullanılmasını tespit edip `HESAPLAR` bölümünde önerme.
+- [x] **Yedek Zincir (Failover) Ayak Çeşitliliği ve Yedeklilik Analizcisi (`evaluateFailoverChainRedundancy`):** Keysmith failover zincirindeki yedek sağlayıcı ayağı sayısını ve gateway hazırlığını `YEDEK ZİNCİR` bölümünde gösterme.
+- [x] **Daemon Çalışma Süresi (Uptime) ve Soket Kararlılık Özeti (`evaluateDaemonUptimeStability`):** `daemon.uptimeSeconds` ve `socketPath` bilgilerini analiz ederek daemon çalışma süresini ve kararlılığını sınıflandırma.
+- [x] **5 Saatlik Pencere Senkronize Sıfırlanma Çakışma Tespiti (`detectFiveHourResetCollision`):** Birden fazla etkin Claude hesabının 5 saatlik sıfırlanma zamanlarının `<=20 dk` yakın olup olmadığını tespit etme.
+- [x] **Durum Panosu `unknown` / Belirsiz Satır Temizlik Denetçisi (`evaluateStatusBoardUnknownNoise`):** Durum panosundaki `unknown` durumlu satırların oranını ve hangi bölümlerde yoğunlaştığını hesaplama.
+
 ---
 
 ## 2. Listedeki İşler Tamamlandığı İçin Önerilen Beş Yeni Yaratıcı Özellik (En Değerli İkisi Uygulandı)
 
-### ✅ Yeni Öneri 1 (UYGULANDI): Hesap Katman (Tier) ve Kapasite Öncelik Hizalaması (`evaluateAccountTierAlignment`)
-- **Değer:** Etkin Claude hesapları arasında daha yüksek kapasiteli bir `max-20x` / `max-5x` / `team` aboneliği düşük dolulukla boşta beklerken `pro` katmanındaki bir hesabın aktif kullanılmasını tespit eder (`Katman optimizasyonu: yahoo (max-20x) hesabına geçiş önerilir`) ve `HESAPLAR` bölümünde önerir.
-- **Uygulama:** `src/controlcenter.js` (`evaluateAccountTierAlignment`), `src/daemon.js` (`base.accountTierAlignment`), `Models.swift` (`AccountTierAlignmentSummary`) ve `ControlCenterView.swift`.
+### ✅ Yeni Öneri 1 (UYGULANDI): Hesap Havuzu 5 Saatlik Pencere Kademelendirme (Staggering) Analizcisi (`evaluateFiveHourWindowStaggering`)
+- **Değer:** Etkin Claude hesaplarının 5 saatlik sıfırlanma pencereleri arasındaki minimum dakika farkını (`minGapMinutes`) puanlayarak pencerelerin çakıştığı durumlarda (`5s pencereleri çakışıyor (10 dk fark) — erken rotasyon önerilir`) `HESAPLAR` bölümünde uyarı gösterir.
+- **Uygulama:** `src/controlcenter.js` (`evaluateFiveHourWindowStaggering`), `src/daemon.js` (`base.fiveHourStaggering`), `Models.swift` (`FiveHourWindowStaggeringSummary`) ve `ControlCenterView.swift`.
 
-### ✅ Yeni Öneri 2 (UYGULANDI): Yedek Zincir (Failover) Ayak Çeşitliliği ve Yedeklilik Analizcisi (`evaluateFailoverChainRedundancy`)
-- **Değer:** Keysmith failover zincirinde (`failover.legs`) kaç adet yedek sağlayıcı ayağı tanımlandığını ve gateway hazırlığını denetleyerek tek ayaklı (`single-leg`) veya çok ayaklı (`Failover zinciri yedekli (2 ayak hazır)`) durumu `YEDEK ZİNCİR` bölümünde gösterir.
-- **Uygulama:** `src/controlcenter.js` (`evaluateFailoverChainRedundancy`), `src/daemon.js` (`base.failoverChainRedundancy`), `Models.swift` (`FailoverChainRedundancySummary`) ve `ControlCenterView.swift`.
+### ✅ Yeni Öneri 2 (UYGULANDI): Durum Panosu Kritik Bölüm Darboğaz Odaklayıcısı (`evaluateStatusBoardHotspot`)
+- **Değer:** Durum panosundaki `bad` ve `warn` satırlarının ağırlıklı olarak hangi bölümde yoğunlaştığını hesaplayarak en kritik darboğaz bölümünü (`Odak darboğazı: Altyapı (2 kritik, 1 uyarı)`) tespit eder ve menü çubuğunda öne çıkarır.
+- **Uygulama:** `src/controlcenter.js` (`evaluateStatusBoardHotspot`), `src/daemon.js` (`base.statusBoardHotspot`), `Models.swift` (`StatusBoardHotspotSummary`) ve `ControlCenterView.swift`.
 
-### 📋 Yeni Öneri 3 (Gelecek Adayı): Daemon Çalışma Süresi (Uptime) ve Soket Kararlılık Özeti (`evaluateDaemonUptimeStability`)
-- **Değer:** `daemon.uptimeSeconds`, `startedAt` ve `socketPath` bilgilerini analiz ederek daemon çalışma süresini ve yeniden başlatma kararlılığını sınıflandırma.
+### 📋 Yeni Öneri 3 (Gelecek Adayı): OAuth Belirteç Yenileme Ön-Süre (`refresh.leadMinutes`) Marj Denetçisi (`evaluateRefreshLeadTimeMargin`)
+- **Değer:** Yapılandırılan `refresh.leadMinutes` değeri ile `daemon.refreshIntervalSeconds` arasındaki güvenlik marjını denetleyerek belirteçlerin süresi dolmadan önce en az 2 yenileme döngüsü yakalayıp yakalamadığını doğrulama.
 
-### 📋 Yeni Öneri 4 (Gelecek Adayı): 5 Saatlik Pencere Senkronize Sıfırlanma Çakışma Tespiti (`detectFiveHourResetCollision`)
-- **Değer:** Birden fazla etkin Claude hesabının 5 saatlik sıfırlanma zamanlarının (`fiveHour.resetsAt`) birbirine `<=20 dk` yakın olup olmadığını tespit ederek aynı anda tükenme riskini raporlama.
+### 📋 Yeni Öneri 4 (Gelecek Adayı): Yerel Servis Tür Dağılımı (`daemon` / `interval` / `scheduled`) Sağlık Matrisi (`summarizeServicesByKind`)
+- **Değer:** İzlenen yerel servisleri çalışma türüne (`daemon`, `interval`, `scheduled`) göre gruplayarak her kategorideki aktif/sağlıklı servis sayısını özetleme.
 
-### 📋 Yeni Öneri 5 (Gelecek Adayı): Durum Panosu `unknown` / Belirsiz Satır Temizlik Denetçisi (`evaluateStatusBoardUnknownNoise`)
-- **Değer:** Durum panosundaki `unknown` durumlu satırların oranını ve hangi bölümlerde yoğunlaştığını hesaplayarak eksik telemetri noktalarını öne çıkarma.
+### 📋 Yeni Öneri 5 (Gelecek Adayı): İkincil Kota API Promosyon Hibe Tükenme Analizcisi (`evaluateApiPromoGrantHealth`)
+- **Değer:** `otherQuotas` içindeki `apicredits` (API Promosyonları) kaynağının kalan dolar bakiyesini ve kullanım yüzdesini ayrıştırarak hibe tükenme uyarısı üretme.

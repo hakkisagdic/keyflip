@@ -53,6 +53,11 @@ public struct ControlCenterPayload: Codable {
     public var fleetCapacityReclaim: FleetCapacityReclaimSummary?
     public var accountTierAlignment: AccountTierAlignmentSummary?
     public var failoverChainRedundancy: FailoverChainRedundancySummary?
+    public var daemonUptime: DaemonUptimeStabilitySummary?
+    public var fiveHourCollision: FiveHourResetCollisionSummary?
+    public var statusBoardUnknownNoise: StatusBoardUnknownNoiseSummary?
+    public var fiveHourStaggering: FiveHourWindowStaggeringSummary?
+    public var statusBoardHotspot: StatusBoardHotspotSummary?
     public var auditTimeline: [AuditEventItem]?
     public var markdownReport: String?
     public var preferences: PreferencesSummary?
@@ -111,6 +116,11 @@ public struct ControlCenterPayload: Codable {
         fleetCapacityReclaim: FleetCapacityReclaimSummary? = nil,
         accountTierAlignment: AccountTierAlignmentSummary? = nil,
         failoverChainRedundancy: FailoverChainRedundancySummary? = nil,
+        daemonUptime: DaemonUptimeStabilitySummary? = nil,
+        fiveHourCollision: FiveHourResetCollisionSummary? = nil,
+        statusBoardUnknownNoise: StatusBoardUnknownNoiseSummary? = nil,
+        fiveHourStaggering: FiveHourWindowStaggeringSummary? = nil,
+        statusBoardHotspot: StatusBoardHotspotSummary? = nil,
         auditTimeline: [AuditEventItem]? = [],
         markdownReport: String? = nil,
         preferences: PreferencesSummary? = nil,
@@ -168,6 +178,11 @@ public struct ControlCenterPayload: Codable {
         self.fleetCapacityReclaim = fleetCapacityReclaim
         self.accountTierAlignment = accountTierAlignment
         self.failoverChainRedundancy = failoverChainRedundancy
+        self.daemonUptime = daemonUptime
+        self.fiveHourCollision = fiveHourCollision
+        self.statusBoardUnknownNoise = statusBoardUnknownNoise
+        self.fiveHourStaggering = fiveHourStaggering
+        self.statusBoardHotspot = statusBoardHotspot
         self.auditTimeline = auditTimeline
         self.markdownReport = markdownReport
         self.preferences = preferences
@@ -1489,5 +1504,54 @@ public struct FailoverChainRedundancySummary: Codable {
     public var gatewayReady: Bool
     public var score: Int
     public var status: String
+    public var summary: String
+}
+
+
+public struct DaemonUptimeStabilitySummary: Codable {
+    public var status: String
+    public var uptimeSeconds: Int
+    public var uptimeHours: Double
+    public var humanUptime: String
+    public var hasSocket: Bool
+    public var summary: String
+}
+
+public struct CollidingAccountPairItem: Codable {
+    public var first: String
+    public var second: String
+    public var gapMinutes: Int
+}
+
+public struct FiveHourResetCollisionSummary: Codable {
+    public var hasCollision: Bool
+    public var collisionCount: Int
+    public var minGapMinutes: Int?
+    public var collidingPairs: [CollidingAccountPairItem]?
+    public var summary: String
+}
+
+public struct StatusBoardUnknownNoiseSummary: Codable {
+    public var hasBlindSpots: Bool
+    public var totalRows: Int
+    public var unknownRows: Int
+    public var unknownPct: Int
+    public var affectedSections: [String]?
+    public var summary: String
+}
+
+public struct FiveHourWindowStaggeringSummary: Codable {
+    public var staggered: Bool
+    public var minGapMinutes: Int?
+    public var score: Int
+    public var summary: String
+}
+
+public struct StatusBoardHotspotSummary: Codable {
+    public var hasHotspot: Bool
+    public var sectionId: String?
+    public var sectionTitle: String?
+    public var badCount: Int
+    public var warnCount: Int
     public var summary: String
 }

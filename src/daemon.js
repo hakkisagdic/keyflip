@@ -884,6 +884,11 @@ async function buildControlCenter(ctx, scheduler, opts) {
   base.fleetCapacityReclaim = _controlcenter.evaluateFleetCapacityReclaim(base.fleet);
   base.accountTierAlignment = _controlcenter.evaluateAccountTierAlignment(base.accounts);
   base.failoverChainRedundancy = _controlcenter.evaluateFailoverChainRedundancy(base.failover);
+  base.daemonUptime = _controlcenter.evaluateDaemonUptimeStability(base.daemon);
+  base.fiveHourCollision = _controlcenter.detectFiveHourResetCollision(base.accounts);
+  base.statusBoardUnknownNoise = _controlcenter.evaluateStatusBoardUnknownNoise(base.statusBoard);
+  base.fiveHourStaggering = _controlcenter.evaluateFiveHourWindowStaggering(base.accounts);
+  base.statusBoardHotspot = _controlcenter.evaluateStatusBoardHotspot(base.statusBoard);
   base.compactSummary = _controlcenter.formatDaemonCompactSummary(base);
   base.preferences = _controlcenter.collectPreferences(ctx);
   base.markdownReport = _controlcenter.buildControlCenterMarkdown(base);

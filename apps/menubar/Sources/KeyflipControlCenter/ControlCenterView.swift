@@ -612,6 +612,18 @@ public struct ControlCenterView: View {
                         }
                     }
 
+                    if let fhs = viewModel.payload.fiveHourStaggering, !fhs.staggered {
+                        HStack(spacing: 5) {
+                            Image(systemName: "clock.arrow.2.circlepath")
+                                .font(.system(size: 10))
+                                .foregroundColor(.orange)
+                            Text(fhs.summary)
+                                .font(.system(size: 10, weight: .medium))
+                                .foregroundColor(.orange)
+                                .lineLimit(1)
+                        }
+                    }
+
                     if let bw = viewModel.payload.bottleneckWindow, !bw.summary.isEmpty {
                         HStack(spacing: 5) {
                             Image(systemName: "gauge.with.dots.needle.67percent")
@@ -883,6 +895,17 @@ public struct ControlCenterView: View {
                             Text(bgc.summary)
                                 .font(.system(size: 10))
                                 .foregroundColor(bgc.status == "ok" ? .secondary : .orange)
+                                .lineLimit(1)
+                        }
+                    }
+                    if let hsp = viewModel.payload.statusBoardHotspot, hsp.hasHotspot {
+                        HStack(spacing: 5) {
+                            Image(systemName: "flame.fill")
+                                .font(.system(size: 10))
+                                .foregroundColor(.orange)
+                            Text(hsp.summary)
+                                .font(.system(size: 10))
+                                .foregroundColor(.orange)
                                 .lineLimit(1)
                         }
                     }

@@ -63,7 +63,12 @@ import {
   evaluateOtherQuotasFreshness,
   evaluateFleetCapacityReclaim,
   evaluateAccountTierAlignment,
-  evaluateFailoverChainRedundancy
+  evaluateFailoverChainRedundancy,
+  evaluateDaemonUptimeStability,
+  detectFiveHourResetCollision,
+  evaluateStatusBoardUnknownNoise,
+  evaluateFiveHourWindowStaggering,
+  evaluateStatusBoardHotspot
 } from "../src/controlcenter.js";
 import * as daemon from "../src/daemon.js";
 
@@ -1166,4 +1171,66 @@ test("evaluateLegacyLaunchdCleanliness, evaluateOtherQuotasFreshness, evaluateFl
   assert.equal(foRed.status, "redundant");
   assert.equal(foRed.legCount, 2);
   assert.equal(foRed.score, 100);
+});
+
+
+test("evaluateDaemonUptimeStability, detectFiveHourResetCollision, evaluateStatusBoardUnknownNoise, evaluateFiveHourWindowStaggering, and evaluateStatusBoardHotspot work accurately", () => {
+  const up = evaluateDaemonUptimeStability({
+    uptimeSeconds: 7200,
+    socketPath: "/tmp/kf-d-test.sock"
+  });
+  assert.equal(up.status, "healthy");
+  assert.equal(up.uptimeHours, 2);
+  assert.equal(up.humanUptime, "2 saat");
+
+  const col = detectFiveHourResetCollision([
+    { name: "gmail", enabled: true, usage: { fiveHour: { resetsAt: "2026-11-15T12:00:00Z" } } },
+    { name: "yahoo", enabled: true, usage: { fiveHour: { resetsAt: "2026-11-15T12:10:00Z" } } },
+    { name: "outlook", enabled: true, usage: { fiveHour: { resetsAt: "2026-11-15T14:30:00Z" } } }
+  ]);
+  assert.equal(col.hasCollision, true);
+  assert.equal(col.collisionCount, 1);
+  assert.equal(col.minGapMinutes, 10);
+
+  const stag = evaluateFiveHourWindowStaggering([
+    { name: "gmail", enabled: true, usage: { fiveHour: { resetsAt: "2026-11-15T12:00:00Z" } } },
+    { name: "yahoo", enabled: true, usage: { fiveHour: { resetsAt: "2026-11-15T12:10:00Z" } } }
+  ]);
+  assert.equal(stag.staggered, false);
+  assert.equal(stag.minGapMinutes, 10);
+
+  const unk = evaluateStatusBoardUnknownNoise({
+    sections: [
+      {
+        id: "sec1",
+        title: "Servisler",
+        rows: [
+          { label: "A", status: "ok", value: "1" },
+          { label: "B", status: "unknown", value: "?" }
+        ]
+      }
+    ]
+  });
+  assert.equal(unk.hasBlindSpots, true);
+  assert.equal(unk.unknownRows, 1);
+  assert.equal(unk.unknownPct, 50);
+
+  const hot = evaluateStatusBoardHotspot({
+    sections: [
+      { id: "s1", title: "Kotalar", rows: [{ label: "A", status: "warn", value: "85%" }] },
+      {
+        id: "s2",
+        title: "Altyapı",
+        rows: [
+          { label: "DB", status: "bad", value: "down" },
+          { label: "Cache", status: "bad", value: "down" },
+          { label: "Queue", status: "warn", value: "slow" }
+        ]
+      }
+    ]
+  });
+  assert.equal(hot.hasHotspot, true);
+  assert.equal(hot.sectionId, "s2");
+  assert.equal(hot.badCount, 2);
+  assert.equal(hot.warnCount, 1);
 });
