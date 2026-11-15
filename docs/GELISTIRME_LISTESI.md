@@ -129,24 +129,29 @@ Bu liste, `docs/RAKIP_ANALIZI.md` sonucunda belirlenen tüm özelliklerin tamaml
 - [x] **Yerel Servisler Sıfır Çıkış Kodu (`lastExit === 0`) Oranı (`evaluateServiceZeroExitRatio`):** İzlenen yerel servislerin kaç tanesinin son çıkış kodunun `0` (hatasız) olduğunu `SERVİSLER` bölümünde gösterme.
 - [x] **Failover Kalan Seans Kapasitesi Tahmincisi (`evaluateFailoverRemainingSessionsEstimate`):** Kalan günlük failover bütçesi ile ortalama 2 saatlik kaç standart geliştirme seansının karşılanabileceğini özetleme.
 - [x] **Denetim Günlüğü Kesintisiz Başarı Serisi (`evaluateAuditRecentSuccessStreak`):** `auditTimeline` içindeki en güncel olaydan geriye doğru kaç ardışık işlemin hatasız (`status === "ok"`) tamamlandığını sayma.
+- [x] **Hesap Havuzu Ferah Hesap Oranı Analizcisi (`evaluatePoolLowUtilizationAccountRatio`):** Etkin Claude hesaplarından kaç tanesinin hem 5s hem 7g pencerede `<%50` altında ferah durumda olduğunu `HESAPLAR` bölümünde gösterme.
+- [x] **Durum Panosu Detay Açıklama (`detail`) Kapsam Analizcisi (`evaluateStatusBoardDetailCoverage`):** Durum panosundaki toplam satırlardan kaç tanesinin dolu bir `detail` açıklamasına sahip olduğunu Durum Panosu kartında gösterme.
+- [x] **Uzak Sunucu Disk vs Bellek Denge Farkı (`evaluateServerResourceBalance`):** Uzak sunucunun RAM ve disk kullanım yüzdeleri arasındaki farkı hesaplayarak darboğazın hangi kaynakta yoğunlaştığını özetleme.
+- [x] **İkincil Sağlayıcılar Tam Kapasite (`ok`) Oranı (`evaluateSecondaryQuotaHealthyRatio`):** Okunabilen ikincil kota sağlayıcılarından kaç tanesinin `ok` durumunda olduğunu yüzdesel olarak özetleme.
+- [x] **Filo (Traycer) Aktif / Boşta Ajan Dengesi (`evaluateFleetActiveToIdleBalance`):** Traycer filosundaki çalışan (`active`) ajanların hazır bekleyen (`idle`) ajanlara oranını özetleme.
 
 ---
 
 ## 2. Listedeki İşler Tamamlandığı İçin Önerilen Beş Yeni Yaratıcı Özellik (En Değerli İkisi Uygulandı)
 
-### ✅ Yeni Öneri 1 (UYGULANDI): Hesap Havuzu Ferah Hesap Oranı Analizcisi (`evaluatePoolLowUtilizationAccountRatio`)
-- **Değer:** Etkin Claude hesaplarından kaç tanesinin hem 5 saatlik hem de 7 günlük pencerede `<%50` altında ferah durumda olduğunu (`lowUtilRatioPct`) hesaplayıp `HESAPLAR` bölümünde gösterir (`Ferah hesap oranı (<%50 5s/7g): 1/2 hesap (%50)`).
-- **Uygulama:** `src/controlcenter.js` (`evaluatePoolLowUtilizationAccountRatio`), `src/daemon.js` (`base.poolLowUtilRatio`), `Models.swift` (`PoolLowUtilizationAccountRatioSummary`) ve `ControlCenterView.swift`.
+### ✅ Yeni Öneri 1 (UYGULANDI): Hesap Havuzu 5 Saatlik Kümülatif Boş Kapasite Analizcisi (`evaluatePoolCombinedFiveHourHeadroom`)
+- **Değer:** Etkin Claude hesaplarının 5 saatlik pencerelerindeki toplam kalan boş kapasite yüzdesini (`totalRemainingFiveHourPct`), ortalama boşluğu (`avgRemainingFiveHourPct`) ve en geniş 5s boşluğuna sahip hesabı (`topHeadroomAccount`) hesaplayıp `HESAPLAR` bölümünde gösterir (`5s toplam boş kapasite: %120 (ort. %60 · en ferah: yahoo %80)`).
+- **Uygulama:** `src/controlcenter.js` (`evaluatePoolCombinedFiveHourHeadroom`), `src/daemon.js` (`base.poolCombinedFiveHourHeadroom`), `Models.swift` (`PoolCombinedFiveHourHeadroomSummary`) ve `ControlCenterView.swift`.
 
-### ✅ Yeni Öneri 2 (UYGULANDI): Durum Panosu Detay Açıklama (`detail`) Kapsam Analizcisi (`evaluateStatusBoardDetailCoverage`)
-- **Değer:** Durum panosundaki toplam satırlardan kaç tanesinin dolu bir `detail` açıklamasına sahip olduğunu (`coveragePct`) hesaplayarak Durum Panosu kartında gösterir (`Detay açıklama kapsamı: 1/2 satır detaylı (%50)`).
-- **Uygulama:** `src/controlcenter.js` (`evaluateStatusBoardDetailCoverage`), `src/daemon.js` (`base.statusBoardDetailCoverage`), `Models.swift` (`StatusBoardDetailCoverageSummary`) ve `ControlCenterView.swift`.
+### ✅ Yeni Öneri 2 (UYGULANDI): Durum Panosu Kritik (`bad`) Satır Yoğunluğu Analizcisi (`evaluateStatusBoardCriticalRowDensity`)
+- **Değer:** Durum panosundaki toplam satırlardan kaç tanesinin doğrudan kritik (`bad`) durumda olduğunu (`criticalDensityPct`) ve en çok kritik satır içeren bölümü (`worstSectionTitle`) hesaplayarak Durum Panosu kartında gösterir (`Kritik satır yoğunluğu: 1/4 satır BAD (%25 · odak: Ağ)`).
+- **Uygulama:** `src/controlcenter.js` (`evaluateStatusBoardCriticalRowDensity`), `src/daemon.js` (`base.statusBoardCriticalDensity`), `Models.swift` (`StatusBoardCriticalRowDensitySummary`) ve `ControlCenterView.swift`.
 
-### 📋 Yeni Öneri 3 (Gelecek Adayı): Uzak Sunucu Disk vs Bellek Denge Farkı (`evaluateServerResourceBalance`)
-- **Değer:** Uzak sunucunun RAM ve disk kullanım yüzdeleri arasındaki farkı hesaplayarak darboğazın hangi kaynakta yoğunlaştığını özetleme.
+### 📋 Yeni Öneri 3 (Gelecek Adayı): Yerel Servisler Aktif Log Satırı Kapsamı (`evaluateServiceLogPresenceRatio`)
+- **Değer:** İzlenen yerel servislerin kaç tanesinin boş olmayan bir `lastLogLine` kaydına sahip olduğunu yüzdesel olarak özetleme.
 
-### 📋 Yeni Öneri 4 (Gelecek Adayı): İkincil Sağlayıcılar Tam Kapasite (`ok`) Oranı (`evaluateSecondaryQuotaHealthyRatio`)
-- **Değer:** Okunabilen ikincil kota sağlayıcılarından kaç tanesinin `ok` durumunda olduğunu yüzdesel olarak özetleme.
+### 📋 Yeni Öneri 4 (Gelecek Adayı): Failover Bütçe Kullanım Durumu Özeti (`evaluateFailoverBudgetUtilizationBand`)
+- **Değer:** Günlük failover harcamasının bütçe bandını (`zero`, `light`, `moderate`, `heavy`) sınıflandırma.
 
-### 📋 Yeni Öneri 5 (Gelecek Adayı): Filo (Traycer) Aktif / Boşta Ajan Dengesi (`evaluateFleetActiveToIdleBalance`)
-- **Değer:** Traycer filosundaki çalışan (`active`) ajanların hazır bekleyen (`idle`) ajanlara oranını özetleme.
+### 📋 Yeni Öneri 5 (Gelecek Adayı): Denetim Günlüğü Detay Metni Doluluk Oranı (`evaluateAuditDetailRichness`)
+- **Değer:** `auditTimeline` olaylarının kaç tanesinin açıklayıcı `detail` bilgisi içerdiğini yüzdesel olarak özetleme.

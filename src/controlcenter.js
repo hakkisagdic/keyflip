@@ -6376,3 +6376,192 @@ export function evaluateStatusBoardDetailCoverage(statusBoard) {
         : "Durum panosunda satır yok"
   };
 }
+
+/**
+ * Computes the spread between memoryUsedPct and diskUsedPct on the remote server and identifies the primary bottleneck resource.
+ */
+export function evaluateServerResourceBalance(server) {
+  if (!server || server.reachable === false) {
+    return {
+      reachable: false,
+      memoryUsedPct: null,
+      diskUsedPct: null,
+      spreadPct: null,
+      dominantResource: null,
+      status: "unreachable",
+      summary: "Sunucu kaynak dengesi okunamadı"
+    };
+  }
+
+  const mem = typeof server.memoryUsedPct === "number" && Number.isFinite(server.memoryUsedPct) ? server.memoryUsedPct : 0;
+  const disk = typeof server.diskUsedPct === "number" && Number.isFinite(server.diskUsedPct) ? server.diskUsedPct : 0;
+  const spreadPct = Math.round(Math.abs(mem - disk) * 10) / 10;
+  const dominantResource = Math.abs(mem - disk) < 5 ? "balanced" : mem > disk ? "memory" : "disk";
+  const status = spreadPct >= 25 ? "skewed" : "balanced";
+
+  return {
+    reachable: true,
+    memoryUsedPct: Math.round(mem * 10) / 10,
+    diskUsedPct: Math.round(disk * 10) / 10,
+    spreadPct,
+    dominantResource,
+    status,
+    summary: `Kaynak dengesi: RAM %${Math.round(mem)} vs Disk %${Math.round(disk)} (fark %${spreadPct} · baskın: ${dominantResource})`
+  };
+}
+
+/**
+ * Computes the count and percentage of readable secondary quota providers in healthy ('ok') state.
+ */
+export function evaluateSecondaryQuotaHealthyRatio(otherQuotas) {
+  const list = Array.isArray(otherQuotas) ? otherQuotas : [];
+  let readableCount = 0;
+  let okCount = 0;
+
+  for (const item of list) {
+    const st = String(item?.status || "").toLowerCase();
+    if (st === "ok" || st === "warning" || st === "exhausted") {
+      readableCount += 1;
+      if (st === "ok") okCount += 1;
+    }
+  }
+
+  const healthyRatioPct = readableCount > 0 ? Math.round((okCount / readableCount) * 100) : 0;
+  const status = readableCount === 0 ? "unreadable" : healthyRatioPct === 100 ? "all_ok" : healthyRatioPct >= 50 ? "partial_ok" : "low_ok";
+
+  return {
+    readableCount,
+    okCount,
+    healthyRatioPct,
+    status,
+    summary:
+      readableCount > 0
+        ? `İkincil kota sağlık oranı: ${okCount}/${readableCount} sağlayıcı OK (%${healthyRatioPct})`
+        : "İkincil kota sağlık oranı okunamadı"
+  };
+}
+
+/**
+ * Summarizes the ratio of working (active) agents vs waiting (idle) agents in the Traycer fleet.
+ */
+export function evaluateFleetActiveToIdleBalance(fleet) {
+  if (!fleet || fleet.readable === false) {
+    return {
+      readable: false,
+      activeCount: 0,
+      idleCount: 0,
+      liveTotal: 0,
+      activeSharePct: null,
+      status: "unreadable",
+      summary: "Filo aktif/boşta dengesi okunamadı"
+    };
+  }
+
+  const activeCount = typeof fleet.active === "number" && Number.isFinite(fleet.active) ? Math.max(0, fleet.active) : 0;
+  const idleCount = typeof fleet.idle === "number" && Number.isFinite(fleet.idle) ? Math.max(0, fleet.idle) : 0;
+  const liveTotal = activeCount + idleCount;
+  const activeSharePct = liveTotal > 0 ? Math.round((activeCount / liveTotal) * 100) : 0;
+  const status = liveTotal === 0 ? "no_live" : activeSharePct >= 75 ? "busy" : activeSharePct >= 25 ? "balanced" : "mostly_idle";
+
+  return {
+    readable: true,
+    activeCount,
+    idleCount,
+    liveTotal,
+    activeSharePct,
+    status,
+    summary:
+      liveTotal > 0
+        ? `Aktif/boşta ajan dengesi: ${activeCount} aktif / ${idleCount} boşta (%${activeSharePct} aktif)`
+        : "Canlı (aktif/boşta) ajan yok"
+  };
+}
+
+/**
+ * Computes the total and average remaining 5-hour quota headroom across enabled Claude accounts.
+ */
+export function evaluatePoolCombinedFiveHourHeadroom(accounts) {
+  const list = Array.isArray(accounts) ? accounts : [];
+  const enabled = list.filter((a) => a && a.enabled !== false && !a.needsReauth);
+  if (enabled.length === 0) {
+    return {
+      enabledCount: 0,
+      totalRemainingFiveHourPct: 0,
+      avgRemainingFiveHourPct: 0,
+      topHeadroomAccount: null,
+      topHeadroomPct: 0,
+      status: "empty",
+      summary: "5s toplam boş kapasite: etkin hesap yok"
+    };
+  }
+
+  let totalRemaining = 0;
+  let topHeadroomAccount = null;
+  let topHeadroomPct = -1;
+
+  for (const acc of enabled) {
+    const used = typeof acc.fiveHourPct === "number" && Number.isFinite(acc.fiveHourPct) ? Math.max(0, Math.min(100, acc.fiveHourPct)) : 0;
+    const rem = Math.max(0, 100 - used);
+    totalRemaining += rem;
+    if (rem > topHeadroomPct) {
+      topHeadroomPct = rem;
+      topHeadroomAccount = acc.name || acc.id || "unknown";
+    }
+  }
+
+  totalRemaining = Math.round(totalRemaining * 10) / 10;
+  const avgRemainingFiveHourPct = Math.round((totalRemaining / enabled.length) * 10) / 10;
+  topHeadroomPct = Math.max(0, Math.round(topHeadroomPct * 10) / 10);
+  const status = avgRemainingFiveHourPct >= 50 ? "ample" : avgRemainingFiveHourPct >= 25 ? "moderate" : "tight";
+
+  return {
+    enabledCount: enabled.length,
+    totalRemainingFiveHourPct: totalRemaining,
+    avgRemainingFiveHourPct,
+    topHeadroomAccount,
+    topHeadroomPct,
+    status,
+    summary: `5s toplam boş kapasite: %${totalRemaining} (ort. %${avgRemainingFiveHourPct} · en ferah: ${topHeadroomAccount} %${topHeadroomPct})`
+  };
+}
+
+/**
+ * Computes the percentage of Status Board rows specifically in critical ('bad') state and identifies the section with the most critical rows.
+ */
+export function evaluateStatusBoardCriticalRowDensity(statusBoard) {
+  const sections = Array.isArray(statusBoard?.sections) ? statusBoard.sections : [];
+  let totalRows = 0;
+  let badCount = 0;
+  let maxSectionBad = 0;
+  let worstSectionTitle = null;
+
+  for (const sec of sections) {
+    let secBad = 0;
+    for (const r of sec?.rows || []) {
+      totalRows += 1;
+      if (String(r?.status || "").toLowerCase() === "bad") {
+        badCount += 1;
+        secBad += 1;
+      }
+    }
+    if (secBad > maxSectionBad) {
+      maxSectionBad = secBad;
+      worstSectionTitle = sec?.title || sec?.id || "Bölüm";
+    }
+  }
+
+  const criticalDensityPct = totalRows > 0 ? Math.round((badCount / totalRows) * 100) : 0;
+  const status = badCount === 0 ? "zero_critical" : criticalDensityPct >= 25 ? "high_critical" : "low_critical";
+
+  return {
+    totalRows,
+    badCount,
+    criticalDensityPct,
+    worstSectionTitle,
+    status,
+    summary:
+      badCount > 0
+        ? `Kritik satır yoğunluğu: ${badCount}/${totalRows} satır BAD (%${criticalDensityPct} · odak: ${worstSectionTitle})`
+        : `Kritik satır yoğunluğu: 0/${totalRows} satır (kritik hata yok)`
+  };
+}

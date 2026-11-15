@@ -123,7 +123,12 @@ import {
   evaluateFailoverRemainingSessionsEstimate,
   evaluateAuditRecentSuccessStreak,
   evaluatePoolLowUtilizationAccountRatio,
-  evaluateStatusBoardDetailCoverage
+  evaluateStatusBoardDetailCoverage,
+  evaluateServerResourceBalance,
+  evaluateSecondaryQuotaHealthyRatio,
+  evaluateFleetActiveToIdleBalance,
+  evaluatePoolCombinedFiveHourHeadroom,
+  evaluateStatusBoardCriticalRowDensity
 } from "../src/controlcenter.js";
 import * as daemon from "../src/daemon.js";
 
@@ -1914,4 +1919,66 @@ test("evaluateServiceZeroExitRatio, evaluateFailoverRemainingSessionsEstimate, e
   assert.equal(sbdc.detailedRows, 1);
   assert.equal(sbdc.coveragePct, 50);
   assert.equal(sbdc.status, "moderate");
+});
+
+test("evaluateServerResourceBalance, evaluateSecondaryQuotaHealthyRatio, evaluateFleetActiveToIdleBalance, evaluatePoolCombinedFiveHourHeadroom, and evaluateStatusBoardCriticalRowDensity work accurately", () => {
+  const srb = evaluateServerResourceBalance({
+    reachable: true,
+    memoryUsedPct: 45,
+    diskUsedPct: 78
+  });
+  assert.equal(srb.reachable, true);
+  assert.equal(srb.spreadPct, 33);
+  assert.equal(srb.dominantResource, "disk");
+  assert.equal(srb.status, "skewed");
+
+  const sqhr = evaluateSecondaryQuotaHealthyRatio([
+    { id: "codex", status: "ok" },
+    { id: "gemini", status: "ok" },
+    { id: "cursor", status: "warning" }
+  ]);
+  assert.equal(sqhr.readableCount, 3);
+  assert.equal(sqhr.okCount, 2);
+  assert.equal(sqhr.healthyRatioPct, 67);
+  assert.equal(sqhr.status, "partial_ok");
+
+  const faib = evaluateFleetActiveToIdleBalance({
+    readable: true,
+    active: 3,
+    idle: 1
+  });
+  assert.equal(faib.liveTotal, 4);
+  assert.equal(faib.activeSharePct, 75);
+  assert.equal(faib.status, "busy");
+
+  const pcf = evaluatePoolCombinedFiveHourHeadroom([
+    { name: "gmail", enabled: true, fiveHourPct: 60 },
+    { name: "yahoo", enabled: true, fiveHourPct: 20 }
+  ]);
+  assert.equal(pcf.enabledCount, 2);
+  assert.equal(pcf.totalRemainingFiveHourPct, 120);
+  assert.equal(pcf.avgRemainingFiveHourPct, 60);
+  assert.equal(pcf.topHeadroomAccount, "yahoo");
+  assert.equal(pcf.topHeadroomPct, 80);
+  assert.equal(pcf.status, "ample");
+
+  const sbcd = evaluateStatusBoardCriticalRowDensity({
+    sections: [
+      {
+        id: "s1",
+        title: "Ağ",
+        rows: [
+          { label: "r1", status: "bad" },
+          { label: "r2", status: "ok" },
+          { label: "r3", status: "ok" },
+          { label: "r4", status: "ok" }
+        ]
+      }
+    ]
+  });
+  assert.equal(sbcd.totalRows, 4);
+  assert.equal(sbcd.badCount, 1);
+  assert.equal(sbcd.criticalDensityPct, 25);
+  assert.equal(sbcd.worstSectionTitle, "Ağ");
+  assert.equal(sbcd.status, "high_critical");
 });

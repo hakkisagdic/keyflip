@@ -113,6 +113,11 @@ public struct ControlCenterPayload: Codable {
     public var auditRecentSuccessStreak: AuditRecentSuccessStreakSummary?
     public var poolLowUtilRatio: PoolLowUtilizationAccountRatioSummary?
     public var statusBoardDetailCoverage: StatusBoardDetailCoverageSummary?
+    public var serverResourceBalance: ServerResourceBalanceSummary?
+    public var secondaryQuotaHealthyRatio: SecondaryQuotaHealthyRatioSummary?
+    public var fleetActiveIdleBalance: FleetActiveToIdleBalanceSummary?
+    public var poolCombinedFiveHourHeadroom: PoolCombinedFiveHourHeadroomSummary?
+    public var statusBoardCriticalDensity: StatusBoardCriticalRowDensitySummary?
     public var auditTimeline: [AuditEventItem]?
     public var markdownReport: String?
     public var preferences: PreferencesSummary?
@@ -231,6 +236,11 @@ public struct ControlCenterPayload: Codable {
         auditRecentSuccessStreak: AuditRecentSuccessStreakSummary? = nil,
         poolLowUtilRatio: PoolLowUtilizationAccountRatioSummary? = nil,
         statusBoardDetailCoverage: StatusBoardDetailCoverageSummary? = nil,
+        serverResourceBalance: ServerResourceBalanceSummary? = nil,
+        secondaryQuotaHealthyRatio: SecondaryQuotaHealthyRatioSummary? = nil,
+        fleetActiveIdleBalance: FleetActiveToIdleBalanceSummary? = nil,
+        poolCombinedFiveHourHeadroom: PoolCombinedFiveHourHeadroomSummary? = nil,
+        statusBoardCriticalDensity: StatusBoardCriticalRowDensitySummary? = nil,
         auditTimeline: [AuditEventItem]? = [],
         markdownReport: String? = nil,
         preferences: PreferencesSummary? = nil,
@@ -348,6 +358,11 @@ public struct ControlCenterPayload: Codable {
         self.auditRecentSuccessStreak = auditRecentSuccessStreak
         self.poolLowUtilRatio = poolLowUtilRatio
         self.statusBoardDetailCoverage = statusBoardDetailCoverage
+        self.serverResourceBalance = serverResourceBalance
+        self.secondaryQuotaHealthyRatio = secondaryQuotaHealthyRatio
+        self.fleetActiveIdleBalance = fleetActiveIdleBalance
+        self.poolCombinedFiveHourHeadroom = poolCombinedFiveHourHeadroom
+        self.statusBoardCriticalDensity = statusBoardCriticalDensity
         self.auditTimeline = auditTimeline
         self.markdownReport = markdownReport
         self.preferences = preferences
@@ -2215,6 +2230,53 @@ public struct StatusBoardDetailCoverageSummary: Codable {
     public var totalRows: Int
     public var detailedRows: Int
     public var coveragePct: Int
+    public var status: String
+    public var summary: String
+}
+
+public struct ServerResourceBalanceSummary: Codable {
+    public var reachable: Bool
+    public var memoryUsedPct: Double?
+    public var diskUsedPct: Double?
+    public var spreadPct: Double?
+    public var dominantResource: String?
+    public var status: String
+    public var summary: String
+}
+
+public struct SecondaryQuotaHealthyRatioSummary: Codable {
+    public var readableCount: Int
+    public var okCount: Int
+    public var healthyRatioPct: Int
+    public var status: String
+    public var summary: String
+}
+
+public struct FleetActiveToIdleBalanceSummary: Codable {
+    public var readable: Bool
+    public var activeCount: Int
+    public var idleCount: Int
+    public var liveTotal: Int
+    public var activeSharePct: Int?
+    public var status: String
+    public var summary: String
+}
+
+public struct PoolCombinedFiveHourHeadroomSummary: Codable {
+    public var enabledCount: Int
+    public var totalRemainingFiveHourPct: Double
+    public var avgRemainingFiveHourPct: Double
+    public var topHeadroomAccount: String?
+    public var topHeadroomPct: Double
+    public var status: String
+    public var summary: String
+}
+
+public struct StatusBoardCriticalRowDensitySummary: Codable {
+    public var totalRows: Int
+    public var badCount: Int
+    public var criticalDensityPct: Int
+    public var worstSectionTitle: String?
     public var status: String
     public var summary: String
 }

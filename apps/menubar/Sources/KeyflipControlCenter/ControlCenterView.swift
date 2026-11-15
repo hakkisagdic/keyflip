@@ -300,7 +300,19 @@ public struct ControlCenterView: View {
                 .background(Color.secondary.opacity(0.08))
                 .cornerRadius(4)
 
-                if let sbdc = viewModel.payload.statusBoardDetailCoverage, sbdc.totalRows > 0 {
+                if let sbcd = viewModel.payload.statusBoardCriticalDensity, sbcd.badCount > 0 {
+                    HStack(spacing: 5) {
+                        Image(systemName: "flame.circle.fill")
+                            .font(.system(size: 9))
+                            .foregroundColor(.red)
+                        Text(sbcd.summary)
+                            .font(.system(size: 9, design: .monospaced))
+                            .foregroundColor(.red)
+                            .lineLimit(1)
+                    }
+                }
+
+                                if let sbdc = viewModel.payload.statusBoardDetailCoverage, sbdc.totalRows > 0 {
                     HStack(spacing: 5) {
                         Image(systemName: "text.alignleft")
                             .font(.system(size: 9))
@@ -714,7 +726,19 @@ public struct ControlCenterView: View {
                         }
                     }
 
-                    if let plu = viewModel.payload.poolLowUtilRatio, plu.enabledCount > 0 {
+                    if let pcf = viewModel.payload.poolCombinedFiveHourHeadroom, pcf.enabledCount > 0 {
+                        HStack(spacing: 5) {
+                            Image(systemName: "bolt.horizontal.circle")
+                                .font(.system(size: 10))
+                                .foregroundColor(pcf.status == "tight" ? .orange : .secondary)
+                            Text(pcf.summary)
+                                .font(.system(size: 10))
+                                .foregroundColor(pcf.status == "tight" ? .orange : .secondary)
+                                .lineLimit(1)
+                        }
+                    }
+
+                                        if let plu = viewModel.payload.poolLowUtilRatio, plu.enabledCount > 0 {
                         HStack(spacing: 5) {
                             Image(systemName: "leaf.fill")
                                 .font(.system(size: 10))
