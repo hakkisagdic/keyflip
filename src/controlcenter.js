@@ -6565,3 +6565,175 @@ export function evaluateStatusBoardCriticalRowDensity(statusBoard) {
         : `Kritik satır yoğunluğu: 0/${totalRows} satır (kritik hata yok)`
   };
 }
+
+/**
+ * Computes how many monitored local services have a non-empty lastLogLine entry.
+ */
+export function evaluateServiceLogPresenceRatio(services) {
+  const list = Array.isArray(services) ? services : [];
+  if (list.length === 0) {
+    return {
+      totalServices: 0,
+      withLogCount: 0,
+      presenceRatioPct: 0,
+      status: "empty",
+      summary: "Servis log kapsamı: izlenen servis yok"
+    };
+  }
+
+  let withLogCount = 0;
+  for (const s of list) {
+    if (typeof s?.lastLogLine === "string" && s.lastLogLine.trim().length > 0 && s.lastLogLine.trim() !== "okunamadı") {
+      withLogCount += 1;
+    }
+  }
+
+  const presenceRatioPct = Math.round((withLogCount / list.length) * 100);
+  const status = presenceRatioPct >= 80 ? "complete" : presenceRatioPct >= 40 ? "partial" : "sparse";
+
+  return {
+    totalServices: list.length,
+    withLogCount,
+    presenceRatioPct,
+    status,
+    summary: `Servis log kapsamı: ${withLogCount}/${list.length} serviste son log satırı mevcut (%${presenceRatioPct})`
+  };
+}
+
+/**
+ * Classifies daily failover spend into zero, light, moderate, or heavy utilization bands.
+ */
+export function evaluateFailoverBudgetUtilizationBand(failover) {
+  const f = failover || {};
+  const capUsd = typeof f.dailyCapUsd === "number" && Number.isFinite(f.dailyCapUsd) && f.dailyCapUsd > 0 ? f.dailyCapUsd : 15;
+  const spentUsd = typeof f.dailySpentUsd === "number" && Number.isFinite(f.dailySpentUsd) && f.dailySpentUsd >= 0 ? f.dailySpentUsd : 0;
+  const utilizationPct = Math.round((spentUsd / capUsd) * 1000) / 10;
+  const band = spentUsd === 0 ? "zero" : utilizationPct < 25 ? "light" : utilizationPct < 75 ? "moderate" : "heavy";
+  const bandLabel = band === "zero" ? "sıfır" : band === "light" ? "düşük" : band === "moderate" ? "orta" : "yoğun";
+
+  return {
+    spentUsd: Math.round(spentUsd * 100) / 100,
+    capUsd,
+    utilizationPct,
+    band,
+    summary: `Failover bütçe bandı: ${bandLabel} ($${spentUsd.toFixed(2)} / $${capUsd.toFixed(2)} · %${utilizationPct})`
+  };
+}
+
+/**
+ * Computes the percentage of auditTimeline events that include descriptive detail text.
+ */
+export function evaluateAuditDetailRichness(auditTimeline) {
+  const list = Array.isArray(auditTimeline) ? auditTimeline : [];
+  if (list.length === 0) {
+    return {
+      totalEvents: 0,
+      withDetailCount: 0,
+      richnessPct: 0,
+      status: "empty",
+      summary: "Denetim detay zenginliği: kayıt yok"
+    };
+  }
+
+  let withDetailCount = 0;
+  for (const item of list) {
+    if (typeof item?.detail === "string" && item.detail.trim().length > 0) {
+      withDetailCount += 1;
+    }
+  }
+
+  const richnessPct = Math.round((withDetailCount / list.length) * 100);
+  const status = richnessPct >= 75 ? "high" : richnessPct >= 40 ? "moderate" : "low";
+
+  return {
+    totalEvents: list.length,
+    withDetailCount,
+    richnessPct,
+    status,
+    summary: `Denetim detay zenginliği: ${withDetailCount}/${list.length} olay açıklamalı (%${richnessPct})`
+  };
+}
+
+/**
+ * Computes the average, minimum, and maximum 7-day quota utilization across enabled Claude accounts.
+ */
+export function evaluatePoolSevenDayAverageUtilization(accounts) {
+  const list = Array.isArray(accounts) ? accounts : [];
+  const enabled = list.filter((a) => a && a.enabled !== false && !a.needsReauth);
+  if (enabled.length === 0) {
+    return {
+      enabledCount: 0,
+      avgSevenDayPct: 0,
+      minSevenDayPct: 0,
+      maxSevenDayPct: 0,
+      status: "empty",
+      summary: "7g havuz ortalaması: etkin hesap yok"
+    };
+  }
+
+  let sum = 0;
+  let minPct = Infinity;
+  let maxPct = 0;
+
+  for (const acc of enabled) {
+    const pct =
+      typeof acc?.usage?.sevenDay?.pct === "number" && Number.isFinite(acc.usage.sevenDay.pct)
+        ? Math.max(0, Math.min(100, acc.usage.sevenDay.pct))
+        : typeof acc.sevenDayPct === "number" && Number.isFinite(acc.sevenDayPct)
+          ? Math.max(0, Math.min(100, acc.sevenDayPct))
+          : 0;
+    sum += pct;
+    if (pct < minPct) minPct = pct;
+    if (pct > maxPct) maxPct = pct;
+  }
+
+  if (!Number.isFinite(minPct)) minPct = 0;
+  const avgSevenDayPct = Math.round((sum / enabled.length) * 10) / 10;
+  minPct = Math.round(minPct * 10) / 10;
+  maxPct = Math.round(maxPct * 10) / 10;
+  const status = avgSevenDayPct >= 80 ? "high" : avgSevenDayPct >= 50 ? "moderate" : "low";
+
+  return {
+    enabledCount: enabled.length,
+    avgSevenDayPct,
+    minSevenDayPct: minPct,
+    maxSevenDayPct: maxPct,
+    status,
+    summary: `7g havuz ortalaması: %${avgSevenDayPct} kullanım (min %${minPct} · maks %${maxPct})`
+  };
+}
+
+/**
+ * Computes the count and percentage of Status Board sections that have zero critical ('bad') rows.
+ */
+export function evaluateStatusBoardZeroBadSectionRatio(statusBoard) {
+  const sections = Array.isArray(statusBoard?.sections) ? statusBoard.sections : [];
+  if (sections.length === 0) {
+    return {
+      totalSections: 0,
+      zeroBadSectionCount: 0,
+      zeroBadRatioPct: 100,
+      status: "empty",
+      summary: "Kritiksiz bölüm oranı: bölüm yok"
+    };
+  }
+
+  let zeroBadSectionCount = 0;
+  for (const sec of sections) {
+    const hasBad = (sec?.rows || []).some((r) => String(r?.status || "").toLowerCase() === "bad");
+    if (!hasBad) {
+      zeroBadSectionCount += 1;
+    }
+  }
+
+  const zeroBadRatioPct = Math.round((zeroBadSectionCount / sections.length) * 100);
+  const status = zeroBadSectionCount === sections.length ? "all_free_of_bad" : zeroBadRatioPct >= 50 ? "mostly_free_of_bad" : "critical_widespread";
+
+  return {
+    totalSections: sections.length,
+    zeroBadSectionCount,
+    zeroBadRatioPct,
+    status,
+    summary: `Kritiksiz bölüm oranı: ${zeroBadSectionCount}/${sections.length} bölümde BAD satır yok (%${zeroBadRatioPct})`
+  };
+}

@@ -300,7 +300,19 @@ public struct ControlCenterView: View {
                 .background(Color.secondary.opacity(0.08))
                 .cornerRadius(4)
 
-                if let sbcd = viewModel.payload.statusBoardCriticalDensity, sbcd.badCount > 0 {
+                if let sbzb = viewModel.payload.statusBoardZeroBadRatio, sbzb.totalSections > 0 {
+                    HStack(spacing: 5) {
+                        Image(systemName: "shield.lefthalf.filled")
+                            .font(.system(size: 9))
+                            .foregroundColor(sbzb.status == "all_free_of_bad" ? .green : .secondary)
+                        Text(sbzb.summary)
+                            .font(.system(size: 9, design: .monospaced))
+                            .foregroundColor(.secondary)
+                            .lineLimit(1)
+                    }
+                }
+
+                                if let sbcd = viewModel.payload.statusBoardCriticalDensity, sbcd.badCount > 0 {
                     HStack(spacing: 5) {
                         Image(systemName: "flame.circle.fill")
                             .font(.system(size: 9))
@@ -726,7 +738,19 @@ public struct ControlCenterView: View {
                         }
                     }
 
-                    if let pcf = viewModel.payload.poolCombinedFiveHourHeadroom, pcf.enabledCount > 0 {
+                    if let psda = viewModel.payload.poolSevenDayAvgUtil, psda.enabledCount > 0 {
+                        HStack(spacing: 5) {
+                            Image(systemName: "calendar.badge.clock")
+                                .font(.system(size: 10))
+                                .foregroundColor(psda.status == "high" ? .orange : .secondary)
+                            Text(psda.summary)
+                                .font(.system(size: 10))
+                                .foregroundColor(psda.status == "high" ? .orange : .secondary)
+                                .lineLimit(1)
+                        }
+                    }
+
+                                        if let pcf = viewModel.payload.poolCombinedFiveHourHeadroom, pcf.enabledCount > 0 {
                         HStack(spacing: 5) {
                             Image(systemName: "bolt.horizontal.circle")
                                 .font(.system(size: 10))

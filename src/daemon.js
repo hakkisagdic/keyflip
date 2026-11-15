@@ -952,6 +952,11 @@ async function buildControlCenter(ctx, scheduler, opts) {
   base.fleetActiveIdleBalance = _controlcenter.evaluateFleetActiveToIdleBalance(base.fleet);
   base.poolCombinedFiveHourHeadroom = _controlcenter.evaluatePoolCombinedFiveHourHeadroom(base.accounts);
   base.statusBoardCriticalDensity = _controlcenter.evaluateStatusBoardCriticalRowDensity(base.statusBoard);
+  base.serviceLogPresence = _controlcenter.evaluateServiceLogPresenceRatio(base.services);
+  base.failoverBudgetBand = _controlcenter.evaluateFailoverBudgetUtilizationBand(base.failover);
+  base.auditDetailRichness = _controlcenter.evaluateAuditDetailRichness(base.auditTimeline);
+  base.poolSevenDayAvgUtil = _controlcenter.evaluatePoolSevenDayAverageUtilization(base.accounts);
+  base.statusBoardZeroBadRatio = _controlcenter.evaluateStatusBoardZeroBadSectionRatio(base.statusBoard);
   base.compactSummary = _controlcenter.formatDaemonCompactSummary(base);
   base.preferences = _controlcenter.collectPreferences(ctx);
   base.notificationAutostartPosture = _controlcenter.evaluateNotificationAndAutostartPosture(base.preferences, base.config);

@@ -128,7 +128,12 @@ import {
   evaluateSecondaryQuotaHealthyRatio,
   evaluateFleetActiveToIdleBalance,
   evaluatePoolCombinedFiveHourHeadroom,
-  evaluateStatusBoardCriticalRowDensity
+  evaluateStatusBoardCriticalRowDensity,
+  evaluateServiceLogPresenceRatio,
+  evaluateFailoverBudgetUtilizationBand,
+  evaluateAuditDetailRichness,
+  evaluatePoolSevenDayAverageUtilization,
+  evaluateStatusBoardZeroBadSectionRatio
 } from "../src/controlcenter.js";
 import * as daemon from "../src/daemon.js";
 
@@ -1981,4 +1986,53 @@ test("evaluateServerResourceBalance, evaluateSecondaryQuotaHealthyRatio, evaluat
   assert.equal(sbcd.criticalDensityPct, 25);
   assert.equal(sbcd.worstSectionTitle, "Ağ");
   assert.equal(sbcd.status, "high_critical");
+});
+
+test("evaluateServiceLogPresenceRatio, evaluateFailoverBudgetUtilizationBand, evaluateAuditDetailRichness, evaluatePoolSevenDayAverageUtilization, and evaluateStatusBoardZeroBadSectionRatio work accurately", () => {
+  const slpr = evaluateServiceLogPresenceRatio([
+    { label: "daemon", lastLogLine: "started ok" },
+    { label: "bridge", lastLogLine: "" }
+  ]);
+  assert.equal(slpr.totalServices, 2);
+  assert.equal(slpr.withLogCount, 1);
+  assert.equal(slpr.presenceRatioPct, 50);
+  assert.equal(slpr.status, "partial");
+
+  const fbub = evaluateFailoverBudgetUtilizationBand({
+    dailyCapUsd: 15,
+    dailySpentUsd: 6
+  });
+  assert.equal(fbub.spentUsd, 6);
+  assert.equal(fbub.utilizationPct, 40);
+  assert.equal(fbub.band, "moderate");
+
+  const adr = evaluateAuditDetailRichness([
+    { id: "1", detail: "autoswitch" },
+    { id: "2", detail: "" }
+  ]);
+  assert.equal(adr.totalEvents, 2);
+  assert.equal(adr.withDetailCount, 1);
+  assert.equal(adr.richnessPct, 50);
+  assert.equal(adr.status, "moderate");
+
+  const psda = evaluatePoolSevenDayAverageUtilization([
+    { name: "gmail", enabled: true, sevenDayPct: 70 },
+    { name: "yahoo", enabled: true, sevenDayPct: 30 }
+  ]);
+  assert.equal(psda.enabledCount, 2);
+  assert.equal(psda.avgSevenDayPct, 50);
+  assert.equal(psda.minSevenDayPct, 30);
+  assert.equal(psda.maxSevenDayPct, 70);
+  assert.equal(psda.status, "moderate");
+
+  const sbzb = evaluateStatusBoardZeroBadSectionRatio({
+    sections: [
+      { id: "s1", rows: [{ label: "r1", status: "warn" }] },
+      { id: "s2", rows: [{ label: "r2", status: "bad" }] }
+    ]
+  });
+  assert.equal(sbzb.totalSections, 2);
+  assert.equal(sbzb.zeroBadSectionCount, 1);
+  assert.equal(sbzb.zeroBadRatioPct, 50);
+  assert.equal(sbzb.status, "mostly_free_of_bad");
 });
