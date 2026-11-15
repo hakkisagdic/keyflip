@@ -68,7 +68,12 @@ import {
   detectFiveHourResetCollision,
   evaluateStatusBoardUnknownNoise,
   evaluateFiveHourWindowStaggering,
-  evaluateStatusBoardHotspot
+  evaluateStatusBoardHotspot,
+  evaluateRefreshLeadTimeMargin,
+  summarizeServicesByKind,
+  evaluateApiPromoGrantHealth,
+  evaluateActiveAccountSafetyCushion,
+  evaluateFleetWorkingUtilization
 } from "../src/controlcenter.js";
 import * as daemon from "../src/daemon.js";
 
@@ -1233,4 +1238,51 @@ test("evaluateDaemonUptimeStability, detectFiveHourResetCollision, evaluateStatu
   assert.equal(hot.sectionId, "s2");
   assert.equal(hot.badCount, 2);
   assert.equal(hot.warnCount, 1);
+});
+
+
+test("evaluateRefreshLeadTimeMargin, summarizeServicesByKind, evaluateApiPromoGrantHealth, evaluateActiveAccountSafetyCushion, and evaluateFleetWorkingUtilization work accurately", () => {
+  const lead = evaluateRefreshLeadTimeMargin({
+    "refresh.leadMinutes": 45,
+    "daemon.refreshIntervalSeconds": 900
+  });
+  assert.equal(lead.safe, true);
+  assert.equal(lead.ticksBeforeExpiry, 3);
+
+  const byKind = summarizeServicesByKind([
+    { kind: "daemon", state: "running" },
+    { kind: "daemon", state: "error" },
+    { kind: "interval", state: "scheduled" },
+    { kind: "scheduled", state: "scheduled" }
+  ]);
+  assert.equal(byKind.daemonTotal, 2);
+  assert.equal(byKind.daemonHealthy, 1);
+  assert.equal(byKind.intervalHealthy, 1);
+  assert.equal(byKind.scheduledHealthy, 1);
+
+  const promo = evaluateApiPromoGrantHealth([
+    { id: "apicredits", status: "ok", display: "$32.50 kalan (2/2 hesap)", usedPct: 35 }
+  ]);
+  assert.equal(promo.available, true);
+  assert.equal(promo.remainingUsd, 32.5);
+  assert.equal(promo.usedPct, 35);
+
+  const cushion = evaluateActiveAccountSafetyCushion(
+    [{ name: "gmail", active: true, usage: { fiveHour: { pct: 84 } } }],
+    { "autoswitch.threshold": 90 }
+  );
+  assert.equal(cushion.hasActive, true);
+  assert.equal(cushion.cushionPct, 6);
+  assert.equal(cushion.status, "imminent");
+
+  const fleetUtil = evaluateFleetWorkingUtilization({
+    status: "ok",
+    working: 3,
+    idle: 1,
+    stuck: 0,
+    dormant: 2
+  });
+  assert.equal(fleetUtil.utilizationPct, 75);
+  assert.equal(fleetUtil.activePoolSize, 4);
+  assert.equal(fleetUtil.status, "high-throughput");
 });

@@ -4102,3 +4102,182 @@ export function evaluateStatusBoardHotspot(statusBoard) {
       : "Durum panosunda darboğaz bölüm yok"
   };
 }
+
+
+/**
+ * Evaluates the safety margin ratio between `refresh.leadMinutes` and `daemon.refreshIntervalSeconds`
+ * so OAuth tokens get at least 2 renewal ticks before expiry.
+ */
+export function evaluateRefreshLeadTimeMargin(config = {}) {
+  const leadMinutes =
+    typeof config?.["refresh.leadMinutes"] === "number" && config["refresh.leadMinutes"] > 0
+      ? config["refresh.leadMinutes"]
+      : 45;
+  const intervalSeconds =
+    typeof config?.["daemon.refreshIntervalSeconds"] === "number" && config["daemon.refreshIntervalSeconds"] > 0
+      ? config["daemon.refreshIntervalSeconds"]
+      : 900;
+  const intervalMinutes = Math.round((intervalSeconds / 60) * 10) / 10;
+  const ticksBeforeExpiry = intervalMinutes > 0 ? Math.round((leadMinutes / intervalMinutes) * 10) / 10 : 0;
+  const safe = ticksBeforeExpiry >= 2;
+
+  return {
+    safe,
+    leadMinutes,
+    intervalMinutes,
+    ticksBeforeExpiry,
+    summary: safe
+      ? `OAuth yenileme marjı güvenli (${ticksBeforeExpiry}x döngü payı)`
+      : `Dar OAuth yenileme marjı (${leadMinutes} dk ön-süre / ${intervalMinutes} dk döngü)`
+  };
+}
+
+/**
+ * Summarizes monitored local launchd services grouped by kind (`daemon`, `interval`, `scheduled`).
+ */
+export function summarizeServicesByKind(services = []) {
+  const list = Array.isArray(services) ? services : [];
+  const counts = {
+    daemon: { total: 0, healthy: 0 },
+    interval: { total: 0, healthy: 0 },
+    scheduled: { total: 0, healthy: 0 }
+  };
+
+  for (const svc of list) {
+    if (!svc || typeof svc !== "object") continue;
+    const k = ["daemon", "interval", "scheduled"].includes(svc.kind) ? svc.kind : "daemon";
+    counts[k].total += 1;
+    if (svc.state === "running" || svc.state === "scheduled") {
+      counts[k].healthy += 1;
+    }
+  }
+
+  return {
+    daemonTotal: counts.daemon.total,
+    daemonHealthy: counts.daemon.healthy,
+    intervalTotal: counts.interval.total,
+    intervalHealthy: counts.interval.healthy,
+    scheduledTotal: counts.scheduled.total,
+    scheduledHealthy: counts.scheduled.healthy,
+    summary: `Daemon ${counts.daemon.healthy}/${counts.daemon.total} · Periyodik ${counts.interval.healthy}/${counts.interval.total} · Zamanlı ${counts.scheduled.healthy}/${counts.scheduled.total}`
+  };
+}
+
+/**
+ * Evaluates API Promo Grant (`apicredits`) balance and utilization from `otherQuotas`.
+ */
+export function evaluateApiPromoGrantHealth(otherQuotas = []) {
+  const list = Array.isArray(otherQuotas) ? otherQuotas : [];
+  const item = list.find((q) => q && q.id === "apicredits") || null;
+
+  if (!item || item.status === "unreadable") {
+    return {
+      available: false,
+      status: "unreadable",
+      usedPct: null,
+      remainingUsd: null,
+      summary: "API promosyon hibesi okunamadı"
+    };
+  }
+
+  const m = typeof item.display === "string" ? item.display.match(/\$(\d+(?:\.\d+)?)/) : null;
+  const remainingUsd = m ? Number.parseFloat(m[1]) : null;
+  const usedPct = typeof item.usedPct === "number" ? item.usedPct : null;
+
+  return {
+    available: true,
+    status: item.status || "ok",
+    usedPct,
+    remainingUsd,
+    summary:
+      remainingUsd !== null
+        ? `API Promosyon hibesi: $${remainingUsd.toFixed(2)} kalan${usedPct !== null ? ` (% ${usedPct} kullanıldı)` : ""}`
+        : `API Promosyon hibesi: ${item.display}`
+  };
+}
+
+/**
+ * Computes the active Claude account remaining percentage cushion before hitting `autoswitch.threshold`.
+ */
+export function evaluateActiveAccountSafetyCushion(accounts = [], config = {}) {
+  const threshold =
+    typeof config?.["autoswitch.threshold"] === "number" && config["autoswitch.threshold"] > 0
+      ? config["autoswitch.threshold"]
+      : 90;
+  const list = Array.isArray(accounts) ? accounts : [];
+  const active = list.find((a) => a && a.active) || null;
+
+  if (!active) {
+    return {
+      hasActive: false,
+      activeAccount: null,
+      usedFiveHourPct: null,
+      thresholdPct: threshold,
+      cushionPct: null,
+      status: "no-active",
+      summary: "Etkin aktif hesap yok"
+    };
+  }
+
+  const usedFiveHourPct =
+    typeof active?.usage?.fiveHour?.pct === "number"
+      ? active.usage.fiveHour.pct
+      : typeof active?.fiveHourPct === "number"
+        ? active.fiveHourPct
+        : 0;
+  const cushionPct = Math.max(0, Math.round((threshold - usedFiveHourPct) * 10) / 10);
+  const status = cushionPct <= 0 ? "breached" : cushionPct <= 10 ? "imminent" : "comfortable";
+
+  return {
+    hasActive: true,
+    activeAccount: active.name,
+    usedFiveHourPct,
+    thresholdPct: threshold,
+    cushionPct,
+    status,
+    summary:
+      status === "breached"
+        ? `Otomatik geçiş eşiği aşıldı (${active.name}: %${usedFiveHourPct} / eşik %${threshold})`
+        : status === "imminent"
+          ? `Otomatik geçişe %${cushionPct} kaldı (${active.name}: %${usedFiveHourPct} / eşik %${threshold})`
+          : `Aktif hesap güvenlik payı: %${cushionPct} (eşik %${threshold})`
+  };
+}
+
+/**
+ * Computes the active working utilization percentage across non-dormant Traycer fleet agents.
+ */
+export function evaluateFleetWorkingUtilization(fleet = {}) {
+  if (!fleet || fleet.status === "unreadable" || typeof fleet.working !== "number") {
+    return {
+      status: "unreadable",
+      utilizationPct: null,
+      activePoolSize: 0,
+      workingCount: 0,
+      summary: "Filo kullanım oranı okunamadı"
+    };
+  }
+
+  const working = Math.max(0, fleet.working || 0);
+  const idle = Math.max(0, fleet.idle || 0);
+  const stuck = Math.max(0, fleet.stuck || 0);
+  const activePoolSize = working + idle + stuck;
+  const utilizationPct = activePoolSize > 0 ? Math.round((working / activePoolSize) * 100) : 0;
+
+  let status = "balanced";
+  if (stuck > 0 && working === 0) {
+    status = "stalled";
+  } else if (utilizationPct >= 70) {
+    status = "high-throughput";
+  } else if (utilizationPct <= 25 && activePoolSize > 0) {
+    status = "underutilized";
+  }
+
+  return {
+    status,
+    utilizationPct,
+    activePoolSize,
+    workingCount: working,
+    summary: `Aktif filo kullanımı: %${utilizationPct} (${working}/${activePoolSize} ajan çalışıyor)`
+  };
+}

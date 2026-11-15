@@ -346,6 +346,21 @@ public enum ModelsTestSuite {
         let r15Decoded = try JSONDecoder().decode(StatusBoardHotspotSummary.self, from: r15Json)
         precondition(r15Decoded.hasHotspot == true && r15Decoded.badCount == 2, "StatusBoardHotspotSummary must decode accurately")
 
+        // Round 16 decoding check for ActiveAccountSafetyCushionSummary & FleetWorkingUtilizationSummary
+        let r16Json = """
+        {
+          "hasActive": true,
+          "activeAccount": "gmail",
+          "usedFiveHourPct": 84.0,
+          "thresholdPct": 90.0,
+          "cushionPct": 6.0,
+          "status": "imminent",
+          "summary": "Otomatik geçişe %6 kaldı (gmail: %84 / eşik %90)"
+        }
+        """.data(using: .utf8)!
+        let r16Decoded = try JSONDecoder().decode(ActiveAccountSafetyCushionSummary.self, from: r16Json)
+        precondition(r16Decoded.status == "imminent" && r16Decoded.cushionPct == 6.0, "ActiveAccountSafetyCushionSummary must decode accurately")
+
         // Urgent owner_needed classification test
         let urgentOwner = StatusBoardOwnerItem(project: "prod", text: "ACİL müdahale")
         let normalOwner = StatusBoardOwnerItem(project: "docs", text: "Not ekle")

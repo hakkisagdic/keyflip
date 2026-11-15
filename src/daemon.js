@@ -889,6 +889,11 @@ async function buildControlCenter(ctx, scheduler, opts) {
   base.statusBoardUnknownNoise = _controlcenter.evaluateStatusBoardUnknownNoise(base.statusBoard);
   base.fiveHourStaggering = _controlcenter.evaluateFiveHourWindowStaggering(base.accounts);
   base.statusBoardHotspot = _controlcenter.evaluateStatusBoardHotspot(base.statusBoard);
+  base.refreshLeadMargin = _controlcenter.evaluateRefreshLeadTimeMargin(base.config);
+  base.servicesByKind = _controlcenter.summarizeServicesByKind(base.services);
+  base.apiPromoGrant = _controlcenter.evaluateApiPromoGrantHealth(base.otherQuotas);
+  base.activeSafetyCushion = _controlcenter.evaluateActiveAccountSafetyCushion(base.accounts, base.config);
+  base.fleetWorkingUtilization = _controlcenter.evaluateFleetWorkingUtilization(base.fleet);
   base.compactSummary = _controlcenter.formatDaemonCompactSummary(base);
   base.preferences = _controlcenter.collectPreferences(ctx);
   base.markdownReport = _controlcenter.buildControlCenterMarkdown(base);

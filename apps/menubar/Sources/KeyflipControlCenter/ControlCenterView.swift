@@ -624,6 +624,18 @@ public struct ControlCenterView: View {
                         }
                     }
 
+                    if let asc = viewModel.payload.activeSafetyCushion, asc.hasActive, (asc.status == "imminent" || asc.status == "breached") {
+                        HStack(spacing: 5) {
+                            Image(systemName: "shield.lefthalf.filled.trianglebadge.exclamationmark")
+                                .font(.system(size: 10))
+                                .foregroundColor(asc.status == "breached" ? .red : .orange)
+                            Text(asc.summary)
+                                .font(.system(size: 10, weight: .medium))
+                                .foregroundColor(asc.status == "breached" ? .red : .orange)
+                                .lineLimit(1)
+                        }
+                    }
+
                     if let bw = viewModel.payload.bottleneckWindow, !bw.summary.isEmpty {
                         HStack(spacing: 5) {
                             Image(systemName: "gauge.with.dots.needle.67percent")
@@ -969,6 +981,11 @@ public struct ControlCenterView: View {
                         Spacer()
                         Text(fleet.display)
                             .font(.system(size: 11, design: .monospaced))
+                    }
+                    if let fwu = viewModel.payload.fleetWorkingUtilization, fwu.utilizationPct != nil {
+                        Text(fwu.summary)
+                            .font(.system(size: 10))
+                            .foregroundColor(.secondary)
                     }
                 } else {
                     Text("okunamadı")

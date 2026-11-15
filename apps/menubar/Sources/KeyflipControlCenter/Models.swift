@@ -58,6 +58,11 @@ public struct ControlCenterPayload: Codable {
     public var statusBoardUnknownNoise: StatusBoardUnknownNoiseSummary?
     public var fiveHourStaggering: FiveHourWindowStaggeringSummary?
     public var statusBoardHotspot: StatusBoardHotspotSummary?
+    public var refreshLeadMargin: RefreshLeadTimeMarginSummary?
+    public var servicesByKind: ServicesByKindSummary?
+    public var apiPromoGrant: ApiPromoGrantHealthSummary?
+    public var activeSafetyCushion: ActiveAccountSafetyCushionSummary?
+    public var fleetWorkingUtilization: FleetWorkingUtilizationSummary?
     public var auditTimeline: [AuditEventItem]?
     public var markdownReport: String?
     public var preferences: PreferencesSummary?
@@ -121,6 +126,11 @@ public struct ControlCenterPayload: Codable {
         statusBoardUnknownNoise: StatusBoardUnknownNoiseSummary? = nil,
         fiveHourStaggering: FiveHourWindowStaggeringSummary? = nil,
         statusBoardHotspot: StatusBoardHotspotSummary? = nil,
+        refreshLeadMargin: RefreshLeadTimeMarginSummary? = nil,
+        servicesByKind: ServicesByKindSummary? = nil,
+        apiPromoGrant: ApiPromoGrantHealthSummary? = nil,
+        activeSafetyCushion: ActiveAccountSafetyCushionSummary? = nil,
+        fleetWorkingUtilization: FleetWorkingUtilizationSummary? = nil,
         auditTimeline: [AuditEventItem]? = [],
         markdownReport: String? = nil,
         preferences: PreferencesSummary? = nil,
@@ -183,6 +193,11 @@ public struct ControlCenterPayload: Codable {
         self.statusBoardUnknownNoise = statusBoardUnknownNoise
         self.fiveHourStaggering = fiveHourStaggering
         self.statusBoardHotspot = statusBoardHotspot
+        self.refreshLeadMargin = refreshLeadMargin
+        self.servicesByKind = servicesByKind
+        self.apiPromoGrant = apiPromoGrant
+        self.activeSafetyCushion = activeSafetyCushion
+        self.fleetWorkingUtilization = fleetWorkingUtilization
         self.auditTimeline = auditTimeline
         self.markdownReport = markdownReport
         self.preferences = preferences
@@ -1553,5 +1568,50 @@ public struct StatusBoardHotspotSummary: Codable {
     public var sectionTitle: String?
     public var badCount: Int
     public var warnCount: Int
+    public var summary: String
+}
+
+
+public struct RefreshLeadTimeMarginSummary: Codable {
+    public var safe: Bool
+    public var leadMinutes: Double
+    public var intervalMinutes: Double
+    public var ticksBeforeExpiry: Double
+    public var summary: String
+}
+
+public struct ServicesByKindSummary: Codable {
+    public var daemonTotal: Int
+    public var daemonHealthy: Int
+    public var intervalTotal: Int
+    public var intervalHealthy: Int
+    public var scheduledTotal: Int
+    public var scheduledHealthy: Int
+    public var summary: String
+}
+
+public struct ApiPromoGrantHealthSummary: Codable {
+    public var available: Bool
+    public var status: String
+    public var usedPct: Double?
+    public var remainingUsd: Double?
+    public var summary: String
+}
+
+public struct ActiveAccountSafetyCushionSummary: Codable {
+    public var hasActive: Bool
+    public var activeAccount: String?
+    public var usedFiveHourPct: Double?
+    public var thresholdPct: Double
+    public var cushionPct: Double?
+    public var status: String
+    public var summary: String
+}
+
+public struct FleetWorkingUtilizationSummary: Codable {
+    public var status: String
+    public var utilizationPct: Int?
+    public var activePoolSize: Int
+    public var workingCount: Int
     public var summary: String
 }

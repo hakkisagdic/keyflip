@@ -1,6 +1,6 @@
 # Geliştirme Listesi ve Yaratıcı Özellik Önerileri (`GELISTIRME_LISTESI.md`)
 
-Bu liste, `docs/RAKIP_ANALIZI.md` sonucunda belirlenen tüm özelliklerin tamamlanma durumunu ve on beşinci turda önerilen **beş yeni yaratıcı özelliği** (en değerli ikisi uygulanmış olarak) içerir.
+Bu liste, `docs/RAKIP_ANALIZI.md` sonucunda belirlenen tüm özelliklerin tamamlanma durumunu ve on altıncı turda önerilen **beş yeni yaratıcı özelliği** (en değerli ikisi uygulanmış olarak) içerir.
 
 ---
 
@@ -80,23 +80,29 @@ Bu liste, `docs/RAKIP_ANALIZI.md` sonucunda belirlenen tüm özelliklerin tamaml
 - [x] **5 Saatlik Pencere Senkronize Sıfırlanma Çakışma Tespiti (`detectFiveHourResetCollision`):** Birden fazla etkin Claude hesabının 5 saatlik sıfırlanma zamanlarının `<=20 dk` yakın olup olmadığını tespit etme.
 - [x] **Durum Panosu `unknown` / Belirsiz Satır Temizlik Denetçisi (`evaluateStatusBoardUnknownNoise`):** Durum panosundaki `unknown` durumlu satırların oranını ve hangi bölümlerde yoğunlaştığını hesaplama.
 
+- [x] **Hesap Havuzu 5 Saatlik Pencere Kademelendirme (Staggering) Analizcisi (`evaluateFiveHourWindowStaggering`):** Etkin Claude hesaplarının 5 saatlik sıfırlanma pencereleri arasındaki minimum dakika farkını puanlayarak `HESAPLAR` bölümünde gösterme.
+- [x] **Durum Panosu Kritik Bölüm Darboğaz Odaklayıcısı (`evaluateStatusBoardHotspot`):** Durum panosundaki `bad` ve `warn` satırlarının yoğunlaştığı darboğaz bölümünü menü çubuğunda öne çıkarma.
+- [x] **OAuth Belirteç Yenileme Ön-Süre (`refresh.leadMinutes`) Marj Denetçisi (`evaluateRefreshLeadTimeMargin`):** `refresh.leadMinutes` ile `daemon.refreshIntervalSeconds` arasındaki güvenlik marjını denetleyerek en az 2 yenileme döngüsü payı olduğunu doğrulama.
+- [x] **Yerel Servis Tür Dağılımı (`daemon` / `interval` / `scheduled`) Sağlık Matrisi (`summarizeServicesByKind`):** İzlenen yerel servisleri çalışma türüne göre gruplayarak her kategorideki sağlıklı servis sayısını özetleme.
+- [x] **İkincil Kota API Promosyon Hibe Tükenme Analizcisi (`evaluateApiPromoGrantHealth`):** `otherQuotas` içindeki `apicredits` kaynağının kalan dolar bakiyesini ve kullanım yüzdesini ayrıştırma.
+
 ---
 
 ## 2. Listedeki İşler Tamamlandığı İçin Önerilen Beş Yeni Yaratıcı Özellik (En Değerli İkisi Uygulandı)
 
-### ✅ Yeni Öneri 1 (UYGULANDI): Hesap Havuzu 5 Saatlik Pencere Kademelendirme (Staggering) Analizcisi (`evaluateFiveHourWindowStaggering`)
-- **Değer:** Etkin Claude hesaplarının 5 saatlik sıfırlanma pencereleri arasındaki minimum dakika farkını (`minGapMinutes`) puanlayarak pencerelerin çakıştığı durumlarda (`5s pencereleri çakışıyor (10 dk fark) — erken rotasyon önerilir`) `HESAPLAR` bölümünde uyarı gösterir.
-- **Uygulama:** `src/controlcenter.js` (`evaluateFiveHourWindowStaggering`), `src/daemon.js` (`base.fiveHourStaggering`), `Models.swift` (`FiveHourWindowStaggeringSummary`) ve `ControlCenterView.swift`.
+### ✅ Yeni Öneri 1 (UYGULANDI): Aktif Hesap Otomatik Geçiş Eşiği Güvenlik Payı (`evaluateActiveAccountSafetyCushion`)
+- **Değer:** Aktif Claude hesabının 5 saatlik kullanım yüzdesi ile `autoswitch.threshold` arasındaki kalan yüzde tamponunu (`cushionPct`) hesaplar ve eşiğe `<=%10` yaklaşıldığında (`Otomatik geçişe %6 kaldı (gmail: %84 / eşik %90)`) `HESAPLAR` bölümünde erken uyarı gösterir.
+- **Uygulama:** `src/controlcenter.js` (`evaluateActiveAccountSafetyCushion`), `src/daemon.js` (`base.activeSafetyCushion`), `Models.swift` (`ActiveAccountSafetyCushionSummary`) ve `ControlCenterView.swift`.
 
-### ✅ Yeni Öneri 2 (UYGULANDI): Durum Panosu Kritik Bölüm Darboğaz Odaklayıcısı (`evaluateStatusBoardHotspot`)
-- **Değer:** Durum panosundaki `bad` ve `warn` satırlarının ağırlıklı olarak hangi bölümde yoğunlaştığını hesaplayarak en kritik darboğaz bölümünü (`Odak darboğazı: Altyapı (2 kritik, 1 uyarı)`) tespit eder ve menü çubuğunda öne çıkarır.
-- **Uygulama:** `src/controlcenter.js` (`evaluateStatusBoardHotspot`), `src/daemon.js` (`base.statusBoardHotspot`), `Models.swift` (`StatusBoardHotspotSummary`) ve `ControlCenterView.swift`.
+### ✅ Yeni Öneri 2 (UYGULANDI): Filo (Traycer) Aktif Ajan Çalışma Yoğunluğu Oranı (`evaluateFleetWorkingUtilization`)
+- **Değer:** Uyuyan (`dormant`) ajanlar hariç aktif filo havuzundaki (`working + idle + stuck`) çalışma oranını (`Aktif filo kullanımı: %75 (3/4 ajan çalışıyor)`) hesaplar ve `FİLO (TRAYCER)` bölümünde gösterir.
+- **Uygulama:** `src/controlcenter.js` (`evaluateFleetWorkingUtilization`), `src/daemon.js` (`base.fleetWorkingUtilization`), `Models.swift` (`FleetWorkingUtilizationSummary`) ve `ControlCenterView.swift`.
 
-### 📋 Yeni Öneri 3 (Gelecek Adayı): OAuth Belirteç Yenileme Ön-Süre (`refresh.leadMinutes`) Marj Denetçisi (`evaluateRefreshLeadTimeMargin`)
-- **Değer:** Yapılandırılan `refresh.leadMinutes` değeri ile `daemon.refreshIntervalSeconds` arasındaki güvenlik marjını denetleyerek belirteçlerin süresi dolmadan önce en az 2 yenileme döngüsü yakalayıp yakalamadığını doğrulama.
+### 📋 Yeni Öneri 3 (Gelecek Adayı): Konuşma İndeksleme ve Embedding (`conv-index`) İş Ritmi Denetçisi (`evaluateConvIndexCadenceHealth`)
+- **Değer:** `jobs["conv-index"]` мета verilerini ve `daemon.convIndexIntervalSeconds` ayarını inceleyerek son indeksleme zamanını ve sağlığını raporlama.
 
-### 📋 Yeni Öneri 4 (Gelecek Adayı): Yerel Servis Tür Dağılımı (`daemon` / `interval` / `scheduled`) Sağlık Matrisi (`summarizeServicesByKind`)
-- **Değer:** İzlenen yerel servisleri çalışma türüne (`daemon`, `interval`, `scheduled`) göre gruplayarak her kategorideki aktif/sağlıklı servis sayısını özetleme.
+### 📋 Yeni Öneri 4 (Gelecek Adayı): Yüzey Yenileme (`surface-refresh`) ve İkincil Kota Eşgüdüm Analizcisi (`evaluateSurfaceRefreshCoordHealth`)
+- **Değer:** `surface-refresh` işinin son çalışma sonucu ile `otherQuotas` okunabilirliğini karşılaştırarak yüzey yenileme sağlığını değerlendirme.
 
-### 📋 Yeni Öneri 5 (Gelecek Adayı): İkincil Kota API Promosyon Hibe Tükenme Analizcisi (`evaluateApiPromoGrantHealth`)
-- **Değer:** `otherQuotas` içindeki `apicredits` (API Promosyonları) kaynağının kalan dolar bakiyesini ve kullanım yüzdesini ayrıştırarak hibe tükenme uyarısı üretme.
+### 📋 Yeni Öneri 5 (Gelecek Adayı): Daemon Uyarıları Şiddet ve Düzeltme Komutu Özetleyicisi (`summarizeDaemonWarningsBySeverity`)
+- **Değer:** `warnings` dizisindeki `error` ve `warn` kayıtlarını sayarak en öncelikli düzeltme komutunu (`topFixCommand`) tek satırda özetleme.
