@@ -22,3 +22,12 @@ Dal `is/20261116-tarayici-oturumu`, mod `function`. Gerçek CLI, geçici HOME + 
 Başarısız kontrol yok. Notlar:
 - Gözlenen: doğrulanamayan sync çıkış kodu 0 verir (ANALIZ'in kararı: uyarı satırı + `verified:false`); beklenen buydu.
 - K6'nın Keychain gerektiren olumlu yolu ve K2'nin açık tarayıcıyı gerçekten kapatıp açma adımı canlı makinede yürütülmedi (kullanıcının tarayıcısını yeniden başlatır); birim testlerle kapsandı.
+
+## İnceleme düzeltmeleri
+| Bulgu | Sonuç | Kanıt |
+|---|---|---|
+| 1 [engel] masaüstü hesabı profil adı sanılıyordu | geçti | `browserplan.desktopProfile` org kimliğiyle eşler (`orgOwner`), CLI ve MCP aynı yardımcıyı kullanır; `det.reason` varsa `guess`. Fixture klasörü UUID yapıldı (`DESK_UUID`); K4 ve K4b gerçek eşlemeyle geçti (masaüstü=beta, "DIFFERENT", `--for desktop`=beta, `--for`suz sync çıkış != 0) |
+| 2 [büyük] çözülmeyen konumsal ad CLI hesabına düşüyordu | geçti | `core.resolveProfile` null ise "no such saved account", çıkış != 0. Yeni kara kutu testi K5c: `sync betta --yes`, çıkış != 0, mesaj var, çerez DB satırı değişmedi |
+
+Kapı yeniden: `npm test` 2231 test, 2227 geçti, 0 kaldı, 4 atlandı (çıkış 0); `npm run lint` çıkış 0; eklenen kodda e-posta/yol/sır yok. `keyflip browser status` iki yüzeyi gösterir ve `--yes`siz sync plan basıp tarayıcıyı yeniden başlatmadan çıkış != 0 verir (K1, K4, K4b).
+Yürütülmedi: gerçek makinede canlı `keyflip browser status` (kullanıcının oturumu/Keychain).
