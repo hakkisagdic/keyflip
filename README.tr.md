@@ -525,6 +525,11 @@ keyflip kiro usage [ad]      # IDE'nin kendi q-client.log'undan son kota bloğu
 keyflip kiro list            # kayıtlı hesaplar ve her yüzeyin son geçerliliği
 keyflip kiro import <slug>   # eski keyflip:surface:kiro:<slug>:* kaydını taşı
 keyflip kiro remove <ad> --force
+keyflip kiro apikey add <hesap> --keychain-service <servis-adi>   # var olan Keychain öğesini kaydet (yalnız ad)
+printf '%s' "$KEY" | keyflip kiro apikey add <hesap> --key-file -   # ya da anahtarı keyflip'e ait öğeye yaz
+keyflip kiro apikey list     # hesap, servis, var/yok, bayt uzunluğu (değer asla)
+keyflip kiro apikey test <hesap> [--timeout 60]   # başsız kiro-cli denemesi: PASS/FAIL + kategori
+keyflip kiro apikey remove <hesap> [--delete-item]  # --delete-item yalnız keyflip'e ait öğe için
 ```
 
 Kayıtlar `~/.config/keyflip/surfaces/kiro/<hesap>/` altında (0600, zaten

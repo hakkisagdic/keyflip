@@ -85,6 +85,7 @@ import * as _browser from './browser.js';
 import * as _browserswitch from './browserswitch.js';
 import * as _browserplan from './browserplan.js';
 import * as _kiro from './kiro.js';
+import * as _kiroapikey from './kiroapikey.js';
 import * as _antigravity from './antigravity.js';
 import * as _commandcode from './commandcode.js';
 import * as _clisurfaces from './clisurfaces.js';
@@ -391,6 +392,8 @@ function usage() {
   print('  keyflip browser [status|logout|capture|sync]  BROWSER claude.ai account: capture saves it under an');
   print('                                 account (so `keyflip chat --as` can read it), sync restores one;');
   print('                                 logout clears it — the Chrome extension inherits this session');
+  print('  keyflip kiro apikey [add|list|test|remove]  Kiro API key (KIRO_API_KEY) references in the Keychain;');
+  print('                                 add --keychain-service <name> | --key-file -; value never printed');
   print('  keyflip kiro [status|list|capture|switch|usage]  KIRO CLI (Keychain) + IDE (~/.aws/sso/cache):');
   print('                                 capture both surfaces, switch with --dry-run/--force, read IDE');
   print('                                 usage; `kiro import <slug>` migrates keyflip:surface:kiro:* captures');
@@ -15219,6 +15222,85 @@ function kiroSurfaceLine(surface) {
   return bits.join(' · ');
 }
 
+// `keyflip kiro apikey [add|list|test|remove]` — references to the Kiro API key (headless
+// kiro-cli's KIRO_API_KEY) kept in the Keychain. The value is never printed or stored in keyflip files.
+function cmdKiroApikey(ctx, args) {
+  const o = _kiroapikey.parseArgs(args);
+  const sub = o.positional[0] || 'list';
+  const acct = o.positional[1];
+  try {
+    if (sub === 'list') {
+      const keys = _kiroapikey.listKeys(ctx, {});
+      if (!keys.length)
+        print('No Kiro API key references. Run: keyflip kiro apikey add <account> --keychain-service <name>');
+      keys.forEach(function (k) {
+        print(
+          '  ' +
+            style.bold(k.account) +
+            '  ' +
+            k.service +
+            '  present: ' +
+            (k.present ? 'yes' : 'no') +
+            '  length: ' +
+            (k.bytes == null ? 'unknown' : k.bytes) +
+            (k.owned ? '  (keyflip-owned)' : ''),
+        );
+      });
+      jsonOut({ apikeys: keys });
+      return;
+    }
+    if (!acct) return fail('usage: keyflip kiro apikey ' + sub + ' <account>');
+    if (sub === 'add') {
+      let r;
+      if (o.keyFile !== null) {
+        if (o.keyFile !== '-') return fail('--key-file only accepts "-" (the key is read from stdin)');
+        r = _kiroapikey.addByValue(ctx, acct, fs.readFileSync(0, 'utf8'), {});
+      } else {
+        r = _kiroapikey.addByService(ctx, acct, o.keychainService, {});
+      }
+      print(
+        style.ok('✓') +
+          ' added Kiro API key ' +
+          style.bold(r.account) +
+          ' -> ' +
+          r.service +
+          ' (length ' +
+          (r.bytes == null ? 'unknown' : r.bytes) +
+          ')',
+      );
+      jsonOut({ added: r });
+      return;
+    }
+    if (sub === 'remove' || sub === 'rm') {
+      const r = _kiroapikey.removeKey(ctx, acct, { deleteItem: o.deleteItem }, {});
+      print(
+        style.ok('✓') +
+          ' removed Kiro API key reference ' +
+          style.bold(r.removed) +
+          (r.itemDeleted ? ' and its Keychain item' : ''),
+      );
+      jsonOut(r);
+      return;
+    }
+    if (sub === 'test') {
+      const r = _kiroapikey.testKey(ctx, acct, { timeoutS: o.timeoutS }, {});
+      print(
+        (r.pass ? style.ok('PASS') : style.err('FAIL') + ' ' + r.category) +
+          ' ' +
+          acct +
+          (r.credits ? '  ' + r.credits : ''),
+      );
+      if (!r.pass && r.detail) print(style.dim(r.detail));
+      jsonOut({ test: r });
+      if (!r.pass) process.exitCode = 1;
+      return;
+    }
+    return fail("unknown kiro apikey command: '" + sub + "' (add|list|test|remove)");
+  } catch (e) {
+    return fail(e.message);
+  }
+}
+
 async function cmdKiro(ctx, rest) {
   logmod.log('kiro invoked');
   if (ctx.platform !== 'darwin') {
@@ -15233,6 +15315,7 @@ async function cmdKiro(ctx, rest) {
   const has = function (f) {
     return args.indexOf(f) !== -1;
   };
+  if (sub === 'apikey') return cmdKiroApikey(ctx, args);
   const force = has('--force') || has('-y');
   const dryRun = has('--dry-run');
   const noVerify = has('--no-verify');
@@ -15434,7 +15517,9 @@ async function cmdKiro(ctx, rest) {
   }
 
   return fail(
-    "unknown kiro command: '" + sub + "' (status|list|capture|switch|usage|import|remove). Try `keyflip kiro status`.",
+    "unknown kiro command: '" +
+      sub +
+      "' (status|list|capture|switch|usage|import|remove|apikey). Try `keyflip kiro status`.",
   );
 }
 
