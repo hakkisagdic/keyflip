@@ -12,7 +12,9 @@ import { fileURLToPath } from 'url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const BIN = path.join(__dirname, '..', 'bin', 'keyflip.js');
 const SEC = '/usr/bin/security';
-const skip = process.platform !== 'darwin';
+// Opt-in only (KEYFLIP_E2E_REAL_KEYCHAIN=1): this test creates items in the REAL login Keychain
+// and a freshly built helper then reads them, so macOS asks for the login password on every run.
+const skip = process.platform !== 'darwin' || process.env.KEYFLIP_E2E_REAL_KEYCHAIN !== '1';
 
 function sandbox() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kf-akcli-'));
