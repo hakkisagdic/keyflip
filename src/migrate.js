@@ -17,6 +17,9 @@ import * as fsutil from './fsutil.js';
 import * as _sessions from './sessions.js';
 import * as _sync from './sync.js';
 import * as _agents from './agents.js';
+import * as profiles from './profiles.js';
+import * as _backup from './backup.js';
+import * as container from './migrate-container.js';
 
 const atomicWrite = fsutil.atomicWrite;
 
@@ -587,6 +590,247 @@ function applyBundle(ctx, bundle, opts) {
   };
 }
 
+// --- dry-run plan and pre-import backup -------------------------------------
+
+function statusOf(exists, same) {
+  if (!exists) return 'new';
+  return same ? 'exists-kept' : 'conflict';
+}
+
+// What `migrate import --dry-run` reports: NAMES and a status only, never a value.
+//   new          not on this machine yet
+//   exists-kept  already here with the same content (nothing to do)
+//   conflict     already here and different (kept, or overwritten with --force)
+// `opts.transcripts` carries the counts the streaming sink measured.
+function planApply(ctx, bundle, opts) {
+  opts = opts || {};
+  const out = { accounts: [], providers: [], memory: [], config: [], agents: 0, agentConfig: 0, transcripts: null };
+  (bundle.accounts || []).forEach(function (a) {
+    if (!a || !profiles.isValidName(a.name)) return;
+    const have = profiles.exists(ctx.configDir, a.name);
+    let same = false;
+    if (have) {
+      const m = profiles.read(ctx.configDir, a.name) || {};
+      same = (m.email || '') === (a.email || '') && (m.userID || '') === (a.userID || '');
+    }
+    out.accounts.push({ name: a.name, status: statusOf(have, same) });
+  });
+  (bundle.providers || []).forEach(function (p) {
+    if (!p || !p.name || !p.meta || !p.meta.baseUrl) return;
+    const have = provider.exists(ctx, p.name);
+    const cur = have ? provider.read(ctx, p.name) || {} : {};
+    out.providers.push({ name: p.name, status: statusOf(have, cur.baseUrl === p.meta.baseUrl) });
+  });
+  const root = claudeDir(ctx);
+  (bundle.memory || []).forEach(function (m) {
+    if (!m || typeof m.content !== 'string' || typeof m.rel !== 'string' || !isMemoryRel(m.rel)) return;
+    const dest = path.resolve(root, m.rel);
+    if (!fsutil.safeDestUnder(root, dest).ok) return;
+    const cur = readFileOrNull(dest);
+    out.memory.push({ name: m.rel, status: statusOf(cur != null, cur === m.content) });
+  });
+  const cfg = bundle.config || {};
+  const cd = claudeDir(ctx);
+  const cfgFiles = [
+    ['mcp-registry', 'mcpRegistry', path.join(ctx.configDir, 'mcp-registry.json')],
+    ['claude-settings', 'claudeSettings', path.join(cd, 'settings.json')],
+    ['claude-settings-local', 'claudeSettingsLocal', path.join(cd, 'settings.local.json')],
+  ];
+  if (ctx.appDataDir)
+    cfgFiles.push(['desktop-mcp', 'desktopMcp', path.join(ctx.appDataDir, 'claude_desktop_config.json')]);
+  cfgFiles.forEach(function (c) {
+    if (cfg[c[1]] == null) return;
+    const cur = readFileOrNull(c[2]);
+    out.config.push({ name: c[0], status: statusOf(cur != null, cur === cfg[c[1]]) });
+  });
+  out.agents = (bundle.agents || []).length;
+  out.agentConfig = (bundle.agentConfig || []).length;
+  out.transcripts = opts.transcripts || { new: 0, existsKept: 0, conflict: 0, skipped: 0, total: 0 };
+  let conflicts = out.transcripts.conflict || 0;
+  ['accounts', 'providers', 'memory', 'config'].forEach(function (k) {
+    out[k].forEach(function (e) {
+      if (e.status === 'conflict') conflicts++;
+    });
+  });
+  out.conflicts = conflicts;
+  return out;
+}
+
+// Every file an import could write, for the safety copy: existing ones only matter.
+function importTargets(ctx, bundle) {
+  const files = [];
+  const cd = claudeDir(ctx);
+  (bundle.accounts || []).forEach(function (a) {
+    if (!a || !profiles.isValidName(a.name)) return;
+    files.push(path.join(ctx.configDir, a.name + '.json'));
+    files.push(path.join(ctx.configDir, 'creds', a.name + '.cred'));
+  });
+  (bundle.providers || []).forEach(function (p) {
+    if (!p || typeof p.name !== 'string' || !isSafeSegment(p.name)) return;
+    files.push(path.join(ctx.configDir, 'providers', p.name + '.json'));
+    files.push(path.join(ctx.configDir, 'creds', PROVIDER_KEY(p.name) + '.cred'));
+  });
+  (bundle.memory || []).forEach(function (m) {
+    if (m && typeof m.rel === 'string' && isMemoryRel(m.rel)) files.push(path.resolve(cd, m.rel));
+  });
+  (bundle.transcripts || []).forEach(function (t) {
+    if (t && isSafeSegment(t.project) && isSafeSegment(t.sessionId))
+      files.push(path.join(projectsDir(ctx), t.project, t.sessionId + '.jsonl'));
+  });
+  files.push(path.join(ctx.configDir, 'mcp-registry.json'));
+  files.push(path.join(cd, 'settings.json'));
+  files.push(path.join(cd, 'settings.local.json'));
+  if (ctx.appDataDir) files.push(path.join(ctx.appDataDir, 'claude_desktop_config.json'));
+  (bundle.agents || []).concat(bundle.agentConfig || []).forEach(function (m) {
+    if (m && typeof m.rel === 'string') files.push(path.resolve(ctx.home, m.rel));
+  });
+  return files;
+}
+
+const BACKUP_KEEP = 10;
+
+// A private (0700) copy of every existing file the import could touch, credential files
+// included, made BEFORE the first write. backup.js only keeps non-secret metadata, so the
+// stamp/retention helpers are reused and the copy itself is done here.
+function createImportBackup(ctx) {
+  const root = path.join(ctx.configDir, 'migrate-backups');
+  let dir = null;
+  const copied = [];
+  function ensure() {
+    if (dir) return;
+    const base = _backup.stamp(ctx);
+    let name = base;
+    let n = 1;
+    while (fs.existsSync(path.join(root, name))) name = base + '.' + n++;
+    dir = path.join(root, name);
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    try {
+      fs.chmodSync(root, 0o700);
+      fs.chmodSync(dir, 0o700);
+    } catch (e) {
+      /* non-POSIX FS */
+    }
+    let all = [];
+    try {
+      all = fs.readdirSync(root).sort().reverse();
+    } catch (e) {
+      all = [];
+    }
+    all.slice(BACKUP_KEEP).forEach(function (old) {
+      try {
+        fs.rmSync(path.join(root, old), { recursive: true, force: true });
+      } catch (e) {
+        /* best effort */
+      }
+    });
+  }
+  function copy(abs) {
+    let st;
+    try {
+      st = fs.statSync(abs);
+    } catch (e) {
+      return;
+    }
+    if (!st.isFile()) return;
+    ensure();
+    let rel = path.relative(ctx.home, abs);
+    if (rel.indexOf('..') === 0 || path.isAbsolute(rel)) rel = path.join('outside-home', abs.replace(/[/\\:]/g, '_'));
+    const dest = path.join(dir, rel);
+    if (fs.existsSync(dest)) return;
+    fs.mkdirSync(path.dirname(dest), { recursive: true, mode: 0o700 });
+    fs.copyFileSync(abs, dest);
+    try {
+      fs.chmodSync(dest, 0o600);
+    } catch (e) {
+      /* non-POSIX FS */
+    }
+    copied.push(rel);
+  }
+  return {
+    start: function (bundle) {
+      ensure();
+      importTargets(ctx, bundle).forEach(copy);
+    },
+    before: copy,
+    get dir() {
+      return dir;
+    },
+    get files() {
+      return copied;
+    },
+  };
+}
+
+// --- manifest and doctor: NAMES, present/missing and lengths — never a value ----
+
+function lengthOf(v) {
+  return typeof v === 'string' ? v.length : 0;
+}
+
+function readBlob(ctx, name) {
+  try {
+    return ctx.store.getProfile(name) || null;
+  } catch (e) {
+    return undefined; // the store itself is unavailable (locked keychain)
+  }
+}
+
+// What an export from this machine would carry, as names + present/missing + length.
+function manifest(ctx) {
+  const accounts = profiles.list(ctx.configDir).map(function (name) {
+    const blob = readBlob(ctx, name);
+    return { name: name, present: !!blob, length: lengthOf(blob) };
+  });
+  const providers = provider.list(ctx).map(function (name) {
+    const blob = readBlob(ctx, PROVIDER_KEY(name));
+    return { name: name, present: !!blob, length: lengthOf(blob) };
+  });
+  const memory = collectMemory(ctx).map(function (m) {
+    return { name: m.rel, present: true, length: m.content.length };
+  });
+  const cfg = collectConfig(ctx);
+  const config = Object.keys(cfg).map(function (k) {
+    return { name: k, present: true, length: cfg[k].length };
+  });
+  return {
+    accounts: accounts,
+    providers: providers,
+    memory: memory,
+    config: config,
+    transcripts: listTranscriptFiles(ctx, {}).length,
+  };
+}
+
+// Preconditions of an export/import on this machine. ok=false on any item is "missing".
+function doctor(ctx) {
+  const checks = [];
+  const add = function (name, ok, detail) {
+    checks.push({ name: name, ok: ok, detail: detail });
+  };
+  add('config-dir', fs.existsSync(ctx.configDir), ctx.configDir ? 'keyflip config directory' : '');
+  add('claude-dir', fs.existsSync(claudeDir(ctx)), 'Claude Code directory');
+  let storeOk = true;
+  const accounts = profiles.list(ctx.configDir);
+  accounts.forEach(function (name) {
+    const blob = readBlob(ctx, name);
+    if (blob === undefined) storeOk = false;
+    add('account ' + name, !!blob, blob ? 'present (' + blob.length + ' chars)' : 'missing');
+  });
+  provider.list(ctx).forEach(function (name) {
+    const blob = readBlob(ctx, PROVIDER_KEY(name));
+    add('provider ' + name, !!blob, blob ? 'present (' + blob.length + ' chars)' : 'missing');
+  });
+  add('credential-store', storeOk, storeOk ? 'readable' : 'unavailable');
+  let kdfOk = true;
+  try {
+    container.deriveKey('doctor', Buffer.alloc(16), { N: container.KDF_N, r: 8, p: 1 });
+  } catch (e) {
+    kdfOk = false;
+  }
+  add('key-derivation', kdfOk, 'scrypt N=' + container.KDF_N + ' within the memory cap');
+  return { checks: checks, ok: checks.every((c) => c.ok) };
+}
+
 // --- cloud relay (option c): move the bundle over WebDAV, reusing sync's
 // encrypted transport. The payload carries secrets, so a passphrase is REQUIRED.
 // For small bundles (< LEGACY_MEMORY_MAX), use the legacy in-memory path for
@@ -674,6 +918,10 @@ export {
   planExport,
   listTranscriptFiles,
   applyBundle,
+  planApply,
+  createImportBackup,
+  manifest,
+  doctor,
   pushBundle,
   pullBundle,
   cleanupPullTemp,

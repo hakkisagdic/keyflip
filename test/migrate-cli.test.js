@@ -99,10 +99,10 @@ test('migrate export - writes ONLY the streaming bundle to stdout (notes go to s
   fs.writeFileSync(pf, 'pw\n');
   const r = run(home, ['migrate', 'export', '-', '--passphrase-file', pf]);
   assert.strictEqual(r.status, 0);
-  assert.strictEqual(r.stdout.split('\n')[0], 'KEYFLIP-MIGRATE-STREAM/2');
+  assert.strictEqual(r.stdout.split('\n')[0], 'KEYFLIP-MIGRATE-STREAM/3');
   const header = JSON.parse(r.stdout.split('\n')[1]);
   assert.strictEqual(header.format, 'keyflip-migrate-stream');
-  assert.strictEqual(header.version, 2);
+  assert.strictEqual(header.version, 3);
   assert.strictEqual(header.encrypted, true);
   assert.ok(header.salt, 'encrypted header carries the KDF salt');
   assert.strictEqual(header.transcripts, 1);
@@ -126,7 +126,7 @@ test('migrate export - --json keeps stdout a pure bundle and puts the JSON summa
   const lines = r.stdout.split('\n').filter(function (l) {
     return l.trim() !== '';
   });
-  assert.strictEqual(lines[0], 'KEYFLIP-MIGRATE-STREAM/2');
+  assert.strictEqual(lines[0], 'KEYFLIP-MIGRATE-STREAM/3');
   lines.slice(1).forEach(function (l) {
     JSON.parse(l); // throws on any non-JSON line
   });
@@ -155,7 +155,7 @@ test('migrate export <file> → import on a fresh home restores the account and 
   const bundle = path.join(src, 'bundle.kf');
   const exp = run(src, ['migrate', 'export', bundle, '--passphrase-file', pf]);
   assert.strictEqual(exp.status, 0, exp.stderr);
-  assert.strictEqual(fs.readFileSync(bundle, 'utf8').split('\n')[0], 'KEYFLIP-MIGRATE-STREAM/2');
+  assert.strictEqual(fs.readFileSync(bundle, 'utf8').split('\n')[0], 'KEYFLIP-MIGRATE-STREAM/3');
   // The login secret must not appear in an encrypted bundle in the clear.
   assert.strictEqual(fs.readFileSync(bundle, 'utf8').indexOf('{"t":1}'), -1);
 

@@ -1,0 +1,7 @@
+KEYFLIP-MIGRATE-STREAM/2
+{"format":"keyflip-migrate-stream","version":2,"encrypted":false,"alg":null,"kdf":null,"salt":null,"createdAt":"2026-01-01T00:00:00.000Z","chunkSize":131072,"transcripts":1,"bytes":9}
+{"type":"meta","data":{"format":"keyflip-migrate","version":1,"exportedAt":"2026-01-01T00:00:00.000Z","accounts":[{"name":"alice","email":"alice@example.com","oauthAccount":{},"userID":"ua","cliCredentials":"{\"t\":\"example-token-not-real\"}"}],"providers":[],"transcripts":[],"memory":[{"rel":"CLAUDE.md","content":"notes v2\n"}],"config":{},"agents":[],"agentConfig":[]},"seq":0}
+{"type":"tx","project":"-demo","sessionId":"s1","bytes":9,"seq":1}
+{"type":"chunk","n":9,"data":"aGVsbG8gdjIK","seq":2}
+{"type":"tx-end","seq":3}
+{"type":"end","transcripts":1,"bytes":9,"counts":{"accounts":1,"providers":0,"transcripts":1,"memory":1,"config":0,"agents":0,"agentConfig":0},"seq":4}

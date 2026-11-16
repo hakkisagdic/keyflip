@@ -296,6 +296,8 @@ function usage() {
   );
   print('  keyflip gateway use <provider> | off   route the Claude DESKTOP app through a provider gateway');
   print('  keyflip sync [push|pull|test] --url <webdav> --passphrase-file <f>   encrypted cross-device sync');
+  print('  keyflip migrate manifest | doctor [--json]   what an export would carry (names, present/missing, lengths)');
+  print('  keyflip migrate import <file> --dry-run | --require-encrypted | --expect-bundle-id <id>   safe import');
   print('  keyflip migrate export/import <file> [--passphrase-file <f>]   move ALL accounts+providers+');
   print('                                 session transcripts to a new machine and MERGE (also: push/pull --url)');
   print(
@@ -5055,6 +5057,8 @@ const BUNDLE_VALUE_FLAGS = [
   '--newer-than',
   '--older-than',
   '--limit',
+  '--bundle-id',
+  '--expect-bundle-id',
 ];
 function bundleFilterOpts(rest) {
   const o = {
@@ -5236,13 +5240,38 @@ async function cmdMigrate(ctx, rest) {
   const migrate = _migrate;
   const sub = rest[0];
   const target = positionals(rest.slice(1), BUNDLE_VALUE_FLAGS)[0];
+  // migrate exit codes: 0 ok, 2 usage, 3 bundle refused (wrong passphrase, tampered, truncated,
+  // plain where encryption was asked, wrong bundle id), 4 conflicts found and nothing written,
+  // 5 a precondition is missing. Anything else stays 1.
+  const migrateFail = function (msg, code) {
+    fail(msg);
+    process.exitCode = code;
+  };
+  const migrateError = function (e) {
+    const c = (e && e.code) || '';
+    if (c === 'USAGE') return migrateFail(e.message, 2);
+    if (c === 'NEED_PASSPHRASE') return migrateFail(e.message, 5);
+    if (/^(STREAM_|LEGACY_)/.test(c)) return migrateFail(e.message, 3);
+    return fail(e.message);
+  };
+  const flagValue = function (flag) {
+    const i = rest.indexOf(flag);
+    return i !== -1 && rest[i + 1] && rest[i + 1][0] !== '-' ? rest[i + 1] : null;
+  };
   const passphraseGiven = rest.indexOf('--passphrase-file') !== -1;
   const passphrase = readSecretArg(rest, '--passphrase-file'); // optional encryption
   // A passphrase-file that was asked for but is unreadable must NOT silently fall back
   // to writing/reading an UNENCRYPTED secrets bundle.
   if (passphraseGiven && !passphrase)
-    return fail('cannot read the --passphrase-file (refusing to proceed unencrypted).');
+    return migrateFail('cannot read the --passphrase-file (refusing to proceed unencrypted).', 5);
   const force = rest.indexOf('--force') !== -1;
+  const requireEncrypted = rest.indexOf('--require-encrypted') !== -1;
+  const dryRun = rest.indexOf('--dry-run') !== -1;
+  const bundleId = flagValue('--bundle-id');
+  const expectBundleId = flagValue('--expect-bundle-id');
+  if (rest.indexOf('--bundle-id') !== -1 && !bundleId) return migrateFail('--bundle-id needs a value', 2);
+  if (rest.indexOf('--expect-bundle-id') !== -1 && !expectBundleId)
+    return migrateFail('--expect-bundle-id needs a value', 2);
 
   if (sub === 'export') {
     const out = target || 'keyflip-migrate.json';
@@ -5271,18 +5300,23 @@ async function cmdMigrate(ctx, rest) {
             process.stderr.write((s == null ? '' : s) + '\n');
           }
         : print;
+    let written;
     try {
-      await _migrateStream.writeBundle({
+      written = await _migrateStream.writeBundle({
         out: out,
         meta: built,
         files: plan.files,
         passphrase: passphrase,
+        bundleId: bundleId,
+        toolVersion: VERSION,
+        fromHome: ctx.home,
+        fromUser: process.env.USER || process.env.USERNAME || null,
       });
     } catch (e) {
-      return fail(e.message);
+      return migrateError(e);
     }
     if (out !== '-') {
-      note('📦 migrate bundle written to ' + style.bold("'" + out + "'") + ':');
+      note('📦 migrate bundle written to ' + style.bold("'" + out + "'") + ' (bundle id ' + written.bundleId + '):');
       note(
         '   ' +
           built.counts.accounts +
@@ -5341,7 +5375,12 @@ async function cmdMigrate(ctx, rest) {
     // When stdout IS the bundle, a JSON summary must not follow it — the importer
     // (correctly) rejects trailing data. The summary rides stderr in that case.
     const summary = {
-      migrateExport: { path: out === '-' ? null : out, encrypted: !!passphrase, counts: built.counts },
+      migrateExport: {
+        path: out === '-' ? null : out,
+        encrypted: !!passphrase,
+        bundleId: written.bundleId,
+        counts: built.counts,
+      },
     };
     if (out === '-' && JSON_MODE) {
       note(JSON.stringify(Object.assign({ schemaVersion: JSON_SCHEMA_VERSION }, summary)));
@@ -5350,9 +5389,15 @@ async function cmdMigrate(ctx, rest) {
   }
 
   if (sub === 'import') {
-    if (!target) return fail('usage: keyflip migrate import <file|-> [--force] [--passphrase-file <f>]');
+    if (!target)
+      return migrateFail(
+        'usage: keyflip migrate import <file|-> [--force] [--dry-run] [--require-encrypted] [--expect-bundle-id <id>] [--passphrase-file <f>]',
+        2,
+      );
     // Reads the streaming container record-by-record; a legacy one-string bundle
     // still imports below the safe cap (or fails with an actionable message).
+    // A real import copies every file it could touch to a private backup dir first.
+    const backup = dryRun ? null : migrate.createImportBackup(ctx);
     let res;
     try {
       res = await _migrateStream.importBundle({
@@ -5360,10 +5405,52 @@ async function cmdMigrate(ctx, rest) {
         input: target,
         passphrase: passphrase,
         force: force,
+        requireEncrypted: requireEncrypted,
+        expectBundleId: expectBundleId,
+        dryRun: dryRun,
+        backup: backup,
       });
     } catch (e) {
-      return fail(e.message);
+      if (backup && backup.dir) process.stderr.write('   safety copy kept at ' + backup.dir + '\n');
+      return migrateError(e);
     }
+    if (res.dryRun) {
+      const plan = res.plan;
+      const names = function (list) {
+        return list.length
+          ? list
+              .map(function (e) {
+                return e.name + ' (' + e.status + ')';
+              })
+              .join(', ')
+          : '(none)';
+      };
+      print('dry run — nothing was written:');
+      print('  accounts:    ' + names(plan.accounts));
+      print('  providers:   ' + names(plan.providers));
+      print('  memory:      ' + names(plan.memory));
+      print('  config:      ' + names(plan.config));
+      if (plan.agents) print('  agents:      ' + plan.agents + ' file(s)');
+      if (plan.agentConfig) print('  agent-config:' + plan.agentConfig + ' file(s)');
+      const t = plan.transcripts;
+      print(
+        '  transcripts: ' +
+          t.new +
+          ' new, ' +
+          t.existsKept +
+          ' exists-kept, ' +
+          t.conflict +
+          ' conflict (' +
+          t.total +
+          ' in the bundle)',
+      );
+      jsonOut({ migrateDryRun: plan });
+      if (plan.conflicts) {
+        migrateFail(plan.conflicts + ' conflict(s): those entries already exist here with different content.', 4);
+      }
+      return;
+    }
+    if (backup && backup.dir) print(style.dim('  safety copy of the files this import could touch: ' + backup.dir));
     const tx = res.transcripts;
     print(style.ok('✅') + ' merged this machine with the bundle:');
     print(
@@ -5442,6 +5529,38 @@ async function cmdMigrate(ctx, rest) {
     }
     jsonOut({ migrated: { accounts: res.accounts, providers: res.providers, transcripts: tx } });
     logmod.log('migrate import: +' + tx.added + ' tx, ' + res.accounts.imported.length + ' acct');
+    return;
+  }
+
+  if (sub === 'manifest') {
+    const m = migrate.manifest(ctx);
+    if (JSON_MODE) {
+      jsonOut({ migrateManifest: m });
+      return;
+    }
+    const line = function (label, list) {
+      print(label + ':');
+      if (!list.length) print('  (none)');
+      list.forEach(function (e) {
+        print('  ' + e.name + ': ' + (e.present ? 'present (' + e.length + ' chars)' : 'missing'));
+      });
+    };
+    line('accounts', m.accounts);
+    line('providers', m.providers);
+    line('memory', m.memory);
+    line('config', m.config);
+    print('transcripts: ' + m.transcripts);
+    return;
+  }
+
+  if (sub === 'doctor') {
+    const d = migrate.doctor(ctx);
+    if (JSON_MODE) jsonOut({ migrateDoctor: d });
+    else
+      d.checks.forEach(function (c) {
+        print((c.ok ? style.ok('ok     ') : style.warn('missing ') + ' ') + c.name + ': ' + c.detail);
+      });
+    if (!d.ok) process.exitCode = 5;
     return;
   }
 
@@ -5584,8 +5703,9 @@ async function cmdMigrate(ctx, rest) {
     return;
   }
 
-  return fail(
-    'usage: keyflip migrate [export <file> | import <file> | push --url … | pull --url …] [--passphrase-file <f>] [--force] [--no-sessions] [--no-providers]',
+  return migrateFail(
+    'usage: keyflip migrate [export <file> | import <file> | manifest | doctor | push --url … | pull --url …] [--passphrase-file <f>] [--force] [--no-sessions] [--no-providers] [--bundle-id <id>] [--expect-bundle-id <id>] [--require-encrypted] [--dry-run]',
+    2,
   );
 }
 
