@@ -83,6 +83,7 @@ import * as longtoken from './longtoken.js';
 import * as _styleModule from './style.js';
 import * as _browser from './browser.js';
 import * as _browserswitch from './browserswitch.js';
+import * as _browserplan from './browserplan.js';
 import * as _kiro from './kiro.js';
 import * as _antigravity from './antigravity.js';
 import * as _commandcode from './commandcode.js';
@@ -434,11 +435,17 @@ function usage() {
   print('                                 through keysmith (surfaces: cli-launcher default, cli-settings opt-in;');
   print('                                 desktop & chrome never use the gateway)');
   print('  keyflip failover run [--force-gateway] [--print-command] [--] [claude args…]');
-  print('                                 launch Claude Code with gateway env in child process only (never settings.json)');
+  print(
+    '                                 launch Claude Code with gateway env in child process only (never settings.json)',
+  );
   print('  keyflip failover resume <session-id|--last> [--desktop] [--yes] [--force-gateway] [--print-command]');
-  print('                                 resume a session in its cwd on the gateway (exits 3 if session pid is alive)');
+  print(
+    '                                 resume a session in its cwd on the gateway (exits 3 if session pid is alive)',
+  );
   print('  keyflip failover verify [--no-spend] [--deep] [--json]');
-  print('                                 read-only check of gateway, legs, modelIds, probes, leftovers, processes & tools');
+  print(
+    '                                 read-only check of gateway, legs, modelIds, probes, leftovers, processes & tools',
+  );
   print(
     '                                 keyflip autoswitch <status|uninstall|--once>   check/stop the service; --once = one tick',
   );
@@ -1620,10 +1627,7 @@ async function cmdFailover(ctx, rest) {
     );
     print('  gateway:  ' + p.gatewayUrl + ' — ' + (ready.ok ? style.ok('ready') : style.warn(ready.reason)));
     print(
-      '  surfaces: cli = ' +
-        cliSurf +
-        ' · desktop = not on the gateway (cannot use it) · chrome = ' +
-        chromeSummary,
+      '  surfaces: cli = ' + cliSurf + ' · desktop = not on the gateway (cannot use it) · chrome = ' + chromeSummary,
     );
     if (ready.cap)
       print(
@@ -1684,11 +1688,7 @@ async function cmdFailover(ctx, rest) {
       });
     }
     if (!r.ok) return fail('could not release every failover surface: ' + r.reason);
-    print(
-      style.ok('✅') +
-        ' API failover ' +
-        (r.already ? 'was already off.' : 'off — back on your Claude account.'),
-    );
+    print(style.ok('✅') + ' API failover ' + (r.already ? 'was already off.' : 'off — back on your Claude account.'));
     return;
   }
   if (sub === 'run') {
@@ -1832,8 +1832,7 @@ async function cmdFailover(ctx, rest) {
     }
     print('Failover verify:');
     r.checks.forEach(function (c) {
-      const mark =
-        c.state === 'fail' ? style.err('✗') : c.state === 'warn' ? style.warn('⚠') : style.ok('✓');
+      const mark = c.state === 'fail' ? style.err('✗') : c.state === 'warn' ? style.warn('⚠') : style.ok('✓');
       print('  ' + mark + ' ' + c.id + ' — ' + c.reason);
     });
     print('  spent: $' + r.spentUsd + (noSpend ? style.dim(' (--no-spend)') : style.dim(' (metered cap delta)')));
@@ -14638,52 +14637,6 @@ async function cmdOnboard(ctx, rest) {
   jsonOut({ onboard: true, added: count, providers: providers });
 }
 
-// Sync the BROWSER (claude.ai session) to `name` — restore that account's saved
-// session so the Claude extension reconnects as it. Quits the browser, writes the
-// stored cookies, reopens. Returns the browsers actually synced. macOS only.
-async function browserSync(ctx, name) {
-  if (!_browser.supported(ctx.platform)) return [];
-  const browser = _browser;
-  const napMs = function (ms) {
-    return new Promise(function (r) {
-      setTimeout(r, ms);
-    });
-  };
-  const synced = [];
-  const list = browser.installed(ctx.home, { platform: ctx.platform });
-  for (let i = 0; i < list.length; i++) {
-    const b = list[i];
-    const sql = browser.loadSession(ctx.configDir, name, b);
-    if (!sql) continue; // no saved browser session for this account+browser
-    const wasRunning = browser.isRunning(b);
-    if (wasRunning) {
-      browser.quit(b, exec.run);
-      for (let t = 0; t < 24 && browser.isRunning(b); t++) {
-        await napMs(250);
-      }
-    }
-    // If it refused to quit, DON'T force-write its live Cookies DB — that corrupts it.
-    if (browser.isRunning(b)) {
-      print(
-        '  ' +
-          style.warn('⏭') +
-          ' ' +
-          b.name +
-          ' is still open — quit it and re-run `keyflip browser sync ' +
-          name +
-          '`.',
-      );
-      continue;
-    }
-    const r = browser.restoreClaudeCookies(b, sql, { force: true });
-    if (r.ok) {
-      synced.push(b.name);
-      if (wasRunning) browser.reopen(b, exec.run);
-    }
-  }
-  return synced;
-}
-
 // Print the browser leg of a switch (browserswitch.align). Every browser that did NOT end up on the
 // target is named with the reason and the one command that finishes it — the whole point of an
 // all-surfaces switch is that nothing is left on the old account without saying so.
@@ -14878,10 +14831,70 @@ async function cmdBrowser(ctx, rest) {
     return lbl;
   }
 
+  // The two surfaces the extension can follow, and the saved account each is on right now.
+  const nameOfOrg = activeOrg ? _browserswitch.orgOwner(ctx.configDir, activeOrg) : '';
+  const cliName =
+    nameOfOrg ||
+    (function () {
+      let n = null;
+      profiles.list(ctx.configDir).forEach(function (p) {
+        if (!n && activeLabel && profiles.email(ctx.configDir, p) === activeLabel) n = p;
+      });
+      return n;
+    })() ||
+    null;
+  let desktopName = null;
+  let desktopUnsaved = null;
+  let desktopGuess = false;
+  try {
+    const det = sub !== 'logout' ? appauth.detectAppAccount(ctx) || {} : {};
+    const dp = _browserplan.desktopProfile(ctx, det);
+    desktopName = dp.name;
+    desktopGuess = dp.guess;
+    desktopUnsaved = !desktopName && (det.email || det.org) ? det.email || det.org.slice(0, 8) + '… (unsaved)' : null;
+  } catch (e) {
+    desktopName = null;
+  }
+  const shown = function (n) {
+    return n ? profiles.email(ctx.configDir, n) || n : null;
+  };
+  const fi = rest.indexOf('--for');
+  const forArg = fi !== -1 ? rest[fi + 1] : null;
+  const forName = forArg && !_browserplan.isSurface(forArg) ? core.resolveProfile(ctx, forArg) : null;
+  if (forArg && !_browserplan.isSurface(forArg) && !forName)
+    return fail("--for: '" + forArg + "' is not cli, desktop or a saved account (see: keyflip list)");
+  const posName = rest[1] && rest[1].indexOf('-') !== 0 && sub === 'sync' ? core.resolveProfile(ctx, rest[1]) : null;
+  if (sub === 'sync' && rest[1] && rest[1].indexOf('-') !== 0 && !posName)
+    return fail("no such saved account: '" + rest[1] + "' (see: keyflip list)");
+  const surfaces = {
+    cli: cliName,
+    desktop: desktopName,
+    target: _browserplan.resolveTarget({
+      name: forName || posName,
+      surface: _browserplan.isSurface(forArg) ? forArg : null,
+      cli: cliName,
+      desktop: desktopName,
+    }),
+  };
+
   if (sub === 'status') {
+    print('CLI account:     ' + style.bold(shown(cliName) || activeLabel || 'unknown'));
     print(
-      'Active account (CLI/desktop, what the extension must match): ' +
-        style.bold(activeLabel || activeOrg || 'unknown'),
+      'Desktop account: ' +
+        style.bold(shown(desktopName) || desktopUnsaved || 'unknown / not signed in') +
+        (desktopGuess ? ' (guess)' : ''),
+    );
+    if (surfaces.target.differ)
+      print(
+        style.warn('⚠ the CLI and the desktop app are on DIFFERENT accounts') +
+          ' — the browser follows the target below; pick the other with --for desktop|cli.',
+      );
+    print(
+      'Target for the browser: ' +
+        style.bold(shown(surfaces.target.name) || 'none') +
+        ' (' +
+        surfaces.target.surface +
+        ')',
     );
     let anyMismatch = false;
     list.forEach(function (b) {
@@ -14893,7 +14906,8 @@ async function cmdBrowser(ctx, rest) {
         return;
       }
       const lbl = labelForOrg(ck.org) || (ck.org ? ck.org.slice(0, 8) + '…' : 'unknown');
-      const match = ck.org && activeOrg && ck.org === activeOrg;
+      const tOrg = surfaces.target.name ? _browserplan.orgOf(ctx, surfaces.target.name) : activeOrg;
+      const match = ck.org && tOrg && ck.org === tOrg;
       if (!match) anyMismatch = true;
       print(
         '  ' +
@@ -14916,6 +14930,12 @@ async function cmdBrowser(ctx, rest) {
       );
     jsonOut({
       active: activeLabel || activeOrg,
+      cli: shown(cliName),
+      desktop: shown(desktopName),
+      desktopGuess: desktopGuess,
+      differ: surfaces.target.differ,
+      target: surfaces.target.name || null,
+      targetSurface: surfaces.target.surface,
       rotated: false,
       note: 'not rotated',
       browsers: list.map(function (b) {
@@ -14926,7 +14946,11 @@ async function cmdBrowser(ctx, rest) {
           account: ck && ck.org ? _browserswitch.orgOwner(ctx.configDir, ck.org) || null : null,
           rotated: false,
           note: 'not rotated',
-          match: !!(ck && ck.org && ck.org === activeOrg),
+          match: !!(
+            ck &&
+            ck.org &&
+            ck.org === (surfaces.target.name ? _browserplan.orgOf(ctx, surfaces.target.name) : activeOrg)
+          ),
         };
       }),
     });
@@ -14984,11 +15008,14 @@ async function cmdBrowser(ctx, rest) {
   if (sub === 'capture') {
     // Save the browser's current claude.ai session UNDER an account (the active one by
     // default) so `keyflip chat --as <account>` can read its cloud history later.
-    const who = rest[1] && rest[1].indexOf('-') !== 0 ? rest[1] : null;
-    const name = who ? core.resolveProfile(ctx, who) : null;
+    const ai = rest.indexOf('--account');
+    const who = ai !== -1 ? rest[ai + 1] : rest[1] && rest[1].indexOf('-') !== 0 ? rest[1] : null;
+    const name = who ? core.resolveProfile(ctx, who) : surfaces.target.name;
     if (who && !name) return fail("no such saved account: '" + who + "' (see: keyflip list)");
     if (!name)
-      return fail('which account? usage: keyflip browser capture <name>  (the browser must be signed in as it)');
+      return fail(
+        'which account? usage: keyflip browser capture [<name>|--account <name>]  (the browser must be signed in as it)',
+      );
     print('Saving the browser claude.ai session as ' + style.bold(profiles.email(ctx.configDir, name) || name) + ' …');
     const r = browserCapture(ctx, name, { installed: list });
     r.saved.forEach(function (n) {
@@ -15025,47 +15052,92 @@ async function cmdBrowser(ctx, rest) {
     return;
   }
   if (sub === 'sync') {
-    // Restore the saved browser session for an account (the active one by default).
-    const target = rest[1] && rest[1].indexOf('-') !== 0 ? core.resolveProfile(ctx, rest[1]) : null;
-    const name =
-      target ||
-      (function () {
-        let n = null;
-        profiles.list(ctx.configDir).forEach(function (p) {
-          if (!n && profiles.email(ctx.configDir, p) === core.currentEmail(ctx)) n = p;
-        });
-        return n;
-      })();
-    if (!name) return fail('which account? usage: keyflip browser sync <name>  (or switch to it first)');
-    print(
-      'Syncing the browser to ' +
-        style.bold(profiles.email(ctx.configDir, name) || name) +
-        ' (restores its saved claude.ai session, quits + reopens the browser)…',
-    );
-    const synced = await browserSync(ctx, name);
-    if (synced.length)
+    // Restore the saved browser session for an account. Prints the plan FIRST; restarting the
+    // browser needs --yes (or an interactive yes), never a silent default.
+    const yes = rest.indexOf('--yes') !== -1 || rest.indexOf('-y') !== -1 || force;
+    const tgt = surfaces.target;
+    if (tgt.ambiguous) {
       print(
-        '  ' +
-          style.ok('✅') +
-          ' synced: ' +
-          synced.join(', ') +
-          ' — the Claude extension will reconnect as ' +
-          (profiles.email(ctx.configDir, name) || name) +
+        'The CLI is on ' +
+          style.bold(shown(cliName)) +
+          ' but the desktop app is on ' +
+          style.bold(shown(desktopName)) +
           '.',
       );
-    else
       print(
-        '  ' +
-          style.warn('·') +
-          ' no saved browser session for ' +
-          name +
-          " yet (it's saved when you capture the account via onboard/login while the browser is on it).",
+        'Not guessing which one the browser should follow. Re-run with --for cli, --for desktop or --for <account>.',
       );
-    jsonOut({ browserSync: name, synced: synced });
+      jsonOut({ browserSync: null, planned: false, ambiguous: true, cli: shown(cliName), desktop: shown(desktopName) });
+      process.exitCode = 1;
+      return;
+    }
+    const name = tgt.name;
+    if (!name) return fail('which account? usage: keyflip browser sync [<name>|--for cli|desktop|<name>] [--yes]');
+    const label = profiles.email(ctx.configDir, name) || name;
+    const p = _browserplan.plan(ctx, name, { installed: list });
+    if (p.noSession) {
+      _browserplan.noSessionSteps(label).forEach(function (l) {
+        print('  ' + l);
+      });
+      jsonOut({ browserSync: name, planned: false, synced: [], reason: 'no-saved-session' });
+      process.exitCode = 1;
+      return;
+    }
+    _browserplan.planLines(p, label).forEach(function (l) {
+      print('Plan: ' + l);
+    });
+    if (!yes) {
+      if (!process.stdin.isTTY) {
+        jsonOut({ browserSync: name, planned: true, plan: _browserplan.publicPlan(p), synced: [] });
+        return fail('nothing was changed. Re-run with --yes to carry out the plan above.');
+      }
+      const ok = await confirm('Proceed? [y/N] ');
+      if (!ok) {
+        print('Cancelled. Nothing was changed.');
+        process.exitCode = 1;
+        return;
+      }
+    }
+    const r = await _browserplan.execute(ctx, name, p, { run: exec.run });
+    r.synced.forEach(function (n) {
+      print('  ' + style.ok('✅') + ' ' + n + ': claude.ai session restored for ' + label + '.');
+    });
+    r.skipped.forEach(function (s) {
+      print('  ' + style.warn('⏭') + ' ' + s.browser + ' NOT synced (' + s.reason + ').');
+    });
+    r.verify.forEach(function (v) {
+      if (v.state === 'ok') print('  ' + style.ok('✓') + ' ' + v.browser + ': browser session is ' + label + '.');
+      else
+        print(
+          '  ' +
+            style.warn('⚠') +
+            ' ' +
+            v.browser +
+            ': could not verify (' +
+            v.state +
+            (v.org ? ' ' + v.org : '') +
+            ') — not reporting success.',
+        );
+    });
+    if (r.synced.length)
+      print(
+        style.dim(
+          'The extension’s own sign-in cannot be read from here: open the Claude panel; if it shows a login screen, reload claude.ai once.',
+        ),
+      );
+    if (r.skipped.length && !r.synced.length) process.exitCode = 1;
+    jsonOut({
+      browserSync: name,
+      planned: true,
+      synced: r.synced,
+      skipped: r.skipped,
+      verified: r.verified,
+      verify: r.verify,
+    });
     return;
   }
   return fail(
-    'usage: keyflip browser [status|logout|capture <name>|sync [name]] [--browser chrome|brave|edge|arc] [--force]',
+    'usage: keyflip browser [status|logout|capture [<name>|--account <name>]|sync [<name>] [--for cli|desktop|<name>] [--yes]] [--browser chrome|brave|edge|arc] [--force]',
   );
 }
 
@@ -17371,6 +17443,7 @@ async function cmdList(ctx, rest) {
   // extension inherits that session, so this is the "browser (extension)" surface.
   // Best-effort, macOS only.
   const browserOrgs = {}; // org uuid -> [browser names]
+  const browserSaved = {}; // account -> true when a saved browser session exists
   let browsersPresent = 0;
   if (_browser.supported(ctx.platform)) {
     try {
@@ -17378,6 +17451,10 @@ async function cmdList(ctx, rest) {
       const inst = browser.installed(ctx.home, { platform: ctx.platform });
       browsersPresent = inst.length;
       inst.forEach(function (b) {
+        // A SAVED browser session (what `browser sync` restores) counts for `web ✓`, live or not.
+        profiles.list(ctx.configDir).forEach(function (n) {
+          if (browser.loadSession(ctx.configDir, n, b)) browserSaved[n] = true;
+        });
         const ck = browser.readClaudeCookies(b, {});
         if (ck && ck.org) {
           (browserOrgs[ck.org] = browserOrgs[ck.org] || []).push(b.name);
@@ -17469,7 +17546,7 @@ async function cmdList(ctx, rest) {
           (cli === null ? '?' : cli ? '✓' : '—') +
           ' | app ' +
           (app ? '✓' : '—') +
-          (anyBrowser ? ' | web ' + (web ? '✓' : '—') : '') +
+          (anyBrowser ? ' | web ' + (web || browserSaved[e.name] ? '✓' : '—') : '') +
           ']' +
           usageCol +
           '   ' +

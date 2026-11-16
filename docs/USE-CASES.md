@@ -175,8 +175,10 @@ The extension inherits the browser's claude.ai session; a mismatch blocks it.
 keyflip browser status               # the browser's claude.ai account + mismatch flag
 keyflip browser logout               # clear the claude.ai session (reversible; quit browser first)
 keyflip browser capture work         # SAVE the browser's claude.ai session under an account
-keyflip browser sync                 # restore the ACTIVE account's saved browser session
-keyflip browser sync work            # ...restore a specific account's session
+keyflip browser sync                 # print the plan (browser restart!); add --yes to carry it out
+keyflip browser sync --for desktop --yes   # follow the desktop app's account instead of the CLI's
+keyflip browser sync work --yes      # ...restore a specific account's session
+keyflip browser capture --account work   # save the browser's current session under that account
 keyflip browser status --browser brave   # target one browser (chrome|brave|edge|arc)
 ```
 - Sessions are captured automatically during `onboard`/`login` while the browser is on

@@ -1664,3 +1664,34 @@ test('MCP: keyflip_enable, keyflip_disable, keyflip_launch_cmd, and keyflip_cli_
   });
   assert.strictEqual(rem.removed.removed, 'moon');
 });
+
+test('MCP keyflip_browser_sync: described as a restart, and without confirm it touches nothing', async function () {
+  const home = mkhome();
+  const got = await mcpSession(
+    home,
+    [
+      {
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'initialize',
+        params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 't', version: '0' } },
+      },
+      { jsonrpc: '2.0', method: 'notifications/initialized' },
+      { jsonrpc: '2.0', id: 2, method: 'tools/list' },
+      {
+        jsonrpc: '2.0',
+        id: 3,
+        method: 'tools/call',
+        params: { name: 'keyflip_browser_sync', arguments: { confirm: false } },
+      },
+    ],
+    [1, 2, 3],
+  );
+  const tool = got[2].result.tools.filter(function (t) {
+    return t.name === 'keyflip_browser_sync';
+  })[0];
+  assert.match(tool.description, /restart/i);
+  // No saved accounts in the temp HOME: either a refusal or a plan, never a performed sync.
+  const text = JSON.stringify(got[3]);
+  assert.ok(!/"synced":\["/.test(text.replace(/\\"/g, '"')), 'nothing was synced');
+});
