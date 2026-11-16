@@ -1,108 +1,46 @@
 // @ts-check
-// Streaming container for `keyflip migrate export/import`.
+// Streaming transport for `keyflip migrate export/import`.
 //
 // The legacy bundle embedded every transcript in ONE JSON string: at ~830 MB
 // JSON.stringify exhausted the heap, and encrypting it base64-encoded the whole
 // ciphertext into a second giant string that hits V8's max-string limit. This
-// container never materializes the transcript set:
+// stream never materializes the transcript set.
 //
-//   KEYFLIP-MIGRATE-STREAM/2
-//   {"format":"keyflip-migrate-stream","version":2,"encrypted":true,"salt":"…",…}
-//   <record>
-//   <record>
-//   …
-//
-// A record is one JSON line. Unencrypted records carry their own fields
-// ({seq,type,…}); with a passphrase each record is encrypted on its own
-// ({seq,iv,tag,ct}) under one scrypt-derived key. Because the AAD is the previous
-// record's tag + this record's sequence number, reordering, replay and truncation
-// are all detected. The last record must be `end`; a missing one is an error.
-//
-// Record types:
-//   meta      the small tier (accounts/providers/memory/config/agents) — no transcripts
+// The framing, key derivation and record encryption live in migrate-container.js
+// (no keyflip imports, shared byte for byte with other tools). This file decides what
+// the records mean:
+//   meta      the small tier (accounts/providers/memory/config/agents) — no transcripts;
+//             in an encrypted bundle it also carries fromHome / fromUser
 //   tx        start of one transcript: {project, sessionId, bytes}
 //   chunk     {n, data:base64} — at most `chunkSize` decoded bytes
 //   tx-end    end of the current transcript
 //   end       {transcripts, bytes, counts} — totals, checked on import
+//
+// Nothing reaches the target before the whole stream verified: transcripts are staged
+// as temp files and renamed, and the metadata tier applied, only after the `end` record
+// reconciled. A tampered, truncated or wrong-passphrase bundle leaves the target as it was.
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
-import { applyBundle, isSafeSegment } from './migrate.js';
+import { applyBundle, isSafeSegment, planApply } from './migrate.js';
 import * as fsutil from './fsutil.js';
 import * as sync from './sync.js';
+import * as container from './migrate-container.js';
 
-const MAGIC = 'KEYFLIP-MIGRATE-STREAM/2';
-const FORMAT = 'keyflip-migrate-stream';
-const VERSION = 2;
-const DEFAULT_CHUNK = 128 * 1024;
+const MAGIC = container.MAGIC_V3;
+const FORMAT = container.FORMAT;
+const VERSION = 3;
+const DEFAULT_CHUNK = container.DEFAULT_CHUNK;
 // A record line never comes close to this (<200 KB). The cap exists because a
 // LEGACY bundle is one giant JSON line, and it matches LEGACY_MAX so the two
 // refusal paths agree on the same limit.
-const LEGACY_MAX = 256 * 1024 * 1024;
+const LEGACY_MAX = container.MAX_LINE;
 const MAX_LINE = LEGACY_MAX;
-
-function error(message, code) {
-  const e = /** @type {any} */ (new Error(message));
-  e.code = code || 'MIGRATE_STREAM';
-  return e;
-}
+const linesOf = container.linesOf;
+const error = container.containerError;
 
 function projectsDir(ctx) {
   return path.join(ctx.claudeDir || path.join(ctx.home, '.claude'), 'projects');
-}
-
-function tooLongLine(maxLine) {
-  return error(
-    'a bundle line is larger than ' +
-      Math.round(maxLine / 1048576) +
-      ' MB — this is the legacy one-string format; re-export on the source machine with a current keyflip (streaming)',
-    'LEGACY_TOO_LARGE',
-  );
-}
-
-// --- line reading -----------------------------------------------------------
-
-// Turn a Node readable into an async iterator of Buffers/strings without ever
-// holding more than one line. Chunks are accumulated in an array so a long line
-// costs O(n) copies, not O(n²).
-async function* linesOf(stream, maxLine) {
-  let parts = [];
-  let len = 0;
-  const emit = function () {
-    const line = parts.length === 1 ? parts[0] : Buffer.concat(parts, len);
-    parts = [];
-    len = 0;
-    return line;
-  };
-  for await (const raw of stream) {
-    const chunk = Buffer.isBuffer(raw) ? raw : Buffer.from(String(raw));
-    let start = 0;
-    for (;;) {
-      const nl = chunk.indexOf(10, start);
-      if (nl === -1) {
-        const rest = chunk.subarray(start);
-        if (rest.length) {
-          parts.push(rest);
-          len += rest.length;
-          if (len > maxLine) throw tooLongLine(maxLine);
-        }
-        break;
-      }
-      const piece = chunk.subarray(start, nl);
-      parts.push(piece);
-      len += piece.length;
-      if (len > maxLine) throw tooLongLine(maxLine);
-      let line = emit();
-      if (line.length && line[line.length - 1] === 13) line = line.subarray(0, -1); // CRLF
-      yield line.toString('utf8');
-      start = nl + 1;
-    }
-  }
-  if (len) {
-    let line = emit();
-    if (line.length && line[line.length - 1] === 13) line = line.subarray(0, -1);
-    if (line.length) yield line.toString('utf8');
-  }
 }
 
 // --- writing ----------------------------------------------------------------
@@ -126,7 +64,8 @@ function replaceFile(tmp, out) {
   }
 }
 
-// opts: { out, meta, files:[{project,sessionId,file,bytes}], passphrase, chunkSize, now }
+// opts: { out, meta, files:[{project,sessionId,file,bytes}], passphrase, chunkSize, now, bundleId,
+//         toolVersion, fromHome, fromUser }
 // meta is the buildBundle() result with `bundle.transcripts` empty and
 // `counts.transcripts` already set to files.length.
 async function writeBundle(opts) {
@@ -140,20 +79,17 @@ async function writeBundle(opts) {
     return n + (f.bytes || 0);
   }, 0);
 
-  const salt = passphrase ? crypto.randomBytes(16) : null;
-  const key = passphrase ? crypto.scryptSync(passphrase, salt, 32) : null;
-  const header = {
-    format: FORMAT,
-    version: VERSION,
-    encrypted: !!passphrase,
-    alg: passphrase ? 'aes-256-gcm' : null,
-    kdf: passphrase ? 'scrypt' : null,
-    salt: salt ? salt.toString('base64') : null,
-    createdAt: opts.now || new Date().toISOString(),
+  const writer = container.createWriter({
+    passphrase: passphrase,
+    bundleId: opts.bundleId,
+    tool: 'keyflip',
+    toolVersion: opts.toolVersion,
+    createdAt: opts.now,
     chunkSize: chunkSize,
     transcripts: files.length,
     bytes: totalBytes,
-  };
+    randomBytes: opts.randomBytes,
+  });
 
   const tmp = out === '-' ? null : out + '.tmp-' + process.pid + '-' + crypto.randomBytes(4).toString('hex');
   let stream;
@@ -169,38 +105,19 @@ async function writeBundle(opts) {
     stream.on('error', function () {});
   }
 
-  let seq = 0;
-  let prevTag = Buffer.alloc(16);
   let exportedBytes = 0;
   const emit = async function (record) {
-    record.seq = seq;
-    let line;
-    if (key) {
-      const iv = crypto.randomBytes(12);
-      const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
-      const aad = Buffer.alloc(24);
-      prevTag.copy(aad, 0);
-      aad.writeBigUInt64BE(BigInt(seq), 16);
-      cipher.setAAD(aad);
-      const ct = Buffer.concat([cipher.update(JSON.stringify(record), 'utf8'), cipher.final()]);
-      const tag = cipher.getAuthTag();
-      line = JSON.stringify({
-        seq: seq,
-        iv: iv.toString('base64'),
-        tag: tag.toString('base64'),
-        ct: ct.toString('base64'),
-      });
-      prevTag = tag;
-    } else {
-      line = JSON.stringify(record);
-    }
-    await writeLine(stream, line + '\n');
-    seq++;
+    await writeLine(stream, writer.seal(record));
   };
 
   try {
-    await writeLine(stream, MAGIC + '\n' + JSON.stringify(header) + '\n');
-    await emit({ type: 'meta', data: meta.bundle });
+    await writeLine(stream, writer.headerText);
+    const metaRec = { type: 'meta', data: meta.bundle };
+    // Where the bundle came from rides inside the ENCRYPTED part only; the clear header
+    // never names the machine or the user.
+    if (passphrase && opts.fromHome) metaRec.fromHome = opts.fromHome;
+    if (passphrase && opts.fromUser) metaRec.fromUser = opts.fromUser;
+    await emit(metaRec);
     const buf = Buffer.allocUnsafe(chunkSize);
     for (let i = 0; i < files.length; i++) {
       const f = files[i];
@@ -279,19 +196,56 @@ async function writeBundle(opts) {
       }
     }
   }
-  return { transcripts: files.length, bytes: exportedBytes, counts: meta.counts };
+  return { transcripts: files.length, bytes: exportedBytes, counts: meta.counts, bundleId: writer.bundleId };
 }
 
 // --- importing --------------------------------------------------------------
 
-// Writes the transcript tier directly to ~/.claude/projects. One temp file per
-// session, renamed only after the tc-end record and the byte count agree.
+function fileSha256(file) {
+  const h = crypto.createHash('sha256');
+  const fd = fs.openSync(file, 'r');
+  try {
+    const buf = Buffer.allocUnsafe(1024 * 1024);
+    for (;;) {
+      const n = fs.readSync(fd, buf, 0, buf.length, null);
+      if (!n) break;
+      h.update(buf.subarray(0, n));
+    }
+  } finally {
+    fs.closeSync(fd);
+  }
+  return h.digest('hex');
+}
+
+// Remove a directory and its sub-directories, but only while they hold no file.
+function removeEmptyTree(dir) {
+  let ents;
+  try {
+    ents = fs.readdirSync(dir, { withFileTypes: true });
+  } catch (e) {
+    return;
+  }
+  ents.forEach(function (ent) {
+    if (ent.isDirectory()) removeEmptyTree(path.join(dir, ent.name));
+  });
+  try {
+    fs.rmdirSync(dir);
+  } catch (e) {
+    /* not empty */
+  }
+}
+
+// Writes the transcript tier to ~/.claude/projects. One temp file per session; the temp
+// files are renamed into place only by commit(), after the whole stream verified.
 class TranscriptSink {
-  constructor(ctx, force) {
+  constructor(ctx, force, backup) {
     this.ctx = ctx;
     this.root = projectsDir(ctx);
     this.force = !!force;
+    this.backup = backup || null;
     this.cur = null;
+    this.pending = [];
+    this.madeDirs = [];
     this.seen = 0;
     this.bytes = 0;
     this.seq = 0;
@@ -319,7 +273,8 @@ class TranscriptSink {
       this.cur = { skip: true, bytes: bytes, received: 0 };
       return;
     }
-    fs.mkdirSync(path.dirname(file), { recursive: true });
+    const made = fs.mkdirSync(path.dirname(file), { recursive: true });
+    if (made) this.madeDirs.push(made); // the topmost directory this call created
     const tmp = file + '.kfimport-' + process.pid + '-' + this.seq++;
     const fd = fs.openSync(tmp, 'wx', 0o600);
     this.cur = { file: file, tmp: tmp, fd: fd, bytes: bytes, received: 0, overwrite: exists };
@@ -357,14 +312,7 @@ class TranscriptSink {
         throw error('transcript is truncated (declared ' + cur.bytes + ' bytes)', 'STREAM_DATA');
       fs.closeSync(cur.fd);
       cur.fd = null;
-      replaceFile(cur.tmp, cur.file);
-      try {
-        fs.chmodSync(cur.file, 0o600);
-      } catch (e) {
-        /* non-POSIX FS */
-      }
-      if (cur.overwrite) this.result.overwritten++;
-      else this.result.added++;
+      this.pending.push(cur);
     } catch (e) {
       if (cur.fd != null) {
         try {
@@ -382,6 +330,25 @@ class TranscriptSink {
     }
   }
 
+  // Move every staged transcript into place (after the stream verified).
+  commit() {
+    const list = this.pending;
+    this.pending = [];
+    list.forEach(
+      function (cur) {
+        if (cur.overwrite && this.backup) this.backup.before(cur.file);
+        replaceFile(cur.tmp, cur.file);
+        try {
+          fs.chmodSync(cur.file, 0o600);
+        } catch (e) {
+          /* non-POSIX FS */
+        }
+        if (cur.overwrite) this.result.overwritten++;
+        else this.result.added++;
+      }.bind(this),
+    );
+  }
+
   abort() {
     if (this.cur && !this.cur.skip) {
       try {
@@ -396,6 +363,19 @@ class TranscriptSink {
       }
     }
     this.cur = null;
+    this.pending.forEach(function (cur) {
+      try {
+        fs.rmSync(cur.tmp, { force: true });
+      } catch (e) {
+        /* best effort */
+      }
+    });
+    this.pending = [];
+    // Directories created only for staged files go away again (rmdir refuses non-empty ones).
+    this.madeDirs.reverse().forEach(function (d) {
+      removeEmptyTree(d);
+    });
+    this.madeDirs = [];
   }
 
   finish() {
@@ -405,48 +385,72 @@ class TranscriptSink {
   }
 }
 
-function parseJson(line, what) {
-  try {
-    return JSON.parse(line);
-  } catch (e) {
-    throw error(what + ' is not valid JSON', 'STREAM_CORRUPT');
+// --dry-run: the same verification, no file written. Counts transcripts as
+// new / exists-kept (same bytes already there) / conflict (a different file is there).
+class DrySink {
+  constructor(ctx) {
+    this.root = projectsDir(ctx);
+    this.cur = null;
+    this.seen = 0;
+    this.bytes = 0;
+    this.result = { new: 0, existsKept: 0, conflict: 0, skipped: 0, total: 0 };
   }
-}
 
-// Read one record, decrypting with the chained AAD when needed.
-function decodeRecord(line, seq, key, prevTag) {
-  const outer = parseJson(line, 'bundle record');
-  if (!outer || typeof outer !== 'object') throw error('bundle record is not an object', 'STREAM_CORRUPT');
-  if (key) {
-    if (outer.seq !== seq) throw error('bundle record out of order (expected ' + seq + ')', 'STREAM_ORDER');
-    let iv, tag, ct;
-    try {
-      iv = Buffer.from(String(outer.iv || ''), 'base64');
-      tag = Buffer.from(String(outer.tag || ''), 'base64');
-      ct = Buffer.from(String(outer.ct || ''), 'base64');
-    } catch (e) {
-      throw error('corrupt encrypted record', 'STREAM_CORRUPT');
+  start(rec) {
+    if (this.cur) throw error('transcript record started before the previous one ended', 'STREAM_SHAPE');
+    this.seen++;
+    const bytes = rec.bytes;
+    if (!isSafeSegment(rec.project) || !isSafeSegment(rec.sessionId) || !Number.isInteger(bytes) || bytes < 0) {
+      this.result.skipped++;
+      this.cur = { skip: true };
+      return;
     }
-    if (iv.length !== 12 || tag.length !== 16) throw error('corrupt encrypted record', 'STREAM_CORRUPT');
-    const aad = Buffer.alloc(24);
-    prevTag.copy(aad, 0);
-    aad.writeBigUInt64BE(BigInt(seq), 16);
-    let plain;
-    try {
-      const d = crypto.createDecipheriv('aes-256-gcm', key, iv);
-      d.setAAD(aad);
-      d.setAuthTag(tag);
-      plain = Buffer.concat([d.update(ct), d.final()]).toString('utf8');
-    } catch (e) {
-      throw error('decryption failed — wrong passphrase or corrupt bundle', 'STREAM_CRYPTO');
+    const file = path.join(this.root, rec.project, rec.sessionId + '.jsonl');
+    if (!fsutil.safeDestUnder(this.root, file).ok) {
+      this.result.skipped++;
+      this.cur = { skip: true };
+      return;
     }
-    const rec = parseJson(plain, 'decrypted record');
-    if (!rec || typeof rec !== 'object') throw error('corrupt bundle record', 'STREAM_CORRUPT');
-    if (rec.seq != null && rec.seq !== seq) throw error('bundle record out of order', 'STREAM_ORDER');
-    return { rec: rec, tag: tag };
+    this.cur = { file: file, bytes: bytes, received: 0, hash: crypto.createHash('sha256') };
   }
-  if (outer.seq !== seq) throw error('bundle record out of order (expected ' + seq + ')', 'STREAM_ORDER');
-  return { rec: outer, tag: null };
+
+  chunk(rec) {
+    if (!this.cur) throw error('transcript chunk without a start record', 'STREAM_SHAPE');
+    const buf = Buffer.from(String(rec.data || ''), 'base64');
+    if (rec.n != null && rec.n !== buf.length) throw error('corrupt transcript chunk length', 'STREAM_DATA');
+    this.bytes += buf.length;
+    if (this.cur.skip) return;
+    this.cur.received += buf.length;
+    if (this.cur.received > this.cur.bytes) throw error('transcript chunk exceeds its declared size', 'STREAM_DATA');
+    this.cur.hash.update(buf);
+  }
+
+  end() {
+    if (!this.cur) throw error('transcript end without a start record', 'STREAM_SHAPE');
+    const cur = this.cur;
+    this.cur = null;
+    if (cur.skip) return;
+    if (cur.received !== cur.bytes) throw error('transcript is truncated', 'STREAM_DATA');
+    let st = null;
+    try {
+      st = fs.statSync(cur.file);
+    } catch (e) {
+      st = null;
+    }
+    if (!st) this.result.new++;
+    else if (st.size === cur.bytes && fileSha256(cur.file) === cur.hash.digest('hex')) this.result.existsKept++;
+    else this.result.conflict++;
+  }
+
+  abort() {
+    this.cur = null;
+  }
+
+  finish() {
+    if (this.cur) throw error('bundle ended in the middle of a transcript', 'STREAM_TRUNCATED');
+    this.result.total = this.seen;
+    return this.result;
+  }
 }
 
 async function readLegacy(it, firstLine, opts) {
@@ -474,8 +478,9 @@ async function readLegacy(it, firstLine, opts) {
   } catch (e) {
     throw error('that file is not a keyflip migrate bundle (invalid JSON)', 'LEGACY_JSON');
   }
+  if (opts.expectBundleId != null) throw error('a legacy bundle has no bundle id', 'STREAM_BUNDLE_ID');
   if (obj && obj.magic === 'keyflip-sync') {
-    if (!opts.passphrase) throw error('this bundle is encrypted — pass --passphrase-file <file>', 'LEGACY_CRYPTO');
+    if (!opts.passphrase) throw error('this bundle is encrypted — pass --passphrase-file <file>', 'NEED_PASSPHRASE');
     let plain;
     try {
       plain = sync.decrypt(raw, opts.passphrase);
@@ -487,7 +492,16 @@ async function readLegacy(it, firstLine, opts) {
     } catch (e) {
       throw error('decrypted bundle is not valid JSON', 'LEGACY_JSON');
     }
+  } else if (opts.passphrase || opts.requireEncrypted) {
+    throw error('this bundle is not encrypted but encryption was asked for — refusing it', 'STREAM_PLAINTEXT');
   }
+  if (opts.dryRun) {
+    return {
+      dryRun: true,
+      plan: planApply(opts.ctx, obj, { force: opts.force, transcripts: legacyTranscriptPlan(opts.ctx, obj) }),
+    };
+  }
+  if (opts.backup) opts.backup.start(obj);
   const res = applyBundle(opts.ctx, obj, { force: opts.force });
   res.agentConfigWithKeys = (obj.agentConfig || []).some(function (c) {
     return c && c.redacted === false;
@@ -495,7 +509,30 @@ async function readLegacy(it, firstLine, opts) {
   return res;
 }
 
-// opts: { ctx, input:'<path>'|'-', passphrase, force }
+function legacyTranscriptPlan(ctx, obj) {
+  const r = { new: 0, existsKept: 0, conflict: 0, skipped: 0, total: 0 };
+  (obj.transcripts || []).forEach(function (t) {
+    r.total++;
+    if (!t || typeof t.content !== 'string' || !isSafeSegment(t.project) || !isSafeSegment(t.sessionId)) {
+      r.skipped++;
+      return;
+    }
+    const file = path.join(projectsDir(ctx), t.project, t.sessionId + '.jsonl');
+    let cur = null;
+    try {
+      cur = fs.readFileSync(file, 'utf8');
+    } catch (e) {
+      cur = null;
+    }
+    if (cur == null) r.new++;
+    else if (cur === t.content) r.existsKept++;
+    else r.conflict++;
+  });
+  return r;
+}
+
+// opts: { ctx, input:'<path>'|'-', passphrase, force, requireEncrypted, expectBundleId,
+//         dryRun, backup:{start(meta), before(file)} }
 async function importBundle(opts) {
   const input = opts.input;
   if (!input) throw error('no bundle path', 'USAGE');
@@ -522,7 +559,7 @@ async function importBundle(opts) {
     } catch (e) {
       throw error('cannot read ' + input + ': ' + e.message, 'READ');
     }
-    if (!head.startsWith(MAGIC) && st.size > LEGACY_MAX) {
+    if (!head.startsWith('KEYFLIP-MIGRATE-STREAM/') && st.size > LEGACY_MAX) {
       throw error(
         'this legacy bundle is ' +
           Math.round(st.size / 1048576) +
@@ -538,56 +575,43 @@ async function importBundle(opts) {
   try {
     first = await it.next();
   } catch (e) {
+    if (e && e.code === 'LEGACY_TOO_LARGE') throw e;
     throw error('cannot read ' + input + ': ' + e.message, 'READ');
   }
   if (first.done) throw error('the bundle is empty', 'STREAM_EMPTY');
-  if (first.value.trim() !== MAGIC) {
+  const magic = first.value.trim();
+  if (magic.indexOf('KEYFLIP-MIGRATE-STREAM/') !== 0) {
     return await readLegacy(it, first.value, opts);
   }
 
   const h = await it.next();
   if (h.done) throw error('the bundle has no header', 'STREAM_TRUNCATED');
-  const header = parseJson(h.value, 'bundle header');
-  if (!header || header.format !== FORMAT || header.version !== VERSION) {
-    throw error(
-      'unsupported migrate bundle version (this keyflip understands stream v' + VERSION + ')',
-      'STREAM_VERSION',
-    );
-  }
-  const encrypted = !!header.encrypted;
-  if (encrypted && !opts.passphrase)
-    throw error('this bundle is encrypted — pass --passphrase-file <file>', 'STREAM_CRYPTO');
-  let key = null;
-  if (encrypted) {
-    const salt = Buffer.from(String(header.salt || ''), 'base64');
-    if (!salt.length) throw error('encrypted bundle has no salt', 'STREAM_CORRUPT');
-    key = crypto.scryptSync(opts.passphrase, salt, 32);
-  }
+  const reader = container.openReader(magic, h.value, {
+    passphrase: opts.passphrase,
+    requireEncrypted: opts.requireEncrypted,
+    expectBundleId: opts.expectBundleId,
+  });
+  const header = reader.header;
 
-  let seq = 0;
-  let prevTag = Buffer.alloc(16);
   let meta = null; // the metadata tier, applied only after the stream verifies
+  let source = null;
   let res = null;
   let sink = null;
-  let ended = false;
   try {
-    for (;;) {
-      const n = await it.next();
-      if (n.done) break;
-      const line = n.value;
-      if (!line.trim()) continue;
-      if (ended) throw error('trailing data after the end record', 'STREAM_SHAPE');
-      const decoded = decodeRecord(line, seq, key, prevTag);
-      const rec = decoded.rec;
-      if (decoded.tag) prevTag = decoded.tag;
-      seq++;
+    for await (const rec of container.records(it, reader)) {
       if (!meta) {
         if (rec.type !== 'meta' || !rec.data || typeof rec.data !== 'object') {
           throw error('the first record must be the metadata tier', 'STREAM_SHAPE');
         }
         meta = Object.assign({}, rec.data);
         meta.transcripts = [];
-        sink = new TranscriptSink(opts.ctx, opts.force);
+        source = {
+          bundleId: header.bundleId || null,
+          version: reader.version,
+          fromHome: typeof rec.fromHome === 'string' ? rec.fromHome : null,
+          fromUser: typeof rec.fromUser === 'string' ? rec.fromUser : null,
+        };
+        sink = opts.dryRun ? new DrySink(opts.ctx) : new TranscriptSink(opts.ctx, opts.force, opts.backup);
         continue;
       }
       if (rec.type === 'tx') sink.start(rec);
@@ -613,26 +637,33 @@ async function importBundle(opts) {
             'STREAM_TRUNCATED',
           );
         }
-        // Apply the metadata tier only after the whole stream reconciled: a
-        // truncated or corrupt bundle must not install accounts, providers or
-        // memory. Individual transcripts were already byte-checked per session.
-        res = applyBundle(opts.ctx, meta, { force: opts.force });
-        // The CLI labels the agent-config line by whether the sender opted in to
-        // carrying raw keys; the merge itself re-redacts anything not marked false.
-        res.agentConfigWithKeys = (meta.agentConfig || []).some(function (c) {
-          return c && c.redacted === false;
-        });
-        res.transcripts = counted;
-        ended = true;
+        if (opts.dryRun) {
+          res = {
+            dryRun: true,
+            plan: planApply(opts.ctx, meta, { force: opts.force, transcripts: counted }),
+            source: source,
+          };
+        } else {
+          // Apply the metadata tier only after the whole stream reconciled: a
+          // truncated or corrupt bundle must not install anything.
+          // The safety copy happens now: the stream is verified and nothing has been
+          // written to its final place yet.
+          if (opts.backup) opts.backup.start(meta);
+          sink.commit();
+          res = applyBundle(opts.ctx, meta, { force: opts.force });
+          // The CLI labels the agent-config line by whether the sender opted in to
+          // carrying raw keys; the merge itself re-redacts anything not marked false.
+          res.agentConfigWithKeys = (meta.agentConfig || []).some(function (c) {
+            return c && c.redacted === false;
+          });
+          res.transcripts = counted;
+          res.source = source;
+        }
       } else throw error("unknown bundle record type '" + rec.type + "'", 'STREAM_SHAPE');
     }
   } catch (e) {
     if (sink) sink.abort();
     throw e;
-  }
-  if (!ended) {
-    if (sink) sink.abort();
-    throw error('the bundle is truncated (no end record)', 'STREAM_TRUNCATED');
   }
   return res;
 }

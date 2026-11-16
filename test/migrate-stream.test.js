@@ -128,7 +128,7 @@ test('encrypted round-trip authenticates records and keeps secrets out of the cl
   const header = JSON.parse(raw.split('\n')[1]);
   assert.strictEqual(header.encrypted, true);
   assert.strictEqual(header.alg, 'aes-256-gcm');
-  assert.strictEqual(header.kdf, 'scrypt');
+  assert.deepStrictEqual(header.kdf, { name: 'scrypt', N: 131072, r: 8, p: 1 });
   assert.ok(header.salt, 'the KDF salt rides the header');
   // `{` cannot appear in base64, and base64 has no `-`; both secrets are inside ct.
   assert.strictEqual(raw.indexOf('{"token":"AAA"}'), -1);

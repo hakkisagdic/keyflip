@@ -1,0 +1,10 @@
+KEYFLIP-MIGRATE-STREAM/3
+{"format":"keyflip-migrate-stream","version":3,"encrypted":false,"alg":null,"kdf":null,"salt":null,"bundleId":"vector-plaintext","tool":"keyflip","toolVersion":"1.6.1","createdAt":"2026-01-01T00:00:00.000Z","chunkSize":131072,"transcripts":2,"bytes":45}
+{"type":"meta","data":{"format":"keyflip-migrate","version":1,"exportedAt":"2026-01-01T00:00:00.000Z","accounts":[],"providers":[],"transcripts":[],"memory":[{"rel":"NOTES.md","content":"vector notes\n"}],"config":{},"agents":[],"agentConfig":[]},"fromHome":"/home/alice","fromUser":"alice","seq":0}
+{"type":"tx","project":"example-project","sessionId":"session-one","bytes":22,"seq":1}
+{"type":"chunk","n":22,"data":"Zmlyc3QgdHJhbnNjcmlwdCBsaW5lCg==","seq":2}
+{"type":"tx-end","seq":3}
+{"type":"tx","project":"example-project","sessionId":"session-two","bytes":23,"seq":4}
+{"type":"chunk","n":23,"data":"c2Vjb25kIHRyYW5zY3JpcHQgbGluZQo=","seq":5}
+{"type":"tx-end","seq":6}
+{"type":"end","transcripts":2,"bytes":45,"counts":{},"seq":7}

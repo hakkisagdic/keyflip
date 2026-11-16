@@ -147,4 +147,4 @@ function restore(ctx, nameOrIndex) {
   return { name: target.name, files: restored };
 }
 
-export { create, list, prune, restore, backupsDir, DEFAULT_KEEP };
+export { create, list, prune, restore, backupsDir, stamp, DEFAULT_KEEP };
