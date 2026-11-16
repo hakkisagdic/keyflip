@@ -32,3 +32,20 @@ Tam `npm test` bu işte koşturulmadı (gate geliştirici ve releaser'ın).
 Başarısız kontrol yok. Gözlemler (hata değil):
 - Reddedilen veya `--dry-run` import bile hedef yapılandırma dizininde yönetilen `.gitignore` dosyasını (keyflip'in sürüm-kontrol başlatması) yaratabiliyor. Kullanıcı verisi, kimlik veya kayıt yazılmıyor; testlerin özeti bu dosyayı ve `.update-check.json` damgasını hariç tutar. Beklenen: "hiçbir şey yazmaz" katı okunursa bu dosya da yazılmamalı. Karar sahibi geliştirici/analist; engel sayılmadı.
 - scrypt N=2^17 nedeniyle her şifreli çağrı ~1-3 sn sürüyor; qa dosyası bu yüzden yaklaşık 4 dk.
+
+## İnceleme düzeltmeleri
+
+Düzeltme: commit `8719f8d` (Keychain'deki sırların yedeği). Tüm koşular geçici HOME ve bellek içi anahtarlıkla.
+
+| Bulgu | Sonuç | Kanıt |
+|---|---|---|
+| 1 [büyük] Keychain tipli mağazada `--force` içe aktarma eski hesap ve sağlayıcı sırlarını yedeklemeli | geçti | `test/migrate-v3-review-qa.test.js` "streamed --force import on a keychain-type store ..." (akış içe aktarıcısı uçtan uca: `store/work.cred` eski değer, `store/provider__relay.cred` = eski anahtar, dizin 0700, dosya 0600, yeni değer yazıldı); geliştirici testi `migrate-v3.test.js` "safety copy holds the old Keychain-held secrets ..." |
+| 1b Mağaza okunamıyorsa `--force` yazmadan önce durur (NEED_STORE, çıkış 5) | geçti | QA "--force with an unreadable store aborts before any write" (hesap sırrı ve profil değişmedi); `src/cli.js` NEED_STORE -> `migrateFail(..., 5)` kodda doğrulandı; CLI üzerinden çıkış 5 koşulmadı (geçici HOME dosya mağazası kullanır, okunamaz hale getirilemedi) |
+| 1c `--force` yoksa okunamayan mağaza engellemez (çakışma zaten reddedilir) | geçti | QA "without --force an unreadable store does not block" |
+
+Gözlem (hata değil): dosya içi çıktı hâlâ "safety copy of the files this import could touch" diyor; artık mağaza sırlarını da içeriyor, metin güncellenebilir.
+
+Kapı yeniden koşuldu (kripto ve düşürme kapatma, regresyon v2 import, transfer, fleet):
+- `machine-resources.sh check` => çıkış 0, ardından geçici HOME ile `npm test`: 2270 test, 2265 geçti, 4 atlandı, 1 kaldı.
+- Kalan: `test/mcp.test.js` "login/logout/browser tools ..." (oturum zaman aşımı, tam suit yükü altında). Dosya bu dalda değişmedi (main'e göre diff yok); tek başına iki kez koşuldu, 33/33 geçti. Yük kaynaklı kararsızlık, bu işle ilgisiz; ayrıca izlenmeli.
+- Regresyon v2 import, transfer, fleet, migrate, kripto/düşürme testleri tam suit içinde geçti.
