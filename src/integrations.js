@@ -17,6 +17,7 @@ import fs from 'fs';
 import path from 'path';
 import { atomicWrite, readJsonForWrite } from './fsutil.js';
 import * as _notify from './notify.js';
+import { refuseFetch } from './spawnguard.js';
 import * as _core from './core.js';
 import * as _usage from './usage.js';
 const notify = _notify; // reuse stripSecrets + sanitizeWebhook (same discipline)
@@ -235,7 +236,9 @@ async function post(ctx, spec, opts) {
 
   const doFetch = opts.fetch || (ctx && ctx.fetch) || (typeof fetch !== 'undefined' ? fetch : null);
   let result;
-  if (!doFetch) {
+  if (refuseFetch(!!(opts.fetch || (ctx && ctx.fetch)), url)) {
+    result = { ok: false, sent: false, reason: 'test-offline', platform: platform, httpStatus: null, at: at };
+  } else if (!doFetch) {
     result = { ok: false, sent: false, reason: 'no-fetch', platform: platform, httpStatus: null, at: at };
   } else {
     try {

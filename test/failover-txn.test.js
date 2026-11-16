@@ -1664,7 +1664,7 @@ test('T30: end-to-end (engage -> tick -> verify -> off) with fake key ks_FAKE_GA
   ];
 
   const e2eCliCtx = Object.assign({}, ctx, {
-    fetch: gwFetch,
+    fetch: webhookFetch, // answers the fake webhook itself, everything else goes to gwFetch
     spawn: okSp.spawn,
     keysmithConfig: ksPath,
     nowMs: 1700000083000,

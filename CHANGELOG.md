@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A test run can no longer notify, open, quit or sign out anything on the developer's machine.**
+  New `src/spawnguard.js`: under the Node test runner (`NODE_TEST_CONTEXT`) or `KEYFLIP_TEST_OFFLINE=1`,
+  `exec.run` refuses a real `osascript`, `open`, `say`, `terminal-notifier` and any `claude auth ...`,
+  and a real webhook POST (loopback sinks excepted) is refused unless a fake fetch was injected. `npm test`
+  arms it for the whole suite, puts stand-in `osascript`/`open`/`security` first on PATH and fails the run
+  (`test/final-no-real-spawns.js`) if any of them, or the guard, recorded a real attempt.
+- Desktop banners now always honour the notify setting: the failover "Back on Claude" notice no longer
+  falls back to a raw banner when desktop is off, `forceDesktop` no longer overrides it, and a release
+  notifies only when a failover was really engaged and its state is now gone.
+
 ### Added
 
 - **`keyflip kiro apikey add|list|test|remove`**: keep references to the Kiro API key (the headless

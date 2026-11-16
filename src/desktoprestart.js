@@ -360,24 +360,7 @@ async function defaultNotify(ctx, event, message, opts) {
   } catch {
     r = null;
   }
-  if (r && r.sent) return r;
-  // Quitting someone's app is never silent: when no sink is configured, a plain macOS banner.
-  if (ctx.platform === 'darwin') {
-    const runner = opts.run || _run;
-    // eslint-disable-next-line no-control-regex
-    const esc = cleanMessage
-      .replace(/[\u0000-\u001f\u007f]/g, ' ')
-      .replace(/\\/g, '\\\\')
-      .replace(/"/g, '\\"')
-      .slice(0, 180);
-    try {
-      runner('/usr/bin/osascript', ['-e', 'display notification "' + esc + '" with title "keyflip"'], undefined, {
-        timeoutMs: 5000,
-      });
-    } catch {
-      /* best effort */
-    }
-  }
+  // No second path: a banner only ever comes from notify.send, which honours the desktop setting.
   return r;
 }
 

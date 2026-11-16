@@ -14,6 +14,8 @@ import * as provider from '../src/provider.js';
 import * as autosw from '../src/autoswitch.js';
 import * as core from '../src/core.js';
 import * as history from '../src/history.js';
+import * as notify from '../src/notify.js';
+import * as desktoprestart from '../src/desktoprestart.js';
 import { spawnSync } from 'child_process';
 import { fileURLToPath } from 'url';
 
@@ -482,6 +484,50 @@ test('engage writes launcher env on cli-launcher, never touches Desktop, records
   assert.strictEqual(fs.existsSync(path.join(ctx.configDir, '.failover-env.json')), false);
   const kinds = history.readEvents(ctx).map((x) => x.kind);
   assert.ok(kinds.includes('failover-engage') && kinds.includes('failover-release'));
+});
+
+test('release says nothing when no failover was engaged, and exactly once when one was', async function () {
+  const ctx = makeCtx();
+  const ksc = await setUp(ctx);
+  const log = [];
+  const deps = {
+    fetch: gateway(['claude-failover']),
+    keysmithConfig: ksc,
+    spawn: okProbeSpawn(),
+    notify: async (ev, msg) => log.push(ev + ':' + msg),
+  };
+  // Nothing engaged: repeated releases (a tick that keeps asking) are silent.
+  await failover.release(ctx, { to: 'yahoo' }, deps);
+  await failover.release(ctx, { to: 'yahoo' }, deps);
+  assert.deepStrictEqual(log, []);
+  // Engaged, then released: one notification for the engage, one for the release, none after.
+  assert.strictEqual((await failover.engage(ctx, { from: 'gmail' }, deps)).ok, true);
+  log.length = 0;
+  await failover.release(ctx, { to: 'yahoo' }, deps);
+  await failover.release(ctx, { to: 'yahoo' }, deps);
+  assert.strictEqual(log.length, 1);
+  assert.match(log[0], /API failover is off/);
+});
+
+test('the loud notifier never raises a banner when the desktop setting is off', async function () {
+  const ctx = makeCtx({ platform: 'darwin' });
+  notify.setConfig(ctx, { desktop: false, events: ['quota', 'switch'] });
+  const calls = [];
+  await desktoprestart.notifyLoud(ctx, 'switch', 'Back on Claude', {
+    run: function (cmd) {
+      calls.push(cmd);
+      return { code: 0, stdout: '', stderr: '' };
+    },
+  });
+  assert.deepStrictEqual(calls, []);
+  notify.setConfig(ctx, { desktop: true });
+  await desktoprestart.notifyLoud(ctx, 'switch', 'Back on Claude', {
+    run: function (cmd) {
+      calls.push(cmd);
+      return { code: 0, stdout: '', stderr: '' };
+    },
+  });
+  assert.deepStrictEqual(calls, ['/usr/bin/osascript']);
 });
 
 test('engage refuses when the gateway is not ready, and changes nothing', async function () {

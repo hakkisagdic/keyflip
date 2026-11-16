@@ -1,0 +1,99 @@
+// Test-run guard: a test run must never reach the developer's real desktop or network.
+//
+// Active when the process runs under the Node test runner (it sets NODE_TEST_CONTEXT in every test
+// process, e.g. "child-v8") or KEYFLIP_TEST_OFFLINE is 1 (npm test sets it for the whole suite and
+// every CLI a test spawns inherits it). While active, a REAL call to osascript, open, say or
+// terminal-notifier (exec.run), any `claude auth ...` of the real binary (logout and login change the owner's real
+// Claude Code session through the machine-wide keychain, status reads it) and a REAL webhook POST
+// (notify.send without an injected fetch; a loopback sink is allowed) are refused and counted.
+// A test that injects its own runner or fetch never reaches this module.
+//
+// Every refusal is appended as one line to the file named by KEYFLIP_SPAWN_LOG (when set), so the
+// suite's final check sees refusals made in child processes too.
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+
+const GUARDED = new Set(['osascript', 'open', 'say', 'terminal-notifier']);
+let refused = 0;
+
+function active() {
+  return process.env.KEYFLIP_TEST_OFFLINE === '1' || !!process.env.NODE_TEST_CONTEXT;
+}
+
+function isGuarded(cmd, args) {
+  const base = path.basename(String(cmd || '')).toLowerCase();
+  if (GUARDED.has(base)) return true;
+  // `claude auth ...` talks to the machine-wide keychain whatever HOME the test uses: logout and login
+  // change the owner's real session, status reads it. A stand-in `claude` a test put under the
+  // temp dir is fine; the real one is not.
+  return /^claude(\.exe|\.cmd)?$/.test(base) && Array.isArray(args) && args[0] === 'auth' && !isTempBinary(cmd);
+}
+
+function isTempBinary(cmd) {
+  try {
+    let file = String(cmd);
+    if (!file.includes(path.sep)) {
+      file = '';
+      for (const dir of String(process.env.PATH || '').split(path.delimiter)) {
+        if (dir && fs.existsSync(path.join(dir, String(cmd)))) {
+          file = path.join(dir, String(cmd));
+          break;
+        }
+      }
+    }
+    if (!file) return false;
+    const tmp = fs.realpathSync(os.tmpdir());
+    return fs.realpathSync(file).startsWith(tmp + path.sep);
+  } catch {
+    return false;
+  }
+}
+
+function isLoopback(url) {
+  try {
+    const h = new URL(String(url)).hostname;
+    return h === 'localhost' || h === '127.0.0.1' || h === '[::1]' || h === '::1';
+  } catch {
+    return false;
+  }
+}
+
+function record(kind, detail) {
+  refused += 1;
+  const file = process.env.KEYFLIP_SPAWN_LOG;
+  if (!file) return;
+  try {
+    fs.appendFileSync(file, kind + ' ' + String(detail == null ? '' : detail).slice(0, 120) + '\n');
+  } catch {
+    /* best effort */
+  }
+}
+
+// Returns a refusal result for exec.run when `cmd` must not really run now, else null.
+function refuseCommand(cmd, args) {
+  if (!active() || !isGuarded(cmd, args)) return null;
+  if (GUARDED.has(path.basename(String(cmd)).toLowerCase())) {
+    record('spawn', path.basename(String(cmd)) + ' ' + (Array.isArray(args) ? args.join(' ') : ''));
+  } else {
+    // `claude auth ...` is something the reset/uninstall/status tests exercise on purpose: refused and
+    // counted, but not a failure of the final check (the guard is what makes them safe to run).
+    refused += 1;
+  }
+  const err = new Error('keyflip test guard: refused to run ' + path.basename(String(cmd)) + ' during a test run');
+  err.code = 'KEYFLIP_TEST_GUARD';
+  return { code: 1, stdout: '', stderr: err.message, error: err, timedOut: false, refused: true };
+}
+
+// True when a real webhook POST must be refused (the caller passes whether a fetch was injected).
+function refuseFetch(injected, url) {
+  if (injected || !active() || isLoopback(url)) return false;
+  record('fetch', url);
+  return true;
+}
+
+function refusedCount() {
+  return refused;
+}
+
+export { active, isGuarded, refuseCommand, refuseFetch, refusedCount, GUARDED };

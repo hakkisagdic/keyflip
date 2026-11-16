@@ -16,6 +16,7 @@ import * as core from '../src/core.js';
 import * as config from '../src/config.js';
 import * as schedule from '../src/schedule.js';
 import * as usage from '../src/usage.js';
+import * as notify from '../src/notify.js';
 import * as doctor from '../src/doctor.js';
 import * as mcp from '../src/mcp.js';
 import * as lock from '../src/lock.js';
@@ -290,6 +291,9 @@ test('6. 400 invalid_grant marks dead, notifies once via desktop runner on darwi
       },
     };
   };
+
+  // The banner honours the user's desktop setting (off by default; a runner alone never forces one).
+  notify.setConfig(ctx, { desktop: true });
 
   // Run 1: 400 invalid_grant -> 'dead' + 1 alert
   const run1 = await tokenkeeper.refreshDue(ctx, {

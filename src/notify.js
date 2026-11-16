@@ -11,6 +11,7 @@ import fs from 'fs';
 import path from 'path';
 import { atomicWrite, readJsonForWrite } from './fsutil.js';
 import * as _exec from './exec.js';
+import { refuseFetch } from './spawnguard.js';
 import { redact } from './redact.js';
 
 let VERSION = '0.0.0';
@@ -182,10 +183,12 @@ function summarize(event, payload) {
 // Fire a notification for `event` with a non-secret `payload`. Channels tried
 // (each best-effort, independent):
 //   - webhook: POST { event, payload, at } as JSON via opts.fetch || global fetch
-//   - desktop: a macOS `osascript` banner via opts.run || exec.run
+//   - desktop: a macOS `osascript` banner via opts.run || exec.run — ONLY when the user's desktop
+//     setting is on; no caller can force a banner past it (this is the one door for every banner)
 // Returns { sent, event, at, channels[, reason] }. `sent` is true if ANY channel
 // delivered. opts.force bypasses the enabled-list check (used by test()).
-// opts.forceDesktop always fires a macOS desktop banner even if notify.json is unconfigured.
+// opts.forceDesktop lets the desktop channel fire although the event is not in the enabled list; it
+// never overrides cfg.desktop = off.
 async function send(ctx, event, payload, opts) {
   opts = opts || {};
   event = String(event == null ? '' : event);
@@ -198,8 +201,10 @@ async function send(ctx, event, payload, opts) {
 
   // --- webhook ---
   if (eventOn && cfg.webhook) {
-    const doFetch = opts.fetch || (typeof fetch !== 'undefined' ? fetch : null);
-    if (!doFetch) channels.push({ channel: 'webhook', ok: false, reason: 'no-fetch' });
+    const injected = opts.fetch || ctx.fetch;
+    const doFetch = injected || (typeof fetch !== 'undefined' ? fetch : null);
+    if (refuseFetch(!!injected, cfg.webhook)) channels.push({ channel: 'webhook', ok: false, reason: 'test-offline' });
+    else if (!doFetch) channels.push({ channel: 'webhook', ok: false, reason: 'no-fetch' });
     else {
       try {
         const res = await doFetch(cfg.webhook, {
@@ -226,11 +231,9 @@ async function send(ctx, event, payload, opts) {
   }
 
   // --- desktop (macOS only) ---
-  if ((eventOn && cfg.desktop) || opts.forceDesktop) {
+  if ((eventOn || opts.forceDesktop) && cfg.desktop) {
     if (ctx.platform !== 'darwin') channels.push({ channel: 'desktop', ok: false, reason: 'not-macos' });
-    else if (!opts.run && !ctx.run && process.env.KEYFLIP_TEST_OFFLINE === '1') {
-      channels.push({ channel: 'desktop', ok: false, reason: 'test-offline' });
-    } else {
+    else {
       const runner = opts.run || ctx.run || _exec.run;
       try {
         const script =

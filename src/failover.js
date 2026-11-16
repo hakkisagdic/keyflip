@@ -16,6 +16,7 @@
 // Every side effect is injectable (run, fetch, keysmith config path, provider/desktop ops) so tests
 // never touch the real gateway, keychain, settings.json or app.
 import { spawnSync as _spawnSync } from 'child_process';
+import { active as _spawnguardActive } from './spawnguard.js';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -899,7 +900,7 @@ async function release(ctx, info, deps) {
     const deskRunner = deps.run || (ctx && ctx.run);
     const deskRunning = isRunningFn
       ? !!isRunningFn()
-      : process.env.KEYFLIP_TEST_OFFLINE === '1' && !deskRunner
+      : _spawnguardActive() && !deskRunner
         ? false
         : _desktoprestart.isMainAppRunning(ctx, deskRunner);
     if (deskRunning) {
@@ -961,7 +962,12 @@ async function release(ctx, info, deps) {
     deferred: deferred,
   });
 
-  if (cur && deps.notify) {
+  // Tell the user only about a real transition: a failover was engaged and its state is now gone.
+  // (An already-clean release, or one whose state file could not be removed, says nothing.)
+  const stateGone = !failed.some(function (f) {
+    return f.step === STATE_FILE;
+  });
+  if (cur && stateGone && deps.notify) {
     await deps.notify(
       info.lost ? 'quota' : 'switch',
       info.lost

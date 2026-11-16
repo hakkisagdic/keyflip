@@ -1,8 +1,12 @@
 // Tiny synchronous process runner. Never throws; returns a normalized result.
 import { spawnSync } from 'child_process';
+import { refuseCommand } from './spawnguard.js';
 
 function run(cmd, args, input, opts) {
   opts = opts || {};
+  // A test run never opens, quits or notifies through a real desktop tool (see spawnguard.js).
+  const refusal = refuseCommand(cmd, args);
+  if (refusal) return refusal;
   const res = spawnSync(cmd, args || [], {
     input: input,
     encoding: 'utf8',

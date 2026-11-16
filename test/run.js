@@ -10,6 +10,7 @@
 // 3. Passing directories (`test/`) throws `ERR_UNSUPPORTED_DIR_IMPORT` on Node 24.
 import { spawnSync } from 'child_process';
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 
 const DIRS = ['test', 'issuer', path.join('issuer', 'adapters')];
@@ -27,8 +28,42 @@ for (const dir of DIRS) {
 }
 
 const extraArgs = process.argv.slice(2);
-const res = spawnSync(process.execPath, ['--import', './test/setup.js', '--test', ...extraArgs, ...files], {
-  stdio: 'inherit',
+
+// Safety net for the whole run: the offline flag arms src/spawnguard.js in every test process and in
+// every CLI a test spawns; a PATH shim directory (osascript, open, security stand-ins that only write a
+// line to a log) catches bare-name calls; test/final-no-real-spawns.js fails the run if the log is not
+// empty, so a test that would have reached a real desktop tool cannot go unnoticed.
+const guardRoot = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'keyflip-spawnguard-'));
+const shimDir = path.join(guardRoot, 'bin');
+const logFile = path.join(guardRoot, 'real-spawns.log');
+fs.mkdirSync(shimDir);
+fs.writeFileSync(logFile, '');
+if (process.platform !== 'win32') {
+  for (const name of ['osascript', 'open', 'security']) {
+    const shim = path.join(shimDir, name);
+    fs.writeFileSync(shim, '#!/bin/sh\necho "shim ' + name + ' $*" >> "$KEYFLIP_SPAWN_LOG"\nexit 0\n');
+    fs.chmodSync(shim, 0o755);
+  }
+}
+const env = Object.assign({}, process.env, {
+  KEYFLIP_TEST_OFFLINE: '1',
+  KEYFLIP_SPAWN_LOG: logFile,
+  PATH: shimDir + path.delimiter + (process.env.PATH || ''),
 });
 
-process.exit(res.status ?? 1);
+const res = spawnSync(process.execPath, ['--import', './test/setup.js', '--test', ...extraArgs, ...files], {
+  stdio: 'inherit',
+  env,
+});
+let status = res.status ?? 1;
+const fin = spawnSync(process.execPath, ['--test', path.join('test', 'final-no-real-spawns.js')], {
+  stdio: 'inherit',
+  env,
+});
+if (fin.status !== 0) status = fin.status ?? 1;
+try {
+  fs.rmSync(guardRoot, { recursive: true, force: true });
+} catch {
+  /* best effort */
+}
+process.exit(status);
