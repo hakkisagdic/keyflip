@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`keyflip kiro apikey add|list|test|remove`**: keep references to the Kiro API key (the headless
+  kiro-cli's `KIRO_API_KEY`) in the Keychain. `add <account> --keychain-service <name>` records only the
+  service name of an existing item; `add <account> --key-file -` reads the key from stdin into a
+  keyflip-owned item (`keyflip:kiro-apikey:<account>`), never via argv. `test` runs a one-shot headless
+  chat with the key as the child's only `KIRO_*`/`AWS_*` variable and reports PASS/FAIL with a category.
+  `remove --delete-item` deletes only keyflip-owned items. Items named `kiro-api-hold:*` are never
+  touched. MCP: `keyflip_kiro_apikey_list|test|add|remove`.
+
 ### Changed
 
 - **`keyflip browser sync` no longer restarts the browser silently (behaviour change).** It prints

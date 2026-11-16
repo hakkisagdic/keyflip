@@ -529,6 +529,11 @@ keyflip kiro usage [name]    # latest quota block from the IDE's own q-client.lo
 keyflip kiro list            # saved accounts and each surface's expiry
 keyflip kiro import <slug>   # migrate an old keyflip:surface:kiro:<slug>:* capture
 keyflip kiro remove <name> --force
+keyflip kiro apikey add <account> --keychain-service <service-name>   # record an existing Keychain item (name only)
+printf '%s' "$KEY" | keyflip kiro apikey add <account> --key-file -     # or store a key in a keyflip-owned item
+keyflip kiro apikey list     # account, service, present yes/no, byte length (never the value)
+keyflip kiro apikey test <account> [--timeout 60]   # headless kiro-cli check: PASS/FAIL + category
+keyflip kiro apikey remove <account> [--delete-item]  # --delete-item only for keyflip-owned items
 ```
 
 Captures live in `~/.config/keyflip/surfaces/kiro/<account>/` (0600, under the

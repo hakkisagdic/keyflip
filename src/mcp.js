@@ -89,6 +89,7 @@ import * as _sessionedit from './sessionedit.js';
 import _child_process from 'child_process';
 import * as _checkpoint from './checkpoint.js';
 import * as _ctxsync from './ctxsync.js';
+import * as _kiroapikey from './kiroapikey.js';
 import * as _leakscan from './leakscan.js';
 import * as _chains from './chains.js';
 import * as _orchestrator from './orchestrator.js';
@@ -605,6 +606,83 @@ const TOOLS = [
           appActiveProfile: f.appActiveProfile,
         },
       };
+    },
+  },
+  {
+    name: 'keyflip_kiro_apikey_list',
+    title: 'List Kiro API key references',
+    description:
+      'List Kiro API key references (account, Keychain service name, present yes/no, byte length). Never returns the key value. Read-only.',
+    inputSchema: {
+      type: 'object',
+      properties: {},
+      required: [],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+    run: async function (ctx, args) {
+      return { apikeys: _kiroapikey.listKeys(ctx, {}) };
+    },
+  },
+  {
+    name: 'keyflip_kiro_apikey_test',
+    title: 'Test a Kiro API key',
+    description:
+      "Run a one-shot headless kiro-cli chat with the account's key (passed only as KIRO_API_KEY to the child) and report PASS/FAIL with a category (key missing, rejected, plan not eligible, timeout). May use a small amount of Kiro credit. Never returns the key.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        account: { type: 'string', description: 'Kiro API key account name.' },
+        timeoutSeconds: { type: 'number', description: 'Timeout, default 60.' },
+      },
+      required: ['account'],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+    run: async function (ctx, args) {
+      return _kiroapikey.testKey(ctx, String(args.account), { timeoutS: args.timeoutSeconds || null }, {});
+    },
+  },
+  {
+    name: 'keyflip_kiro_apikey_add',
+    title: 'Add a Kiro API key reference',
+    description:
+      'Record a reference to an EXISTING Keychain item that holds a Kiro API key (only its service name is stored). Items named kiro-api-hold:* are refused. Ask the user first, then set confirm=true.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        account: { type: 'string', description: 'Kiro API key account name.' },
+        keychainService: { type: 'string', description: 'Keychain service name of the existing item.' },
+        confirm: { type: 'boolean', description: 'Must be true, set only after the user agreed.' },
+      },
+      required: ['account', 'keychainService', 'confirm'],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
+    run: async function (ctx, args) {
+      if (args.confirm !== true)
+        throw new Error('confirmation required: ask the user first, then call again with confirm=true');
+      return _kiroapikey.addByService(ctx, String(args.account), String(args.keychainService), {});
+    },
+  },
+  {
+    name: 'keyflip_kiro_apikey_remove',
+    title: 'Remove a Kiro API key reference',
+    description: 'Remove the reference (not the Keychain item). Ask the user first, then set confirm=true.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        account: { type: 'string', description: 'Kiro API key account name.' },
+        confirm: { type: 'boolean', description: 'Must be true, set only after the user agreed.' },
+      },
+      required: ['account', 'confirm'],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
+    run: async function (ctx, args) {
+      if (args.confirm !== true)
+        throw new Error('confirmation required: ask the user first, then call again with confirm=true');
+      return _kiroapikey.removeKey(ctx, String(args.account), { deleteItem: false }, {});
     },
   },
   {
