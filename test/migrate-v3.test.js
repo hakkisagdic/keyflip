@@ -11,6 +11,9 @@ import _child_process from 'child_process';
 import { fileURLToPath } from 'url';
 import * as container from '../src/migrate-container.js';
 import * as stream from '../src/migrate-stream.js';
+import * as migrateMod from '../src/migrate.js';
+import * as profiles from '../src/profiles.js';
+import * as provider from '../src/provider.js';
 import { makeCtx } from './helpers.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -604,4 +607,56 @@ test('a legacy one-string bundle still imports, and is refused as plain when a p
   });
   const res = await stream.importBundle({ ctx: dst, input: file });
   assert.strictEqual(res.memory.added, 1);
+});
+
+// Review fix: on macOS the secrets live in the Keychain, not creds/*.cred.
+test('safety copy holds the old Keychain-held secrets before a --force import', function () {
+  const src = makeCtx();
+  src.store.setProfile('work', '{"token":"NEW-CANARY"}');
+  fs.mkdirSync(src.claudeDir, { recursive: true });
+  profiles.write(src.configDir, { name: 'work', email: 'a@x.com', oauthAccount: {}, savedAt: src.now() });
+  provider.add(src, 'relay', { baseUrl: 'https://relay.example', authScheme: 'api-key', key: 'sk-new' });
+  const bundle = migrateMod.buildBundle(src, {}).bundle;
+
+  const dst = makeCtx();
+  dst.store.type = 'keychain'; // mimic the Hybrid store: no creds/*.cred files exist
+  dst.store.setProfile('work', '{"token":"OLD-CANARY"}');
+  profiles.write(dst.configDir, { name: 'work', email: 'old@x.com', oauthAccount: {}, savedAt: dst.now() });
+  provider.add(dst, 'relay', { baseUrl: 'https://relay.example', authScheme: 'api-key', key: 'sk-old' });
+  assert.ok(!fs.existsSync(path.join(dst.configDir, 'creds')));
+
+  const backup = migrateMod.createImportBackup(dst, { force: true });
+  backup.start(bundle);
+  migrateMod.applyBundle(dst, bundle, { force: true });
+  assert.strictEqual(dst.store.getProfile('work'), '{"token":"NEW-CANARY"}');
+  const w = path.join(backup.dir, 'store', 'work.cred');
+  assert.strictEqual(fs.readFileSync(w, 'utf8'), '{"token":"OLD-CANARY"}');
+  assert.strictEqual(fs.readFileSync(path.join(backup.dir, 'store', 'provider__relay.cred'), 'utf8'), 'sk-old');
+  if (process.platform !== 'win32') {
+    assert.strictEqual(fs.statSync(w).mode & 0o777, 0o600);
+    assert.strictEqual(fs.statSync(path.join(backup.dir, 'store')).mode & 0o777, 0o700);
+  }
+});
+
+test('--force with an unreadable store stops (NEED_STORE) before any write', function () {
+  const src = makeCtx();
+  src.store.setProfile('work', 'x');
+  profiles.write(src.configDir, { name: 'work', email: 'a@x.com', oauthAccount: {}, savedAt: src.now() });
+  const bundle = migrateMod.buildBundle(src, {}).bundle;
+  const dst = makeCtx();
+  dst.store.getProfile = function () {
+    const e = new Error('keychain locked');
+    e.code = 'EKEYCHAIN';
+    throw e;
+  };
+  const backup = migrateMod.createImportBackup(dst, { force: true });
+  assert.throws(
+    function () {
+      backup.start(bundle);
+    },
+    function (e) {
+      return e.code === 'NEED_STORE';
+    },
+  );
+  assert.ok(!fs.existsSync(path.join(dst.configDir, 'work.json')));
 });

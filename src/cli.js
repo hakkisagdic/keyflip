@@ -5250,7 +5250,7 @@ async function cmdMigrate(ctx, rest) {
   const migrateError = function (e) {
     const c = (e && e.code) || '';
     if (c === 'USAGE') return migrateFail(e.message, 2);
-    if (c === 'NEED_PASSPHRASE') return migrateFail(e.message, 5);
+    if (c === 'NEED_PASSPHRASE' || c === 'NEED_STORE') return migrateFail(e.message, 5);
     if (/^(STREAM_|LEGACY_)/.test(c)) return migrateFail(e.message, 3);
     return fail(e.message);
   };
@@ -5397,7 +5397,7 @@ async function cmdMigrate(ctx, rest) {
     // Reads the streaming container record-by-record; a legacy one-string bundle
     // still imports below the safe cap (or fails with an actionable message).
     // A real import copies every file it could touch to a private backup dir first.
-    const backup = dryRun ? null : migrate.createImportBackup(ctx);
+    const backup = dryRun ? null : migrate.createImportBackup(ctx, { force: force });
     let res;
     try {
       res = await _migrateStream.importBundle({

@@ -692,7 +692,8 @@ const BACKUP_KEEP = 10;
 // A private (0700) copy of every existing file the import could touch, credential files
 // included, made BEFORE the first write. backup.js only keeps non-secret metadata, so the
 // stamp/retention helpers are reused and the copy itself is done here.
-function createImportBackup(ctx) {
+function createImportBackup(ctx, bopts) {
+  const force = !!(bopts && bopts.force);
   const root = path.join(ctx.configDir, 'migrate-backups');
   let dir = null;
   const copied = [];
@@ -748,7 +749,49 @@ function createImportBackup(ctx) {
   }
   return {
     start: function (bundle) {
+      // Secrets live in the credential store (the Keychain on macOS), not in creds/*.cred:
+      // write the old value of every account/provider secret this import could overwrite.
+      const keys = [];
+      (bundle.accounts || []).forEach(function (a) {
+        if (a && profiles.isValidName(a.name)) keys.push(a.name);
+      });
+      (bundle.providers || []).forEach(function (p) {
+        if (p && typeof p.name === 'string' && isSafeSegment(p.name)) keys.push(PROVIDER_KEY(p.name));
+      });
+      const saved = [];
+      keys.forEach(function (key) {
+        let blob;
+        try {
+          blob = ctx.store.getProfile(key);
+        } catch (e) {
+          if (force) {
+            const err = new Error(
+              'cannot read the existing credential store (' +
+                ((e && e.message) || 'unavailable') +
+                ') — refusing --force without a backup of the secrets it would overwrite.',
+            );
+            err.code = 'NEED_STORE';
+            throw err;
+          }
+          return;
+        }
+        if (blob == null) return;
+        saved.push([key, blob]);
+      });
       ensure();
+      saved.forEach(function (kv) {
+        const sdir = path.join(dir, 'store');
+        fs.mkdirSync(sdir, { recursive: true, mode: 0o700 });
+        const dest = path.join(sdir, kv[0] + '.cred');
+        fs.writeFileSync(dest, typeof kv[1] === 'string' ? kv[1] : JSON.stringify(kv[1]), { mode: 0o600 });
+        try {
+          fs.chmodSync(sdir, 0o700);
+          fs.chmodSync(dest, 0o600);
+        } catch (e) {
+          /* non-POSIX FS */
+        }
+        copied.push(path.join('store', kv[0] + '.cred'));
+      });
       importTargets(ctx, bundle).forEach(copy);
     },
     before: copy,
