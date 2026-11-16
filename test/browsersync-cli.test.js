@@ -14,6 +14,8 @@ const BIN = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'bin',
 const SECRET = 'FIXTURE-COOKIE-VALUE-9f3a';
 const ORG = { alpha: 'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa', beta: 'bbbbbbbb-2222-4222-8222-bbbbbbbbbbbb' };
 
+const DESK_UUID = 'dddddddd-3333-4333-8333-dddddddddddd'; // the Desktop folder is an account UUID, never a profile name
+
 function sh(cmd, args, input) {
   return spawnSync(cmd, args, { encoding: 'utf8', input: input });
 }
@@ -50,7 +52,7 @@ function mkHome(o) {
   );
   if (o.desktop) {
     const app = path.join(home, 'Library', 'Application Support', 'Claude');
-    fs.mkdirSync(path.join(app, 'claude-code-sessions', o.desktop, ORG[o.desktop]), { recursive: true });
+    fs.mkdirSync(path.join(app, 'claude-code-sessions', DESK_UUID, ORG[o.desktop]), { recursive: true });
     const k = {};
     k['dxt:allowlistLastUpdated:' + ORG[o.desktop]] = '2026-11-16T10:00:00Z';
     fs.writeFileSync(path.join(app, 'config.json'), JSON.stringify(k));
@@ -189,6 +191,17 @@ test('K4b: sync with differing surfaces and no --for does not guess and exits !=
   assert.notStrictEqual(r.status, 0);
   assert.match(r.stdout, /--for/);
   assert.ok(!/restored for/.test(r.stdout));
+});
+
+test('K5c: sync with an unknown positional account fails and leaves the cookie DB untouched', function () {
+  const h = mkHome({ cli: 'alpha' });
+  const db = addBrowser(h, path.join('BraveSoftware', 'Brave-Browser'), true);
+  saveSnap(h, 'alpha', 'brave');
+  const r = kf(h, ['browser', 'sync', 'betta', '--yes']);
+  assert.notStrictEqual(r.status, 0);
+  assert.match(r.stdout + r.stderr, /no such saved account/);
+  const rows = sh('sqlite3', [db, "SELECT name FROM cookies WHERE host_key LIKE '%claude.ai'"]).stdout.trim();
+  assert.strictEqual(rows, 'stale', 'cookie DB must be untouched');
 });
 
 test('K5: account with no saved session: nothing restored, two steps printed, exit != 0', function () {

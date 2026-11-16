@@ -14,6 +14,15 @@ import { run as _run } from './exec.js';
 
 const SURFACES = ['cli', 'desktop'];
 
+// The saved account the Desktop app is on. det.account is the app's claude-code-sessions folder
+// (an account UUID), NOT a keyflip profile name, so map by organization id, like `keyflip list`.
+// guess is true when detection fell back (det.reason set), so callers can say it is not certain.
+export function desktopProfile(ctx, det) {
+  det = det || {};
+  const name = det.org ? _bs.orgOwner(ctx.configDir, det.org) || null : null;
+  return { name: name, guess: !!(name && det.reason) };
+}
+
 // Which saved account the browser should follow.
 //   o = { name, surface, cli, desktop } — name: an explicit account; surface: 'cli'|'desktop' (--for);
 //   cli/desktop: the saved account each surface is signed into right now (or null).

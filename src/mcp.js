@@ -5655,7 +5655,7 @@ const TOOLS = [
       let desktopName = null;
       try {
         const det = appauth.detectAppAccount(ctx) || {};
-        desktopName = det.account && profiles.list(ctx.configDir).indexOf(det.account) !== -1 ? det.account : null;
+        desktopName = browserplan.desktopProfile(ctx, det).name;
       } catch (e) {
         desktopName = null;
       }

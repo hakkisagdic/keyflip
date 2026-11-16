@@ -14845,9 +14845,12 @@ async function cmdBrowser(ctx, rest) {
     null;
   let desktopName = null;
   let desktopUnsaved = null;
+  let desktopGuess = false;
   try {
     const det = sub !== 'logout' ? appauth.detectAppAccount(ctx) || {} : {};
-    desktopName = det.account && profiles.list(ctx.configDir).indexOf(det.account) !== -1 ? det.account : null;
+    const dp = _browserplan.desktopProfile(ctx, det);
+    desktopName = dp.name;
+    desktopGuess = dp.guess;
     desktopUnsaved = !desktopName && (det.email || det.org) ? det.email || det.org.slice(0, 8) + '… (unsaved)' : null;
   } catch (e) {
     desktopName = null;
@@ -14860,12 +14863,14 @@ async function cmdBrowser(ctx, rest) {
   const forName = forArg && !_browserplan.isSurface(forArg) ? core.resolveProfile(ctx, forArg) : null;
   if (forArg && !_browserplan.isSurface(forArg) && !forName)
     return fail("--for: '" + forArg + "' is not cli, desktop or a saved account (see: keyflip list)");
+  const posName = rest[1] && rest[1].indexOf('-') !== 0 && sub === 'sync' ? core.resolveProfile(ctx, rest[1]) : null;
+  if (sub === 'sync' && rest[1] && rest[1].indexOf('-') !== 0 && !posName)
+    return fail("no such saved account: '" + rest[1] + "' (see: keyflip list)");
   const surfaces = {
     cli: cliName,
     desktop: desktopName,
     target: _browserplan.resolveTarget({
-      name:
-        forName || (rest[1] && rest[1].indexOf('-') !== 0 && sub === 'sync' ? core.resolveProfile(ctx, rest[1]) : null),
+      name: forName || posName,
       surface: _browserplan.isSurface(forArg) ? forArg : null,
       cli: cliName,
       desktop: desktopName,
@@ -14874,7 +14879,11 @@ async function cmdBrowser(ctx, rest) {
 
   if (sub === 'status') {
     print('CLI account:     ' + style.bold(shown(cliName) || activeLabel || 'unknown'));
-    print('Desktop account: ' + style.bold(shown(desktopName) || desktopUnsaved || 'unknown / not signed in'));
+    print(
+      'Desktop account: ' +
+        style.bold(shown(desktopName) || desktopUnsaved || 'unknown / not signed in') +
+        (desktopGuess ? ' (guess)' : ''),
+    );
     if (surfaces.target.differ)
       print(
         style.warn('⚠ the CLI and the desktop app are on DIFFERENT accounts') +
@@ -14923,6 +14932,7 @@ async function cmdBrowser(ctx, rest) {
       active: activeLabel || activeOrg,
       cli: shown(cliName),
       desktop: shown(desktopName),
+      desktopGuess: desktopGuess,
       differ: surfaces.target.differ,
       target: surfaces.target.name || null,
       targetSurface: surfaces.target.surface,
