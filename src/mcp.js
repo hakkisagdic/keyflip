@@ -31,6 +31,8 @@ import * as proxy from './proxy.js';
 import * as proxyroutes from './proxyroutes.js';
 import * as tiers from './tiers.js';
 import * as browser from './browser.js';
+import * as browserplan from './browserplan.js';
+import * as _browserswitch from './browserswitch.js';
 import * as loginmod from './login.js';
 import * as exec from './exec.js';
 import * as appsessions from './appsessions.js';
@@ -5623,53 +5625,82 @@ const TOOLS = [
     name: 'keyflip_browser_sync',
     title: "Align the browser to an account's saved session",
     description:
-      "macOS and Windows. Restore an account's saved claude.ai browser session (captured during onboard/login) into the browser so the Claude extension reconnects as that account. Quits + reopens the browser. name defaults to the active account. Mutating — ask the user, then confirm=true.",
+      "macOS and Windows. Restore an account's saved claude.ai browser session (captured during onboard/login) into the browser so the Claude extension reconnects as that account. This will QUIT and restart the browser (a restart that can lose tabs if the browser does not restore them). With confirm=false (or absent) it only returns the plan and touches nothing; show the plan to the user, then call again with confirm=true. Target: name, or for=cli|desktop (which surface the browser follows); when the CLI and the desktop app are on different accounts and neither is given, it refuses to guess. After a confirmed run it reads the browser session back and reports verified=true|false.",
     inputSchema: {
       type: 'object',
-      properties: { name: { type: 'string' }, confirm: confirmProp.confirm },
+      properties: {
+        name: { type: 'string' },
+        for: { type: 'string', enum: ['cli', 'desktop'] },
+        confirm: confirmProp.confirm,
+      },
       required: ['confirm'],
       additionalProperties: false,
     },
     annotations: MUT,
     run: async function (ctx, args) {
-      needConfirm(args);
       if (!browser.supported(ctx.platform)) throw new Error('browser sync is supported on macOS and Windows only');
-      const name = args.name
-        ? core.resolveProfile(ctx, String(args.name))
-        : (function () {
-            let n = null;
-            profiles.list(ctx.configDir).forEach(function (p) {
-              if (!n && profiles.email(ctx.configDir, p) === core.currentEmail(ctx)) n = p;
-            });
-            return n;
-          })();
-      if (!name) throw new Error('which account? pass name');
-      const napMs = function (ms) {
-        return new Promise(function (r) {
-          setTimeout(r, ms);
-        });
+      const byOrg = function (org) {
+        return org ? _browserswitch.orgOwner(ctx.configDir, org) || null : null;
       };
-      const synced = [];
-      const list = browser.installed(ctx.home, { platform: ctx.platform });
-      for (let i = 0; i < list.length; i++) {
-        const b = list[i];
-        const sql = browser.loadSession(ctx.configDir, name, b);
-        if (!sql) continue;
-        const wasRunning = browser.isRunning(b);
-        if (wasRunning) {
-          browser.quit(b, exec.run);
-          for (let t = 0; t < 24 && browser.isRunning(b); t++) {
-            await napMs(250);
-          }
-        }
-        if (browser.isRunning(b)) continue; // refused to quit -> don't corrupt a live DB
-        const r = browser.restoreClaudeCookies(b, sql, { force: true });
-        if (r.ok) {
-          synced.push(b.name);
-          if (wasRunning) browser.reopen(b, exec.run);
-        }
+      let cliName = null;
+      const st = loginmod.parseAuthStatus(
+        exec.run('claude', ['auth', 'status'], undefined, { timeoutMs: 8000 }).stdout,
+      );
+      if (st) cliName = byOrg(st.orgId);
+      if (!cliName) {
+        profiles.list(ctx.configDir).forEach(function (p) {
+          if (!cliName && profiles.email(ctx.configDir, p) === core.currentEmail(ctx)) cliName = p;
+        });
       }
-      return { synced: synced, account: name };
+      let desktopName = null;
+      try {
+        const det = appauth.detectAppAccount(ctx) || {};
+        desktopName = det.account && profiles.list(ctx.configDir).indexOf(det.account) !== -1 ? det.account : null;
+      } catch (e) {
+        desktopName = null;
+      }
+      const explicit = args.name ? core.resolveProfile(ctx, String(args.name)) : null;
+      if (args.name && !explicit) throw new Error("no such saved account: '" + args.name + "'");
+      const tgt = browserplan.resolveTarget({ name: explicit, surface: args.for, cli: cliName, desktop: desktopName });
+      if (tgt.ambiguous)
+        return {
+          planned: false,
+          ambiguous: true,
+          cli: cliName,
+          desktop: desktopName,
+          hint: 'the CLI and the desktop app are on different accounts: pass for=cli, for=desktop or name',
+        };
+      if (!tgt.name) throw new Error('which account? pass name or for=cli|desktop');
+      const p = browserplan.plan(ctx, tgt.name, {});
+      if (p.noSession)
+        return {
+          planned: false,
+          account: tgt.name,
+          synced: [],
+          reason: 'no-saved-session',
+          steps: browserplan.noSessionSteps(tgt.name),
+        };
+      const label = profiles.email(ctx.configDir, tgt.name) || tgt.name;
+      if (!args || args.confirm !== true)
+        return {
+          planned: true,
+          confirmed: false,
+          needsConfirm: true,
+          account: tgt.name,
+          plan: browserplan.planLines(p, label),
+          browsers: browserplan.publicPlan(p).browsers,
+          synced: [],
+        };
+      const r = await browserplan.execute(ctx, tgt.name, p, { run: exec.run });
+      return {
+        planned: true,
+        confirmed: true,
+        account: tgt.name,
+        synced: r.synced,
+        skipped: r.skipped,
+        verified: r.verified,
+        verify: r.verify,
+      };
     },
   },
 

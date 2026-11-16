@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **`keyflip browser sync` no longer restarts the browser silently (behaviour change).** It prints
+  the plan first (which browser is quit and reopened, whether it restores its tabs, which account)
+  and needs `--yes` (or an interactive yes); without a TTY it prints the plan and exits non-zero.
+  Scripts that called it bare must add `--yes`. The MCP tool `keyflip_browser_sync` returns the plan
+  unless `confirm=true`. After a confirmed run the browser's cookie is read back and the result says
+  `verified` or not; the extension's own sign-in cannot be read, and the output says so.
+  `browser status` shows the CLI and the desktop account side by side; `--for cli|desktop|<account>`
+  picks the target, and `sync` refuses to guess when the two differ. `browser capture --account <name>`
+  works, an account without a saved session gets the two steps to create one, and `keyflip list`
+  `web ✓` now means a saved session exists.
+
 ### Added
 
 - **API failover that survives its own failure modes (Desktop never touches the gateway).**
