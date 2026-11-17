@@ -534,6 +534,7 @@ printf '%s' "$KEY" | keyflip kiro apikey add <account> --key-file -     # or sto
 keyflip kiro apikey list     # account, service, present yes/no, byte length (never the value)
 keyflip kiro apikey test <account> [--timeout 60]   # headless kiro-cli check: PASS/FAIL + category
 keyflip kiro apikey remove <account> [--delete-item]  # --delete-item only for keyflip-owned items
+keyflip kiro apikey add|list ... --no-length         # never read the item: no macOS permission prompt, no length shown
 ```
 
 Captures live in `~/.config/keyflip/surfaces/kiro/<account>/` (0600, under the

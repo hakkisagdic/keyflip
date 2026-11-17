@@ -45,6 +45,18 @@ function makeEnv(items) {
         return { code: 0, stdout: '', stderr: '', error: null, timedOut: false };
       }
     }
+    if (cmd === FAKE_HELPER && args[0] === 'put') {
+      items[args[1]] = input;
+      return { code: 0, stdout: 'put\n', stderr: '', error: null, timedOut: false };
+    }
+    if (cmd === FAKE_HELPER && args[0] === 'del') {
+      delete items[args[1]];
+      return { code: 0, stdout: '', stderr: '', error: null, timedOut: false };
+    }
+    if (cmd === FAKE_HELPER && args[0] === 'get') {
+      const g = items[args[1]];
+      return { code: g === undefined ? 4 : 0, stdout: g || '', stderr: '', error: null, timedOut: false };
+    }
     if (cmd === FAKE_HELPER) {
       const v = items[args[1]];
       return {
@@ -296,4 +308,69 @@ test('parseArgs keeps flag values out of positionals', function () {
   assert.strictEqual(o.keychainService, 'svc');
   assert.strictEqual(o.timeoutS, 5);
   assert.strictEqual(o.deleteItem, true);
+});
+
+test('K6 a foreign item: the notice comes BEFORE the length read; --no-length reads nothing and notifies nothing', function () {
+  const ctx = makeCtx();
+  const svc = 'kf-test-' + crypto.randomBytes(6).toString('hex');
+  const e = makeEnv({ [svc]: randomKey() });
+  const events = [];
+  const run = function (cmd, args, input, opts) {
+    events.push(cmd === FAKE_HELPER ? 'stat' : 'other');
+    return e.run(cmd, args, input, opts);
+  };
+  const r = ak.addByService(ctx, 'y', svc, {
+    run: run,
+    helper: FAKE_HELPER,
+    notify: function (m) {
+      events.push('notice');
+      assert.match(m, /macOS will ask once/);
+    },
+  });
+  assert.ok(events.indexOf('notice') !== -1 && events.indexOf('notice') < events.indexOf('stat'));
+  assert.strictEqual(typeof r.bytes, 'number');
+
+  const e2 = makeEnv({ [svc]: randomKey() });
+  const notes = [];
+  const r2 = ak.addByService(ctx, 'z', svc, {
+    run: e2.run,
+    helper: FAKE_HELPER,
+    noLength: true,
+    notify: (m) => notes.push(m),
+  });
+  assert.strictEqual(r2.bytes, null);
+  assert.deepStrictEqual(notes, []);
+  assert.ok(!e2.argvLog.some((a) => a.startsWith(FAKE_HELPER)), 'the helper never ran');
+  const l = ak.listKeys(ctx, { run: e2.run, helper: FAKE_HELPER, noLength: true });
+  assert.ok(l.every((x) => x.bytes === null));
+  assert.ok(!e2.argvLog.some((a) => a.startsWith(FAKE_HELPER)));
+});
+
+test('owned keys are written, read and deleted by the helper, never by `security -i` or -w', function () {
+  const ctx = makeCtx();
+  const key = randomKey();
+  const e = makeEnv({});
+  ak.addByValue(ctx, 'o1', key + '\n', e.deps);
+  assert.ok(e.argvLog.some((a) => a === FAKE_HELPER + ' put keyflip:kiro-apikey:o1 kiro-apikey'));
+  assert.ok(!e.argvLog.some((a) => a.includes('/usr/bin/security')), 'security never used for owned items');
+  assert.ok(
+    e.argvLog.every((a) => !a.includes(key)),
+    'value never in argv',
+  );
+  ak.removeKey(ctx, 'o1', { deleteItem: true }, e.deps);
+  assert.ok(e.argvLog.some((a) => a === FAKE_HELPER + ' del keyflip:kiro-apikey:o1'));
+});
+
+test('K2b a confined keychain: the real runner never asks the helper for the length of a foreign item', function () {
+  const ctx = makeCtx();
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kf-akey-h-'));
+  const mark = path.join(dir, 'called');
+  const helper = path.join(dir, 'kfkc');
+  fs.writeFileSync(helper, '#!/bin/sh\necho "$@" >> "' + mark + '"\necho bytes=7\n', { mode: 0o755 });
+  const env = Object.assign({}, process.env, { KEYFLIP_KEYCHAIN_FILE: path.join(dir, 'k.keychain-db') });
+  const deps = { run: realRun, helper: helper, env: env, noLength: false };
+  assert.strictEqual(ak._itemLength(ctx, 'kf-test-foreign-x', deps), null);
+  assert.ok(!fs.existsSync(mark), 'no helper call for a foreign item');
+  assert.strictEqual(ak._itemLength(ctx, ak.OWNED_PREFIX + 'a2', deps), 7);
+  assert.ok(fs.existsSync(mark), 'an owned item is still measured');
 });

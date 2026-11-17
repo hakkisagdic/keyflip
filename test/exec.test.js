@@ -64,3 +64,40 @@ test('run passes a file path that requires no shell (spaces are safe)', function
   assert.equal(r.code, 0);
   assert.equal(r.stdout.trim(), 'ok');
 });
+
+test('KEYFLIP_KEYCHAIN_FILE is honoured only while the guard is active', function () {
+  const prev = {
+    f: process.env.KEYFLIP_KEYCHAIN_FILE,
+    o: process.env.KEYFLIP_TEST_OFFLINE,
+    n: process.env.NODE_TEST_CONTEXT,
+  };
+  try {
+    process.env.KEYFLIP_KEYCHAIN_FILE = '/Users/someone/Library/Keychains/real.keychain-db';
+    delete process.env.KEYFLIP_TEST_OFFLINE;
+    delete process.env.NODE_TEST_CONTEXT;
+    const a = exec.withKeychainFile('/usr/bin/security', ['find-generic-password', '-s', 'x']);
+    assert.deepEqual(a, ['find-generic-password', '-s', 'x']);
+    const i = exec.withKeychainFileInput('/usr/bin/security', ['-i'], 'find-generic-password -s "x"\n');
+    assert.equal(i, 'find-generic-password -s "x"\n');
+    const ok = path.join(tmpdir(), 'k.keychain-db');
+    fs.writeFileSync(ok, '');
+    process.env.KEYFLIP_KEYCHAIN_FILE = ok;
+    assert.deepEqual(exec.withKeychainFile('/usr/bin/security', ['find-generic-password']), ['find-generic-password']);
+    // guard active: the variable is honoured
+    process.env.KEYFLIP_TEST_OFFLINE = '1';
+    process.env.KEYFLIP_KEYCHAIN_FILE = '/elsewhere/z.keychain-db';
+    assert.deepEqual(exec.withKeychainFile('/usr/bin/security', ['find-generic-password']), [
+      'find-generic-password',
+      '/elsewhere/z.keychain-db',
+    ]);
+  } finally {
+    for (const [k, v] of [
+      ['KEYFLIP_KEYCHAIN_FILE', prev.f],
+      ['KEYFLIP_TEST_OFFLINE', prev.o],
+      ['NODE_TEST_CONTEXT', prev.n],
+    ]) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  }
+});

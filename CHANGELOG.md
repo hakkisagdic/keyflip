@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A test run can no longer reach the login Keychain, so macOS never asks for the owner's password during `npm test`.** The test guard now refuses `security` (name or absolute path) and the `kfkc` helper unless a call names a throwaway keychain file under the temp dir; the suite sends every item-level `security` call to such a file (`KEYFLIP_KEYCHAIN_FILE`), and a source test fails when a test file runs the real tool without creating its own keychain. `keyflip kiro apikey` creates and reads its own items with the `kfkc` helper (fixed path, fixed signing identifier, rebuilt only when its source changes) instead of `security -i`; `--no-length` skips reading an item, and for an item made by another program the command says before macOS asks. `scripts/cleanup-old-test-keychain-items.sh` removes the four leftovers of the old end-to-end test.
 - **A test run can no longer notify, open, quit or sign out anything on the developer's machine.**
   New `src/spawnguard.js`: under the Node test runner (`NODE_TEST_CONTEXT`) or `KEYFLIP_TEST_OFFLINE=1`,
   `exec.run` refuses a real `osascript`, `open`, `say`, `terminal-notifier` and any `claude auth ...`,
