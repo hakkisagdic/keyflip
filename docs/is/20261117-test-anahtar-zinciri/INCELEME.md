@@ -1,0 +1,23 @@
+# İNCELEME: 20261117-test-anahtar-zinciri (dal is/20261117-test-anahtar-zinciri, origin/main eff7c4b'ye karşı)
+
+Karar: GEÇER (ship). Engel ya da büyük bulgu yok; aşağıdaki küçük bulgular test edenin doğrulamasıyla sonradan kapatılabilir.
+
+Okunan dosyalar: farktaki 19 dosyanın hepsi (src/cli.js, src/exec.js, src/kiro.js, src/kiroapikey.js, src/spawnguard.js, scripts/cleanup-old-test-keychain-items.sh, CHANGELOG/README/README.tr, test/ altındaki 9 dosya, ANALIZ.md, TEST.md); ayrıca bağlam için src/stores/keychain.js ve src/antigravity.js'deki `security -i` noktası.
+
+## Mercekler
+
+1. Veri güvenliği: migrasyon yok. Test kurulumu (`test/setup.js`) atılgan keychain'i özel temp kökünde açıyor; `security list-keychains -d user` bu makinede salt okunur bakıldı, eski koşulardan kalmış temp keychain girdisi yok. Yıkıcı tek parça tek seferlik temizlik betiği (bulgu 1).
+2. Erişim: kalkan varsayılan olarak reddediyor (`security` adı ve mutlak yolu, `kfkc`); öğe dışı komutlar, `default-keychain`, `list-keychains -s` da reddediliyor. `src/` içinde `security`'yi exec.run dışından çağıran yer yok. `antigravity.js`'nin nesne olarak geçen girdisi kalkanda reddediliyor (önceden var olan hata, kapsam dışı). Kalan açıklar küçük (bulgu 2, 3).
+3. Para ve kişisel veri: para yok. Anahtar değeri argv'ye girmiyor (`kfkc put` stdin, `get` yalnız süreç içinde + `registerSecret`); kalkan günlüğü yalnız araç adı ve ilk argümanı yazıyor. Silme sonucu yok sayılıyor (bulgu 4).
+4. Dürüstlük: TEST.md kanıtları kontrollerle örtüşüyor; K1, K4, K7 testleri koşulsuz assert ediyor. `kiroapikey-cli.test.js` içindeki yeniden derleme denetimi `if (fs.existsSync(bin))` ile koşullu, ama K4'ü `tester-keychain-chain.test.js` koşulsuz karşılıyor. "Sabit imza tanımlayıcısı kimliği korur" iddiası ad-hoc imzada doğru değil (bulgu 5).
+5. Sırlar: farkın eklenen satırlarında e-posta, kişisel yol, anahtar yok (yalnız `/Users/someone/...` yer tutucusu); test parolaları sabit, atılgan keychain'e ait.
+
+## Bulgular
+
+| Önem | Dosya:satır | Sorun | Düzeltme |
+|---|---|---|---|
+| küçük | scripts/cleanup-old-test-keychain-items.sh:11,15 | Varsayılan kip siliyor ve öğeyi yalnız servis adıyla eşliyor; sahibin gerçekten `a1`, `a2`, `a9` ya da `h` adlı bir `kiro apikey` hesabı varsa (`keyflip:kiro-apikey:h`) gerçek anahtarı geri dönüşsüz silinir. | `find`/`delete` çağrılarına `-a kiro-apikey` ekleyin; `~/.config/keyflip/kiro-apikey/<ad>.json` varsa o adı "kayıtlı hesap, atlandı" diyerek geçin; varsayılanı `--dry-run` yapıp silmeyi `--delete` bayrağına bağlayın. |
+| küçük | src/exec.js:12, src/kiroapikey.js:21 | Gerçek (kalkan kapalı) çalıştırmada `KEYFLIP_KEYCHAIN_FILE` herhangi bir OS temp dizini altındaysa kabul ediliyor; TMPDIR yoksa bu `/tmp` (herkes yazabilir). Ortam değişkenini sokabilen biri gerçek Kiro anahtarını parolasını bildiği bir temp keychain'e yazdırabilir. Testlerde CLI çocukları zaten `KEYFLIP_TEST_OFFLINE=1` alıyor, yani bu dal gerekli değil. | Değişkeni yalnız `active()` iken kabul edin (`isTempKeychainFile` dalını kaldırın). Dal kalacaksa dosyanın sahibi kullanıcı olsun ve kipi 0600 olsun; `tester-keychain-chain` "review" testine `/tmp/x.keychain-db` durumunu ekleyin. |
+| küçük | src/spawnguard.js:36,67 | `-i` girdisinde herhangi bir satırda temp keychain geçmesi bütün girdiyi geçiriyor (yönlendirme yalnız ilk satıra ekleniyor); ayrıca yalnız dizin realpath'leniyor, temp altındaki login keychain'e giden bir symlink geçer. Bugün üründe çok satırlı `-i` yok, açık yalnız bir testin yanlış yazılmasıyla açılır. | Her öğe komutu satırının (`ITEM_CMDS`) kendi temp dosyasını taşımasını şart koşun; `isTempKeychainFile` içinde dosyanın kendisini `realpathSync` edin (yoksa dizini), sonra temp altında mı diye bakın. |
+| küçük | src/kiroapikey.js:232,237 | `kfkc del` çıkış kodu yok sayılıyor: eski `security -i` ile yaratılmış öğede izin reddedilirse ya da silme başarısız olursa komut "deleted" diyor, meta dosyası siliniyor ve anahtar Keychain'de sahipsiz kalıyor. | `r.code` 0 ya da 44 değilse hata atın (`KIRO_APIKEY_DELETE`), meta dosyasını silmeyin; `kiroapikey.test.js`'e del 3 dönen sahte yardımcıyla bir test ekleyin. |
+| küçük | src/kiro.js:468,512; CHANGELOG.md | Ad-hoc imzada atanmış gereksinim cdhash'tir; `-i com.keyflip.kfkc` kaynak değişince kimliği korumaz. Yardımcının `surfaces/kiro/.bin`'den `~/.keyflip-helper`'a taşınması da mevcut `kiro swap` kullanıcılarının `kirocli:odic:*` öğeleri için bir kez yeniden izin istemi doğurur. CHANGELOG bunu söylemiyor. | Yorumu ve CHANGELOG'u düzeltin: "aynı kaynakla yeniden derlenmez; kaynak değişirse ya da ilk güncellemede macOS her öğe için bir kez sorar". Eski `.bin/kfkc` ikilisinin bırakıldığını da not edin. K5'te sahip bu davranışı doğrular. |
