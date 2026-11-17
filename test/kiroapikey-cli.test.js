@@ -1,6 +1,9 @@
-// End-to-end checks of `keyflip kiro apikey` through the real CLI binary. Uses the real
-// login Keychain with random service names (created and removed here); the key values are
-// random per run. kiro-cli is a stub script. darwin only.
+// End-to-end checks of `keyflip kiro apikey` through the real CLI binary. Uses a THROWAWAY keychain file
+// created under the temp dir (never the login Keychain, so macOS can never ask for the owner's password);
+// the CLI is pointed at it with KEYFLIP_KEYCHAIN_FILE. Key values are random per run. kiro-cli is a stub
+// script. The default keychain and the search list are not touched (checked before/after). darwin only.
+// Items made by another program are only ever read with --no-length here: reading their length would make
+// macOS ask for permission, even in a throwaway keychain.
 import test from 'node:test';
 import assert from 'node:assert';
 import crypto from 'crypto';
@@ -14,28 +17,45 @@ const BIN = path.join(__dirname, '..', 'bin', 'keyflip.js');
 const SEC = '/usr/bin/security';
 const skip = process.platform !== 'darwin';
 
+let KC = null; // the throwaway keychain file of the current test
+
 function sandbox() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kf-akcli-'));
+  KC = path.join(dir, 'kf-test.keychain-db');
+  _child_process.execFileSync(SEC, ['create-keychain', '-p', 'kf-test-pw', KC]);
   return { dir, cfg: path.join(dir, 'cfg') };
+}
+function searchList() {
+  return _child_process.execFileSync(SEC, ['list-keychains', '-d', 'user'], { encoding: 'utf8' });
 }
 function kf(sb, args, input, extraEnv) {
   return _child_process.spawnSync(process.execPath, [BIN].concat(args), {
     encoding: 'utf8',
     input: input,
-    env: Object.assign({}, process.env, { KEYFLIP_CONFIG_DIR: sb.cfg, KEYFLIP_VCS: 'off' }, extraEnv || {}),
+    env: Object.assign(
+      {},
+      process.env,
+      {
+        KEYFLIP_CONFIG_DIR: sb.cfg,
+        KEYFLIP_VCS: 'off',
+        KEYFLIP_KEYCHAIN_FILE: KC,
+        KEYFLIP_HELPER_DIR: path.join(sb.dir, 'helper'),
+      },
+      extraEnv || {},
+    ),
   });
 }
 function rnd(p) {
   return p + crypto.randomBytes(8).toString('hex');
 }
 function addItem(svc, val) {
-  _child_process.execFileSync(SEC, ['add-generic-password', '-s', svc, '-a', 'kf-test', '-w', val]);
+  _child_process.execFileSync(SEC, ['add-generic-password', '-s', svc, '-a', 'kf-test', '-w', val, KC]);
 }
 function hasItem(svc) {
-  return _child_process.spawnSync(SEC, ['find-generic-password', '-s', svc]).status === 0;
+  return _child_process.spawnSync(SEC, ['find-generic-password', '-s', svc, KC]).status === 0;
 }
 function delItem(svc) {
-  _child_process.spawnSync(SEC, ['delete-generic-password', '-s', svc]);
+  _child_process.spawnSync(SEC, ['delete-generic-password', '-s', svc, KC]);
 }
 function walk(d, out) {
   out = out || [];
@@ -48,7 +68,8 @@ function walk(d, out) {
   return out;
 }
 
-test('CLI K1/K2/K3/K4/K7/K8 end to end on the real Keychain', { skip }, function () {
+test('CLI K1/K2/K3/K4/K7/K8 end to end on a throwaway keychain', { skip }, function () {
+  const listBefore = searchList();
   const sb = sandbox();
   const foreign = rnd('kf-test-foreign-');
   const hold = rnd('kiro-api-hold:kf-test-');
@@ -60,17 +81,18 @@ test('CLI K1/K2/K3/K4/K7/K8 end to end on the real Keychain', { skip }, function
   addItem(hold, key);
   try {
     // K1
-    let r = kf(sb, ['kiro', 'apikey', 'add', 'a1', '--keychain-service', foreign]);
+    let r = kf(sb, ['kiro', 'apikey', 'add', 'a1', '--keychain-service', foreign, '--no-length']);
     take(r);
     assert.strictEqual(r.status, 0, r.stderr);
     assert.match(r.stdout, /added/);
     const meta = path.join(sb.cfg, 'kiro-apikey', 'a1.json');
     assert.strictEqual(fs.statSync(meta).mode & 0o777, 0o600);
     assert.ok(!fs.readFileSync(meta, 'utf8').includes(key));
-    r = kf(sb, ['kiro', 'apikey', 'list']);
+    assert.doesNotMatch(r.stderr, /macOS will ask/, '--no-length: no prompt notice');
+    r = kf(sb, ['kiro', 'apikey', 'list', '--no-length']);
     take(r);
     assert.ok(r.stdout.includes('a1') && r.stdout.includes(foreign) && /present: yes/.test(r.stdout));
-    assert.match(r.stdout, new RegExp('length: ' + key.length));
+    assert.match(r.stdout, /length: unknown/);
     // K2
     r = kf(sb, ['kiro', 'apikey', 'add', 'a9', '--keychain-service', rnd('kf-test-absent-')]);
     take(r);
@@ -88,6 +110,9 @@ test('CLI K1/K2/K3/K4/K7/K8 end to end on the real Keychain', { skip }, function
     take(r);
     assert.strictEqual(r.status, 0, r.stderr);
     assert.ok(hasItem('keyflip:kiro-apikey:a2'));
+    r = kf(sb, ['kiro', 'apikey', 'list']);
+    take(r);
+    assert.match(r.stdout, new RegExp('a2 .*length: ' + key2.length));
     // K6 via CLI + JSON, K5
     const stub = path.join(sb.dir, 'stub.sh');
     fs.writeFileSync(
@@ -149,13 +174,22 @@ test('CLI K1/K2/K3/K4/K7/K8 end to end on the real Keychain', { skip }, function
     assert.strictEqual(r.status, 0);
     assert.ok(!hasItem('keyflip:kiro-apikey:a2'));
     assert.ok(hasItem(hold), 'hold item untouched');
+    // helper binary is built once (same bytes after a second add)
+    const bin = path.join(sb.dir, 'helper', 'kfkc');
+    if (fs.existsSync(bin)) {
+      const before = fs.statSync(bin).mtimeMs;
+      r = kf(sb, ['kiro', 'apikey', 'add', 'a3', '--key-file', '-'], key2 + '\n');
+      take(r);
+      assert.strictEqual(r.status, 0, r.stderr);
+      assert.strictEqual(fs.statSync(bin).mtimeMs, before, 'helper not rebuilt for the same source');
+      kf(sb, ['kiro', 'apikey', 'remove', 'a3', '--delete-item']);
+    }
     // K8
     const all = outs.concat(walk(sb.cfg).map((f) => fs.readFileSync(f, 'utf8')));
     all.forEach((s) => assert.ok(!s.includes(key) && !s.includes(key2), 'leak'));
   } finally {
-    delItem(foreign);
-    delItem(hold);
-    delItem('keyflip:kiro-apikey:a2');
+    _child_process.spawnSync(SEC, ['delete-keychain', KC]);
     fs.rmSync(sb.dir, { recursive: true, force: true });
+    assert.strictEqual(searchList(), listBefore, 'the keychain search list is unchanged');
   }
 });

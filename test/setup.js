@@ -6,6 +6,7 @@
 // os.tmpdir() reads these variables on every call, so every mkdtemp in the tests, in the code
 // under test and in the children they spawn lands inside it.
 import fs from 'fs';
+import { spawnSync } from 'child_process';
 import os from 'os';
 import path from 'path';
 
@@ -24,6 +25,15 @@ process.env.KEYFLIP_TEST_OFFLINE = '1';
 // The failover reads keysmith's config (its alias and caps): never the machine's real one. A test
 // that needs one passes its own file (opts.keysmithConfig / KEYSMITH_CONFIG for a spawned CLI).
 process.env.KEYSMITH_CONFIG = path.join(root, 'no-keysmith', 'config.json');
+
+// Every `security` call a test (or a CLI a test spawns) makes goes to a THROWAWAY keychain file in this
+// private temp root, never the login Keychain (src/exec.js adds the file; src/spawnguard.js refuses anything
+// else). A test that needs its own passes its own KEYFLIP_KEYCHAIN_FILE.
+if (process.platform === 'darwin' && !process.env.KEYFLIP_KEYCHAIN_FILE) {
+  const kc = path.join(root, 'suite.keychain-db');
+  const made = spawnSync('/usr/bin/security', ['create-keychain', '-p', 'keyflip-test', kc], { stdio: 'ignore' });
+  if (made.status === 0) process.env.KEYFLIP_KEYCHAIN_FILE = kc;
+}
 
 process.on('exit', function () {
   try {

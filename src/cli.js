@@ -15226,11 +15226,15 @@ function kiroSurfaceLine(surface) {
 // kiro-cli's KIRO_API_KEY) kept in the Keychain. The value is never printed or stored in keyflip files.
 function cmdKiroApikey(ctx, args) {
   const o = _kiroapikey.parseArgs(args);
+  // Said BEFORE macOS shows its own permission dialog (stderr, so --json output stays clean).
+  const noticeLine = function (msg) {
+    process.stderr.write(msg + '\n');
+  };
   const sub = o.positional[0] || 'list';
   const acct = o.positional[1];
   try {
     if (sub === 'list') {
-      const keys = _kiroapikey.listKeys(ctx, {});
+      const keys = _kiroapikey.listKeys(ctx, { noLength: o.noLength, notify: noticeLine });
       if (!keys.length)
         print('No Kiro API key references. Run: keyflip kiro apikey add <account> --keychain-service <name>');
       keys.forEach(function (k) {
@@ -15254,9 +15258,9 @@ function cmdKiroApikey(ctx, args) {
       let r;
       if (o.keyFile !== null) {
         if (o.keyFile !== '-') return fail('--key-file only accepts "-" (the key is read from stdin)');
-        r = _kiroapikey.addByValue(ctx, acct, fs.readFileSync(0, 'utf8'), {});
+        r = _kiroapikey.addByValue(ctx, acct, fs.readFileSync(0, 'utf8'), { noLength: o.noLength });
       } else {
-        r = _kiroapikey.addByService(ctx, acct, o.keychainService, {});
+        r = _kiroapikey.addByService(ctx, acct, o.keychainService, { noLength: o.noLength, notify: noticeLine });
       }
       print(
         style.ok('✓') +
@@ -15265,7 +15269,7 @@ function cmdKiroApikey(ctx, args) {
           ' -> ' +
           r.service +
           ' (length ' +
-          (r.bytes == null ? 'unknown' : r.bytes) +
+          (r.bytes == null ? (o.noLength ? 'not read' : 'unknown') : r.bytes) +
           ')',
       );
       jsonOut({ added: r });

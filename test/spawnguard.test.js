@@ -136,3 +136,79 @@ test('a stand-in claude under the temp dir may answer `auth status`', function (
   assert.equal(r.refused, undefined);
   assert.equal(r.stdout.trim(), 'stub');
 });
+
+// Without KEYFLIP_KEYCHAIN_FILE (the suite sets it, and exec.run then redirects item calls to that throwaway
+// file) a call that names no keychain is what the guard must refuse.
+function withoutKeychainEnv(fn) {
+  const prev = process.env.KEYFLIP_KEYCHAIN_FILE;
+  delete process.env.KEYFLIP_KEYCHAIN_FILE;
+  return Promise.resolve(fn()).finally(function () {
+    if (prev !== undefined) process.env.KEYFLIP_KEYCHAIN_FILE = prev;
+  });
+}
+
+// Keychain class: security (bare name and absolute path) and kfkc never run without an explicit temp keychain file.
+test('exec.run refuses security and kfkc without an explicit temp keychain file and logs one line each', function () {
+  return withoutKeychainEnv(() =>
+    withLog(function (file) {
+      const calls = [
+        ['/usr/bin/security', ['find-generic-password', '-s', 'keyflip:kiro-apikey:SECRET-NAME']],
+        ['security', ['add-generic-password', '-s', 'x', '-a', 'y', '-w', 'z']],
+        ['/usr/bin/security', ['-i']],
+        ['/tmp/some/kfkc', ['stat', 'svc']],
+      ];
+      for (const [cmd, args] of calls) {
+        const r = exec.run(
+          cmd,
+          args,
+          cmd.endsWith('security') && args[0] === '-i' ? 'delete-generic-password -s "x"\n' : undefined,
+        );
+        assert.equal(r.code, 1, cmd);
+        assert.equal(r.refused, true);
+      }
+      const lines = fs.readFileSync(file, 'utf8').trim().split('\n');
+      assert.equal(lines.length, 4);
+      lines.forEach((l) => assert.match(l, /^keychain /));
+      assert.ok(!fs.readFileSync(file, 'utf8').includes('SECRET-NAME'), 'argv (service names) is never logged');
+    }),
+  );
+});
+
+test('a keychain file outside the temp dir does not unlock the guard; changing the search list is refused even for temp', function () {
+  return withoutKeychainEnv(() =>
+    withLog(function (file) {
+      const tmpKc = path.join(tmpdir(), 'ok.keychain-db');
+      assert.equal(guard.isTempKeychainFile(tmpKc), true);
+      assert.equal(guard.isTempKeychainFile('/Users/someone/Library/Keychains/login.keychain-db'), false);
+      assert.equal(guard.isTempKeychainFile('relative.keychain-db'), false);
+      let r = exec.run('/usr/bin/security', [
+        'find-generic-password',
+        '-s',
+        'x',
+        '/Users/someone/Library/Keychains/login.keychain-db',
+      ]);
+      assert.equal(r.refused, true);
+      r = exec.run('/usr/bin/security', ['list-keychains', '-d', 'user', '-s', tmpKc]);
+      assert.equal(r.refused, true);
+      r = exec.run('/usr/bin/security', ['default-keychain', '-s', tmpKc]);
+      assert.equal(r.refused, true);
+      r = exec.run('/usr/bin/security', ['-i'], 'find-generic-password -s "x" "/Users/someone/login.keychain-db"\n');
+      assert.equal(r.refused, true);
+      assert.equal(fs.readFileSync(file, 'utf8').trim().split('\n').length, 4);
+    }),
+  );
+});
+
+test('a call that names a throwaway keychain file under the temp dir is let through (it cannot reach the login Keychain)', function () {
+  return withLog(function (file) {
+    const tmpKc = path.join(tmpdir(), 'nonexistent.keychain-db');
+    const r = exec.run('/usr/bin/security', ['show-keychain-info', tmpKc]);
+    assert.ok(!r.refused, 'allowed through the guard');
+    const r2 = exec.run('/usr/bin/security', ['-i'], 'show-keychain-info "' + tmpKc + '"\n');
+    assert.ok(!r2.refused);
+    assert.ok(!fs.existsSync(file) || fs.readFileSync(file, 'utf8').trim() === '');
+    assert.equal(guard.helperAllowed({ KFKC_KEYCHAIN: tmpKc }), true);
+    assert.equal(guard.helperAllowed({}), false);
+    assert.match(fs.readFileSync(file, 'utf8'), /^keychain kfkc helper/);
+  });
+});

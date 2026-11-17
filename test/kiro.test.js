@@ -433,6 +433,10 @@ test('ensureHelper compiles once and skips the compiler while the binary exists'
   const run = function (cmd, args) {
     if (cmd === 'xcrun')
       return { code: 0, stdout: '/Library/Developer/CommandLineTools/SDKs/MacOSX27.0.sdk\n', stderr: '' };
+    if (cmd === 'codesign') {
+      assert.ok(args.includes('com.keyflip.kfkc'), 'fixed signing identifier');
+      return { code: 0, stdout: '', stderr: '' };
+    }
     assert.strictEqual(cmd, 'cc');
     compiles += 1;
     const bin = args[args.indexOf('-o') + 1];
@@ -442,7 +446,7 @@ test('ensureHelper compiles once and skips the compiler while the binary exists'
   const first = kiro.ensureHelper(ctx, { run: run });
   assert.strictEqual(first.ok, true);
   assert.strictEqual(compiles, 1);
-  const src = fs.readFileSync(path.join(kiro.surfaceRoot(ctx), '.bin', 'kfkc.c'), 'utf8');
+  const src = fs.readFileSync(path.join(kiro.helperDir(ctx), 'kfkc.c'), 'utf8');
   assert.ok(src.indexOf('SecItemUpdate') !== -1);
   const second = kiro.ensureHelper(ctx, { run: run });
   assert.strictEqual(second.ok, true);

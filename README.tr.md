@@ -530,6 +530,7 @@ printf '%s' "$KEY" | keyflip kiro apikey add <hesap> --key-file -   # ya da anah
 keyflip kiro apikey list     # hesap, servis, var/yok, bayt uzunluğu (değer asla)
 keyflip kiro apikey test <hesap> [--timeout 60]   # başsız kiro-cli denemesi: PASS/FAIL + kategori
 keyflip kiro apikey remove <hesap> [--delete-item]  # --delete-item yalnız keyflip'e ait öğe için
+keyflip kiro apikey add|list ... --no-length         # ögeyi hiç okumaz: macOS izin istemi yok, uzunluk gösterilmez
 ```
 
 Kayıtlar `~/.config/keyflip/surfaces/kiro/<hesap>/` altında (0600, zaten

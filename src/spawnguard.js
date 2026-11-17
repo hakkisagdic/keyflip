@@ -8,6 +8,12 @@
 // (notify.send without an injected fetch; a loopback sink is allowed) are refused and counted.
 // A test that injects its own runner or fetch never reaches this module.
 //
+// Keychain class: `security` (bare name AND absolute path) and the kfkc helper are refused unless the call
+// names an explicit keychain FILE under the temp dir (a throwaway one the test created; the helper takes it
+// from KFKC_KEYCHAIN), so no test path can reach the login Keychain and make macOS ask for the owner's password.
+// A refusal is logged as `keychain ...`, which fails the suite's final check. Changing the search list or the
+// default keychain is refused even for a temp file.
+//
 // Every refusal is appended as one line to the file named by KEYFLIP_SPAWN_LOG (when set), so the
 // suite's final check sees refusals made in child processes too.
 import fs from 'fs';
@@ -21,9 +27,49 @@ function active() {
   return process.env.KEYFLIP_TEST_OFFLINE === '1' || !!process.env.NODE_TEST_CONTEXT;
 }
 
+// A keychain file under the (real) temp dir, e.g. created by the test itself.
+function isTempKeychainFile(p) {
+  try {
+    const s = String(p || '');
+    if (!/\.keychain(-db)?$/.test(s) || !path.isAbsolute(s)) return false;
+    const tmp = fs.realpathSync(os.tmpdir());
+    const dir = fs.realpathSync(path.dirname(s));
+    return dir === tmp || dir.startsWith(tmp + path.sep);
+  } catch {
+    return false;
+  }
+}
+
+function isKeychainTool(cmd) {
+  const base = path.basename(String(cmd || '')).toLowerCase();
+  return base === 'security' || base === 'kfkc';
+}
+
+// True when a security/kfkc call stays inside an explicit throwaway keychain file.
+function keychainCallAllowed(cmd, args, input, opts) {
+  const base = path.basename(String(cmd || '')).toLowerCase();
+  const a = Array.isArray(args) ? args.map(String) : [];
+  if (base === 'kfkc') {
+    const env = (opts && opts.env) || process.env;
+    return isTempKeychainFile(env.KFKC_KEYCHAIN);
+  }
+  if (a[0] === 'default-keychain' || a[0] === 'login-keychain') return false;
+  if (a[0] === 'list-keychains' && (a.includes('-s') || a.includes('-S'))) return false;
+  const words = a.slice();
+  if (a[0] === '-i' && typeof input === 'string') {
+    input.split(/\r?\n/).forEach(function (line) {
+      const m = line.match(/"((?:[^"\\]|\\.)*)"|\S+/g) || [];
+      m.forEach(function (w) {
+        words.push(w.replace(/^"|"$/g, '').replace(/\\(.)/g, '$1'));
+      });
+    });
+  }
+  return words.some(isTempKeychainFile);
+}
+
 function isGuarded(cmd, args) {
   const base = path.basename(String(cmd || '')).toLowerCase();
-  if (GUARDED.has(base)) return true;
+  if (GUARDED.has(base) || isKeychainTool(cmd)) return true;
   // `claude auth ...` talks to the machine-wide keychain whatever HOME the test uses: logout and login
   // change the owner's real session, status reads it. A stand-in `claude` a test put under the
   // temp dir is fine; the real one is not.
@@ -71,8 +117,18 @@ function record(kind, detail) {
 }
 
 // Returns a refusal result for exec.run when `cmd` must not really run now, else null.
-function refuseCommand(cmd, args) {
+function refuseCommand(cmd, args, input, opts) {
   if (!active() || !isGuarded(cmd, args)) return null;
+  if (isKeychainTool(cmd)) {
+    if (keychainCallAllowed(cmd, args, input, opts)) return null;
+    // Never log argv: it may carry a service name or a value.
+    record('keychain', path.basename(String(cmd)) + ' ' + (Array.isArray(args) ? String(args[0] || '') : ''));
+    const e = new Error(
+      'keyflip test guard: refused ' + path.basename(String(cmd)) + ' without an explicit temp keychain file',
+    );
+    e.code = 'KEYFLIP_TEST_GUARD';
+    return { code: 1, stdout: '', stderr: e.message, error: e, timedOut: false, refused: true };
+  }
   if (GUARDED.has(path.basename(String(cmd)).toLowerCase())) {
     record('spawn', path.basename(String(cmd)) + ' ' + (Array.isArray(args) ? args.join(' ') : ''));
   } else {
@@ -92,8 +148,17 @@ function refuseFetch(injected, url) {
   return true;
 }
 
+// For code that would build/run the kfkc helper itself: true when that is allowed now (guard off, or an
+// explicit temp keychain file is named). When it is not, the attempt is logged as a keychain refusal.
+function helperAllowed(env) {
+  if (!active()) return true;
+  if (isTempKeychainFile((env || process.env).KFKC_KEYCHAIN || (env || process.env).KEYFLIP_KEYCHAIN_FILE)) return true;
+  record('keychain', 'kfkc helper');
+  return false;
+}
+
 function refusedCount() {
   return refused;
 }
 
-export { active, isGuarded, refuseCommand, refuseFetch, refusedCount, GUARDED };
+export { active, isGuarded, refuseCommand, refuseFetch, refusedCount, helperAllowed, isTempKeychainFile, GUARDED };
