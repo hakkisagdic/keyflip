@@ -360,3 +360,17 @@ test('owned keys are written, read and deleted by the helper, never by `security
   ak.removeKey(ctx, 'o1', { deleteItem: true }, e.deps);
   assert.ok(e.argvLog.some((a) => a === FAKE_HELPER + ' del keyflip:kiro-apikey:o1'));
 });
+
+test('K2b a confined keychain: the real runner never asks the helper for the length of a foreign item', function () {
+  const ctx = makeCtx();
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kf-akey-h-'));
+  const mark = path.join(dir, 'called');
+  const helper = path.join(dir, 'kfkc');
+  fs.writeFileSync(helper, '#!/bin/sh\necho "$@" >> "' + mark + '"\necho bytes=7\n', { mode: 0o755 });
+  const env = Object.assign({}, process.env, { KEYFLIP_KEYCHAIN_FILE: path.join(dir, 'k.keychain-db') });
+  const deps = { run: realRun, helper: helper, env: env, noLength: false };
+  assert.strictEqual(ak._itemLength(ctx, 'kf-test-foreign-x', deps), null);
+  assert.ok(!fs.existsSync(mark), 'no helper call for a foreign item');
+  assert.strictEqual(ak._itemLength(ctx, ak.OWNED_PREFIX + 'a2', deps), 7);
+  assert.ok(fs.existsSync(mark), 'an owned item is still measured');
+});

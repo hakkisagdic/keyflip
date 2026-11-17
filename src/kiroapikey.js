@@ -14,9 +14,11 @@ import { atomicWrite } from './fsutil.js';
 import { registerSecret, redact } from './redact.js';
 import KeychainStore, { SECURITY } from './stores/keychain.js';
 import { ensureHelper } from './kiro.js';
+import { active as guardActive, isTempKeychainFile } from './spawnguard.js';
 
 function keychainFile(deps) {
-  return ((deps && deps.env) || process.env).KEYFLIP_KEYCHAIN_FILE || null;
+  const f = ((deps && deps.env) || process.env).KEYFLIP_KEYCHAIN_FILE || null;
+  return f && (guardActive() || isTempKeychainFile(f)) ? f : null;
 }
 function helperEnv(deps) {
   const f = keychainFile(deps);
@@ -102,6 +104,8 @@ function itemExists(service, deps) {
 // Byte length via the kfkc helper (value hidden); null when unavailable.
 function itemLength(ctx, service, deps) {
   if (deps.noLength) return null;
+  // With the real runner in a confined (test) keychain a foreign item is never read: that would make macOS ask.
+  if (deps.run === defaultRun && keychainFile(deps) && String(service).indexOf(OWNED_PREFIX) !== 0) return null;
   try {
     const h = ensureHelper(ctx, { run: deps.run, helper: deps.helper, cc: deps.cc });
     if (!h.ok) return null;
@@ -342,4 +346,5 @@ export {
   classify,
   cleanEnv,
   parseArgs,
+  itemLength as _itemLength,
 };

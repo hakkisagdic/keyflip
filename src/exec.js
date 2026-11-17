@@ -1,13 +1,18 @@
 // Tiny synchronous process runner. Never throws; returns a normalized result.
 import { spawnSync } from 'child_process';
 import path from 'path';
-import { refuseCommand } from './spawnguard.js';
+import { refuseCommand, active, isTempKeychainFile } from './spawnguard.js';
 
 // KEYFLIP_KEYCHAIN_FILE (documented; set by the test setup to a throwaway file) sends every item-level
 // `security` call that names no keychain to that one file instead of the login Keychain.
 const ITEM_CMDS = new Set(['find-generic-password', 'add-generic-password', 'delete-generic-password']);
-function withKeychainFile(cmd, args) {
+// The variable only counts under the test guard or when it names a keychain file under the temp dir.
+function confinedFile() {
   const file = process.env.KEYFLIP_KEYCHAIN_FILE;
+  return file && (active() || isTempKeychainFile(file)) ? file : null;
+}
+function withKeychainFile(cmd, args) {
+  const file = confinedFile();
   if (!file || path.basename(String(cmd)) !== 'security' || !Array.isArray(args) || !ITEM_CMDS.has(args[0]))
     return args;
   if (args.some((a) => /\.keychain(-db)?$/.test(String(a)))) return args;
@@ -16,7 +21,7 @@ function withKeychainFile(cmd, args) {
 
 // The same redirection for `security -i`, whose commands arrive on stdin one per line.
 function withKeychainFileInput(cmd, args, input) {
-  const file = process.env.KEYFLIP_KEYCHAIN_FILE;
+  const file = confinedFile();
   if (!file || path.basename(String(cmd)) !== 'security' || !Array.isArray(args) || args[0] !== '-i') return input;
   if (typeof input !== 'string' || /\.keychain(-db)?\b/.test(input.split('\n').slice(0, 1).join(''))) return input;
   const q = '"' + file.replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"';
@@ -52,4 +57,4 @@ function run(cmd, args, input, opts) {
   };
 }
 
-export { run };
+export { run, withKeychainFile, withKeychainFileInput };
