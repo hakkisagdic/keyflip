@@ -1,0 +1,26 @@
+# TEST: 20261117-test-anahtar-zinciri (dal is/20261117-test-anahtar-zinciri, mod function)
+
+Karar: KALDI (K2 ve inceleme ek maddesi). Tam `npm test` 2256 geçti / 0 kaldı / 4 atlandı, `final-no-real-spawns` yeşil; ama koşu penceresinde 1 securityd istem satırı var ve gerçek (guard kapalı) çalıştırmada dışarıdan verilen `KEYFLIP_KEYCHAIN_FILE` kabul ediliyor.
+
+Koşu penceresi: 2026-11-17 04:16:33 - 04:24:19 (+03), makine yuvası alındıktan sonra tek koşu (`heavy_slot.sh`, yük 96, sonra bırakıldı).
+
+| Kontrol | Sonuç | Kanıt |
+|---|---|---|
+| K1 guard, mutlak yol dahil, açık keychain'siz security reddi + final-no-real-spawns kırmızı | geçti | `test/tester-keychain-chain.test.js` "K1: ..." (guard açık alt süreçte `/usr/bin/security list-keychains` reddedilir, log satırı `keychain ...`, `final-no-real-spawns.js` çıkış != 0); ayrıca `test/spawnguard.test.js` yeşil |
+| K2 tam npm test, pencerede securityd "displaying keychain prompt" = 0 | KALDI | Pencerede 1 satır: 04:17:22.828 `displaying keychain prompt for .../kf-akcli-*/helper/kfkc`. Sorgu eski 02:20-02:35 penceresinde çalıştı: 8 satır (kanıt: `/usr/bin/log show --predicate 'process == "securityd"' --start ... --end ...`, not: zsh'te `log` yerleşiktir, tam yol gerekir). Kaynak: `test/kiroapikey-cli.test.js` yürütülürken kfkc, atılgan keychain'de başka program yapımı ögeyi (a1, `--no-length`siz `list`) okuyor. Yalnız-sahip-ögesi (a2 ekle/list/test/sil) ayrı denemede istemsiz geçti |
+| K3 atılgan keychain ile add --key-file -, list, test, remove; list-keychains ve varsayılan keychain aynı; login öge sayısı aynı | geçti | `test/kiroapikey-cli.test.js` yeşil (79 sn); koşu öncesi/sonrası `security list-keychains` aynı, varsayılan login, `dump-keychain` genp sayısı 206 = 206 (değer okunmadı) |
+| K4 sabit yol helper: aynı kaynakla iki add'de yeniden derlenmez, kaynak değişince bir kez derlenir | geçti | `test/tester-keychain-chain.test.js` "K4: ..." (mtime aynı, kaynak değişince artar, sonraki add'de yine aynı) |
+| K5 gerçek makinede ikinci okumada parola istemi yok | yürütülmedi | Yalnız sahip elle dener (kararda öyle). Not: atılgan keychain'de bile K2'deki gibi bir istem görüldü, yani kfkc'nin kendi yapmadığı ögeyi okuması istem çıkarıyor; kendi ögesinde istem görülmedi |
+| K6 yabancı öge: istemden ÖNCE uyarı; `--no-length` ile istem ve length yok | geçti (test düzeyinde) | `test/kiroapikey-cli.test.js` ve `test/kiroapikey.test.js` "K6 a foreign item..." yeşil (uyarı stderr'e, okumadan önce) |
+| K7 temizlik betiği yalnız a1,a2,a9,h; kiro-api:* ve kiro-api-hold:* sorgulanmaz, liste dökülmez | geçti | `test/tester-keychain-chain.test.js` "K7" (kaynak taraması) ve "K7 run" (sahte security: tam 4 `find-generic-password -s keyflip:kiro-apikey:<ad>` çağrısı); gerçek makinede `--dry-run`: 4 ad "absent" |
+| K8 depoda e-posta, özel yol, sır yok | geçti | Dal farkındaki eklenen satırlarda e-posta/kullanıcı adı/`.polyctl`/anahtar deseni yok; yalnız `/Users/someone/...` yer tutucusu |
+| Ek: KEYFLIP_KEYCHAIN_FILE yalnız guard aktifken veya temp altındaysa geçerli | KALDI | `test/tester-keychain-chain.test.js` "review: ..." kırmızı: guard kapalıyken `KEYFLIP_KEYCHAIN_FILE=/var/attacker/evil.keychain-db` ile `exec.run(security find-generic-password -s svc)` çağrısına dosya eklendi (`ARGS: find-generic-password -s svc /var/attacker/evil.keychain-db`) |
+| Ek: helper put/get/del argv ve loga değer yazmaz; çağrı noktaları taraması | geçti (kısmi not) | `put` değeri stdin'den alır (`deps.run(h, ['put', service, acct], v)`), `get` stdout'u yalnız süreç içinde okunur ve `registerSecret` edilir; tüm `security`/helper çağrıları `exec.run` üzerinden (guard + yönlendirme); `test/` "no test file runs the real security tool without creating its own throwaway keychain" yeşil. Not: `src/antigravity.js` 3. argümana `{input}` nesnesi veriyor (imza `run(cmd,args,input,opts)`), bu dalın konusu değil ama dikkat |
+| Regresyon: Claude profil deposu, kiro swap, kiro apikey add/list/remove/test, kiroapikey-cli ve keychain.real, uninstall, cli flags, switch dry run, mcp, migrate-v3 dalı | geçti | Tam `npm test` 0 kalan; `keychain.real` testi `KEYFLIP_REAL_KEYCHAIN` olmadan atlandı (kasıtlı, opt-in). migrate-v3 dalı ve yönetici satırı bu dalda değişmedi (`git diff --stat` içinde yok) |
+
+## Kalanlar
+
+1. K2: gözlenen = penceredeki 1 istem satırı (04:17:22, `kfkc` süreci `kiro-api` testinin atılgan keychain'inde); beklenen = 0. Olası neden: `kiroapikey-cli.test.js` içinde yabancı ögeli `a1` varken `list` `--no-length`siz çağrılıyor (satır "K4" adımı), `kfkc stat` yabancı ögeyi okuyor. Yer: `test/kiroapikey-cli.test.js` (list adımı) veya CLI'nin yabancı ögede `stat`a girmeden `--no-length` zorlaması. Kanıt: yalnız-sahip akışı denemesinde istem yok.
+2. Ek madde: gözlenen = `KEYFLIP_KEYCHAIN_FILE` ortam değişkeni guard kapalıyken ve temp dışındayken de `security` çağrılarına ekleniyor; beklenen = yalnız `spawnguard` aktifken veya dosya gerçek temp dizini altında `.keychain(-db)` ise kabul. Yer: `src/exec.js` `withKeychainFile` ve `withKeychainFileInput`, `src/kiroapikey.js` `keychainFile`. Düzeltince `test/tester-keychain-chain.test.js` "review" testi yeşile döner.
+
+Eklenen testler: `test/tester-keychain-chain.test.js` (5 test, 4 geçti, 1 bilerek kırmızı kalır). Gölge: ekran görüntüsü gerekmedi (arayüz yok).
