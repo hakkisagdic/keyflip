@@ -65,7 +65,7 @@ test('run passes a file path that requires no shell (spaces are safe)', function
   assert.equal(r.stdout.trim(), 'ok');
 });
 
-test('KEYFLIP_KEYCHAIN_FILE is ignored with the guard off unless it is a keychain file under the temp dir', function () {
+test('KEYFLIP_KEYCHAIN_FILE is honoured only while the guard is active', function () {
   const prev = {
     f: process.env.KEYFLIP_KEYCHAIN_FILE,
     o: process.env.KEYFLIP_TEST_OFFLINE,
@@ -82,10 +82,7 @@ test('KEYFLIP_KEYCHAIN_FILE is ignored with the guard off unless it is a keychai
     const ok = path.join(tmpdir(), 'k.keychain-db');
     fs.writeFileSync(ok, '');
     process.env.KEYFLIP_KEYCHAIN_FILE = ok;
-    assert.deepEqual(exec.withKeychainFile('/usr/bin/security', ['find-generic-password']), [
-      'find-generic-password',
-      ok,
-    ]);
+    assert.deepEqual(exec.withKeychainFile('/usr/bin/security', ['find-generic-password']), ['find-generic-password']);
     // guard active: the variable is honoured
     process.env.KEYFLIP_TEST_OFFLINE = '1';
     process.env.KEYFLIP_KEYCHAIN_FILE = '/elsewhere/z.keychain-db';

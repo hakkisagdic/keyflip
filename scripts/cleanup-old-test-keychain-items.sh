@@ -8,11 +8,11 @@ set -u
 SEC=/usr/bin/security
 for name in a1 a2 a9 h; do
   svc="keyflip:kiro-apikey:$name"
-  if "$SEC" find-generic-password -s "$svc" >/dev/null 2>&1; then
+  if "$SEC" find-generic-password -a kiro-apikey -s "$svc" >/dev/null 2>&1; then
     if [ "${1:-}" = "--dry-run" ]; then
       echo "would delete $svc"
     else
-      "$SEC" delete-generic-password -s "$svc" >/dev/null 2>&1 && echo "deleted $svc" || echo "could not delete $svc"
+      "$SEC" delete-generic-password -a kiro-apikey -s "$svc" >/dev/null 2>&1 && echo "deleted $svc" || echo "could not delete $svc"
     fi
   else
     echo "absent $svc"

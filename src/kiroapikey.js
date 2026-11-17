@@ -14,11 +14,11 @@ import { atomicWrite } from './fsutil.js';
 import { registerSecret, redact } from './redact.js';
 import KeychainStore, { SECURITY } from './stores/keychain.js';
 import { ensureHelper } from './kiro.js';
-import { active as guardActive, isTempKeychainFile } from './spawnguard.js';
+import { active as guardActive } from './spawnguard.js';
 
 function keychainFile(deps) {
   const f = ((deps && deps.env) || process.env).KEYFLIP_KEYCHAIN_FILE || null;
-  return f && (guardActive() || isTempKeychainFile(f)) ? f : null;
+  return f && guardActive() ? f : null;
 }
 function helperEnv(deps) {
   const f = keychainFile(deps);

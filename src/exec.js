@@ -1,15 +1,15 @@
 // Tiny synchronous process runner. Never throws; returns a normalized result.
 import { spawnSync } from 'child_process';
 import path from 'path';
-import { refuseCommand, active, isTempKeychainFile } from './spawnguard.js';
+import { refuseCommand, active } from './spawnguard.js';
 
 // KEYFLIP_KEYCHAIN_FILE (documented; set by the test setup to a throwaway file) sends every item-level
 // `security` call that names no keychain to that one file instead of the login Keychain.
 const ITEM_CMDS = new Set(['find-generic-password', 'add-generic-password', 'delete-generic-password']);
-// The variable only counts under the test guard or when it names a keychain file under the temp dir.
+// The variable only counts while the test guard is active; a real run ignores it.
 function confinedFile() {
   const file = process.env.KEYFLIP_KEYCHAIN_FILE;
-  return file && (active() || isTempKeychainFile(file)) ? file : null;
+  return file && active() ? file : null;
 }
 function withKeychainFile(cmd, args) {
   const file = confinedFile();

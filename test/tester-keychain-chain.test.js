@@ -100,7 +100,7 @@ test('K7 run: --dry-run with a stand-in security touches only the four names', {
     const r = spawnSync('sh', [copy, '--dry-run'], { encoding: 'utf8' });
     assert.equal(r.status, 0, r.stderr);
     const calls = fs.readFileSync(log, 'utf8').split('\n').filter(Boolean);
-    assert.deepEqual(calls, ['a1', 'a2', 'a9', 'h'].map((n) => 'find-generic-password -s keyflip:kiro-apikey:' + n));
+    assert.deepEqual(calls, ['a1', 'a2', 'a9', 'h'].map((n) => 'find-generic-password -a kiro-apikey -s keyflip:kiro-apikey:' + n));
   } finally {
     fs.rmSync(d, { recursive: true, force: true });
   }
