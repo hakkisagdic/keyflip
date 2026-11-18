@@ -580,6 +580,8 @@ function mapClaudeStatus(s) {
   // NOT mean the account is rate-limited (a 429-usage account keeps serving inference). Map it
   // to 'unknown', never 'throttled', so a TUI/auto-switch consumer does not skip a usable account.
   if (s === 'throttled') return 'unknown';
+  // 'unsupported' = the endpoint refuses this kind of sign-in: no reading exists, and that is not a limit.
+  if (s === 'unsupported') return 'unknown';
   if (s === 'expired' || s === 'no-token' || s === 'no-creds') return 'unauthenticated';
   return 'unknown';
 }
@@ -609,13 +611,24 @@ const claudeProvider = {
     const windows = [];
     const u = info.usage;
     if (isObj(u)) {
-      if (isObj(u.fiveHour) && num(u.fiveHour.pct) !== null) {
-        windows.push(makeWindow('5h', u.fiveHour.pct, u.fiveHour.resetsAt ? { iso: u.fiveHour.resetsAt } : null, deps));
-      }
-      if (isObj(u.sevenDay) && num(u.sevenDay.pct) !== null) {
-        windows.push(
-          makeWindow('weekly', u.sevenDay.pct, u.sevenDay.resetsAt ? { iso: u.sevenDay.resetsAt } : null, deps),
-        );
+      // EVERY window the reader parsed (5h, weekly, per-model weekly, unknown ones), by stable name.
+      const wl = Array.isArray(u.windows) ? u.windows : null;
+      if (wl) {
+        wl.forEach(function (w) {
+          if (isObj(w) && num(w.pct) !== null)
+            windows.push(makeWindow(w.name || 'window', w.pct, w.resetsAt ? { iso: w.resetsAt } : null, deps));
+        });
+      } else {
+        if (isObj(u.fiveHour) && num(u.fiveHour.pct) !== null) {
+          windows.push(
+            makeWindow('5h', u.fiveHour.pct, u.fiveHour.resetsAt ? { iso: u.fiveHour.resetsAt } : null, deps),
+          );
+        }
+        if (isObj(u.sevenDay) && num(u.sevenDay.pct) !== null) {
+          windows.push(
+            makeWindow('weekly', u.sevenDay.pct, u.sevenDay.resetsAt ? { iso: u.sevenDay.resetsAt } : null, deps),
+          );
+        }
       }
     }
     return { status: status === 'ok' && !windows.length ? 'unknown' : status, windows: windows, raw: null };
