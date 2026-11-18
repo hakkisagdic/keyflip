@@ -177,8 +177,17 @@ test('the shared distill instruction carries the four anti-invention rules', fun
   assert.match(t, /first line is "Task and outcome:"/);
   assert.match(t, /diff under review, a ticket or a pasted document is input, never work done/);
   assert.match(t, /no number, path, date, commit or name that is not in the transcript/);
-  assert.match(t, /language the session itself is in/);
-  assert.ok(t.length < 900, 'keep it short');
+  assert.ok(t.length < 1100, 'keep it short');
+});
+
+test('the distill instruction states the language rule first and unmistakably', function () {
+  const t = llm.DISTILL_INSTRUCTION;
+  assert.ok(
+    t.startsWith('Write the whole summary in the language the user wrote in during the session'),
+    'language rule must open the instruction',
+  );
+  assert.ok(t.indexOf('language') < t.indexOf('Summarize this'), 'before the task');
+  assert.ok(!/session itself is in/.test(t), 'the old weak wording is gone');
 });
 
 test('distill and dream use the shared instruction, not private copies', function () {
