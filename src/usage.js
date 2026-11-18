@@ -22,6 +22,8 @@ const THROTTLE_BASE_MS = 60 * 1000;
 const THROTTLE_MAX_MS = 30 * 60 * 1000;
 const RETRY_AFTER_MAX_MS = 6 * 3600 * 1000; // a corrupt header must not pin the cache for days
 const LOCK_TIMEOUT_MS = 8000;
+// A sign-in kind the endpoint refuses stays refused until the credential changes: ask again rarely.
+const UNSUPPORTED_TTL_MS = 6 * 3600 * 1000;
 
 let VERSION = '0.0.0';
 try {
@@ -59,6 +61,193 @@ function headerOf(res, name) {
   return h[name] !== undefined ? h[name] : h[name.toLowerCase()] !== undefined ? h[name.toLowerCase()] : null;
 }
 
+// The server's own reason for a refusal: { type, message } from the error body, never anything else
+// (no header, no token). Best effort; null when the body is not the usual error envelope.
+async function errorReasonOf(res) {
+  try {
+    if (!res || typeof res.json !== 'function') return null;
+    const j = await res.json();
+    const e = j && typeof j === 'object' ? j.error : null;
+    if (!e || typeof e !== 'object') return null;
+    const type = typeof e.type === 'string' ? e.type.slice(0, 80) : null;
+    const message = typeof e.message === 'string' ? e.message.slice(0, 200) : null;
+    return type || message ? { type: type, message: message } : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+// What kind of sign-in a stored credential is, from its scopes (a name list, not a secret).
+// The usage endpoint needs the 'user:profile' scope: a browser OAuth sign-in has it, a long-lived
+// token made for inference only ('claude setup-token') does not and is refused.
+// -> 'oauth' | 'inference-only' | 'unknown'
+function signInKind(blob) {
+  try {
+    const o = JSON.parse(blob).claudeAiOauth;
+    if (!o || !Array.isArray(o.scopes)) return 'unknown';
+    return o.scopes.indexOf('user:profile') !== -1 ? 'oauth' : 'inference-only';
+  } catch (e) {
+    return 'unknown';
+  }
+}
+
+// A refusal that is about the KIND of sign-in, not about load: a missing scope in the server's
+// words, or a refusal (401/403/429) on a credential that lacks the profile scope altogether.
+const UNSUPPORTED_NOTE = 'unsupported for this sign-in kind';
+function isUnsupportedSignIn(httpStatus, reason, kind) {
+  const msg = reason ? String(reason.message || '') + ' ' + String(reason.type || '') : '';
+  if (httpStatus === 403 && /scope|user:profile|permission/i.test(msg)) return true;
+  if (kind === 'inference-only' && (httpStatus === 401 || httpStatus === 403 || httpStatus === 429)) return true;
+  return false;
+}
+
+// ---- windows -------------------------------------------------------------------------------
+// The usage endpoint grew: the old top-level keys (five_hour, seven_day, seven_day_opus, ...) and a
+// newer `limits` list (kind, group, percent, severity, resets_at, scope.model, is_active). Every
+// window found becomes { name, pct, resetsAt, scope, severity, active, limiting, source } with a
+// STABLE name: '5h', 'weekly', 'weekly:<model>' (e.g. 'weekly:fable'), or the slug of an unknown
+// kind/key. Unknown future windows are kept, never dropped.
+function slug(v) {
+  return String(v == null ? '' : v)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+function isPct(v) {
+  return typeof v === 'number' && isFinite(v);
+}
+function legacyName(key) {
+  if (key === 'five_hour') return { name: '5h', scope: null, limiting: true };
+  if (key === 'seven_day') return { name: 'weekly', scope: null, limiting: true };
+  const m = /^seven_day_(.+)$/.exec(key);
+  if (m) return { name: 'weekly:' + slug(m[1]), scope: slug(m[1]), limiting: false };
+  return { name: slug(key), scope: null, limiting: false };
+}
+function limitName(l) {
+  const kind = String(l.kind || '');
+  const sc = l.scope && typeof l.scope === 'object' ? l.scope : null;
+  const model = sc && sc.model && typeof sc.model === 'object' ? sc.model.display_name || sc.model.id : null;
+  const surface = sc && sc.surface ? sc.surface : null;
+  const scopeSlug = model ? slug(model) : surface ? slug(surface) : null;
+  let base;
+  if (kind === 'weekly_all' || kind === 'weekly_scoped' || kind === 'weekly') base = 'weekly';
+  else if (kind === 'five_hour' || kind === 'session' || kind === 'five_hour_all') base = '5h';
+  else base = slug(kind) || slug(l.group) || 'limit';
+  return { name: scopeSlug ? base + ':' + scopeSlug : base, scope: scopeSlug };
+}
+function parseWindows(data) {
+  const wins = [];
+  const seen = Object.create(null);
+  function add(w) {
+    if (seen[w.name]) return;
+    seen[w.name] = true;
+    wins.push(w);
+  }
+  if (!data || typeof data !== 'object') return wins;
+  // 1. the `limits` list (carries severity and which window is the binding one)
+  if (Array.isArray(data.limits)) {
+    data.limits.forEach(function (l) {
+      if (!l || typeof l !== 'object' || !isPct(l.percent)) return;
+      const n = limitName(l);
+      add({
+        name: n.name,
+        pct: l.percent,
+        resetsAt: l.resets_at || null,
+        scope: n.scope,
+        severity: typeof l.severity === 'string' ? l.severity : null,
+        active: l.is_active === true,
+        limiting: !n.scope || l.is_active === true,
+        source: 'limits',
+      });
+    });
+  }
+  // 2. every top-level key that is itself a window ({ utilization, resets_at }) — known or not
+  Object.keys(data).forEach(function (key) {
+    const w = data[key];
+    if (!w || typeof w !== 'object' || Array.isArray(w) || !isPct(w.utilization)) return;
+    const n = legacyName(key);
+    add({
+      name: n.name,
+      pct: w.utilization,
+      resetsAt: w.resets_at || null,
+      scope: n.scope,
+      severity: null,
+      active: null,
+      limiting: n.limiting,
+      source: key,
+    });
+  });
+  const rank = function (w) {
+    return w.name === '5h' ? 0 : w.name === 'weekly' ? 1 : 2;
+  };
+  return wins
+    .map(function (w, i) {
+      return { w: w, i: i };
+    })
+    .sort(function (a, b) {
+      return rank(a.w) - rank(b.w) || a.i - b.i;
+    })
+    .map(function (x) {
+      return x.w;
+    });
+}
+
+// A window's short label for one-line output (the names callers already know stay as they were).
+function labelOf(w) {
+  if (w.name === 'weekly') return '7d';
+  if (w.name.indexOf('weekly:') === 0) return w.name.slice(7);
+  return w.name;
+}
+
+// Remaining % across the windows that LIMIT the account (account-wide ones, plus any flagged active);
+// when none is account-wide, across whatever windows exist. null = unknown.
+function headroomOfWindows(wins) {
+  if (!wins || !wins.length) return null;
+  let pool = wins.filter(function (w) {
+    return w.limiting;
+  });
+  if (!pool.length) pool = wins;
+  return Math.min.apply(
+    null,
+    pool.map(function (w) {
+      return 100 - w.pct;
+    }),
+  );
+}
+
+// The endpoint's JSON -> { windows, headroomPct, limitedScopes, fiveHour?, sevenDay?, sevenDayOpus?,
+// sevenDaySonnet? } | null. The four legacy fields are kept for existing callers.
+function parseUsage(data) {
+  const wins = parseWindows(data);
+  if (!wins.length) return null;
+  const out = {};
+  function pick(name, family) {
+    const w = wins.filter(function (x) {
+      return x.name === name;
+    })[0];
+    if (!w) return null;
+    const o = { pct: w.pct, resetsAt: w.resetsAt };
+    if (family) o.family = family;
+    return o;
+  }
+  const f = pick('5h');
+  const d = pick('weekly');
+  const op = pick('weekly:opus', 'opus');
+  const so = pick('weekly:sonnet', 'sonnet');
+  if (f) out.fiveHour = f;
+  if (d) out.sevenDay = d;
+  if (op) out.sevenDayOpus = op;
+  if (so) out.sevenDaySonnet = so;
+  out.windows = wins;
+  out.headroomPct = headroomOfWindows(wins);
+  out.limitedScopes = wins
+    .filter(function (w) {
+      return w.pct >= 100;
+    })
+    .map(labelOf);
+  return out;
+}
+
 // Detailed variant: { usage, httpStatus, retryAfterMs } — httpStatus lets callers distinguish
 // an expired/invalid token (401/403) from a network failure; retryAfterMs is the server's
 // Retry-After on a 429/503 (null when absent).
@@ -83,31 +272,11 @@ async function fetchUsageDetailed(accessToken, opts) {
         usage: null,
         httpStatus: (res && res.status) || null,
         retryAfterMs: parseRetryAfter(headerOf(res, 'retry-after'), opts.nowMs),
+        reason: await errorReasonOf(res),
       };
     const data = await res.json();
-    const out = {};
-    if (data.five_hour && typeof data.five_hour.utilization === 'number') {
-      out.fiveHour = { pct: data.five_hour.utilization, resetsAt: data.five_hour.resets_at || null };
-    }
-    if (data.seven_day && typeof data.seven_day.utilization === 'number') {
-      out.sevenDay = { pct: data.seven_day.utilization, resetsAt: data.seven_day.resets_at || null };
-    }
-    if (data.seven_day_opus && typeof data.seven_day_opus.utilization === 'number') {
-      out.sevenDayOpus = {
-        pct: data.seven_day_opus.utilization,
-        resetsAt: data.seven_day_opus.resets_at || null,
-        family: 'opus',
-      };
-    }
-    if (data.seven_day_sonnet && typeof data.seven_day_sonnet.utilization === 'number') {
-      out.sevenDaySonnet = {
-        pct: data.seven_day_sonnet.utilization,
-        resetsAt: data.seven_day_sonnet.resets_at || null,
-        family: 'sonnet',
-      };
-    }
-    const hasAny = out.fiveHour || out.sevenDay || out.sevenDayOpus || out.sevenDaySonnet;
-    return { usage: hasAny ? out : null, httpStatus: res.status, retryAfterMs: null };
+    const out = parseUsage(data);
+    return { usage: out, httpStatus: res.status, retryAfterMs: null };
   } catch (e) {
     return { usage: null, httpStatus: null, retryAfterMs: null };
   }
@@ -118,66 +287,72 @@ async function fetchUsage(accessToken, opts) {
   return (await fetchUsageDetailed(accessToken, opts)).usage;
 }
 
-// Remaining % before the binding account-wide rate-limit window; null = unknown.
-function headroom(usage) {
-  if (!usage || typeof usage !== 'object') return null;
-  const pcts = [];
-  [usage.fiveHour, usage.sevenDay].forEach(function (w) {
-    if (w && typeof w.pct === 'number') pcts.push(w.pct);
-  });
-  if (!pcts.length) {
-    [usage.sevenDayOpus, usage.sevenDaySonnet].forEach(function (w) {
-      if (w && typeof w.pct === 'number') pcts.push(w.pct);
+// The windows of a usage object: the parsed list, or (an older cached reading) the four legacy fields.
+function windowsOf(usage) {
+  if (!usage || typeof usage !== 'object') return [];
+  if (Array.isArray(usage.windows)) {
+    return usage.windows.filter(function (w) {
+      return w && isPct(w.pct);
     });
   }
-  if (!pcts.length) return null;
-  return 100 - Math.max.apply(null, pcts);
-}
-
-// Model-scoped headroom (Traycer semantics): shared windows (5h, 7d) gate every
-// model, while model-family windows (sevenDayOpus, sevenDaySonnet) gate only
-// models of that family. An account at 100% Opus quota still has headroom for Sonnet.
-function headroomForModel(usage, model) {
-  if (!usage || typeof usage !== 'object') return null;
-  const family = model ? _tiers.familyOf(model) : null;
-  const pcts = [];
-  [usage.fiveHour, usage.sevenDay].forEach(function (w) {
-    if (w && typeof w.pct === 'number') pcts.push(w.pct);
+  const out = [];
+  [
+    ['5h', usage.fiveHour, null, true],
+    ['weekly', usage.sevenDay, null, true],
+    ['weekly:opus', usage.sevenDayOpus, 'opus', false],
+    ['weekly:sonnet', usage.sevenDaySonnet, 'sonnet', false],
+  ].forEach(function (r) {
+    if (r[1] && isPct(r[1].pct))
+      out.push({ name: r[0], pct: r[1].pct, resetsAt: r[1].resetsAt || null, scope: r[2], limiting: r[3] });
   });
-  if (!family || family === 'opus') {
-    if (usage.sevenDayOpus && typeof usage.sevenDayOpus.pct === 'number') {
-      pcts.push(usage.sevenDayOpus.pct);
-    }
-  }
-  if (!family || family === 'sonnet') {
-    if (usage.sevenDaySonnet && typeof usage.sevenDaySonnet.pct === 'number') {
-      pcts.push(usage.sevenDaySonnet.pct);
-    }
-  }
+  return out;
+}
+
+// Remaining % before the binding rate-limit window: the smallest remaining share across the windows
+// that limit the account (see headroomOfWindows); null = unknown.
+function headroom(usage) {
+  return headroomOfWindows(windowsOf(usage));
+}
+
+// Model-scoped headroom (Traycer semantics): shared windows (5h, weekly) gate every model, while a
+// model-scoped window (weekly:opus, weekly:fable, ...) gates only that model. An account at 100% Opus
+// quota still has headroom for Sonnet. An unknown model is held against every scoped window.
+function headroomForModel(usage, model) {
+  const wins = windowsOf(usage);
+  const shared = wins.filter(function (w) {
+    return !w.scope;
+  });
+  const scoped = wins.filter(function (w) {
+    return w.scope;
+  });
+  const m = slug(model);
+  const family = model ? _tiers.familyOf(model) : null;
+  const matched = scoped.filter(function (w) {
+    return m.indexOf(w.scope) !== -1;
+  });
+  const used = model && (family || matched.length) ? matched : scoped;
+  const pcts = shared.concat(used).map(function (w) {
+    return w.pct;
+  });
   if (!pcts.length) return null;
   return 100 - Math.max.apply(null, pcts);
 }
 
-// Which quota scopes are currently exhausted (pct >= 100).
+// Which quota scopes are currently exhausted (pct >= 100), by short label ('5h', '7d', 'opus', ...).
 function limitedScopes(usage) {
-  if (!usage || typeof usage !== 'object') return [];
-  const scopes = [];
-  if (usage.fiveHour && typeof usage.fiveHour.pct === 'number' && usage.fiveHour.pct >= 100) scopes.push('5h');
-  if (usage.sevenDay && typeof usage.sevenDay.pct === 'number' && usage.sevenDay.pct >= 100) scopes.push('7d');
-  if (usage.sevenDayOpus && typeof usage.sevenDayOpus.pct === 'number' && usage.sevenDayOpus.pct >= 100)
-    scopes.push('opus');
-  if (usage.sevenDaySonnet && typeof usage.sevenDaySonnet.pct === 'number' && usage.sevenDaySonnet.pct >= 100)
-    scopes.push('sonnet');
-  return scopes;
+  const out = [];
+  windowsOf(usage).forEach(function (w) {
+    const l = labelOf(w);
+    if (w.pct >= 100 && out.indexOf(l) === -1) out.push(l);
+  });
+  return out;
 }
 
 function fmt(usage) {
   if (!usage) return '?';
-  const parts = [];
-  if (usage.fiveHour) parts.push('5h ' + Math.round(usage.fiveHour.pct) + '%');
-  if (usage.sevenDay) parts.push('7d ' + Math.round(usage.sevenDay.pct) + '%');
-  if (usage.sevenDayOpus) parts.push('opus ' + Math.round(usage.sevenDayOpus.pct) + '%');
-  if (usage.sevenDaySonnet) parts.push('sonnet ' + Math.round(usage.sevenDaySonnet.pct) + '%');
+  const parts = windowsOf(usage).map(function (w) {
+    return labelOf(w) + ' ' + Math.round(w.pct) + '%';
+  });
   return parts.join(' · ') || '?';
 }
 
@@ -271,10 +446,11 @@ function cacheState(c, nowMs, ttl) {
   const t = c.throttle;
   if (t && typeof t.until === 'number' && nowMs < t.until && t.until - nowMs <= RETRY_AFTER_MAX_MS + THROTTLE_MAX_MS)
     return 'quiet';
+  if (c.status === 'unsupported' && nowMs - c.at < UNSUPPORTED_TTL_MS) return 'fresh';
   return nowMs - c.at < ttl ? 'fresh' : 'stale';
 }
 
-// Usage per profile name -> { status: 'ok'|'no-creds'|'no-token'|'error'|'throttled'|'expired'|'pending',
+// Usage per profile name -> { status: 'ok'|'no-creds'|'no-token'|'error'|'throttled'|'unsupported'|'expired'|'pending',
 // usage, headroom, lastGood, lastGoodAt, limitedScopes, retryAt? }.
 //
 // ONE poll per account per window for the whole machine: the cache file is shared by the CLI, the
@@ -290,9 +466,40 @@ async function usageForProfiles(ctx, names, opts) {
   const ttl = opts.cacheTtlMs !== undefined ? opts.cacheTtlMs : cfgTtlMs(ctx);
   const out = {};
 
+  // The credential this name would be read with now (live for the active account, else the saved one).
+  function currentBlob(name) {
+    let blob = null;
+    if (opts.liveFor && opts.liveFor === name) {
+      try {
+        blob = ctx.store.getLive();
+      } catch (e) {
+        blob = null;
+      }
+    }
+    if (!blob) {
+      try {
+        blob = ctx.store.getProfile(name);
+      } catch (e) {
+        blob = null;
+      }
+    }
+    return blob;
+  }
+  // A refusal or a quiet window belongs to the credential that earned it. After a renewed sign-in the
+  // account must be asked again at once — a 17-strike hour-long wait for the OLD token must not hide it.
+  function credentialChanged(name, c) {
+    const tok = accessTokenOf(currentBlob(name));
+    if (!tok) return false;
+    const fp = tokenFp(tok);
+    if (c.status === 'unsupported') return !c.fp || c.fp !== fp;
+    if (c.throttle && c.throttle.fp) return c.throttle.fp !== fp;
+    return !quietUntil(readThrottles(ctx)[fp], nowMs); // an older entry without a fingerprint
+  }
+
   function serveFromCache(cache, name) {
     const c = cache[name];
-    const st = cacheState(c, nowMs, ttl);
+    let st = cacheState(c, nowMs, ttl);
+    if ((st === 'quiet' || (st === 'fresh' && c.status === 'unsupported')) && credentialChanged(name, c)) st = 'stale';
     if (st === 'fresh') {
       out[name] = rowFromCache(c, nowMs);
       return true;
@@ -356,23 +563,10 @@ async function usageForProfiles(ctx, names, opts) {
       const prevGood = (c && (c.usage || c.lastGood)) || null;
       const prevGoodAt = c ? (c.usage ? c.at : typeof c.lastGoodAt === 'number' ? c.lastGoodAt : null) : null;
       let throttle = null;
+      let unsupportedFp = null;
       // For the ACTIVE account prefer the LIVE credential — Claude keeps it fresh,
       // while the stored snapshot may hold an already-expired access token.
-      let blob = null;
-      if (opts.liveFor && opts.liveFor === name) {
-        try {
-          blob = ctx.store.getLive();
-        } catch (e) {
-          blob = null;
-        }
-      }
-      if (!blob) {
-        try {
-          blob = ctx.store.getProfile(name);
-        } catch (e) {
-          blob = null;
-        }
-      }
+      const blob = currentBlob(name);
       if (!blob) {
         out[name] = {
           status: 'no-creds',
@@ -447,7 +641,7 @@ async function usageForProfiles(ctx, names, opts) {
           }
           if (r.httpStatus === 'quiet') {
             const tw = tthrottle[tfp];
-            throttle = { until: tUntil, strikes: tw.strikes || 1, retryAfterMs: tw.retryAfterMs || null };
+            throttle = { until: tUntil, strikes: tw.strikes || 1, retryAfterMs: tw.retryAfterMs || null, fp: tfp };
             out[name] = {
               status: 'throttled',
               usage: null,
@@ -465,10 +659,25 @@ async function usageForProfiles(ctx, names, opts) {
             out[name] = {
               status: 'ok',
               usage: r.usage,
-              headroom: headroom(r.usage),
+              headroom: r.usage.headroomPct,
               lastGood: r.usage,
               lastGoodAt: nowMs,
               limitedScopes: limitedScopes(r.usage),
+            };
+          } else if (isUnsupportedSignIn(r.httpStatus, r.reason, signInKind(blob))) {
+            // The endpoint refuses this KIND of sign-in (no profile scope): not a rate limit, not an
+            // expired token. Say so, and do not ask again until the credential changes.
+            unsupportedFp = tfp;
+            out[name] = {
+              status: 'unsupported',
+              note: UNSUPPORTED_NOTE,
+              httpStatus: r.httpStatus,
+              reason: r.reason || null,
+              usage: null,
+              headroom: null,
+              lastGood: null,
+              lastGoodAt: null,
+              limitedScopes: [],
             };
           } else if (r.httpStatus === 401 || r.httpStatus === 403) {
             out[name] = {
@@ -486,16 +695,18 @@ async function usageForProfiles(ctx, names, opts) {
           // `lastGood`, and stay quiet for the window the server asked for (or longer).
           else if (r.httpStatus === 429) {
             const prevStrikes = Math.max(
-              (c && c.throttle && c.throttle.strikes) || 0,
+              (c && c.throttle && c.throttle.fp === tfp && c.throttle.strikes) || 0,
               (tthrottle[tfp] && tthrottle[tfp].strikes) || 0,
             );
             const strikes = prevStrikes + 1;
             const wait = throttleWindowMs(strikes, r.retryAfterMs, ttl);
-            throttle = { until: nowMs + wait, strikes: strikes, retryAfterMs: r.retryAfterMs };
+            throttle = { until: nowMs + wait, strikes: strikes, retryAfterMs: r.retryAfterMs, fp: tfp };
             tthrottle[tfp] = throttle;
             tthrottleDirty = true;
             out[name] = {
               status: 'throttled',
+              httpStatus: 429,
+              reason: r.reason || null,
               usage: null,
               headroom: null,
               lastGood: prevGood,
@@ -523,6 +734,7 @@ async function usageForProfiles(ctx, names, opts) {
         lastGoodAt: out[name].lastGoodAt || null,
       };
       if (throttle) cache[name].throttle = throttle;
+      if (unsupportedFp) cache[name].fp = unsupportedFp;
       // #12: record every FRESH sample (cache hits never get here) to the trend log.
       if (opts.recordHistory) {
         try {
@@ -557,7 +769,7 @@ function effectiveHeadroom(info, nowMs, maxStaleMs) {
   const now = nowMs !== undefined ? nowMs : Date.now();
   const age = now - at;
   if (age < 0 || age > maxStaleMs) return { headroom: null, basis: null, usage: null };
-  const reset = [lg.fiveHour, lg.sevenDay, lg.sevenDayOpus, lg.sevenDaySonnet].some(function (w) {
+  const reset = windowsOf(lg).some(function (w) {
     const r = w && w.resetsAt ? Date.parse(w.resetsAt) : NaN;
     return !isNaN(r) && r <= now;
   });
@@ -608,6 +820,11 @@ function pickByStrategy(candidates, infos, strategy, opts) {
 export {
   fetchUsage,
   fetchUsageDetailed,
+  parseUsage,
+  parseWindows,
+  windowsOf,
+  signInKind,
+  UNSUPPORTED_NOTE,
   headroom,
   headroomForModel,
   limitedScopes,

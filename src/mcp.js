@@ -176,6 +176,11 @@ function accountsPayload(ctx, infos) {
       out.headroomPct = infos[e.name].headroom;
       out.limitedScopes = usage.limitedScopes(infos[e.name].usage);
       out.lastGood = infos[e.name].lastGood || null;
+      out.lastGoodAt = infos[e.name].lastGoodAt || null;
+      if (infos[e.name].note) out.usageNote = infos[e.name].note;
+      if (infos[e.name].httpStatus) out.usageHttpStatus = infos[e.name].httpStatus;
+      if (infos[e.name].reason) out.usageReason = infos[e.name].reason;
+      if (infos[e.name].retryAt) out.retryAt = infos[e.name].retryAt;
     }
     return out;
   });
