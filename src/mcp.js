@@ -5816,8 +5816,7 @@ const TOOLS = [
       if (gate.provider.provider === 'claude' && !llm.available(ctx))
         throw new Error('distill needs Claude Code on PATH — or set a provider: keyflip llm set --provider ollama');
       const transcript = fs.readFileSync(row.file, 'utf8');
-      const INSTR =
-        'Summarize this past coding-assistant conversation (a JSONL transcript) into a durable "keepsake" memory. Output terse markdown bullets under these headings: Goal, Decisions, Built/Changed, Gotchas/Learnings, Open TODOs. Be specific; skip anything trivial; no preamble.';
+      const INSTR = llm.DISTILL_INSTRUCTION;
       const res = await llm.complete(ctx, INSTR, transcript, { model: args.model, skipCheck: true });
       if (!res.ok) throw new Error('distill failed: ' + (res.reason || 'unknown') + (res.fix ? ' — ' + res.fix : ''));
       const l = await lock.acquire(ctx.configDir);
@@ -5927,8 +5926,7 @@ const TOOLS = [
         throw new Error(
           'dream needs Claude Code on PATH (`claude -p`), or a provider: keyflip llm set --provider ollama',
         );
-      const INSTR =
-        'Summarize this past coding-assistant conversation (a JSONL transcript) into a durable "keepsake" memory. Output terse markdown bullets under: Goal, Decisions, Built/Changed, Gotchas/Learnings, Open TODOs. Be specific; skip trivia; no preamble.';
+      const INSTR = llm.DISTILL_INSTRUCTION;
       let distilled = 0,
         archived = 0,
         failed = 0;

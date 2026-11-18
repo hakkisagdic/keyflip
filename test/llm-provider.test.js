@@ -171,3 +171,38 @@ test('an unknown provider name degrades to claude instead of throwing', function
   const p = llm.resolve(ctx, { env: { KEYFLIP_LLM_PROVIDER: 'gpt-whatever' } });
   assert.strictEqual(p.provider, 'claude');
 });
+
+test('the shared distill instruction carries the four anti-invention rules', function () {
+  const t = llm.DISTILL_INSTRUCTION;
+  assert.match(t, /first line is "Task and outcome:"/);
+  assert.match(t, /diff under review, a ticket or a pasted document is input, never work done/);
+  assert.match(t, /no number, path, date, commit or name that is not in the transcript/);
+  assert.match(t, /language the session itself is in/);
+  assert.ok(t.length < 900, 'keep it short');
+});
+
+test('distill and dream use the shared instruction, not private copies', function () {
+  for (const f of ['../src/cli.js', '../src/mcp.js']) {
+    const src = fs.readFileSync(new URL(f, import.meta.url), 'utf8');
+    assert.ok(!/Summarize this past coding-assistant/.test(src), f + ' has its own copy');
+    assert.match(src, /llm\.DISTILL_INSTRUCTION/);
+  }
+});
+
+test('ollama chat calls switch thinking off and wait long; other endpoints are untouched', async function () {
+  const reply = () => ({ choices: [{ message: { content: 'x' } }] });
+  const ctx = makeCtx();
+  config.set(ctx, 'llm.provider', 'ollama');
+  const p = poster(reply);
+  await llm.complete(ctx, 'i', 't', { post: p.fn, skipCheck: true });
+  assert.strictEqual(p.calls[0].body.reasoning_effort, 'none');
+  assert.strictEqual(p.calls[0].timeoutMs, 900000);
+  const ctx2 = makeCtx();
+  config.set(ctx2, 'llm.provider', 'openai');
+  config.set(ctx2, 'llm.base_url', 'https://gateway.example.com/v1');
+  config.set(ctx2, 'llm.key_env', 'GW_KEY');
+  const q = poster(reply);
+  await llm.complete(ctx2, 'i', 't', { post: q.fn, env: { GW_KEY: 'k' }, skipCheck: true });
+  assert.strictEqual(q.calls[0].body.reasoning_effort, undefined);
+  assert.strictEqual(q.calls[0].timeoutMs, 120000);
+});

@@ -19,6 +19,16 @@ import http from 'http';
 import https from 'https';
 import * as config from './config.js';
 
+// The one instruction distill (CLI, MCP) and dream send. Four rules exist because unattended
+// summaries once presented a reviewed diff as the session's own work and invented details.
+const DISTILL_INSTRUCTION =
+  'Summarize this past coding-assistant conversation (a JSONL transcript) into a durable "keepsake" memory. ' +
+  'Rules: (1) The first line is "Task and outcome:" in one line, even if the session did almost nothing. ' +
+  'Then terse markdown bullets under: Goal, Decisions, Built/Changed, Gotchas/Learnings, Open TODOs. ' +
+  '(2) Only list as Built/Changed what the assistant itself did in this session; a diff under review, a ticket or a pasted document is input, never work done. ' +
+  '(3) Write no number, path, date, commit or name that is not in the transcript. ' +
+  '(4) Write in the language the session itself is in. Be specific; skip trivia; no preamble.';
+
 // Every provider keyflip can route a completion through. `cost` is what the CLI prints BEFORE the
 // first call, because "which quota is this burning" is the question a background job must answer.
 const PROVIDERS = {
@@ -249,8 +259,13 @@ async function httpComplete(p, instruction, text, opts) {
           { role: 'user', content: String(text || '') },
         ],
       };
+  // A local model's thinking tokens are wasted on a summary chore (and minutes slower on a shared
+  // GPU): Ollama's OpenAI endpoint switches them off with reasoning_effort. Local runs are slow, so
+  // the default wait is 15 minutes there; a remote endpoint keeps 2.
+  const local = p.provider === 'ollama';
+  if (local && /\/chat\/completions$/.test(url)) body.reasoning_effort = 'none';
   try {
-    const res = await post(url, body, headers, opts.timeoutMs || 120000);
+    const res = await post(url, body, headers, opts.timeoutMs || (local ? 900000 : 120000));
     const out = String(extractText(res) || '').trim();
     if (!out) return { ok: false, reason: 'empty-output', provider: p.provider, model: p.model };
     return { ok: true, text: out, provider: p.provider, model: p.model, endpoint: url };
@@ -310,4 +325,15 @@ function summarize(instruction, text, opts) {
   return { ok: true, text: out };
 }
 
-export { PROVIDERS, resolve, availability, available, summarize, complete, postJson, extractText, claudeInstalled };
+export {
+  DISTILL_INSTRUCTION,
+  PROVIDERS,
+  resolve,
+  availability,
+  available,
+  summarize,
+  complete,
+  postJson,
+  extractText,
+  claudeInstalled,
+};
