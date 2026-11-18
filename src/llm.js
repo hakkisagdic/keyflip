@@ -259,8 +259,13 @@ async function httpComplete(p, instruction, text, opts) {
           { role: 'user', content: String(text || '') },
         ],
       };
+  // A local model's thinking tokens are wasted on a summary chore (and minutes slower on a shared
+  // GPU): Ollama's OpenAI endpoint switches them off with reasoning_effort. Local runs are slow, so
+  // the default wait is 15 minutes there; a remote endpoint keeps 2.
+  const local = p.provider === 'ollama';
+  if (local && /\/chat\/completions$/.test(url)) body.reasoning_effort = 'none';
   try {
-    const res = await post(url, body, headers, opts.timeoutMs || 120000);
+    const res = await post(url, body, headers, opts.timeoutMs || (local ? 900000 : 120000));
     const out = String(extractText(res) || '').trim();
     if (!out) return { ok: false, reason: 'empty-output', provider: p.provider, model: p.model };
     return { ok: true, text: out, provider: p.provider, model: p.model, endpoint: url };

@@ -188,3 +188,21 @@ test('distill and dream use the shared instruction, not private copies', functio
     assert.match(src, /llm\.DISTILL_INSTRUCTION/);
   }
 });
+
+test('ollama chat calls switch thinking off and wait long; other endpoints are untouched', async function () {
+  const reply = () => ({ choices: [{ message: { content: 'x' } }] });
+  const ctx = makeCtx();
+  config.set(ctx, 'llm.provider', 'ollama');
+  const p = poster(reply);
+  await llm.complete(ctx, 'i', 't', { post: p.fn, skipCheck: true });
+  assert.strictEqual(p.calls[0].body.reasoning_effort, 'none');
+  assert.strictEqual(p.calls[0].timeoutMs, 900000);
+  const ctx2 = makeCtx();
+  config.set(ctx2, 'llm.provider', 'openai');
+  config.set(ctx2, 'llm.base_url', 'https://gateway.example.com/v1');
+  config.set(ctx2, 'llm.key_env', 'GW_KEY');
+  const q = poster(reply);
+  await llm.complete(ctx2, 'i', 't', { post: q.fn, env: { GW_KEY: 'k' }, skipCheck: true });
+  assert.strictEqual(q.calls[0].body.reasoning_effort, undefined);
+  assert.strictEqual(q.calls[0].timeoutMs, 120000);
+});
