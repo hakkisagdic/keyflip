@@ -27,6 +27,7 @@ import * as _bm25 from './bm25.js';
 import * as _embed from './embed.js';
 import * as _secretscan from './secretscan.js';
 import * as _fsutil from './fsutil.js';
+import * as _writeindex from './writeindex.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -1504,6 +1505,19 @@ async function build(ctx, opts) {
     report.stats = built.stats;
   } else {
     report.stats = initialMeta.stats;
+  }
+  const claudeIncluded = !(opts.apps && opts.apps.length) || opts.apps.indexOf('claude') !== -1;
+  if (claudeIncluded && _writeindex.isEnabled(ctx, opts)) {
+    const wr = _writeindex.build(ctx, {
+      force: !!opts.force,
+      exclude: opts.writesExclude,
+      warnBytes: opts.writesWarnBytes,
+      onProgress: opts.onProgress,
+    });
+    report.writes = wr;
+    if (Array.isArray(wr.warnings) && wr.warnings.length) {
+      wr.warnings.forEach((w) => report.warnings.push({ path: _writeindex.dirOf(ctx), app: 'claude', error: w }));
+    }
   }
   return report;
 }
