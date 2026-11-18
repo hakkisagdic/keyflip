@@ -437,6 +437,7 @@ function rowFromCache(c, nowMs) {
     lastGoodAt: usageNow ? c.at : typeof c.lastGoodAt === 'number' ? c.lastGoodAt : null,
     limitedScopes: limitedScopes(usageNow || c.lastGood),
     cached: true,
+    readAt: usageNow ? c.at : null,
   };
   if (c.throttle && typeof c.throttle.until === 'number' && nowMs < c.throttle.until) row.retryAt = c.throttle.until;
   return row;
@@ -447,6 +448,9 @@ function cacheState(c, nowMs, ttl) {
   if (t && typeof t.until === 'number' && nowMs < t.until && t.until - nowMs <= RETRY_AFTER_MAX_MS + THROTTLE_MAX_MS)
     return 'quiet';
   if (c.status === 'unsupported' && nowMs - c.at < UNSUPPORTED_TTL_MS) return 'fresh';
+  // An entry an older build wrote has only the legacy keys (no `windows` list): it would hide every
+  // window but the weekly one, so it is never served as a fresh reading.
+  if (c.status === 'ok' && c.usage && typeof c.usage === 'object' && !Array.isArray(c.usage.windows)) return 'stale';
   return nowMs - c.at < ttl ? 'fresh' : 'stale';
 }
 
@@ -663,6 +667,7 @@ async function usageForProfiles(ctx, names, opts) {
               lastGood: r.usage,
               lastGoodAt: nowMs,
               limitedScopes: limitedScopes(r.usage),
+              readAt: nowMs,
             };
           } else if (isUnsupportedSignIn(r.httpStatus, r.reason, signInKind(blob))) {
             // The endpoint refuses this KIND of sign-in (no profile scope): not a rate limit, not an
@@ -682,6 +687,7 @@ async function usageForProfiles(ctx, names, opts) {
           } else if (r.httpStatus === 401 || r.httpStatus === 403) {
             out[name] = {
               status: 'expired',
+              httpStatus: r.httpStatus,
               usage: null,
               headroom: null,
               lastGood: null,
@@ -717,6 +723,7 @@ async function usageForProfiles(ctx, names, opts) {
           } else {
             out[name] = {
               status: 'error',
+              httpStatus: r.httpStatus || null,
               usage: null,
               headroom: null,
               lastGood: prevGood,

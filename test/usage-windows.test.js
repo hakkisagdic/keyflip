@@ -279,3 +279,56 @@ test('a renewed sign-in is not held in the quiet window earned by the old creden
   assert.strictEqual(fresh.acct.status, 'ok');
   assert.strictEqual(fresh.acct.usage.windows.length, 2);
 });
+
+// A cache entry written by an older build keeps only the legacy keys (no `windows` list). A newer
+// build sharing the cache file must not serve it as a fresh reading: it would hide every window
+// except the weekly one. The entry counts as stale and the endpoint is asked again.
+test('a fresh cache entry without a windows list is read again, not served', async function () {
+  const fs = await import('fs');
+  const path = await import('path');
+  const ctx = makeCtx();
+  const NOW = 1800000000000;
+  ctx.store.setProfile('a', JSON.stringify({ claudeAiOauth: { accessToken: 'TA' } }));
+  fs.writeFileSync(
+    path.join(ctx.configDir, '.usage-cache.json'),
+    JSON.stringify({
+      a: {
+        at: NOW - 1000,
+        status: 'ok',
+        usage: { sevenDay: { pct: 44, resetsAt: '2026-01-10T07:00:00.000000+00:00' } },
+        lastGood: null,
+        lastGoodAt: null,
+      },
+    }),
+  );
+  let calls = 0;
+  const f = async function () {
+    calls++;
+    return { ok: true, status: 200, headers: { get: () => null }, json: async () => realShape() };
+  };
+  const r = await usage.usageForProfiles(ctx, ['a'], { fetch: f, nowMs: NOW, cacheTtlMs: 60000, lock: false });
+  assert.strictEqual(calls, 1, 'asked the endpoint again');
+  assert.ok(Array.isArray(r.a.usage.windows) && r.a.usage.windows.length === 2, 'both windows present');
+  assert.strictEqual(typeof r.a.readAt, 'number', 'the row carries the time of the reading');
+});
+
+test('a fresh cache entry WITH a windows list is served and keeps its reading time', async function () {
+  const fs = await import('fs');
+  const path = await import('path');
+  const ctx = makeCtx();
+  const NOW = 1800000000000;
+  ctx.store.setProfile('a', JSON.stringify({ claudeAiOauth: { accessToken: 'TA' } }));
+  const u = usage.parseUsage(realShape());
+  fs.writeFileSync(
+    path.join(ctx.configDir, '.usage-cache.json'),
+    JSON.stringify({ a: { at: NOW - 5000, status: 'ok', usage: u, lastGood: u, lastGoodAt: NOW - 5000 } }),
+  );
+  let calls = 0;
+  const f = async function () {
+    calls++;
+    return { ok: false, status: 500, headers: { get: () => null } };
+  };
+  const r = await usage.usageForProfiles(ctx, ['a'], { fetch: f, nowMs: NOW, cacheTtlMs: 60000, lock: false });
+  assert.strictEqual(calls, 0);
+  assert.strictEqual(r.a.readAt, NOW - 5000);
+});
