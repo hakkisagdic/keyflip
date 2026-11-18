@@ -8517,7 +8517,7 @@ const CONV_USAGE = [
   '       keyflip conv search "<query>" [--hybrid|--semantic|--lexical] [--per-conv N] [--limit N] [--since 7d] [--account <name>]',
   '       keyflip conv context "<query>" [--hybrid] [--budget 12000] [--expand 1]   RAG block for an LLM prompt',
   '       keyflip conv show <id|prefix|title> [--format md|html|json] [--out <file|dir>] [--no-redact]',
-  '       keyflip conv index [--embed] [--background] [--force] [--watch] [--interval N]  build/refresh the local retrieval index',
+  '       keyflip conv index [--embed] [--background] [--force] [--writes] [--watch] [--interval N]  build/refresh the local retrieval index',
   '                                     --watch re-indexes every N minutes (default 30) so search stays current',
   '       keyflip conv index --schedule [--interval N]   keep it current unattended (launchd/cron); --unschedule removes it',
   '       keyflip conv export (--all | <id>) [--obsidian] --out <dir> [--format md|html|json] [--no-redact]',
@@ -8700,6 +8700,7 @@ async function convBuild(ctx, rest, embedDefault) {
     embed: embed,
     background: background,
     force: rest.indexOf('--force') !== -1,
+    writes: rest.indexOf('--writes') !== -1 ? true : undefined,
     onProgress: function (p) {
       if (JSON_MODE) return;
       const pct = Math.floor((p.done / Math.max(1, p.total)) * 100);
@@ -8770,6 +8771,21 @@ function convReportText(ctx, r) {
               st.coverage +
               '%) — rerun with --embed to cover new chunks.'
           : 'No vectors yet — `keyflip conv index --embed` enables semantic + hybrid search.',
+      );
+  }
+  if (r.writes) {
+    line +=
+      '\n' +
+      style.dim(
+        'Writes: ' +
+          r.writes.totalEvents +
+          ' event(s) · ' +
+          r.writes.totalBlobs +
+          ' blob(s) (' +
+          r.writes.indexed +
+          ' scanned, ' +
+          r.writes.reused +
+          ' reused)',
       );
   }
   if (r.errors && r.errors.length) {

@@ -184,6 +184,16 @@ SCHEMA['threads.mergeMaxMiB'] = {
   max: 512,
   help: 'Per-member transcript read cap (MiB) when merging a thread into one timeline.',
 };
+SCHEMA['conv.writes.enabled'] = {
+  type: 'bool',
+  default: false,
+  help: 'Index file-writing tool inputs from Claude Code sessions under conv-index/writes/ (off by default).',
+};
+SCHEMA['conv.writes.exclude'] = {
+  type: 'string',
+  default: '',
+  help: 'Comma-separated project paths or names excluded from the conversation write-input index.',
+};
 SCHEMA['ui.color'] = { type: 'bool', default: true, help: 'Colorize CLI output.' };
 SCHEMA['usage.cacheTtlSeconds'] = {
   type: 'int',
