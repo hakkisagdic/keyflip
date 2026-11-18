@@ -8039,8 +8039,7 @@ async function cmdDream(ctx, rest) {
     });
     return;
   }
-  const INSTR =
-    'Summarize this past coding-assistant conversation (a JSONL transcript) into a durable "keepsake" memory. Output terse markdown bullets under: Goal, Decisions, Built/Changed, Gotchas/Learnings, Open TODOs. Be specific; skip trivia; no preamble.';
+  const INSTR = llm.DISTILL_INSTRUCTION;
   let distilled = 0,
     archived = 0,
     failed = 0;
@@ -8138,8 +8137,7 @@ async function cmdSessionsDistill(ctx, rest) {
   );
   const modelI = rest.indexOf('--model');
   const model = modelI !== -1 ? rest[modelI + 1] : null;
-  const INSTR =
-    'Summarize this past coding-assistant conversation (a JSONL transcript) into a durable "keepsake" memory. Output terse markdown bullets under these headings: Goal, Decisions, Built/Changed, Gotchas/Learnings, Open TODOs. Be specific; skip anything trivial; no preamble.';
+  const INSTR = llm.DISTILL_INSTRUCTION;
   const res = await llm.complete(ctx, INSTR, transcript, { model: model, skipCheck: true });
   if (!res.ok)
     return fail(

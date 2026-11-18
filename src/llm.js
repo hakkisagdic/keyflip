@@ -19,6 +19,16 @@ import http from 'http';
 import https from 'https';
 import * as config from './config.js';
 
+// The one instruction distill (CLI, MCP) and dream send. Four rules exist because unattended
+// summaries once presented a reviewed diff as the session's own work and invented details.
+const DISTILL_INSTRUCTION =
+  'Summarize this past coding-assistant conversation (a JSONL transcript) into a durable "keepsake" memory. ' +
+  'Rules: (1) The first line is "Task and outcome:" in one line, even if the session did almost nothing. ' +
+  'Then terse markdown bullets under: Goal, Decisions, Built/Changed, Gotchas/Learnings, Open TODOs. ' +
+  '(2) Only list as Built/Changed what the assistant itself did in this session; a diff under review, a ticket or a pasted document is input, never work done. ' +
+  '(3) Write no number, path, date, commit or name that is not in the transcript. ' +
+  '(4) Write in the language the session itself is in. Be specific; skip trivia; no preamble.';
+
 // Every provider keyflip can route a completion through. `cost` is what the CLI prints BEFORE the
 // first call, because "which quota is this burning" is the question a background job must answer.
 const PROVIDERS = {
@@ -310,4 +320,15 @@ function summarize(instruction, text, opts) {
   return { ok: true, text: out };
 }
 
-export { PROVIDERS, resolve, availability, available, summarize, complete, postJson, extractText, claudeInstalled };
+export {
+  DISTILL_INSTRUCTION,
+  PROVIDERS,
+  resolve,
+  availability,
+  available,
+  summarize,
+  complete,
+  postJson,
+  extractText,
+  claudeInstalled,
+};

@@ -171,3 +171,20 @@ test('an unknown provider name degrades to claude instead of throwing', function
   const p = llm.resolve(ctx, { env: { KEYFLIP_LLM_PROVIDER: 'gpt-whatever' } });
   assert.strictEqual(p.provider, 'claude');
 });
+
+test('the shared distill instruction carries the four anti-invention rules', function () {
+  const t = llm.DISTILL_INSTRUCTION;
+  assert.match(t, /first line is "Task and outcome:"/);
+  assert.match(t, /diff under review, a ticket or a pasted document is input, never work done/);
+  assert.match(t, /no number, path, date, commit or name that is not in the transcript/);
+  assert.match(t, /language the session itself is in/);
+  assert.ok(t.length < 900, 'keep it short');
+});
+
+test('distill and dream use the shared instruction, not private copies', function () {
+  for (const f of ['../src/cli.js', '../src/mcp.js']) {
+    const src = fs.readFileSync(new URL(f, import.meta.url), 'utf8');
+    assert.ok(!/Summarize this past coding-assistant/.test(src), f + ' has its own copy');
+    assert.match(src, /llm\.DISTILL_INSTRUCTION/);
+  }
+});
