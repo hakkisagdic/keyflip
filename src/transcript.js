@@ -62,7 +62,12 @@ function feedLine(line, state) {
     role: role,
     text: text,
     tools: tools,
-    ts: typeof j.timestamp === 'string' ? j.timestamp : null,
+    ts:
+      typeof j.timestamp === 'string'
+        ? j.timestamp
+        : typeof j._audit_timestamp === 'string'
+          ? j._audit_timestamp
+          : null,
   });
 }
 

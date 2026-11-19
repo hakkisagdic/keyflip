@@ -28,6 +28,8 @@ import * as transcript from './transcript.js';
 import * as foreign from './foreign.js';
 import * as cursor from './cursor.js';
 import * as opencode from './opencode.js';
+import * as vscodechat from './vscodechat.js';
+import * as cowork from './cowork.js';
 import * as yamlread from './yamlread.js';
 
 const SCHEMA_VERSION = 1;
@@ -806,16 +808,20 @@ function parseCursorChat(ctx, src, opts) {
   );
 }
 
-function parseOpencodeChat(ctx, src, opts) {
-  const chat = opencode.loadChat(ctx, src);
-  const messages = (chat.messages || [])
+function normalizeMessages(list) {
+  return (list || [])
     .map((m) => ({
       role: m.role === 'assistant' ? 'assistant' : 'user',
       text: cleanMessage(m.text),
-      ts: m.ts || null,
+      ts: toIso(m.ts) || m.ts || null,
       tools: m.tools || [],
     }))
     .filter((m) => m.text || m.tools.length);
+}
+
+function parseOpencodeChat(ctx, src, opts) {
+  const chat = opencode.loadChat(ctx, src);
+  const messages = normalizeMessages(chat.messages);
   const sid = safeId(chat.sessionId);
   const conv = makeConv({
     id: 'opencode:' + sid,
@@ -849,14 +855,7 @@ function parseCopilotSession(text, src, opts) {
     }
   }
   const parsed = foreign.parseCopilotEvents(text);
-  const messages = (parsed.messages || [])
-    .map((m) => ({
-      role: m.role === 'assistant' ? 'assistant' : 'user',
-      text: cleanMessage(m.text),
-      ts: toIso(m.ts) || m.ts || null,
-      tools: m.tools || [],
-    }))
-    .filter((m) => m.text || m.tools.length);
+  const messages = normalizeMessages(parsed.messages);
   const sessionId = safeId(parsed.sessionId || (ws && ws.id) || src.idHint || path.basename(dir));
   const conv = makeConv({
     id: 'copilot:' + sessionId,
@@ -901,14 +900,7 @@ function parseGrokSession(text, src, opts) {
     }
   }
   const parsed = foreign.parseGrokChat(text);
-  const messages = (parsed.messages || [])
-    .map((m) => ({
-      role: m.role === 'assistant' ? 'assistant' : 'user',
-      text: cleanMessage(m.text),
-      ts: toIso(m.ts) || m.ts || null,
-      tools: m.tools || [],
-    }))
-    .filter((m) => m.text || m.tools.length);
+  const messages = normalizeMessages(parsed.messages);
   const sessionId = safeId((info && info.id) || (summary && summary.session_id) || src.idHint || path.basename(dir));
   const conv = makeConv({
     id: 'grok:' + sessionId,
@@ -926,6 +918,55 @@ function parseGrokSession(text, src, opts) {
     size: src.size,
   });
   return withFallbackTitle(conv, sessionId);
+}
+
+function parseVscodeChat(input, src, opts) {
+  const parsed = vscodechat.parseChatSession(input, { sessionId: src.sessionId || src.idHint, cwd: src.cwd });
+  const messages = normalizeMessages(parsed.messages);
+  const sid = safeId(parsed.sessionId || src.sessionId || src.idHint);
+  const conv = makeConv({
+    id: 'vscode-chat:' + sid,
+    app: 'vscode-chat',
+    surface: 'desktop',
+    title: parsed.title || src.title || null,
+    cwd: parsed.cwd || src.cwd || (opts && opts.cwd) || null,
+    createdAt: parsed.createdAt || (messages.length ? messages[0].ts : null),
+    updatedAt:
+      parsed.updatedAt || (messages.length ? messages[messages.length - 1].ts : new Date(src.mtimeMs).toISOString()),
+    messages: messages,
+    path: src.path,
+    mtimeMs: src.mtimeMs,
+    size: src.size,
+  });
+  return withFallbackTitle(conv, sid);
+}
+
+function parseCoworkAudit(input, src, opts) {
+  const parsed = transcript.parse(input, {
+    maxMessages: MAX_MESSAGES,
+    maxTextBytes: MAX_TEXT_BYTES,
+    maxMessageChars: MAX_MESSAGE_CHARS,
+  });
+  const messages = normalizeMessages(
+    (parsed.messages || []).filter((m) => m.role === 'user' || m.role === 'assistant'),
+  );
+  const sid = safeId(src.sessionId || src.idHint);
+  const conv = makeConv({
+    id: 'cowork:' + sid,
+    app: 'cowork',
+    surface: 'desktop',
+    title: src.title || null,
+    cwd: parsed.cwd || src.cwd || (opts && opts.cwd) || null,
+    createdAt: toIso(src.createdAt) || (messages.length ? messages[0].ts : null),
+    updatedAt:
+      toIso(src.updatedAt) ||
+      (messages.length ? messages[messages.length - 1].ts : new Date(src.mtimeMs).toISOString()),
+    messages: messages,
+    path: src.path,
+    mtimeMs: src.mtimeMs,
+    size: src.size,
+  });
+  return withFallbackTitle(conv, sid);
 }
 
 function parseForeignSource(text, src, opts) {
@@ -1156,6 +1197,55 @@ function opencodeSources(ctx) {
   return out;
 }
 
+function vscodeChatSources(ctx) {
+  const out = [];
+  let found;
+  try {
+    found = vscodechat.discover(ctx);
+  } catch {
+    return out;
+  }
+  found.forEach((s) => {
+    const src = statSource(s.path, 'vscode-chat', {
+      app: 'vscode-chat',
+      surface: 'desktop',
+      idHint: s.sessionId,
+      sessionId: s.sessionId,
+      cwd: s.cwd,
+      mtimeMs: s.mtimeMs,
+      size: s.size,
+    });
+    if (src) out.push(src);
+  });
+  return out;
+}
+
+function coworkSources(ctx) {
+  const out = [];
+  let found;
+  try {
+    found = cowork.auditSources(ctx);
+  } catch {
+    return out;
+  }
+  found.forEach((s) => {
+    const src = statSource(s.path, 'cowork-audit', {
+      app: 'cowork',
+      surface: 'desktop',
+      idHint: s.sessionId,
+      sessionId: s.sessionId,
+      title: s.title,
+      cwd: s.cwd,
+      createdAt: s.createdAt,
+      updatedAt: s.updatedAt,
+      mtimeMs: s.mtimeMs,
+      size: s.size,
+    });
+    if (src) out.push(src);
+  });
+  return out;
+}
+
 function foreignSources(ctx) {
   const out = [];
   let found;
@@ -1213,12 +1303,16 @@ function discover(ctx, opts) {
   const want = opts.apps && opts.apps.length ? new Set(opts.apps) : null;
   const cursorFamily = cursorSources(ctx);
   const opencodeFamily = !want || want.has('opencode') ? opencodeSources(ctx) : [];
+  const vscodeFamily = !want || want.has('vscode-chat') ? vscodeChatSources(ctx) : [];
+  const coworkFamily = !want || want.has('cowork') ? coworkSources(ctx) : [];
   const all = []
     .concat(claudeSources(ctx))
     .concat(codexSources(ctx))
     .concat(kiroSources(ctx))
     .concat(cursorFamily)
     .concat(opencodeFamily)
+    .concat(vscodeFamily)
+    .concat(coworkFamily)
     .concat(opts.foreign === false ? [] : foreignSources(ctx));
   const seen = new Set();
   const candidates = [];
@@ -1319,6 +1413,8 @@ function load(ctx, src, opts) {
     src.kind === 'gemini-transcript' ||
     src.kind === 'copilot-events' ||
     src.kind === 'grok-chat' ||
+    src.kind === 'vscode-chat' ||
+    src.kind === 'cowork-audit' ||
     (src.kind === 'foreign' && /\.(jsonl|md)$/i.test(src.path));
   const warnings = [];
   const input = canStream ? readSourceInput(src.path, opts, warnings) : readText(src.path);
@@ -1331,6 +1427,8 @@ function load(ctx, src, opts) {
   else if (src.kind === 'gemini-transcript') conv = parseGeminiTranscript(input, src, opts);
   else if (src.kind === 'copilot-events') conv = parseCopilotSession(input, src, opts);
   else if (src.kind === 'grok-chat') conv = parseGrokSession(input, src, opts);
+  else if (src.kind === 'vscode-chat') conv = parseVscodeChat(input, src, opts);
+  else if (src.kind === 'cowork-audit') conv = parseCoworkAudit(input, src, opts);
   else conv = parseForeignSource(input, src, opts);
   if (warnings.length) {
     conv.warnings = (conv.warnings || []).concat(warnings.map((w) => Object.assign({ app: conv.app }, w)));

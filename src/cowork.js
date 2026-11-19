@@ -4,6 +4,7 @@
 // with title, initial message, the underlying Claude Code cliSessionId, cwd,
 // model, account email and timestamps. Read-only; account-independent browsing.
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 import { isAccountDirName } from './appsessions.js';
 
@@ -152,4 +153,94 @@ function resumeCommand(row) {
   return { cwd: row.cwd, command: 'claude', args: ['--resume', row.cliSessionId] };
 }
 
-export { coworkDir, list, find, readIndex, resumeCommand };
+function envOf(ctx) {
+  if (ctx && ctx.env) return ctx.env;
+  if (ctx && ctx.home && ctx.home !== os.homedir()) return {};
+  return process.env;
+}
+
+function auditRoots(ctx) {
+  const env = envOf(ctx);
+  const home = (ctx && ctx.home) || os.homedir();
+  const out = [];
+  const push = function (dir) {
+    if (!dir) return;
+    const p = path.join(dir, 'local-agent-mode-sessions');
+    if (out.indexOf(p) < 0) out.push(p);
+  };
+  if (ctx && ctx.appDataDir) push(ctx.appDataDir);
+  if (env && env.APPDATA) push(path.join(env.APPDATA, 'Claude'));
+  if (env && env.XDG_CONFIG_HOME) push(path.join(env.XDG_CONFIG_HOME, 'Claude'));
+  push(path.join(home, 'Library', 'Application Support', 'Claude'));
+  push(path.join(home, 'AppData', 'Roaming', 'Claude'));
+  push(path.join(home, '.config', 'Claude'));
+  return out;
+}
+
+// Discover Cowork `audit.jsonl` logs under `local-agent-mode-sessions` (skipping `skills-plugin`),
+// enriched with non-PII metadata from sibling `local_<id>.json`, deduped newest-first by sessionId.
+function auditSources(ctx) {
+  const raw = [];
+  const seenPath = new Set();
+  const walk = function (dir, depth) {
+    if (depth < 0) return;
+    let ents;
+    try {
+      ents = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    ents.forEach(function (e) {
+      const p = path.join(dir, e.name);
+      if (e.isDirectory()) {
+        if (e.name === 'skills-plugin' || e.name.slice(-'.keyflip-bak'.length) === '.keyflip-bak') return;
+        walk(p, depth - 1);
+      } else if (e.isFile() && e.name === 'audit.jsonl') {
+        try {
+          const st = fs.statSync(p);
+          if (!st.isFile() || st.size === 0) return;
+          let real;
+          try {
+            real = fs.realpathSync(p);
+          } catch {
+            real = path.resolve(p);
+          }
+          if (seenPath.has(real)) return;
+          seenPath.add(real);
+          const sessDir = path.dirname(p);
+          const meta = readIndex(sessDir + '.json');
+          const sid = (meta && meta.sessionId) || path.basename(sessDir);
+          const updMs = meta && meta.lastActivityAt ? Date.parse(meta.lastActivityAt) : NaN;
+          raw.push({
+            path: p,
+            mtimeMs: !isNaN(updMs) && updMs > st.mtimeMs ? updMs : st.mtimeMs,
+            size: st.size,
+            sessionId: sid,
+            title: (meta && meta.title) || null,
+            cwd: (meta && meta.cwd) || null,
+            createdAt: (meta && meta.createdAt) || null,
+            updatedAt: (meta && meta.lastActivityAt) || null,
+          });
+        } catch {
+          /* vanished */
+        }
+      }
+    });
+  };
+  auditRoots(ctx).forEach(function (root) {
+    walk(root, 6);
+  });
+  raw.sort(function (a, b) {
+    return b.mtimeMs - a.mtimeMs || b.size - a.size;
+  });
+  const out = [];
+  const seenId = new Set();
+  for (const item of raw) {
+    if (seenId.has(item.sessionId)) continue;
+    seenId.add(item.sessionId);
+    out.push(item);
+  }
+  return out;
+}
+
+export { coworkDir, auditRoots, auditSources, list, find, readIndex, resumeCommand };

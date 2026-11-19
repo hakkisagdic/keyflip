@@ -15,7 +15,9 @@ const CACHE_MAX = 4;
 const storeCache = new Map();
 
 function envOf(ctx) {
-  return (ctx && ctx.env) || process.env;
+  if (ctx && ctx.env) return ctx.env;
+  if (ctx && ctx.home && ctx.home !== os.homedir()) return {};
+  return process.env;
 }
 
 function homeOf(ctx) {
