@@ -40,7 +40,8 @@ const SESSION_SOURCES = [
     dirs: [{ base: '.local/share/opencode', match: /\.jsonl?$/, skipDir: /^(log|snapshot|tool-output|repos)$/ }],
   },
   { tool: 'gemini', dirs: [{ base: '.gemini/antigravity-cli', match: /transcript\.jsonl$/ }] },
-  { tool: 'copilot', dirs: [{ base: '.copilot/session-state', match: /workspace\.ya?ml$/ }] },
+  { tool: 'copilot', dirs: [{ base: '.copilot/session-state', match: /^events\.jsonl$/ }] },
+  { tool: 'grok', dirs: [{ base: '.grok/sessions', match: /^chat_history\.jsonl$/ }] },
   // Qoder CLI keeps Claude-Code-shaped transcripts at ~/.qoder/projects/<key>/<sessionId>.jsonl
   // (verified against a real install, 2026-10). The per-session sidecar holds subagent logs and
   // memory notes — not conversations of their own.
@@ -163,6 +164,37 @@ function eachLine(input, fn) {
     .forEach(fn);
 }
 
+function extractTextBlocks(content, maxChars) {
+  if (typeof content === 'string') {
+    const t = content.trim();
+    return t.length > maxChars ? t.slice(0, maxChars) : t;
+  }
+  if (!Array.isArray(content)) return '';
+  let out = '';
+  for (let i = 0; i < content.length && out.length < maxChars; i++) {
+    const b = content[i];
+    if (!b || b.type !== 'text' || typeof b.text !== 'string' || !b.text.trim()) continue;
+    const piece = (out ? '\n' : '') + b.text.trim();
+    const room = maxChars - out.length;
+    out += piece.length > room ? piece.slice(0, room) : piece;
+  }
+  return out.trim();
+}
+function pushBoundedTurn(state, role, text, tools, ts) {
+  if (state.messages.length >= MAX_MESSAGES || state.textBytes >= MAX_TEXT_BYTES) return false;
+  const cleanTools = dedupe(tools);
+  const t = text.length > MAX_MESSAGE_CHARS ? text.slice(0, MAX_MESSAGE_CHARS) : text;
+  if (!t && !cleanTools.length) return false;
+  const addBytes = Buffer.byteLength(t, 'utf8');
+  if (state.textBytes + addBytes > MAX_TEXT_BYTES && state.messages.length > 0) {
+    state.textBytes = MAX_TEXT_BYTES;
+    return false;
+  }
+  state.textBytes += addBytes;
+  state.messages.push({ role: role, text: t, tools: cleanTools, ts: ts || null });
+  return true;
+}
+
 // Detect the source format from filename + a header sniff (works on a Buffer or string).
 function detect(filePath, input) {
   const buf = asBuffer(input);
@@ -170,39 +202,51 @@ function detect(filePath, input) {
   const p = String(filePath || '').toLowerCase();
   const head = buf.toString('utf8', 0, 2000);
   if (/\.aider\.chat\.history\.md$/.test(p) || /^#\s*aider chat started/m.test(head)) return 'aider';
-  // Command Code: must be checked before the `.jsonl` shorthand, which would otherwise hand it to
-  // the Claude-Code message-event parser. Two live shapes:
-  //   v1  {sessionId, role, content:[…]}          (v1 sessions start with a user turn)
-  //   v3  {type:'session', version, id, cwd}      (so a v3 file's first line has no role)
-  if (head.trim()[0] === '{') {
-    const first = (
-      head.split('\n').find(function (l) {
-        return l.trim();
-      }) || ''
-    ).trim();
-    try {
-      const o = JSON.parse(first);
-      if (o && typeof o === 'object') {
-        if (o.sessionId && o.role && Array.isArray(o.content)) return 'commandcode';
-        if (o.type === 'session' && o.id && typeof o.version === 'number') return 'commandcode';
-      }
-    } catch (e) {
-      /* not a Command Code line */
-    }
-  }
-  if (/\.jsonl$/.test(p)) return 'jsonl';
   const firstLine = (
     head.split('\n').find(function (l) {
       return l.trim();
     }) || ''
   ).trim();
+  let firstObj = null;
   if (firstLine[0] === '{') {
     try {
       const o = JSON.parse(firstLine);
-      if (o && (o.message || o.type || o.role)) return 'jsonl';
+      if (o && typeof o === 'object') firstObj = o;
     } catch (e) {
-      /* maybe a whole-file JSON */
+      /* maybe a partial line or whole-file JSON */
     }
+  }
+  // Command Code: must be checked before the `.jsonl` shorthand, which would otherwise hand it to
+  // the Claude-Code message-event parser. Two live shapes:
+  //   v1  {sessionId, role, content:[…]}          (v1 sessions start with a user turn)
+  //   v3  {type:'session', version, id, cwd}      (so a v3 file's first line has no role)
+  if (firstObj) {
+    if (firstObj.sessionId && firstObj.role && Array.isArray(firstObj.content)) return 'commandcode';
+    if (firstObj.type === 'session' && firstObj.id && typeof firstObj.version === 'number') return 'commandcode';
+  }
+  if (
+    /(?:^|[/\\])events\.jsonl$/.test(p) ||
+    (firstObj &&
+      typeof firstObj.type === 'string' &&
+      /^(session\.start|user\.message|assistant\.message|assistant\.turn_start)$/.test(firstObj.type) &&
+      firstObj.data &&
+      typeof firstObj.data === 'object')
+  ) {
+    return 'copilot-events';
+  }
+  if (
+    /(?:^|[/\\])chat_history\.jsonl$/.test(p) ||
+    (firstObj &&
+      (firstObj.type === 'system' || firstObj.type === 'user' || firstObj.type === 'assistant') &&
+      !firstObj.message &&
+      firstObj.content !== undefined &&
+      !firstObj.sessionId)
+  ) {
+    return 'grok';
+  }
+  if (/\.jsonl$/.test(p)) return 'jsonl';
+  if (firstLine[0] === '{') {
+    if (firstObj && (firstObj.message || firstObj.type || firstObj.role)) return 'jsonl';
     // a whole-file JSON document (opencode / generic)?
     try {
       JSON.parse(head.length < 2000 ? buf.toString('utf8') : head);
@@ -366,6 +410,104 @@ function parseCommandCode(text) {
     return m.text || m.tools.length;
   });
   return { messages: msgs, cwd: cwd, counts: countsOf(msgs), sessionId: sessionId };
+}
+
+// Copilot CLI (`~/.copilot/session-state/<id>/events.jsonl`) writes typed event envelopes:
+//   session.start     -> data.sessionId, data.startTime, data.context.cwd (or data.cwd)
+//   user.message      -> data.content (string | [{type:'text',text}]; transformedContent ignored)
+//   assistant.message -> data.content + data.toolRequests[].name (reasoningBlocks/Opaque ignored)
+//   tool.execution_*, system.message, instruction.update, skill.*, session.usage_record are skipped.
+function parseCopilotEvents(text) {
+  const state = { messages: [], textBytes: 0 };
+  let sessionId = null;
+  let cwd = null;
+  let createdAt = null;
+  let updatedAt = null;
+  eachLine(text, function (line) {
+    if (!line || !line.trim()) return;
+    if (state.messages.length >= MAX_MESSAGES || state.textBytes >= MAX_TEXT_BYTES) return;
+    let rec;
+    try {
+      rec = JSON.parse(line);
+    } catch (e) {
+      return;
+    }
+    if (!rec || typeof rec !== 'object' || typeof rec.type !== 'string') return;
+    const d = rec.data && typeof rec.data === 'object' ? rec.data : null;
+    if (!d) return;
+    const ts = typeof rec.timestamp === 'string' && rec.timestamp ? rec.timestamp : null;
+    if (ts) updatedAt = ts;
+    if (rec.type === 'session.start') {
+      if (d.sessionId) sessionId = String(d.sessionId);
+      if (!createdAt && (typeof d.startTime === 'string' || ts)) createdAt = d.startTime || ts;
+      const ctxCwd = (d.context && d.context.cwd) || d.cwd;
+      if (!cwd && typeof ctxCwd === 'string' && ctxCwd.trim()) cwd = ctxCwd.trim();
+      return;
+    }
+    if (rec.type === 'user.message') {
+      const t = extractTextBlocks(d.content, MAX_MESSAGE_CHARS);
+      if (t) pushBoundedTurn(state, 'user', t, [], ts);
+      return;
+    }
+    if (rec.type === 'assistant.message') {
+      const t = extractTextBlocks(d.content, MAX_MESSAGE_CHARS);
+      const tools = Array.isArray(d.toolRequests)
+        ? d.toolRequests
+            .map(function (r) {
+              return r && (r.name || (r.function && r.function.name)) ? String(r.name || r.function.name) : '';
+            })
+            .filter(Boolean)
+        : [];
+      if (t || tools.length) pushBoundedTurn(state, 'assistant', t, tools, ts);
+    }
+  });
+  if (!createdAt && state.messages.length) createdAt = state.messages[0].ts;
+  if (!updatedAt && state.messages.length) updatedAt = state.messages[state.messages.length - 1].ts;
+  return {
+    messages: state.messages,
+    cwd: cwd,
+    counts: countsOf(state.messages),
+    sessionId: sessionId,
+    createdAt: createdAt,
+    updatedAt: updatedAt,
+  };
+}
+
+// Grok CLI (`~/.grok/sessions/<url-encoded-cwd>/<session>/chat_history.jsonl`):
+//   { type: 'user'|'assistant'|'system'|'reasoning'|'tool_result'|'tool', content, tool_calls?, synthetic_reason? }
+// Host-injected reminders (`synthetic_reason`), system prompts, reasoning, and tool outputs are excluded.
+function parseGrokChat(text) {
+  const state = { messages: [], textBytes: 0 };
+  eachLine(text, function (line) {
+    if (!line || !line.trim()) return;
+    if (state.messages.length >= MAX_MESSAGES || state.textBytes >= MAX_TEXT_BYTES) return;
+    let rec;
+    try {
+      rec = JSON.parse(line);
+    } catch (e) {
+      return;
+    }
+    if (!rec || typeof rec !== 'object') return;
+    if (rec.synthetic_reason) return;
+    const ts = rec.timestamp || rec.created_at || null;
+    if (rec.type === 'user') {
+      const t = extractTextBlocks(rec.content, MAX_MESSAGE_CHARS);
+      if (t) pushBoundedTurn(state, 'user', t, [], ts);
+      return;
+    }
+    if (rec.type === 'assistant') {
+      const t = extractTextBlocks(rec.content, MAX_MESSAGE_CHARS);
+      const tools = Array.isArray(rec.tool_calls)
+        ? rec.tool_calls
+            .map(function (c) {
+              return c && (c.name || (c.function && c.function.name)) ? String(c.name || c.function.name) : '';
+            })
+            .filter(Boolean)
+        : [];
+      if (t || tools.length) pushBoundedTurn(state, 'assistant', t, tools, ts);
+    }
+  });
+  return { messages: state.messages, cwd: null, counts: countsOf(state.messages) };
 }
 
 // Cursor SQLite (`cursorDiskKV`): bubbles are `bubbleId:<composer>:<id>` JSON rows; the composer
@@ -552,6 +694,8 @@ function normalize(filePath, input) {
     const tool = detect(filePath, headBuf);
     if (tool === 'jsonl') return Object.assign({ tool: 'jsonl' }, _transcript.parse(input));
     if (tool === 'commandcode') return Object.assign({ tool: 'command-code' }, parseCommandCode(input));
+    if (tool === 'copilot-events') return Object.assign({ tool: 'copilot' }, parseCopilotEvents(input));
+    if (tool === 'grok') return Object.assign({ tool: 'grok' }, parseGrokChat(input));
     if (tool === 'aider') return Object.assign({ tool: 'aider' }, parseAider(input));
     // Whole-file formats (cursor SQLite, JSON, YAML) fall back to reading the file buffer,
     // which must enforce the 160 MB whole-file safety cap before allocating.
@@ -594,6 +738,8 @@ function normalize(filePath, input) {
   }
   if (tool === 'jsonl') return Object.assign({ tool: 'jsonl' }, _transcript.parse(buf.toString('utf8')));
   if (tool === 'commandcode') return Object.assign({ tool: 'command-code' }, parseCommandCode(buf.toString('utf8')));
+  if (tool === 'copilot-events') return Object.assign({ tool: 'copilot' }, parseCopilotEvents(buf.toString('utf8')));
+  if (tool === 'grok') return Object.assign({ tool: 'grok' }, parseGrokChat(buf.toString('utf8')));
   if (tool === 'json') return Object.assign({ tool: 'json' }, parseJson(buf.toString('utf8')));
   if (tool === 'yaml') return Object.assign({ tool: 'copilot' }, parseYaml(buf.toString('utf8')));
   if (tool === 'aider') return Object.assign({ tool: 'aider' }, parseAider(buf.toString('utf8')));
@@ -628,6 +774,8 @@ export {
   detect,
   parseAider,
   parseCommandCode,
+  parseCopilotEvents,
+  parseGrokChat,
   parseCursor,
   parseJson,
   parseYaml,

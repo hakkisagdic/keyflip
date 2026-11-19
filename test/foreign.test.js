@@ -433,3 +433,155 @@ test(
     assert.ok(/quit cursor/i.test(w), 'tells the user how to checkpoint it');
   },
 );
+
+test('Copilot CLI events.jsonl: keeps user/assistant prose & tool names, excludes K9 reasoning/tool output/telemetry', function () {
+  const events = [
+    {
+      type: 'session.start',
+      id: 'e1',
+      timestamp: '2026-11-10T10:00:00.000Z',
+      data: { sessionId: 'cp-123', startTime: '2026-11-10T10:00:00.000Z', context: { cwd: '/work/cp' } },
+    },
+    { type: 'system.message', id: 'e2', timestamp: '2026-11-10T10:00:01.000Z', data: { content: 'PLANTED_SYSTEM' } },
+    {
+      type: 'user.message',
+      id: 'e3',
+      timestamp: '2026-11-10T10:00:02.000Z',
+      data: { content: 'Explain webhook retries', transformedContent: 'PLANTED_TRANSFORMED_WRAPPER' },
+    },
+    { type: 'assistant.turn_start', id: 'e4', timestamp: '2026-11-10T10:00:03.000Z', data: { turnId: '0' } },
+    {
+      type: 'assistant.message',
+      id: 'e5',
+      timestamp: '2026-11-10T10:00:04.000Z',
+      data: {
+        content: 'Use exponential backoff.',
+        reasoningBlocks: [{ text: 'PLANTED_REASONING_BLOCK' }],
+        reasoningOpaque: 'PLANTED_OPAQUE',
+        encryptedContent: 'PLANTED_ENCRYPTED',
+        toolRequests: [{ toolCallId: 'tc1', name: 'bash' }],
+      },
+    },
+    {
+      type: 'tool.execution_complete',
+      id: 'e6',
+      timestamp: '2026-11-10T10:00:05.000Z',
+      data: { toolCallId: 'tc1', result: { content: 'PLANTED_TOOL_OUTPUT' } },
+    },
+    { type: 'session.usage_record', id: 'e7', timestamp: '2026-11-10T10:00:06.000Z', data: { tokens: 99 } },
+  ]
+    .map((x) => JSON.stringify(x))
+    .join('\n');
+
+  assert.strictEqual(foreign.detect('/tmp/.copilot/session-state/cp-123/events.jsonl', events), 'copilot-events');
+  assert.strictEqual(foreign.detect('unnamed.log', events), 'copilot-events');
+
+  const p = foreign.parseCopilotEvents(events);
+  assert.strictEqual(p.sessionId, 'cp-123');
+  assert.strictEqual(p.cwd, '/work/cp');
+  assert.strictEqual(p.counts.messages, 2);
+  assert.strictEqual(p.messages[0].role, 'user');
+  assert.strictEqual(p.messages[0].text, 'Explain webhook retries');
+  assert.strictEqual(p.messages[1].role, 'assistant');
+  assert.strictEqual(p.messages[1].text, 'Use exponential backoff.');
+  assert.deepStrictEqual(p.messages[1].tools, ['bash']);
+
+  const joined = p.messages.map((m) => m.text).join('\n');
+  for (const planted of [
+    'PLANTED_SYSTEM',
+    'PLANTED_TRANSFORMED_WRAPPER',
+    'PLANTED_REASONING_BLOCK',
+    'PLANTED_OPAQUE',
+    'PLANTED_ENCRYPTED',
+    'PLANTED_TOOL_OUTPUT',
+  ]) {
+    assert.strictEqual(joined.indexOf(planted), -1, planted + ' must not enter parsed messages');
+  }
+
+  const norm = foreign.normalize('events.jsonl', events);
+  assert.strictEqual(norm.tool, 'copilot');
+  assert.strictEqual(norm.counts.messages, 2);
+
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'kf-cp-disc-'));
+  try {
+    const s1 = path.join(home, '.copilot', 'session-state', 'cp-123');
+    const s2 = path.join(home, '.copilot', 'session-state', 'cp-yaml-only');
+    fs.mkdirSync(s1, { recursive: true });
+    fs.mkdirSync(s2, { recursive: true });
+    fs.writeFileSync(path.join(s1, 'events.jsonl'), events + '\n');
+    fs.writeFileSync(path.join(s1, 'workspace.yaml'), 'id: cp-123\ncwd: /work/cp\n');
+    fs.writeFileSync(path.join(s2, 'workspace.yaml'), 'id: cp-yaml-only\n');
+    const found = foreign.discover({ home: home });
+    assert.deepStrictEqual(
+      found.map((f) => f.tool + ':' + path.basename(f.path)),
+      ['copilot:events.jsonl'],
+      'only events.jsonl is discovered; workspace.yaml alone yields no session',
+    );
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test('Grok chat_history.jsonl: skips synthetic_reason, reasoning, tool_result, and telemetry siblings', function () {
+  const chat = [
+    { type: 'system', content: 'PLANTED_GROK_SYSTEM' },
+    { type: 'user', content: [{ type: 'text', text: 'PLANTED_REMINDER' }], synthetic_reason: 'system_reminder' },
+    {
+      type: 'user',
+      timestamp: '2026-11-11T09:00:00.000Z',
+      content: [{ type: 'text', text: 'How do I shard workers?' }],
+    },
+    { type: 'reasoning', content: 'PLANTED_GROK_REASONING' },
+    {
+      type: 'assistant',
+      timestamp: '2026-11-11T09:00:02.000Z',
+      content: 'Use a hash ring.',
+      tool_calls: [{ id: 'tc1', name: 'Read', arguments: '{}' }],
+    },
+    { type: 'tool_result', content: 'PLANTED_GROK_TOOL_RESULT' },
+  ]
+    .map((x) => JSON.stringify(x))
+    .join('\n');
+
+  assert.strictEqual(foreign.detect('/tmp/.grok/sessions/p/s1/chat_history.jsonl', chat), 'grok');
+  assert.strictEqual(foreign.detect('unnamed.log', chat), 'grok');
+
+  const p = foreign.parseGrokChat(chat);
+  assert.strictEqual(p.counts.messages, 2);
+  assert.strictEqual(p.messages[0].role, 'user');
+  assert.strictEqual(p.messages[0].text, 'How do I shard workers?');
+  assert.strictEqual(p.messages[1].role, 'assistant');
+  assert.strictEqual(p.messages[1].text, 'Use a hash ring.');
+  assert.deepStrictEqual(p.messages[1].tools, ['Read']);
+
+  const joined = p.messages.map((m) => m.text).join('\n');
+  for (const planted of [
+    'PLANTED_GROK_SYSTEM',
+    'PLANTED_REMINDER',
+    'PLANTED_GROK_REASONING',
+    'PLANTED_GROK_TOOL_RESULT',
+  ]) {
+    assert.strictEqual(joined.indexOf(planted), -1, planted + ' must be excluded');
+  }
+
+  const norm = foreign.normalize('chat_history.jsonl', chat);
+  assert.strictEqual(norm.tool, 'grok');
+  assert.strictEqual(norm.counts.messages, 2);
+
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'kf-grok-disc-'));
+  try {
+    const sdir = path.join(home, '.grok', 'sessions', '%2Fwork%2Fproj', 'sess-1');
+    fs.mkdirSync(sdir, { recursive: true });
+    fs.writeFileSync(path.join(sdir, 'chat_history.jsonl'), chat + '\n');
+    fs.writeFileSync(path.join(sdir, 'events.jsonl'), '{"event":"telemetry"}\n');
+    fs.writeFileSync(path.join(sdir, 'prompt_history.jsonl'), '{"prompt":"old"}\n');
+    const found = foreign.discover({ home: home });
+    assert.deepStrictEqual(
+      found.map((f) => f.tool + ':' + path.basename(f.path)),
+      ['grok:chat_history.jsonl'],
+      'telemetry events.jsonl and prompt_history.jsonl under .grok/sessions are skipped',
+    );
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});

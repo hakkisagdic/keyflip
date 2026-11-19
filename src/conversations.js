@@ -27,6 +27,7 @@ import { run } from './exec.js';
 import * as transcript from './transcript.js';
 import * as foreign from './foreign.js';
 import * as cursor from './cursor.js';
+import * as yamlread from './yamlread.js';
 
 const SCHEMA_VERSION = 1;
 const MAX_FILE_BYTES = 160 * 1024 * 1024; // whole-file string/decompression cap
@@ -74,6 +75,44 @@ function safeStr(v, max) {
 function oneLine(v, max) {
   const s = safeStr(v, max || 120);
   return s ? s.replace(/\s+/g, ' ') : null;
+}
+
+function safeId(v) {
+  const s = String(v == null ? '' : v);
+  // eslint-disable-next-line no-control-regex -- control characters are being folded
+  const folded = s.replace(/[\u0000-\u001f\u007f]/g, '-').replace(/[^A-Za-z0-9._:-]/g, '-');
+  return (
+    folded
+      .replace(/-{2,}/g, '-')
+      .replace(/^[-.]+/, '')
+      .slice(0, 120) || 'unknown'
+  );
+}
+
+function toIso(v) {
+  if (typeof v === 'number' && isFinite(v)) {
+    const ms = v > 1e12 ? v : v * 1000;
+    const d = new Date(Math.round(ms));
+    return isNaN(d.getTime()) ? null : d.toISOString();
+  }
+  if (typeof v === 'string') {
+    const s = v.trim();
+    if (!s) return null;
+    if (/^\d{10,}(\.\d+)?$/.test(s)) return toIso(Number(s));
+    const t = Date.parse(s);
+    if (!isNaN(t)) return new Date(t).toISOString();
+  }
+  return null;
+}
+
+function readSmallText(file, maxBytes) {
+  try {
+    const st = fs.statSync(file);
+    if (!st.isFile() || st.size === 0 || st.size > (maxBytes || 262144)) return null;
+    return fs.readFileSync(file, 'utf8');
+  } catch {
+    return null;
+  }
 }
 
 function countsOf(messages) {
@@ -766,6 +805,99 @@ function parseCursorChat(ctx, src, opts) {
   );
 }
 
+function parseCopilotSession(text, src, opts) {
+  const dir = path.dirname(src.path);
+  let ws = null;
+  const rawYaml =
+    readSmallText(path.join(dir, 'workspace.yaml'), 262144) || readSmallText(path.join(dir, 'workspace.yml'), 262144);
+  if (rawYaml) {
+    try {
+      const doc = yamlread.parse(rawYaml);
+      if (doc && typeof doc === 'object' && !Array.isArray(doc)) ws = doc;
+    } catch {
+      /* sibling yaml is optional */
+    }
+  }
+  const parsed = foreign.parseCopilotEvents(text);
+  const messages = (parsed.messages || [])
+    .map((m) => ({
+      role: m.role === 'assistant' ? 'assistant' : 'user',
+      text: cleanMessage(m.text),
+      ts: toIso(m.ts) || m.ts || null,
+      tools: m.tools || [],
+    }))
+    .filter((m) => m.text || m.tools.length);
+  const sessionId = safeId(parsed.sessionId || (ws && ws.id) || src.idHint || path.basename(dir));
+  const conv = makeConv({
+    id: 'copilot:' + sessionId,
+    app: 'copilot',
+    surface: 'cli',
+    title: (ws && (ws.name || ws.title || ws.summary)) || src.title || null,
+    cwd: parsed.cwd || (ws && ws.cwd) || (opts && opts.cwd) || null,
+    createdAt: toIso(parsed.createdAt) || toIso(ws && ws.created_at) || (messages.length ? messages[0].ts : null),
+    updatedAt:
+      toIso(parsed.updatedAt) ||
+      toIso(ws && ws.updated_at) ||
+      (messages.length ? messages[messages.length - 1].ts : new Date(src.mtimeMs).toISOString()),
+    messages: messages,
+    path: src.path,
+    mtimeMs: src.mtimeMs,
+    size: src.size,
+  });
+  return withFallbackTitle(conv, sessionId);
+}
+
+function parseGrokSession(text, src, opts) {
+  const dir = path.dirname(src.path);
+  let summary = null;
+  const rawJson = readSmallText(path.join(dir, 'summary.json'), 262144);
+  if (rawJson) {
+    try {
+      const j = JSON.parse(rawJson);
+      if (j && typeof j === 'object') summary = j;
+    } catch {
+      /* sibling summary is optional */
+    }
+  }
+  const info = summary && summary.info && typeof summary.info === 'object' ? summary.info : null;
+  let dirCwd = null;
+  const encodedParent = path.basename(path.dirname(dir));
+  if (/%2[fF]|%5[cC]/.test(encodedParent)) {
+    try {
+      const dec = decodeURIComponent(encodedParent);
+      if (dec && dec.trim()) dirCwd = dec.trim();
+    } catch {
+      /* ignore malformed percent encoding */
+    }
+  }
+  const parsed = foreign.parseGrokChat(text);
+  const messages = (parsed.messages || [])
+    .map((m) => ({
+      role: m.role === 'assistant' ? 'assistant' : 'user',
+      text: cleanMessage(m.text),
+      ts: toIso(m.ts) || m.ts || null,
+      tools: m.tools || [],
+    }))
+    .filter((m) => m.text || m.tools.length);
+  const sessionId = safeId((info && info.id) || (summary && summary.session_id) || src.idHint || path.basename(dir));
+  const conv = makeConv({
+    id: 'grok:' + sessionId,
+    app: 'grok',
+    surface: 'cli',
+    title: (summary && (summary.session_summary || summary.title)) || src.title || null,
+    cwd: (info && info.cwd) || (summary && summary.cwd) || dirCwd || (opts && opts.cwd) || null,
+    createdAt: toIso(summary && summary.created_at) || (messages.length ? messages[0].ts : null),
+    updatedAt:
+      toIso(summary && summary.updated_at) ||
+      (messages.length ? messages[messages.length - 1].ts : new Date(src.mtimeMs).toISOString()),
+    messages: messages,
+    path: src.path,
+    mtimeMs: src.mtimeMs,
+    size: src.size,
+  });
+  return withFallbackTitle(conv, sessionId);
+}
+
 function parseForeignSource(text, src, opts) {
   const normalized = foreign.normalize(src.path, text);
   const messages = (normalized.messages || [])
@@ -978,6 +1110,8 @@ function foreignSources(ctx) {
   found.forEach((f) => {
     const gemini = f.tool === 'gemini' && /transcript\.jsonl$/i.test(f.path);
     const commandCode = f.tool === 'command-code';
+    const copilot = f.tool === 'copilot' && /events\.jsonl$/i.test(f.path);
+    const grok = f.tool === 'grok' && /chat_history\.jsonl$/i.test(f.path);
     let file = f.path;
     if (gemini) {
       // transcript_full.jsonl carries the same records plus steps an older transcript omitted.
@@ -998,10 +1132,16 @@ function foreignSources(ctx) {
         /* title is optional */
       }
     }
-    const src = statSource(file, gemini ? 'gemini-transcript' : 'foreign', {
+    const kind = gemini ? 'gemini-transcript' : copilot ? 'copilot-events' : grok ? 'grok-chat' : 'foreign';
+    const idHint = gemini
+      ? geminiSessionId(file)
+      : copilot || grok
+        ? path.basename(path.dirname(file))
+        : crypto.createHash('sha1').update(f.path).digest('hex').slice(0, 12);
+    const src = statSource(file, kind, {
       app: f.tool,
-      surface: gemini || commandCode ? 'cli' : 'local',
-      idHint: gemini ? geminiSessionId(file) : crypto.createHash('sha1').update(f.path).digest('hex').slice(0, 12),
+      surface: gemini || commandCode || copilot || grok ? 'cli' : 'local',
+      idHint: idHint,
       tool: f.tool,
       title: title,
     });
@@ -1106,6 +1246,8 @@ function load(ctx, src, opts) {
     src.kind === 'kiro-cli' ||
     src.kind === 'kiro-ide' ||
     src.kind === 'gemini-transcript' ||
+    src.kind === 'copilot-events' ||
+    src.kind === 'grok-chat' ||
     (src.kind === 'foreign' && /\.(jsonl|md)$/i.test(src.path));
   const warnings = [];
   const input = canStream ? readSourceInput(src.path, opts, warnings) : readText(src.path);
@@ -1116,6 +1258,8 @@ function load(ctx, src, opts) {
   else if (src.kind === 'kiro-cli') conv = parseKiroCli(input, src, opts);
   else if (src.kind === 'kiro-ide') conv = parseKiroIde(input, src, opts);
   else if (src.kind === 'gemini-transcript') conv = parseGeminiTranscript(input, src, opts);
+  else if (src.kind === 'copilot-events') conv = parseCopilotSession(input, src, opts);
+  else if (src.kind === 'grok-chat') conv = parseGrokSession(input, src, opts);
   else conv = parseForeignSource(input, src, opts);
   if (warnings.length) {
     conv.warnings = (conv.warnings || []).concat(warnings.map((w) => Object.assign({ app: conv.app }, w)));

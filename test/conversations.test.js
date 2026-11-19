@@ -545,3 +545,135 @@ test('discover sorts newest-first before capping and distributes a tight budget 
   assert.strictEqual(perApp.filter((s) => s.app === 'kiro').length, 5);
   assert.strictEqual(perApp.filter((s) => s.app === 'qoder').length, 2);
 });
+
+test('Copilot CLI: reads events.jsonl with sibling workspace.yaml metadata and excludes reasoning/tool output', function () {
+  const ctx = ctxFor();
+  try {
+    const dir = path.join(ctx.home, '.copilot', 'session-state', 'cp-sess-9');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(
+      path.join(dir, 'workspace.yaml'),
+      [
+        'id: cp-sess-9',
+        'name: Fix OAuth callback loop',
+        'cwd: /work/copilot-app',
+        'created_at: 2026-11-12T08:00:00.000Z',
+        'updated_at: 2026-11-12T08:05:00.000Z',
+      ].join('\n') + '\n',
+    );
+    fs.writeFileSync(
+      path.join(dir, 'events.jsonl'),
+      [
+        {
+          type: 'session.start',
+          timestamp: '2026-11-12T08:00:00.000Z',
+          data: { sessionId: 'cp-sess-9', context: { cwd: '/work/copilot-app' } },
+        },
+        {
+          type: 'user.message',
+          timestamp: '2026-11-12T08:01:00.000Z',
+          data: { content: 'Why does the callback loop?', transformedContent: 'PLANTED_TRANSFORMED' },
+        },
+        {
+          type: 'assistant.message',
+          timestamp: '2026-11-12T08:02:00.000Z',
+          data: {
+            content: 'Check the state cookie path.',
+            reasoningBlocks: [{ text: 'PLANTED_REASONING' }],
+            toolRequests: [{ name: 'view_file' }],
+          },
+        },
+        {
+          type: 'tool.execution_complete',
+          timestamp: '2026-11-12T08:03:00.000Z',
+          data: { result: { content: 'PLANTED_TOOL_STDOUT' } },
+        },
+      ]
+        .map((x) => JSON.stringify(x))
+        .join('\n') + '\n',
+    );
+    const convs = conversations.discover(ctx, {}).map((s) => conversations.load(ctx, s, {}));
+    assert.strictEqual(convs.length, 1);
+    const c = convs[0];
+    assert.strictEqual(c.id, 'copilot:cp-sess-9');
+    assert.strictEqual(c.app, 'copilot');
+    assert.strictEqual(c.surface, 'cli');
+    assert.strictEqual(c.title, 'Fix OAuth callback loop');
+    assert.strictEqual(c.cwd, '/work/copilot-app');
+    assert.deepStrictEqual(
+      c.messages.map((m) => m.role),
+      ['user', 'assistant'],
+    );
+    assert.deepStrictEqual(c.messages[1].tools, ['view_file']);
+    const text = c.messages.map((m) => m.text).join('\n');
+    assert.strictEqual(text.indexOf('PLANTED_'), -1);
+  } finally {
+    fs.rmSync(ctx.home, { recursive: true, force: true });
+  }
+});
+
+test('Grok CLI: reads chat_history.jsonl, uses summary.json or decoded parent cwd, excludes synthetic reminders & telemetry', function () {
+  const ctx = ctxFor();
+  try {
+    const withSummary = path.join(ctx.home, '.grok', 'sessions', '%2Fwork%2Falpha', 'g-1');
+    const withoutSummary = path.join(ctx.home, '.grok', 'sessions', '%2Fwork%2Fbeta-dir', 'g-2');
+    fs.mkdirSync(withSummary, { recursive: true });
+    fs.mkdirSync(withoutSummary, { recursive: true });
+    fs.writeFileSync(
+      path.join(withSummary, 'summary.json'),
+      JSON.stringify({
+        info: { id: 'g-1', cwd: '/work/alpha-meta' },
+        session_summary: 'Tune SQLite page cache',
+        created_at: '2026-11-13T10:00:00.000Z',
+        updated_at: '2026-11-13T10:05:00.000Z',
+      }),
+    );
+    fs.writeFileSync(
+      path.join(withSummary, 'chat_history.jsonl'),
+      [
+        { type: 'system', content: 'PLANTED_SYS' },
+        { type: 'user', content: [{ type: 'text', text: 'PLANTED_SYNTHETIC' }], synthetic_reason: 'system_reminder' },
+        { type: 'user', content: [{ type: 'text', text: 'Increase mmap size safely.' }] },
+        { type: 'reasoning', content: 'PLANTED_THOUGHT' },
+        { type: 'assistant', content: 'Use PRAGMA cache_size.', tool_calls: [{ name: 'grep_search' }] },
+        { type: 'tool_result', content: 'PLANTED_RESULT' },
+      ]
+        .map((x) => JSON.stringify(x))
+        .join('\n') + '\n',
+    );
+    fs.writeFileSync(path.join(withSummary, 'events.jsonl'), '{"type":"metric"}\n');
+    fs.writeFileSync(
+      path.join(withoutSummary, 'chat_history.jsonl'),
+      [
+        { type: 'user', content: 'Fallback cwd check for Grok' },
+        { type: 'assistant', content: 'Decoded from parent dir.' },
+      ]
+        .map((x) => JSON.stringify(x))
+        .join('\n') + '\n',
+    );
+
+    const convs = conversations.discover(ctx, {}).map((s) => conversations.load(ctx, s, {}));
+    assert.strictEqual(convs.length, 2);
+    const c1 = convs.find((c) => c.id === 'grok:g-1');
+    const c2 = convs.find((c) => c.id === 'grok:g-2');
+    assert.ok(c1 && c2);
+    assert.strictEqual(c1.app, 'grok');
+    assert.strictEqual(c1.surface, 'cli');
+    assert.strictEqual(c1.title, 'Tune SQLite page cache');
+    assert.strictEqual(c1.cwd, '/work/alpha-meta');
+    assert.deepStrictEqual(c1.messages[1].tools, ['grep_search']);
+    assert.strictEqual(
+      c1.messages
+        .map((m) => m.text)
+        .join('\n')
+        .indexOf('PLANTED_'),
+      -1,
+    );
+
+    assert.strictEqual(c2.app, 'grok');
+    assert.strictEqual(c2.cwd, '/work/beta-dir');
+    assert.strictEqual(c2.title, 'Fallback cwd check for Grok');
+  } finally {
+    fs.rmSync(ctx.home, { recursive: true, force: true });
+  }
+});
