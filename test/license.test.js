@@ -5,6 +5,7 @@ import os from 'os';
 import path from 'path';
 import crypto from 'crypto';
 import * as license from '../src/license.js';
+import * as mcp from '../src/mcp.js';
 import { makeCtx, assertPrivateMode } from './helpers.js';
 
 // A throwaway Ed25519 keypair + its SPKI-DER base64 public key (same encoding
@@ -425,4 +426,168 @@ test('paywall is env-gated: requireTier is a no-op unless KEYFLIP_LICENSING is s
   }
   assert.strictEqual(license.featureFor('cost'), 'cost');
   assert.strictEqual(license.featureFor('list'), null);
+});
+
+// ---- MCP failover gating & CLI<->MCP parity (K1-K4) --------------------------
+
+test('K1: featureFor maps keyflip_failover and keyflip_failover_verify to autoswitch', function () {
+  assert.strictEqual(license.featureFor('failover'), 'autoswitch');
+  assert.strictEqual(license.featureFor('keyflip_failover'), 'autoswitch');
+  assert.strictEqual(license.featureFor('keyflip_failover_verify'), 'autoswitch');
+});
+
+test('K2: MCP keyflip_failover is rejected with LICENSE_REQUIRED when unlicensed and allowed on pro', async function (t) {
+  const k = freshKeys();
+  license.setPublicKey(k.pubB64);
+  const prev = process.env.KEYFLIP_LICENSING;
+  process.env.KEYFLIP_LICENSING = '1';
+  const offlineFetch = async function () {
+    throw new Error('offline');
+  };
+  const freeCtx = makeCtx({ now: NOW, fetch: offlineFetch });
+  const proCtx = makeCtx({ now: NOW, fetch: offlineFetch });
+  t.after(function () {
+    fs.rmSync(freeCtx.home, { recursive: true, force: true });
+    fs.rmSync(proCtx.home, { recursive: true, force: true });
+  });
+  try {
+    assert.throws(
+      function () {
+        license.requireForName(freeCtx, 'keyflip_failover');
+      },
+      function (e) {
+        return e.code === 'LICENSE_REQUIRED' && e.feature === 'autoswitch' && e.requiredTier === 'pro';
+      },
+    );
+    assert.throws(
+      function () {
+        license.requireForName(freeCtx, 'keyflip_failover_verify');
+      },
+      function (e) {
+        return e.code === 'LICENSE_REQUIRED' && e.feature === 'autoswitch' && e.requiredTier === 'pro';
+      },
+    );
+
+    const freeFailoverRes = await mcp.handle(freeCtx, {
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'tools/call',
+      params: { name: 'keyflip_failover', arguments: { action: 'status' } },
+    });
+    assert.strictEqual(freeFailoverRes.result.isError, true);
+    assert.strictEqual(freeFailoverRes.result.structuredContent, undefined);
+    assert.match(freeFailoverRes.result.content[0].text, /pro plan/);
+
+    const freeVerifyRes = await mcp.handle(freeCtx, {
+      jsonrpc: '2.0',
+      id: 2,
+      method: 'tools/call',
+      params: { name: 'keyflip_failover_verify', arguments: { no_spend: true } },
+    });
+    assert.strictEqual(freeVerifyRes.result.isError, true);
+    assert.strictEqual(freeVerifyRes.result.structuredContent, undefined);
+    assert.match(freeVerifyRes.result.content[0].text, /pro plan/);
+
+    license.activate(proCtx, {
+      token: license.makeLicense(k.privateKey, { tier: 'pro', email: 'a@b.co', expiry: null }, { now: NOW }),
+    });
+    assert.strictEqual(license.requireForName(proCtx, 'keyflip_failover'), true);
+    assert.strictEqual(license.requireForName(proCtx, 'keyflip_failover_verify'), true);
+
+    const proFailoverRes = await mcp.handle(proCtx, {
+      jsonrpc: '2.0',
+      id: 3,
+      method: 'tools/call',
+      params: { name: 'keyflip_failover', arguments: { action: 'status' } },
+    });
+    assert.strictEqual(proFailoverRes.result.isError, false);
+    assert.strictEqual(typeof proFailoverRes.result.structuredContent.failover, 'object');
+  } finally {
+    if (prev === undefined) delete process.env.KEYFLIP_LICENSING;
+    else process.env.KEYFLIP_LICENSING = prev;
+    license.setPublicKey(license.PUBKEY_B64);
+  }
+});
+
+test('K3: every command in CMD_FEATURE maps every matching keyflip_<area> MCP tool to the same feature', function () {
+  const cmdNames = Object.keys(license.CMD_FEATURE);
+  assert.ok(cmdNames.length > 0, 'CMD_FEATURE must not be empty');
+  let matchedCount = 0;
+
+  cmdNames.forEach(function (cmd) {
+    const expected = license.CMD_FEATURE[cmd];
+    assert.ok(license.FEATURES[expected], 'CMD_FEATURE[' + cmd + '] must map to a known feature: ' + expected);
+
+    const seen = Object.create(null);
+    const areas = [cmd, cmd.replace(/-/g, '_'), cmd.replace(/-/g, '')];
+    if (cmd.indexOf('run-') === 0) areas.push(cmd.slice(4));
+
+    areas.forEach(function (area) {
+      if (seen[area]) return;
+      seen[area] = true;
+      const exact = 'keyflip_' + area;
+      const prefix = exact + '_';
+
+      mcp.TOOLS.forEach(function (tool) {
+        if (tool.name === exact || tool.name.indexOf(prefix) === 0) {
+          matchedCount++;
+          assert.strictEqual(
+            license.featureFor(tool.name),
+            expected,
+            'MCP tool ' +
+              tool.name +
+              ' (area ' +
+              area +
+              ', CLI command ' +
+              cmd +
+              ') must map to ' +
+              expected +
+              ' via AREA_FEATURE',
+          );
+        }
+      });
+    });
+  });
+
+  assert.ok(matchedCount > 0, 'expected at least one MCP tool matching CMD_FEATURE areas');
+});
+
+test('K4: free MCP tools (keyflip_list, keyflip_status) are not locked when KEYFLIP_LICENSING=1', async function (t) {
+  const prev = process.env.KEYFLIP_LICENSING;
+  process.env.KEYFLIP_LICENSING = '1';
+  const offlineFetch = async function () {
+    throw new Error('offline');
+  };
+  const freeCtx = makeCtx({ now: NOW, fetch: offlineFetch });
+  t.after(function () {
+    fs.rmSync(freeCtx.home, { recursive: true, force: true });
+  });
+  try {
+    assert.strictEqual(license.tier(freeCtx), 'free');
+    ['keyflip_list', 'keyflip_status'].forEach(function (name) {
+      assert.strictEqual(license.featureFor(name), null);
+      assert.strictEqual(license.requireForName(freeCtx, name), true);
+    });
+
+    const listRes = await mcp.handle(freeCtx, {
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'tools/call',
+      params: { name: 'keyflip_list', arguments: {} },
+    });
+    assert.strictEqual(listRes.result.isError, false);
+    assert.ok(Array.isArray(listRes.result.structuredContent.accounts));
+
+    const statusRes = await mcp.handle(freeCtx, {
+      jsonrpc: '2.0',
+      id: 2,
+      method: 'tools/call',
+      params: { name: 'keyflip_status', arguments: {} },
+    });
+    assert.strictEqual(statusRes.result.isError, false);
+    assert.ok('cli' in statusRes.result.structuredContent);
+  } finally {
+    if (prev === undefined) delete process.env.KEYFLIP_LICENSING;
+    else process.env.KEYFLIP_LICENSING = prev;
+  }
 });
