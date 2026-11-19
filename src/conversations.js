@@ -27,6 +27,7 @@ import { run } from './exec.js';
 import * as transcript from './transcript.js';
 import * as foreign from './foreign.js';
 import * as cursor from './cursor.js';
+import * as opencode from './opencode.js';
 import * as yamlread from './yamlread.js';
 
 const SCHEMA_VERSION = 1;
@@ -805,6 +806,35 @@ function parseCursorChat(ctx, src, opts) {
   );
 }
 
+function parseOpencodeChat(ctx, src, opts) {
+  const chat = opencode.loadChat(ctx, src);
+  const messages = (chat.messages || [])
+    .map((m) => ({
+      role: m.role === 'assistant' ? 'assistant' : 'user',
+      text: cleanMessage(m.text),
+      ts: m.ts || null,
+      tools: m.tools || [],
+    }))
+    .filter((m) => m.text || m.tools.length);
+  const sid = safeId(chat.sessionId);
+  const conv = makeConv({
+    id: 'opencode:' + sid,
+    app: 'opencode',
+    surface: 'cli',
+    title: chat.title || src.title || null,
+    cwd: chat.cwd || src.cwd || (opts && opts.cwd) || null,
+    createdAt: chat.createdAt || (messages.length ? messages[0].ts : null),
+    updatedAt:
+      chat.updatedAt || (messages.length ? messages[messages.length - 1].ts : new Date(src.mtimeMs).toISOString()),
+    messages: messages,
+    path: src.path,
+    subId: src.subId || chat.sessionId,
+    mtimeMs: src.mtimeMs,
+    size: src.size,
+  });
+  return withFallbackTitle(conv, sid);
+}
+
 function parseCopilotSession(text, src, opts) {
   const dir = path.dirname(src.path);
   let ws = null;
@@ -1099,6 +1129,33 @@ function cursorSources(ctx) {
   return out;
 }
 
+function opencodeSources(ctx) {
+  const out = [];
+  let found;
+  try {
+    found = opencode.discover(ctx);
+  } catch {
+    return out;
+  }
+  found.forEach((s) => {
+    const src = statSource(s.path, 'opencode-db', {
+      app: 'opencode',
+      surface: 'cli',
+      idHint: s.sessionId,
+      sessionId: s.sessionId,
+      subId: s.subId || s.sessionId,
+      title: s.title,
+      cwd: s.cwd,
+      mtimeMs: s.mtimeMs,
+      size: s.size,
+    });
+    if (src) out.push(src);
+  });
+  out.issues = (found.skipped || []).map((s) => ({ path: s.file, app: 'opencode', error: s.reason }));
+  out.storeWarnings = (found.warnings || []).map((w) => ({ path: w.file, app: 'opencode', error: w.reason }));
+  return out;
+}
+
 function foreignSources(ctx) {
   const out = [];
   let found;
@@ -1155,11 +1212,13 @@ function discover(ctx, opts) {
   opts = opts || {};
   const want = opts.apps && opts.apps.length ? new Set(opts.apps) : null;
   const cursorFamily = cursorSources(ctx);
+  const opencodeFamily = !want || want.has('opencode') ? opencodeSources(ctx) : [];
   const all = []
     .concat(claudeSources(ctx))
     .concat(codexSources(ctx))
     .concat(kiroSources(ctx))
     .concat(cursorFamily)
+    .concat(opencodeFamily)
     .concat(opts.foreign === false ? [] : foreignSources(ctx));
   const seen = new Set();
   const candidates = [];
@@ -1224,9 +1283,20 @@ function discover(ctx, opts) {
   // Store-level refusals and degraded reads travel with the source list for the index report to
   // print — but only when this run actually asked for Cursor, so `--app claude` does not inherit
   // another app's complaint.
-  const asked = !want || want.has('cursor');
-  out.storeIssues = asked ? cursorFamily.issues || [] : [];
-  out.storeWarnings = asked ? cursorFamily.storeWarnings || [] : [];
+  const askedCursor = !want || want.has('cursor');
+  const askedOpencode = !want || want.has('opencode');
+  const issues = [];
+  const storeWarnings = [];
+  if (askedCursor) {
+    issues.push.apply(issues, cursorFamily.issues || []);
+    storeWarnings.push.apply(storeWarnings, cursorFamily.storeWarnings || []);
+  }
+  if (askedOpencode) {
+    issues.push.apply(issues, opencodeFamily.issues || []);
+    storeWarnings.push.apply(storeWarnings, opencodeFamily.storeWarnings || []);
+  }
+  out.storeIssues = issues;
+  out.storeWarnings = storeWarnings;
   return out;
 }
 
@@ -1238,6 +1308,7 @@ function load(ctx, src, opts) {
   // state. The adapter opens them itself, for every one of its three kinds.
   if (src.kind === 'cursor-composer' || src.kind === 'cursor-agent' || src.kind === 'cursor-transcript')
     return parseCursorChat(ctx, src, opts);
+  if (src.kind === 'opencode-db') return parseOpencodeChat(ctx, src, opts);
   // Stream uncompressed line-based sources (.jsonl, Aider .md) so sessions >160 MB (e.g. long
   // Claude Code or Kiro IDE transcripts) parse cleanly without hitting V8's string limit.
   const canStream =
