@@ -926,10 +926,7 @@ show --md` prints the merged document without writing anything.
 
 ### Every tool's chats, searchable (`conv`)
 
-Claude Code writes `~/.claude/projects`, Codex writes `~/.codex/sessions` (sometimes zstd-compressed),
-Kiro writes both `~/.kiro/sessions/cli` and its IDE store, Cursor keeps three separate stores (the
-editor's `state.vscdb`, the `cursor-agent` CLI's content-addressed `~/.cursor/chats`, and the
-`agent-transcripts` mirror), and opencode/Qoder/Gemini/Copilot/Aider each have their own. `keyflip conv`
+Claude Code writes `~/.claude/projects`, Claude Desktop Cowork logs `local-agent-mode-sessions/**/audit.jsonl`, Codex writes `~/.codex/sessions` (sometimes zstd-compressed), Kiro writes both `~/.kiro/sessions/cli` and its IDE store, Cursor keeps three separate stores (the editor's `state.vscdb`, the `cursor-agent` CLI's content-addressed `~/.cursor/chats`, and the `agent-transcripts` mirror), opencode writes SQLite `~/.local/share/opencode/opencode.db`, VS Code Copilot Chat writes `User/workspaceStorage/*/chatSessions/*.jsonl` (+ `emptyWindowChatSessions`), Copilot CLI writes `~/.copilot/session-state/*/events.jsonl`, Grok writes `~/.grok/sessions/**/chat_history.jsonl`, and Qoder/Gemini/Command Code/Aider each have their own. `keyflip conv`
 reads **all of them** into one canonical shape — id, app, surface, title, cwd, timestamps,
 `{role, text, ts, tools}` messages — with the host apps' harness noise stripped:
 `<system-reminder>`, `<task-notification>`, `<command-name>` plumbing, environment contexts and
@@ -939,8 +936,8 @@ index or an export. Sources are read-only; keyflip never writes into any tool's 
 ```bash
 keyflip conv list --app claude,codex --since 7d   # browse: id prefix, app, age, message count, title
 keyflip conv list --account yahoo                 # only the chats that account worked on
-keyflip conv index                                # parse once into chunks keyflip owns (incremental)
-keyflip conv index --embed                        # + local embeddings (Ollama bge-m3 by default; add --background to run detached)
+keyflip conv index --no-embed                     # parse only into chunks keyflip owns (incremental)
+keyflip conv index --embed --embed-batch 8 --embed-pause-ms 500 --max-embed 300   # + local Ollama bge-m3, throttled for shared GPUs
 keyflip conv index --schedule --interval 30        # keep it current unattended (launchd on macOS, cron on Linux)
 keyflip conv search "database migration"          # BM25 now; hybrid once vectors exist
 keyflip conv search "database migration" --account gmail   # …and only that account's chats
@@ -1021,7 +1018,7 @@ keyflip conv transfer a7dc93d0 --to codex         # a handoff bundle for another
   instead of a stale one — it runs on an **interval**, not at a nightly hour, because a daily index would
   be a day behind. The pass is incremental: an unchanged transcript costs one `stat()`, and only new or
   changed chunks are embedded, so a tick costs seconds. It runs the **local** embedding model — no cloud
-  model, no quota. `--schedule-status` shows the state, `--unschedule` removes it, and `--watch` is the
+  model, no quota — with GPU-friendly defaults (`conv.embedBatch = 8`, `conv.embedPauseMs = 500`, `conv.maxEmbed = 300`, overridable via `keyflip config set` or `--embed-batch` / `--embed-pause-ms` / `--max-embed`), and `keyflip conv status` reports remaining pending chunks and token estimates. `--schedule-status` shows the state, `--unschedule` removes it, and `--watch` is the
   foreground equivalent if you would rather keep a terminal open.
 - **Exports redact by default.** MD / self-contained HTML / canonical JSON, and Obsidian notes with YAML
   frontmatter, tags and an index note. Credential-shaped lines are masked unless you pass `--no-redact`.

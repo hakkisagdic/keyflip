@@ -1012,10 +1012,9 @@ keyflip threads drop dugum-acmak -y    # yalnız ADI unutur; her transkript ve h
 
 ### Her aracın sohbetleri, aranabilir hâlde (`conv`)
 
-Claude Code `~/.claude/projects`'e, Codex `~/.codex/sessions`'a (bazen zstd sıkıştırılmış), Kiro hem
+Claude Code `~/.claude/projects`'e, Claude Desktop Cowork `local-agent-mode-sessions/**/audit.jsonl`'a, Codex `~/.codex/sessions`'a (bazen zstd sıkıştırılmış), Kiro hem
 `~/.kiro/sessions/cli`'ye hem IDE deposuna, Cursor üç ayrı depoya yazar (editörün `state.vscdb`'si,
-`cursor-agent` CLI'ının içerik-adresli `~/.cursor/chats`'i ve `agent-transcripts` aynası);
-opencode/Qoder/Gemini/Copilot/Aider'in ise kendine göre. `keyflip conv` hepsini **tek kanonik biçimde**
+`cursor-agent` CLI'ının içerik-adresli `~/.cursor/chats`'i ve `agent-transcripts` aynası); opencode SQLite (`~/.local/share/opencode/opencode.db`), VS Code Copilot Chat (`chatSessions/*.jsonl` + `emptyWindowChatSessions`), Copilot CLI (`~/.copilot/session-state/*/events.jsonl`), Grok (`~/.grok/sessions/**/chat_history.jsonl`) ve Qoder/Gemini/Command Code/Aider'in ise kendine göre. `keyflip conv` hepsini **tek kanonik biçimde**
 okur — id, uygulama, yüzey, başlık, çalışma dizini, zaman damgaları, `{role, text, ts, tools}`
 mesajları — ve araçların kendi gürültüsünü ayıklar:
 `<system-reminder>`, `<task-notification>`, `<command-name>` tesisatı, ortam bağlamları ve
@@ -1025,8 +1024,8 @@ dışa aktarıma asla ulaşmaz. Kaynaklar salt-okunur; keyflip hiçbir aracın d
 ```bash
 keyflip conv list --app claude,codex --since 7d   # gez: id öneki, uygulama, yaş, mesaj sayısı, başlık
 keyflip conv list --account yahoo                 # yalnızca o hesabın çalıştığı sohbetler
-keyflip conv index                                # bir kez çözümle, parçaları keyflip tutsun (artımlı)
-keyflip conv index --embed                        # + yerel embedding (varsayılan Ollama bge-m3; arka plan için --background)
+keyflip conv index --no-embed                     # yalnızca çözümle, parçaları keyflip tutsun (artımlı)
+keyflip conv index --embed --embed-batch 8 --embed-pause-ms 500 --max-embed 300   # + yerel Ollama bge-m3 (paylaşılan GPU dostu hız)
 keyflip conv index --schedule --interval 30        # kendini güncel tut (macOS'ta launchd, Linux'ta cron)
 keyflip conv search "database migration"          # şimdi BM25; vektörler varsa hibrit
 keyflip conv search "database migration" --account gmail   # …ve yalnızca o hesabın sohbetleri
@@ -1107,7 +1106,7 @@ keyflip conv transfer a7dc93d0 --to codex         # başka bir yapay zekâ arac�
   bulur, bayat olanı değil — **gece saatinde değil, aralıkla** çalışır, çünkü günlük indeks bir gün geride
   kalırdı. Geçiş kademeli: değişmeyen bir transcript tek `stat()` demektir, yalnızca yeni ya da değişen
   parçalar gömülür, dolayısıyla bir tur saniyeler sürer. **Yerel** embedding modelini çalıştırır — bulut
-  modeli yok, kota yok. Durumu `--schedule-status` gösterir, `--unschedule` kaldırır; terminali açık
+  modeli yok, kota yok — ve paylaşılan GPU'yu boğmamak için nazik varsayılanlar (`conv.embedBatch = 8`, `conv.embedPauseMs = 500`, `conv.maxEmbed = 300`; `keyflip config set` veya `--embed-batch` / `--embed-pause-ms` / `--max-embed` ile ayarlanır) kullanır; `keyflip conv status` kalan `pending` parça ve tahmini token sayısını gösterir. Durumu `--schedule-status` gösterir, `--unschedule` kaldırır; terminali açık
   tutmayı severseniz ön planlı karşılığı `--watch`.
 - **`conv context` RAG giriş noktasıdır.** Karakter bütçeli (varsayılan 12.000) taşınabilir tek blok
   döndürür: kararlı başlıklar, kaynak id'leri, çalışma dizinleri ve tarihler; `--expand N` komşu
