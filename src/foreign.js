@@ -43,8 +43,9 @@ const SESSION_SOURCES = [
   { tool: 'copilot', dirs: [{ base: '.copilot/session-state', match: /^events\.jsonl$/ }] },
   { tool: 'grok', dirs: [{ base: '.grok/sessions', match: /^chat_history\.jsonl$/ }] },
   // Qoder CLI keeps Claude-Code-shaped transcripts at ~/.qoder/projects/<key>/<sessionId>.jsonl
-  // (verified against a real install, 2026-10). The per-session sidecar holds subagent logs and
-  // memory notes — not conversations of their own.
+  // (verified against a real install, 2026-10). `subagents` stays skipped here so `foreign.discover`
+  // never lists sub-agent transcripts twice — Qoder sub-agents are read by `qoderSubagentSources` in
+  // `src/conversations.js`, while `memory/` holds non-conversation notes.
   { tool: 'qoder', dirs: [{ base: '.qoder/projects', match: /\.jsonl$/, skipDir: /^(subagents|memory)$/ }] },
   // Command Code (`cmd`, npm `command-code`) keeps one directory per project slug under
   // ~/.commandcode/projects/. `<sessionId>.jsonl` is the chat, `<sessionId>.meta.json` its title

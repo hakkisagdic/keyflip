@@ -85,7 +85,10 @@ Unified shape: `{ tool, sessionId, created_at, updated_at, resumable, resumeComm
 | Tool | Session path | Format | Resumable | Feasibility |
 |---|---|---|---|---|
 | **Copilot** | `~/.copilot/session-state/<id>/` (workspace.yaml + checkpoints/index.md) | YAML+MD | ✅ `copilot --resume=<id>` | easiest |
-| **Gemini** | `~/.gemini/antigravity-cli/brain/<UUID>/…/transcript.jsonl` (+ conversations/<UUID>.db) | JSONL | ✅ | easy |
+| **Gemini (Antigravity)** | `~/.gemini/antigravity-cli/brain/<UUID>/.system_generated/logs/transcript[_full].jsonl` (+ conversations/<UUID>.db) | JSONL (indexed as `gemini`; Antigravity = `gemini`) | ✅ | easy |
+| **Claude Code sub-agents** | `~/.claude/projects/<proj>/<sid>/subagents/agent-*.jsonl` | JSONL (`app: claude`, `surface: subagent`, `parentId: <sid>`, id `claude:subagent:<sid>:<agentId>`, counted separately as `claude (subagent)`) | — | shipped |
+| **Qoder (+ sub-agents)** | `~/.qoder/projects/<key>/<sid>.jsonl` + `<key>/<sid>/subagents/agent-*.jsonl` | JSONL (main as `qoder`; sub-agents as `app: qoder`, `surface: subagent`, `parentId: <sid>`, counted separately as `qoder (subagent)`) | — | shipped |
+| **Traycer** | `~/.traycer/epic-chat-transcripts/<epicUUID>/<Title>-<UUID>.txt` (strict allow-list; `host/auth`, `credentials*`, `*.enc` skipped; `host/chat-search/chat-search.db` out of scope) | Plain text (**NEEDS-VERIFICATION** on inner format) | — | shipped (experimental) |
 | **Cursor** | editor: `<User>/globalStorage/state.vscdb` (`cursorDiskKV`: `composerData:*`, `bubbleId:*`, `composerHeaders` table on ≥3.12); CLI: `~/.cursor/chats/<md5>/<uuid>/store.db` (`blobs` + `meta`); mirror: `~/.cursor/projects/<enc>/agent-transcripts/<id>/<id>.jsonl` | SQLite + JSONL | ✅ `cursor agent --resume <id>` | medium |
 | **opencode** | `~/.local/share/opencode/project/*/storage/` (`ses_*`) | JSON/JSONL (NEEDS-VERIFICATION) | ✅ `opencode --session <id>` | medium |
 | **Aider** | `.aider.chat.history.md` per repo | Markdown | ⚠️ partial (no session ids) | hardest |
@@ -102,6 +105,7 @@ surfaced to the user as printable commands, never shell-executed by keyflip.
 - opencode: instruction-file location + `storage/` message schema (the `--session` resume is mapped).
 - Copilot: `data.db` token extraction (or skip — carry only the memory md).
 - Aider: confirmed no `--resume`/session-list exists (resumeCommand returns null).
+- Traycer: inner formatting markers of `~/.traycer/epic-chat-transcripts/<epicUUID>/<Title>-<UUID>.txt` (**NEEDS-VERIFICATION** — current reader splits conservatively on line-start role labels or emits one block); `~/.traycer/host/chat-search/chat-search.db` deferred (**NEEDS-VERIFICATION**).
 - Cursor: bubble order and the render manifest on a real store (`fullConversationHeadersOnly` /
   `isRenderable`), the `composerHeaders` table on ≥3.12, and `toolFormerData` vs `capabilities` —
   fixtures pin the contract, no live store has been read yet.

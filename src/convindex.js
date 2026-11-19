@@ -271,8 +271,13 @@ function countStats(sources) {
     stats.chunks += s.chunks || 0;
     stats.messages += (s.counts && s.counts.messages) || 0;
     stats.bytes += s.bytes || 0;
-    const app = s.app || 'other';
-    const a = stats.byApp[app] || (stats.byApp[app] = { sources: 0, chunks: 0, messages: 0, bytes: 0 });
+    const isSub = s.surface === 'subagent';
+    const app = isSub ? (s.app || 'other') + ' (subagent)' : s.app || 'other';
+    const a =
+      stats.byApp[app] ||
+      (stats.byApp[app] = isSub
+        ? { sources: 0, chunks: 0, messages: 0, bytes: 0, surface: 'subagent' }
+        : { sources: 0, chunks: 0, messages: 0, bytes: 0 });
     a.sources++;
     a.chunks += s.chunks || 0;
     a.messages += (s.counts && s.counts.messages) || 0;
@@ -1114,7 +1119,13 @@ async function build(ctx, opts) {
       if (!opts.force && sameEntry && had.mtimeMs === src.mtimeMs && had.size === src.size) {
         // Re-attributed even though the row is reused: the account that was live when it was
         // written may have been learned (or deleted) since the last pass.
-        next[id] = Object.assign({}, had, src.subId ? { subId: src.subId } : {}, accounts.fields(conv));
+        next[id] = Object.assign(
+          {},
+          had,
+          conv.parentId ? { parentId: conv.parentId } : {},
+          src.subId ? { subId: src.subId } : {},
+          accounts.fields(conv),
+        );
         report.reused++;
         pendingEnsureTokens.push(id);
         continue;
@@ -1132,6 +1143,7 @@ async function build(ctx, opts) {
             title: conv.title,
             cwd: conv.cwd,
           },
+          conv.parentId ? { parentId: conv.parentId } : {},
           src.subId ? { subId: src.subId } : {},
           accounts.fields(conv),
         );
@@ -1175,6 +1187,7 @@ async function build(ctx, opts) {
         _oldVec: sameOwner && space && had.vec && had.vec.space === space.hash ? had.vec : null,
         _oldHashes: sameOwner && space && had.vec && had.vec.space === space.hash ? oldHashes : null,
       };
+      if (conv.parentId) entry.parentId = conv.parentId;
       if (src.subId) entry.subId = src.subId;
       // Which account worked on it — stated if the user said so, inferred from the switch
       // timeline otherwise (and labelled as an inference).
@@ -1570,6 +1583,15 @@ function matchesAccount(row, wanted) {
   return !!have && have === want;
 }
 
+function matchesApps(row, apps) {
+  if (!apps || !apps.length) return true;
+  if (apps.indexOf(row.app) !== -1) return true;
+  if (row.surface === 'subagent') {
+    return apps.indexOf(row.app + '-subagent') !== -1 || apps.indexOf(row.app + ' (subagent)') !== -1;
+  }
+  return false;
+}
+
 // Metadata rows for every conversation. When the index exists this is a manifest read (no
 // transcript parsing); otherwise it falls back to a full discovery pass. Both branches return
 // the same row shape so callers (CLI, MCP) never branch on which source produced it.
@@ -1579,7 +1601,8 @@ function catalog(ctx, opts) {
   if (meta && !opts.refresh) {
     const rows = Object.keys(meta.sources)
       .map((id) => meta.sources[id])
-      .filter((s) => !opts.apps || !opts.apps.length || opts.apps.indexOf(s.app) !== -1)
+      .filter((s) => !(opts.excludeSubagents && s.surface === 'subagent'))
+      .filter((s) => matchesApps(s, opts.apps))
       .filter((s) => !opts.sinceMs || Date.parse(s.updatedAt || '') >= opts.sinceMs)
       .filter(
         (s) =>
@@ -1735,7 +1758,8 @@ function activeSources(ctx, meta, opts) {
   const keys = [];
   Object.keys(meta.sources).forEach((id) => {
     const s = meta.sources[id];
-    if (opts.apps && opts.apps.length && opts.apps.indexOf(s.app) === -1) return;
+    if (opts.excludeSubagents && s.surface === 'subagent') return;
+    if (!matchesApps(s, opts.apps)) return;
     if (opts.sinceMs && Date.parse(s.updatedAt || '') < opts.sinceMs) return;
     if (
       opts.cwd &&
@@ -1944,6 +1968,7 @@ function lexical(ctx, query, opts) {
     const hit = {
       id: h.id,
       app: src.app,
+      surface: src.surface || null,
       title: src.title,
       cwd: src.cwd,
       updatedAt: src.updatedAt,
@@ -1957,6 +1982,7 @@ function lexical(ctx, query, opts) {
       alsoIn: [],
       snippet: makeSnippet(c.text, need),
     };
+    if (src.parentId) hit.parentId = src.parentId;
     if (c.h) seenHash.set(c.h, hit);
     hits.push(hit);
   }
@@ -2133,6 +2159,7 @@ async function semantic(ctx, query, opts) {
     const hit = {
       id: h.id,
       app: src.app,
+      surface: src.surface || null,
       title: src.title,
       cwd: src.cwd,
       updatedAt: src.updatedAt,
@@ -2146,6 +2173,7 @@ async function semantic(ctx, query, opts) {
       alsoIn: [],
       snippet: makeSnippet(c.text, needlesForQuery),
     };
+    if (src.parentId) hit.parentId = src.parentId;
     if (c.h) seenHash.set(c.h, hit);
     hits.push(hit);
   }
@@ -2295,8 +2323,9 @@ function contextPack(ctx, query, hits, opts) {
     const ex = expandHit(ctx, hit, { expand: expand });
     if (!ex) continue;
     const s = ex.source;
+    const appLabel = s.app + (s.surface === 'subagent' ? ' (subagent)' : '');
     const head = [
-      '## ' + (n + 1) + '. [' + s.app + '] ' + s.title,
+      '## ' + (n + 1) + '. [' + appLabel + '] ' + s.title,
       'source: `' + s.id + '` · updated: ' + (s.updatedAt || '?') + (s.cwd ? ' · cwd: ' + s.cwd : ''),
       '',
     ].join('\n');

@@ -1012,9 +1012,9 @@ keyflip threads drop dugum-acmak -y    # yalnız ADI unutur; her transkript ve h
 
 ### Her aracın sohbetleri, aranabilir hâlde (`conv`)
 
-Claude Code `~/.claude/projects`'e, Claude Desktop Cowork `local-agent-mode-sessions/**/audit.jsonl`'a, Codex `~/.codex/sessions`'a (bazen zstd sıkıştırılmış), Kiro hem
+Claude Code `~/.claude/projects`'e (ana oturumlar ile `<sid>/subagents/agent-*.jsonl`), Claude Desktop Cowork `local-agent-mode-sessions/**/audit.jsonl`'a, Codex `~/.codex/sessions`'a (bazen zstd sıkıştırılmış), Kiro hem
 `~/.kiro/sessions/cli`'ye hem IDE deposuna, Cursor üç ayrı depoya yazar (editörün `state.vscdb`'si,
-`cursor-agent` CLI'ının içerik-adresli `~/.cursor/chats`'i ve `agent-transcripts` aynası); opencode SQLite (`~/.local/share/opencode/opencode.db`), VS Code Copilot Chat (`chatSessions/*.jsonl` + `emptyWindowChatSessions`), Copilot CLI (`~/.copilot/session-state/*/events.jsonl`), Grok (`~/.grok/sessions/**/chat_history.jsonl`) ve Qoder/Gemini/Command Code/Aider'in ise kendine göre. `keyflip conv` hepsini **tek kanonik biçimde**
+`cursor-agent` CLI'ının içerik-adresli `~/.cursor/chats`'i ve `agent-transcripts` aynası); opencode SQLite (`~/.local/share/opencode/opencode.db`), VS Code Copilot Chat (`chatSessions/*.jsonl` + `emptyWindowChatSessions`), Copilot CLI (`~/.copilot/session-state/*/events.jsonl`), Grok (`~/.grok/sessions/**/chat_history.jsonl`), Antigravity (`~/.gemini/antigravity-cli/brain/<UUID>/**/transcript.jsonl`, `gemini` olarak indekslenir), Qoder (`~/.qoder/projects` ana oturumları ve `<sid>/subagents/agent-*.jsonl`), Traycer (`~/.traycer/epic-chat-transcripts/<epic>/*.txt`, salt-okunur izin listesi; iç biçim NEEDS-VERIFICATION, `chat-search.db` kapsam dışı) ve Command Code/Aider'in ise kendine göre. Alt-ajan (sub-agent) transkriptleri `surface: "subagent"` ve `parentId` ile ayrı sohbetler olarak indekslenir, `conv status` çıktısında ana sayıyı şişirmeden kendi `<app> (subagent)` satırlarında sayılır ve `conv search` sonuçlarında `<app> (subagent)` etiketiyle gelir (varsayılan açık; gizlemek için `--no-subagents`). `keyflip conv` hepsini **tek kanonik biçimde**
 okur — id, uygulama, yüzey, başlık, çalışma dizini, zaman damgaları, `{role, text, ts, tools}`
 mesajları — ve araçların kendi gürültüsünü ayıklar:
 `<system-reminder>`, `<task-notification>`, `<command-name>` tesisatı, ortam bağlamları ve
