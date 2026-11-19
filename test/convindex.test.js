@@ -3,10 +3,17 @@
 import test from 'node:test';
 import assert from 'node:assert';
 import fs from 'fs';
+import http from 'http';
 import path from 'path';
+import cp from 'child_process';
+import { fileURLToPath } from 'url';
 import { makeCtx } from './helpers.js';
 import * as convindex from '../src/convindex.js';
 import * as profiles from '../src/profiles.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const BIN = path.join(__dirname, '..', 'bin', 'keyflip.js');
 
 function ctxFor() {
   const ctx = makeCtx();
@@ -1745,4 +1752,200 @@ test('when an emptied source had an id that another source claims but fails to p
     false,
     'stale token sidecar for canonicalId must be deleted',
   );
+});
+
+test('K2: status reports pendingChunks and pendingTokensEstimate and both drop as chunks are embedded', async function () {
+  const ctx = ctxFor();
+  writeClaude(ctx, 'p1', [
+    {
+      type: 'user',
+      timestamp: '2026-10-01T10:00:00Z',
+      message: { role: 'user', content: 'First ' + 'a'.repeat(1100) },
+    },
+    {
+      type: 'assistant',
+      timestamp: '2026-10-01T10:01:00Z',
+      message: { role: 'assistant', content: 'Answer ' + 'b'.repeat(1100) },
+    },
+  ]);
+  writeClaude(ctx, 'p2', [
+    {
+      type: 'user',
+      timestamp: '2026-10-02T10:00:00Z',
+      message: { role: 'user', content: 'Second ' + 'c'.repeat(200) },
+    },
+  ]);
+  await convindex.build(ctx, {});
+
+  const st0 = convindex.status(ctx);
+  assert.strictEqual(st0.pendingSources, 2);
+  assert.strictEqual(st0.pendingChunks, st0.stats.chunks);
+  assert.ok(st0.pendingChunks >= 3);
+  assert.ok(st0.pendingTokensEstimate > 0);
+
+  // Embed only the newest conversation (p2, 1 chunk).
+  const r1 = await convindex.build(ctx, { embed: true, maxEmbedSources: 1, post: stubPost({ dim: 8 }) });
+  assert.strictEqual(r1.embedded, 1);
+  const embeddedN = r1.embedding.chunks;
+  assert.ok(embeddedN >= 1);
+
+  const st1 = convindex.status(ctx);
+  assert.strictEqual(st1.pendingSources, 1);
+  assert.strictEqual(st1.pendingChunks, st0.pendingChunks - embeddedN);
+  assert.ok(st1.pendingTokensEstimate > 0 && st1.pendingTokensEstimate < st0.pendingTokensEstimate);
+
+  await convindex.build(ctx, { embed: true, post: stubPost({ dim: 8 }) });
+  const st2 = convindex.status(ctx);
+  assert.strictEqual(st2.pendingSources, 0);
+  assert.strictEqual(st2.pendingChunks, 0);
+  assert.strictEqual(st2.pendingTokensEstimate, 0);
+});
+
+test('K3: embed-batch caps request size and embed-pause-ms enforces inter-request pause on loopback server', async function () {
+  const ctx = ctxFor();
+  // Create 5 sessions x 8 chunks each = 40 chunks.
+  for (let s = 0; s < 5; s++) {
+    const turns = [];
+    for (let t = 0; t < 8; t++) {
+      turns.push({
+        type: 'user',
+        timestamp: '2026-10-0' + (s + 1) + 'T10:0' + t + ':00Z',
+        message: { role: 'user', content: 'Session ' + s + ' turn ' + t + ' ' + 'x'.repeat(1200) },
+      });
+    }
+    writeClaude(ctx, 'batch-sess-' + s, turns);
+  }
+  const seen = [];
+  const server = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', (d) => {
+      body += d;
+    });
+    req.on('end', () => {
+      const at = Date.now();
+      const parsed = JSON.parse(body);
+      seen.push({ count: parsed.input.length, at: at });
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ embeddings: parsed.input.map(() => new Array(8).fill(0.25)) }));
+    });
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const port = server.address().port;
+  try {
+    const r = await new Promise((resolve, reject) => {
+      const child = cp.spawn(
+        process.execPath,
+        [BIN, 'conv', 'index', '--embed', '--embed-pause-ms', '200', '--embed-batch', '4', '--json'],
+        {
+          stdio: ['ignore', 'pipe', 'pipe'],
+          env: Object.assign({}, process.env, {
+            HOME: ctx.home,
+            USERPROFILE: ctx.home,
+            XDG_CONFIG_HOME: path.join(ctx.home, '.config'),
+            KEYFLIP_CONFIG_DIR: ctx.configDir,
+            APPDATA: path.join(ctx.home, 'AppData', 'Roaming'),
+            CODEX_HOME: path.join(ctx.home, '.codex'),
+            KEYFLIP_EMBED_URL: 'http://127.0.0.1:' + port + '/api/embed',
+            KEYFLIP_TEST_CLAUDE: 'stopped',
+          }),
+        },
+      );
+      let stdout = '';
+      let stderr = '';
+      child.stdout.on('data', (d) => {
+        stdout += d;
+      });
+      child.stderr.on('data', (d) => {
+        stderr += d;
+      });
+      child.on('error', reject);
+      child.on('close', (code) => resolve({ status: code, stdout: stdout, stderr: stderr }));
+    });
+    assert.strictEqual(r.status, 0, r.stderr);
+    const report = JSON.parse(r.stdout.trim().split('\n').pop());
+    assert.strictEqual(report.ok, true);
+    assert.strictEqual(report.stats.chunks, 40);
+    assert.strictEqual(seen.length, 10);
+    for (let i = 0; i < seen.length; i++) {
+      assert.ok(seen[i].count >= 1 && seen[i].count <= 4, 'batch size <= 4, got ' + seen[i].count);
+      if (i > 0) {
+        const gap = seen[i].at - seen[i - 1].at;
+        assert.ok(gap >= 200, 'gap between requests must be >= 200 ms, got ' + gap + ' ms at index ' + i);
+      }
+    }
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test('K4: max-embed embeds N newest sessions per run and status reports remaining', async function () {
+  const ctx = ctxFor();
+  for (let i = 0; i < 10; i++) {
+    writeClaude(ctx, 'm-' + String(i).padStart(2, '0'), [
+      {
+        type: 'user',
+        timestamp: '2026-10-' + String(i + 1).padStart(2, '0') + 'T10:00:00Z',
+        message: { role: 'user', content: 'Session number ' + i },
+      },
+    ]);
+  }
+  await convindex.build(ctx, {});
+
+  const r1 = await convindex.build(ctx, { embed: true, maxEmbedSources: 3, post: stubPost({ dim: 8 }) });
+  assert.strictEqual(r1.embedded, 3);
+  assert.strictEqual(r1.embedding.remainingSources, 7);
+  const st1 = convindex.status(ctx);
+  assert.strictEqual(st1.vectorSources, 3);
+  assert.strictEqual(st1.pendingSources, 7);
+  const m1 = readManifest(ctx).sources;
+  assert.ok(m1['claude:local:m-09'].vec, 'newest session embedded first');
+  assert.ok(m1['claude:local:m-08'].vec);
+  assert.ok(m1['claude:local:m-07'].vec);
+  assert.strictEqual(m1['claude:local:m-06'].vec, null);
+
+  const r2 = await convindex.build(ctx, { embed: true, maxEmbedSources: 3, post: stubPost({ dim: 8 }) });
+  assert.strictEqual(r2.embedded, 3);
+  assert.strictEqual(r2.embedding.remainingSources, 4);
+  const st2 = convindex.status(ctx);
+  assert.strictEqual(st2.vectorSources, 6);
+  assert.strictEqual(st2.pendingSources, 4);
+  const m2 = readManifest(ctx).sources;
+  assert.ok(m2['claude:local:m-06'].vec);
+  assert.ok(m2['claude:local:m-05'].vec);
+  assert.ok(m2['claude:local:m-04'].vec);
+});
+
+test('K7: old-format manifest rows and vectors are reused without recomputing embeddings', async function () {
+  const ctx = ctxFor();
+  writeClaude(ctx, 'legacy-1', [
+    { type: 'user', timestamp: '2026-10-01T10:00:00Z', message: { role: 'user', content: 'Legacy chat one.' } },
+  ]);
+  writeClaude(ctx, 'legacy-2', [
+    { type: 'user', timestamp: '2026-10-02T10:00:00Z', message: { role: 'user', content: 'Legacy chat two.' } },
+  ]);
+  await convindex.build(ctx, { embed: true, post: stubPost({ dim: 8 }) });
+
+  // Strip new metadata fields to simulate an index written by the previous release.
+  const legacyMeta = readManifest(ctx);
+  delete legacyMeta.candidateSources;
+  delete legacyMeta.truncated;
+  Object.values(legacyMeta.sources).forEach((s) => delete s.subId);
+  fs.writeFileSync(convindex.metaPath(ctx), JSON.stringify(legacyMeta, null, 2));
+
+  const counters = { calls: 0 };
+  const rReuse = await convindex.build(ctx, { embed: true, post: stubPost(counters) });
+  assert.strictEqual(rReuse.reused, 2);
+  assert.strictEqual(rReuse.changed, 0);
+  assert.strictEqual(rReuse.embedded, 0);
+  assert.strictEqual(counters.calls, 0, 'existing vectors must not be recomputed');
+
+  writeClaude(ctx, 'fresh-3', [
+    { type: 'user', timestamp: '2026-10-03T10:00:00Z', message: { role: 'user', content: 'Brand new third chat.' } },
+  ]);
+  const countersNew = { calls: 0 };
+  const rAdd = await convindex.build(ctx, { embed: true, post: stubPost(countersNew) });
+  assert.strictEqual(rAdd.reused, 2);
+  assert.strictEqual(rAdd.changed, 1);
+  assert.strictEqual(rAdd.embedded, 1);
+  assert.strictEqual(countersNew.calls, 1, 'only the newly added source is embedded');
 });

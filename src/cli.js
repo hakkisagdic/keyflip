@@ -8515,7 +8515,7 @@ const CONV_USAGE = [
   '       keyflip conv search "<query>" [--hybrid|--semantic|--lexical] [--per-conv N] [--limit N] [--since 7d] [--account <name>]',
   '       keyflip conv context "<query>" [--hybrid] [--budget 12000] [--expand 1]   RAG block for an LLM prompt',
   '       keyflip conv show <id|prefix|title> [--format md|html|json] [--out <file|dir>] [--no-redact]',
-  '       keyflip conv index [--embed] [--background] [--force] [--writes] [--watch] [--interval N]  build/refresh the local retrieval index',
+  '       keyflip conv index [--embed|--no-embed] [--embed-pause-ms N] [--embed-batch N] [--max-embed N] [--background] [--force] [--writes] [--watch] [--interval N]  build/refresh the local retrieval index',
   '                                     --watch re-indexes every N minutes (default 30) so search stays current',
   '       keyflip conv index --schedule [--interval N]   keep it current unattended (launchd/cron); --unschedule removes it',
   '       keyflip conv export (--all | <id>) [--obsidian] --out <dir> [--format md|html|json] [--no-redact]',
@@ -8536,6 +8536,9 @@ const CONV_VALUE_FLAGS = [
   '--budget',
   '--expand',
   '--limit-sources',
+  '--embed-pause-ms',
+  '--embed-batch',
+  '--max-embed',
   '--search',
   '--interval',
   '--account',
@@ -8688,6 +8691,12 @@ async function convBuild(ctx, rest, embedDefault) {
   if (f.error) throw new Error(f.error);
   const ls = convInt(rest, '--limit-sources', null, 1, 100000);
   if (!ls.ok) throw new Error(ls.error);
+  const pauseMs = convInt(rest, '--embed-pause-ms', null, 0, 60000);
+  if (!pauseMs.ok) throw new Error(pauseMs.error);
+  const batch = convInt(rest, '--embed-batch', null, 1, 512);
+  if (!batch.ok) throw new Error(batch.error);
+  const maxEmbed = convInt(rest, '--max-embed', null, 1, 100000);
+  if (!maxEmbed.ok) throw new Error(maxEmbed.error);
   const embed =
     embedDefault != null ? embedDefault : rest.indexOf('--no-embed') !== -1 ? false : rest.indexOf('--embed') !== -1;
   const background = rest.indexOf('--background') !== -1 && rest.indexOf('--foreground') === -1;
@@ -8697,6 +8706,9 @@ async function convBuild(ctx, rest, embedDefault) {
     apps: f.apps,
     limitSources: ls.value,
     embed: embed,
+    embedPauseMs: pauseMs.value != null ? pauseMs.value : _cfg.get(ctx, 'conv.embedPauseMs'),
+    embedBatch: batch.value != null ? batch.value : _cfg.get(ctx, 'conv.embedBatch'),
+    maxEmbedSources: maxEmbed.value,
     background: background,
     force: rest.indexOf('--force') !== -1,
     writes: rest.indexOf('--writes') !== -1 ? true : undefined,
@@ -8754,7 +8766,13 @@ function convReportText(ctx, r) {
           )
         : r.embedding.error
           ? style.warn('Vectors failed: ' + r.embedding.error)
-          : 'Vectors: ' + r.embedded + ' conversation(s) embedded · ' + r.embedding.model + ' @ ' + r.embedding.host);
+          : 'Vectors: ' +
+            r.embedded +
+            ' conversation(s) embedded · ' +
+            r.embedding.model +
+            ' @ ' +
+            r.embedding.host +
+            (r.embedding.remainingSources ? ' · ' + r.embedding.remainingSources + ' remaining' : ''));
   } else {
     // Embed-less passes must not claim there are no vectors at all: the previous embedding
     // survives, only chunks born in THIS pass are missing theirs.
@@ -8822,6 +8840,9 @@ function convReportText(ctx, r) {
   return line;
 }
 async function cmdConv(ctx, rest) {
+  if (rest.indexOf('--help') !== -1 || rest.indexOf('-h') !== -1 || rest[0] === 'help') {
+    return print(CONV_USAGE);
+  }
   const first = rest[0];
   const sub = CONV_SUBS.indexOf(first) !== -1 ? first : 'list';
   const args = CONV_SUBS.indexOf(first) !== -1 ? rest.slice(1) : rest;
@@ -8939,6 +8960,17 @@ async function cmdConv(ctx, rest) {
         );
       }
     } else print('  embeddings: none — `keyflip conv index --embed` turns on semantic/hybrid search');
+    if (st.pendingChunks > 0) {
+      print(
+        '  pending: ' +
+          st.pendingChunks +
+          ' chunk(s) across ' +
+          st.pendingSources +
+          ' conversation(s) (~' +
+          st.pendingTokensEstimate +
+          ' tokens)',
+      );
+    }
     if (s.byApp) {
       print('  by app:');
       Object.keys(s.byApp)

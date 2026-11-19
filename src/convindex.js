@@ -562,6 +562,9 @@ function spawnBackgroundEmbed(ctx, opts) {
   const args = [binPath, 'conv', 'index', '--embed', '--foreground'];
   if (opts.apps && opts.apps.length) args.push('--app', opts.apps.join(','));
   if (opts.limitSources) args.push('--limit-sources', String(opts.limitSources));
+  if (opts.embedPauseMs != null) args.push('--embed-pause-ms', String(opts.embedPauseMs));
+  if (opts.embedBatch != null) args.push('--embed-batch', String(opts.embedBatch));
+  if (opts.maxEmbedSources != null) args.push('--max-embed', String(opts.maxEmbedSources));
   if (opts.force) args.push('--force');
   const env = Object.assign({}, process.env, (ctx && ctx.env) || {});
   if (ctx && ctx.configDir) {
@@ -840,6 +843,18 @@ function vectorFileOk(ctx, id, vec) {
   }
 }
 
+async function pauseAtLeast(ms) {
+  const wallStart = Date.now();
+  const monoTarget = performance.now() + ms;
+  for (;;) {
+    const remMono = monoTarget - performance.now();
+    const remWall = ms - (Date.now() - wallStart);
+    const rem = Math.max(remMono, remWall);
+    if (rem <= 0) break;
+    await new Promise((r) => setTimeout(r, Math.ceil(rem) + 1));
+  }
+}
+
 async function embedSource(ctx, id, chunks, prev, space, opts) {
   // A source with no chunks on disk has nothing to embed. Never record it as vectorized:
   // doing so used to leave a 0-byte vector file and a meta row claiming "embedded", which
@@ -876,9 +891,13 @@ async function embedSource(ctx, id, chunks, prev, space, opts) {
       remote: space.remote,
     };
   }
+  const batchSize =
+    opts && opts.embedBatch > 0 ? Math.max(1, Math.min(512, Math.floor(Number(opts.embedBatch)))) : EMBED_BATCH;
+  const pauseMs =
+    opts && opts.embedPauseMs > 0 ? Math.max(0, Math.min(60000, Math.floor(Number(opts.embedPauseMs)))) : 0;
   const fresh = [];
-  for (let i = 0; i < need.length; i += EMBED_BATCH) {
-    const batch = need.slice(i, i + EMBED_BATCH).map((c) => safeForEmbedding(c.text, space).slice(0, EMBED_MAX_CHARS));
+  for (let i = 0; i < need.length; i += batchSize) {
+    const batch = need.slice(i, i + batchSize).map((c) => safeForEmbedding(c.text, space).slice(0, EMBED_MAX_CHARS));
     // A flaky local endpoint (busy model, restarted Ollama) must cost a retry, not the whole
     // run: embedSource throws only after 3 tries, and the caller skips just this source.
     let got = null;
@@ -908,9 +927,10 @@ async function embedSource(ctx, id, chunks, prev, space, opts) {
     if (opts && opts.onProgress)
       opts.onProgress({
         phase: 'embed-chunks',
-        done: prefix + Math.min(i + EMBED_BATCH, need.length),
+        done: prefix + Math.min(i + batchSize, need.length),
         total: chunks.length,
       });
+    if (pauseMs > 0) await pauseAtLeast(pauseMs);
   }
   if (!dim || prefix + fresh.length !== chunks.length) return null;
   const freshBuf = Buffer.alloc(fresh.length * dim * 4);
@@ -1618,24 +1638,50 @@ function catalog(ctx, opts) {
 
 function status(ctx, opts) {
   const meta = readMeta(ctx);
-  if (!meta) return { exists: false, dir: dirOf(ctx), sources: 0, chunks: 0, candidateSources: 0, truncated: 0 };
+  if (!meta)
+    return {
+      exists: false,
+      dir: dirOf(ctx),
+      sources: 0,
+      chunks: 0,
+      candidateSources: 0,
+      truncated: 0,
+      pendingSources: 0,
+      pendingChunks: 0,
+      pendingTokensEstimate: 0,
+    };
   const activeSpace = spaceOf(opts, ctx);
   let vectorSources = 0;
   let vectorChunks = 0;
   let staleVectorSources = 0;
   let staleVectorChunks = 0;
   let staleModel = null;
+  let pendingSources = 0;
+  let pendingChunks = 0;
+  let pendingTokensEstimate = 0;
   Object.keys(meta.sources).forEach((id) => {
     const s = meta.sources[id];
+    const totalChunks = s.chunks || 0;
+    let coveredChunks = 0;
     if (s.vec && vectorFileOk(ctx, id, s.vec)) {
       if (s.vec.space === activeSpace.hash) {
         vectorSources++;
         vectorChunks += s.vec.count || 0;
+        coveredChunks = Math.min(totalChunks, s.vec.count || 0);
       } else {
         staleVectorSources++;
         staleVectorChunks += s.vec.count || 0;
         if (!staleModel && s.vec.model) staleModel = s.vec.model;
       }
+    }
+    const missing = Math.max(0, totalChunks - coveredChunks);
+    if (missing > 0) {
+      pendingSources++;
+      pendingChunks += missing;
+      const totalBytes = s.bytes || 0;
+      const pendingBytes =
+        coveredChunks === 0 ? totalBytes : totalChunks > 0 ? Math.round((totalBytes * missing) / totalChunks) : 0;
+      pendingTokensEstimate += Math.max(missing, Math.ceil(pendingBytes / 4));
     }
   });
   const bg = backgroundStatus(ctx);
@@ -1658,6 +1704,9 @@ function status(ctx, opts) {
     embedding: effectiveEmbedding,
     vectorSources: vectorSources,
     vectorChunks: vectorChunks,
+    pendingSources: pendingSources,
+    pendingChunks: pendingChunks,
+    pendingTokensEstimate: pendingTokensEstimate,
     coverage: meta.stats && meta.stats.chunks ? Math.round((vectorChunks / meta.stats.chunks) * 1000) / 10 : 0,
     staleVectorSources: staleVectorSources,
     staleVectorChunks: staleVectorChunks,

@@ -2038,6 +2038,9 @@ const TOOLS = [
         force: { type: 'boolean', description: 'Re-parse even when mtime+size are unchanged.' },
         app: { type: 'string', description: 'Comma-separated app ids for a partial build.' },
         limit_sources: { type: 'integer', description: 'Parse at most N sources (quick slice).' },
+        embed_pause_ms: { type: 'integer', description: 'Milliseconds to pause between embedding batches (0..60000).' },
+        embed_batch: { type: 'integer', description: 'Chunks per embedding request (1..512).' },
+        max_embed: { type: 'integer', description: 'Maximum conversations to embed in this run.' },
         confirm: confirmProp.confirm,
       },
       required: ['confirm'],
@@ -2048,10 +2051,23 @@ const TOOLS = [
       needConfirm(args);
       const f = convFilters(args);
       const ls = Number(args.limit_sources) || null;
+      const pauseMs =
+        args.embed_pause_ms != null
+          ? Math.max(0, Math.min(60000, Math.floor(Number(args.embed_pause_ms) || 0)))
+          : _config.get(ctx, 'conv.embedPauseMs');
+      const batch =
+        args.embed_batch != null
+          ? Math.max(1, Math.min(512, Math.floor(Number(args.embed_batch) || 8)))
+          : _config.get(ctx, 'conv.embedBatch');
+      const maxEmbed =
+        args.max_embed != null ? Math.max(1, Math.min(100000, Math.floor(Number(args.max_embed) || 1))) : null;
       const report = await _convindex.build(ctx, {
         apps: f.apps,
         limitSources: ls,
         embed: !!args.embed,
+        embedPauseMs: pauseMs,
+        embedBatch: batch,
+        maxEmbedSources: maxEmbed,
         background: !!args.background,
         force: !!args.force,
       });
@@ -2073,6 +2089,9 @@ const TOOLS = [
         embedding: report.embedding || null,
         stats: st.stats || report.stats || null,
         vectorChunks: st.vectorChunks || 0,
+        pendingSources: st.pendingSources || 0,
+        pendingChunks: st.pendingChunks || 0,
+        pendingTokensEstimate: st.pendingTokensEstimate || 0,
         coverage: st.coverage || 0,
         errors: (report.errors || []).slice(0, 5),
         // Degraded reads: a store that yielded chats but whose newest writes could not be replayed.

@@ -3,6 +3,7 @@
 import test from 'node:test';
 import assert from 'node:assert';
 import fs from 'fs';
+import http from 'http';
 import os from 'os';
 import path from 'path';
 import _child_process from 'child_process';
@@ -37,18 +38,23 @@ function home() {
   return h;
 }
 
-function run(h, args) {
+function run(h, args, extraEnv) {
   return _child_process.spawnSync(process.execPath, [BIN].concat(args), {
     encoding: 'utf8',
-    env: Object.assign({}, process.env, {
-      HOME: h,
-      USERPROFILE: h,
-      XDG_CONFIG_HOME: path.join(h, '.config'),
-      KEYFLIP_CONFIG_DIR: path.join(h, '.config', 'keyflip'),
-      APPDATA: path.join(h, 'AppData', 'Roaming'),
-      CODEX_HOME: path.join(h, '.codex'),
-      KEYFLIP_TEST_CLAUDE: 'stopped',
-    }),
+    env: Object.assign(
+      {},
+      process.env,
+      {
+        HOME: h,
+        USERPROFILE: h,
+        XDG_CONFIG_HOME: path.join(h, '.config'),
+        KEYFLIP_CONFIG_DIR: path.join(h, '.config', 'keyflip'),
+        APPDATA: path.join(h, 'AppData', 'Roaming'),
+        CODEX_HOME: path.join(h, '.codex'),
+        KEYFLIP_TEST_CLAUDE: 'stopped',
+      },
+      extraEnv || {},
+    ),
   });
 }
 
@@ -171,4 +177,89 @@ test('conv index --watch reports changes on stdout as JSON and stays incremental
   const found = run(h, ['conv', 'search', 'zeppelin maintenance', '--json']);
   assert.strictEqual(found.status, 0, found.stderr);
   assert.strictEqual(json(found).hits.length, 1);
+});
+
+test('conv index help and pacing flags (--no-embed, --embed-pause-ms, --embed-batch, --max-embed)', async function () {
+  const h = home();
+  const dir = path.join(h, '.claude', 'projects', '-work-proj');
+  for (let i = 0; i < 3; i++) {
+    fs.writeFileSync(
+      path.join(dir, 'extra-' + i + '.jsonl'),
+      JSON.stringify({
+        type: 'user',
+        timestamp: '2026-01-0' + (i + 2) + 'T10:00:00.000Z',
+        message: { role: 'user', content: 'Extra conversation ' + i + ' ' + 'w'.repeat(200) },
+      }) + '\n',
+    );
+  }
+  const help = run(h, ['conv', '--help']);
+  const helpText = (help.stdout || '') + (help.stderr || '');
+  assert.match(helpText, /--embed-pause-ms/);
+  assert.match(helpText, /--embed-batch/);
+  assert.match(helpText, /--max-embed/);
+  assert.match(helpText, /--no-embed/);
+
+  const lexOnly = run(h, ['conv', 'index', '--no-embed', '--json']);
+  assert.strictEqual(lexOnly.status, 0, lexOnly.stderr);
+  assert.strictEqual(json(lexOnly).embedded, 0);
+
+  const batches = [];
+  const server = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', (d) => {
+      body += d;
+    });
+    req.on('end', () => {
+      const parsed = JSON.parse(body);
+      batches.push(parsed.input.length);
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ embeddings: parsed.input.map(() => new Array(8).fill(0.5)) }));
+    });
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const port = server.address().port;
+  const embedUrl = 'http://127.0.0.1:' + port + '/api/embed';
+  try {
+    const r = await new Promise((resolve, reject) => {
+      const child = _child_process.spawn(
+        process.execPath,
+        [BIN, 'conv', 'index', '--embed', '--embed-pause-ms', '20', '--embed-batch', '2', '--max-embed', '2', '--json'],
+        {
+          stdio: ['ignore', 'pipe', 'pipe'],
+          env: Object.assign({}, process.env, {
+            HOME: h,
+            USERPROFILE: h,
+            XDG_CONFIG_HOME: path.join(h, '.config'),
+            KEYFLIP_CONFIG_DIR: path.join(h, '.config', 'keyflip'),
+            APPDATA: path.join(h, 'AppData', 'Roaming'),
+            CODEX_HOME: path.join(h, '.codex'),
+            KEYFLIP_EMBED_URL: embedUrl,
+            KEYFLIP_TEST_CLAUDE: 'stopped',
+          }),
+        },
+      );
+      let stdout = '';
+      let stderr = '';
+      child.stdout.on('data', (d) => {
+        stdout += d;
+      });
+      child.stderr.on('data', (d) => {
+        stderr += d;
+      });
+      child.on('error', reject);
+      child.on('close', (code) => resolve({ status: code, stdout: stdout, stderr: stderr }));
+    });
+    assert.strictEqual(r.status, 0, r.stderr);
+    const out = json(r);
+    assert.strictEqual(out.embedded, 2);
+    assert.strictEqual(out.embedding.remainingSources, 2);
+    assert.ok(batches.every((n) => n <= 2));
+
+    const stHuman = run(h, ['conv', 'status'], { KEYFLIP_EMBED_URL: embedUrl });
+    assert.strictEqual(stHuman.status, 0, stHuman.stderr);
+    assert.match(stHuman.stdout, /pending:\s+2 chunk\(s\) across 2 conversation\(s\)/);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+    fs.rmSync(h, { recursive: true, force: true });
+  }
 });

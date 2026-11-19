@@ -194,6 +194,27 @@ SCHEMA['conv.writes.exclude'] = {
   default: '',
   help: 'Comma-separated project paths or names excluded from the conversation write-input index.',
 };
+SCHEMA['conv.embedPauseMs'] = {
+  type: 'int',
+  default: 500,
+  min: 0,
+  max: 60000,
+  help: 'Milliseconds to pause after each embedding batch so a shared GPU is not starved (0 = no pause).',
+};
+SCHEMA['conv.embedBatch'] = {
+  type: 'int',
+  default: 8,
+  min: 1,
+  max: 512,
+  help: 'Chunks sent per embedding request in CLI and scheduled runs.',
+};
+SCHEMA['conv.maxEmbed'] = {
+  type: 'int',
+  default: 300,
+  min: 0,
+  max: 100000,
+  help: 'Maximum conversations embedded per scheduled tick (0 = unlimited).',
+};
 SCHEMA['ui.color'] = { type: 'bool', default: true, help: 'Colorize CLI output.' };
 SCHEMA['usage.cacheTtlSeconds'] = {
   type: 'int',

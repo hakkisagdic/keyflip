@@ -8,6 +8,7 @@ import os from 'os';
 import { run } from './exec.js';
 import { atomicWrite } from './fsutil.js';
 import * as selfbin from './selfbin.js';
+import * as config from './config.js';
 import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -74,12 +75,20 @@ function daemonCommand(opts) {
 
 // The conversation index, refreshed on an interval so `keyflip conv search` never returns a
 // stale answer. The pass is incremental: an unchanged transcript is one `stat()`, and `--embed`
-// only covers chunks that are new or changed, so a tick costs seconds, not an hour.
+// only covers chunks that are new or changed, so a tick runs gently using validated config pacing.
 function convCommand(opts) {
+  if (opts && opts.embed === false) {
+    return argvFor(keyflipBin(opts), ['conv', 'index']);
+  }
+  const schema = config.describe();
+  const cfgCtx = opts && opts.configDir ? { configDir: opts.configDir } : null;
+  const pauseMs = cfgCtx ? config.get(cfgCtx, 'conv.embedPauseMs') : schema['conv.embedPauseMs'].default;
+  const batch = cfgCtx ? config.get(cfgCtx, 'conv.embedBatch') : schema['conv.embedBatch'].default;
+  const maxEmbed = cfgCtx ? config.get(cfgCtx, 'conv.maxEmbed') : schema['conv.maxEmbed'].default;
   const args = ['conv', 'index', '--embed'];
-  // `--no-embed` keeps the lexical index current without asking the embedding endpoint for
-  // anything — useful when the local model is not running.
-  if (opts && opts.embed === false) args.pop();
+  if (pauseMs > 0) args.push('--embed-pause-ms', String(pauseMs));
+  if (batch > 0) args.push('--embed-batch', String(batch));
+  if (maxEmbed > 0) args.push('--max-embed', String(maxEmbed));
   return argvFor(keyflipBin(opts), args);
 }
 
@@ -501,6 +510,7 @@ function install(ctx, opts) {
   opts = Object.assign({}, opts);
   if (!opts.home && ctx && ctx.home) opts.home = ctx.home;
   if (!opts.run && ctx && ctx.run) opts.run = ctx.run;
+  if (!opts.configDir && ctx && ctx.configDir) opts.configDir = ctx.configDir;
   const job = jobOf(opts);
   const r =
     ctx.platform === 'darwin'
