@@ -37,7 +37,15 @@ function writeClaudeSession(ctx, projCwd, sessionId, lines) {
 }
 
 function writeSubagentSession(ctx, projCwd, sessionId, agentName, lines) {
-  const file = path.join(ctx.home, '.claude', 'projects', encodeProj(projCwd), sessionId, 'subagents', agentName + '.jsonl');
+  const file = path.join(
+    ctx.home,
+    '.claude',
+    'projects',
+    encodeProj(projCwd),
+    sessionId,
+    'subagents',
+    agentName + '.jsonl',
+  );
   return writeJsonl(file, lines);
 }
 
@@ -74,7 +82,12 @@ test('default OFF: config defaults, scheduled/plain convindex.build does not tou
   assert.ok(secretpaths.SECRET_DIRS.indexOf('conv-index') !== -1, 'conv-index is in SECRET_DIRS');
 
   writeClaudeSession(ctx, '/work/proj', 'sess-off', [
-    { type: 'user', cwd: '/work/proj', timestamp: '2026-02-01T09:59:00.000Z', message: { role: 'user', content: 'hi' } },
+    {
+      type: 'user',
+      cwd: '/work/proj',
+      timestamp: '2026-02-01T09:59:00.000Z',
+      message: { role: 'user', content: 'hi' },
+    },
     assistantToolUse('tu-1', 'Write', { file_path: '/work/proj/a.txt', content: 'hello\n' }, { cwd: '/work/proj' }),
   ]);
 
@@ -111,7 +124,9 @@ test('default OFF: config defaults, scheduled/plain convindex.build does not tou
 test('K1 (D1 scope): Bash heredocs, redirects, tee, sed -i, python/node writes vs non-writing commands', async function () {
   const ctx = makeCtx();
   ctx.env = {};
-  const lines20 = Array.from({ length: 20 }, (_, i) => (i === 7 ? 'line-8 MAVIKEDI-4711 secret-marker' : 'line-' + (i + 1)));
+  const lines20 = Array.from({ length: 20 }, (_, i) =>
+    i === 7 ? 'line-8 MAVIKEDI-4711 secret-marker' : 'line-' + (i + 1),
+  );
   const heredoc20 = 'cat > /work/proj/notes.md <<EOF\n' + lines20.join('\n') + '\nEOF';
 
   writeClaudeSession(ctx, '/work/proj', 'sess-k1', [
@@ -134,18 +149,28 @@ test('K1 (D1 scope): Bash heredocs, redirects, tee, sed -i, python/node writes v
       { command: "cat <<'EOF' | tee piped.txt\nalpha\nbeta\nEOF" },
       { timestamp: '2026-02-01T10:00:03.000Z' },
     ),
-    assistantToolUse('b-sed-mac', 'Bash', { command: "sed -i '' 's/a/b/g' notes.md" }, { timestamp: '2026-02-01T10:00:04.000Z' }),
-    assistantToolUse('b-sed-gnu', 'Bash', { command: "sed -i 's/x/y/' sub/more.md" }, { timestamp: '2026-02-01T10:00:05.000Z' }),
+    assistantToolUse(
+      'b-sed-mac',
+      'Bash',
+      { command: "sed -i '' 's/a/b/g' notes.md" },
+      { timestamp: '2026-02-01T10:00:04.000Z' },
+    ),
+    assistantToolUse(
+      'b-sed-gnu',
+      'Bash',
+      { command: "sed -i 's/x/y/' sub/more.md" },
+      { timestamp: '2026-02-01T10:00:05.000Z' },
+    ),
     assistantToolUse(
       'b-python',
       'Bash',
-      { command: 'python3 -c "open(\'py-out.txt\', \'w\').write(\'hello\\n\')"' },
+      { command: "python3 -c \"open('py-out.txt', 'w').write('hello\\n')\"" },
       { timestamp: '2026-02-01T10:00:06.000Z' },
     ),
     assistantToolUse(
       'b-node',
       'Bash',
-      { command: 'node -e "require(\'fs\').writeFileSync(\'node-out.txt\', \'hi\\n\')"' },
+      { command: "node -e \"require('fs').writeFileSync('node-out.txt', 'hi\\n')\"" },
       { timestamp: '2026-02-01T10:00:07.000Z' },
     ),
     assistantToolUse(
@@ -169,8 +194,18 @@ test('K1 (D1 scope): Bash heredocs, redirects, tee, sed -i, python/node writes v
       { command: 'gh pr create --title "t" --body "$(cat <<\'EOF\'\nbody with > fake2.txt\nEOF\n)"' },
       { timestamp: '2026-02-01T10:00:10.000Z' },
     ),
-    assistantToolUse('b-devnull-err', 'Bash', { command: 'npm test 2>/dev/null' }, { timestamp: '2026-02-01T10:00:11.000Z' }),
-    assistantToolUse('b-devnull-out', 'Bash', { command: 'ls >/dev/null 2>&1' }, { timestamp: '2026-02-01T10:00:12.000Z' }),
+    assistantToolUse(
+      'b-devnull-err',
+      'Bash',
+      { command: 'npm test 2>/dev/null' },
+      { timestamp: '2026-02-01T10:00:11.000Z' },
+    ),
+    assistantToolUse(
+      'b-devnull-out',
+      'Bash',
+      { command: 'ls >/dev/null 2>&1' },
+      { timestamp: '2026-02-01T10:00:12.000Z' },
+    ),
     assistantToolUse(
       'b-py-read',
       'Bash',
@@ -184,10 +219,25 @@ test('K1 (D1 scope): Bash heredocs, redirects, tee, sed -i, python/node writes v
       { timestamp: '2026-02-01T10:00:14.000Z' },
     ),
     assistantToolUse('t-read', 'Read', { file_path: '/work/proj/notes.md' }, { timestamp: '2026-02-01T10:00:15.000Z' }),
-    assistantToolUse('t-grep', 'Grep', { pattern: 'MAVIKEDI', path: '/work/proj' }, { timestamp: '2026-02-01T10:00:16.000Z' }),
+    assistantToolUse(
+      't-grep',
+      'Grep',
+      { pattern: 'MAVIKEDI', path: '/work/proj' },
+      { timestamp: '2026-02-01T10:00:16.000Z' },
+    ),
     assistantToolUse('t-glob', 'Glob', { pattern: '*.md' }, { timestamp: '2026-02-01T10:00:17.000Z' }),
-    assistantToolUse('t-web', 'WebFetch', { url: 'https://example.com', prompt: 'get' }, { timestamp: '2026-02-01T10:00:18.000Z' }),
-    assistantToolUse('t-task', 'Task', { description: 'run', prompt: 'do work' }, { timestamp: '2026-02-01T10:00:19.000Z' }),
+    assistantToolUse(
+      't-web',
+      'WebFetch',
+      { url: 'https://example.com', prompt: 'get' },
+      { timestamp: '2026-02-01T10:00:18.000Z' },
+    ),
+    assistantToolUse(
+      't-task',
+      'Task',
+      { description: 'run', prompt: 'do work' },
+      { timestamp: '2026-02-01T10:00:19.000Z' },
+    ),
   ]);
 
   const r = await convindex.build(ctx, { writes: true });
@@ -251,7 +301,12 @@ test('structured file-writing tools: Write, Edit, MultiEdit, NotebookEdit', asyn
   ctx.env = {};
   writeClaudeSession(ctx, '/work/proj', 'sess-tools', [
     { type: 'user', cwd: '/work/proj', message: { role: 'user', content: 'edit files' } },
-    assistantToolUse('t-w', 'Write', { file_path: 'new.js', content: 'const a = 1;\n' }, { timestamp: '2026-02-01T11:00:01.000Z' }),
+    assistantToolUse(
+      't-w',
+      'Write',
+      { file_path: 'new.js', content: 'const a = 1;\n' },
+      { timestamp: '2026-02-01T11:00:01.000Z' },
+    ),
     assistantToolUse(
       't-e',
       'Edit',
@@ -314,7 +369,12 @@ test('K2: tool outputs (tool_result and toolUseResult) are NEVER stored', async 
   const ctx = makeCtx();
   ctx.env = {};
   writeClaudeSession(ctx, '/work/proj', 'sess-k2', [
-    assistantToolUse('t-1', 'Write', { file_path: '/work/proj/out.txt', content: 'clean content\n' }, { cwd: '/work/proj' }),
+    assistantToolUse(
+      't-1',
+      'Write',
+      { file_path: '/work/proj/out.txt', content: 'clean content\n' },
+      { cwd: '/work/proj' },
+    ),
     {
       type: 'user',
       cwd: '/work/proj',
@@ -476,10 +536,7 @@ test('K5: identical content across sessions is stored as one blob file with two 
   const events = writeindex.readEvents(ctx, '/work/proj/shared.txt');
   assert.strictEqual(events.length, 2);
   assert.notStrictEqual(events[0].id, events[1].id);
-  assert.deepStrictEqual(
-    events.map((e) => e.session).sort(),
-    ['sess-a', 'sess-b'],
-  );
+  assert.deepStrictEqual(events.map((e) => e.session).sort(), ['sess-a', 'sess-b']);
   assert.strictEqual(events[0].blob, events[1].blob);
 });
 
@@ -488,7 +545,12 @@ test('K7: sub-agent transcripts covered with subagent flags while excluded from 
   ctx.env = {};
 
   writeClaudeSession(ctx, '/work/proj', 'sess-main', [
-    { type: 'user', cwd: '/work/proj', timestamp: '2026-02-01T15:00:00.000Z', message: { role: 'user', content: 'start' } },
+    {
+      type: 'user',
+      cwd: '/work/proj',
+      timestamp: '2026-02-01T15:00:00.000Z',
+      message: { role: 'user', content: 'start' },
+    },
     assistantToolUse(
       'tu-main',
       'Write',
@@ -516,7 +578,17 @@ test('K7: sub-agent transcripts covered with subagent flags while excluded from 
   assert.strictEqual(events[1].subagent, true);
   assert.strictEqual(events[1].agent, 'w1');
 
-  assert.strictEqual(conversations.list(ctx).conversations.length, 1, 'sub-agent omitted from conversations.list');
+  const listed = conversations.list(ctx).conversations;
+  assert.strictEqual(
+    listed.filter((c) => c.surface !== 'subagent').length,
+    1,
+    'only one main conversation in conversations.list',
+  );
+  assert.strictEqual(
+    listed.filter((c) => c.surface === 'subagent').length,
+    1,
+    'sub-agent listed separately with surface subagent',
+  );
   assert.strictEqual(convindex.catalog(ctx, {}).conversations.length, 1, 'sub-agent omitted from convindex catalog');
 });
 
@@ -524,7 +596,12 @@ test('K8: idempotent re-indexing, byte-offset append resume, file shrink reset, 
   const ctx = makeCtx();
   ctx.env = {};
   const sessFile = writeClaudeSession(ctx, '/work/proj', 'sess-k8', [
-    { type: 'user', cwd: '/work/proj', timestamp: '2026-02-01T16:00:00.000Z', message: { role: 'user', content: 'go' } },
+    {
+      type: 'user',
+      cwd: '/work/proj',
+      timestamp: '2026-02-01T16:00:00.000Z',
+      message: { role: 'user', content: 'go' },
+    },
     assistantToolUse(
       'tu-1',
       'Write',
@@ -601,10 +678,20 @@ test('conv.writes.exclude skips excluded projects and CLI --writes builds writes
   config.set(ctx, 'conv.writes.exclude', '/work/skip-me, secret-proj');
 
   writeClaudeSession(ctx, '/work/keep-me', 's-keep', [
-    assistantToolUse('t-keep', 'Write', { file_path: '/work/keep-me/ok.txt', content: 'keep\n' }, { cwd: '/work/keep-me' }),
+    assistantToolUse(
+      't-keep',
+      'Write',
+      { file_path: '/work/keep-me/ok.txt', content: 'keep\n' },
+      { cwd: '/work/keep-me' },
+    ),
   ]);
   writeClaudeSession(ctx, '/work/skip-me', 's-skip', [
-    assistantToolUse('t-skip', 'Write', { file_path: '/work/skip-me/no.txt', content: 'skip\n' }, { cwd: '/work/skip-me' }),
+    assistantToolUse(
+      't-skip',
+      'Write',
+      { file_path: '/work/skip-me/no.txt', content: 'skip\n' },
+      { cwd: '/work/skip-me' },
+    ),
   ]);
   writeClaudeSession(ctx, '/work/client/secret-proj', 's-sec', [
     assistantToolUse(
@@ -658,8 +745,7 @@ test('edge cases: cd tracking, nested python open(), partial EOF line recovery, 
   const ctx = makeCtx();
   ctx.env = {};
   const boundarySecret = 'sk-ant-' + 'ZzYyXxWwVvUuTtSsRrQqPpOoNnMmLl';
-  const boundaryContent =
-    'A'.repeat(48 * 1024 - 10) + boundarySecret + 'B'.repeat(20 * 1024);
+  const boundaryContent = 'A'.repeat(48 * 1024 - 10) + boundarySecret + 'B'.repeat(20 * 1024);
 
   const line1 = JSON.stringify(
     assistantToolUse(
@@ -673,7 +759,7 @@ test('edge cases: cd tracking, nested python open(), partial EOF line recovery, 
     assistantToolUse(
       'tu-py-nested',
       'Bash',
-      { command: 'python3 -c "open(os.path.join(\'a\', \'b.txt\'), \'w\').write(\'x\')"' },
+      { command: "python3 -c \"open(os.path.join('a', 'b.txt'), 'w').write('x')\"" },
       { cwd: '/work/proj', timestamp: '2026-02-01T17:00:02.000Z' },
     ),
   );

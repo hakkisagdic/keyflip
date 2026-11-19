@@ -116,6 +116,10 @@ function attributor(ctx) {
       };
     }
 
+    if (conv && (conv.surface === 'subagent' || /:subagent:/.test(String(conv.id || '')))) {
+      return none('sub-agent transcripts are not attributed to an account');
+    }
+
     const surface = surfaceOf(conv);
     if (!surface) return none('keyflip does not manage accounts for ' + (conv && conv.app ? conv.app : 'this tool'));
 

@@ -30,6 +30,7 @@ import * as cursor from './cursor.js';
 import * as opencode from './opencode.js';
 import * as vscodechat from './vscodechat.js';
 import * as cowork from './cowork.js';
+import * as traycerchat from './traycerchat.js';
 import * as yamlread from './yamlread.js';
 
 const SCHEMA_VERSION = 1;
@@ -57,6 +58,10 @@ function homeOf(ctx) {
 
 function claudeRoot(ctx) {
   return path.join((ctx && ctx.claudeDir) || path.join(homeOf(ctx), '.claude'), 'projects');
+}
+
+function qoderRoot(ctx) {
+  return path.join((ctx && ctx.qoderDir) || path.join(homeOf(ctx), '.qoder'), 'projects');
 }
 
 function codexRoot(ctx) {
@@ -177,6 +182,7 @@ function makeConv(fields) {
     hash: convHash(messages),
   };
   if (fields.subId) out.source.subId = String(fields.subId);
+  if (fields.parentId) out.parentId = safeStr(String(fields.parentId), 200);
   if (fields.warnings && fields.warnings.length) out.warnings = fields.warnings;
   return out;
 }
@@ -408,20 +414,39 @@ function withFallbackTitle(conv, fallback) {
 // ---- Claude Code / Qoder-style message-event JSONL ---------------------------------------
 
 function parseClaudeLocal(text, src, opts) {
+  const isSubagent = src.surface === 'subagent';
+  const app = (isSubagent && src.app) || 'claude';
   const parsed = transcript.parse(text, {
     maxMessages: MAX_MESSAGES,
     maxTextBytes: MAX_TEXT_BYTES,
     maxMessageChars: MAX_MESSAGE_CHARS,
   });
   const messages = parsed.messages
-    .filter((m) => (m.role === 'user' || m.role === 'assistant') && (m.text || (m.tools && m.tools.length)))
+    .filter((m) => {
+      if (m.role !== 'user' && m.role !== 'assistant') return false;
+      if (!m.text && !(m.tools && m.tools.length)) return false;
+      if (isSubagent && m.role === 'user' && isInjected(m.text)) return false;
+      return true;
+    })
     .map((m) => ({ role: m.role, text: cleanMessage(m.text), ts: m.ts || null, tools: m.tools || [] }))
     .filter((m) => m.text || m.tools.length);
-  const fallbackTitle = src.title || null;
+  let fallbackTitle = src.title || null;
+  if (!fallbackTitle && isSubagent && src.path) {
+    const rawMeta = readSmallText(src.path.replace(/\.jsonl$/i, '.meta.json'), 262144);
+    if (rawMeta) {
+      try {
+        const meta = JSON.parse(rawMeta);
+        if (meta && typeof meta.title === 'string' && meta.title.trim()) fallbackTitle = meta.title.trim();
+      } catch {
+        /* optional sibling meta */
+      }
+    }
+  }
   const conv = makeConv({
-    id: 'claude:local:' + src.idHint,
-    app: 'claude',
-    surface: 'cli',
+    id: (isSubagent ? app + ':subagent:' : 'claude:local:') + src.idHint,
+    app: app,
+    surface: isSubagent ? 'subagent' : 'cli',
+    parentId: isSubagent ? src.parentId || null : null,
     title: fallbackTitle,
     cwd: parsed.cwd || (opts && opts.cwd) || null,
     createdAt: messages.length ? messages[0].ts : null,
@@ -969,6 +994,32 @@ function parseCoworkAudit(input, src, opts) {
   return withFallbackTitle(conv, sid);
 }
 
+function parseTraycer(input, src, opts) {
+  const parsed = traycerchat.parseTranscript(input, {
+    epicId: src.epicId,
+    fileUuid: src.fileUuid,
+    title: src.title,
+  });
+  const messages = normalizeMessages((parsed.messages || []).filter((m) => !(m.role === 'user' && isInjected(m.text))));
+  const epic = safeId(src.epicId || parsed.epicId || 'epic');
+  const fileUuid = safeId(src.fileUuid || parsed.fileUuid || src.idHint || 'unknown');
+  const conv = makeConv({
+    id: 'traycer:' + epic + ':' + fileUuid,
+    app: 'traycer',
+    surface: 'desktop',
+    title: src.title || parsed.title || null,
+    cwd: (opts && opts.cwd) || null,
+    createdAt: parsed.createdAt || (messages.length ? messages[0].ts : null),
+    updatedAt:
+      parsed.updatedAt || (messages.length ? messages[messages.length - 1].ts : new Date(src.mtimeMs).toISOString()),
+    messages: messages,
+    path: src.path,
+    mtimeMs: src.mtimeMs,
+    size: src.size,
+  });
+  return withFallbackTitle(conv, fileUuid);
+}
+
 function parseForeignSource(text, src, opts) {
   const normalized = foreign.normalize(src.path, text);
   const messages = (normalized.messages || [])
@@ -1072,6 +1123,78 @@ function claudeSources(ctx) {
     });
   });
   return out;
+}
+
+function subagentSourcesFromRoot(root, kind, app) {
+  let projDirs;
+  try {
+    projDirs = fs.readdirSync(root, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  const out = [];
+  let visited = 0;
+  const MAX_WALK_ENTRIES = 200000;
+  const scanSubdir = function (dir, depth, sid) {
+    if (depth < 0 || visited >= MAX_WALK_ENTRIES) return;
+    let ents;
+    try {
+      ents = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const e of ents) {
+      if (visited >= MAX_WALK_ENTRIES) break;
+      visited++;
+      if (e.isSymbolicLink()) continue;
+      const p = path.join(dir, e.name);
+      if (e.isDirectory()) {
+        scanSubdir(p, depth - 1, sid);
+        continue;
+      }
+      if (!e.isFile()) continue;
+      if (!/^agent-[A-Za-z0-9._-]+\.jsonl$/i.test(e.name)) continue;
+      if (/\.meta\.json$/i.test(e.name) || /\.checkpoints\.jsonl$/i.test(e.name)) continue;
+      const stem = e.name.slice(0, -6);
+      const agentId = stem.replace(/^agent-/i, '') || stem;
+      const src = statSource(p, kind, {
+        app: app,
+        surface: 'subagent',
+        parentId: sid,
+        agentId: agentId,
+        idHint: sid + ':' + agentId,
+      });
+      if (src) out.push(src);
+    }
+  };
+  for (const pd of projDirs) {
+    if (visited >= MAX_WALK_ENTRIES) break;
+    if (!pd.isDirectory() || pd.isSymbolicLink() || pd.name.endsWith('.keyflip-bak')) continue;
+    const projPath = path.join(root, pd.name);
+    let sessDirs;
+    try {
+      sessDirs = fs.readdirSync(projPath, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const sd of sessDirs) {
+      if (visited >= MAX_WALK_ENTRIES) break;
+      if (!sd.isDirectory() || sd.isSymbolicLink()) continue;
+      if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(sd.name)) continue;
+      scanSubdir(path.join(projPath, sd.name, 'subagents'), 2, sd.name);
+    }
+  }
+  // Sort newest-first BEFORE capping so older sub-agent runs never hide recent ones.
+  out.sort((a, b) => b.mtimeMs - a.mtimeMs);
+  return out.slice(0, PER_APP_BUDGET);
+}
+
+function claudeSubagentSources(ctx) {
+  return subagentSourcesFromRoot(claudeRoot(ctx), 'claude-subagent', 'claude');
+}
+
+function qoderSubagentSources(ctx) {
+  return subagentSourcesFromRoot(qoderRoot(ctx), 'qoder-subagent', 'qoder');
 }
 
 function codexSources(ctx) {
@@ -1246,6 +1369,30 @@ function coworkSources(ctx) {
   return out;
 }
 
+function traycerSources(ctx) {
+  const out = [];
+  let found;
+  try {
+    found = traycerchat.discover(ctx);
+  } catch {
+    return out;
+  }
+  found.forEach((s) => {
+    const src = statSource(s.path, 'traycer-chat', {
+      app: 'traycer',
+      surface: 'desktop',
+      epicId: s.epicId,
+      fileUuid: s.fileUuid,
+      idHint: s.epicId + ':' + s.fileUuid,
+      title: s.title,
+      mtimeMs: s.mtimeMs,
+      size: s.size,
+    });
+    if (src) out.push(src);
+  });
+  return out;
+}
+
 function foreignSources(ctx) {
   const out = [];
   let found;
@@ -1297,6 +1444,19 @@ function foreignSources(ctx) {
   return out;
 }
 
+function matchesAppFilter(src, want) {
+  if (!want) return true;
+  if (want.has(src.app)) return true;
+  if (src.surface === 'subagent') {
+    return want.has(src.app + '-subagent') || want.has(src.app + ' (subagent)');
+  }
+  return false;
+}
+
+function discoveryBucket(src) {
+  return src && src.surface === 'subagent' ? (src.app || 'other') + ' (subagent)' : (src && src.app) || 'other';
+}
+
 // All readable sources, newest first. `apps` filters by app name when given.
 function discover(ctx, opts) {
   opts = opts || {};
@@ -1305,19 +1465,35 @@ function discover(ctx, opts) {
   const opencodeFamily = !want || want.has('opencode') ? opencodeSources(ctx) : [];
   const vscodeFamily = !want || want.has('vscode-chat') ? vscodeChatSources(ctx) : [];
   const coworkFamily = !want || want.has('cowork') ? coworkSources(ctx) : [];
+  const claudeSubFamily =
+    !opts.excludeSubagents &&
+    (!want || want.has('claude') || want.has('claude-subagent') || want.has('claude (subagent)'))
+      ? claudeSubagentSources(ctx)
+      : [];
+  const qoderSubFamily =
+    opts.excludeSubagents || (opts.foreign === false && !want)
+      ? []
+      : !want || want.has('qoder') || want.has('qoder-subagent') || want.has('qoder (subagent)')
+        ? qoderSubagentSources(ctx)
+        : [];
+  const traycerFamily = !want || want.has('traycer') ? traycerSources(ctx) : [];
   const all = []
     .concat(claudeSources(ctx))
+    .concat(claudeSubFamily)
     .concat(codexSources(ctx))
     .concat(kiroSources(ctx))
     .concat(cursorFamily)
     .concat(opencodeFamily)
     .concat(vscodeFamily)
     .concat(coworkFamily)
+    .concat(traycerFamily)
+    .concat(qoderSubFamily)
     .concat(opts.foreign === false ? [] : foreignSources(ctx));
   const seen = new Set();
   const candidates = [];
   for (const src of all) {
-    if (want && !want.has(src.app)) continue;
+    if (opts.excludeSubagents && src.surface === 'subagent') continue;
+    if (want && !matchesAppFilter(src, want)) continue;
     // The dedupe key is the CHAT, not the file: a Cursor store contributes many sources with one
     // path, and keying on the path would collapse months of work into the first composer.
     const key = src.composerId ? path.resolve(src.path) + '#' + src.composerId : sourceKey(src);
@@ -1332,7 +1508,7 @@ function discover(ctx, opts) {
   const appCounts = Object.create(null);
   const appAllowed = [];
   for (const src of candidates) {
-    const app = src.app || 'other';
+    const app = discoveryBucket(src);
     const n = appCounts[app] || 0;
     if (n >= perAppCap) continue;
     appCounts[app] = n + 1;
@@ -1345,7 +1521,7 @@ function discover(ctx, opts) {
   } else {
     const byApp = new Map();
     for (const src of appAllowed) {
-      const app = src.app || 'other';
+      const app = discoveryBucket(src);
       let list = byApp.get(app);
       if (!list) byApp.set(app, (list = []));
       list.push(src);
@@ -1407,6 +1583,8 @@ function load(ctx, src, opts) {
   // Claude Code or Kiro IDE transcripts) parse cleanly without hitting V8's string limit.
   const canStream =
     src.kind === 'claude-local' ||
+    src.kind === 'claude-subagent' ||
+    src.kind === 'qoder-subagent' ||
     src.kind === 'codex-rollout' ||
     src.kind === 'kiro-cli' ||
     src.kind === 'kiro-ide' ||
@@ -1415,11 +1593,13 @@ function load(ctx, src, opts) {
     src.kind === 'grok-chat' ||
     src.kind === 'vscode-chat' ||
     src.kind === 'cowork-audit' ||
+    src.kind === 'traycer-chat' ||
     (src.kind === 'foreign' && /\.(jsonl|md)$/i.test(src.path));
   const warnings = [];
   const input = canStream ? readSourceInput(src.path, opts, warnings) : readText(src.path);
   let conv;
-  if (src.kind === 'claude-local') conv = parseClaudeLocal(input, src, opts);
+  if (src.kind === 'claude-local' || src.kind === 'claude-subagent' || src.kind === 'qoder-subagent')
+    conv = parseClaudeLocal(input, src, opts);
   else if (src.kind === 'codex-rollout')
     conv = parseCodexRollout(input, src, Object.assign({}, opts, { titles: opts.titles || codexTitles(ctx) }));
   else if (src.kind === 'kiro-cli') conv = parseKiroCli(input, src, opts);
@@ -1429,6 +1609,7 @@ function load(ctx, src, opts) {
   else if (src.kind === 'grok-chat') conv = parseGrokSession(input, src, opts);
   else if (src.kind === 'vscode-chat') conv = parseVscodeChat(input, src, opts);
   else if (src.kind === 'cowork-audit') conv = parseCoworkAudit(input, src, opts);
+  else if (src.kind === 'traycer-chat') conv = parseTraycer(input, src, opts);
   else conv = parseForeignSource(input, src, opts);
   if (warnings.length) {
     conv.warnings = (conv.warnings || []).concat(warnings.map((w) => Object.assign({ app: conv.app }, w)));
@@ -1445,7 +1626,7 @@ function list(ctx, opts) {
   discover(ctx, opts).forEach((src) => {
     try {
       const c = load(ctx, src, opts);
-      rows.push({
+      const row = {
         id: c.id,
         app: c.app,
         surface: c.surface,
@@ -1457,7 +1638,9 @@ function list(ctx, opts) {
         counts: c.counts,
         source: c.source,
         hash: c.hash,
-      });
+      };
+      if (c.parentId) row.parentId = c.parentId;
+      rows.push(row);
     } catch (e) {
       errors.push({ path: src.path, app: src.app, error: (e && e.message) || String(e) });
     }
@@ -1554,8 +1737,12 @@ export {
   countsOf,
   codexTitles,
   claudeRoot,
+  qoderRoot,
   codexRoot,
   kiroRoot,
+  claudeSubagentSources,
+  qoderSubagentSources,
+  traycerSources,
   readText,
   forEachLine,
   isInjected,

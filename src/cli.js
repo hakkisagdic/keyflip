@@ -8511,9 +8511,9 @@ async function cmdRecall(ctx, rest) {
 // (src/convexport.js). Every subcommand is tool-agnostic: it reads Claude Code, Codex/ChatGPT,
 // Kiro, Gemini, Command Code and the foreign adapters through the same shape, and no live store is modified.
 const CONV_USAGE = [
-  'usage: keyflip conv [list] [--app claude,codex,kiro,…] [--since 7d] [--cwd <dir>] [--search T] [--account <name>] [--limit N] [--json]',
-  '       keyflip conv search "<query>" [--hybrid|--semantic|--lexical] [--per-conv N] [--limit N] [--since 7d] [--account <name>]',
-  '       keyflip conv context "<query>" [--hybrid] [--budget 12000] [--expand 1]   RAG block for an LLM prompt',
+  'usage: keyflip conv [list] [--app claude,codex,kiro,…] [--since 7d] [--cwd <dir>] [--search T] [--account <name>] [--no-subagents] [--limit N] [--json]',
+  '       keyflip conv search "<query>" [--hybrid|--semantic|--lexical] [--per-conv N] [--limit N] [--since 7d] [--account <name>] [--no-subagents]',
+  '       keyflip conv context "<query>" [--hybrid] [--budget 12000] [--expand 1] [--no-subagents]   RAG block for an LLM prompt',
   '       keyflip conv show <id|prefix|title> [--format md|html|json] [--out <file|dir>] [--no-redact]',
   '       keyflip conv index [--embed|--no-embed] [--embed-pause-ms N] [--embed-batch N] [--max-embed N] [--background] [--force] [--writes] [--watch] [--interval N]  build/refresh the local retrieval index',
   '                                     --watch re-indexes every N minutes (default 30) so search stays current',
@@ -8601,6 +8601,7 @@ function convFilter(rest) {
     cwd: flagVal(rest, '--cwd') || null,
     q: flagVal(rest, '--search') || null,
     account: flagVal(rest, '--account') || null,
+    excludeSubagents: rest.indexOf('--no-subagents') !== -1,
   };
 }
 function convMode(rest) {
@@ -8656,11 +8657,12 @@ function convPrintHits(query, r, limit) {
       style.dim('[' + label + ']'),
   );
   r.hits.forEach(function (h, i) {
+    const appLabel = (h.app || '?') + (h.surface === 'subagent' ? ' (subagent)' : '');
     print(
       '  [' +
         (i + 1) +
         '] ' +
-        style.bold(h.app || '?') +
+        style.bold(appLabel) +
         '  ' +
         convClip(h.title, 70) +
         '   ' +
@@ -8883,11 +8885,12 @@ async function cmdConv(ctx, rest) {
       const msgs = (r.counts && r.counts.messages) || 0;
       const acct = convAccountCell(r);
       if (acct.indexOf('*') !== -1) anyInferred = true;
+      const appLabel = String(r.app || '?') + (r.surface === 'subagent' ? ' (subagent)' : '');
       print(
         '  ' +
           id.padEnd(9) +
           ' ' +
-          String(r.app || '?').padEnd(8) +
+          appLabel.padEnd(8) +
           ' ' +
           convWhen(r.updatedAt).padStart(4) +
           '  ' +
@@ -8973,20 +8976,22 @@ async function cmdConv(ctx, rest) {
     }
     if (s.byApp) {
       print('  by app:');
-      Object.keys(s.byApp)
-        .sort()
-        .forEach(function (app) {
-          const a = s.byApp[app];
-          print(
-            '    ' +
-              app.padEnd(10) +
-              String(a.sources).padStart(5) +
-              ' conv · ' +
-              String(a.messages).padStart(7) +
-              ' msg · ' +
-              fmtBytes(a.bytes),
-          );
-        });
+      const appKeys = Object.keys(s.byApp).sort();
+      const colWidth = appKeys.reduce(function (m, k) {
+        return Math.max(m, k.length + 2);
+      }, 10);
+      appKeys.forEach(function (app) {
+        const a = s.byApp[app];
+        print(
+          '    ' +
+            app.padEnd(colWidth) +
+            String(a.sources).padStart(5) +
+            ' conv · ' +
+            String(a.messages).padStart(7) +
+            ' msg · ' +
+            fmtBytes(a.bytes),
+        );
+      });
     }
     return;
   }
@@ -9195,6 +9200,7 @@ async function cmdConv(ctx, rest) {
       limit: sub === 'context' ? Math.max(limit.value, 8) : limit.value,
       perConv: perConv.value,
       account: f.account,
+      excludeSubagents: f.excludeSubagents,
     };
     let r;
     try {
@@ -9285,7 +9291,15 @@ async function cmdConv(ctx, rest) {
       return;
     }
     if (JSON_MODE) return jsonOut({ conversation: conv });
-    const head = [conv.app, conv.surface, conv.id, conv.counts.messages + ' messages', conv.updatedAt, conv.cwd]
+    const head = [
+      conv.app,
+      conv.surface,
+      conv.id,
+      conv.parentId ? 'parent ' + conv.parentId : null,
+      conv.counts.messages + ' messages',
+      conv.updatedAt,
+      conv.cwd,
+    ]
       .filter(Boolean)
       .join(' · ');
     print(style.bold(conv.title));
