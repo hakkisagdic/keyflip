@@ -336,3 +336,307 @@ test(
     }
   },
 );
+
+test(
+  'K10: 5,200 newer Kiro sessions with tight --limit-sources preserve traycer, gemini, claude/qoder subagents, and all other apps',
+  { skip: hasSqlite3() ? false : 'sqlite3 CLI not installed' },
+  function () {
+    const h = fs.mkdtempSync(path.join(os.tmpdir(), 'kf-k10-'));
+    try {
+      const kiroCli = path.join(h, '.kiro', 'sessions', 'cli');
+      const claudeProj = path.join(h, '.claude', 'projects', '-work-cl');
+      const claudeSub = path.join(claudeProj, 'cl-k10', 'subagents');
+      const qoderProj = path.join(h, '.qoder', 'projects', '-work-q');
+      const qoderSub = path.join(qoderProj, 'qd-k10', 'subagents');
+      const traycerDir = path.join(h, '.traycer', 'epic-chat-transcripts', 'epic-k10');
+      const geminiDir = path.join(
+        h,
+        '.gemini',
+        'antigravity-cli',
+        'brain',
+        '11111111-2222-4333-8444-555555555555',
+        '.system_generated',
+        'logs',
+      );
+      const copilotDir = path.join(h, '.copilot', 'session-state', 'cp-k10');
+      const grokDir = path.join(h, '.grok', 'sessions', '%2Fwork%2Fg', 'g-k10');
+      const ccDir = path.join(h, '.commandcode', 'projects', '-work-cc');
+      [kiroCli, claudeSub, qoderSub, traycerDir, geminiDir, copilotDir, grokDir, ccDir].forEach((d) =>
+        fs.mkdirSync(d, { recursive: true }),
+      );
+
+      const baseMs = Date.UTC(2026, 10, 15, 12, 0, 0);
+      const kiroLine = JSON.stringify({ kind: 'Prompt', data: { content: [{ kind: 'text', data: 'hi' }] } }) + '\n';
+      for (let i = 0; i < 5200; i++) {
+        fs.writeFileSync(path.join(kiroCli, 'k' + String(i).padStart(4, '0') + '.jsonl'), kiroLine);
+      }
+
+      const oldTime = new Date(baseMs - 3600 * 1000);
+      const writeAged = (file, content) => {
+        fs.writeFileSync(file, content);
+        fs.utimesSync(file, oldTime, oldTime);
+      };
+
+      writeAged(
+        path.join(claudeProj, 'cl-k10.jsonl'),
+        JSON.stringify({ type: 'user', message: { role: 'user', content: 'Claude K10 prompt' } }) + '\n',
+      );
+      writeAged(
+        path.join(claudeSub, 'agent-k10.jsonl'),
+        JSON.stringify({
+          type: 'user',
+          isSidechain: true,
+          agentId: 'k10',
+          sessionId: 'cl-k10',
+          message: { role: 'user', content: 'Claude subagent K10 prompt' },
+        }) + '\n',
+      );
+      writeAged(
+        path.join(qoderProj, 'qd-k10.jsonl'),
+        JSON.stringify({ type: 'user', message: { role: 'user', content: 'Qoder K10 prompt' } }) + '\n',
+      );
+      writeAged(
+        path.join(qoderSub, 'agent-k10.jsonl'),
+        JSON.stringify({
+          type: 'user',
+          isSidechain: true,
+          agentId: 'k10',
+          sessionId: 'qd-k10',
+          message: { role: 'user', content: 'Qoder subagent K10 prompt' },
+        }) + '\n',
+      );
+      writeAged(
+        path.join(traycerDir, 'T-aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee.txt'),
+        'User: Traycer K10 prompt\nAssistant: Traycer K10 reply\n',
+      );
+      writeAged(
+        path.join(geminiDir, 'transcript.jsonl'),
+        JSON.stringify({ type: 'USER_INPUT', content: 'Gemini Antigravity K10 prompt' }) + '\n',
+      );
+      writeAged(
+        path.join(copilotDir, 'events.jsonl'),
+        JSON.stringify({ type: 'user.message', data: { content: 'Copilot K10 prompt' } }) + '\n',
+      );
+      writeAged(
+        path.join(grokDir, 'chat_history.jsonl'),
+        JSON.stringify({ type: 'user', content: 'Grok K10 prompt' }) + '\n',
+      );
+      writeAged(
+        path.join(ccDir, 'cc10.jsonl'),
+        JSON.stringify({ sessionId: 'cc10', role: 'user', content: [{ type: 'text', text: 'Command Code K10' }] }) +
+          '\n',
+      );
+      seedOpencodeDb(h, 'k10oc', 'Opencode K10', oldTime.getTime());
+
+      const cfg = path.join(h, 'cfg-k10');
+      const capped = runCli(h, ['conv', 'index', '--no-embed', '--limit-sources', '25'], {
+        KEYFLIP_CONFIG_DIR: cfg,
+      });
+      assert.strictEqual(capped.status, 0, capped.stderr);
+      assert.match(capped.stdout, /5,?185\s+source\(s\)\s+truncated/i);
+
+      const stJson = lastJson(runCli(h, ['conv', 'status', '--json'], { KEYFLIP_CONFIG_DIR: cfg }));
+      assert.strictEqual(stJson.stats.sources, 25);
+
+      const stPlain = runCli(h, ['conv', 'status'], { KEYFLIP_CONFIG_DIR: cfg });
+      assert.strictEqual(stPlain.status, 0, stPlain.stderr);
+
+      const allApps = [
+        'kiro',
+        'claude',
+        'claude (subagent)',
+        'qoder',
+        'qoder (subagent)',
+        'traycer',
+        'gemini',
+        'copilot',
+        'grok',
+        'opencode',
+        'command-code',
+      ];
+      for (const app of allApps) {
+        assert.ok(stJson.stats.byApp[app] && stJson.stats.byApp[app].sources >= 1, app + ' must survive tight cap');
+        assert.ok(stPlain.stdout.indexOf(app) !== -1, app + ' must be printed by conv status');
+      }
+    } finally {
+      fs.rmSync(h, { recursive: true, force: true });
+    }
+  },
+);
+
+test('K11: traycer, gemini (Antigravity), and claude/qoder subagents tolerate missing/corrupt files and index/search/show end to end', function () {
+  const hEmpty = fs.mkdtempSync(path.join(os.tmpdir(), 'kf-k11-empty-'));
+  const h = fs.mkdtempSync(path.join(os.tmpdir(), 'kf-k11-'));
+  try {
+    // Missing folders: status & index exit 0 cleanly with 0 sources.
+    const stEmptyBefore = runCli(hEmpty, ['conv', 'status', '--json']);
+    assert.strictEqual(stEmptyBefore.status, 0, stEmptyBefore.stderr);
+    assert.strictEqual(lastJson(stEmptyBefore).exists, false);
+
+    const idxEmpty = runCli(hEmpty, ['conv', 'index', '--no-embed', '--json']);
+    assert.strictEqual(idxEmpty.status, 0, idxEmpty.stderr);
+    assert.strictEqual(lastJson(idxEmpty).stats.sources, 0);
+
+    const stEmptyAfter = runCli(hEmpty, ['conv', 'status', '--json']);
+    assert.strictEqual(stEmptyAfter.status, 0, stEmptyAfter.stderr);
+
+    // Seed valid + corrupt files for all four reader targets.
+    const clProj = path.join(h, '.claude', 'projects', '-work-k11');
+    const clSub = path.join(clProj, 'cl-main-1', 'subagents');
+    fs.mkdirSync(clSub, { recursive: true });
+    fs.writeFileSync(
+      path.join(clProj, 'cl-main-1.jsonl'),
+      JSON.stringify({ type: 'user', message: { role: 'user', content: 'Main Claude K11 session.' } }) + '\n',
+    );
+    fs.writeFileSync(
+      path.join(clSub, 'agent-cl11.jsonl'),
+      [
+        JSON.stringify({
+          type: 'user',
+          isSidechain: true,
+          agentId: 'cl11',
+          sessionId: 'cl-main-1',
+          message: { role: 'user', content: 'clsubk11marker inspect edge case' },
+        }),
+        JSON.stringify({
+          type: 'assistant',
+          isSidechain: true,
+          agentId: 'cl11',
+          sessionId: 'cl-main-1',
+          message: { role: 'assistant', content: [{ type: 'text', text: 'Claude subagent verified.' }] },
+        }),
+      ].join('\n') + '\n',
+    );
+    fs.writeFileSync(path.join(clSub, 'agent-corrupt.jsonl'), '{{{bad-json\n{"type":"user"\n');
+
+    const qProj = path.join(h, '.qoder', 'projects', '-work-q11');
+    const qSub = path.join(qProj, 'qd-main-1', 'subagents');
+    fs.mkdirSync(qSub, { recursive: true });
+    fs.writeFileSync(
+      path.join(qProj, 'qd-main-1.jsonl'),
+      JSON.stringify({ type: 'user', message: { role: 'user', content: 'Main Qoder K11 session.' } }) + '\n',
+    );
+    fs.writeFileSync(
+      path.join(qSub, 'agent-qd11.jsonl'),
+      [
+        JSON.stringify({
+          type: 'user',
+          isSidechain: true,
+          agentId: 'qd11',
+          sessionId: 'qd-main-1',
+          message: { role: 'user', content: 'qdsubk11marker check workspace' },
+        }),
+        JSON.stringify({
+          type: 'assistant',
+          isSidechain: true,
+          agentId: 'qd11',
+          sessionId: 'qd-main-1',
+          message: { role: 'assistant', content: [{ type: 'text', text: 'Qoder subagent verified.' }] },
+        }),
+      ].join('\n') + '\n',
+    );
+    fs.writeFileSync(path.join(qSub, 'agent-corrupt.jsonl'), 'not-json\n{"broken');
+
+    const trDir = path.join(h, '.traycer', 'epic-chat-transcripts', 'epic-k11');
+    fs.mkdirSync(trDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(trDir, 'T-99999999-aaaa-4bbb-8ccc-dddddddddddd.txt'),
+      'User: trck11marker verify traycer text\nAssistant: Traycer verified.\n',
+    );
+    fs.writeFileSync(
+      path.join(trDir, 'Bad-88888888-aaaa-4bbb-8ccc-dddddddddddd.txt'),
+      Buffer.from('corrupt\x00binary-truncated'),
+    );
+
+    const agvUuid = '77777777-aaaa-4bbb-8ccc-dddddddddddd';
+    const agvBadUuid = '66666666-aaaa-4bbb-8ccc-dddddddddddd';
+    const agvDir = path.join(h, '.gemini', 'antigravity-cli', 'brain', agvUuid, '.system_generated', 'logs');
+    const agvBadDir = path.join(h, '.gemini', 'antigravity-cli', 'brain', agvBadUuid, '.system_generated', 'logs');
+    fs.mkdirSync(agvDir, { recursive: true });
+    fs.mkdirSync(agvBadDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(agvDir, 'transcript.jsonl'),
+      [
+        JSON.stringify({
+          type: 'USER_INPUT',
+          created_at: '2026-11-15T10:00:00.000Z',
+          content: '<USER_REQUEST>agvk11marker verify Antigravity gemini index</USER_REQUEST>',
+        }),
+        JSON.stringify({
+          type: 'PLANNER_RESPONSE',
+          created_at: '2026-11-15T10:00:02.000Z',
+          content: 'Antigravity gemini response.',
+        }),
+      ].join('\n') + '\n',
+    );
+    fs.writeFileSync(path.join(agvBadDir, 'transcript.jsonl'), '<<<corrupt\n{"type":');
+
+    const idx = runCli(h, ['conv', 'index', '--no-embed', '--json']);
+    assert.strictEqual(idx.status, 0, idx.stderr);
+
+    const st = lastJson(runCli(h, ['conv', 'status', '--json']));
+    assert.strictEqual(st.stats.byApp.claude.sources, 1);
+    assert.strictEqual(st.stats.byApp['claude (subagent)'].sources, 1);
+    assert.strictEqual(st.stats.byApp.qoder.sources, 1);
+    assert.strictEqual(st.stats.byApp['qoder (subagent)'].sources, 1);
+    assert.strictEqual(st.stats.byApp.traycer.sources, 1);
+    assert.strictEqual(st.stats.byApp.gemini.sources, 1);
+
+    const specs = [
+      {
+        marker: 'clsubk11marker',
+        id: 'claude:subagent:cl-main-1:cl11',
+        app: 'claude',
+        surface: 'subagent',
+        labelRe: /claude \(subagent\)/,
+      },
+      {
+        marker: 'qdsubk11marker',
+        id: 'qoder:subagent:qd-main-1:qd11',
+        app: 'qoder',
+        surface: 'subagent',
+        labelRe: /qoder \(subagent\)/,
+      },
+      {
+        marker: 'trck11marker',
+        id: 'traycer:epic-k11:99999999-aaaa-4bbb-8ccc-dddddddddddd',
+        app: 'traycer',
+        surface: 'desktop',
+        labelRe: /\btraycer\b/,
+      },
+      {
+        marker: 'agvk11marker',
+        id: 'gemini:' + agvUuid,
+        app: 'gemini',
+        surface: 'cli',
+        labelRe: /\bgemini\b/,
+      },
+    ];
+    for (const spec of specs) {
+      const srJson = lastJson(runCli(h, ['conv', 'search', spec.marker, '--json']));
+      assert.strictEqual(srJson.hits.length, 1, spec.marker + ' returns exactly 1 hit');
+      assert.strictEqual(srJson.hits[0].id, spec.id);
+      assert.strictEqual(srJson.hits[0].app, spec.app);
+      assert.strictEqual(srJson.hits[0].surface, spec.surface);
+
+      const srPlain = runCli(h, ['conv', 'search', spec.marker]);
+      assert.strictEqual(srPlain.status, 0, srPlain.stderr);
+      assert.match(srPlain.stdout, spec.labelRe);
+
+      const sh = runCli(h, ['conv', 'show', spec.id, '--json']);
+      assert.strictEqual(sh.status, 0, sh.stderr);
+      const showJson = lastJson(sh);
+      assert.strictEqual(showJson.conversation.id, spec.id);
+      assert.deepStrictEqual(
+        showJson.conversation.messages.map((m) => m.role),
+        ['user', 'assistant'],
+      );
+      if (spec.app === 'gemini') {
+        assert.strictEqual(showJson.conversation.messages[0].text.indexOf('<USER_REQUEST>'), -1);
+      }
+    }
+  } finally {
+    fs.rmSync(hEmpty, { recursive: true, force: true });
+    fs.rmSync(h, { recursive: true, force: true });
+  }
+});
