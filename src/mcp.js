@@ -294,7 +294,9 @@ function convByRef(ctx, ref) {
     e.candidates = m.candidates || [];
     throw e;
   }
-  return m.match.path ? _conversations.loadPath(ctx, m.match.path, {}) : _conversations.get(ctx, m.match.id, {});
+  return m.match.path
+    ? _conversations.loadPath(ctx, m.match.path, { subId: m.match.subId })
+    : _conversations.get(ctx, m.match.id, {});
 }
 // Conversation text goes into an agent transcript, so credential-shaped lines are masked unless
 // the caller explicitly opts out (`redact:false`). Same rule as every export path in the CLI.
@@ -2056,6 +2058,8 @@ const TOOLS = [
       const st = _convindex.status(ctx);
       return {
         ok: report.ok,
+        candidateSources: report.candidateSources,
+        truncated: report.truncated || 0,
         indexed: report.indexed,
         reused: report.reused,
         changed: report.changed,
@@ -2129,13 +2133,15 @@ const TOOLS = [
         const slice = rows.slice(offset, offset + cap);
         if (!slice.length) throw new Error('no conversations match those filters');
         const srcs = _conversations.discover(ctx, {});
-        const byPath = Object.create(null);
+        const byKey = Object.create(null);
         srcs.forEach(function (s) {
-          byPath[_path.resolve(s.path)] = s;
+          byKey[_conversations.sourceKey(s)] = s;
+          const rp = _path.resolve(s.path);
+          if (!byKey[rp]) byKey[rp] = s;
         });
         function* loadRows() {
           for (const row of slice) {
-            const src = row.path ? byPath[_path.resolve(row.path)] : null;
+            const src = row.path ? byKey[_conversations.sourceKey(row)] || byKey[_path.resolve(row.path)] : null;
             if (!src) continue;
             try {
               yield _conversations.load(ctx, src, {});
@@ -2164,14 +2170,16 @@ const TOOLS = [
       const slice = rows.slice(offset, offset + cap);
       if (!slice.length) throw new Error('no conversations match those filters');
       const srcs = _conversations.discover(ctx, {});
-      const byPath = Object.create(null);
+      const byKey = Object.create(null);
       srcs.forEach(function (s) {
-        byPath[_path.resolve(s.path)] = s;
+        byKey[_conversations.sourceKey(s)] = s;
+        const rp = _path.resolve(s.path);
+        if (!byKey[rp]) byKey[rp] = s;
       });
       const files = [];
       const errors = [];
       for (const row of slice) {
-        const src = row.path ? byPath[_path.resolve(row.path)] : null;
+        const src = row.path ? byKey[_conversations.sourceKey(row)] || byKey[_path.resolve(row.path)] : null;
         if (!src) {
           errors.push({ id: row.id, error: 'source is gone' });
           continue;

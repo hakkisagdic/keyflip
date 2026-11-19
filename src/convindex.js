@@ -941,19 +941,21 @@ async function build(ctx, opts) {
   const dsOpts = { apps: opts.apps, foreign: opts.foreign, limitSources: opts.limitSources };
   const sources = conversations.discover(ctx, dsOpts);
   const meta = readMeta(ctx) || emptyMeta();
-  // A source is looked up by its PATH, not by a computed id: the id is assigned by the
-  // parser (Codex may take it from session_meta rather than the filename), so guessing it
-  // here would miss and re-parse every file on every run.
-  const byPath = Object.create(null);
+  // A source is looked up by its sourceKey (`path#subId` for multi-chat DBs, `path` otherwise),
+  // not by a computed id: the id is assigned by the parser (Codex may take it from session_meta
+  // rather than the filename), so guessing it here would miss and re-parse every file on every run.
+  const byKey = Object.create(null);
   Object.keys(meta.sources).forEach((id) => {
     const s = meta.sources[id];
-    if (s && s.path) byPath[s.path] = s;
+    const k = conversations.sourceKey(s);
+    if (k) byKey[k] = s;
   });
   const next = Object.create(null);
   const removedIds = new Set();
-  const discoveredPaths = new Set();
+  const discoveredKeys = new Set();
   for (const s of sources) {
-    if (s && s.path) discoveredPaths.add(s.path);
+    const k = conversations.sourceKey(s);
+    if (k) discoveredKeys.add(k);
   }
   const pendingWrites = [];
   const pendingDeletes = [];
@@ -962,6 +964,8 @@ async function build(ctx, opts) {
   const report = {
     ok: true,
     candidateSources: sources.length,
+    totalCandidates: sources.totalCandidates != null ? sources.totalCandidates : sources.length,
+    truncated: sources.truncated || 0,
     indexed: 0,
     reused: 0,
     changed: 0,
@@ -989,24 +993,24 @@ async function build(ctx, opts) {
   // one would overwrite the first one's chunk file while the manifest keeps a single row — the
   // counts then disagree with the disk. The newcomer gets a stable, path-derived id instead and
   // the collision is reported, never swallowed.
-  const claimed = new Map(); // id -> path that owns it in this build
-  const counted = new Set(); // "id|path" pairs already reported
-  function claimId(id, srcPath) {
+  const claimed = new Map(); // id -> sourceKey that owns it in this build
+  const counted = new Set(); // "id|sourceKey" pairs already reported
+  function claimId(id, srcKey) {
     const owner = claimed.get(id);
-    if (owner && owner !== srcPath) {
-      const alt = id + '-' + crypto.createHash('sha1').update(String(srcPath)).digest('hex').slice(0, 8);
-      claimed.set(alt, srcPath);
-      const key = id + '|' + srcPath;
+    if (owner && owner !== srcKey) {
+      const alt = id + '-' + crypto.createHash('sha1').update(String(srcKey)).digest('hex').slice(0, 8);
+      claimed.set(alt, srcKey);
+      const key = id + '|' + srcKey;
       if (!counted.has(key)) {
         counted.add(key);
         report.duplicates++;
         if (report.duplicateIds.length < 5) {
-          report.duplicateIds.push({ id: id, path: srcPath, keptFor: owner, as: alt });
+          report.duplicateIds.push({ id: id, path: srcKey, keptFor: owner, as: alt });
         }
       }
       return alt;
     }
-    claimed.set(id, srcPath);
+    claimed.set(id, srcKey);
     return id;
   }
   const wantEmbed = !!(opts.embed || opts.semantic);
@@ -1029,7 +1033,8 @@ async function build(ctx, opts) {
   for (const src of sources) {
     done++;
     if (opts.onProgress) opts.onProgress({ phase: 'scan', done: done, total: sources.length, id: src.path });
-    const prev = byPath[src.path];
+    const srcKey = conversations.sourceKey(src);
+    const prev = byKey[srcKey];
     try {
       // Fast path BEFORE parsing: an unchanged file keeps its id and hash by definition, so a
       // no-op build is a stat() per source instead of re-reading every transcript. A row from
@@ -1045,7 +1050,7 @@ async function build(ctx, opts) {
         prev.size === src.size &&
         chunkBytesOk(ctx, prev)
       ) {
-        const id = claimId(prev.id, src.path);
+        const id = claimId(prev.id, srcKey);
         if (id === prev.id) {
           next[prev.id] = Object.assign({}, prev, accounts.fields(prev));
           report.reused++;
@@ -1069,10 +1074,10 @@ async function build(ctx, opts) {
         }
         continue;
       }
-      const id = claimId(conv.id, src.path);
+      const id = claimId(conv.id, srcKey);
       const had = meta.sources[id] || prev;
       // Reuse is only safe when the entry really belongs to THIS id and its chunk file is
-      // still on disk. Checking the id matters: entries are looked up by path, and before the
+      // still on disk. Checking the id matters: entries are looked up by sourceKey, and before the
       // Codex id fix several rollouts shared one id, so reusing `had` blind could copy a
       // neighbour's chunk count onto a source whose own chunk file was never written.
       // An entry with hash null asked to be re-chunked (see the embed loop's disk check).
@@ -1089,7 +1094,7 @@ async function build(ctx, opts) {
       if (!opts.force && sameEntry && had.mtimeMs === src.mtimeMs && had.size === src.size) {
         // Re-attributed even though the row is reused: the account that was live when it was
         // written may have been learned (or deleted) since the last pass.
-        next[id] = Object.assign({}, had, accounts.fields(conv));
+        next[id] = Object.assign({}, had, src.subId ? { subId: src.subId } : {}, accounts.fields(conv));
         report.reused++;
         pendingEnsureTokens.push(id);
         continue;
@@ -1107,6 +1112,7 @@ async function build(ctx, opts) {
             title: conv.title,
             cwd: conv.cwd,
           },
+          src.subId ? { subId: src.subId } : {},
           accounts.fields(conv),
         );
         report.reused++;
@@ -1149,6 +1155,7 @@ async function build(ctx, opts) {
         _oldVec: sameOwner && space && had.vec && had.vec.space === space.hash ? had.vec : null,
         _oldHashes: sameOwner && space && had.vec && had.vec.space === space.hash ? oldHashes : null,
       };
+      if (src.subId) entry.subId = src.subId;
       // Which account worked on it — stated if the user said so, inferred from the switch
       // timeline otherwise (and labelled as an inference).
       Object.assign(entry, accounts.fields(conv));
@@ -1176,18 +1183,19 @@ async function build(ctx, opts) {
   // Full discovery means anything absent is gone. Filtered builds must not delete the rest.
   // An empty app list is NO filter (the CLI passes []), so it must still count as a full build:
   // otherwise a deleted conversation keeps its row, chunk file and vector forever.
-  const full = !(opts.apps && opts.apps.length) && !opts.limitSources;
+  const full = !(opts.apps && opts.apps.length) && !opts.limitSources && !sources.truncated;
   if (full) {
-    const claimedPaths = new Set(claimed.values());
+    const claimedKeys = new Set(claimed.values());
     Object.keys(meta.sources).forEach((id) => {
       if (!next[id]) {
         const s = meta.sources[id];
+        const sk = conversations.sourceKey(s);
         // In a full build, any row from our initial meta snapshot that was not produced by this
-        // scan is removed: either its path was discovered and claimed by a newer id (e.g. an
-        // ID_SCHEME bump or collision resolution), or its path was not in the discovery snapshot
+        // scan is removed: either its sourceKey was discovered and claimed by a newer id (e.g. an
+        // ID_SCHEME bump or collision resolution), or it was not in the discovery snapshot
         // at all. Rows added on disk by a concurrent build after our initial readMeta() are not in
         // `meta.sources` (and not in `removedIds`), so writeMeta() still preserves them.
-        const supersededOrGone = !s || !s.path || claimedPaths.has(s.path) || !discoveredPaths.has(s.path);
+        const supersededOrGone = !s || !sk || claimedKeys.has(sk) || !discoveredKeys.has(sk);
         if (supersededOrGone) {
           removedIds.add(id);
           report.removed++;
@@ -1295,6 +1303,13 @@ async function build(ctx, opts) {
             remote: report.embedding.remote,
           }
         : meta.embedding || null,
+      candidateSources:
+        !(opts.apps && opts.apps.length) && !opts.limitSources
+          ? sources.length
+          : meta.candidateSources != null
+            ? meta.candidateSources
+            : Object.keys(next).length,
+      truncated: !(opts.apps && opts.apps.length) && !opts.limitSources ? sources.truncated || 0 : meta.truncated || 0,
       stats: countStats(next),
       sources: next,
     };
@@ -1570,11 +1585,16 @@ function catalog(ctx, opts) {
   const accounts = _convaccounts.attributor(ctx);
   const rows = r.conversations
     .map((c) =>
-      Object.assign({}, c, {
-        path: c.source && c.source.path,
-        mtimeMs: c.source && c.source.mtimeMs,
-        size: c.source && c.source.size,
-      }),
+      Object.assign(
+        {},
+        c,
+        {
+          path: c.source && c.source.path,
+          mtimeMs: c.source && c.source.mtimeMs,
+          size: c.source && c.source.size,
+        },
+        c.source && c.source.subId ? { subId: c.source.subId } : {},
+      ),
     )
     .map((s) => Object.assign({}, s, accounts.fields(s)))
     .filter((s) => !opts.sinceMs || Date.parse(s.updatedAt || '') >= opts.sinceMs)
@@ -1598,7 +1618,7 @@ function catalog(ctx, opts) {
 
 function status(ctx, opts) {
   const meta = readMeta(ctx);
-  if (!meta) return { exists: false, dir: dirOf(ctx), sources: 0, chunks: 0 };
+  if (!meta) return { exists: false, dir: dirOf(ctx), sources: 0, chunks: 0, candidateSources: 0, truncated: 0 };
   const activeSpace = spaceOf(opts, ctx);
   let vectorSources = 0;
   let vectorChunks = 0;
@@ -1632,6 +1652,8 @@ function status(ctx, opts) {
     exists: true,
     dir: dirOf(ctx),
     builtAt: meta.builtAt,
+    candidateSources: meta.candidateSources != null ? meta.candidateSources : meta.stats ? meta.stats.sources : 0,
+    truncated: meta.truncated || 0,
     stats: meta.stats,
     embedding: effectiveEmbedding,
     vectorSources: vectorSources,

@@ -492,3 +492,56 @@ test('forEachLine streams an actual >160 MB JSONL session and UTF-8 across chunk
     fs.rmSync(file, { force: true });
   }
 });
+
+test('discover sorts newest-first before capping and distributes a tight budget across apps without starvation', function () {
+  const ctx = ctxFor();
+  const kiroDir = path.join(ctx.home, '.kiro', 'sessions', 'cli');
+  const qoderDir = path.join(ctx.home, '.qoder', 'projects', '-work-q');
+  fs.mkdirSync(kiroDir, { recursive: true });
+  fs.mkdirSync(qoderDir, { recursive: true });
+  const baseMs = Date.UTC(2026, 10, 1, 12, 0, 0);
+  for (let i = 0; i < 20; i++) {
+    const file = path.join(kiroDir, 'k-' + String(i).padStart(2, '0') + '.jsonl');
+    fs.writeFileSync(
+      file,
+      JSON.stringify({ kind: 'Prompt', data: { content: [{ kind: 'text', data: 'k ' + i }] } }) + '\n',
+    );
+    const t = new Date(baseMs - i * 1000);
+    fs.utimesSync(file, t, t);
+  }
+  for (let i = 0; i < 2; i++) {
+    const file = path.join(qoderDir, 'q-' + i + '.jsonl');
+    fs.writeFileSync(file, JSON.stringify({ type: 'user', message: { role: 'user', content: 'q ' + i } }) + '\n');
+    const t = new Date(baseMs - (100 + i) * 1000);
+    fs.utimesSync(file, t, t);
+  }
+
+  const all = conversations.discover(ctx, {});
+  assert.strictEqual(all.length, 22);
+  assert.strictEqual(all.totalCandidates, 22);
+  assert.strictEqual(all.truncated, 0);
+  assert.strictEqual(
+    all.filter((s) => s.app === 'qoder').length,
+    2,
+    'older qoder sessions must not be starved by newer kiro sessions',
+  );
+  for (let i = 1; i < all.length; i++) {
+    assert.ok(all[i - 1].mtimeMs >= all[i].mtimeMs, 'discover output stays newest-first');
+  }
+
+  const capped = conversations.discover(ctx, { limitSources: 10 });
+  assert.strictEqual(capped.length, 10);
+  assert.strictEqual(capped.totalCandidates, 22);
+  assert.strictEqual(capped.truncated, 12);
+  assert.ok(
+    capped.some((s) => s.app === 'qoder'),
+    'tight total budget still reserves slots for smaller apps',
+  );
+
+  const perApp = conversations.discover(ctx, { perAppBudget: 5 });
+  assert.strictEqual(perApp.length, 7);
+  assert.strictEqual(perApp.totalCandidates, 22);
+  assert.strictEqual(perApp.truncated, 15);
+  assert.strictEqual(perApp.filter((s) => s.app === 'kiro').length, 5);
+  assert.strictEqual(perApp.filter((s) => s.app === 'qoder').length, 2);
+});

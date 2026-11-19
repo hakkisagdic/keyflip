@@ -167,6 +167,7 @@ function ideUserDirs(ctx) {
   IDE_BASES.forEach(function (b) {
     push(path.join(home, b, 'User'));
   });
+  if (env && env.APPDATA) push(path.join(env.APPDATA, 'Cursor', 'User'));
   if (env && env.XDG_CONFIG_HOME) push(path.join(env.XDG_CONFIG_HOME, 'Cursor', 'User'));
   return out;
 }

@@ -36,7 +36,16 @@ const MAX_LINE_CHARS = 32 * 1024 * 1024; // guard against a single multi-hundred
 const MAX_TEXT_BYTES = 256 * 1024 * 1024; // decompressed / accumulated text cap (zstd & memory guard)
 const MAX_MESSAGE_CHARS = 200000;
 const MAX_MESSAGES = 20000;
-const SOURCE_BUDGET = 5000;
+const SOURCE_BUDGET = 50000;
+const PER_APP_BUDGET = 25000;
+
+function sourceKey(x) {
+  if (!x) return '';
+  const p = x.path || (x.source && x.source.path) || '';
+  if (!p) return '';
+  const sub = x.subId || (x.source && x.source.subId) || '';
+  return sub ? path.resolve(p) + '#' + sub : path.resolve(p);
+}
 
 function homeOf(ctx) {
   return (ctx && ctx.home) || os.homedir();
@@ -125,6 +134,7 @@ function makeConv(fields) {
     },
     hash: convHash(messages),
   };
+  if (fields.subId) out.source.subId = String(fields.subId);
   if (fields.warnings && fields.warnings.length) out.warnings = fields.warnings;
   return out;
 }
@@ -746,6 +756,7 @@ function parseCursorChat(ctx, src, opts) {
     updatedAt: chat.updatedAt || null,
     messages: messages,
     path: src.path,
+    subId: src.subId || (src.kind === 'cursor-composer' ? chat.composerId : null),
     mtimeMs: src.mtimeMs,
     size: src.size,
   });
@@ -931,7 +942,8 @@ function cursorSources(ctx) {
     return out; // a Cursor layout keyflip does not recognise must not hide the other apps
   }
   found.forEach((c) => {
-    const src = statSource(c.path, c.kind || 'cursor-composer', {
+    const kind = c.kind || 'cursor-composer';
+    const src = statSource(c.path, kind, {
       app: 'cursor',
       surface: c.surface || 'local',
       // The session id is the identity: stable across runs, so a rebuilt index reuses the chat's
@@ -940,6 +952,7 @@ function cursorSources(ctx) {
       title: c.title,
       cwd: c.cwd,
       composerId: c.composerId,
+      subId: kind === 'cursor-composer' ? c.composerId : undefined,
     });
     if (src) out.push(src);
   });
@@ -1009,18 +1022,65 @@ function discover(ctx, opts) {
     .concat(cursorFamily)
     .concat(opts.foreign === false ? [] : foreignSources(ctx));
   const seen = new Set();
-  const out = [];
+  const candidates = [];
   for (const src of all) {
     if (want && !want.has(src.app)) continue;
     // The dedupe key is the CHAT, not the file: a Cursor store contributes many sources with one
     // path, and keying on the path would collapse months of work into the first composer.
-    const key = src.composerId ? src.path + '#' + src.composerId : src.path;
+    const key = src.composerId ? path.resolve(src.path) + '#' + src.composerId : sourceKey(src);
     if (seen.has(key)) continue;
     seen.add(key);
-    out.push(src);
-    if (out.length >= (opts.limitSources || SOURCE_BUDGET)) break;
+    candidates.push(src);
   }
-  out.sort((a, b) => b.mtimeMs - a.mtimeMs);
+  // Sort newest-first BEFORE capping so a tool discovered late or a huge Kiro backlog never
+  // starves newer chats across other tools.
+  candidates.sort((a, b) => b.mtimeMs - a.mtimeMs);
+  const perAppCap = opts.perAppBudget > 0 ? opts.perAppBudget : PER_APP_BUDGET;
+  const appCounts = Object.create(null);
+  const appAllowed = [];
+  for (const src of candidates) {
+    const app = src.app || 'other';
+    const n = appCounts[app] || 0;
+    if (n >= perAppCap) continue;
+    appCounts[app] = n + 1;
+    appAllowed.push(src);
+  }
+  const budget = opts.limitSources || opts.sourceBudget || SOURCE_BUDGET;
+  let out;
+  if (appAllowed.length <= budget) {
+    out = appAllowed;
+  } else {
+    const byApp = new Map();
+    for (const src of appAllowed) {
+      const app = src.app || 'other';
+      let list = byApp.get(app);
+      if (!list) byApp.set(app, (list = []));
+      list.push(src);
+    }
+    if (budget < byApp.size) {
+      out = appAllowed.slice(0, budget);
+    } else {
+      const minPerApp = Math.max(1, Math.floor(budget / Math.max(2, byApp.size * 2)));
+      const picked = new Set();
+      out = [];
+      for (const list of byApp.values()) {
+        const take = Math.min(minPerApp, list.length);
+        for (let i = 0; i < take; i++) {
+          picked.add(list[i]);
+          out.push(list[i]);
+        }
+      }
+      for (const src of appAllowed) {
+        if (out.length >= budget) break;
+        if (picked.has(src)) continue;
+        picked.add(src);
+        out.push(src);
+      }
+      out.sort((a, b) => b.mtimeMs - a.mtimeMs);
+    }
+  }
+  out.totalCandidates = candidates.length;
+  out.truncated = Math.max(0, candidates.length - out.length);
   // Store-level refusals and degraded reads travel with the source list for the index report to
   // print — but only when this run actually asked for Cursor, so `--app claude` does not inherit
   // another app's complaint.
@@ -1128,7 +1188,8 @@ function get(ctx, ref, opts) {
     e.candidates = m.candidates || [];
     throw e;
   }
-  const src = discover(ctx, opts).find((s) => s.path === m.match.source.path);
+  const wantKey = sourceKey(m.match.source);
+  const src = discover(ctx, opts).find((s) => sourceKey(s) === wantKey);
   if (!src) {
     const e = new Error('the source for ' + m.match.id + ' disappeared');
     e.code = 'CONV_SOURCE_GONE';
@@ -1145,7 +1206,10 @@ function find(ctx, ref, opts) {
 // resolved the source: stat-only discovery, then parse just that file.
 function loadPath(ctx, file, opts) {
   const want = path.resolve(file);
-  const src = discover(ctx, Object.assign({}, opts, { apps: null })).find((s) => path.resolve(s.path) === want);
+  const wantSub = opts && opts.subId ? String(opts.subId) : null;
+  const wantKey = wantSub ? want + '#' + wantSub : want;
+  const srcs = discover(ctx, Object.assign({}, opts, { apps: null }));
+  const src = wantSub ? srcs.find((s) => sourceKey(s) === wantKey) : srcs.find((s) => path.resolve(s.path) === want);
   if (!src) {
     const e = new Error('the source for this conversation is no longer on disk: ' + file);
     e.code = 'CONV_SOURCE_GONE';
@@ -1163,6 +1227,9 @@ export {
   MAX_FILE_BYTES,
   MAX_STREAM_BYTES,
   MAX_MESSAGE_CHARS,
+  SOURCE_BUDGET,
+  PER_APP_BUDGET,
+  sourceKey,
   discover,
   load,
   loadPath,

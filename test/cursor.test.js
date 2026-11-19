@@ -22,6 +22,12 @@ import { makeCtx } from './helpers.js';
 import * as cursor from '../src/cursor.js';
 import * as foreign from '../src/foreign.js';
 import * as conversations from '../src/conversations.js';
+import * as convindex from '../src/convindex.js';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const BIN = path.join(__dirname, '..', 'bin', 'keyflip.js');
 
 function esc(s) {
   return String(s).replace(/'/g, "''");
@@ -1107,5 +1113,73 @@ test(
     const norm = foreign.normalize(file, fs.readFileSync(file));
     assert.strictEqual(norm.tool, 'cursor');
     assert.strictEqual(norm.messages.length, 1);
+  },
+);
+
+test(
+  'K6: conv index / search / show run end to end over a synthetic Cursor state.vscdb, and unreadable stores are skipped loudly',
+  {
+    skip: SQLITE_SKIP,
+  },
+  async function () {
+    const s = seededIde([
+      cd('C1', { name: 'First cursor chat', projectPath: '/work/cur1' }),
+      bd('C1', 'b1', { type: 1, text: 'curalpha91marker question', createdAt: 1767225600000 }),
+      bd('C1', 'b2', { type: 2, text: 'curalpha91marker answer', createdAt: 1767225610000 }),
+      cd('C2', { name: 'Second cursor chat', projectPath: '/work/cur2' }),
+      bd('C2', 'b1', { type: 1, text: 'curbravo82marker question', createdAt: 1767225700000 }),
+      bd('C2', 'b2', { type: 2, text: 'curbravo82marker answer', createdAt: 1767225710000 }),
+    ]);
+
+    const r1 = await convindex.build(s.ctx, {});
+    assert.strictEqual(r1.ok, true);
+    assert.strictEqual(r1.stats.byApp.cursor.sources, 2, 'both composers in one state.vscdb are indexed');
+    const r2 = await convindex.build(s.ctx, {});
+    assert.strictEqual(r2.reused, 2, 'subsequent index run reuses both composers from the same file');
+    assert.strictEqual(r2.changed, 0);
+    assert.strictEqual(r2.removed, 0);
+
+    const cliEnv = Object.assign({}, process.env, {
+      HOME: s.ctx.home,
+      USERPROFILE: s.ctx.home,
+      XDG_CONFIG_HOME: path.join(s.ctx.home, '.config'),
+      KEYFLIP_CONFIG_DIR: s.ctx.configDir,
+      APPDATA: path.join(s.ctx.home, 'AppData', 'Roaming'),
+      CODEX_HOME: path.join(s.ctx.home, '.codex'),
+      CURSOR_DESKTOP_USER_DIR: s.user,
+      CURSOR_DATA_DIR: path.join(s.ctx.home, '.cursor-empty'),
+      KEYFLIP_TEST_CLAUDE: 'stopped',
+    });
+    const runCli = (args) => cp.spawnSync(process.execPath, [BIN].concat(args), { encoding: 'utf8', env: cliEnv });
+    const idx = runCli(['conv', 'index', '--no-embed', '--json']);
+    assert.strictEqual(idx.status, 0, idx.stderr);
+    const st = JSON.parse(runCli(['conv', 'status', '--json']).stdout.trim().split('\n').pop());
+    assert.strictEqual(st.stats.byApp.cursor.sources, 2);
+
+    const hit = JSON.parse(
+      runCli(['conv', 'search', 'curbravo82marker', '--app', 'cursor', '--json']).stdout.trim().split('\n').pop(),
+    );
+    assert.strictEqual(hit.hits.length, 1);
+    assert.strictEqual(hit.hits[0].app, 'cursor');
+    assert.strictEqual(hit.hits[0].id, 'cursor:local:C2');
+
+    const shown = JSON.parse(runCli(['conv', 'show', 'cursor:local:C2', '--json']).stdout.trim().split('\n').pop());
+    assert.strictEqual(shown.conversation.id, 'cursor:local:C2');
+    assert.strictEqual(shown.conversation.title, 'Second cursor chat');
+    assert.match(shown.conversation.messages[0].text, /curbravo82marker/);
+
+    // An unreadable Cursor store must be reported as skipped with a reason, never silent.
+    const badCtx = makeCtx();
+    const badUser = path.join(badCtx.home, 'bad-cursor', 'User');
+    fs.mkdirSync(path.join(badUser, 'globalStorage'), { recursive: true });
+    fs.writeFileSync(path.join(badUser, 'globalStorage', 'state.vscdb'), 'not a sqlite file');
+    badCtx.cursorUserDir = badUser;
+    badCtx.env = {};
+    const badReport = await convindex.build(badCtx, {});
+    assert.ok(badReport.skipped >= 1, 'unreadable store counts as skipped');
+    assert.ok(
+      badReport.errors.some((e) => e.app === 'cursor' && /not a SQLite/i.test(e.error)),
+      'unreadable store error surfaces cursor reason',
+    );
   },
 );

@@ -67,7 +67,7 @@ const SESSION_SOURCES = [
 // `keyflip foreign <path>` is one paste away from rendering a credential as a chat.
 const NOT_A_SESSION = /^(auth|accounts?|credentials?|tokens?|secrets?|oauth[\w-]*|config|settings)\.jsonl?$/i;
 // Per-source cap, so one tool with thousands of files cannot starve the ones listed after it.
-const PER_SOURCE_BUDGET = 3000;
+const PER_SOURCE_BUDGET = 25000;
 
 function walkFind(dir, matchRe, budget, out, skipDirRe, skipFileRe) {
   if (budget.left <= 0) return;

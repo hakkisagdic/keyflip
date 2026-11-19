@@ -8625,7 +8625,7 @@ function convLoad(ctx, ref) {
     e.candidates = m.candidates || [];
     throw e;
   }
-  if (m.match.path) return _conversations.loadPath(ctx, m.match.path);
+  if (m.match.path) return _conversations.loadPath(ctx, m.match.path, { subId: m.match.subId });
   return _conversations.get(ctx, ref);
 }
 function convFailLoad(e) {
@@ -8688,7 +8688,8 @@ async function convBuild(ctx, rest, embedDefault) {
   if (f.error) throw new Error(f.error);
   const ls = convInt(rest, '--limit-sources', null, 1, 100000);
   if (!ls.ok) throw new Error(ls.error);
-  const embed = embedDefault != null ? embedDefault : rest.indexOf('--embed') !== -1;
+  const embed =
+    embedDefault != null ? embedDefault : rest.indexOf('--no-embed') !== -1 ? false : rest.indexOf('--embed') !== -1;
   const background = rest.indexOf('--background') !== -1 && rest.indexOf('--foreground') === -1;
   const t0 = Date.now();
   let lastPct = -1;
@@ -8722,6 +8723,7 @@ function convReportText(ctx, r) {
   ];
   if (r.rechunk) parts.push(r.rechunk + ' re-chunked (disk disagreed with the index)');
   if (r.duplicates) parts.push(r.duplicates + ' id collision(s) kept apart');
+  if (r.truncated) parts.push(r.truncated + ' truncated');
   let line =
     'Indexed ' +
     (s.sources || 0) +
@@ -8785,6 +8787,11 @@ function convReportText(ctx, r) {
           r.writes.reused +
           ' reused)',
       );
+  }
+  if (r.truncated) {
+    line +=
+      '\n' +
+      style.warn('· ' + r.truncated + ' source(s) truncated by the source budget (' + r.candidateSources + ' kept)');
   }
   if (r.errors && r.errors.length) {
     line +=
@@ -9020,7 +9027,11 @@ async function cmdConv(ctx, rest) {
           return;
         }
       }
-      const r = _schedule.install(ctx, { job: 'conv', interval: minutes });
+      const r = _schedule.install(ctx, {
+        job: 'conv',
+        interval: minutes,
+        embed: args.indexOf('--no-embed') === -1,
+      });
       if (!r.ok) return fail('could not schedule: ' + (r.reason || r.detail || 'unknown'));
       print(
         style.ok('✅') +
@@ -9320,12 +9331,14 @@ async function cmdConv(ctx, rest) {
       let n = 0;
       function* loadRows() {
         const srcs = _conversations.discover(ctx, {});
-        const byPath = Object.create(null);
+        const byKey = Object.create(null);
         srcs.forEach(function (s) {
-          byPath[path.resolve(s.path)] = s;
+          byKey[_conversations.sourceKey(s)] = s;
+          const rp = path.resolve(s.path);
+          if (!byKey[rp]) byKey[rp] = s;
         });
         for (const row of rows) {
-          const src = row.path ? byPath[path.resolve(row.path)] : null;
+          const src = row.path ? byKey[_conversations.sourceKey(row)] || byKey[path.resolve(row.path)] : null;
           if (!src) continue;
           try {
             n++;
@@ -9373,15 +9386,17 @@ async function cmdConv(ctx, rest) {
       const rows = _convindex.catalog(ctx, f).conversations;
       if (!rows.length) return fail('no conversations match those filters.');
       const srcs = _conversations.discover(ctx, {});
-      const byPath = Object.create(null);
+      const byKey = Object.create(null);
       srcs.forEach(function (s) {
-        byPath[path.resolve(s.path)] = s;
+        byKey[_conversations.sourceKey(s)] = s;
+        const rp = path.resolve(s.path);
+        if (!byKey[rp]) byKey[rp] = s;
       });
       const results = [];
       const errors = [];
       let done = 0;
       for (const row of rows) {
-        const src = row.path ? byPath[path.resolve(row.path)] : null;
+        const src = row.path ? byKey[_conversations.sourceKey(row)] || byKey[path.resolve(row.path)] : null;
         if (!src) {
           errors.push({ id: row.id, error: 'source is gone' });
           continue;
