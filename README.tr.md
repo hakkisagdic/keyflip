@@ -1761,7 +1761,7 @@ sonra ayarlanabilir):
    değil, senin etkileşimli `npm login` oturumunu kullanır:
    ```bash
    npm login
-   npm publish --access public        # @hakkisagdic/keyflip oluşturur
+   npm publish --access public        # keyflip oluşturur
    ```
 2. **npmjs.com** → paket → **Settings → Trusted Publisher → GitHub Actions**:
    kullanıcı `hakkisagdic`, repo `keyflip`, workflow `publish.yml`. Kaydet.
@@ -1770,8 +1770,10 @@ sonra ayarlanabilir):
    ```bash
    git tag vX.Y.Z && git push origin vX.Y.Z
    ```
-   `release.yml` etiketi doğrular, test eder ve bir GitHub Release oluşturur; o
-   Release'i yayınlamak `publish.yml`'i tetikler ve paket OIDC üzerinden npm'e gider.
+   `.github/workflows/publish.yml` etiketin `package.json` ile eşleştiğini
+   doğrular, testleri ve `npm audit` denetimini çalıştırır, `keyflip` paketini
+   OIDC ve provenance ile npm'e yayınlar ve tarball ile GitHub Release oluşturur
+   (etiket → test → audit → npm → GitHub Release).
 
 ---
 
