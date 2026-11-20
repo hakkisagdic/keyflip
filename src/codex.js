@@ -418,22 +418,60 @@ function resolveCapture(ctx, arg) {
   return null;
 }
 
-function slugFor(ctx, name, email) {
-  const base = profiles.sanitizeName(name || email || 'codex');
+// Same login when the normalized e-mails match. When both sides have an accountId
+// it must match too: a shared e-mail must not overwrite a different account.
+function sameCodexLogin(hit, email, accountId) {
+  if (!email || !hit || !hit.email || hit.email !== email) return false;
+  if (accountId && hit.accountId && hit.accountId !== accountId) return false;
+  return true;
+}
+
+function slugFor(ctx, name, email, accountId) {
+  const normalized = normalizeEmail(email);
   const accounts = listCaptures(ctx);
+  const base = profiles.sanitizeName(name || normalized || 'codex');
+  // No explicit name: refresh an existing capture of this login in place, even
+  // when it was stored under a custom slug. A collision-chain slug (base, base-2,
+  // …) still wins when one exists, so today's auto-named capture stays the one
+  // that is updated. Any other duplicate is left on disk.
+  if (!name && normalized) {
+    const matches = accounts.filter(function (a) {
+      return sameCodexLogin(a, normalized, accountId);
+    });
+    if (matches.length) {
+      let candidate = base;
+      for (let n = 2; n <= accounts.length + 2; n++) {
+        const onChain = matches.filter(function (a) {
+          return a.slug === candidate;
+        })[0];
+        if (onChain) return onChain.slug;
+        const occupied = accounts.filter(function (a) {
+          return a.slug === candidate;
+        })[0];
+        if (!occupied) break;
+        candidate = base + '-' + n;
+      }
+      return matches[0].slug;
+    }
+  }
   let candidate = base;
   for (let n = 2; ; n++) {
     const hit = accounts.filter(function (a) {
       return a.slug === candidate;
     })[0];
     if (!hit) return candidate;
-    if (email && hit.email && hit.email === email) return candidate; // same account, refresh in place
+    // Explicit name keeps the old rule (e-mail match refreshes that slug).
+    // With no name, a same-e-mail hit is a different account when accountIds disagree.
+    if (name && normalized && hit.email && hit.email === normalized) return candidate;
+    if (!name && sameCodexLogin(hit, normalized, accountId)) return candidate;
     candidate = base + '-' + n;
   }
 }
 
-// Capture the live auth.json. `name` overrides the slug; otherwise the e-mail
-// local part wins (matching the existing hasanugur / ozguraric captures).
+// Capture the live auth.json. `name` overrides the slug. With no name, refresh
+// an existing capture of the same normalized e-mail in place (same accountId
+// when both have one) so a custom slug keeps the rotated login; otherwise the
+// e-mail local part wins (matching the existing hasanugur / ozguraric captures).
 function capture(ctx, opts) {
   opts = opts || {};
   const deps = depsOf(opts);
@@ -453,7 +491,10 @@ function capture(ctx, opts) {
       'CODEX_NO_EMAIL',
     );
   }
-  const slug = slugFor(ctx, opts.name, email);
+  // The stored bytes are the live file, so its accountId wins. opts.accountId
+  // fills in when the file itself carries none (switchTo passes the live one).
+  const accountId = id.accountId || safeStr(opts.accountId) || null;
+  const slug = slugFor(ctx, opts.name, email, accountId);
   const dir = accountDir(ctx, slug);
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   try {
@@ -716,7 +757,9 @@ function switchTo(ctx, target, opts) {
   let capturedOutgoing = null;
   if (live.present && live.auth) {
     try {
-      capturedOutgoing = capture(ctx, { email: liveId.email, source: 'live-outgoing', deps: deps }).slug;
+      const outgoingOpts = { email: liveId.email, source: 'live-outgoing', deps: deps };
+      if (liveId.accountId) outgoingOpts.accountId = liveId.accountId;
+      capturedOutgoing = capture(ctx, outgoingOpts).slug;
     } catch (e) {
       /* non-fatal: the switch is still what the user asked for */
     }
