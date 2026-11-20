@@ -5,6 +5,7 @@
   "private": true,
   "scripts": {
     "dev": "astro dev",
+    "prebuild": "node scripts/og-image.js",
     "build": "astro build",
     "preview": "astro preview",
     "astro": "astro"

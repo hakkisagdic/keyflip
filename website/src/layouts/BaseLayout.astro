@@ -18,6 +18,11 @@ const siteTitle = `${title} | ${trans.site.title}`;
 const siteDescription = description || trans.site.description;
 const alternatePath = getAlternateLocalePath(currentPath, locale);
 const alternateLocale = locale === 'en' ? 'tr' : 'en';
+const siteHref = Astro.site?.href;
+if (!siteHref) {
+  throw new Error('Set site in astro.config.mjs so og:image is an absolute URL');
+}
+const ogImage = new URL('og-image.png', siteHref.endsWith('/') ? siteHref : `${siteHref}/`).href;
 ---
 
 <!doctype html>
@@ -37,7 +42,14 @@ const alternateLocale = locale === 'en' ? 'tr' : 'en';
     <meta property="og:type" content="website" />
     <meta property="og:locale" content={locale === 'en' ? 'en_US' : 'tr_TR'} />
     <meta property="og:site_name" content="keyflip" />
-    <!-- TODO: add a 1200x630 PNG og-image before deployment (SVG is not supported by social platforms) -->
+    <meta property="og:image" content={ogImage} />
+    <meta property="og:image:type" content="image/png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content={siteDescription} />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:image" content={ogImage} />
+    <meta name="twitter:image:alt" content={siteDescription} />
 
     <!-- Alternate language -->
     <link rel="alternate" hreflang={alternateLocale} href={new URL(alternatePath, Astro.site).href} />
