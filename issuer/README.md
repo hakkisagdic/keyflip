@@ -213,6 +213,19 @@ vault, etc.) — do **not** put these in a committed `.env`. (`.env`, `.env.*`,
 
 ---
 
+## Stripe
+
+A `checkout.session.completed` event is a purchase only when the session's
+`payment_status` is `paid` or `no_payment_required`. An unpaid session,
+including a delayed bank payment, is type `other`: the issuer answers 200 and
+does not mint a license. That license is minted when
+`checkout.session.async_payment_succeeded` arrives, so the Stripe webhook
+endpoint must include that event type along with `checkout.session.completed`.
+The ledger dedupes by Checkout Session id, so a paid session that sends both
+events is issued once.
+
+---
+
 ## The admin panel — issue, reissue, revoke, look up
 
 `admin.js` is the operator's view of the same issuer. It serves **both** a JSON

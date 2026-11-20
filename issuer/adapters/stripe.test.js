@@ -119,13 +119,121 @@ test('parseEvent: checkout.session.completed -> purchase (customer_details.email
   const body = JSON.stringify({
     id: 'evt_x',
     type: 'checkout.session.completed',
-    data: { object: { id: 'cs_123', customer_details: { email: 'a@b.com' }, metadata: { product: 'keyflip-pro' } } },
+    data: {
+      object: {
+        id: 'cs_123',
+        payment_status: 'paid',
+        customer_details: { email: 'a@b.com' },
+        metadata: { product: 'keyflip-pro' },
+      },
+    },
   });
   const ev = stripe.parseEvent(Buffer.from(body));
   assert.strictEqual(ev.type, 'purchase');
   assert.strictEqual(ev.email, 'a@b.com');
   assert.strictEqual(ev.orderId, 'cs_123');
   assert.strictEqual(ev.product, 'keyflip-pro');
+});
+
+test('parseEvent: signed checkout.session.completed payment_status paid -> purchase', function () {
+  const body = JSON.stringify({
+    id: 'evt_paid',
+    type: 'checkout.session.completed',
+    data: {
+      object: {
+        id: 'cs_paid',
+        payment_status: 'paid',
+        customer_details: { email: 'a@b.com' },
+        metadata: { product: 'keyflip-pro' },
+      },
+    },
+  });
+  const { header } = sign(body, T, SECRET);
+  const verified = stripe.verifyWebhook(Buffer.from(body), { 'stripe-signature': header }, SECRET, { now: NOW });
+  assert.strictEqual(verified.ok, true, verified.reason);
+  const ev = stripe.parseEvent(Buffer.from(body));
+  assert.strictEqual(ev.type, 'purchase');
+  assert.strictEqual(ev.email, 'a@b.com');
+  assert.strictEqual(ev.orderId, 'cs_paid');
+  assert.strictEqual(ev.product, 'keyflip-pro');
+});
+
+test('parseEvent: checkout.session.completed payment_status unpaid -> other', function () {
+  const body = JSON.stringify({
+    id: 'evt_unpaid',
+    type: 'checkout.session.completed',
+    data: {
+      object: {
+        id: 'cs_unpaid',
+        payment_status: 'unpaid',
+        customer_details: { email: 'a@b.com' },
+        metadata: { product: 'keyflip-pro' },
+      },
+    },
+  });
+  const { header } = sign(body, T, SECRET);
+  const verified = stripe.verifyWebhook(Buffer.from(body), { 'stripe-signature': header }, SECRET, { now: NOW });
+  assert.strictEqual(verified.ok, true, verified.reason);
+  const ev = stripe.parseEvent(Buffer.from(body));
+  assert.strictEqual(ev.type, 'other');
+  assert.strictEqual(ev.email, 'a@b.com');
+  assert.strictEqual(ev.orderId, 'cs_unpaid');
+  assert.strictEqual(ev.product, 'keyflip-pro');
+});
+
+test('parseEvent: checkout.session.completed payment_status no_payment_required -> purchase', function () {
+  const body = JSON.stringify({
+    id: 'evt_free',
+    type: 'checkout.session.completed',
+    data: {
+      object: {
+        id: 'cs_free',
+        payment_status: 'no_payment_required',
+        customer_details: { email: 'a@b.com' },
+        metadata: { product: 'keyflip-pro' },
+      },
+    },
+  });
+  const ev = stripe.parseEvent(Buffer.from(body));
+  assert.strictEqual(ev.type, 'purchase');
+  assert.strictEqual(ev.email, 'a@b.com');
+  assert.strictEqual(ev.orderId, 'cs_free');
+  assert.strictEqual(ev.product, 'keyflip-pro');
+});
+
+test('parseEvent: checkout.session.async_payment_succeeded -> purchase (same session id)', function () {
+  const completed = JSON.stringify({
+    id: 'evt_completed_paid',
+    type: 'checkout.session.completed',
+    data: {
+      object: {
+        id: 'cs_same',
+        payment_status: 'paid',
+        customer_details: { email: 'a@b.com' },
+        metadata: { product: 'keyflip-pro' },
+      },
+    },
+  });
+  const asyncPaid = JSON.stringify({
+    id: 'evt_async_paid',
+    type: 'checkout.session.async_payment_succeeded',
+    data: {
+      object: {
+        id: 'cs_same',
+        payment_status: 'paid',
+        customer_details: { email: 'a@b.com' },
+        metadata: { product: 'keyflip-pro' },
+      },
+    },
+  });
+  const first = stripe.parseEvent(Buffer.from(completed));
+  const second = stripe.parseEvent(Buffer.from(asyncPaid));
+  assert.strictEqual(first.type, 'purchase');
+  assert.strictEqual(second.type, 'purchase');
+  assert.strictEqual(first.orderId, 'cs_same');
+  assert.strictEqual(second.orderId, 'cs_same');
+  assert.strictEqual(second.email, 'a@b.com');
+  assert.strictEqual(second.product, 'keyflip-pro');
 });
 
 test('parseEvent: invoice.paid -> purchase (customer_email fallback, line price.product)', function () {

@@ -27,6 +27,7 @@ const fs = require('node:fs');
 const { createIssuer, configReadiness } = require('./server');
 const { EventLog } = require('./store');
 const license = require('../src/license');
+const stripeAdapter = require('./adapters/stripe');
 
 // ---- crypto contract helpers (mirror src/license.js EXACTLY) -----------------
 function b64u(buf) {
@@ -164,6 +165,15 @@ function request(port, method, urlPath, body, headers) {
 
 function hmacHex(secret, raw) {
   return crypto.createHmac('sha256', secret).update(Buffer.from(raw)).digest('hex');
+}
+
+// Stripe-Signature over the raw body, timestamped at "now" so the adapter's
+// default 300s replay window accepts it (the server does not inject opts.now).
+function stripeSignature(secret, raw) {
+  const t = String(Math.floor(Date.now() / 1000));
+  const signedPayload = Buffer.concat([Buffer.from(t + '.', 'utf8'), Buffer.from(raw)]);
+  const v1 = crypto.createHmac('sha256', secret).update(signedPayload).digest('hex');
+  return 't=' + t + ',v1=' + v1;
 }
 
 // -----------------------------------------------------------------------------
@@ -387,4 +397,100 @@ test('ledger.json persists metadata (not the token) and dedups across restart', 
   assert.strictEqual(r2.status, 200);
   assert.strictEqual(r2.json.idempotent, true);
   assert.strictEqual(h2.state.mintCount, 0, 'a restart must not re-mint a persisted order');
+});
+
+test('unpaid Stripe checkout.session.completed answers 200, leaves the ledger empty, and does not deliver', async function (t) {
+  const delivered = { n: 0 };
+  const h = buildHarness({
+    deps: {
+      resolveAdapter: function () {
+        return stripeAdapter;
+      },
+      deliverLicense: function () {
+        delivered.n++;
+      },
+    },
+  });
+  const port = await listen(h.issuer.server);
+  t.after(function () {
+    h.issuer.server.close();
+  });
+
+  const body = JSON.stringify({
+    id: 'evt_unpaid',
+    type: 'checkout.session.completed',
+    data: {
+      object: {
+        id: 'cs_unpaid_1',
+        payment_status: 'unpaid',
+        customer_details: { email: 'buyer@x.io' },
+        metadata: { product: 'plan-pro' },
+      },
+    },
+  });
+  const res = await request(port, 'POST', '/webhook/stripe', body, {
+    'stripe-signature': stripeSignature(h.secret, body),
+  });
+
+  assert.strictEqual(res.status, 200);
+  assert.strictEqual(res.json.issued, false);
+  assert.strictEqual(res.json.type, 'other');
+  assert.strictEqual(h.state.mintCount, 0, 'an unpaid session must not mint');
+  assert.strictEqual(h.issuer.ledger.size, 0);
+  assert.ok(!h.issuer.ledger.has('cs_unpaid_1'), 'an unpaid session must not enter the ledger');
+  assert.strictEqual(delivered.n, 0, 'delivery must not be called for an unpaid session');
+});
+
+test('paid checkout.session.completed then async_payment_succeeded for the same session issues once', async function (t) {
+  const delivered = { n: 0 };
+  const h = buildHarness({
+    deps: {
+      resolveAdapter: function () {
+        return stripeAdapter;
+      },
+      deliverLicense: function () {
+        delivered.n++;
+      },
+    },
+  });
+  const port = await listen(h.issuer.server);
+  t.after(function () {
+    h.issuer.server.close();
+  });
+
+  const session = {
+    id: 'cs_once_1',
+    payment_status: 'paid',
+    customer_details: { email: 'buyer@x.io' },
+    metadata: { product: 'plan-pro' },
+  };
+  const completed = JSON.stringify({
+    id: 'evt_completed_paid',
+    type: 'checkout.session.completed',
+    data: { object: session },
+  });
+  const asyncPaid = JSON.stringify({
+    id: 'evt_async_paid',
+    type: 'checkout.session.async_payment_succeeded',
+    data: { object: session },
+  });
+
+  const first = await request(port, 'POST', '/webhook/stripe', completed, {
+    'stripe-signature': stripeSignature(h.secret, completed),
+  });
+  assert.strictEqual(first.status, 200);
+  assert.strictEqual(first.json.issued, true);
+  assert.strictEqual(first.json.tier, 'pro');
+
+  const second = await request(port, 'POST', '/webhook/stripe', asyncPaid, {
+    'stripe-signature': stripeSignature(h.secret, asyncPaid),
+  });
+  assert.strictEqual(second.status, 200);
+  assert.strictEqual(second.json.issued, true);
+  assert.strictEqual(second.json.idempotent, true);
+
+  assert.strictEqual(h.state.mintCount, 1, 'a paid session that also sends async success must mint once');
+  assert.strictEqual(h.issuer.ledger.size, 1);
+  assert.ok(h.issuer.ledger.has('cs_once_1'));
+  assert.strictEqual(delivered.n, 1, 'delivery runs on the first issue only');
 });
