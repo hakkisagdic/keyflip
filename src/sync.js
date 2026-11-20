@@ -191,10 +191,21 @@ async function test(o) {
   }
 }
 
+// A push that could not read every account must not replace the remote backup with a
+// short (or empty) bundle. Names only — the store error is not safe to forward.
+function assertPushable(built, o) {
+  if (built.skipped.length > 0 && o.allowPartial !== true) {
+    throw new Error('refusing to push (credentials unreadable for: ' + built.skipped.join(', ') + ')');
+  }
+  if (built.envelope.accounts.length === 0) throw new Error('nothing to push');
+}
+
 // Push: build the export bundle, wrap with metadata, encrypt, PUT.
 async function push(ctx, o) {
   if (!o.passphrase) throw new Error('sync requires a passphrase (the payload carries secrets)');
-  const bundle = transfer.buildExport(ctx).envelope;
+  const built = transfer.buildExport(ctx);
+  assertPushable(built, o);
+  const bundle = built.envelope;
   const wrapped = JSON.stringify({
     schema: VERSION,
     device: o.device || 'this-device',
@@ -203,7 +214,7 @@ async function push(ctx, o) {
     bundle: bundle,
   });
   await davPut(o, encrypt(wrapped, o.passphrase));
-  return { pushed: bundle.accounts.length };
+  return { pushed: bundle.accounts.length, skipped: built.skipped };
 }
 
 // Pull: GET, decrypt, return metadata for a preview. apply() does the write.
@@ -246,6 +257,7 @@ function apply(ctx, pulled, opts) {
 async function pushStream(ctx, o) {
   if (!o.passphrase) throw new Error('sync requires a passphrase (the payload carries secrets)');
   const built = transfer.buildExport(ctx);
+  assertPushable(built, o);
   const tmpDir = os.tmpdir();
   const tmpPath = path.join(tmpDir, 'keyflip-push-' + process.pid + '-' + Date.now() + '.json');
   // Write the unencrypted bundle to a temp file first
@@ -264,7 +276,7 @@ async function pushStream(ctx, o) {
   } catch (e) {
     /* best effort */
   }
-  return { pushed: built.envelope.accounts.length };
+  return { pushed: built.envelope.accounts.length, skipped: built.skipped };
 }
 
 // Streaming pull: download to a temp file, decrypt, parse metadata for preview.
