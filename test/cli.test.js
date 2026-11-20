@@ -9,6 +9,9 @@ import path from 'path';
 import _child_process from 'child_process';
 import crypto from 'crypto';
 import { fileURLToPath } from 'url';
+import * as cli from '../src/cli.js';
+import * as core from '../src/core.js';
+import * as profiles from '../src/profiles.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -1112,4 +1115,317 @@ test('surfaces: a switchable tool says how, and the footer no longer denies swit
   assert.ok(res.stdout.indexOf('keyflip commandcode') !== -1, res.stdout);
   assert.ok(res.stdout.indexOf('Switchable from this list: Command Code') !== -1, res.stdout);
   assert.ok(res.stdout.indexOf('Switching other tools is not supported yet') === -1);
+});
+
+// Shared-org desktop capture. Two people on one organization share the org id, so a
+// nameless `add --app` must follow the confirmed e-mail. Fixtures stay under a temp dir;
+// nothing here reads a real desktop login. The v10 blob is the same shape appauth.test.js uses.
+const ORG_X = '11111111-2222-3333-4444-555555555555';
+const ACCT_X = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+
+function writeDesktopLogin(appDataDir, email) {
+  fs.mkdirSync(appDataDir, { recursive: true });
+  const cfg = {};
+  cfg['oauth:tokenCacheV2'] = tokenBlob(JSON.stringify({ org: ORG_X }));
+  cfg['dxt:allowlistLastUpdated:' + ORG_X] = '2026-07-05T00:00:00.000Z';
+  fs.writeFileSync(path.join(appDataDir, 'config.json'), JSON.stringify(cfg));
+  fs.writeFileSync(path.join(appDataDir, 'Cookies'), 'sessionKey LIVE');
+  if (!email) return;
+  const lam = path.join(appDataDir, 'local-agent-mode-sessions', ACCT_X, ORG_X);
+  fs.mkdirSync(lam, { recursive: true });
+  fs.writeFileSync(path.join(lam, 'x.json'), JSON.stringify({ oauthAccount: { emailAddress: email } }));
+  fs.mkdirSync(path.join(appDataDir, 'claude-code-sessions', ACCT_X, ORG_X), { recursive: true });
+}
+
+function captureCtx(email) {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'keyflip-captureapp-'));
+  const appDataDir = path.join(home, 'ClaudeApp');
+  const configDir = path.join(home, 'keyflip');
+  fs.mkdirSync(configDir, { recursive: true });
+  writeDesktopLogin(appDataDir, email);
+  return {
+    home: home,
+    platform: 'darwin',
+    appDataDir: appDataDir,
+    configDir: configDir,
+    safeStoragePassword: SAFE_PW,
+    now: function () {
+      return '2026-01-01T00:00:00.000Z';
+    },
+  };
+}
+
+function writeSaved(ctx, name, email) {
+  profiles.write(ctx.configDir, {
+    name: name,
+    email: email || '',
+    oauthAccount: { organizationUuid: ORG_X },
+    savedAt: '2020-01-01T00:00:00.000Z',
+  });
+  const appDir = path.join(ctx.configDir, 'app');
+  fs.mkdirSync(appDir, { recursive: true });
+  fs.writeFileSync(path.join(appDir, name + '.json'), '{"marker":"' + name + '-token"}');
+  fs.writeFileSync(path.join(appDir, name + '.cookies'), 'cookie-' + name);
+}
+
+function profileBytes(ctx, name) {
+  return {
+    meta: fs.readFileSync(path.join(ctx.configDir, name + '.json')),
+    app: fs.readFileSync(path.join(ctx.configDir, 'app', name + '.json')),
+    cookies: fs.readFileSync(path.join(ctx.configDir, 'app', name + '.cookies')),
+  };
+}
+
+function assertUntouched(ctx, name, before) {
+  const now = profileBytes(ctx, name);
+  assert.deepStrictEqual(now.meta, before.meta, name + ' profile metadata changed');
+  assert.deepStrictEqual(now.app, before.app, name + ' app snapshot changed');
+  assert.deepStrictEqual(now.cookies, before.cookies, name + ' cookie snapshot changed');
+}
+
+function platformAppDir(home) {
+  if (process.platform === 'darwin') return path.join(home, 'Library', 'Application Support', 'Claude');
+  if (process.platform === 'win32') return path.join(home, 'AppData', 'Roaming', 'Claude');
+  return path.join(home, '.config', 'Claude');
+}
+
+test('captureApp on a shared org returns the desktop e-mail and leaves the other profile byte-identical', function () {
+  const ctx = captureCtx('b@example.com');
+  writeSaved(ctx, 'alice', 'a@example.com');
+  writeSaved(ctx, 'bob', 'B@Example.com'); // case must not matter
+  const alice = profileBytes(ctx, 'alice');
+  const bobMeta = profileBytes(ctx, 'bob').meta;
+
+  const r = cli.captureApp(ctx, null);
+  assert.strictEqual(r.ok, true, r.reason);
+  assert.strictEqual(r.name, 'bob');
+  assert.deepStrictEqual(profiles.list(ctx.configDir), ['alice', 'bob']);
+  assertUntouched(ctx, 'alice', alice);
+  assert.deepStrictEqual(profileBytes(ctx, 'bob').meta, bobMeta, 'matching refreshes the app files, not the metadata');
+  assert.notDeepStrictEqual(profileBytes(ctx, 'bob').app, Buffer.from('{"marker":"bob-token"}'));
+});
+
+test('captureApp creates a new profile via autoName for a third person on the same org', function () {
+  const ctx = captureCtx('c@example.com');
+  writeSaved(ctx, 'alice', 'a@example.com');
+  writeSaved(ctx, 'bob', 'b@example.com');
+  const alice = profileBytes(ctx, 'alice');
+  const bob = profileBytes(ctx, 'bob');
+  const expected = core.autoName(ctx, 'c@example.com');
+
+  const r = cli.captureApp(ctx, null);
+  assert.strictEqual(r.ok, true, r.reason);
+  assert.strictEqual(r.name, expected);
+  assert.notStrictEqual(expected, 'alice');
+  assert.notStrictEqual(expected, 'bob');
+  const meta = profiles.read(ctx.configDir, expected);
+  assert.strictEqual(meta.email, 'c@example.com');
+  assert.strictEqual(meta.oauthAccount.organizationUuid, ORG_X);
+  assert.deepStrictEqual(profiles.list(ctx.configDir), ['alice', 'bob', expected].sort());
+  assertUntouched(ctx, 'alice', alice);
+  assertUntouched(ctx, 'bob', bob);
+});
+
+test('captureApp refreshes the one saved profile in place when its e-mail matches the desktop', function () {
+  const ctx = captureCtx('solo@example.com');
+  writeSaved(ctx, 'solo', 'Solo@Example.com');
+  const meta = profileBytes(ctx, 'solo').meta;
+
+  const r = cli.captureApp(ctx, null);
+  assert.strictEqual(r.ok, true, r.reason);
+  assert.strictEqual(r.name, 'solo');
+  assert.deepStrictEqual(profiles.list(ctx.configDir), ['solo']);
+  assert.deepStrictEqual(profileBytes(ctx, 'solo').meta, meta);
+  assert.notDeepStrictEqual(profileBytes(ctx, 'solo').app, Buffer.from('{"marker":"solo-token"}'));
+});
+
+test('captureApp dry-run for a third person on the org reports a new name and existed: false', function () {
+  const ctx = captureCtx('c@example.com');
+  writeSaved(ctx, 'alice', 'a@example.com');
+  writeSaved(ctx, 'bob', 'b@example.com');
+  const alice = profileBytes(ctx, 'alice');
+  const bob = profileBytes(ctx, 'bob');
+  const expected = core.autoName(ctx, 'c@example.com');
+
+  const r = cli.captureApp(ctx, null, { dryRun: true });
+  assert.strictEqual(r.ok, true, r.reason);
+  assert.strictEqual(r.dryRun, true);
+  assert.strictEqual(r.existed, false);
+  assert.strictEqual(r.name, expected);
+  assert.strictEqual(r.email, 'c@example.com');
+  assert.strictEqual(fs.existsSync(path.join(ctx.configDir, expected + '.json')), false);
+  assert.strictEqual(fs.existsSync(path.join(ctx.configDir, 'app', expected + '.json')), false);
+  assertUntouched(ctx, 'alice', alice);
+  assertUntouched(ctx, 'bob', bob);
+});
+
+test('keyflip add --app --dry-run for a third person on the org reports a new profile and writes nothing', function (t) {
+  // Windows decrypts the desktop token with DPAPI, not this v10 password. The captureApp
+  // dry-run above covers that platform; here the spawned command must actually plan.
+  if (process.platform === 'win32') return t.skip('desktop v10 decrypt is not the Windows path');
+  const home = setupHome();
+  const configDir = path.join(home, '.config', 'keyflip');
+  const ctx = { configDir: configDir };
+  writeSaved(ctx, 'alice', 'a@example.com');
+  writeSaved(ctx, 'bob', 'b@example.com');
+  writeDesktopLogin(platformAppDir(home), 'c@example.com');
+  const alice = profileBytes(ctx, 'alice');
+  const bob = profileBytes(ctx, 'bob');
+  const expected = core.autoName(ctx, 'c@example.com');
+
+  const r = run(home, ['add', '--app', '--dry-run'], { KEYFLIP_SAFE_STORAGE_PW: SAFE_PW });
+  assert.strictEqual(r.status, 0, (r.stderr || '') + (r.stdout || ''));
+  // Quotes stay contiguous inside any colour wrap, so this still sees the planned name.
+  assert.ok(r.stdout.indexOf("'" + expected + "'") !== -1, r.stdout);
+  assert.ok(r.stdout.indexOf('c@example.com') !== -1, r.stdout);
+  assert.ok(r.stdout.indexOf('new profile') !== -1, r.stdout);
+  assert.strictEqual(r.stdout.indexOf('would be refreshed'), -1, r.stdout);
+  assert.strictEqual(fs.existsSync(path.join(configDir, expected + '.json')), false, 'dry-run created a profile');
+  assert.strictEqual(fs.existsSync(path.join(configDir, 'app', expected + '.json')), false);
+  assertUntouched(ctx, 'alice', alice);
+  assertUntouched(ctx, 'bob', bob);
+});
+
+test('captureApp falls back to the org id for the single profile that has no e-mail of its own', function () {
+  const ctx = captureCtx(null); // confirmed decrypt, no detectable e-mail
+  writeSaved(ctx, 'solo', '');
+  const meta = profileBytes(ctx, 'solo').meta;
+
+  const r = cli.captureApp(ctx, null);
+  assert.strictEqual(r.ok, true, r.reason);
+  assert.strictEqual(r.name, 'solo');
+  assert.deepStrictEqual(profiles.list(ctx.configDir), ['solo']);
+  assert.deepStrictEqual(profileBytes(ctx, 'solo').meta, meta);
+  assert.notDeepStrictEqual(profileBytes(ctx, 'solo').app, Buffer.from('{"marker":"solo-token"}'));
+});
+
+test('captureApp does not overwrite a labelled profile when the desktop e-mail cannot be read', function () {
+  const ctx = captureCtx(null);
+  writeSaved(ctx, 'solo', 'solo@example.com');
+  const before = profileBytes(ctx, 'solo');
+
+  const r = cli.captureApp(ctx, null);
+  assert.strictEqual(r.ok, false);
+  assert.strictEqual(r.needName, true);
+  assert.deepStrictEqual(profiles.list(ctx.configDir), ['solo']);
+  assertUntouched(ctx, 'solo', before);
+});
+
+test('captureApp does not guess when several profiles share an org and no e-mail is known', function () {
+  const ctx = captureCtx(null);
+  writeSaved(ctx, 'alice', '');
+  writeSaved(ctx, 'bob', '');
+  const alice = profileBytes(ctx, 'alice');
+  const bob = profileBytes(ctx, 'bob');
+
+  const r = cli.captureApp(ctx, null);
+  assert.strictEqual(r.ok, false);
+  assert.strictEqual(r.needName, true);
+  assert.deepStrictEqual(profiles.list(ctx.configDir), ['alice', 'bob']);
+  assertUntouched(ctx, 'alice', alice);
+  assertUntouched(ctx, 'bob', bob);
+});
+
+test('several profiles with the same e-mail are not guessed; captureApp uses autoName', function () {
+  const ctx = captureCtx('b@example.com');
+  writeSaved(ctx, 'alice', 'b@example.com');
+  writeSaved(ctx, 'bob', 'b@example.com');
+  const alice = profileBytes(ctx, 'alice');
+  const bob = profileBytes(ctx, 'bob');
+  const expected = core.autoName(ctx, 'b@example.com');
+
+  const r = cli.captureApp(ctx, null);
+  assert.strictEqual(r.ok, true, r.reason);
+  assert.strictEqual(r.name, expected);
+  assert.notStrictEqual(r.name, 'alice');
+  assert.notStrictEqual(r.name, 'bob');
+  assertUntouched(ctx, 'alice', alice);
+  assertUntouched(ctx, 'bob', bob);
+});
+
+test('captureApp still refuses to match when the decrypt is not confirmed', function () {
+  const ctx = captureCtx('b@example.com');
+  const cfgPath = path.join(ctx.appDataDir, 'config.json');
+  const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
+  cfg['oauth:tokenCacheV2'] = 'not-a-v10-blob';
+  fs.writeFileSync(cfgPath, JSON.stringify(cfg));
+  writeSaved(ctx, 'alice', 'a@example.com');
+  writeSaved(ctx, 'bob', 'b@example.com');
+  const alice = profileBytes(ctx, 'alice');
+  const bob = profileBytes(ctx, 'bob');
+
+  const r = cli.captureApp(ctx, null);
+  assert.strictEqual(r.ok, false);
+  assert.strictEqual(r.needName, true);
+  assert.ok(r.reason, 'the confirmed-decrypt stop keeps its reason');
+  assertUntouched(ctx, 'alice', alice);
+  assertUntouched(ctx, 'bob', bob);
+});
+
+test('captureApp with an explicit name still writes that profile', function () {
+  const ctx = captureCtx('b@example.com');
+  writeSaved(ctx, 'alice', 'a@example.com');
+  writeSaved(ctx, 'bob', 'b@example.com');
+  const bob = profileBytes(ctx, 'bob');
+
+  const r = cli.captureApp(ctx, 'alice');
+  assert.strictEqual(r.ok, true, r.reason);
+  assert.strictEqual(r.name, 'alice');
+  assert.notDeepStrictEqual(profileBytes(ctx, 'alice').app, Buffer.from('{"marker":"alice-token"}'));
+  assertUntouched(ctx, 'bob', bob);
+});
+
+test('preserveOutgoingAppLogin refreshes the matching e-mail and leaves the teammate byte-identical', function () {
+  process.env.KEYFLIP_TEST_CLAUDE = 'stopped';
+  const ctx = captureCtx('b@example.com');
+  writeSaved(ctx, 'alice', 'a@example.com');
+  writeSaved(ctx, 'bob', 'B@Example.com');
+  const alice = profileBytes(ctx, 'alice');
+  const bobMeta = profileBytes(ctx, 'bob').meta;
+
+  const r = cli.preserveOutgoingAppLogin(ctx);
+  assert.ok(r && r.ok, 'the confirmed desktop e-mail selects bob');
+  assertUntouched(ctx, 'alice', alice);
+  assert.deepStrictEqual(profileBytes(ctx, 'bob').meta, bobMeta);
+  assert.notDeepStrictEqual(profileBytes(ctx, 'bob').app, Buffer.from('{"marker":"bob-token"}'));
+});
+
+test('preserveOutgoingAppLogin does nothing when the desktop e-mail is a third person on the org', function () {
+  process.env.KEYFLIP_TEST_CLAUDE = 'stopped';
+  const ctx = captureCtx('c@example.com');
+  writeSaved(ctx, 'alice', 'a@example.com');
+  writeSaved(ctx, 'bob', 'b@example.com');
+  const alice = profileBytes(ctx, 'alice');
+  const bob = profileBytes(ctx, 'bob');
+
+  assert.strictEqual(cli.preserveOutgoingAppLogin(ctx), null);
+  assert.deepStrictEqual(profiles.list(ctx.configDir), ['alice', 'bob']);
+  assertUntouched(ctx, 'alice', alice);
+  assertUntouched(ctx, 'bob', bob);
+});
+
+test('preserveOutgoingAppLogin does not guess when several profiles share an org and no e-mail is known', function () {
+  process.env.KEYFLIP_TEST_CLAUDE = 'stopped';
+  const ctx = captureCtx(null);
+  writeSaved(ctx, 'alice', 'a@example.com');
+  writeSaved(ctx, 'bob', 'b@example.com');
+  const alice = profileBytes(ctx, 'alice');
+  const bob = profileBytes(ctx, 'bob');
+
+  assert.strictEqual(cli.preserveOutgoingAppLogin(ctx), null);
+  assertUntouched(ctx, 'alice', alice);
+  assertUntouched(ctx, 'bob', bob);
+});
+
+test('preserveOutgoingAppLogin still refreshes the one profile when the desktop e-mail cannot be read', function () {
+  process.env.KEYFLIP_TEST_CLAUDE = 'stopped';
+  const ctx = captureCtx(null);
+  writeSaved(ctx, 'solo', 'solo@example.com');
+  const meta = profileBytes(ctx, 'solo').meta;
+
+  const r = cli.preserveOutgoingAppLogin(ctx);
+  assert.ok(r && r.ok);
+  assert.deepStrictEqual(profiles.list(ctx.configDir), ['solo']);
+  assert.deepStrictEqual(profileBytes(ctx, 'solo').meta, meta);
+  assert.notDeepStrictEqual(profileBytes(ctx, 'solo').app, Buffer.from('{"marker":"solo-token"}'));
 });
