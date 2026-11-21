@@ -217,6 +217,11 @@ keyflip panel --export <f> [--anon]   # write a share-safe STATIC snapshot (no s
 keyflip menubar [--install]   # menu-bar/tray plugin — macOS xbar/SwiftBar, Linux GNOME Argos/KDE kargos: account+quota at a glance, click-to-switch
 keyflip statusline install    # show active account + quota in the Claude Code prompt
 keyflip install-skill         # install the keyflip skill into every agent on this machine
+keyflip sync [test|push|pull] --url <webdav> --passphrase-file <f> [--allow-partial]
+                              # encrypted account backup on WebDAV. push refuses when any
+                              # account's credentials could not be read, so a short bundle never
+                              # replaces the remote. --allow-partial pushes the rest and names
+                              # the skipped accounts; nothing readable is still refused
 keyflip export [file|-]       # back up accounts to a file (CONTAINS SECRETS)
 keyflip import <file|->       # restore accounts from an export (--force overwrites)
 keyflip migrate export <file> # bundle accounts + providers + transcripts + memory + config (MCP + settings)
@@ -258,6 +263,18 @@ keyflip reset [--soft]        # FACTORY reset: DELETE all keyflip data (--soft k
 keyflip uninstall [--purge]   # remove keyflip from this machine (--purge also deletes data)
 keyflip upgrade               # update keyflip itself (detects how it was installed)
 ```
+
+### Encrypted account sync (`sync`)
+
+`keyflip sync push --url <webdav> --passphrase-file <f>` encrypts saved accounts (AES-256-GCM) and
+PUTs them to WebDAV. `sync pull` shows the remote snapshot, writes a local safety backup, then applies
+it. `sync test` only checks that the URL answers.
+
+Push refuses, before any network call, when any account's credentials could not be read (locked
+keychain, store error) and names those accounts. A short or empty bundle must not replace the remote
+backup. `--allow-partial` pushes the accounts that could be read and prints the skipped names; a push
+with nothing readable still refuses. The MCP tool `keyflip_sync_push` takes the same opt-in as
+`allow_partial`. A scheduled push that used to upload a partial bundle now fails until that flag is set.
 
 ### Internet transfer — the relay (zero-knowledge)
 

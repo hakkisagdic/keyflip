@@ -3635,7 +3635,7 @@ const TOOLS = [
     name: 'keyflip_sync_push',
     title: 'Push encrypted accounts to WebDAV',
     description:
-      "Encrypt this machine's accounts (passphrase from passphrase_file) and PUT them to a WebDAV URL. Secrets are only ever read from files, never argv. Mutating (writes to the remote) — ask the user, then confirm=true.",
+      "Encrypt this machine's accounts (passphrase from passphrase_file) and PUT them to a WebDAV URL. Refuses before any network call when any account's credentials cannot be read, and names those accounts — a short or empty bundle must not replace the remote backup. allow_partial=true uploads the readable accounts and returns the unread names under skipped; nothing readable is still refused. Secrets are only ever read from files, never argv. Mutating (writes to the remote) — ask the user, then confirm=true.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -3643,6 +3643,7 @@ const TOOLS = [
         passphrase_file: { type: 'string' },
         user: { type: 'string' },
         pass_file: { type: 'string' },
+        allow_partial: { type: 'boolean' },
         confirm: confirmProp.confirm,
       },
       required: ['url', 'passphrase_file', 'confirm'],
@@ -3656,6 +3657,7 @@ const TOOLS = [
         user: args.user || null,
         pass: args.pass_file ? fs.readFileSync(String(args.pass_file), 'utf8').trim() : null,
         passphrase: fs.readFileSync(String(args.passphrase_file), 'utf8').trim(),
+        allowPartial: args.allow_partial === true,
       };
       return await sync.push(ctx, o);
     },

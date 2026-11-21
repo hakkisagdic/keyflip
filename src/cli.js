@@ -296,7 +296,8 @@ function usage() {
     '  keyflip mcpreg [add|list|surfaces|enable|disable|import]   one MCP registry, projected into every agent keyflip can write',
   );
   print('  keyflip gateway use <provider> | off   route the Claude DESKTOP app through a provider gateway');
-  print('  keyflip sync [push|pull|test] --url <webdav> --passphrase-file <f>   encrypted cross-device sync');
+  print('  keyflip sync [push|pull|test] --url <webdav> --passphrase-file <f> [--allow-partial]');
+  print('                                 encrypted cross-device sync');
   print('  keyflip migrate manifest | doctor [--json]   what an export would carry (names, present/missing, lengths)');
   print('  keyflip migrate import <file> --dry-run | --require-encrypted | --expect-bundle-id <id>   safe import');
   print('  keyflip migrate export/import <file> [--passphrase-file <f>]   move ALL accounts+providers+');
@@ -5005,10 +5006,17 @@ async function cmdSync(ctx, rest) {
     return;
   }
   if (sub === 'push') {
-    if (!url || !o.passphrase)
-      return fail('usage: keyflip sync push --url <u> --passphrase-file <f> [--user U --pass-file f]');
+    if (!url || !o.passphrase) {
+      return fail(
+        'usage: keyflip sync push --url <u> --passphrase-file <f> [--user U --pass-file f] [--allow-partial]',
+      );
+    }
+    o.allowPartial = rest.indexOf('--allow-partial') !== -1;
     const r = await sync.push(ctx, o);
     print(style.ok('✅') + ' pushed ' + r.pushed + ' account(s), encrypted.');
+    if (r.skipped && r.skipped.length) {
+      print(style.warn('⚠️ skipped (credentials unreadable): ' + r.skipped.join(', ')));
+    }
     return;
   }
   if (sub === 'pull') {
@@ -5044,7 +5052,8 @@ async function cmdSync(ctx, rest) {
     return;
   }
   return fail(
-    'usage: keyflip sync [test|push|pull] --url <webdav-url> --passphrase-file <file> [--user U --pass-file f]',
+    'usage: keyflip sync [test|push|pull] --url <webdav-url> --passphrase-file <file> ' +
+      '[--user U --pass-file f] [--allow-partial]',
   );
 }
 
