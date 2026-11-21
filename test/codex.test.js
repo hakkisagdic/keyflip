@@ -3,6 +3,7 @@
 // no real credential is ever read, and assertions check that no token leaks.
 import test from 'node:test';
 import assert from 'node:assert';
+import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import _child_process from 'child_process';
@@ -91,6 +92,9 @@ function writeCapture(ctx, slug, auth) {
     path.join(dir, 'meta.json'),
     JSON.stringify({ schemaVersion: 1, tool: 'codex', slug: slug, email: '' }),
   );
+}
+function sha256(bytes) {
+  return crypto.createHash('sha256').update(bytes).digest('hex');
 }
 
 test('identityFromAuth reads e-mail, plan and expiry without exposing tokens', function () {
@@ -193,6 +197,75 @@ test('switchTo writes the stored login, backs up the outgoing one and captures i
   assert.deepStrictEqual(
     JSON.parse(fs.readFileSync(path.join(accountDir(ctx, 'live'), 'auth.json'), 'utf8')),
     outgoing,
+  );
+});
+
+test('switchTo refreshes a custom-named capture when the outgoing login rotates', function () {
+  const ctx = setup();
+  writeLive(ctx, authFor('e1@example.com'));
+  capture(ctx, { name: 'work' });
+  writeLive(ctx, authFor('e1@example.com', { refresh: 'rt-e1-rotated' }));
+  const rotatedHash = sha256(fs.readFileSync(authPath(ctx)));
+  const staleHash = sha256(fs.readFileSync(path.join(accountDir(ctx, 'work'), 'auth.json')));
+  assert.notStrictEqual(rotatedHash, staleHash);
+  writeCapture(ctx, 'other', authFor('other@example.com'));
+
+  const away = switchTo(ctx, 'other', { running: [], force: true });
+  assert.strictEqual(away.slug, 'other');
+  assert.strictEqual(away.verified, true);
+  assert.strictEqual(away.capturedOutgoing, 'work');
+  assert.ok(away.backup && fs.existsSync(away.backup));
+  assert.strictEqual(sha256(fs.readFileSync(away.backup)), rotatedHash);
+  const e1 = listCaptures(ctx).filter(function (a) {
+    return a.email === 'e1@example.com';
+  });
+  assert.strictEqual(e1.length, 1);
+  assert.strictEqual(e1[0].slug, 'work');
+  assert.strictEqual(sha256(fs.readFileSync(path.join(accountDir(ctx, 'work'), 'auth.json'))), rotatedHash);
+
+  const back = switchTo(ctx, 'work', { running: [], force: true });
+  assert.strictEqual(back.slug, 'work');
+  assert.strictEqual(back.verified, true);
+  assert.strictEqual(sha256(fs.readFileSync(authPath(ctx))), rotatedHash);
+});
+
+test('two different e-mails that share a slug base still get a -2 suffix', function () {
+  const ctx = setup();
+  writeLive(ctx, authFor('ada@one.example'));
+  assert.strictEqual(capture(ctx, {}).slug, 'ada');
+  writeLive(ctx, authFor('ada@two.example'));
+  assert.strictEqual(capture(ctx, {}).slug, 'ada-2');
+  const slugs = listCaptures(ctx)
+    .map(function (a) {
+      return a.slug;
+    })
+    .sort();
+  assert.deepStrictEqual(slugs, ['ada', 'ada-2']);
+  const emails = listCaptures(ctx)
+    .map(function (a) {
+      return a.email;
+    })
+    .sort();
+  assert.deepStrictEqual(emails, ['ada@one.example', 'ada@two.example']);
+});
+
+test('an explicit capture name does not reuse a custom slug for the same e-mail', function () {
+  const ctx = setup();
+  writeLive(ctx, authFor('e1@example.com'));
+  assert.strictEqual(capture(ctx, { name: 'work' }).slug, 'work');
+  const again = capture(ctx, { name: 'x' });
+  assert.strictEqual(again.slug, 'x');
+  const rows = listCaptures(ctx);
+  assert.deepStrictEqual(
+    rows.map(function (a) {
+      return a.slug;
+    }),
+    ['work', 'x'],
+  );
+  assert.ok(
+    rows.every(function (a) {
+      return a.email === 'e1@example.com';
+    }),
   );
 });
 
