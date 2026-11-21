@@ -1,0 +1,5 @@
+# Baseline of accepted gitleaks findings (2026-11-21). Test fixtures only: synthetic values built for the tests.
+# Any new finding still stops the push. Format: commit:file:rule:line (gitleaks fingerprint).
+64987b17c1d1ae12fdf83bb5fe11078ec4ab800f:test/daemon.test.js:jwt:80
+0b438e7ca7498bc4e338d4d866cffca202e1855f:test/convindex.test.js:generic-api-key:1240
+bec5145a25015e180a81d942acdb236b5614434b:test/convindex.test.js:generic-api-key:1544
