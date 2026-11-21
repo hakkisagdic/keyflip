@@ -25,6 +25,7 @@ import * as _codex from './codex.js';
 import * as _oauth from './oauth.js';
 import * as _selfbin from './selfbin.js';
 import * as _failover from './failover.js';
+import { redact } from './redact.js';
 
 async function probe(url, opts) {
   opts = opts || {};
@@ -171,6 +172,42 @@ async function testProvider(ctx, name, opts) {
   } catch (e) {
     return { ok: false, ms: clock() - t0, category: 'network', reason: (e && e.message) || 'error' };
   }
+}
+
+// Run an async provider test function across `names` with bounded concurrency (default 4).
+// Results are returned in input order (not completion order), and per-provider throws are
+// isolated into `{ ok: false, category: 'error', reason }` so one bad provider never aborts the batch.
+async function runAll(names, testFn, limit) {
+  const list = Array.isArray(names) ? names.slice() : [];
+  if (!list.length) return [];
+  const n = Number(limit);
+  const cap = Math.max(1, Number.isFinite(n) && n > 0 ? Math.floor(n) : 4);
+  const results = new Array(list.length);
+  let next = 0;
+  const workerCount = Math.min(cap, list.length);
+  const workers = [];
+  for (let w = 0; w < workerCount; w++) {
+    workers.push(
+      (async function () {
+        while (next < list.length) {
+          const i = next++;
+          const name = list[i];
+          try {
+            const r = await testFn(name);
+            results[i] = {
+              provider: name,
+              result: r && typeof r === 'object' ? r : { ok: false, category: 'error', reason: 'invalid result' },
+            };
+          } catch (e) {
+            const msg = redact((e && e.message) || String(e || 'error'));
+            results[i] = { provider: name, result: { ok: false, category: 'error', reason: msg } };
+          }
+        }
+      })(),
+    );
+  }
+  await Promise.all(workers);
+  return results;
 }
 
 // The flagship hygiene check: NO secret-bearing file may be tracked by keyflip's git.
@@ -1150,4 +1187,4 @@ function settingsJson(ctx, add) {
   }
 }
 
-export { probe, diagnose, testProvider };
+export { probe, diagnose, testProvider, runAll };
