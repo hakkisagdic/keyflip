@@ -1776,7 +1776,7 @@ configured):
    `npm login`, not a stored token:
    ```bash
    npm login
-   npm publish --access public        # creates @hakkisagdic/keyflip
+   npm publish --access public        # creates keyflip
    ```
 2. On **npmjs.com** → the package → **Settings → Trusted Publisher → GitHub
    Actions**, enter: user `hakkisagdic`, repository `keyflip`, workflow
@@ -1786,8 +1786,10 @@ configured):
    ```bash
    git tag vX.Y.Z && git push origin vX.Y.Z
    ```
-   `release.yml` verifies the tag, tests, and cuts a GitHub Release; publishing
-   that Release fires `publish.yml`, which publishes to npm over OIDC.
+   `.github/workflows/publish.yml` verifies that the tag matches `package.json`,
+   runs tests and `npm audit`, publishes `keyflip` to npm over OIDC with
+   provenance, and creates the GitHub Release with the tarball (tag → test →
+   audit → npm → GitHub Release).
 
 ---
 
