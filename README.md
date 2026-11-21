@@ -356,6 +356,7 @@ keyflip provider list           # what's saved / active
 keyflip provider models zai     # what does the endpoint actually serve? (GET /v1/models)
 keyflip speedtest openrouter    # time the endpoints, use the fastest
 keyflip test openrouter         # one real request: is auth working?
+keyflip test --all              # test every saved provider in parallel (4 at a time; non-zero exit if any fail)
 keyflip doctor                  # health check: secrets-in-git + orphans + versioning + config + login + endpoints + desktop app session + is the desktop app really signed in + auto-update state + every background service (installed / loaded / last output)
 ```
 

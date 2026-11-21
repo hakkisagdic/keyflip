@@ -356,6 +356,7 @@ keyflip provider list           # kayıtlı / aktif olan
 keyflip provider models zai     # endpoint gerçekte ne sunuyor? (GET /v1/models)
 keyflip speedtest openrouter    # endpoint'leri ölç, en hızlısını kullan
 keyflip test openrouter         # tek gerçek istek: auth çalışıyor mu?
+keyflip test --all              # kayıtlı tüm provider'ları paralel test et (en fazla 4; biri bile başarısızsa çıkış kodu ≠ 0)
 keyflip doctor                  # sağlık kontrolü: git-e-sır + orphan + versiyonlama + config + giriş + endpointler + masaüstü oturumu + otomatik güncelleme durumu + her arka plan servisi (kurulu / tutuluyor / son çıktı)
 ```
 
