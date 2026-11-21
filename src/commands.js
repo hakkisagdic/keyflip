@@ -174,8 +174,8 @@ const CATALOG = [
     name: 'test',
     group: 'providers',
     safe: false,
-    usage: 'keyflip test <provider>',
-    desc: "Fire one real request to check a provider's auth.",
+    usage: 'keyflip test <provider> | --all',
+    desc: "Fire one real request to check one or all providers' auth.",
   },
   {
     name: 'import-env',
