@@ -69,7 +69,7 @@ near‑term backlog; several are prerequisites for the big epics (E3 especially)
 | 3 | ✅ Authoritative‑reset‑only 429 triage (don't fail over on billing/org‑disabled 429s) | E3 |
 | 9 | ✅ Priority + LRU deterministic account ordering (`priority` field) | E3 |
 | 10 | ✅ Route‑decision debug headers / `--verbose` (`x-keyflip-account`, `-route-reason`) | E3 |
-| 14 | `keyflip test --all` parallel provider health check | — |
+| 14 | ✅ `keyflip test --all` parallel provider health check | — |
 | 15 | `keyflip provider fork <src> <new>` duplicate a provider config | — |
 
 ### Phase 0b — provider ecosystem (the biggest gap vs competitors)

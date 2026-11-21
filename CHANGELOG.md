@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`keyflip test --all`**: run `doctor.testProvider` across every saved provider in parallel with bounded concurrency (4), printing results in sorted provider-list order followed by an `N ok, M failed` summary and exiting non-zero if any provider fails (including in `--json` mode, which emits `{ results: [{ provider, result }], ok, failed }`). Exports pure `doctor.runAll(names, testFn, limit)`.
+
 ### Fixed
 
 - **`keyflip conv index` can no longer grow without bound or stall silently.** A scheduled pass over a large corpus that had to re-parse most transcripts (for example after a profanity-filter change with the local model on) kept every changed conversation's chunks in memory until the end, wrote nothing until the whole pass finished, and logged progress only every 5% of sources, so one slow stretch looked like silence while the process grew to many gigabytes. Now changed conversations are written to disk as they are parsed and committed to `meta.json` in batches (at most every 1000 conversations or 2 minutes), and `meta.json` is now written one row at a time (same bytes as before) instead of as one giant string, so a stopped run loses at most one batch. A run guard stops the pass cleanly when the process passes a memory limit (`conv.maxRssMb`, default 2048 MB) or a wall-clock limit (`conv.maxRunMinutes`, default 120 min; `--max-rss-mb N` / `--max-run-min N` per run, `0` = off): it saves what it has, prints the reason, exits 0, and the next scheduled run resumes from the saved rows. The guard also speaks between classifier batches, so one very long conversation cannot hold the run past its limit. A timestamped progress line is written at least every 5 minutes (`conv index: progress scan 5055/33694 · rss … MB · … s elapsed`), also while one step is stuck. Per-source error and warning lists in the report are capped at 1000 entries, and stage files a killed run left behind are removed at the next start. The index format, the embedding output, and search results are unchanged.

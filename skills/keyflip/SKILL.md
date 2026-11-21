@@ -296,6 +296,7 @@ keyflip provider off          # back to the subscription (OAuth)
 keyflip provider list         # which providers exist / which is active
 keyflip speedtest <name>      # pick the fastest of a provider's endpoints
 keyflip test <name>           # one real request → auth ok? (auth/network/4xx/5xx)
+keyflip test --all [--json]   # test every saved provider in parallel (max 4; non-zero exit if any fail)
 keyflip doctor                # health check: secrets-in-git, orphaned sessions, versioning, config, login, endpoints, desktop app session, live auto-update state of the app + clones, and the BACKGROUND-SERVICE INVENTORY — per job: installed / actually held by launchd or cron / when it last wrote output (MCP: keyflip_doctor, `services[]`)
 keyflip doctor --history      # + scan every blob the state repo ever committed: a secret in an OLD commit (MCP: keyflip_history_audit)
 keyflip scrub-history [--apply]  # remove them from history (dry run by default; git-filter-repo + bundle backup)
