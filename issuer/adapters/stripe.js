@@ -133,6 +133,8 @@ function verifyWebhook(rawBody, headers, secret, opts) {
 // ---- event parsing (only call AFTER verifyWebhook returns ok) ----------------
 const TYPE_MAP = Object.assign(Object.create(null), {
   'checkout.session.completed': 'purchase',
+  // Delayed methods (bank debit, etc.) settle later. This event is the purchase.
+  'checkout.session.async_payment_succeeded': 'purchase',
   'invoice.paid': 'purchase',
   'charge.refunded': 'refund',
 });
@@ -171,7 +173,15 @@ function parseEvent(rawBody /*, headers */) {
   if (!event || typeof event !== 'object') return null;
 
   const obj = event.data && typeof event.data === 'object' ? event.data.object : null;
-  const type = TYPE_MAP[event.type] || 'other';
+  let type = TYPE_MAP[event.type] || 'other';
+  // checkout.session.completed fires before a delayed payment settles. Only a
+  // session whose payment_status is paid or no_payment_required may mint; every
+  // other status (unpaid, missing, processing) stays 'other'. The license for a
+  // delayed payment comes from checkout.session.async_payment_succeeded.
+  if (event.type === 'checkout.session.completed') {
+    const paymentStatus = obj && obj.payment_status;
+    if (paymentStatus !== 'paid' && paymentStatus !== 'no_payment_required') type = 'other';
+  }
   return {
     type: type,
     email: extractEmail(obj),
