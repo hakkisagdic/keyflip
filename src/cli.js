@@ -13973,18 +13973,48 @@ function targetAppSignIn(ctx, name) {
   }
 }
 
-// The saved profile the desktop app's OWN login currently matches (by org uuid).
-// Returns the profile name, '' when the app is signed in on an account keyflip has
-// never saved, or null when there is no app login to read (no app, signed out, or
-// its state is unreadable) — null means "can't tell", so callers must not act on it.
-function profileForOrg(ctx, org) {
-  let found = '';
+// True when both sides are non-empty addresses for the same mailbox.
+// Comparison ignores case. A blank address matches nothing, so two profiles
+// that never recorded an email are not treated as the same person.
+function sameAccountEmail(a, b) {
+  const left = String(a || '');
+  const right = String(b || '');
+  if (!left || !right) return false;
+  return left.toLowerCase() === right.toLowerCase();
+}
+
+// The saved profile the desktop app's OWN login currently matches.
+// A confirmed email decides (case-insensitive). On a shared organization the
+// org id alone must not select a profile that carries a different email —
+// that would refresh the wrong person's capture — and several profiles on one
+// org are not guessed when the email cannot be read.
+// Returns the profile name, '' when this login was never saved, or null when
+// the only honest answer is "do nothing" (a different person's profile, or a
+// tie). Callers that write must treat null and '' as "leave the files alone".
+// null from appActiveProfile still also means "can't tell" (no app login).
+function profileForOrg(ctx, org, email) {
+  const hits = [];
   profiles.list(ctx.configDir).forEach(function (n) {
-    if (found) return;
     const m = profiles.read(ctx.configDir, n);
-    if (m && m.oauthAccount && m.oauthAccount.organizationUuid === org) found = n;
+    if (m && m.oauthAccount && m.oauthAccount.organizationUuid === org) {
+      hits.push({ n: n, email: m.email || '' });
+    }
   });
-  return found;
+  if (!hits.length) return '';
+  if (email) {
+    const same = hits.filter(function (h) {
+      return sameAccountEmail(h.email, email);
+    });
+    // One saved profile owns this mailbox. Several, or a different email on
+    // the org's profile, is not a person we may refresh.
+    if (same.length === 1) return same[0].n;
+    return null;
+  }
+  // Email not detectable. A single profile on the org cannot be a different
+  // saved person, so keep the historical refresh (including when that profile
+  // already has an email the desktop did not repeat). Several are a guess.
+  if (hits.length === 1) return hits[0].n;
+  return null;
 }
 
 function appActiveProfile(ctx) {
@@ -13996,7 +14026,7 @@ function appActiveProfile(ctx) {
     return null;
   }
   if (!det || !det.org) return null;
-  return profileForOrg(ctx, det.org);
+  return profileForOrg(ctx, det.org, det.email);
 }
 
 // Before a switch overwrites the app's login, keep the account we are LEAVING
@@ -14017,8 +14047,8 @@ function preserveOutgoingAppLogin(ctx) {
     return null;
   }
   if (!det || det.reason || !det.org) return null;
-  const cur = profileForOrg(ctx, det.org);
-  if (!cur) return null; // an account keyflip never saved: nothing to update
+  const cur = profileForOrg(ctx, det.org, det.email);
+  if (!cur) return null; // never saved, or a different person's profile: nothing to update
   let r = null;
   try {
     r = appauth.snapshotToProfile(ctx, cur);
@@ -14059,13 +14089,29 @@ function captureApp(ctx, nameArg, opts) {
     // profile could snapshot the LIVE account's tokens into the WRONG profile, so we
     // require an explicit name instead.
     if (!det.reason) {
+      // A confirmed email decides. Pairing on the org id as well is what stored
+      // the second person's desktop login over the first: teammates share that
+      // id. Fall back to the org only when it cannot contradict an email — the
+      // detected address is empty, the saved profile has none of its own, and
+      // exactly one profile has that org. Several matches are not a guess; a
+      // known email falls through to autoName below, otherwise the caller asks.
+      const emailHits = [];
+      const orgHits = [];
       profiles.list(ctx.configDir).forEach(function (n) {
-        if (name) return;
         const m = profiles.read(ctx.configDir, n);
         if (!m) return;
-        if ((email && m.email === email) || (det.org && m.oauthAccount && m.oauthAccount.organizationUuid === det.org))
-          name = n;
+        if (email) {
+          if (sameAccountEmail(m.email, email)) emailHits.push(n);
+          return;
+        }
+        if (det.org && m.oauthAccount && m.oauthAccount.organizationUuid === det.org)
+          orgHits.push({ n: n, email: m.email || '' });
       });
+      if (email) {
+        if (emailHits.length === 1) name = emailHits[0];
+      } else if (orgHits.length === 1 && !orgHits[0].email) {
+        name = orgHits[0].n;
+      }
       if (!name && email) name = core.autoName(ctx, email);
     }
     if (!name) return { ok: false, needName: true, reason: det.reason || null };
@@ -19014,6 +19060,7 @@ export {
   desktopTugRisk,
   appActiveProfile,
   preserveOutgoingAppLogin,
+  captureApp,
   browserCapture,
   verifyAppRelogin,
   formatAutoswitchTickLine,
