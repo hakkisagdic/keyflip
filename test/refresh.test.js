@@ -110,16 +110,25 @@ test('Retry backoff increases with consecutive failures', () => {
   assert.equal(backoffs.length, 3);
 });
 
-test('Claude session extraction handles missing database gracefully', () => {
-  const ctx = {};
-  const cred = { slug: 'desktop' };
+test(
+  'Claude session extraction handles missing database gracefully',
+  { skip: process.platform !== 'darwin' && 'macOS-only: Claude Safe Storage Keychain lookup' },
+  () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'keyflip-claude-'));
+    try {
+      const ctx = { configDir: tmpDir };
+      const cred = { slug: 'desktop' };
 
-  // This should fail gracefully since Claude cookie DB doesn't exist in test env
-  const result = STRATEGIES.claude.checkFn(ctx, cred);
+      // This should fail gracefully since Claude cookie DB doesn't exist in test env
+      const result = STRATEGIES.claude.checkFn(ctx, cred);
 
-  // Should return null when extraction fails
-  assert.equal(result, null);
-});
+      // Should return null when extraction fails
+      assert.equal(result, null);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  },
+);
 
 test('Proactive strategies have valid thresholds', () => {
   assert.ok(STRATEGIES.antigravity.thresholdMs > 0);
