@@ -13,6 +13,7 @@ import {
   TITLE,
   TITLE_FONT,
   crc32,
+  renderOgImage,
   writeOgImage,
 } from '../website/scripts/og-image.js';
 
@@ -23,7 +24,9 @@ const probePath = path.join(root, 'website', 'public', '_byteprobe.bin');
 
 if (fs.existsSync(probePath)) fs.unlinkSync(probePath);
 
-const png = writeOgImage(pngPath);
+const rendered = renderOgImage();
+const png =
+  fs.existsSync(pngPath) && fs.readFileSync(pngPath).equals(rendered) ? rendered : writeOgImage(pngPath);
 const W = 1200;
 const H = 630;
 
@@ -166,19 +169,40 @@ test('BaseLayout drops the og-image TODO and emits absolute image tags from site
   }
 });
 
-test('built pages carry absolute og:image and twitter:image when dist exists', function () {
+test('built pages carry absolute og:image and twitter:image when dist exists', function (t) {
   const dist = path.join(root, 'website', 'dist');
   // The root gate runs npm test before the website build, so dist is often absent.
   // BaseLayout is checked above; this reads the real HTML once dist is present.
-  if (!fs.existsSync(dist)) return;
-  const config = fs.readFileSync(path.join(root, 'website', 'astro.config.mjs'), 'utf8');
-  const site = config.match(/site:\s*'([^']+)'/);
-  const expected = ogImageUrl(site[1]);
+  if (!fs.existsSync(dist)) {
+    t.skip('website/dist does not exist');
+    return;
+  }
+  const sourceFiles = [
+    layoutPath,
+    pngPath,
+    path.join(root, 'website', 'public', 'og-image.svg'),
+    path.join(root, 'website', 'scripts', 'og-image.js'),
+    path.join(root, 'website', 'astro.config.mjs'),
+  ].filter((file) => fs.existsSync(file));
+  const latestSourceMtime = Math.max(...sourceFiles.map((file) => fs.statSync(file).mtimeMs));
   const routes = {
     '/': ['index.html'],
     '/tr/': ['tr/index.html', 'tr.html'],
     '/pricing/': ['pricing/index.html', 'pricing.html'],
   };
+  const existingPages = Object.values(routes)
+    .map((names) => names.map((name) => path.join(dist, name)).find((candidate) => fs.existsSync(candidate)))
+    .filter(Boolean);
+  const oldestDistMtime = existingPages.length
+    ? Math.min(...existingPages.map((file) => fs.statSync(file).mtimeMs))
+    : fs.statSync(dist).mtimeMs;
+  if (oldestDistMtime < latestSourceMtime) {
+    t.skip('website/dist is older than og:image sources');
+    return;
+  }
+  const config = fs.readFileSync(path.join(root, 'website', 'astro.config.mjs'), 'utf8');
+  const site = config.match(/site:\s*'([^']+)'/);
+  const expected = ogImageUrl(site[1]);
   for (const names of Object.values(routes)) {
     const file = names.map((name) => path.join(dist, name)).find((candidate) => fs.existsSync(candidate));
     assert.ok(file, 'missing dist page ' + names.join(' or '));

@@ -553,15 +553,23 @@ test('K9 a canary secret never appears (plain, base64, hex) in output, log or bu
 
 function runWithFd3(home, args, secret) {
   return new Promise(function (resolve) {
-    const child = _child_process.spawn(process.execPath, [BIN].concat(args), {
-      env: envFor(home),
-      stdio: ['ignore', 'pipe', 'pipe', 'pipe'],
-    });
+    // Node's stdio: 'pipe' uses a Unix socketpair on POSIX; on Linux opening /dev/fd/3 on a
+    // socket fails with ENXIO (parent gets ECONNRESET). Piping through `cat | (...)` puts a
+    // real kernel pipe(2) on fd 3, matching shell `3< <(...)` without putting secret in argv.
+    const child = _child_process.spawn(
+      'sh',
+      ['-c', 'cat | (exec "$0" "$@" 3<&0 </dev/null)', process.execPath, BIN].concat(args),
+      {
+        env: envFor(home),
+        stdio: ['pipe', 'pipe', 'pipe'],
+      },
+    );
     let out = '';
     let err = '';
     child.stdout.on('data', (d) => (out += d));
     child.stderr.on('data', (d) => (err += d));
-    child.stdio[3].end(secret + '\n');
+    child.stdin.on('error', () => {});
+    child.stdin.end(secret + '\n');
     child.on('close', (status) => resolve({ status, stdout: out, stderr: err, argv: args }));
   });
 }

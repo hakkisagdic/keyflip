@@ -108,12 +108,13 @@ function noSecret(r) {
   assert.ok(!/sessionKey=/.test(r.stdout + r.stderr), 'sessionKey= leaked');
 }
 
-const chromeUp = sh('/usr/bin/pgrep', ['-x', 'Google Chrome']).status === 0;
-const braveUp = sh('/usr/bin/pgrep', ['-x', 'Brave Browser']).status === 0;
+const DARWIN_SKIP = process.platform !== 'darwin' && 'macOS-only: cookie DB paths and Keychain';
+const chromeUp = process.platform === 'darwin' && sh('/usr/bin/pgrep', ['-x', 'Google Chrome']).status === 0;
+const braveUp = process.platform === 'darwin' && sh('/usr/bin/pgrep', ['-x', 'Brave Browser']).status === 0;
 
 test(
   'K1: sync without --yes on a RUNNING Chrome prints the plan, exits != 0, Chrome PID unchanged',
-  { skip: !chromeUp },
+  { skip: DARWIN_SKIP || !chromeUp },
   function () {
     const h = mkHome({ cli: 'alpha' });
     addBrowser(h, path.join('Google', 'Chrome'), true);
@@ -129,24 +130,28 @@ test(
   },
 );
 
-test('K2: --yes prints the plan first, restores, then prints a verification line', { skip: braveUp }, function () {
-  const h = mkHome({ cli: 'alpha' });
-  const db = addBrowser(h, path.join('BraveSoftware', 'Brave-Browser'), true);
-  saveSnap(h, 'alpha', 'brave');
-  const r = kf(h, ['browser', 'sync', 'alpha', '--yes']);
-  const out = r.stdout;
-  const iPlan = out.indexOf('Plan:');
-  const iDone = out.search(/restored for|NOT synced/);
-  const iVer = out.search(/browser session is|could not verify/);
-  assert.ok(iPlan !== -1 && iDone > iPlan && iVer > iDone, 'order plan < restore < verify\n' + out);
-  const rows = sh('sqlite3', [db, "SELECT name FROM cookies WHERE host_key LIKE '%claude.ai'"]).stdout;
-  assert.match(rows, /sessionKey/);
-  noSecret(r);
-});
+test(
+  'K2: --yes prints the plan first, restores, then prints a verification line',
+  { skip: DARWIN_SKIP || braveUp },
+  function () {
+    const h = mkHome({ cli: 'alpha' });
+    const db = addBrowser(h, path.join('BraveSoftware', 'Brave-Browser'), true);
+    saveSnap(h, 'alpha', 'brave');
+    const r = kf(h, ['browser', 'sync', 'alpha', '--yes']);
+    const out = r.stdout;
+    const iPlan = out.indexOf('Plan:');
+    const iDone = out.search(/restored for|NOT synced/);
+    const iVer = out.search(/browser session is|could not verify/);
+    assert.ok(iPlan !== -1 && iDone > iPlan && iVer > iDone, 'order plan < restore < verify\n' + out);
+    const rows = sh('sqlite3', [db, "SELECT name FROM cookies WHERE host_key LIKE '%claude.ai'"]).stdout;
+    assert.match(rows, /sessionKey/);
+    noSecret(r);
+  },
+);
 
 test(
   'K7: after a restore the cookie cannot be read back: not reported as success (verified:false)',
-  { skip: braveUp },
+  { skip: DARWIN_SKIP || braveUp },
   function () {
     const h = mkHome({ cli: 'alpha' });
     addBrowser(h, path.join('BraveSoftware', 'Brave-Browser'), true);
@@ -165,7 +170,7 @@ test(
   },
 );
 
-test('K4: CLI on alpha, desktop on beta: status names both, warns, --for picks the target', function () {
+test('K4: CLI on alpha, desktop on beta: status names both, warns, --for picks the target', { skip: DARWIN_SKIP }, function () {
   const h = mkHome({ cli: 'alpha', desktop: 'beta' });
   addBrowser(h, path.join('BraveSoftware', 'Brave-Browser'), false);
   const r = kf(h, ['browser', 'status']);
@@ -182,7 +187,7 @@ test('K4: CLI on alpha, desktop on beta: status names both, warns, --for picks t
   noSecret(r);
 });
 
-test('K4b: sync with differing surfaces and no --for does not guess and exits != 0', function () {
+test('K4b: sync with differing surfaces and no --for does not guess and exits != 0', { skip: DARWIN_SKIP }, function () {
   const h = mkHome({ cli: 'alpha', desktop: 'beta' });
   addBrowser(h, path.join('BraveSoftware', 'Brave-Browser'), true);
   saveSnap(h, 'alpha', 'brave');
@@ -193,30 +198,38 @@ test('K4b: sync with differing surfaces and no --for does not guess and exits !=
   assert.ok(!/restored for/.test(r.stdout));
 });
 
-test('K5c: sync with an unknown positional account fails and leaves the cookie DB untouched', function () {
-  const h = mkHome({ cli: 'alpha' });
-  const db = addBrowser(h, path.join('BraveSoftware', 'Brave-Browser'), true);
-  saveSnap(h, 'alpha', 'brave');
-  const r = kf(h, ['browser', 'sync', 'betta', '--yes']);
-  assert.notStrictEqual(r.status, 0);
-  assert.match(r.stdout + r.stderr, /no such saved account/);
-  const rows = sh('sqlite3', [db, "SELECT name FROM cookies WHERE host_key LIKE '%claude.ai'"]).stdout.trim();
-  assert.strictEqual(rows, 'stale', 'cookie DB must be untouched');
-});
+test(
+  'K5c: sync with an unknown positional account fails and leaves the cookie DB untouched',
+  { skip: DARWIN_SKIP },
+  function () {
+    const h = mkHome({ cli: 'alpha' });
+    const db = addBrowser(h, path.join('BraveSoftware', 'Brave-Browser'), true);
+    saveSnap(h, 'alpha', 'brave');
+    const r = kf(h, ['browser', 'sync', 'betta', '--yes']);
+    assert.notStrictEqual(r.status, 0);
+    assert.match(r.stdout + r.stderr, /no such saved account/);
+    const rows = sh('sqlite3', [db, "SELECT name FROM cookies WHERE host_key LIKE '%claude.ai'"]).stdout.trim();
+    assert.strictEqual(rows, 'stale', 'cookie DB must be untouched');
+  },
+);
 
-test('K5: account with no saved session: nothing restored, two steps printed, exit != 0', function () {
-  const h = mkHome({ cli: 'alpha' });
-  const db = addBrowser(h, path.join('BraveSoftware', 'Brave-Browser'), true);
-  const r = kf(h, ['browser', 'sync', '--for', 'beta', '--yes']);
-  assert.notStrictEqual(r.status, 0);
-  assert.match(r.stdout, /no saved browser session for/);
-  assert.match(r.stdout, /1\. .*sign into claude\.ai/i);
-  assert.match(r.stdout, /2\. .*keyflip browser capture --account/);
-  const rows = sh('sqlite3', [db, "SELECT name FROM cookies WHERE host_key LIKE '%claude.ai'"]).stdout.trim();
-  assert.strictEqual(rows, 'stale', 'cookie DB must be untouched');
-});
+test(
+  'K5: account with no saved session: nothing restored, two steps printed, exit != 0',
+  { skip: DARWIN_SKIP },
+  function () {
+    const h = mkHome({ cli: 'alpha' });
+    const db = addBrowser(h, path.join('BraveSoftware', 'Brave-Browser'), true);
+    const r = kf(h, ['browser', 'sync', '--for', 'beta', '--yes']);
+    assert.notStrictEqual(r.status, 0);
+    assert.match(r.stdout, /no saved browser session for/);
+    assert.match(r.stdout, /1\. .*sign into claude\.ai/i);
+    assert.match(r.stdout, /2\. .*keyflip browser capture --account/);
+    const rows = sh('sqlite3', [db, "SELECT name FROM cookies WHERE host_key LIKE '%claude.ai'"]).stdout.trim();
+    assert.strictEqual(rows, 'stale', 'cookie DB must be untouched');
+  },
+);
 
-test('K5b: another account snapshot is never loaded for the target', function () {
+test('K5b: another account snapshot is never loaded for the target', { skip: DARWIN_SKIP }, function () {
   const h = mkHome({ cli: 'alpha' });
   const db = addBrowser(h, path.join('BraveSoftware', 'Brave-Browser'), true);
   saveSnap(h, 'alpha', 'brave'); // alpha has one, beta does not
@@ -225,32 +238,40 @@ test('K5b: another account snapshot is never loaded for the target', function ()
   assert.ok(!/sessionKey/.test(sh('sqlite3', [db, 'SELECT name FROM cookies']).stdout));
 });
 
-test('K6: capture --account with an unreadable/other-account browser saves nothing and exits != 0', function () {
-  const h = mkHome({ cli: 'alpha' });
-  addBrowser(h, path.join('BraveSoftware', 'Brave-Browser'), true); // no readable claude session
-  const r = kf(h, ['browser', 'capture', '--account', 'beta']);
-  assert.notStrictEqual(r.status, 0);
-  assert.ok(!fs.existsSync(path.join(h.cfg, 'browser-sessions', 'beta__brave.sql')));
-  noSecret(r);
-});
+test(
+  'K6: capture --account with an unreadable/other-account browser saves nothing and exits != 0',
+  { skip: DARWIN_SKIP },
+  function () {
+    const h = mkHome({ cli: 'alpha' });
+    addBrowser(h, path.join('BraveSoftware', 'Brave-Browser'), true); // no readable claude session
+    const r = kf(h, ['browser', 'capture', '--account', 'beta']);
+    assert.notStrictEqual(r.status, 0);
+    assert.ok(!fs.existsSync(path.join(h.cfg, 'browser-sessions', 'beta__brave.sql')));
+    noSecret(r);
+  },
+);
 
-test('K6b: list shows web check for an account with a saved session, dash for one without', function () {
-  const h = mkHome({ cli: 'alpha' });
-  addBrowser(h, path.join('BraveSoftware', 'Brave-Browser'), false);
-  saveSnap(h, 'beta', 'brave');
-  const r = kf(h, ['list']);
-  const line = function (n) {
-    return r.stdout.split('\n').filter(function (l) {
-      return l.indexOf(n + '@example.com') !== -1 || new RegExp('\\b' + n + '\\b').test(l);
-    })[0];
-  };
-  assert.match(line('beta'), /web ✓/, r.stdout);
-  assert.match(line('alpha'), /web —/, r.stdout);
-});
+test(
+  'K6b: list shows web check for an account with a saved session, dash for one without',
+  { skip: DARWIN_SKIP },
+  function () {
+    const h = mkHome({ cli: 'alpha' });
+    addBrowser(h, path.join('BraveSoftware', 'Brave-Browser'), false);
+    saveSnap(h, 'beta', 'brave');
+    const r = kf(h, ['list']);
+    const line = function (n) {
+      return r.stdout.split('\n').filter(function (l) {
+        return l.indexOf(n + '@example.com') !== -1 || new RegExp('\\b' + n + '\\b').test(l);
+      })[0];
+    };
+    assert.match(line('beta'), /web ✓/, r.stdout);
+    assert.match(line('alpha'), /web —/, r.stdout);
+  },
+);
 
 test(
   'K3: MCP keyflip_browser_sync without confirm leaves a running Chrome alone, with a plan; description says restart',
-  { skip: !chromeUp },
+  { skip: DARWIN_SKIP || !chromeUp },
   async function () {
     const h = mkHome({ cli: 'alpha' });
     addBrowser(h, path.join('Google', 'Chrome'), true);
