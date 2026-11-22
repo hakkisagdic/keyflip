@@ -499,9 +499,6 @@ function runCustomRouter(cmd, payload, opts) {
       const model = j && typeof j.model === 'string' && isModel(j.model) ? j.model : null;
       finish({ account: account, model: model, reason: (j && j.reason) || 'custom router' });
     });
-    child.stdin.on('error', function () {
-      /* EPIPE when the router exits without reading stdin; close/error handler resolves */
-    });
     try {
       child.stdin.end(JSON.stringify(payload));
     } catch (e) {

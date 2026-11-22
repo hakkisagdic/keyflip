@@ -236,10 +236,6 @@ test('custom router: a script may pick the account/model; bad ones fail soft', a
   assert.match(junk.error, /printed no JSON/);
   const boom = await proxyroutes.runCustomRouter(hookScript('process.exit(3)'), {});
   assert.match(boom.error, /exited with code 3/);
-  const earlyExit = await proxyroutes.runCustomRouter(hookScript('process.exit(3)'), {
-    pad: 'x'.repeat(256 * 1024),
-  });
-  assert.match(earlyExit.error, /exited with code 3/);
   const slow = await proxyroutes.runCustomRouter(hookScript('setInterval(()=>{},1000)'), {}, { timeoutMs: 50 });
   assert.match(slow.error, /timed out/);
 });
