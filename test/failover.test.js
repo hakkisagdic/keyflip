@@ -285,6 +285,36 @@ function flaky(re, fail, err, inner) {
   g.seen = seen;
   return g;
 }
+
+// A fetch stub that never answers until opts.signal aborts. On Node 22, AbortSignal.timeout's
+// internal timer is unref'd, so without a ref'd handle here the event loop drains while the
+// promise is still pending and the test runner cancels the rest of the file. The guard timer
+// holds the loop open until abort and fails fast if a caller omits or never fires opts.signal.
+function neverFetch(guardMs = 1000) {
+  return (_url, opts) =>
+    new Promise((_resolve, reject) => {
+      if (!opts || !opts.signal) {
+        reject(new Error('neverFetch expected opts.signal'));
+        return;
+      }
+      if (opts.signal.aborted) {
+        reject(opts.signal.reason);
+        return;
+      }
+      const guard = setTimeout(() => {
+        reject(new Error(`neverFetch guard timed out after ${guardMs} ms without abort`));
+      }, guardMs);
+      opts.signal.addEventListener(
+        'abort',
+        () => {
+          clearTimeout(guard);
+          reject(opts.signal.reason);
+        },
+        { once: true },
+      );
+    });
+}
+
 test('gateway checks: 15 s per try, one retry on a timeout or failed connection, never on an HTTP answer', async function () {
   const ctx = makeCtx();
   const ksc = await setUp(ctx);
@@ -337,10 +367,7 @@ test('gateway checks: 15 s per try, one retry on a timeout or failed connection,
   assert.ok(/does not report its spend caps \(404\)/.test(r6.reason), r6.reason);
   assert.strictEqual(noRoute.calls.length, 2, '/v1/models once, the usage route once');
   // a real AbortSignal: the fetch never answers, the signal ends it, and it reads as a timeout
-  const never = (url, opts) =>
-    new Promise((resolve, reject) => {
-      opts.signal.addEventListener('abort', () => reject(opts.signal.reason));
-    });
+  const never = neverFetch();
   const r7 = await failover.gatewayReady(ctx, {
     fetch: never,
     keysmithConfig: ksc,
