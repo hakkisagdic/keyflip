@@ -1657,6 +1657,9 @@ test('when an emptied source had a colliding id that another source claims in th
   const file2 = path.join(dir, 'rollout-2026-01-02T10-00-00-' + SHARED + '.jsonl');
   fs.writeFileSync(file1, [metaLine, turnLine('First rollout text.')].map((l) => JSON.stringify(l)).join('\n') + '\n');
   fs.writeFileSync(file2, [metaLine, turnLine('Second rollout text.')].map((l) => JSON.stringify(l)).join('\n') + '\n');
+  const now = Date.now();
+  fs.utimesSync(file1, new Date(now - 20000), new Date(now - 20000));
+  fs.utimesSync(file2, new Date(now - 10000), new Date(now - 10000));
 
   await convindex.build(ctx, {});
   const canonicalId = 'codex:' + SHARED;
@@ -1670,9 +1673,8 @@ test('when an emptied source had a colliding id that another source claims in th
       .map((l) => JSON.stringify(l))
       .join('\n') + '\n',
   );
-  const future = new Date(Date.now() + 60000);
-  fs.utimesSync(file1, future, future);
-  fs.utimesSync(file2, future, future);
+  fs.utimesSync(file1, new Date(now + 10000), new Date(now + 10000));
+  fs.utimesSync(file2, new Date(now + 20000), new Date(now + 20000));
 
   const r = await convindex.build(ctx, {});
   assert.strictEqual(r.ok, true);
@@ -1690,6 +1692,49 @@ test('when an emptied source had a colliding id that another source claims in th
     "token sidecar for canonicalId must NOT be deleted by file2's empty-source pendingDeletes",
   );
   assert.strictEqual(chunkLineCount(ctx, canonicalId), after.sources[canonicalId].chunks);
+});
+
+test('two same-mtime Codex rollouts with the same id resolve to the same canonical owner regardless of write order', async function () {
+  const SHARED = '88888888-8888-4888-8888-888888888888';
+  const metaLine = { type: 'session_meta', payload: { id: SHARED, session_id: SHARED, cwd: '/work/codex' } };
+  const turnLine = (text) => ({
+    type: 'response_item',
+    payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: text }] },
+  });
+  const sameTime = new Date('2026-01-02T12:00:00Z');
+  async function buildPair(order) {
+    const ctx = ctxFor();
+    const dir = path.join(ctx.home, '.codex', 'sessions', '2026', '01', '01');
+    fs.mkdirSync(dir, { recursive: true });
+    const files = {
+      first: {
+        path: path.join(dir, 'rollout-2026-01-01T10-00-00-' + SHARED + '.jsonl'),
+        body: [metaLine, turnLine('First rollout text.')].map((l) => JSON.stringify(l)).join('\n') + '\n',
+      },
+      second: {
+        path: path.join(dir, 'rollout-2026-01-02T10-00-00-' + SHARED + '.jsonl'),
+        body: [metaLine, turnLine('Second rollout text.')].map((l) => JSON.stringify(l)).join('\n') + '\n',
+      },
+    };
+    for (const key of order) {
+      fs.writeFileSync(files[key].path, files[key].body);
+    }
+    for (const key of order) {
+      fs.utimesSync(files[key].path, sameTime, sameTime);
+    }
+    const r = await convindex.build(ctx, {});
+    assert.strictEqual(r.ok, true);
+    assert.strictEqual(r.duplicates, 1);
+    return path.basename(readManifest(ctx).sources['codex:' + SHARED].path);
+  }
+  const owner12 = await buildPair(['first', 'second']);
+  const owner21 = await buildPair(['second', 'first']);
+  assert.strictEqual(owner12, owner21, 'same canonical owner regardless of write order');
+  assert.strictEqual(
+    owner12,
+    'rollout-2026-01-02T10-00-00-' + SHARED + '.jsonl',
+    'later rollout filename wins exact mtime ties',
+  );
 });
 
 test('when an emptied source had an id that another source claims but fails to produce chunks for, the emptied source is still deleted and not resurrected', async function () {
