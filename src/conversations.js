@@ -1054,10 +1054,6 @@ function parseForeignSource(text, src, opts) {
 
 // ---- discovery ----------------------------------------------------------------------------
 
-function compareSourcesNewestFirst(a, b) {
-  return b.mtimeMs - a.mtimeMs || String(b.path || '').localeCompare(String(a.path || ''));
-}
-
 function statSource(file, kind, extra) {
   let st;
   try {
@@ -1189,7 +1185,7 @@ function subagentSourcesFromRoot(root, kind, app) {
     }
   }
   // Sort newest-first BEFORE capping so older sub-agent runs never hide recent ones.
-  out.sort(compareSourcesNewestFirst);
+  out.sort((a, b) => b.mtimeMs - a.mtimeMs);
   return out.slice(0, PER_APP_BUDGET);
 }
 
@@ -1507,7 +1503,7 @@ function discover(ctx, opts) {
   }
   // Sort newest-first BEFORE capping so a tool discovered late or a huge Kiro backlog never
   // starves newer chats across other tools.
-  candidates.sort(compareSourcesNewestFirst);
+  candidates.sort((a, b) => b.mtimeMs - a.mtimeMs);
   const perAppCap = opts.perAppBudget > 0 ? opts.perAppBudget : PER_APP_BUDGET;
   const appCounts = Object.create(null);
   const appAllowed = [];
@@ -1549,7 +1545,7 @@ function discover(ctx, opts) {
         picked.add(src);
         out.push(src);
       }
-      out.sort(compareSourcesNewestFirst);
+      out.sort((a, b) => b.mtimeMs - a.mtimeMs);
     }
   }
   out.totalCandidates = candidates.length;
