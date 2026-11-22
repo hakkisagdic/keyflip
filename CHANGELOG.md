@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.7.0] - 2026-11-22
+
 ### Fixed
 
 - **`keyflip_failover` and `keyflip_failover_verify` MCP tools now carry the same `autoswitch` (`pro`) license gate as `keyflip failover`.** Added `failover: 'autoswitch'` to `AREA_FEATURE` in `src/license.js`, exported `CMD_FEATURE` and `AREA_FEATURE`, and added a `CMD_FEATURE`-to-MCP `keyflip_<area>` parity test in `test/license.test.js` so paid CLI areas cannot omit matching MCP tools.
