@@ -28,6 +28,8 @@ import * as _embed from './embed.js';
 import * as _secretscan from './secretscan.js';
 import * as _fsutil from './fsutil.js';
 import * as _writeindex from './writeindex.js';
+import * as _config from './config.js';
+import * as _profanity from './profanity.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -286,6 +288,14 @@ function countStats(sources) {
   return stats;
 }
 
+function countProfanityMasked(sources) {
+  let n = 0;
+  Object.keys(sources || {}).forEach((id) => {
+    n += (sources[id] && sources[id].profanityMasked) || 0;
+  });
+  return n;
+}
+
 // Write `meta.json` under `meta.lock` and reconcile concurrent updates from disk:
 //   * Never writes unlocked if `meta.lock` cannot be acquired within the wait window.
 //   * Any source added on disk by a concurrent lexical build while an embedding worker was running
@@ -349,7 +359,9 @@ function writeMeta(ctx, meta, opts) {
           diskRow.vec &&
           diskRow.hash &&
           diskRow.hash === memRow.hash &&
-          diskRow.chunks === memRow.chunks
+          diskRow.chunks === memRow.chunks &&
+          diskRow.chunkBytes === memRow.chunkBytes &&
+          (diskRow.profanitySig || null) === (memRow.profanitySig || null)
         ) {
           if (
             !memRow.vec ||
@@ -361,9 +373,10 @@ function writeMeta(ctx, meta, opts) {
       });
       if (!meta.embedding && onDisk.embedding) meta.embedding = onDisk.embedding;
       meta.stats = countStats(meta.sources);
+      meta.profanityMasked = countProfanityMasked(meta.sources);
     }
     const replacer = function (k, v) {
-      if (k === '_oldVec' || k === '_oldHashes') return undefined;
+      if (k === '_oldVec' || k === '_oldHashes' || k === '_embeddedChunks') return undefined;
       return v;
     };
     _fsutil.atomicWrite(metaPath(ctx), JSON.stringify(meta, replacer, 2) + '\n', 0o600);
@@ -571,6 +584,7 @@ function spawnBackgroundEmbed(ctx, opts) {
   if (opts.embedBatch != null) args.push('--embed-batch', String(opts.embedBatch));
   if (opts.maxEmbedSources != null) args.push('--max-embed', String(opts.maxEmbedSources));
   if (opts.force) args.push('--force');
+  if (opts.rebuildProfanity) args.push('--rebuild-profanity');
   const env = Object.assign({}, process.env, (ctx && ctx.env) || {});
   if (ctx && ctx.configDir) {
     env.KEYFLIP_CONFIG_DIR = ctx.configDir;
@@ -627,28 +641,34 @@ function splitLong(text) {
 // that keeps it in the message text) is kept — an error string or a path is exactly what someone
 // searches for — but only its head, labelled, so one `cat` cannot fill several chunks with bytes
 // nobody meant to search. The full text stays in the transcript and every export.
-function chunkBody(m) {
-  const body = String(m.text || '').trim();
-  if (!body || m.machine !== true) return body;
+function chunkBody(m, maskFn) {
+  const raw = String(m.text || '').trim();
+  if (!raw) return { text: '', masked: false };
+  const maskedRes = maskFn ? maskFn(raw) : { text: raw, count: 0 };
+  const body = maskedRes.text;
+  const masked = maskedRes.count > 0;
+  if (!body || m.machine !== true) return { text: body, masked: masked };
   const head = body.length > MACHINE_CAP ? body.slice(0, MACHINE_CAP).trimEnd() + ' …' : body;
-  return 'Tool output: ' + head;
+  return { text: 'Tool output: ' + head, masked: masked };
 }
 
-function chunkConversation(conv) {
+function chunkConversation(conv, opts) {
+  const maskFn = opts && typeof opts.mask === 'function' ? opts.mask : null;
   const labelOf = (role) => (role === 'assistant' ? 'Assistant: ' : role === 'user' ? 'User: ' : '');
   const turns = [];
   let cur = null;
   for (const m of conv.messages || []) {
-    const body = chunkBody(m);
-    if (!body) continue;
-    const text = labelOf(m.role) + body;
+    const res = chunkBody(m, maskFn);
+    if (!res.text) continue;
+    const text = labelOf(m.role) + res.text;
     // A user message always starts a turn; so does any message with no turn open (a transcript
     // can begin with an assistant message, and tool/system lines sometimes lead).
     if (!cur || m.role === 'user') {
-      cur = { role: m.role, ts: m.ts || null, head: text, parts: [text] };
+      cur = { role: m.role, ts: m.ts || null, head: text, parts: [text], masked: res.masked };
       turns.push(cur);
     } else {
       cur.parts.push(text);
+      if (res.masked) cur.masked = true;
     }
   }
   const out = [];
@@ -664,25 +684,36 @@ function chunkConversation(conv) {
     // question and its answer belong together.
     if (text.length <= CHUNK_TARGET * 1.5) {
       if (buf && buf.text.length + 2 + text.length > CHUNK_TARGET) flush();
-      if (!buf) buf = { role: t.role, ts: t.ts, text: text };
-      else buf.text += '\n\n' + text;
+      if (!buf) buf = { role: t.role, ts: t.ts, text: text, masked: t.masked };
+      else {
+        buf.text += '\n\n' + text;
+        if (t.masked) buf.masked = true;
+      }
       continue;
     }
     flush();
     const head = t.head.length > 220 ? t.head.slice(0, 220).trimEnd() + ' …' : t.head;
     splitLong(text).forEach((part, i) => {
-      out.push({ role: t.role, ts: t.ts, text: i === 0 ? part : head + '\n\n' + part });
+      const chunkText = i === 0 ? part : head + '\n\n' + part;
+      const partMasked = !!(t.masked && chunkText.includes(_profanity.MASK_TOKEN));
+      out.push({ role: t.role, ts: t.ts, text: chunkText, masked: partMasked });
     });
   }
   flush();
-  return out.map((c, i) => ({
-    n: i,
-    role: c.role,
-    ts: c.ts,
-    h: hashText(c.text),
-    len: _bm25.tokenize(c.text).length,
-    text: c.text,
-  }));
+  let maskedChunks = 0;
+  const mapped = out.map((c, i) => {
+    if (c.masked) maskedChunks++;
+    return {
+      n: i,
+      role: c.role,
+      ts: c.ts,
+      h: hashText(c.text),
+      len: _bm25.tokenize(c.text).length,
+      text: c.text,
+    };
+  });
+  Object.defineProperty(mapped, 'maskedChunks', { value: maskedChunks, enumerable: false });
+  return mapped;
 }
 
 function readChunks(file) {
@@ -866,27 +897,45 @@ async function embedSource(ctx, id, chunks, prev, space, opts) {
   // hid the real problem (missing/torn chunk file) behind a healthy-looking count.
   if (!chunks.length) return null;
   const file = vectorPath(ctx, id);
-  let prefix = 0;
-  let prefixBuf = null;
+  const slotBufs = new Array(chunks.length);
+  const needIndices = [];
   let dim = (prev && prev.vec && prev.vec.dim) || 0;
+  let exactOrderMatch = false;
   const canReuse = prev && prev.vec && prev.vec.space === space.hash && prev.vec.dim && Array.isArray(prev.chunkHashes);
   if (canReuse) {
     const oldHashes = prev.chunkHashes;
-    while (prefix < oldHashes.length && prefix < chunks.length && oldHashes[prefix] === chunks[prefix].h) prefix++;
-    const old = prefix ? readVectorFile(file, prev.vec.dim, oldHashes.length) : null;
+    const old = readVectorFile(file, prev.vec.dim, oldHashes.length);
     if (old) {
-      prefixBuf = old.subarray(0, prefix * prev.vec.dim * 4);
       dim = prev.vec.dim;
+      const oldByHash = new Map();
+      for (let k = 0; k < oldHashes.length; k++) {
+        if (!oldByHash.has(oldHashes[k])) {
+          oldByHash.set(oldHashes[k], old.subarray(k * dim * 4, (k + 1) * dim * 4));
+        }
+      }
+      for (let i = 0; i < chunks.length; i++) {
+        const hit = oldByHash.get(chunks[i].h);
+        if (hit) slotBufs[i] = hit;
+        else needIndices.push(i);
+      }
+      exactOrderMatch =
+        needIndices.length === 0 &&
+        oldHashes.length === chunks.length &&
+        oldHashes.every((h, idx) => h === chunks[idx].h);
     } else {
-      prefix = 0;
+      dim = 0;
+      for (let i = 0; i < chunks.length; i++) needIndices.push(i);
     }
   } else {
     // Switching models (e.g. nomic-embed-text 768d -> bge-m3 1024d) starts a new vector space:
     // never seed `dim` from the previous model's vector metadata.
     dim = 0;
+    for (let i = 0; i < chunks.length; i++) needIndices.push(i);
   }
-  const need = chunks.slice(prefix);
-  if (!need.length && prefix) {
+  if (!needIndices.length && dim) {
+    if (!exactOrderMatch) {
+      _fsutil.atomicWrite(file, Buffer.concat(slotBufs), 0o600);
+    }
     return {
       space: space.hash,
       dim: dim,
@@ -894,8 +943,11 @@ async function embedSource(ctx, id, chunks, prev, space, opts) {
       model: space.model,
       host: space.host,
       remote: space.remote,
+      _embeddedChunks: 0,
     };
   }
+  const need = needIndices.map((idx) => chunks[idx]);
+  const reusedCount = chunks.length - need.length;
   const batchSize =
     opts && opts.embedBatch > 0 ? Math.max(1, Math.min(512, Math.floor(Number(opts.embedBatch)))) : EMBED_BATCH;
   const pauseMs =
@@ -932,21 +984,25 @@ async function embedSource(ctx, id, chunks, prev, space, opts) {
     if (opts && opts.onProgress)
       opts.onProgress({
         phase: 'embed-chunks',
-        done: prefix + Math.min(i + batchSize, need.length),
+        done: reusedCount + Math.min(i + batchSize, need.length),
         total: chunks.length,
       });
     if (pauseMs > 0) await pauseAtLeast(pauseMs);
   }
-  if (!dim || prefix + fresh.length !== chunks.length) return null;
-  const freshBuf = Buffer.alloc(fresh.length * dim * 4);
-  let off = 0;
-  for (const v of fresh) {
+  if (!dim || fresh.length !== needIndices.length) return null;
+  const outBuf = Buffer.alloc(chunks.length * dim * 4);
+  for (let i = 0; i < chunks.length; i++) {
+    if (slotBufs[i]) slotBufs[i].copy(outBuf, i * dim * 4);
+  }
+  for (let k = 0; k < needIndices.length; k++) {
+    const v = fresh[k];
+    let off = needIndices[k] * dim * 4;
     for (let j = 0; j < dim; j++) {
-      freshBuf.writeFloatLE(Number(v[j]) || 0, off);
+      outBuf.writeFloatLE(Number(v[j]) || 0, off);
       off += 4;
     }
   }
-  _fsutil.atomicWrite(file, prefixBuf ? Buffer.concat([prefixBuf, freshBuf]) : freshBuf, 0o600);
+  _fsutil.atomicWrite(file, outBuf, 0o600);
   return {
     space: space.hash,
     dim: dim,
@@ -954,6 +1010,7 @@ async function embedSource(ctx, id, chunks, prev, space, opts) {
     model: space.model,
     host: space.host,
     remote: space.remote,
+    _embeddedChunks: need.length,
   };
 }
 
@@ -963,6 +1020,11 @@ async function embedSource(ctx, id, chunks, prev, space, opts) {
 // files, and optionally embed them. Returns a report; never mutates a tool's own store.
 async function build(ctx, opts) {
   opts = opts || {};
+  const profanityEnabled =
+    typeof opts.profanityFilter === 'boolean' ? opts.profanityFilter : _config.get(ctx, 'conv.profanityFilter');
+  const curProfanitySig = _profanity.profanitySignature(ctx, profanityEnabled);
+  const profanityMask = profanityEnabled ? _profanity.createFilter({ configDir: ctx.configDir }).mask : null;
+  const rebuildProfanity = !!opts.rebuildProfanity;
   const dsOpts = { apps: opts.apps, foreign: opts.foreign, limitSources: opts.limitSources };
   const sources = conversations.discover(ctx, dsOpts);
   const meta = readMeta(ctx) || emptyMeta();
@@ -1004,6 +1066,8 @@ async function build(ctx, opts) {
     warnings: [],
     embedded: 0,
     embedding: null,
+    profanityFilter: profanityEnabled ? 'on' : 'off',
+    profanityMasked: 0,
   };
   // A store an adapter refused outright contributes no sources at all, so it can never reach the
   // per-source `catch` below. Fold its reason in here: a database past the read budget counts as a
@@ -1064,8 +1128,11 @@ async function build(ctx, opts) {
       // Fast path BEFORE parsing: an unchanged file keeps its id and hash by definition, so a
       // no-op build is a stat() per source instead of re-reading every transcript. A row from
       // an older id scheme is re-parsed once, so the id is re-derived under the current one.
+      const prevSigOk = ((prev && prev.profanitySig) || null) === curProfanitySig;
       if (
         !opts.force &&
+        !rebuildProfanity &&
+        prevSigOk &&
         prev &&
         prev.id &&
         prev.hash &&
@@ -1079,6 +1146,7 @@ async function build(ctx, opts) {
         if (id === prev.id) {
           next[prev.id] = Object.assign({}, prev, accounts.fields(prev));
           report.reused++;
+          report.profanityMasked += prev.profanityMasked || 0;
           pendingEnsureTokens.push(prev.id);
           continue;
         }
@@ -1116,7 +1184,15 @@ async function build(ctx, opts) {
         had.chunkScheme === CHUNK_SCHEME &&
         fs.existsSync(chunkPath(ctx, id)) &&
         chunkBytesOk(ctx, had);
-      if (!opts.force && sameEntry && had.mtimeMs === src.mtimeMs && had.size === src.size) {
+      const hadSigOk = ((had && had.profanitySig) || null) === curProfanitySig;
+      if (
+        !opts.force &&
+        !rebuildProfanity &&
+        hadSigOk &&
+        sameEntry &&
+        had.mtimeMs === src.mtimeMs &&
+        had.size === src.size
+      ) {
         // Re-attributed even though the row is reused: the account that was live when it was
         // written may have been learned (or deleted) since the last pass.
         next[id] = Object.assign(
@@ -1127,10 +1203,12 @@ async function build(ctx, opts) {
           accounts.fields(conv),
         );
         report.reused++;
+        report.profanityMasked += had.profanityMasked || 0;
         pendingEnsureTokens.push(id);
         continue;
       }
-      if (!opts.force && sameEntry && had.hash === conv.hash) {
+      const maskedTitle = profanityMask && conv.title ? profanityMask(conv.title).text : conv.title;
+      if (!opts.force && !rebuildProfanity && hadSigOk && sameEntry && had.hash === conv.hash) {
         next[id] = Object.assign(
           {},
           had,
@@ -1140,7 +1218,7 @@ async function build(ctx, opts) {
             size: src.size,
             path: src.path,
             updatedAt: conv.updatedAt,
-            title: conv.title,
+            title: maskedTitle,
             cwd: conv.cwd,
           },
           conv.parentId ? { parentId: conv.parentId } : {},
@@ -1148,25 +1226,60 @@ async function build(ctx, opts) {
           accounts.fields(conv),
         );
         report.reused++;
+        report.profanityMasked += had.profanityMasked || 0;
         pendingEnsureTokens.push(id);
         continue;
       }
-      const chunks = chunkConversation(conv);
+      const chunks = chunkConversation(conv, { mask: profanityMask });
       if (!chunks.length) {
         report.empty++;
         continue;
       }
+      const maskedChunks = chunks.maskedChunks || 0;
       // Old hashes/vectors may only seed prefix reuse when they belong to this same id —
       // a path that changed id (or an entry copied from a colliding id) must start clean.
       const sameOwner = !!had && had.id === id;
       const oldHashes = sameOwner ? had.chunkHashes || readChunks(chunkPath(ctx, id)).map((c) => c.h) : [];
+      const newHashes = chunks.map((c) => c.h);
+      const chunksIdentical =
+        !opts.force &&
+        sameEntry &&
+        oldHashes.length === newHashes.length &&
+        oldHashes.every((h, idx) => h === newHashes[idx]);
+      if (chunksIdentical) {
+        next[id] = Object.assign(
+          {},
+          had,
+          {
+            scheme: ID_SCHEME,
+            mtimeMs: src.mtimeMs,
+            size: src.size,
+            path: src.path,
+            updatedAt: conv.updatedAt,
+            title: maskedTitle,
+            cwd: conv.cwd,
+            hash: conv.hash,
+            counts: conv.counts,
+            bytes: bytes,
+            profanitySig: curProfanitySig,
+            profanityMasked: maskedChunks,
+          },
+          conv.parentId ? { parentId: conv.parentId } : {},
+          src.subId ? { subId: src.subId } : {},
+          accounts.fields(conv),
+        );
+        report.reused++;
+        report.profanityMasked += maskedChunks;
+        pendingEnsureTokens.push(id);
+        continue;
+      }
       const entry = {
         id: id,
         scheme: ID_SCHEME,
         chunkScheme: CHUNK_SCHEME,
         app: conv.app,
         surface: conv.surface,
-        title: conv.title,
+        title: maskedTitle,
         cwd: conv.cwd,
         createdAt: conv.createdAt,
         updatedAt: conv.updatedAt,
@@ -1180,9 +1293,12 @@ async function build(ctx, opts) {
         parserAccount: conv.account || null,
         chunks: chunks.length,
         bytes: bytes,
-        chunkHashes: chunks.map((c) => c.h),
+        chunkHashes: newHashes,
+        profanitySig: curProfanitySig,
+        profanityMasked: maskedChunks,
         // Changed text invalidates the vector alignment. Keep the OLD vector/hash pair only
-        // so an appended chat can reuse its unchanged prefix instead of embedding 8k chunks again.
+        // so an appended or profanity-masked chat can reuse its unchanged chunks instead of
+        // embedding every chunk again.
         vec: null,
         _oldVec: sameOwner && space && had.vec && had.vec.space === space.hash ? had.vec : null,
         _oldHashes: sameOwner && space && had.vec && had.vec.space === space.hash ? oldHashes : null,
@@ -1196,6 +1312,7 @@ async function build(ctx, opts) {
       next[id] = entry;
       report.changed++;
       report.indexed++;
+      report.profanityMasked += maskedChunks;
     } catch (e) {
       report.skipped++;
       report.errors.push({ path: src.path, app: src.app, error: (e && e.message) || String(e) });
@@ -1343,6 +1460,8 @@ async function build(ctx, opts) {
             ? meta.candidateSources
             : Object.keys(next).length,
       truncated: !(opts.apps && opts.apps.length) && !opts.limitSources ? sources.truncated || 0 : meta.truncated || 0,
+      profanitySig: full ? curProfanitySig : meta.profanitySig || curProfanitySig,
+      profanityMasked: countProfanityMasked(next),
       stats: countStats(next),
       sources: next,
     };
@@ -1377,6 +1496,7 @@ async function build(ctx, opts) {
       error: null,
       sources: 0,
       chunks: 0,
+      reembeddedChunks: 0,
       remainingSources: 0,
     };
     // Embed newest conversations first so when the embedding model changes (or on the first
@@ -1467,6 +1587,8 @@ async function build(ctx, opts) {
             });
             const vec = await embedSource(ctx, id, chunks, prev, space, opts);
             if (vec) {
+              const newlyEmbedded = typeof vec._embeddedChunks === 'number' ? vec._embeddedChunks : chunks.length;
+              delete vec._embeddedChunks;
               // Re-check that a concurrent lexical build did not rewrite the chunk file while
               // the HTTP embedding call was awaiting. If the chunk hashes on disk changed mid-call,
               // discard this vector so it is never paired with mismatched chunkHashes.
@@ -1491,6 +1613,7 @@ async function build(ctx, opts) {
               report.embedded++;
               report.embedding.sources++;
               report.embedding.chunks += chunks.length;
+              report.embedding.reembeddedChunks += newlyEmbedded;
               sinceFlush++;
               const nowMs = Date.now();
               if (sinceFlush >= EMBED_CHECKPOINT_SOURCES || nowMs - lastFlushMs >= EMBED_CHECKPOINT_MS) {
@@ -1660,6 +1783,7 @@ function catalog(ctx, opts) {
 }
 
 function status(ctx, opts) {
+  const profanityFilter = _config.get(ctx, 'conv.profanityFilter') ? 'on' : 'off';
   const meta = readMeta(ctx);
   if (!meta)
     return {
@@ -1672,6 +1796,8 @@ function status(ctx, opts) {
       pendingSources: 0,
       pendingChunks: 0,
       pendingTokensEstimate: 0,
+      profanityFilter: profanityFilter,
+      profanityMasked: 0,
     };
   const activeSpace = spaceOf(opts, ctx);
   let vectorSources = 0;
@@ -1736,6 +1862,8 @@ function status(ctx, opts) {
     staleModel:
       staleModel || (meta.embedding && meta.embedding.space !== activeSpace.hash ? meta.embedding.model : null),
     backgroundEmbed: bg.running ? bg : null,
+    profanityFilter: profanityFilter,
+    profanityMasked: countProfanityMasked(meta.sources),
   };
 }
 
