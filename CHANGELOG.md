@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.7.2] - 2026-11-23
+
 ### Added
 
 - **The conversation index keeps a conversation after its source file is deleted (`conv.keepDeleted`, default `on`).** A full `conv index` no longer drops the row, chunk file and vectors of a source that vanished; search, list, context and show treat it like any other conversation, and `conv show`, `conv export`, `conv transfer`, the Obsidian export and `keyflip_conv_show` rebuild it from the stored chunks and say "shown from the index" (`fromIndex: true`). Superseded rows (id scheme bump, collision re-claim) are still replaced, and filtered or truncated builds still delete nothing. `keyflip config set conv.keepDeleted off` restores removal for sources that go missing afterwards.
