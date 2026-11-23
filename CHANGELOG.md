@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.7.1] - 2026-11-23
+
 ### Added
 
 - **Local profanity filter for conversation RAG chunks, titles, and embeddings (`src/profanity.js`, `conv.profanityFilter`).** Masks Turkish and English profanity (including inflected/suffixed forms and simple obfuscations while preserving innocent look-alike words via allow-lists) with `[…]` before chunk hashing, BM25 tokenization, and local embedding (`conv-index/chunks`, `conv-index/vectors`) without modifying original transcripts on disk. Configurable via `conv.profanityFilter` (default `on`), extendable/overridable via `~/.config/keyflip/profanity.json` (`{ "add": [...], "allow": [...] }`), tracked via `profanitySig` so list or toggle changes incrementally re-chunk and re-embed only changed chunks (with `--rebuild-profanity` / MCP `rebuild_profanity` as an explicit pass), and surfaced in `keyflip conv status` and `keyflip_conv_status` (`profanityFilter`, `profanityMasked`). Search queries are left unmasked.
