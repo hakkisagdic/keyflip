@@ -1,0 +1,70 @@
+{
+  "stems": [
+    "fuck",
+    "motherfuck",
+    "shit",
+    "bullshit",
+    "bitch",
+    "asshole",
+    "bastard",
+    "cunt",
+    "dickhead",
+    "dumbass",
+    "jackass",
+    "dipshit",
+    "cocksuck"
+  ],
+  "exact": [
+    "dick",
+    "cock",
+    "prick",
+    "whore",
+    "slut",
+    "wanker",
+    "twat",
+    "stfu"
+  ],
+  "phrases": [
+    "son of a bitch",
+    "piece of shit",
+    "fuck off",
+    "fuck you",
+    "shut the fuck up"
+  ],
+  "allow": [
+    "got",
+    "pic",
+    "book",
+    "books",
+    "bokeh"
+  ],
+  "allowStems": [
+    "scunthorpe",
+    "shiitake",
+    "shittake",
+    "dickens",
+    "cocktail",
+    "cockpit",
+    "peacock",
+    "assistant",
+    "assert",
+    "assign",
+    "assume",
+    "asset",
+    "class",
+    "pass",
+    "grass",
+    "glass",
+    "bass",
+    "mass",
+    "book",
+    "bokeh",
+    "classic",
+    "analytics",
+    "analysis",
+    "analyst",
+    "document",
+    "hello",
+    "shell"
+  ]
+}
