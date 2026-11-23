@@ -8529,9 +8529,22 @@ const CONV_USAGE = [
   '       keyflip conv index --schedule [--interval N]   keep it current unattended (launchd/cron); --unschedule removes it',
   '       keyflip conv export (--all | <id>) [--obsidian] --out <dir> [--format md|html|json] [--no-redact]',
   '       keyflip conv transfer <id> --to <claude|codex|cursor|kiro|opencode|windsurf|gemini|copilot|aider>',
+  '       keyflip conv forget <id> [--confirm]   remove one conversation from the index (without --confirm it only shows what it would remove)',
   '       keyflip conv capabilities | status',
 ].join('\n');
-const CONV_SUBS = ['list', 'search', 'show', 'get', 'index', 'context', 'export', 'transfer', 'capabilities', 'status'];
+const CONV_SUBS = [
+  'list',
+  'search',
+  'show',
+  'get',
+  'index',
+  'context',
+  'export',
+  'transfer',
+  'forget',
+  'capabilities',
+  'status',
+];
 const CONV_VALUE_FLAGS = [
   '--app',
   '--since',
@@ -8638,8 +8651,14 @@ function convLoad(ctx, ref) {
     e.candidates = m.candidates || [];
     throw e;
   }
-  if (m.match.path) return _conversations.loadPath(ctx, m.match.path, { subId: m.match.subId });
-  return _conversations.get(ctx, ref);
+  try {
+    if (m.match.path) return _conversations.loadPath(ctx, m.match.path, { subId: m.match.subId });
+    return _conversations.get(ctx, ref);
+  } catch (e) {
+    // The source file was deleted: the index still holds the text.
+    if (e && e.code === 'CONV_SOURCE_GONE' && m.match.id) return _convindex.loadFromIndex(ctx, m.match.id);
+    throw e;
+  }
 }
 function convFailLoad(e) {
   if (e && e.candidates && e.candidates.length) {
@@ -9317,6 +9336,7 @@ async function cmdConv(ctx, rest) {
       .join(' · ');
     print(style.bold(conv.title));
     print(style.dim(head));
+    if (conv.fromIndex) print(style.dim('shown from the index'));
     // Which account worked on it, and how that is known: the user's word, or the switch
     // timeline. A guess is printed as a guess.
     const acct = _convaccounts.explain(ctx, conv);
@@ -9338,6 +9358,27 @@ async function cmdConv(ctx, rest) {
       if (m.text) print(m.text);
       if (m.tools && m.tools.length) print(style.dim('→ used ' + m.tools.join(', ')));
     });
+    return;
+  }
+
+  if (sub === 'forget') {
+    const ref = positionals(args, CONV_VALUE_FLAGS).join(' ').trim();
+    if (!ref) return fail(CONV_USAGE);
+    const confirm = args.indexOf('--confirm') !== -1;
+    let res;
+    try {
+      res = _convindex.forget(ctx, ref, { confirm: confirm });
+    } catch (e) {
+      return convFailLoad(e);
+    }
+    if (JSON_MODE) return jsonOut(res);
+    const what = res.id + ' · ' + (res.title || '') + ' (' + res.files.join(', ') + ')';
+    if (!confirm) {
+      print('Would remove from the index: ' + what);
+      print('Nothing was removed. The source file is never touched. Run again with --confirm to remove it.');
+      return;
+    }
+    print(style.ok('✅') + ' removed from the index: ' + what);
     return;
   }
 
@@ -9398,11 +9439,10 @@ async function cmdConv(ctx, rest) {
         });
         for (const row of rows) {
           const src = row.path ? byKey[_conversations.sourceKey(row)] || byKey[path.resolve(row.path)] : null;
-          if (!src) continue;
           try {
             n++;
             if (!JSON_MODE && n % 100 === 0) print(style.dim('  reading ' + n + '/' + rows.length));
-            yield _conversations.load(ctx, src, {});
+            yield src ? _conversations.load(ctx, src, {}) : _convindex.loadFromIndex(ctx, row.id);
           } catch {
             /* a single unreadable source must not abort the vault export */
           }
@@ -9456,12 +9496,8 @@ async function cmdConv(ctx, rest) {
       let done = 0;
       for (const row of rows) {
         const src = row.path ? byKey[_conversations.sourceKey(row)] || byKey[path.resolve(row.path)] : null;
-        if (!src) {
-          errors.push({ id: row.id, error: 'source is gone' });
-          continue;
-        }
         try {
-          const conv = _conversations.load(ctx, src, {});
+          const conv = src ? _conversations.load(ctx, src, {}) : _convindex.loadFromIndex(ctx, row.id);
           const res = _convexport.exportOne(conv, {
             out: dest + path.sep,
             format: format,

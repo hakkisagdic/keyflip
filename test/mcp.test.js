@@ -1485,6 +1485,33 @@ test('MCP conversation tools: read-only tools never build, index needs confirm',
   assert.strictEqual(st.profanityMasked, 0);
 });
 
+test('MCP: a deleted source is shown from the index with fromIndex, and there is no forget tool', async function () {
+  const home = mkhome();
+  seedConversation(home);
+  await mcpSession(home, [call(1, 'keyflip_conv_index', { confirm: true })], [1]);
+  fs.rmSync(path.join(home, '.claude', 'projects', '-work-proj', 'sess-mcp.jsonl'));
+  await mcpSession(home, [call(1, 'keyflip_conv_index', { confirm: true })], [1]);
+  const got = await mcpSession(
+    home,
+    [
+      call(1, 'keyflip_conv_show', { id: 'sess-mcp' }),
+      call(2, 'keyflip_conv_list', {}),
+      call(3, 'keyflip_conv_search', { query: 'database migration' }),
+      { jsonrpc: '2.0', id: 4, method: 'tools/list' },
+    ],
+    [1, 2, 3, 4],
+  );
+  const one = got[1].result.structuredContent;
+  assert.strictEqual(one.fromIndex, true);
+  assert.match(one.content, /dry run first/);
+  assert.match(one.content, /shown from the index/);
+  assert.strictEqual(got[2].result.structuredContent.total, 1);
+  assert.ok(got[3].result.structuredContent.count >= 1);
+  assert.ok(JSON.stringify([got[1], got[2], got[3]]).indexOf('sourceGoneAt') === -1);
+  const names = got[4].result.tools.map((t) => t.name);
+  assert.ok(!names.some((n) => /forget/i.test(n)), 'forgetting is CLI only');
+});
+
 test('MCP conversation tools: list, search, context, show, and a handoff bundle', async function () {
   const home = mkhome();
   seedConversation(home);

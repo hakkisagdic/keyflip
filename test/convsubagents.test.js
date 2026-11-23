@@ -221,11 +221,12 @@ test('Claude sub-agents: separate counts, search label, unknown account, noise/s
 
     fs.rmSync(a3Path);
     const idxDeleted = lastJson(runCli(tmp, ['conv', 'index', '--no-embed', '--json']));
-    assert.strictEqual(idxDeleted.removed, 1);
+    // The index keeps a conversation whose source file was deleted (conv.keepDeleted, default on).
+    assert.strictEqual(idxDeleted.removed, 0);
     const stDeleted = lastJson(runCli(tmp, ['conv', 'status', '--json']));
     assert.strictEqual(stDeleted.stats.byApp.claude.sources, 2);
-    assert.strictEqual(stDeleted.stats.byApp['claude (subagent)'].sources, 2);
-    assert.strictEqual(fs.existsSync(convindex.chunkPath(ctx, 'claude:subagent:sess-1:a3')), false);
+    assert.strictEqual(stDeleted.stats.byApp['claude (subagent)'].sources, 3);
+    assert.strictEqual(fs.existsSync(convindex.chunkPath(ctx, 'claude:subagent:sess-1:a3')), true);
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }

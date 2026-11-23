@@ -1075,6 +1075,15 @@ keyflip conv transfer a7dc93d0 --to codex         # a handoff bundle for another
   `keyflip conv index --embed --rebuild-profanity` (only chunks whose masked text changed are
   re-embedded), and inspect the active setting and masked chunk count via `keyflip conv status` or
   `keyflip_conv_status`.
+- **History outlives the chat file (`conv.keepDeleted`, default `on`).** When a source file is deleted,
+  its row, chunk text and vectors stay in the index: `conv search`, `list`, `context` and `show` treat it
+  like any other conversation. `conv show` / `keyflip_conv_show` / `conv export` rebuild a deleted
+  conversation from the stored chunks and say so ("shown from the index", `fromIndex: true`); that copy is
+  lossy (turn text only, tool results are not indexed, masked words stay masked). If the file returns it is
+  re-parsed as usual. A model change re-embeds it from the stored text. The only way to remove one is
+  `keyflip conv forget <id> --confirm` (CLI only; without `--confirm` it prints what it would remove and
+  changes nothing; the source file is never touched). `keyflip config set conv.keepDeleted off` restores
+  removal for sources that go missing from then on.
 
 ## Context Layer — portable project memory (`.keyflip/`)
 

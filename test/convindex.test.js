@@ -6,6 +6,7 @@ import fs from 'fs';
 import http from 'http';
 import path from 'path';
 import cp from 'child_process';
+import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 import { makeCtx } from './helpers.js';
 import * as config from '../src/config.js';
@@ -101,7 +102,7 @@ test('two transcripts that claim one id are kept apart, and the counts still mat
   assert.match(texts, /Second copy\./);
 });
 
-test('a deleted conversation disappears from an unfiltered build (an empty app list is no filter)', async function () {
+test('K3: with keepDeleted off a deleted conversation disappears from an unfiltered build (an empty app list is no filter)', async function () {
   const ctx = ctxFor();
   const file = writeClaude(ctx, 'db-1', [
     { type: 'user', message: { role: 'user', content: 'How do we run the database migration safely?' } },
@@ -112,7 +113,7 @@ test('a deleted conversation disappears from an unfiltered build (an empty app l
 
   fs.rmSync(file);
   // The CLI passes apps: [] when no --app is given — that is no filter, so the build is full.
-  const r = await convindex.build(ctx, { apps: [] });
+  const r = await convindex.build(ctx, { apps: [], keepDeleted: false });
   assert.strictEqual(r.removed, 1);
   const manifest = readManifest(ctx);
   assert.strictEqual(manifest.sources[id], undefined, 'the row is gone');
@@ -1340,7 +1341,7 @@ test('worker checkpoint does not resurrect a source deleted by a concurrent full
       deletedDuringEmbed = true;
       // Delete the transcript file and run a concurrent full lexical build
       fs.rmSync(fileDel, { force: true });
-      const delBuild = await convindex.build(ctx, { embed: false });
+      const delBuild = await convindex.build(ctx, { embed: false, keepDeleted: false });
       assert.strictEqual(delBuild.removed, 1);
       assert.strictEqual(readManifest(ctx).sources['claude:local:to-be-deleted'], undefined);
     }
@@ -1800,7 +1801,7 @@ test('when an emptied source had an id that another source claims but fails to p
   fs.utimesSync(file2, new Date(now + 20000), new Date(now + 20000));
   fs.utimesSync(file1, new Date(now + 10000), new Date(now + 10000));
 
-  const r = await convindex.build(ctx, {});
+  const r = await convindex.build(ctx, { keepDeleted: false });
   assert.strictEqual(r.ok, true);
   const after = readManifest(ctx);
   assert.strictEqual(
@@ -2200,4 +2201,178 @@ test('K4, K6 & K8: profanitySig change and --rebuild-profanity re-embed only cha
   assert.deepStrictEqual(restoredChunks, unmaskedMixedChunks);
   assert.strictEqual(convindex.status(ctx).profanityFilter, 'off');
   assert.strictEqual(convindex.status(ctx).profanityMasked, 0);
+});
+
+// ---- keepDeleted: the index keeps a conversation after its source file is deleted -------------
+
+function sha(file) {
+  return crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+}
+function rowWithoutGone(row) {
+  const c = Object.assign({}, row);
+  delete c.sourceGoneAt;
+  return crypto.createHash('sha256').update(JSON.stringify(c)).digest('hex');
+}
+function seedThree(ctx) {
+  const files = {};
+  files.a = writeClaude(ctx, 'keep-a', [
+    { type: 'user', message: { role: 'user', content: 'Alpha question about kubernetes rollout.' } },
+    { type: 'assistant', message: { role: 'assistant', content: 'Alpha answer: use a canary.' } },
+  ]);
+  files.b = writeClaude(ctx, 'keep-b', [
+    { type: 'user', message: { role: 'user', content: 'Bravo question about zebrafish genomes.' } },
+    { type: 'assistant', message: { role: 'assistant', content: 'Bravo answer: sequence it.' } },
+  ]);
+  files.c = writeClaude(ctx, 'keep-c', [
+    { type: 'user', message: { role: 'user', content: 'Charlie question about sourdough.' } },
+  ]);
+  return files;
+}
+
+test('K1: a deleted source stays in the index byte-identical, is searchable, and shows from its chunks', async function () {
+  const ctx = ctxFor();
+  const files = seedThree(ctx);
+  await convindex.build(ctx, { embed: true, model: 'bge-m3', post: stubPost({ dim: 8 }) });
+  const id = 'claude:local:keep-b';
+  const row0 = readManifest(ctx).sources[id];
+  const before = {
+    row: rowWithoutGone(row0),
+    chunk: sha(convindex.chunkPath(ctx, id)),
+    vec: sha(convindex.vectorPath(ctx, id)),
+    tok: sha(convindex.tokenPath(ctx, id)),
+  };
+  fs.rmSync(files.b);
+  const r = await convindex.build(ctx, { embed: true, model: 'bge-m3', post: stubPost({ dim: 8 }) });
+  assert.strictEqual(r.removed, 0);
+  const row1 = readManifest(ctx).sources[id];
+  assert.ok(row1, 'the row is kept');
+  assert.ok(row1.sourceGoneAt, 'the first miss is recorded');
+  assert.strictEqual(rowWithoutGone(row1), before.row);
+  assert.strictEqual(sha(convindex.chunkPath(ctx, id)), before.chunk);
+  assert.strictEqual(sha(convindex.vectorPath(ctx, id)), before.vec);
+  assert.strictEqual(sha(convindex.tokenPath(ctx, id)), before.tok);
+  // A second full build keeps the first timestamp.
+  await convindex.build(ctx, {});
+  assert.strictEqual(readManifest(ctx).sources[id].sourceGoneAt, row1.sourceGoneAt);
+
+  const hits = convindex.lexical(ctx, 'zebrafish', {});
+  assert.ok(JSON.stringify(hits).includes(id), 'search finds it');
+  assert.ok(!JSON.stringify(hits).includes('sourceGoneAt'));
+  const cat = convindex.catalog(ctx, {});
+  assert.ok(cat.conversations.some((c) => c.id === id));
+  assert.ok(!JSON.stringify(cat).includes('sourceGoneAt'), 'no label in the catalog');
+  assert.ok(!JSON.stringify(convindex.status(ctx)).includes('sourceGoneAt'));
+
+  const conv = convindex.loadFromIndex(ctx, id);
+  assert.strictEqual(conv.fromIndex, true);
+  assert.strictEqual(conv.app, 'claude');
+  assert.deepStrictEqual(
+    conv.messages.map((m) => m.role),
+    ['user', 'assistant'],
+  );
+  assert.match(conv.messages[0].text, /zebrafish genomes/);
+  assert.match(conv.messages[1].text, /sequence it/);
+});
+
+test('K2: a restored source is re-parsed, not duplicated, and sourceGoneAt is cleared', async function () {
+  const ctx = ctxFor();
+  const files = seedThree(ctx);
+  await convindex.build(ctx, {});
+  const body = fs.readFileSync(files.b, 'utf8');
+  fs.rmSync(files.b);
+  await convindex.build(ctx, {});
+  assert.ok(readManifest(ctx).sources['claude:local:keep-b'].sourceGoneAt);
+  fs.writeFileSync(files.b, body);
+  const r = await convindex.build(ctx, {});
+  assert.strictEqual(r.removed, 0);
+  const m = readManifest(ctx);
+  assert.strictEqual(Object.keys(m.sources).length, 3, 'no duplicate row');
+  assert.strictEqual(m.sources['claude:local:keep-b'].sourceGoneAt, undefined);
+});
+
+test('K3: with keepDeleted off a vanished source is removed; rows already marked gone stay', async function () {
+  const ctx = ctxFor();
+  const files = seedThree(ctx);
+  await convindex.build(ctx, {});
+  fs.rmSync(files.a);
+  await convindex.build(ctx, {}); // kept (default on), marked gone
+  fs.rmSync(files.b);
+  const r = await convindex.build(ctx, { keepDeleted: false });
+  assert.strictEqual(r.removed, 1);
+  const m = readManifest(ctx);
+  assert.strictEqual(m.sources['claude:local:keep-b'], undefined);
+  assert.ok(m.sources['claude:local:keep-a'], 'a source that went missing before the switch stays');
+  assert.strictEqual(fs.existsSync(convindex.chunkPath(ctx, 'claude:local:keep-b')), false);
+});
+
+test('K3b: the config key conv.keepDeleted is read, defaults on, and accepts on/off', async function () {
+  const ctx = ctxFor();
+  assert.strictEqual(config.get(ctx, 'conv.keepDeleted'), true);
+  const files = seedThree(ctx);
+  await convindex.build(ctx, {});
+  config.set(ctx, 'conv.keepDeleted', 'off');
+  assert.strictEqual(config.get(ctx, 'conv.keepDeleted'), false);
+  fs.rmSync(files.c);
+  const r = await convindex.build(ctx, {});
+  assert.strictEqual(r.removed, 1);
+});
+
+test('K4: forget without confirm changes nothing; with confirm removes index files and leaves the source', async function () {
+  const ctx = ctxFor();
+  const files = seedThree(ctx);
+  await convindex.build(ctx, { embed: true, model: 'bge-m3', post: stubPost({ dim: 8 }) });
+  const id = 'claude:local:keep-a';
+  const plan = convindex.forget(ctx, id, {});
+  assert.strictEqual(plan.removed, false);
+  assert.ok(plan.files.length >= 3);
+  assert.ok(readManifest(ctx).sources[id]);
+  assert.ok(fs.existsSync(convindex.chunkPath(ctx, id)));
+  const done = convindex.forget(ctx, id, { confirm: true });
+  assert.strictEqual(done.removed, true);
+  assert.strictEqual(readManifest(ctx).sources[id], undefined);
+  [convindex.chunkPath(ctx, id), convindex.vectorPath(ctx, id), convindex.tokenPath(ctx, id)].forEach((f) =>
+    assert.strictEqual(fs.existsSync(f), false, f),
+  );
+  assert.ok(fs.existsSync(files.a), 'the source file is untouched');
+  assert.strictEqual(readManifest(ctx).stats.sources, 2);
+  assert.throws(() => convindex.forget(ctx, 'nope-nothing', { confirm: true }), /no conversation/);
+});
+
+test('K5: a re-embed with a different model re-embeds a gone source from its stored chunks', async function () {
+  const ctx = ctxFor();
+  const files = seedThree(ctx);
+  await convindex.build(ctx, { embed: true, model: 'bge-m3', post: stubPost({ dim: 8 }) });
+  const id = 'claude:local:keep-b';
+  fs.rmSync(files.b);
+  await convindex.build(ctx, { embed: true, model: 'bge-m3', post: stubPost({ dim: 8 }) });
+  const oldSpace = readManifest(ctx).sources[id].vec.space;
+  const seen = [];
+  const post = async function (_u, body) {
+    seen.push(...body.input);
+    return { model: body.model, embeddings: body.input.map(() => Array(12).fill(0.25)) };
+  };
+  const r = await convindex.build(ctx, { embed: true, model: 'nomic-embed-text', post: post });
+  assert.strictEqual(r.ok, true);
+  const row = readManifest(ctx).sources[id];
+  assert.ok(row.sourceGoneAt);
+  assert.ok(row.vec && row.vec.space !== oldSpace, 'vectors follow the new model');
+  assert.ok(
+    seen.some((t) => /zebrafish/.test(t)),
+    'embedded from the stored chunk text',
+  );
+});
+
+test('K6: filtered and truncated builds delete nothing', async function () {
+  const ctx = ctxFor();
+  const files = seedThree(ctx);
+  await convindex.build(ctx, {});
+  fs.rmSync(files.b);
+  const r = await convindex.build(ctx, { apps: ['codex'], keepDeleted: false });
+  assert.strictEqual(r.removed, 0);
+  const m = readManifest(ctx);
+  assert.ok(m.sources['claude:local:keep-b']);
+  assert.strictEqual(m.sources['claude:local:keep-b'].sourceGoneAt, undefined, 'a filtered build does not even mark');
+  const r2 = await convindex.build(ctx, { limitSources: 1, keepDeleted: false });
+  assert.strictEqual(r2.removed, 0);
+  assert.ok(readManifest(ctx).sources['claude:local:keep-b']);
 });

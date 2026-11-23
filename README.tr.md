@@ -1149,6 +1149,15 @@ keyflip conv transfer a7dc93d0 --to codex         # başka bir yapay zekâ arac�
   üzerinde tek seferlik geçiş için `keyflip conv index --embed --rebuild-profanity` çalıştırabilir
   (yalnızca maskelenen metni değişen parçalar yeniden gömülür) ve etkin ayar ile maskelenen parça
   sayısını `keyflip conv status` veya `keyflip_conv_status` üzerinden görebilirsiniz.
+- **Geçmiş sohbet dosyasından uzun yaşar (`conv.keepDeleted`, varsayılan `on`).** Bir kaynak dosya
+  silinince satırı, parça metni ve vektörleri indekste kalır: `conv search`, `list`, `context` ve `show`
+  onu diğer sohbetler gibi ele alır. `conv show` / `keyflip_conv_show` / `conv export`, silinmiş sohbeti
+  saklı parçalardan kurar ve bunu söyler ("shown from the index", `fromIndex: true`); bu kopya kayıplıdır
+  (yalnız tur metni, araç çıktıları indekslenmez, maskelenen sözcükler maskeli kalır). Dosya geri gelirse
+  her zamanki gibi yeniden çözümlenir. Model değişince saklı metinden yeniden gömülür. Birini kaldırmanın
+  tek yolu `keyflip conv forget <id> --confirm` (yalnız CLI; `--confirm` olmadan neyi kaldıracağını yazar,
+  hiçbir şeyi değiştirmez; kaynak dosyaya asla dokunulmaz). `keyflip config set conv.keepDeleted off`
+  bundan sonra kaybolan kaynaklar için kaldırmayı geri getirir.
 
 ## Bağlam Katmanı — taşınabilir proje hafızası (`.keyflip/`)
 
