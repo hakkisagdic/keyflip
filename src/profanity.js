@@ -4,6 +4,7 @@ import crypto from 'crypto';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import { normalizeModelId, loadLocalClassifier } from './profanity-model.js';
 
 const FILE_NAME = 'profanity.json';
 const MASK_TOKEN = '[…]';
@@ -128,12 +129,24 @@ function parseUserList(raw) {
   }
 }
 
-function profanitySignature(ctx, enabled) {
+function profanitySignature(ctx, enabled, modelOpts) {
   if (!enabled) return 'off';
   const rawUser = readUserListRaw(ctx);
-  return crypto
+  const base = crypto
     .createHash('sha1')
     .update(FILTER_VERSION + '\0on\0' + RAW_TR + '\0' + RAW_EN + '\0' + rawUser)
+    .digest('hex')
+    .slice(0, 16);
+
+  const m = modelOpts || {};
+  const modelId = normalizeModelId(m.model);
+  if (modelId === 'off' || m.fallback === true) return base;
+
+  const modelHash = String(m.modelHash || '');
+  const threshold = typeof m.threshold === 'number' && Number.isFinite(m.threshold) ? m.threshold : 0.8;
+  return crypto
+    .createHash('sha1')
+    .update(base + '\0model\0' + modelId + '\0' + modelHash + '\0' + threshold.toFixed(4))
     .digest('hex')
     .slice(0, 16);
 }
@@ -483,11 +496,181 @@ function createFilter(opts) {
     return { text: out, count: replacements.length };
   }
 
-  return { mask };
+  function maskWithFlagged(text, flaggedSet) {
+    const base = mask(text);
+    if (!base.text || !flaggedSet || !flaggedSet.size) return { text: base.text, count: base.count, modelCount: 0 };
+    const spans = splitSentences(base.text);
+    if (!spans.length) return { text: base.text, count: base.count, modelCount: 0 };
+    const replacements = [];
+    for (const span of spans) {
+      if (flaggedSet.has(span.text)) {
+        replacements.push([span.start, span.end]);
+      }
+    }
+    if (!replacements.length) return { text: base.text, count: base.count, modelCount: 0 };
+    let out = '';
+    let cursor = 0;
+    for (const [start, end] of replacements) {
+      if (start < cursor) continue;
+      out += base.text.slice(cursor, start) + MASK_TOKEN;
+      cursor = end;
+    }
+    out += base.text.slice(cursor);
+    return { text: out, count: base.count + replacements.length, modelCount: replacements.length };
+  }
+
+  async function prepare(convOrTexts) {
+    const modelId = normalizeModelId(opts.model);
+    const threshold = typeof opts.threshold === 'number' && Number.isFinite(opts.threshold) ? opts.threshold : 0.8;
+    if (!opts.classifier && modelId === 'off') {
+      return { mask, flagged: new Set(), flaggedCount: 0 };
+    }
+
+    let rawTexts = [];
+    if (Array.isArray(convOrTexts)) {
+      rawTexts = convOrTexts.filter((t) => typeof t === 'string' && t);
+    } else if (convOrTexts && typeof convOrTexts === 'object') {
+      if (typeof convOrTexts.title === 'string' && convOrTexts.title) rawTexts.push(convOrTexts.title);
+      if (Array.isArray(convOrTexts.messages)) {
+        for (const m of convOrTexts.messages) {
+          if (m && typeof m.text === 'string' && m.text) rawTexts.push(m.text);
+        }
+      }
+    }
+
+    const candidates = [];
+    const seen = new Set();
+    for (const raw of rawTexts) {
+      const stage1 = mask(raw).text;
+      if (!stage1) continue;
+      for (const span of splitSentences(stage1)) {
+        if (!span.text || span.text === MASK_TOKEN || !HAS_LETTER_RE.test(span.text)) continue;
+        if (!seen.has(span.text)) {
+          seen.add(span.text);
+          candidates.push(span.text);
+        }
+      }
+    }
+
+    if (!candidates.length) {
+      return { mask, flagged: new Set(), flaggedCount: 0 };
+    }
+
+    const scores = await classifyOffensive(candidates, {
+      classifier: opts.classifier,
+      model: modelId,
+      configDir: opts.configDir,
+      env: opts.env,
+      home: opts.home,
+      runtimeLoader: opts.runtimeLoader,
+    });
+    const flagged = new Set();
+    for (let i = 0; i < candidates.length; i++) {
+      const s = scores[i] && typeof scores[i].score === 'number' ? scores[i].score : 0;
+      if (s >= threshold) flagged.add(candidates[i]);
+    }
+    return {
+      mask: function (t) {
+        return maskWithFlagged(t, flagged);
+      },
+      flagged: flagged,
+      flaggedCount: flagged.size,
+    };
+  }
+
+  return { mask, prepare };
+}
+
+function splitSentences(text) {
+  if (typeof text !== 'string' || !text) return [];
+  const spans = [];
+  const lineRe = /[^\r\n]+/g;
+  let lm;
+  while ((lm = lineRe.exec(text)) !== null) {
+    const line = lm[0];
+    const base = lm.index;
+    let startOffset = 0;
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      if (ch !== '.' && ch !== '!' && ch !== '?' && ch !== '…') continue;
+      let j = i;
+      while (
+        j + 1 < line.length &&
+        (line[j + 1] === '.' || line[j + 1] === '!' || line[j + 1] === '?' || line[j + 1] === '…')
+      ) {
+        j++;
+      }
+      const next = j + 1 < line.length ? line[j + 1] : '';
+      if (next && !/\s/.test(next)) {
+        i = j;
+        continue;
+      }
+      // Trim surrounding horizontal spaces while keeping exact string indices.
+      let s = base + startOffset;
+      let e = base + j + 1;
+      while (s < e && (text[s] === ' ' || text[s] === '\t')) s++;
+      while (e > s && (text[e - 1] === ' ' || text[e - 1] === '\t')) e--;
+      if (e > s) spans.push({ start: s, end: e, text: text.slice(s, e) });
+      startOffset = j + 1;
+      i = j;
+    }
+    if (startOffset < line.length) {
+      let s = base + startOffset;
+      let e = base + line.length;
+      while (s < e && (text[s] === ' ' || text[s] === '\t')) s++;
+      while (e > s && (text[e - 1] === ' ' || text[e - 1] === '\t')) e--;
+      if (e > s) spans.push({ start: s, end: e, text: text.slice(s, e) });
+    }
+  }
+  return spans;
+}
+
+function normalizeScores(raw, len) {
+  const out = [];
+  for (let i = 0; i < len; i++) {
+    const item = Array.isArray(raw) ? raw[i] : null;
+    const score = item && typeof item.score === 'number' && Number.isFinite(item.score) ? item.score : 0;
+    out.push({ score: Math.max(0, Math.min(1, score)) });
+  }
+  return out;
+}
+
+async function classifyOffensive(texts, opts) {
+  const list = Array.isArray(texts) ? texts : [];
+  if (!list.length) return [];
+  opts = opts || {};
+
+  if (typeof opts.classifier === 'function') {
+    const res = await opts.classifier(list);
+    return normalizeScores(res, list.length);
+  }
+
+  const modelId = normalizeModelId(opts.model);
+  if (modelId === 'off') {
+    return list.map(() => ({ score: 0 }));
+  }
+
+  const clf = await loadLocalClassifier(opts, modelId, opts);
+  try {
+    const res = await clf(list);
+    return normalizeScores(res, list.length);
+  } finally {
+    if (clf && typeof clf.dispose === 'function') await clf.dispose();
+  }
 }
 
 function maskProfanity(text, opts) {
   return createFilter(opts).mask(text);
 }
 
-export { FILE_NAME, MASK_TOKEN, userListPath, createFilter, maskProfanity, profanitySignature };
+export {
+  FILE_NAME,
+  MASK_TOKEN,
+  userListPath,
+  createFilter,
+  maskProfanity,
+  profanitySignature,
+  splitSentences,
+  classifyOffensive,
+  normalizeModelId,
+};
