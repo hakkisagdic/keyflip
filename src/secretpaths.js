@@ -24,6 +24,9 @@ const SECRET_DIRS = [
   // Cross-app retrieval index (`keyflip conv index`): chunked CONVERSATION TEXT plus embedding
   // vectors. Rebuildable, but still raw prose — 0600, never versioned, backed up or synced.
   'conv-index',
+  // Downloaded local ML models and runtime (`keyflip conv profanity-model install`): large
+  // binary weights/node_modules kept under configDir, never versioned, backed up or synced.
+  'models',
 ];
 // Secret-shaped files, by extension (no leading dot).
 // `pre-scrub` is the reversible-copy suffix `memory audit --apply` leaves behind: a redacted keepsake
