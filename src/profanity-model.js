@@ -192,7 +192,7 @@ function listInstalledModels(ctxOrOpts) {
   const root = weightsRootDir(ctxOrOpts);
   if (!root || !fs.existsSync(root)) return [];
   const out = [];
-  let orgs = [];
+  let orgs;
   try {
     orgs = fs.readdirSync(root);
   } catch {
@@ -201,7 +201,7 @@ function listInstalledModels(ctxOrOpts) {
   for (const org of orgs) {
     if (!SEGMENT_RE.test(org) || org.startsWith('.')) continue;
     const orgDir = path.join(root, org);
-    let repos = [];
+    let repos;
     try {
       if (!fs.statSync(orgDir).isDirectory()) continue;
       repos = fs.readdirSync(orgDir);
