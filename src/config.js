@@ -215,6 +215,11 @@ SCHEMA['conv.maxEmbed'] = {
   max: 100000,
   help: 'Maximum conversations embedded per scheduled tick (0 = unlimited).',
 };
+SCHEMA['conv.profanityFilter'] = {
+  type: 'bool',
+  default: true,
+  help: 'Mask profanity with […] in indexed conversation chunks and embeddings (off = keep raw text).',
+};
 SCHEMA['ui.color'] = { type: 'bool', default: true, help: 'Colorize CLI output.' };
 SCHEMA['usage.cacheTtlSeconds'] = {
   type: 'int',

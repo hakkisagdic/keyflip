@@ -342,3 +342,17 @@ test('threads.mergeMaxMiB is a bounded int — no unbounded "read it all"', func
     config.set(ctx, 'threads.mergeMaxMiB', '4096');
   }, 'a 4 GiB cap is an out-of-memory waiting for a 24 MB paste');
 });
+
+test('conv.profanityFilter defaults ON and coerces on/off/true/false', function () {
+  const ctx = makeCtx();
+  assert.strictEqual(config.get(ctx, 'conv.profanityFilter'), true);
+  assert.strictEqual(config.describe()['conv.profanityFilter'].type, 'bool');
+  assert.strictEqual(config.set(ctx, 'conv.profanityFilter', 'off'), false);
+  assert.strictEqual(config.get(ctx, 'conv.profanityFilter'), false);
+  assert.strictEqual(config.set(ctx, 'conv.profanityFilter', 'on'), true);
+  assert.strictEqual(config.get(ctx, 'conv.profanityFilter'), true);
+  assert.strictEqual(config.set(ctx, 'conv.profanityFilter', 'false'), false);
+  assert.strictEqual(config.get(ctx, 'conv.profanityFilter'), false);
+  assert.strictEqual(config.unset(ctx, 'conv.profanityFilter'), true);
+  assert.strictEqual(config.get(ctx, 'conv.profanityFilter'), true);
+});
