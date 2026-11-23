@@ -1014,6 +1014,107 @@ async function embedSource(ctx, id, chunks, prev, space, opts) {
   };
 }
 
+// ---- show from the index, forget -----------------------------------------------------------
+
+// Rebuild a conversation from the stored row and chunk text, for a source whose file is gone.
+// Lossy by nature (chunks hold turns, tool results are not indexed, profanity stays masked), so
+// the result carries `fromIndex: true` and every renderer says "shown from the index".
+function loadFromIndex(ctx, id) {
+  const meta = readMeta(ctx);
+  const row = meta && meta.sources && meta.sources[id];
+  if (!row) {
+    const e = new Error('no conversation in the index with id ' + id);
+    e.code = 'CONV_NOT_FOUND';
+    throw e;
+  }
+  const chunks = readChunks(chunkPath(ctx, id));
+  if (!chunks.length) {
+    const e = new Error('the source file is gone and the index holds no text for ' + id);
+    e.code = 'CONV_SOURCE_GONE';
+    throw e;
+  }
+  const messages = [];
+  chunks.forEach((c) => {
+    String(c.text)
+      .split(/\n\n(?=(?:User|Assistant): )/)
+      .forEach((part, i) => {
+        let role = c.role || 'system';
+        let text = part;
+        const m = /^(User|Assistant): ([\s\S]*)$/.exec(part);
+        if (m) {
+          role = m[1] === 'User' ? 'user' : 'assistant';
+          text = m[2];
+        }
+        messages.push({ role: role, ts: i === 0 ? c.ts || null : null, text: text, tools: [] });
+      });
+  });
+  const conv = {
+    id: row.id,
+    app: row.app,
+    surface: row.surface,
+    title: row.title,
+    cwd: row.cwd || null,
+    createdAt: row.createdAt || null,
+    updatedAt: row.updatedAt || null,
+    counts: row.counts || { messages: messages.length },
+    messages: messages,
+    fromIndex: true,
+  };
+  ['parentId', 'account', 'accountSource', 'accountConfidence', 'accountWhy', 'parserAccount'].forEach((k) => {
+    if (row[k] != null) conv[k] = row[k];
+  });
+  return conv;
+}
+
+// The only way to remove an indexed conversation on purpose. Without `confirm` it changes
+// nothing and returns the plan. The source file is never touched.
+function forget(ctx, ref, opts) {
+  opts = opts || {};
+  const meta = readMeta(ctx);
+  if (!meta) {
+    const e = new Error('there is no conversation index yet');
+    e.code = 'CONV_NOT_FOUND';
+    throw e;
+  }
+  const rows = Object.keys(meta.sources).map((id) => meta.sources[id]);
+  const m = conversations.matchRef(rows, ref);
+  if (!m.match) {
+    const e = new Error(
+      m.reason === 'ambiguous'
+        ? "'" + ref + "' matches several conversations — use more of the id"
+        : "no conversation matching '" + ref + "'",
+    );
+    e.code = m.reason === 'ambiguous' ? 'CONV_AMBIGUOUS' : 'CONV_NOT_FOUND';
+    e.candidates = m.candidates || [];
+    throw e;
+  }
+  const id = m.match.id;
+  const files = [chunkPath(ctx, id), tokenPath(ctx, id), vectorPath(ctx, id)].filter((f) => fs.existsSync(f));
+  const plan = {
+    id: id,
+    title: meta.sources[id].title,
+    app: meta.sources[id].app,
+    files: files.map((f) => path.basename(f)),
+    confirmed: !!opts.confirm,
+    removed: false,
+  };
+  if (!opts.confirm) return plan;
+  delete meta.sources[id];
+  const wrote = writeMeta(ctx, meta, {
+    removedIds: new Set([id]),
+    beforeMerge: function () {
+      files.forEach((f) => fs.rmSync(f, { force: true }));
+    },
+  });
+  if (!wrote) {
+    const e = new Error('the index is busy (meta.lock); nothing was removed, try again');
+    e.code = 'CONV_INDEX_BUSY';
+    throw e;
+  }
+  plan.removed = true;
+  return plan;
+}
+
 // ---- build ---------------------------------------------------------------------------------
 
 // Parse every source, compare mtime/size (+ content hash after parse), write changed chunk
@@ -1025,6 +1126,9 @@ async function build(ctx, opts) {
   const curProfanitySig = _profanity.profanitySignature(ctx, profanityEnabled);
   const profanityMask = profanityEnabled ? _profanity.createFilter({ configDir: ctx.configDir }).mask : null;
   const rebuildProfanity = !!opts.rebuildProfanity;
+  // A conversation whose source file was deleted stays in the index (row, chunks, vectors) unless
+  // the user turned conv.keepDeleted off. Off only affects sources that vanish from then on.
+  const keepDeleted = typeof opts.keepDeleted === 'boolean' ? opts.keepDeleted : _config.get(ctx, 'conv.keepDeleted');
   const dsOpts = { apps: opts.apps, foreign: opts.foreign, limitSources: opts.limitSources };
   const sources = conversations.discover(ctx, dsOpts);
   const meta = readMeta(ctx) || emptyMeta();
@@ -1330,10 +1434,20 @@ async function build(ctx, opts) {
     }
   }
 
+  // A source that came back (same sourceKey) was re-matched above; it is no longer gone.
+  Object.keys(next).forEach((id) => {
+    const row = next[id];
+    if (row && row.sourceGoneAt && discoveredKeys.has(conversations.sourceKey(row))) {
+      next[id] = Object.assign({}, row);
+      delete next[id].sourceGoneAt;
+    }
+  });
+
   // Full discovery means anything absent is gone. Filtered builds must not delete the rest.
   // An empty app list is NO filter (the CLI passes []), so it must still count as a full build:
   // otherwise a deleted conversation keeps its row, chunk file and vector forever.
   const full = !(opts.apps && opts.apps.length) && !opts.limitSources && !sources.truncated;
+  const nowIsoForGone = () => (ctx.now && ctx.now()) || new Date().toISOString();
   if (full) {
     const claimedKeys = new Set(claimed.values());
     Object.keys(meta.sources).forEach((id) => {
@@ -1346,6 +1460,14 @@ async function build(ctx, opts) {
         // at all. Rows added on disk by a concurrent build after our initial readMeta() are not in
         // `meta.sources` (and not in `removedIds`), so writeMeta() still preserves them.
         const supersededOrGone = !s || !sk || claimedKeys.has(sk) || !discoveredKeys.has(sk);
+        // A source whose file merely vanished keeps its row, chunk file and vectors: the owner
+        // deletes chat files on purpose and reads the history from the index. Superseded rows
+        // (id scheme bump, collision re-claim) and rows with no chunks on disk are still removed.
+        const goneOnly = !!s && !!sk && !claimedKeys.has(sk) && !discoveredKeys.has(sk);
+        if (goneOnly && (keepDeleted || s.sourceGoneAt) && fs.existsSync(chunkPath(ctx, id))) {
+          next[id] = s.sourceGoneAt ? s : Object.assign({}, s, { sourceGoneAt: nowIsoForGone() });
+          return;
+        }
         if (supersededOrGone) {
           removedIds.add(id);
           report.removed++;
@@ -1718,12 +1840,21 @@ function matchesApps(row, apps) {
 // Metadata rows for every conversation. When the index exists this is a manifest read (no
 // transcript parsing); otherwise it falls back to a full discovery pass. Both branches return
 // the same row shape so callers (CLI, MCP) never branch on which source produced it.
+// `sourceGoneAt` is keyflip's own bookkeeping: it never leaves the index as a label.
+function stripInternal(row) {
+  if (!row || !row.sourceGoneAt) return row;
+  const c = Object.assign({}, row);
+  delete c.sourceGoneAt;
+  return c;
+}
+
 function catalog(ctx, opts) {
   opts = opts || {};
   const meta = readMeta(ctx);
   if (meta && !opts.refresh) {
     const rows = Object.keys(meta.sources)
       .map((id) => meta.sources[id])
+      .map(stripInternal)
       .filter((s) => !(opts.excludeSubagents && s.surface === 'subagent'))
       .filter((s) => matchesApps(s, opts.apps))
       .filter((s) => !opts.sinceMs || Date.parse(s.updatedAt || '') >= opts.sinceMs)
@@ -2488,6 +2619,8 @@ export {
   keyOf,
   chunkConversation,
   readChunks,
+  loadFromIndex,
+  forget,
   build,
   catalog,
   status,

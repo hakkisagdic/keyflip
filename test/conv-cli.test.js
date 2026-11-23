@@ -311,3 +311,72 @@ test('conv CLI: --rebuild-profanity, status output, lexical search miss, and con
   const foundOff = json(run(h, ['conv', 'search', 'siktir', '--lexical', '--json']));
   assert.strictEqual(foundOff.hits.length, 1);
 });
+
+test('a deleted source is still listed, searched and shown from the index; no label leaks', function () {
+  const h = home();
+  const file = path.join(h, '.claude', 'projects', '-work-proj', 'sess-cli.jsonl');
+  assert.strictEqual(run(h, ['conv', 'index', '--no-embed', '--json']).status, 0);
+  fs.rmSync(file);
+  const rebuilt = run(h, ['conv', 'index', '--no-embed', '--json']);
+  assert.strictEqual(rebuilt.status, 0, rebuilt.stderr);
+
+  const outs = [
+    run(h, ['conv', 'list', '--json']),
+    run(h, ['conv', 'search', 'database migration', '--json']),
+    run(h, ['conv', 'status', '--json']),
+    run(h, ['conv', 'context', 'database', '--json']),
+  ];
+  outs.forEach(function (o) {
+    assert.strictEqual(o.status, 0, o.stderr);
+    assert.ok(o.stdout.indexOf('sourceGoneAt') === -1, 'no internal field in output');
+  });
+  assert.strictEqual(json(outs[0]).conversations.length, 1);
+  assert.strictEqual(json(outs[1]).hits[0].id, 'claude:local:sess-cli');
+
+  const shown = run(h, ['conv', 'show', 'sess-cli', '--format', 'md']);
+  assert.strictEqual(shown.status, 0, shown.stderr);
+  assert.match(shown.stdout, /Check the database migration plan/);
+  assert.match(shown.stdout, /dry-run mode first/);
+  assert.match(shown.stdout, /shown from the index/);
+  assert.ok(shown.stdout.indexOf('sourceGoneAt') === -1);
+  const plain = run(h, ['conv', 'show', 'sess-cli']);
+  assert.match(plain.stdout, /shown from the index/);
+  const js = json(run(h, ['conv', 'show', 'sess-cli', '--json']));
+  assert.strictEqual(js.conversation.fromIndex, true);
+
+  const out = path.join(h, 'exp');
+  const ex = run(h, ['conv', 'export', '--all', '--out', out, '--json']);
+  assert.strictEqual(ex.status, 0, ex.stderr);
+  assert.strictEqual(json(ex).files.length, 1);
+  const vault = path.join(h, 'vault');
+  const ob = run(h, ['conv', 'export', '--all', '--obsidian', '--out', vault, '--json']);
+  assert.strictEqual(json(ob).written, 1);
+});
+
+test('conv forget refuses without --confirm, and with it removes only the index entry', function () {
+  const h = home();
+  const file = path.join(h, '.claude', 'projects', '-work-proj', 'sess-cli.jsonl');
+  assert.strictEqual(run(h, ['conv', 'index', '--no-embed', '--json']).status, 0);
+  const dry = run(h, ['conv', 'forget', 'sess-cli']);
+  assert.strictEqual(dry.status, 0, dry.stderr);
+  assert.match(dry.stdout, /Would remove/);
+  assert.strictEqual(json(run(h, ['conv', 'list', '--json'])).conversations.length, 1);
+  const done = run(h, ['conv', 'forget', 'sess-cli', '--confirm']);
+  assert.strictEqual(done.status, 0, done.stderr);
+  assert.match(done.stdout, /removed from the index/);
+  assert.strictEqual(json(run(h, ['conv', 'list', '--json'])).conversations.length, 0);
+  assert.ok(fs.existsSync(file), 'the source file is untouched');
+  const missing = run(h, ['conv', 'forget', 'sess-cli', '--confirm']);
+  assert.notStrictEqual(missing.status, 0);
+});
+
+test('conv.keepDeleted accepts on/off through config set', function () {
+  const h = home();
+  const set = run(h, ['config', 'set', 'conv.keepDeleted', 'off']);
+  assert.strictEqual(set.status, 0, set.stderr + set.stdout);
+  const file = path.join(h, '.claude', 'projects', '-work-proj', 'sess-cli.jsonl');
+  run(h, ['conv', 'index', '--no-embed', '--json']);
+  fs.rmSync(file);
+  run(h, ['conv', 'index', '--no-embed', '--json']);
+  assert.strictEqual(json(run(h, ['conv', 'list', '--json'])).conversations.length, 0);
+});

@@ -294,9 +294,15 @@ function convByRef(ctx, ref) {
     e.candidates = m.candidates || [];
     throw e;
   }
-  return m.match.path
-    ? _conversations.loadPath(ctx, m.match.path, { subId: m.match.subId })
-    : _conversations.get(ctx, m.match.id, {});
+  try {
+    return m.match.path
+      ? _conversations.loadPath(ctx, m.match.path, { subId: m.match.subId })
+      : _conversations.get(ctx, m.match.id, {});
+  } catch (err) {
+    // The source file was deleted: the index still holds the text.
+    if (err && err.code === 'CONV_SOURCE_GONE' && m.match.id) return _convindex.loadFromIndex(ctx, m.match.id);
+    throw err;
+  }
 }
 // Conversation text goes into an agent transcript, so credential-shaped lines are masked unless
 // the caller explicitly opts out (`redact:false`). Same rule as every export path in the CLI.
@@ -1795,7 +1801,7 @@ const TOOLS = [
     name: 'keyflip_conv_show',
     title: 'Read one conversation in full',
     description:
-      'Load one conversation by id, unique id prefix, or unique title, and return it rendered as markdown (default), self-contained HTML, or normalized JSON. Tool calls are summarized, not dumped. `max_chars` caps the returned content (default 60000) — read a narrower slice or export the file for a huge chat. Credential-shaped lines are masked by default; pass redact:false only when the user asked for exact fidelity. Read-only, local.',
+      'Load one conversation by id, unique id prefix, or unique title, and return it rendered as markdown (default), self-contained HTML, or normalized JSON. Tool calls are summarized, not dumped. `max_chars` caps the returned content (default 60000) — read a narrower slice or export the file for a huge chat. Credential-shaped lines are masked by default; pass redact:false only when the user asked for exact fidelity. When the original file was deleted the text is rebuilt from the index and the answer says fromIndex:true. Read-only, local.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1829,6 +1835,7 @@ const TOOLS = [
         accountConfidence: acct.account ? acct.confidence : null,
         accountWhy: acct.why || null,
         counts: conv.counts,
+        fromIndex: conv.fromIndex === true,
         format: format,
         redacted: r.redacted || 0,
         truncated: truncated,
@@ -2205,14 +2212,10 @@ const TOOLS = [
       const errors = [];
       for (const row of slice) {
         const src = row.path ? byKey[_conversations.sourceKey(row)] || byKey[_path.resolve(row.path)] : null;
-        if (!src) {
-          errors.push({ id: row.id, error: 'source is gone' });
-          continue;
-        }
         try {
           files.push(
             _convexport.exportOne(
-              _conversations.load(ctx, src, {}),
+              src ? _conversations.load(ctx, src, {}) : _convindex.loadFromIndex(ctx, row.id),
               Object.assign({}, opts, {
                 out: dest + _path.sep,
                 format: format,

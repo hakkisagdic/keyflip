@@ -189,6 +189,7 @@ function markdownOf(c, redacted, opts) {
       (off || !redacted ? '' : ' · secrets redacted: ' + redacted),
     '',
   ]);
+  if (c.fromIndex) lines.push('> shown from the index', '');
   for (const m of c.messages) {
     lines.push('### ' + roleLabel(m.role, c.app) + (m.ts ? ' · ' + shortTs(m.ts) : ''));
     if (m.text) lines.push('', m.text);
@@ -232,7 +233,9 @@ function htmlOf(c, redacted, opts) {
       );
     })
     .join('');
-  const sub = [c.app, c.surface, shortTs(c.updatedAt), c.cwd].filter(Boolean).join(' · ');
+  const sub = [c.app, c.surface, shortTs(c.updatedAt), c.cwd, c.fromIndex ? 'shown from the index' : null]
+    .filter(Boolean)
+    .join(' · ');
   return (
     '<!doctype html><html lang="en"><head><meta charset="utf-8">' +
     '<meta name="viewport" content="width=device-width,initial-scale=1">' +
@@ -360,6 +363,7 @@ function noteFor(conv, opts) {
     '> ' + [c.app, c.surface, shortTs(c.updatedAt), c.cwd].filter(Boolean).join(' · '),
     '',
   ];
+  if (c.fromIndex) lines.push('> shown from the index', '');
   for (const m of c.messages) {
     lines.push('### ' + roleLabel(m.role, c.app) + (m.ts ? ' · ' + shortTs(m.ts) : ''));
     if (m.text) lines.push('', m.text);
