@@ -198,6 +198,7 @@ test('conv index help and pacing flags (--no-embed, --embed-pause-ms, --embed-ba
   assert.match(helpText, /--embed-batch/);
   assert.match(helpText, /--max-embed/);
   assert.match(helpText, /--no-embed/);
+  assert.match(helpText, /--rebuild-profanity/);
 
   const lexOnly = run(h, ['conv', 'index', '--no-embed', '--json']);
   assert.strictEqual(lexOnly.status, 0, lexOnly.stderr);
@@ -258,8 +259,55 @@ test('conv index help and pacing flags (--no-embed, --embed-pause-ms, --embed-ba
     const stHuman = run(h, ['conv', 'status'], { KEYFLIP_EMBED_URL: embedUrl });
     assert.strictEqual(stHuman.status, 0, stHuman.stderr);
     assert.match(stHuman.stdout, /pending:\s+2 chunk\(s\) across 2 conversation\(s\)/);
+    assert.match(stHuman.stdout, /profanity filter:\s+on\s+·\s+0 chunk\(s\) masked/);
   } finally {
     await new Promise((resolve) => server.close(resolve));
     fs.rmSync(h, { recursive: true, force: true });
   }
+});
+
+test('conv CLI: --rebuild-profanity, status output, lexical search miss, and config off round-trip', function (t) {
+  const h = home();
+  t.after(() => fs.rmSync(h, { recursive: true, force: true }));
+
+  const dir = path.join(h, '.claude', 'projects', '-work-proj');
+  const profFile = path.join(dir, 'sess-prof.jsonl');
+  const rawContent =
+    JSON.stringify({
+      type: 'user',
+      timestamp: '2026-01-02T10:00:00.000Z',
+      cwd: '/work/proj',
+      message: { role: 'user', content: 'Bu siktir hatayı kubernetes podunda gördüm.' },
+    }) + '\n';
+  fs.writeFileSync(profFile, rawContent);
+
+  const built = run(h, ['conv', 'index', '--rebuild-profanity', '--json']);
+  assert.strictEqual(built.status, 0, built.stderr);
+  const report = json(built);
+  assert.strictEqual(report.profanityFilter, 'on');
+  assert.strictEqual(report.profanityMasked, 1);
+  assert.strictEqual(fs.readFileSync(profFile, 'utf8'), rawContent, 'source transcript untouched');
+
+  const stJson = json(run(h, ['conv', 'status', '--json']));
+  assert.strictEqual(stJson.profanityFilter, 'on');
+  assert.strictEqual(stJson.profanityMasked, 1);
+
+  const stText = run(h, ['conv', 'status']);
+  assert.strictEqual(stText.status, 0, stText.stderr);
+  assert.match(stText.stdout, /profanity filter:\s+on\s+·\s+1 chunk\(s\) masked/);
+
+  const miss = json(run(h, ['conv', 'search', 'siktir', '--lexical', '--json']));
+  assert.strictEqual(miss.hits.length, 0);
+
+  const pack = json(run(h, ['conv', 'context', 'kubernetes', '--lexical', '--json']));
+  assert.match(pack.context, /\[…\]/);
+  assert.ok(!/siktir/i.test(pack.context));
+
+  assert.strictEqual(run(h, ['config', 'set', 'conv.profanityFilter', 'off']).status, 0);
+  const rebuiltOff = json(run(h, ['conv', 'index', '--json']));
+  assert.strictEqual(rebuiltOff.profanityFilter, 'off');
+  assert.strictEqual(rebuiltOff.profanityMasked, 0);
+
+  const foundOff = json(run(h, ['conv', 'search', 'siktir', '--lexical', '--json']));
+  assert.strictEqual(foundOff.hits.length, 1);
 });

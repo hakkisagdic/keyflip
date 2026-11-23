@@ -8,6 +8,7 @@ import path from 'path';
 import cp from 'child_process';
 import { fileURLToPath } from 'url';
 import { makeCtx } from './helpers.js';
+import * as config from '../src/config.js';
 import * as convindex from '../src/convindex.js';
 import * as profiles from '../src/profiles.js';
 
@@ -2013,4 +2014,190 @@ test('K7: old-format manifest rows and vectors are reused without recomputing em
   assert.strictEqual(rAdd.changed, 1);
   assert.strictEqual(rAdd.embedded, 1);
   assert.strictEqual(countersNew.calls, 1, 'only the newly added source is embedded');
+});
+
+test('K2 & K7: profanity filter masks stored chunks and embedded text while leaving source byte-identical', async function () {
+  const ctx = ctxFor();
+  const srcFile = writeClaude(ctx, 'prof-1', [
+    {
+      type: 'user',
+      timestamp: '2026-10-01T10:00:00Z',
+      message: { role: 'user', content: 'Bu siktir hatayı deployment sırasında nasıl çözeriz?' },
+    },
+    {
+      type: 'assistant',
+      timestamp: '2026-10-01T10:01:00Z',
+      message: { role: 'assistant', content: 'Logları kontrol edip rollback yapalım, sıkıntı yok.' },
+    },
+  ]);
+  const rawBefore = fs.readFileSync(srcFile);
+
+  const embeddedInputs = [];
+  const capturePost = async function (url, body) {
+    embeddedInputs.push(...body.input);
+    return { model: body.model, embeddings: body.input.map(() => Array(8).fill(0.5)) };
+  };
+
+  const r = await convindex.build(ctx, { embed: true, post: capturePost });
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(r.profanityFilter, 'on');
+  assert.strictEqual(r.profanityMasked, 1);
+
+  const rawAfter = fs.readFileSync(srcFile);
+  assert.strictEqual(Buffer.compare(rawBefore, rawAfter), 0, 'original transcript must remain byte-identical');
+
+  const chunks = convindex.readChunks(convindex.chunkPath(ctx, 'claude:local:prof-1'));
+  assert.strictEqual(chunks.length, 1);
+  assert.ok(!/siktir/i.test(chunks[0].text), 'stored chunk must not contain profanity');
+  assert.match(chunks[0].text, /Bu \[…\] hatayı/);
+  assert.match(chunks[0].text, /sıkıntı yok/);
+
+  assert.strictEqual(embeddedInputs.length, 1);
+  assert.ok(!/siktir/i.test(embeddedInputs[0]), 'embedded input must be masked');
+  assert.match(embeddedInputs[0], /\[…\]/);
+
+  // K7: lexical search finds nothing for the masked word, while contextPack for a surrounding word shows […]
+  const lexMasked = await convindex.search(ctx, 'siktir', { mode: 'lexical' });
+  assert.strictEqual(lexMasked.hits.length, 0);
+
+  const lexClean = await convindex.search(ctx, 'deployment', { mode: 'lexical' });
+  assert.strictEqual(lexClean.hits.length, 1);
+  const pack = convindex.contextPack(ctx, 'deployment', lexClean.hits);
+  assert.match(pack, /\[…\]/);
+  assert.ok(!/siktir/i.test(pack));
+});
+
+test('K3: with conv.profanityFilter off, chunks and embeddings keep raw unmasked text', async function () {
+  const ctx = ctxFor();
+  config.set(ctx, 'conv.profanityFilter', 'off');
+  writeClaude(ctx, 'prof-off', [
+    {
+      type: 'user',
+      timestamp: '2026-10-01T10:00:00Z',
+      message: { role: 'user', content: 'Bu siktir hatayı incele.' },
+    },
+  ]);
+  const embeddedInputs = [];
+  const r = await convindex.build(ctx, {
+    embed: true,
+    post: async (url, body) => {
+      embeddedInputs.push(...body.input);
+      return { model: body.model, embeddings: body.input.map(() => Array(8).fill(0.25)) };
+    },
+  });
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(r.profanityFilter, 'off');
+  assert.strictEqual(r.profanityMasked, 0);
+
+  const chunks = convindex.readChunks(convindex.chunkPath(ctx, 'claude:local:prof-off'));
+  assert.match(chunks[0].text, /siktir/);
+  assert.ok(!chunks[0].text.includes('[…]'));
+  assert.match(embeddedInputs[0], /siktir/);
+
+  const st = convindex.status(ctx);
+  assert.strictEqual(st.profanityFilter, 'off');
+  assert.strictEqual(st.profanityMasked, 0);
+});
+
+test('K4, K6 & K8: profanitySig change and --rebuild-profanity re-embed only changed chunks and toggle off cleanly', async function () {
+  const ctx = ctxFor();
+  config.set(ctx, 'conv.profanityFilter', 'off');
+
+  writeClaude(ctx, 'clean-conv', [
+    {
+      type: 'user',
+      timestamp: '2026-10-01T10:00:00Z',
+      message: { role: 'user', content: 'Sadece temiz bir konuşma, hiçbir küfür yok.' },
+    },
+  ]);
+  writeClaude(ctx, 'mixed-conv', [
+    {
+      type: 'user',
+      timestamp: '2026-10-02T10:00:00Z',
+      message: { role: 'user', content: 'Chunk zero clean turn ' + 'a'.repeat(1200) },
+    },
+    {
+      type: 'user',
+      timestamp: '2026-10-02T10:01:00Z',
+      message: { role: 'user', content: 'Chunk one has siktir word ' + 'b'.repeat(1200) },
+    },
+    {
+      type: 'user',
+      timestamp: '2026-10-02T10:02:00Z',
+      message: { role: 'user', content: 'Chunk two clean turn ' + 'c'.repeat(1200) },
+    },
+  ]);
+
+  const initialInputs = [];
+  await convindex.build(ctx, {
+    embed: true,
+    post: async (url, body) => {
+      initialInputs.push(...body.input);
+      return { model: body.model, embeddings: body.input.map(() => Array(8).fill(0.5)) };
+    },
+  });
+  assert.strictEqual(initialInputs.length, 4, '3 chunks in mixed-conv + 1 chunk in clean-conv');
+  const unmaskedMixedChunks = convindex
+    .readChunks(convindex.chunkPath(ctx, 'claude:local:mixed-conv'))
+    .map((c) => c.text);
+
+  // K6: enable filter and run incremental index --embed (signature mismatch triggers automatic re-chunk)
+  config.set(ctx, 'conv.profanityFilter', 'on');
+  const reembeddedInputs = [];
+  const rOn = await convindex.build(ctx, {
+    embed: true,
+    post: async (url, body) => {
+      reembeddedInputs.push(...body.input);
+      return { model: body.model, embeddings: body.input.map(() => Array(8).fill(0.5)) };
+    },
+  });
+  assert.strictEqual(rOn.ok, true);
+  assert.strictEqual(rOn.profanityFilter, 'on');
+  assert.strictEqual(rOn.profanityMasked, 1);
+  assert.strictEqual(reembeddedInputs.length, 1, 'only the single changed chunk is re-embedded');
+  assert.strictEqual(rOn.embedding.reembeddedChunks, 1);
+  assert.match(reembeddedInputs[0], /Chunk one has \[…\] word/);
+
+  const stOn = convindex.status(ctx);
+  assert.strictEqual(stOn.profanityFilter, 'on');
+  assert.strictEqual(stOn.profanityMasked, 1);
+
+  // Verify no chunk file under conv-index/chunks contains the listed profane word
+  const chunksDir = path.join(convindex.dirOf(ctx), 'chunks');
+  const allChunkText = fs
+    .readdirSync(chunksDir)
+    .map((f) => fs.readFileSync(path.join(chunksDir, f), 'utf8'))
+    .join('\n');
+  assert.ok(!/siktir/i.test(allChunkText), 'chunk files on disk must contain zero profanity');
+
+  // K4: --rebuild-profanity when already masked embeds 0 chunks, and on legacy/unmasked meta embeds only changed chunk
+  const noopInputs = [];
+  const rNoop = await convindex.build(ctx, {
+    embed: true,
+    rebuildProfanity: true,
+    post: async (url, body) => {
+      noopInputs.push(...body.input);
+      return { model: body.model, embeddings: body.input.map(() => Array(8).fill(0.5)) };
+    },
+  });
+  assert.strictEqual(rNoop.ok, true);
+  assert.strictEqual(noopInputs.length, 0, 'already-masked chunks need no re-embedding');
+  assert.strictEqual(rNoop.profanityMasked, 1);
+
+  // K8: switching filter off re-chunks back to exact unmasked text
+  config.set(ctx, 'conv.profanityFilter', 'off');
+  const offInputs = [];
+  const rOff = await convindex.build(ctx, {
+    embed: true,
+    post: async (url, body) => {
+      offInputs.push(...body.input);
+      return { model: body.model, embeddings: body.input.map(() => Array(8).fill(0.5)) };
+    },
+  });
+  assert.strictEqual(rOff.ok, true);
+  assert.strictEqual(offInputs.length, 1, 'only the unmasked chunk re-embeds when turning filter off');
+  const restoredChunks = convindex.readChunks(convindex.chunkPath(ctx, 'claude:local:mixed-conv')).map((c) => c.text);
+  assert.deepStrictEqual(restoredChunks, unmaskedMixedChunks);
+  assert.strictEqual(convindex.status(ctx).profanityFilter, 'off');
+  assert.strictEqual(convindex.status(ctx).profanityMasked, 0);
 });

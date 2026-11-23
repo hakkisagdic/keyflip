@@ -2011,7 +2011,7 @@ const TOOLS = [
     name: 'keyflip_conv_status',
     title: 'Conversation index status',
     description:
-      'What keyflip can search on this machine: index location, build time, conversation/message/chunk counts per app, embedding model+host and vector coverage. `exists:false` means keyflip_conv_search/context will refuse until keyflip_conv_index runs. Read-only.',
+      'What keyflip can search on this machine: index location, build time, conversation/message/chunk counts per app, embedding model+host, vector coverage, and profanityFilter/profanityMasked counts. `exists:false` means keyflip_conv_index has not run yet. Read-only.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
     annotations: RO,
     run: async function (ctx) {
@@ -2036,6 +2036,11 @@ const TOOLS = [
           description: 'When embed=true, regenerate vectors incrementally in a detached background worker.',
         },
         force: { type: 'boolean', description: 'Re-parse even when mtime+size are unchanged.' },
+        rebuild_profanity: {
+          type: 'boolean',
+          description:
+            'Force a one-time profanity masking pass over every existing chunk, re-embedding only changed chunks.',
+        },
         app: { type: 'string', description: 'Comma-separated app ids for a partial build.' },
         limit_sources: { type: 'integer', description: 'Parse at most N sources (quick slice).' },
         embed_pause_ms: { type: 'integer', description: 'Milliseconds to pause between embedding batches (0..60000).' },
@@ -2070,6 +2075,7 @@ const TOOLS = [
         maxEmbedSources: maxEmbed,
         background: !!args.background,
         force: !!args.force,
+        rebuildProfanity: !!args.rebuild_profanity,
       });
       const st = _convindex.status(ctx);
       return {

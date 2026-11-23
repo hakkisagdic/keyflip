@@ -1477,6 +1477,12 @@ test('MCP conversation tools: read-only tools never build, index needs confirm',
   assert.ok(r.indexed >= 1);
   assert.ok(r.stats.sources >= 1);
   assert.strictEqual(r.coverage, 0);
+
+  const statusRes = await mcpSession(home, [call(1, 'keyflip_conv_status', {})], [1]);
+  const st = statusRes[1].result.structuredContent;
+  assert.strictEqual(st.exists, true);
+  assert.strictEqual(st.profanityFilter, 'on');
+  assert.strictEqual(st.profanityMasked, 0);
 });
 
 test('MCP conversation tools: list, search, context, show, and a handoff bundle', async function () {

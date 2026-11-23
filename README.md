@@ -1065,6 +1065,16 @@ keyflip conv transfer a7dc93d0 --to codex         # a handoff bundle for another
   the index — that is `keyflip_conv_index`, confirm-gated, like `keyflip_conv_export`). Snippets and
   context blocks are secret-masked before they reach an agent transcript, and the index path is reported
   relative to the state dir, never as your home path.
+- **Profanity filter (`conv.profanityFilter`, default `on`).** Before conversation chunks, titles, and
+  embeddings are written, `keyflip` replaces Turkish and English profanity locally with `[…]` so RAG
+  blocks (`keyflip conv context`) and vectors stay clean without touching your original transcripts on
+  disk or sending text anywhere. Search queries themselves are **not** masked (so you can still search
+  normally; masked words simply do not match lexically). Customize the word lists in
+  `~/.config/keyflip/profanity.json` (`{ "add": [...], "allow": [...] }`), turn the filter off with
+  `keyflip config set conv.profanityFilter off`, force a one-time pass over existing chunks with
+  `keyflip conv index --embed --rebuild-profanity` (only chunks whose masked text changed are
+  re-embedded), and inspect the active setting and masked chunk count via `keyflip conv status` or
+  `keyflip_conv_status`.
 
 ## Context Layer — portable project memory (`.keyflip/`)
 

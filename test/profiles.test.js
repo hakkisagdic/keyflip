@@ -7,6 +7,7 @@ import * as core from '../src/core.js';
 import * as schedule from '../src/schedule.js';
 import * as secretpolicy from '../src/secretpolicy.js';
 import * as proxyroutes from '../src/proxyroutes.js';
+import * as profanity from '../src/profanity.js';
 import { tmpdir, makeCtx, writeClaude } from './helpers.js';
 
 test('write/read/exists/email round-trip', function () {
@@ -83,6 +84,7 @@ test('a top-level state file is never listed as an account', function () {
       // proxy-routes.json is user-authored routing config; it lives at the top
       // level so it must be reserved or it shows up as an account (#4).
       proxyroutes.FILE_NAME,
+      profanity.FILE_NAME,
     ]);
   stateFiles.forEach(function (n) {
     fs.writeFileSync(path.join(dir, n), JSON.stringify({ installedAt: 'now', job: 'nightly' }), { mode: 0o600 });

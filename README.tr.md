@@ -1139,6 +1139,16 @@ keyflip conv transfer a7dc93d0 --to codex         # başka bir yapay zekâ arac�
   asla kendileri kurmaz — o iş `keyflip_conv_index`'in, `keyflip_conv_export` gibi `confirm` ister).
   Kesitler ve bağlam blokları bir agent kaydına ulaşmadan önce sır-maskelenir, indeks yolu durum
   dizinine göreli raporlanır, asla ev yolu olarak değil.
+- **Küfür filtresi (`conv.profanityFilter`, varsayılan `on`).** Sohbet parçaları, başlıklar ve
+  embedding vektörleri yazılmadan önce `keyflip`, Türkçe ve İngilizce küfürleri yerel olarak `[…]`
+  ile maskeler; böylece RAG blokları (`keyflip conv context`) ve vektörler temiz kalır, diskteki
+  orijinal transkriptlere dokunulmaz ve dışarıya hiçbir metin gönderilmez. Arama sorgularının kendisi
+  maskelenmez (normal şekilde arama yapabilirsiniz; maskelenen kelimeler sözcük aramasında eşleşmez).
+  Listeleri `~/.config/keyflip/profanity.json` (`{ "add": [...], "allow": [...] }`) ile
+  özelleştirebilir, `keyflip config set conv.profanityFilter off` ile kapatabilir, mevcut parçalar
+  üzerinde tek seferlik geçiş için `keyflip conv index --embed --rebuild-profanity` çalıştırabilir
+  (yalnızca maskelenen metni değişen parçalar yeniden gömülür) ve etkin ayar ile maskelenen parça
+  sayısını `keyflip conv status` veya `keyflip_conv_status` üzerinden görebilirsiniz.
 
 ## Bağlam Katmanı — taşınabilir proje hafızası (`.keyflip/`)
 
