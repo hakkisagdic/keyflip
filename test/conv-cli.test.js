@@ -380,3 +380,43 @@ test('conv.keepDeleted accepts on/off through config set', function () {
   run(h, ['conv', 'index', '--no-embed', '--json']);
   assert.strictEqual(json(run(h, ['conv', 'list', '--json'])).conversations.length, 0);
 });
+
+test('conv profanity-model CLI: help, status, unknown id, consent refusal, and conv status fields', function () {
+  const h = home();
+  const help = run(h, ['conv', '--help']);
+  assert.strictEqual(help.status, 0);
+  assert.match(help.stdout, /profanity-model/);
+
+  const pmStatus = run(h, ['conv', 'profanity-model', 'status']);
+  assert.strictEqual(pmStatus.status, 0, pmStatus.stderr);
+  assert.match(pmStatus.stdout, /configured:\s+off/);
+  assert.match(pmStatus.stdout, /multilingual-toxicity-small/);
+
+  const pmJson = json(run(h, ['conv', 'profanity-model', 'status', '--json']));
+  assert.strictEqual(pmJson.configured, 'off');
+  assert.strictEqual(pmJson.threshold, 0.8);
+  assert.ok(Array.isArray(pmJson.catalog) && pmJson.catalog.length >= 2);
+
+  // Unknown model id is rejected
+  const bad = run(h, ['conv', 'profanity-model', 'install', 'not-a-real-model', '--yes']);
+  assert.notStrictEqual(bad.status, 0);
+  assert.match(bad.stderr + bad.stdout, /unknown|supported/i);
+
+  // Non-interactive install without --yes prints licence + size and refuses
+  const noConsent = run(h, ['conv', 'profanity-model', 'install', 'multilingual-toxicity-small']);
+  assert.notStrictEqual(noConsent.status, 0);
+  assert.match(noConsent.stdout + noConsent.stderr, /Apache-2\.0/);
+  assert.match(noConsent.stdout + noConsent.stderr, /MB/);
+  assert.match(noConsent.stdout + noConsent.stderr, /--yes/);
+
+  // conv status prints profanity model line alongside profanity filter line
+  assert.strictEqual(run(h, ['conv', 'index', '--no-embed', '--json']).status, 0);
+  const st = run(h, ['conv', 'status']);
+  assert.strictEqual(st.status, 0, st.stderr);
+  assert.match(st.stdout, /profanity filter:\s+on/);
+  assert.match(st.stdout, /profanity model:\s+off/);
+
+  const stJson = json(run(h, ['conv', 'status', '--json']));
+  assert.strictEqual(stJson.profanityModel, 'off');
+  assert.strictEqual(stJson.profanityModelMasked, 0);
+});

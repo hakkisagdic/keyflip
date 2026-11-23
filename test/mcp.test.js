@@ -1483,6 +1483,8 @@ test('MCP conversation tools: read-only tools never build, index needs confirm',
   assert.strictEqual(st.exists, true);
   assert.strictEqual(st.profanityFilter, 'on');
   assert.strictEqual(st.profanityMasked, 0);
+  assert.strictEqual(st.profanityModel, 'off');
+  assert.strictEqual(st.profanityModelMasked, 0);
 });
 
 test('MCP: a deleted source is shown from the index with fromIndex, and there is no forget tool', async function () {

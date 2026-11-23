@@ -2376,3 +2376,182 @@ test('K6: filtered and truncated builds delete nothing', async function () {
   assert.strictEqual(r2.removed, 0);
   assert.ok(readManifest(ctx).sources['claude:local:keep-b']);
 });
+
+// ---- Stage-2 profanity model tests (K2, K6, K7, K8) ----------------------------------------
+
+test('K2 & K8: convindex.build runs stage-2 classifier pre-pass, tracks extra count, and respects profanityFilter=false', async function () {
+  const ctx = ctxFor();
+  config.set(ctx, 'conv.profanityModel', 'Horizon-Labs/multilingual-toxicity-small');
+  config.set(ctx, 'conv.profanityThreshold', '0.8');
+
+  const srcFile = writeClaude(ctx, 'stage2-conv', [
+    {
+      type: 'user',
+      timestamp: '2026-10-01T10:00:00Z',
+      message: {
+        role: 'user',
+        content: 'Merhaba, bugün sıkıntı yok. Sen tam bir beceriksizsin!',
+      },
+    },
+    {
+      type: 'assistant',
+      timestamp: '2026-10-01T10:01:00Z',
+      message: { role: 'assistant', content: 'Logları inceleyelim.' },
+    },
+  ]);
+  const rawBefore = fs.readFileSync(srcFile);
+
+  let clfCalls = 0;
+  const fakeClassifier = async (texts) => {
+    clfCalls++;
+    return texts.map((t) => ({ score: t.includes('beceriksizsin') ? 0.91 : 0.05 }));
+  };
+
+  const embedded = [];
+  const r = await convindex.build(ctx, {
+    embed: true,
+    profanityClassifier: fakeClassifier,
+    post: async (_u, body) => {
+      embedded.push(...body.input);
+      return { model: body.model, embeddings: body.input.map(() => Array(8).fill(0.5)) };
+    },
+  });
+
+  assert.strictEqual(r.ok, true);
+  assert.ok(clfCalls >= 1);
+  assert.strictEqual(r.profanityFilter, 'on');
+  assert.strictEqual(r.profanityModel, 'Horizon-Labs/multilingual-toxicity-small');
+  assert.strictEqual(r.profanityMasked, 1);
+  assert.strictEqual(r.profanityModelMasked, 1);
+  assert.strictEqual(Buffer.compare(rawBefore, fs.readFileSync(srcFile)), 0);
+
+  const chunks = convindex.readChunks(convindex.chunkPath(ctx, 'claude:local:stage2-conv'));
+  assert.strictEqual(chunks.length, 1);
+  assert.ok(!/beceriksizsin/i.test(chunks[0].text));
+  assert.match(chunks[0].text, /sıkıntı yok\. \[…\]/);
+  assert.ok(!/beceriksizsin/i.test(embedded[0]));
+
+  const st = convindex.status(ctx);
+  assert.strictEqual(st.profanityModel, 'Horizon-Labs/multilingual-toxicity-small');
+  assert.strictEqual(st.profanityModelMasked, 1);
+  assert.strictEqual(st.profanityMasked, 1);
+
+  // Turning conv.profanityFilter off disables stage-2 classifier as well
+  config.set(ctx, 'conv.profanityFilter', 'off');
+  let offCalls = 0;
+  const rOff = await convindex.build(ctx, {
+    profanityClassifier: async (texts) => {
+      offCalls++;
+      return texts.map(() => ({ score: 0.99 }));
+    },
+  });
+  assert.strictEqual(offCalls, 0);
+  assert.strictEqual(rOff.profanityFilter, 'off');
+  assert.strictEqual(rOff.profanityModel, 'off');
+  assert.strictEqual(rOff.profanityModelMasked, 0);
+  const stOff = convindex.status(ctx);
+  assert.strictEqual(stOff.profanityModel, 'off');
+  assert.strictEqual(stOff.profanityModelMasked, 0);
+});
+
+test('K6: missing configured profanity model warns once, falls back to word list, and recovers on later build', async function () {
+  const ctx = ctxFor();
+  config.set(ctx, 'conv.profanityModel', 'Horizon-Labs/multilingual-toxicity-small');
+  writeClaude(ctx, 'fallback-conv', [
+    {
+      type: 'user',
+      timestamp: '2026-10-01T10:00:00Z',
+      message: { role: 'user', content: 'Bu siktir hatayı düzelt. Sen tam bir beceriksizsin!' },
+    },
+  ]);
+
+  const r1 = await convindex.build(ctx, {});
+  assert.strictEqual(r1.ok, true);
+  assert.strictEqual(r1.profanityModel, 'off');
+  assert.strictEqual(r1.profanityMasked, 1);
+  assert.strictEqual(r1.profanityModelMasked, 0);
+  assert.strictEqual(r1.warnings.length, 1);
+  assert.match(r1.warnings[0].error, /multilingual-toxicity-small/);
+
+  const chunks1 = convindex.readChunks(convindex.chunkPath(ctx, 'claude:local:fallback-conv'));
+  assert.ok(!/siktir/i.test(chunks1[0].text), 'word list still masked');
+  assert.match(chunks1[0].text, /beceriksizsin/, 'unmasked sentence kept until model works');
+
+  // Now provide working classifier -> signature differs from fallback, so it re-masks automatically
+  const r2 = await convindex.build(ctx, {
+    profanityClassifier: async (texts) => texts.map((t) => ({ score: t.includes('beceriksizsin') ? 0.9 : 0.05 })),
+  });
+  assert.strictEqual(r2.ok, true);
+  assert.strictEqual(r2.profanityModel, 'Horizon-Labs/multilingual-toxicity-small');
+  assert.strictEqual(r2.profanityModelMasked, 1);
+  const chunks2 = convindex.readChunks(convindex.chunkPath(ctx, 'claude:local:fallback-conv'));
+  assert.ok(!/beceriksizsin/i.test(chunks2[0].text));
+});
+
+test('K7: threshold change triggers --rebuild-profanity and keeps unchanged chunk hashes & embeddings', async function () {
+  const ctx = ctxFor();
+  config.set(ctx, 'conv.profanityModel', 'Horizon-Labs/multilingual-toxicity-small');
+  config.set(ctx, 'conv.profanityThreshold', '0.8');
+
+  writeClaude(ctx, 'thresh-conv', [
+    {
+      type: 'user',
+      timestamp: '2026-10-02T10:00:00Z',
+      message: { role: 'user', content: 'Temiz ilk parça. ' + 'Uzun bağlam ' + 'a'.repeat(1200) },
+    },
+    {
+      type: 'user',
+      timestamp: '2026-10-02T10:01:00Z',
+      message: { role: 'user', content: 'Sınırda ikinci parça. ' + 'Uzun bağlam ' + 'b'.repeat(1200) },
+    },
+    {
+      type: 'user',
+      timestamp: '2026-10-02T10:02:00Z',
+      message: { role: 'user', content: 'Ağır üçüncü parça. ' + 'Uzun bağlam ' + 'c'.repeat(1200) },
+    },
+  ]);
+
+  const fakeClassifier = async (texts) =>
+    texts.map((t) => {
+      if (t.includes('Ağır üçüncü parça.')) return { score: 0.92 };
+      if (t.includes('Sınırda ikinci parça.')) return { score: 0.65 };
+      return { score: 0.05 };
+    });
+
+  const initialEmbeds = [];
+  const r1 = await convindex.build(ctx, {
+    embed: true,
+    profanityClassifier: fakeClassifier,
+    post: async (_u, body) => {
+      initialEmbeds.push(...body.input);
+      return { model: body.model, embeddings: body.input.map(() => Array(8).fill(0.5)) };
+    },
+  });
+  assert.strictEqual(r1.profanityModelMasked, 1);
+  assert.strictEqual(initialEmbeds.length, 3);
+  const hashesBefore = convindex.readChunks(convindex.chunkPath(ctx, 'claude:local:thresh-conv')).map((c) => c.h);
+  const sigBefore = readManifest(ctx).profanitySig;
+
+  // Lower threshold from 0.8 -> 0.6 so chunk 1 crosses threshold, chunk 0 stays unchanged
+  config.set(ctx, 'conv.profanityThreshold', '0.6');
+  const reembedded = [];
+  const r2 = await convindex.build(ctx, {
+    embed: true,
+    rebuildProfanity: true,
+    profanityClassifier: fakeClassifier,
+    post: async (_u, body) => {
+      reembedded.push(...body.input);
+      return { model: body.model, embeddings: body.input.map(() => Array(8).fill(0.5)) };
+    },
+  });
+
+  assert.strictEqual(r2.ok, true);
+  assert.strictEqual(r2.profanityModelMasked, 2);
+  const hashesAfter = convindex.readChunks(convindex.chunkPath(ctx, 'claude:local:thresh-conv')).map((c) => c.h);
+  assert.notStrictEqual(readManifest(ctx).profanitySig, sigBefore);
+  assert.strictEqual(hashesAfter[0], hashesBefore[0], 'unchanged chunk 0 keeps exact hash');
+  assert.notStrictEqual(hashesAfter[1], hashesBefore[1], 'newly masked chunk 1 hash changes');
+  assert.strictEqual(hashesAfter[2], hashesBefore[2], 'already masked chunk 2 keeps exact hash');
+  assert.strictEqual(reembedded.length, 1, 'only the single newly masked chunk is re-embedded');
+  assert.match(reembedded[0], /^User: \[…\] Uzun bağlam b+/);
+});
