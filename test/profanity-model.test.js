@@ -231,8 +231,17 @@ test('K6 & catalog: missing weights throw MODEL_NOT_INSTALLED, catalog satisfies
 
   assert.ok(MODEL_CATALOG.length >= 2);
   for (const entry of MODEL_CATALOG) {
-    assert.ok(PERMISSIVE_LICENSES.includes(entry.license), entry.id + ' must have permissive license');
+    assert.strictEqual(typeof entry.license, 'string', entry.id + ' must declare license string');
+    assert.ok(
+      PERMISSIVE_LICENSES.includes(entry.license),
+      entry.id + ' must have permissive license (MIT/Apache-2.0/BSD)',
+    );
+    assert.strictEqual(typeof entry.approxSizeMB, 'number', entry.id + ' must declare numeric approxSizeMB');
     assert.ok(entry.approxSizeMB > 0 && entry.approxSizeMB < 500, entry.id + ' must be under 500 MB');
+    assert.strictEqual(typeof entry.source, 'string', entry.id + ' must declare source');
+    assert.match(entry.source, /^huggingface\.co\/[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/);
+    assert.ok(entry.source.endsWith('/' + entry.id), entry.id + ' source must reference its repo id');
+    assert.ok(typeof entry.metrics === 'string' && entry.metrics.length > 0, entry.id + ' must declare metrics');
   }
 
   assert.strictEqual(resolveCatalogModel('multilingual-toxicity-small').id, 'Horizon-Labs/multilingual-toxicity-small');

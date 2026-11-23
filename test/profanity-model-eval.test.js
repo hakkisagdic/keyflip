@@ -1,6 +1,7 @@
 // K3 evaluation dataset & optional local model benchmark (skipped unless KEYFLIP_TEST_REAL_MODEL=1).
-// 30 clean Turkish sentences with innocent look-alike words + 30 synthetic offensive Turkish
-// sentences missed by the word list. Zero real user data or private values.
+// 30+30 corpus: 30 clean Turkish sentences (covering the 30-word innocent look-alike list) +
+// 30 synthetic offensive Turkish sentences missed by the word list (60 total).
+// Zero real user data or private values.
 import test from 'node:test';
 import assert from 'node:assert';
 import { createFilter, classifyOffensive } from '../src/profanity.js';
@@ -88,7 +89,7 @@ test('K3 corpus invariant: 30 clean and 30 offensive sentences are untouched by 
 });
 
 test(
-  'K3 live local model evaluation over 60 synthetic Turkish sentences',
+  'K3 live local model evaluation over 30+30 (60) synthetic Turkish sentences',
   { skip: process.env.KEYFLIP_TEST_REAL_MODEL !== '1' },
   async function () {
     const modelId = process.env.KEYFLIP_TEST_REAL_MODEL_ID || DEFAULT_MODEL_ID;
