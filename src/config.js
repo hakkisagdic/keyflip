@@ -220,6 +220,11 @@ SCHEMA['conv.profanityFilter'] = {
   default: true,
   help: 'Mask profanity with […] in indexed conversation chunks and embeddings (off = keep raw text).',
 };
+SCHEMA['conv.keepDeleted'] = {
+  type: 'bool',
+  default: true,
+  help: 'Keep a conversation in the index (archived, still searchable) after its source file is deleted (off = remove it).',
+};
 SCHEMA['ui.color'] = { type: 'bool', default: true, help: 'Colorize CLI output.' };
 SCHEMA['usage.cacheTtlSeconds'] = {
   type: 'int',

@@ -1014,6 +1014,15 @@ async function embedSource(ctx, id, chunks, prev, space, opts) {
   };
 }
 
+// A row whose source is back (or never left) must not carry archive flags.
+function unarchived(row) {
+  const r = Object.assign({}, row);
+  delete r.archived;
+  delete r.archivedAt;
+  delete r.archivedReason;
+  return r;
+}
+
 // ---- build ---------------------------------------------------------------------------------
 
 // Parse every source, compare mtime/size (+ content hash after parse), write changed chunk
@@ -1025,6 +1034,8 @@ async function build(ctx, opts) {
   const curProfanitySig = _profanity.profanitySignature(ctx, profanityEnabled);
   const profanityMask = profanityEnabled ? _profanity.createFilter({ configDir: ctx.configDir }).mask : null;
   const rebuildProfanity = !!opts.rebuildProfanity;
+  const keepDeleted =
+    typeof opts.keepDeleted === 'boolean' ? opts.keepDeleted : _config.get(ctx, 'conv.keepDeleted') !== false;
   const dsOpts = { apps: opts.apps, foreign: opts.foreign, limitSources: opts.limitSources };
   const sources = conversations.discover(ctx, dsOpts);
   const meta = readMeta(ctx) || emptyMeta();
@@ -1057,6 +1068,7 @@ async function build(ctx, opts) {
     reused: 0,
     changed: 0,
     removed: 0,
+    archived: 0,
     skipped: 0,
     empty: 0,
     rechunk: 0,
@@ -1144,7 +1156,7 @@ async function build(ctx, opts) {
       ) {
         const id = claimId(prev.id, srcKey);
         if (id === prev.id) {
-          next[prev.id] = Object.assign({}, prev, accounts.fields(prev));
+          next[prev.id] = Object.assign(unarchived(prev), accounts.fields(prev));
           report.reused++;
           report.profanityMasked += prev.profanityMasked || 0;
           pendingEnsureTokens.push(prev.id);
@@ -1196,8 +1208,7 @@ async function build(ctx, opts) {
         // Re-attributed even though the row is reused: the account that was live when it was
         // written may have been learned (or deleted) since the last pass.
         next[id] = Object.assign(
-          {},
-          had,
+          unarchived(had),
           conv.parentId ? { parentId: conv.parentId } : {},
           src.subId ? { subId: src.subId } : {},
           accounts.fields(conv),
@@ -1210,8 +1221,7 @@ async function build(ctx, opts) {
       const maskedTitle = profanityMask && conv.title ? profanityMask(conv.title).text : conv.title;
       if (!opts.force && !rebuildProfanity && hadSigOk && sameEntry && had.hash === conv.hash) {
         next[id] = Object.assign(
-          {},
-          had,
+          unarchived(had),
           {
             scheme: ID_SCHEME,
             mtimeMs: src.mtimeMs,
@@ -1248,8 +1258,7 @@ async function build(ctx, opts) {
         oldHashes.every((h, idx) => h === newHashes[idx]);
       if (chunksIdentical) {
         next[id] = Object.assign(
-          {},
-          had,
+          unarchived(had),
           {
             scheme: ID_SCHEME,
             mtimeMs: src.mtimeMs,
@@ -1340,16 +1349,37 @@ async function build(ctx, opts) {
       if (!next[id]) {
         const s = meta.sources[id];
         const sk = conversations.sourceKey(s);
-        // In a full build, any row from our initial meta snapshot that was not produced by this
-        // scan is removed: either its sourceKey was discovered and claimed by a newer id (e.g. an
-        // ID_SCHEME bump or collision resolution), or it was not in the discovery snapshot
-        // at all. Rows added on disk by a concurrent build after our initial readMeta() are not in
+        // In a full build, a row from our initial meta snapshot that was not produced by this scan
+        // is either superseded (its sourceKey was discovered and claimed by a newer id, e.g. an
+        // ID_SCHEME bump or collision resolution): removed as before; or its source is gone from
+        // discovery: archived (kept searchable with its chunks and vectors) unless conv.keepDeleted
+        // is off. Rows added on disk by a concurrent build after our initial readMeta() are not in
         // `meta.sources` (and not in `removedIds`), so writeMeta() still preserves them.
-        const supersededOrGone = !s || !sk || claimedKeys.has(sk) || !discoveredKeys.has(sk);
-        if (supersededOrGone) {
+        const unjudgeable = !s || !sk;
+        const superseded = !unjudgeable && claimedKeys.has(sk);
+        const gone = !unjudgeable && !superseded && !discoveredKeys.has(sk);
+        const hasChunks = !!s && fs.existsSync(chunkPath(ctx, id));
+        let remove = false;
+        if (!s) remove = true;
+        else if (unjudgeable) remove = !hasChunks;
+        else if (superseded) remove = true;
+        else if (gone) {
+          if (s.archived) remove = !hasChunks;
+          else remove = !keepDeleted || !hasChunks;
+        }
+        if (remove) {
           removedIds.add(id);
           report.removed++;
           pendingDeletes.push(id);
+        } else if (s && gone && !s.archived) {
+          next[id] = Object.assign({}, s, {
+            archived: true,
+            archivedAt: (ctx.now && ctx.now()) || new Date().toISOString(),
+            archivedReason: 'source-missing',
+          });
+          report.archived++;
+        } else if (s) {
+          next[id] = s;
         }
       }
     });
@@ -1725,6 +1755,7 @@ function catalog(ctx, opts) {
     const rows = Object.keys(meta.sources)
       .map((id) => meta.sources[id])
       .filter((s) => !(opts.excludeSubagents && s.surface === 'subagent'))
+      .filter((s) => !(opts.excludeArchived && s.archived))
       .filter((s) => matchesApps(s, opts.apps))
       .filter((s) => !opts.sinceMs || Date.parse(s.updatedAt || '') >= opts.sinceMs)
       .filter(
@@ -1784,6 +1815,7 @@ function catalog(ctx, opts) {
 
 function status(ctx, opts) {
   const profanityFilter = _config.get(ctx, 'conv.profanityFilter') ? 'on' : 'off';
+  const keepDeleted = _config.get(ctx, 'conv.keepDeleted') !== false;
   const meta = readMeta(ctx);
   if (!meta)
     return {
@@ -1796,6 +1828,9 @@ function status(ctx, opts) {
       pendingSources: 0,
       pendingChunks: 0,
       pendingTokensEstimate: 0,
+      archivedSources: 0,
+      archivedChunks: 0,
+      keepDeleted: keepDeleted,
       profanityFilter: profanityFilter,
       profanityMasked: 0,
     };
@@ -1808,8 +1843,14 @@ function status(ctx, opts) {
   let pendingSources = 0;
   let pendingChunks = 0;
   let pendingTokensEstimate = 0;
+  let archivedSources = 0;
+  let archivedChunks = 0;
   Object.keys(meta.sources).forEach((id) => {
     const s = meta.sources[id];
+    if (s.archived) {
+      archivedSources++;
+      archivedChunks += s.chunks || 0;
+    }
     const totalChunks = s.chunks || 0;
     let coveredChunks = 0;
     if (s.vec && vectorFileOk(ctx, id, s.vec)) {
@@ -1862,6 +1903,9 @@ function status(ctx, opts) {
     staleModel:
       staleModel || (meta.embedding && meta.embedding.space !== activeSpace.hash ? meta.embedding.model : null),
     backgroundEmbed: bg.running ? bg : null,
+    archivedSources: archivedSources,
+    archivedChunks: archivedChunks,
+    keepDeleted: keepDeleted,
     profanityFilter: profanityFilter,
     profanityMasked: countProfanityMasked(meta.sources),
   };
@@ -1887,6 +1931,7 @@ function activeSources(ctx, meta, opts) {
   Object.keys(meta.sources).forEach((id) => {
     const s = meta.sources[id];
     if (opts.excludeSubagents && s.surface === 'subagent') return;
+    if (opts.excludeArchived && s.archived) return;
     if (!matchesApps(s, opts.apps)) return;
     if (opts.sinceMs && Date.parse(s.updatedAt || '') < opts.sinceMs) return;
     if (
@@ -2111,6 +2156,7 @@ function lexical(ctx, query, opts) {
       snippet: makeSnippet(c.text, need),
     };
     if (src.parentId) hit.parentId = src.parentId;
+    if (src.archived) hit.archived = true;
     if (c.h) seenHash.set(c.h, hit);
     hits.push(hit);
   }
@@ -2302,6 +2348,7 @@ async function semantic(ctx, query, opts) {
       snippet: makeSnippet(c.text, needlesForQuery),
     };
     if (src.parentId) hit.parentId = src.parentId;
+    if (src.archived) hit.archived = true;
     if (c.h) seenHash.set(c.h, hit);
     hits.push(hit);
   }
@@ -2418,6 +2465,83 @@ async function searchMode(ctx, query, opts, mode) {
   return { ok: false, reason: 'bad-mode', hits: [] };
 }
 
+// The stored view of an archived conversation: its original file is gone, so the text comes
+// from the chunk file keyflip owns. Lossy by nature (chunked, profanity-masked when that filter
+// was on, tool results absent); the returned object says so in `archivedNote`.
+function archivedConversation(ctx, id) {
+  const meta = readMeta(ctx);
+  const row = meta && meta.sources[id];
+  if (!row || !row.archived) return null;
+  const chunks = readChunks(chunkPath(ctx, id));
+  const messages = chunks.map((c) => ({ role: c.role || 'system', ts: c.ts || null, text: c.text }));
+  return {
+    id: id,
+    app: row.app,
+    surface: row.surface || null,
+    title: row.title,
+    cwd: row.cwd,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+    parentId: row.parentId || undefined,
+    account: row.account || undefined,
+    accountSource: row.accountSource || undefined,
+    accountConfidence: row.accountConfidence || undefined,
+    counts: Object.assign({}, row.counts || {}, { messages: messages.length }),
+    messages: messages,
+    archived: true,
+    archivedAt: row.archivedAt || null,
+    archivedNote:
+      'archived: the original file is gone; this is the stored chunk text (chunked, possibly masked, tool output not kept)',
+    source: { path: row.path || null },
+  };
+}
+
+// ---- forget (the only explicit deletion) ----------------------------------------------------
+
+// Remove one conversation from the index: its row, chunk file, vector file and token sidecar.
+// `ref` is a full id or a unique prefix. With `opts.dryRun` nothing is touched. The source
+// conversation file is never read or changed.
+function forget(ctx, ref, opts) {
+  opts = opts || {};
+  const want = String(ref || '').trim();
+  if (!want) return { ok: false, reason: 'no-id' };
+  const meta = readMeta(ctx);
+  if (!meta) return { ok: false, reason: 'no-index' };
+  const ids = Object.keys(meta.sources);
+  const exact = ids.filter((id) => id === want);
+  const found = exact.length ? exact : ids.filter((id) => id.startsWith(want));
+  if (!found.length) return { ok: false, reason: 'not-found' };
+  if (found.length > 1) return { ok: false, reason: 'ambiguous', matches: found.slice(0, 10) };
+  const id = found[0];
+  const row = meta.sources[id];
+  const info = {
+    id: id,
+    app: row.app,
+    title: row.title,
+    archived: !!row.archived,
+    chunks: row.chunks || 0,
+    path: row.path || null,
+  };
+  if (opts.dryRun) return Object.assign({ ok: true, dryRun: true }, info);
+  const res = withMetaLock(ctx, { timeoutMs: opts.metaLockTimeoutMs }, function () {
+    const cur = readMeta(ctx);
+    if (!cur || !cur.sources[id]) return;
+    delete cur.sources[id];
+    cur.stats = countStats(cur.sources);
+    cur.profanityMasked = countProfanityMasked(cur.sources);
+    _fsutil.atomicWrite(metaPath(ctx), JSON.stringify(cur, null, 2) + '\n', 0o600);
+    try {
+      fs.rmSync(chunkPath(ctx, id), { force: true });
+      fs.rmSync(vectorPath(ctx, id), { force: true });
+    } catch {
+      /* best-effort */
+    }
+    dropTokens(ctx, id);
+  });
+  if (!res.acquired) return { ok: false, reason: 'locked' };
+  return Object.assign({ ok: true, removed: true }, info);
+}
+
 // ---- context pack --------------------------------------------------------------------------
 
 function expandHit(ctx, hit, opts) {
@@ -2451,7 +2575,7 @@ function contextPack(ctx, query, hits, opts) {
     const ex = expandHit(ctx, hit, { expand: expand });
     if (!ex) continue;
     const s = ex.source;
-    const appLabel = s.app + (s.surface === 'subagent' ? ' (subagent)' : '');
+    const appLabel = s.app + (s.surface === 'subagent' ? ' (subagent)' : '') + (s.archived ? ' (archived)' : '');
     const head = [
       '## ' + (n + 1) + '. [' + appLabel + '] ' + s.title,
       'source: `' + s.id + '` · updated: ' + (s.updatedAt || '?') + (s.cwd ? ' · cwd: ' + s.cwd : ''),
@@ -2501,6 +2625,8 @@ export {
   rrf,
   contextPack,
   expandHit,
+  forget,
+  archivedConversation,
   spaceOf,
   safeForEmbedding,
   isLoopback,

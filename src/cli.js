@@ -8520,18 +8520,19 @@ async function cmdRecall(ctx, rest) {
 // (src/convexport.js). Every subcommand is tool-agnostic: it reads Claude Code, Codex/ChatGPT,
 // Kiro, Gemini, Command Code and the foreign adapters through the same shape, and no live store is modified.
 const CONV_USAGE = [
-  'usage: keyflip conv [list] [--app claude,codex,kiro,…] [--since 7d] [--cwd <dir>] [--search T] [--account <name>] [--no-subagents] [--limit N] [--json]',
-  '       keyflip conv search "<query>" [--hybrid|--semantic|--lexical] [--per-conv N] [--limit N] [--since 7d] [--account <name>] [--no-subagents]',
-  '       keyflip conv context "<query>" [--hybrid] [--budget 12000] [--expand 1] [--no-subagents]   RAG block for an LLM prompt',
+  'usage: keyflip conv [list] [--app claude,codex,kiro,…] [--since 7d] [--cwd <dir>] [--search T] [--account <name>] [--no-subagents] [--no-archived] [--limit N] [--json]',
+  '       keyflip conv search "<query>" [--hybrid|--semantic|--lexical] [--per-conv N] [--limit N] [--since 7d] [--account <name>] [--no-subagents] [--no-archived]',
+  '       keyflip conv context "<query>" [--hybrid] [--budget 12000] [--expand 1] [--no-subagents] [--no-archived]   RAG block for an LLM prompt',
   '       keyflip conv show <id|prefix|title> [--format md|html|json] [--out <file|dir>] [--no-redact]',
   '       keyflip conv index [--embed|--no-embed] [--embed-pause-ms N] [--embed-batch N] [--max-embed N] [--background] [--force] [--rebuild-profanity] [--writes] [--watch] [--interval N]  build/refresh the local retrieval index',
   '                                     --watch re-indexes every N minutes (default 30) so search stays current',
   '       keyflip conv index --schedule [--interval N]   keep it current unattended (launchd/cron); --unschedule removes it',
   '       keyflip conv export (--all | <id>) [--obsidian] --out <dir> [--format md|html|json] [--no-redact]',
   '       keyflip conv transfer <id> --to <claude|codex|cursor|kiro|opencode|windsurf|gemini|copilot|aider>',
+  '       keyflip conv forget <id|prefix> [--confirm]   remove one conversation from the index (the only way anything is deleted; the source file is never touched)',
   '       keyflip conv capabilities | status',
 ].join('\n');
-const CONV_SUBS = ['list', 'search', 'show', 'get', 'index', 'context', 'export', 'transfer', 'capabilities', 'status'];
+const CONV_SUBS = ['list', 'search', 'show', 'get', 'index', 'context', 'export', 'transfer', 'capabilities', 'status', 'forget'];
 const CONV_VALUE_FLAGS = [
   '--app',
   '--since',
@@ -8611,6 +8612,7 @@ function convFilter(rest) {
     q: flagVal(rest, '--search') || null,
     account: flagVal(rest, '--account') || null,
     excludeSubagents: rest.indexOf('--no-subagents') !== -1,
+    excludeArchived: rest.indexOf('--no-archived') !== -1,
   };
 }
 function convMode(rest) {
@@ -8637,6 +8639,10 @@ function convLoad(ctx, ref) {
     e.code = m.reason === 'ambiguous' ? 'CONV_AMBIGUOUS' : 'CONV_NOT_FOUND';
     e.candidates = m.candidates || [];
     throw e;
+  }
+  if (m.match.archived) {
+    const a = _convindex.archivedConversation(ctx, m.match.id);
+    if (a) return a;
   }
   if (m.match.path) return _conversations.loadPath(ctx, m.match.path, { subId: m.match.subId });
   return _conversations.get(ctx, ref);
@@ -8666,7 +8672,8 @@ function convPrintHits(query, r, limit) {
       style.dim('[' + label + ']'),
   );
   r.hits.forEach(function (h, i) {
-    const appLabel = (h.app || '?') + (h.surface === 'subagent' ? ' (subagent)' : '');
+    const appLabel =
+      (h.app || '?') + (h.surface === 'subagent' ? ' (subagent)' : '') + (h.archived ? ' (archived)' : '');
     print(
       '  [' +
         (i + 1) +
@@ -8745,6 +8752,7 @@ function convReportText(ctx, r) {
     r.empty + ' empty',
     r.skipped + ' skipped',
   ];
+  if (r.archived) parts.push(r.archived + ' archived (source file gone, kept in the index)');
   if (r.rechunk) parts.push(r.rechunk + ' re-chunked (disk disagreed with the index)');
   if (r.profanityMasked) parts.push(r.profanityMasked + ' chunk(s) profanity-masked');
   if (r.duplicates) parts.push(r.duplicates + ' id collision(s) kept apart');
@@ -8896,7 +8904,8 @@ async function cmdConv(ctx, rest) {
       const msgs = (r.counts && r.counts.messages) || 0;
       const acct = convAccountCell(r);
       if (acct.indexOf('*') !== -1) anyInferred = true;
-      const appLabel = String(r.app || '?') + (r.surface === 'subagent' ? ' (subagent)' : '');
+      const appLabel =
+        String(r.app || '?') + (r.surface === 'subagent' ? ' (subagent)' : '') + (r.archived ? ' (archived)' : '');
       print(
         '  ' +
           id.padEnd(9) +
@@ -8938,6 +8947,14 @@ async function cmdConv(ctx, rest) {
     );
     print('  ' + (s.chunks || 0) + ' chunks · ' + fmtBytes(s.bytes || 0));
     print('  profanity filter: ' + st.profanityFilter + ' · ' + (st.profanityMasked || 0) + ' chunk(s) masked');
+    print(
+      '  archived: ' +
+        (st.archivedSources || 0) +
+        ' conversation(s), ' +
+        (st.archivedChunks || 0) +
+        ' chunk(s) kept after their source file was deleted · keep deleted: ' +
+        (st.keepDeleted ? 'on' : 'off'),
+    );
     if (st.embedding) {
       print(
         '  embeddings: ' +
@@ -9121,12 +9138,12 @@ async function cmdConv(ctx, rest) {
           logmod.log('conv watch tick failed: ' + ((e && e.message) || String(e)));
           r = null;
         }
-        if (r && (r.changed || r.removed)) {
+        if (r && (r.changed || r.removed || r.archived)) {
           const when = new Date().toISOString();
           if (JSON_MODE) {
             jsonOut({ watched: true, at: when, report: r });
           } else {
-            print('  ' + style.ok('↳') + ' ' + r.changed + ' changed · ' + r.removed + ' removed (' + when + ')');
+            print('  ' + style.ok('↳') + ' ' + r.changed + ' changed · ' + r.removed + ' removed · ' + (r.archived || 0) + ' archived (' + when + ')');
             if (r.embedded) print('    ' + style.dim(r.embedded + ' conversation(s) re-embedded'));
           }
         }
@@ -9214,6 +9231,7 @@ async function cmdConv(ctx, rest) {
       perConv: perConv.value,
       account: f.account,
       excludeSubagents: f.excludeSubagents,
+      excludeArchived: f.excludeArchived,
     };
     let r;
     try {
@@ -9255,6 +9273,44 @@ async function cmdConv(ctx, rest) {
       });
     if (!r.hits.length) return print('No conversation matched "' + query + '".');
     return convPrintHits(query, r, limit.value);
+  }
+
+  if (sub === 'forget') {
+    const ref = positionals(args, CONV_VALUE_FLAGS).join(' ').trim();
+    if (!ref) return fail(CONV_USAGE);
+    const confirmed = args.indexOf('--confirm') !== -1;
+    const res = _convindex.forget(ctx, ref, { dryRun: !confirmed });
+    if (!res.ok) {
+      const why =
+        res.reason === 'not-found'
+          ? "no indexed conversation matching '" + ref + "'"
+          : res.reason === 'ambiguous'
+            ? "'" + ref + "' matches several conversations: " + res.matches.join(', ')
+            : res.reason === 'no-index'
+              ? 'no index yet'
+              : res.reason === 'locked'
+                ? 'the index is busy (meta.lock); try again'
+                : 'could not forget: ' + res.reason;
+      return fail(why);
+    }
+    if (!confirmed) {
+      if (!JSON_MODE)
+        print(
+        'Would remove ' +
+          style.bold(res.id) +
+          ' (' +
+          convClip(res.title, 60) +
+          ', ' +
+          res.chunks +
+          ' chunk(s)' +
+          (res.archived ? ', archived' : '') +
+          ') from the index: its row, chunks, vectors and token file. The source file is not touched.',
+      );
+      return fail('refusing without --confirm: run `keyflip conv forget ' + res.id + ' --confirm` to do it.');
+    }
+    if (JSON_MODE) return jsonOut(res);
+    print(style.ok('✅') + ' forgot ' + res.id + ' (' + convClip(res.title, 60) + ') — removed from the index.');
+    return;
   }
 
   if (sub === 'show' || sub === 'get') {
@@ -9300,6 +9356,7 @@ async function cmdConv(ctx, rest) {
       } catch (e) {
         return fail((e && e.message) || String(e));
       }
+      if (conv.archived) process.stderr.write(conv.archivedNote + '\n');
       process.stdout.write(rendered.content.slice(-1) === '\n' ? rendered.content : rendered.content + '\n');
       return;
     }
@@ -9317,6 +9374,7 @@ async function cmdConv(ctx, rest) {
       .join(' · ');
     print(style.bold(conv.title));
     print(style.dim(head));
+    if (conv.archived) print(style.warn('·') + ' ' + conv.archivedNote);
     // Which account worked on it, and how that is known: the user's word, or the switch
     // timeline. A guess is printed as a guess.
     const acct = _convaccounts.explain(ctx, conv);

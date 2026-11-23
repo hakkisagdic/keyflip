@@ -279,6 +279,7 @@ function convFilters(args) {
     sinceMs: sinceMs,
     q: a.search ? String(a.search) : null,
     account: a.account ? String(a.account) : null,
+    excludeArchived: a.no_archived === true,
   };
 }
 // Resolve an id/prefix/title from the index manifest (cheap) and load the real conversation.
@@ -293,6 +294,10 @@ function convByRef(ctx, ref) {
     );
     e.candidates = m.candidates || [];
     throw e;
+  }
+  if (m.match.archived) {
+    const a = _convindex.archivedConversation(ctx, m.match.id);
+    if (a) return a;
   }
   return m.match.path
     ? _conversations.loadPath(ctx, m.match.path, { subId: m.match.subId })
@@ -320,6 +325,7 @@ function convSlim(r) {
     createdAt: r.createdAt || null,
     updatedAt: r.updatedAt || null,
     messages: (r.counts && r.counts.messages) || 0,
+    archived: r.archived === true,
   };
 }
 function convHint() {
@@ -1769,6 +1775,11 @@ const TOOLS = [
             'Only conversations worked on by this keyflip account (a Claude profile, a Kiro slug, a ChatGPT/Codex slug). The account is stated when you assigned it, otherwise inferred from the switch timeline.',
         },
         limit: { type: 'integer', description: 'Default 20, max 500.' },
+        no_archived: {
+          type: 'boolean',
+          description:
+            'Exclude conversations whose source file was deleted (kept in the index, labelled archived). Default false: they are included.',
+        },
       },
       additionalProperties: false,
     },
@@ -1829,6 +1840,8 @@ const TOOLS = [
         accountConfidence: acct.account ? acct.confidence : null,
         accountWhy: acct.why || null,
         counts: conv.counts,
+        archived: conv.archived === true,
+        archivedNote: conv.archived ? conv.archivedNote : null,
         format: format,
         redacted: r.redacted || 0,
         truncated: truncated,
@@ -1856,6 +1869,11 @@ const TOOLS = [
           description: 'Only hits from conversations worked on by this keyflip account.',
         },
         redact: { type: 'boolean', description: 'Default true; false returns raw snippets.' },
+        no_archived: {
+          type: 'boolean',
+          description:
+            'Exclude conversations whose source file was deleted (kept in the index, labelled archived). Default false: they are included.',
+        },
       },
       required: ['query'],
       additionalProperties: false,
@@ -1885,6 +1903,7 @@ const TOOLS = [
         sinceMs: f.sinceMs,
         cwd: f.cwd,
         account: f.account,
+        excludeArchived: f.excludeArchived,
         limit: limit,
         perConv: Math.max(1, Math.min(20, Number(args.per_conv) || 1)),
       });
@@ -1910,6 +1929,7 @@ const TOOLS = [
             id: h.id,
             app: h.app || null,
             title: h.title,
+            archived: h.archived === true,
             cwd: h.cwd || null,
             updatedAt: h.updatedAt || null,
             account: h.account || null,
@@ -1952,6 +1972,11 @@ const TOOLS = [
         cwd: { type: 'string' },
         since: { type: 'string' },
         redact: { type: 'boolean', description: 'Default true.' },
+        no_archived: {
+          type: 'boolean',
+          description:
+            'Exclude conversations whose source file was deleted (kept in the index, labelled archived). Default false: they are included.',
+        },
       },
       required: ['query'],
       additionalProperties: false,
@@ -1975,6 +2000,7 @@ const TOOLS = [
         apps: f.apps,
         sinceMs: f.sinceMs,
         cwd: f.cwd,
+        excludeArchived: f.excludeArchived,
         limit: 12,
         perConv: 1,
       });
@@ -1994,7 +2020,14 @@ const TOOLS = [
         query: q,
         mode: r.mode || (r.semanticCoverage ? 'hybrid' : 'lexical'),
         sources: (r.hits || []).map(function (h) {
-          return { id: h.id, app: h.app || null, title: h.title, updatedAt: h.updatedAt || null, score: h.score };
+          return {
+            id: h.id,
+            app: h.app || null,
+            title: h.title,
+            archived: h.archived === true,
+            updatedAt: h.updatedAt || null,
+            score: h.score,
+          };
         }),
         redacted: red.count || 0,
         chars: red.text.length,
@@ -2011,7 +2044,7 @@ const TOOLS = [
     name: 'keyflip_conv_status',
     title: 'Conversation index status',
     description:
-      'What keyflip can search on this machine: index location, build time, conversation/message/chunk counts per app, embedding model+host, vector coverage, and profanityFilter/profanityMasked counts. `exists:false` means keyflip_conv_index has not run yet. Read-only.',
+      'What keyflip can search on this machine: index location, build time, conversation/message/chunk counts per app, embedding model+host, vector coverage, profanityFilter/profanityMasked counts, and archivedSources/archivedChunks (conversations kept after their source file was deleted). `exists:false` means keyflip_conv_index has not run yet. Read-only.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
     annotations: RO,
     run: async function (ctx) {
