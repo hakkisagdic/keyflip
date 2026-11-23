@@ -8524,7 +8524,7 @@ const CONV_USAGE = [
   '       keyflip conv search "<query>" [--hybrid|--semantic|--lexical] [--per-conv N] [--limit N] [--since 7d] [--account <name>] [--no-subagents]',
   '       keyflip conv context "<query>" [--hybrid] [--budget 12000] [--expand 1] [--no-subagents]   RAG block for an LLM prompt',
   '       keyflip conv show <id|prefix|title> [--format md|html|json] [--out <file|dir>] [--no-redact]',
-  '       keyflip conv index [--embed|--no-embed] [--embed-pause-ms N] [--embed-batch N] [--max-embed N] [--background] [--force] [--writes] [--watch] [--interval N]  build/refresh the local retrieval index',
+  '       keyflip conv index [--embed|--no-embed] [--embed-pause-ms N] [--embed-batch N] [--max-embed N] [--background] [--force] [--rebuild-profanity] [--writes] [--watch] [--interval N]  build/refresh the local retrieval index',
   '                                     --watch re-indexes every N minutes (default 30) so search stays current',
   '       keyflip conv index --schedule [--interval N]   keep it current unattended (launchd/cron); --unschedule removes it',
   '       keyflip conv export (--all | <id>) [--obsidian] --out <dir> [--format md|html|json] [--no-redact]',
@@ -8722,6 +8722,7 @@ async function convBuild(ctx, rest, embedDefault) {
     maxEmbedSources: maxEmbed.value,
     background: background,
     force: rest.indexOf('--force') !== -1,
+    rebuildProfanity: rest.indexOf('--rebuild-profanity') !== -1,
     writes: rest.indexOf('--writes') !== -1 ? true : undefined,
     onProgress: function (p) {
       if (JSON_MODE) return;
@@ -8745,6 +8746,7 @@ function convReportText(ctx, r) {
     r.skipped + ' skipped',
   ];
   if (r.rechunk) parts.push(r.rechunk + ' re-chunked (disk disagreed with the index)');
+  if (r.profanityMasked) parts.push(r.profanityMasked + ' chunk(s) profanity-masked');
   if (r.duplicates) parts.push(r.duplicates + ' id collision(s) kept apart');
   if (r.truncated) parts.push(r.truncated + ' truncated');
   let line =
@@ -8919,6 +8921,7 @@ async function cmdConv(ctx, rest) {
     if (JSON_MODE) return jsonOut(st);
     if (!st.exists) {
       print('No conversation index yet.');
+      print('  profanity filter: ' + st.profanityFilter);
       print('  build it: ' + style.bold('keyflip conv index') + '   (add --embed for semantic search)');
       return;
     }
@@ -8934,6 +8937,7 @@ async function cmdConv(ctx, rest) {
         ' messages',
     );
     print('  ' + (s.chunks || 0) + ' chunks · ' + fmtBytes(s.bytes || 0));
+    print('  profanity filter: ' + st.profanityFilter + ' · ' + (st.profanityMasked || 0) + ' chunk(s) masked');
     if (st.embedding) {
       print(
         '  embeddings: ' +
