@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.7.3] - 2026-11-23
+
+### Added
+
+- **Optional local offensive-language model stage for profanity masking (`conv.profanityModel`, default `off`; `conv.profanityThreshold`, default 0.8).** After the word list, sentences a local Turkish classifier scores at or above the threshold are masked with the same token. `keyflip conv profanity-model install <id>|status|remove` downloads the model once, with consent, into keyflip's data folder (nothing is vendored, inference never touches the network). `conv status` shows the model and the extra masked count; with the model off, behaviour and the index signature are unchanged. `--rebuild-profanity` re-masks.
+
 ## [1.7.2] - 2026-11-23
 
 ### Added
