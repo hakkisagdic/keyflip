@@ -18,7 +18,7 @@ const CTRL = /[\u0000-\u001f\u007f]/; // control chars (incl. ANSI ESC / newline
 
 // ---- SCHEMA: the set of KNOWN keys. Object.create(null) so a key can never
 // collide with an inherited prototype property during a `key in SCHEMA` lookup.
-// Each entry: { type:'int'|'bool'|'string'|'enum', default, min?, max?, values?, help }.
+// Each entry: { type:'int'|'float'|'bool'|'string'|'enum', default, min?, max?, values?, help }.
 const SCHEMA = Object.create(null);
 SCHEMA['autoswitch.threshold'] = {
   type: 'int',
@@ -220,6 +220,18 @@ SCHEMA['conv.profanityFilter'] = {
   default: true,
   help: 'Mask profanity with […] in indexed conversation chunks and embeddings (off = keep raw text).',
 };
+SCHEMA['conv.profanityModel'] = {
+  type: 'string',
+  default: 'off',
+  help: 'Optional local offensive-language model id run after the word list (off = word list only; install with `keyflip conv profanity-model install <id>`).',
+};
+SCHEMA['conv.profanityThreshold'] = {
+  type: 'float',
+  default: 0.8,
+  min: 0,
+  max: 1,
+  help: 'Score threshold (0..1) at/above which the local profanity model masks a sentence with […] (default 0.8).',
+};
 SCHEMA['conv.keepDeleted'] = {
   type: 'bool',
   default: true,
@@ -362,6 +374,17 @@ function coerce(schema, raw) {
       throw new Error('must be <= ' + schema.max + ' (got ' + n + ')');
     return n;
   }
+  if (schema.type === 'float') {
+    const t = s.trim();
+    if (!/^-?(?:\d+\.?\d*|\.\d+)$/.test(t)) throw new Error("expected a number, got '" + s + "'");
+    const n = Number(t);
+    if (!Number.isFinite(n)) throw new Error("number out of range: '" + s + "'");
+    if (typeof schema.min === 'number' && n < schema.min)
+      throw new Error('must be >= ' + schema.min + ' (got ' + n + ')');
+    if (typeof schema.max === 'number' && n > schema.max)
+      throw new Error('must be <= ' + schema.max + ' (got ' + n + ')');
+    return n;
+  }
   if (schema.type === 'enum') {
     const vals = schema.values || [];
     if (vals.indexOf(s) === -1) throw new Error('must be one of: ' + vals.join(', '));
@@ -381,6 +404,12 @@ function isValidStored(schema, value) {
   if (schema.type === 'bool') return typeof value === 'boolean';
   if (schema.type === 'int') {
     if (typeof value !== 'number' || !Number.isInteger(value)) return false;
+    if (typeof schema.min === 'number' && value < schema.min) return false;
+    if (typeof schema.max === 'number' && value > schema.max) return false;
+    return true;
+  }
+  if (schema.type === 'float') {
+    if (typeof value !== 'number' || !Number.isFinite(value)) return false;
     if (typeof schema.min === 'number' && value < schema.min) return false;
     if (typeof schema.max === 'number' && value > schema.max) return false;
     return true;

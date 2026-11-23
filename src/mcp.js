@@ -2018,7 +2018,7 @@ const TOOLS = [
     name: 'keyflip_conv_status',
     title: 'Conversation index status',
     description:
-      'What keyflip can search on this machine: index location, build time, conversation/message/chunk counts per app, embedding model+host, vector coverage, and profanityFilter/profanityMasked counts. `exists:false` means keyflip_conv_index has not run yet. Read-only.',
+      'What keyflip can search on this machine: index location, build time, conversation/message/chunk counts per app, embedding model+host, vector coverage, and profanityFilter/profanityModel/profanityMasked/profanityModelMasked counts. `exists:false` means keyflip_conv_index has not run yet. Read-only.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
     annotations: RO,
     run: async function (ctx) {
@@ -2106,6 +2106,10 @@ const TOOLS = [
         pendingChunks: st.pendingChunks || 0,
         pendingTokensEstimate: st.pendingTokensEstimate || 0,
         coverage: st.coverage || 0,
+        profanityFilter: report.profanityFilter,
+        profanityModel: report.profanityModel,
+        profanityMasked: report.profanityMasked || 0,
+        profanityModelMasked: report.profanityModelMasked || 0,
         errors: (report.errors || []).slice(0, 5),
         // Degraded reads: a store that yielded chats but whose newest writes could not be replayed.
         // Kept apart from `errors` (sources that cost conversations) so an agent can tell the two.

@@ -154,6 +154,9 @@ import * as _conversations from './conversations.js';
 import * as _convindex from './convindex.js';
 import * as _convaccounts from './convaccounts.js';
 import * as _convexport from './convexport.js';
+import * as _profanity from './profanity.js';
+import * as _profanityModel from './profanity-model.js';
+import * as _profanityModelInstall from './profanity-model-install.js';
 import * as _pii from './pii.js';
 import * as _onboard from './onboard.js';
 import * as _vcs from './vcs.js';
@@ -8530,6 +8533,7 @@ const CONV_USAGE = [
   '       keyflip conv export (--all | <id>) [--obsidian] --out <dir> [--format md|html|json] [--no-redact]',
   '       keyflip conv transfer <id> --to <claude|codex|cursor|kiro|opencode|windsurf|gemini|copilot|aider>',
   '       keyflip conv forget <id> [--confirm]   remove one conversation from the index (without --confirm it only shows what it would remove)',
+  '       keyflip conv profanity-model status | list | install <id> [--yes] | remove [<id>]   manage optional local stage-2 profanity model',
   '       keyflip conv capabilities | status',
 ].join('\n');
 const CONV_SUBS = [
@@ -8542,6 +8546,7 @@ const CONV_SUBS = [
   'export',
   'transfer',
   'forget',
+  'profanity-model',
   'capabilities',
   'status',
 ];
@@ -8765,7 +8770,13 @@ function convReportText(ctx, r) {
     r.skipped + ' skipped',
   ];
   if (r.rechunk) parts.push(r.rechunk + ' re-chunked (disk disagreed with the index)');
-  if (r.profanityMasked) parts.push(r.profanityMasked + ' chunk(s) profanity-masked');
+  if (r.profanityMasked) {
+    parts.push(
+      r.profanityMasked +
+        ' chunk(s) profanity-masked' +
+        (r.profanityModelMasked ? ' (' + r.profanityModelMasked + ' by model)' : ''),
+    );
+  }
   if (r.duplicates) parts.push(r.duplicates + ' id collision(s) kept apart');
   if (r.truncated) parts.push(r.truncated + ' truncated');
   let line =
@@ -8941,6 +8952,7 @@ async function cmdConv(ctx, rest) {
     if (!st.exists) {
       print('No conversation index yet.');
       print('  profanity filter: ' + st.profanityFilter);
+      print('  profanity model:  ' + (st.profanityModel || 'off'));
       print('  build it: ' + style.bold('keyflip conv index') + '   (add --embed for semantic search)');
       return;
     }
@@ -8957,6 +8969,13 @@ async function cmdConv(ctx, rest) {
     );
     print('  ' + (s.chunks || 0) + ' chunks · ' + fmtBytes(s.bytes || 0));
     print('  profanity filter: ' + st.profanityFilter + ' · ' + (st.profanityMasked || 0) + ' chunk(s) masked');
+    print(
+      '  profanity model:  ' +
+        (st.profanityModel || 'off') +
+        (st.profanityModel && st.profanityModel !== 'off'
+          ? ' · ' + (st.profanityModelMasked || 0) + ' extra chunk(s) masked'
+          : ''),
+    );
     if (st.embedding) {
       print(
         '  embeddings: ' +
@@ -9161,6 +9180,106 @@ async function cmdConv(ctx, rest) {
     if (JSON_MODE) return jsonOut(r);
     print(convReportText(ctx, r));
     return;
+  }
+
+  if (sub === 'profanity-model') {
+    const pmSub = args[0] || 'status';
+    const pmRest = args.slice(1);
+    const configured = _profanity.normalizeModelId(_cfg.get(ctx, 'conv.profanityModel'));
+    const threshold = _cfg.get(ctx, 'conv.profanityThreshold');
+    const installed = _profanityModel.listInstalledModels(ctx);
+
+    if (pmSub === 'status' || pmSub === 'list') {
+      if (JSON_MODE) {
+        return jsonOut({
+          configured: configured,
+          threshold: threshold,
+          runtimeInstalled: _profanityModel.isRuntimeInstalled(ctx),
+          installed: installed,
+          catalog: _profanityModel.MODEL_CATALOG,
+        });
+      }
+      print('Profanity classifier (stage 2):');
+      print('  configured: ' + configured + '  (threshold ' + threshold + ')');
+      print('  runtime:    ' + (_profanityModel.isRuntimeInstalled(ctx) ? 'installed' : 'not installed'));
+      print('  installed:  ' + (installed.length ? installed.map((m) => m.id).join(', ') : 'none'));
+      print('\nAvailable local models (permissive licences, inference stays offline):');
+      _profanityModel.MODEL_CATALOG.forEach(function (m) {
+        print('  ' + style.bold(m.alias) + '  (' + m.id + ')');
+        print('    ' + style.dim(m.license + ' · ~' + m.approxSizeMB + ' MB · ' + m.languages));
+      });
+      print('\nInstall: ' + style.bold('keyflip conv profanity-model install <id>'));
+      return;
+    }
+
+    if (pmSub === 'install') {
+      const target = positionals(pmRest, CONV_VALUE_FLAGS)[0] || _profanityModel.DEFAULT_MODEL_ID;
+      let plan;
+      try {
+        plan = _profanityModelInstall.installPlan(ctx, target);
+      } catch (e) {
+        const ids = _profanityModel.MODEL_CATALOG.map((m) => m.alias + ' (' + m.id + ')').join(', ');
+        return fail(((e && e.message) || String(e)) + '\nSupported models: ' + ids);
+      }
+      const entry = plan.entry;
+      const autoYes = pmRest.indexOf('--yes') !== -1 || pmRest.indexOf('-y') !== -1;
+      if (!JSON_MODE) {
+        print('Local profanity model download:');
+        print('  model:   ' + entry.id + ' (' + entry.alias + ')');
+        print('  licence: ' + entry.license);
+        print(
+          '  size:    ~' +
+            plan.downloadSizeMB +
+            ' MB' +
+            (plan.runtimeInstalled ? ' (weights only; runtime already installed)' : ' (weights + local ONNX runtime)'),
+        );
+        print('  folder:  ' + plan.dir);
+        print('  note:    weights stay outside git; inference runs offline with zero network calls.');
+      }
+      if (!autoYes) {
+        if (!process.stdin.isTTY) {
+          return fail(
+            'profanity model download (~' +
+              plan.downloadSizeMB +
+              ' MB, licence ' +
+              entry.license +
+              ') requires confirmation — re-run with --yes.',
+          );
+        }
+        const ok = await confirm('Download and enable ' + entry.id + ' (~' + plan.downloadSizeMB + ' MB)? [y/N] ');
+        if (!ok) {
+          print('Cancelled.');
+          return;
+        }
+      }
+      let res;
+      try {
+        res = await _profanityModelInstall.installModel(ctx, entry.id);
+      } catch (e) {
+        return fail((e && e.message) || String(e));
+      }
+      _cfg.set(ctx, 'conv.profanityModel', res.id);
+      if (JSON_MODE) return jsonOut({ ok: true, installed: res, configured: res.id });
+      print(style.ok('✅') + ' installed ' + res.id + ' and set conv.profanityModel=' + res.id);
+      print(style.dim('  Re-mask existing chunks: keyflip conv index --rebuild-profanity'));
+      return;
+    }
+
+    if (pmSub === 'remove') {
+      const target = positionals(pmRest, CONV_VALUE_FLAGS)[0] || configured;
+      if (!target || target === 'off') return fail('specify a model id to remove, or install one first.');
+      const res = _profanityModelInstall.removeModel(ctx, target);
+      if (configured === res.id) _cfg.set(ctx, 'conv.profanityModel', 'off');
+      if (JSON_MODE) return jsonOut(res);
+      print(
+        res.removed
+          ? style.ok('✅') + ' removed local weights for ' + res.id
+          : 'No local weights found for ' + res.id + '.',
+      );
+      return;
+    }
+
+    return fail('usage: keyflip conv profanity-model [status|list|install <id> [--yes]|remove [<id>]]');
   }
 
   if (sub === 'capabilities') {

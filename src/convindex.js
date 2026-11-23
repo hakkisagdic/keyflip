@@ -30,6 +30,7 @@ import * as _fsutil from './fsutil.js';
 import * as _writeindex from './writeindex.js';
 import * as _config from './config.js';
 import * as _profanity from './profanity.js';
+import * as _profanityModel from './profanity-model.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -296,6 +297,14 @@ function countProfanityMasked(sources) {
   return n;
 }
 
+function countProfanityModelMasked(sources) {
+  let n = 0;
+  Object.keys(sources || {}).forEach((id) => {
+    n += (sources[id] && sources[id].profanityModelMasked) || 0;
+  });
+  return n;
+}
+
 // Write `meta.json` under `meta.lock` and reconcile concurrent updates from disk:
 //   * Never writes unlocked if `meta.lock` cannot be acquired within the wait window.
 //   * Any source added on disk by a concurrent lexical build while an embedding worker was running
@@ -374,6 +383,7 @@ function writeMeta(ctx, meta, opts) {
       if (!meta.embedding && onDisk.embedding) meta.embedding = onDisk.embedding;
       meta.stats = countStats(meta.sources);
       meta.profanityMasked = countProfanityMasked(meta.sources);
+      meta.profanityModelMasked = countProfanityModelMasked(meta.sources);
     }
     const replacer = function (k, v) {
       if (k === '_oldVec' || k === '_oldHashes' || k === '_embeddedChunks') return undefined;
@@ -643,13 +653,14 @@ function splitLong(text) {
 // nobody meant to search. The full text stays in the transcript and every export.
 function chunkBody(m, maskFn) {
   const raw = String(m.text || '').trim();
-  if (!raw) return { text: '', masked: false };
+  if (!raw) return { text: '', masked: false, modelMasked: false };
   const maskedRes = maskFn ? maskFn(raw) : { text: raw, count: 0 };
   const body = maskedRes.text;
   const masked = maskedRes.count > 0;
-  if (!body || m.machine !== true) return { text: body, masked: masked };
+  const modelMasked = (maskedRes.modelCount || 0) > 0;
+  if (!body || m.machine !== true) return { text: body, masked: masked, modelMasked: modelMasked };
   const head = body.length > MACHINE_CAP ? body.slice(0, MACHINE_CAP).trimEnd() + ' …' : body;
-  return { text: 'Tool output: ' + head, masked: masked };
+  return { text: 'Tool output: ' + head, masked: masked, modelMasked: modelMasked };
 }
 
 function chunkConversation(conv, opts) {
@@ -664,11 +675,19 @@ function chunkConversation(conv, opts) {
     // A user message always starts a turn; so does any message with no turn open (a transcript
     // can begin with an assistant message, and tool/system lines sometimes lead).
     if (!cur || m.role === 'user') {
-      cur = { role: m.role, ts: m.ts || null, head: text, parts: [text], masked: res.masked };
+      cur = {
+        role: m.role,
+        ts: m.ts || null,
+        head: text,
+        parts: [text],
+        masked: res.masked,
+        modelMasked: res.modelMasked,
+      };
       turns.push(cur);
     } else {
       cur.parts.push(text);
       if (res.masked) cur.masked = true;
+      if (res.modelMasked) cur.modelMasked = true;
     }
   }
   const out = [];
@@ -684,10 +703,11 @@ function chunkConversation(conv, opts) {
     // question and its answer belong together.
     if (text.length <= CHUNK_TARGET * 1.5) {
       if (buf && buf.text.length + 2 + text.length > CHUNK_TARGET) flush();
-      if (!buf) buf = { role: t.role, ts: t.ts, text: text, masked: t.masked };
+      if (!buf) buf = { role: t.role, ts: t.ts, text: text, masked: t.masked, modelMasked: t.modelMasked };
       else {
         buf.text += '\n\n' + text;
         if (t.masked) buf.masked = true;
+        if (t.modelMasked) buf.modelMasked = true;
       }
       continue;
     }
@@ -696,13 +716,16 @@ function chunkConversation(conv, opts) {
     splitLong(text).forEach((part, i) => {
       const chunkText = i === 0 ? part : head + '\n\n' + part;
       const partMasked = !!(t.masked && chunkText.includes(_profanity.MASK_TOKEN));
-      out.push({ role: t.role, ts: t.ts, text: chunkText, masked: partMasked });
+      const partModelMasked = !!(t.modelMasked && chunkText.includes(_profanity.MASK_TOKEN));
+      out.push({ role: t.role, ts: t.ts, text: chunkText, masked: partMasked, modelMasked: partModelMasked });
     });
   }
   flush();
   let maskedChunks = 0;
+  let modelMaskedChunks = 0;
   const mapped = out.map((c, i) => {
     if (c.masked) maskedChunks++;
+    if (c.modelMasked) modelMaskedChunks++;
     return {
       n: i,
       role: c.role,
@@ -713,6 +736,7 @@ function chunkConversation(conv, opts) {
     };
   });
   Object.defineProperty(mapped, 'maskedChunks', { value: maskedChunks, enumerable: false });
+  Object.defineProperty(mapped, 'modelMaskedChunks', { value: modelMaskedChunks, enumerable: false });
   return mapped;
 }
 
@@ -1123,8 +1147,70 @@ async function build(ctx, opts) {
   opts = opts || {};
   const profanityEnabled =
     typeof opts.profanityFilter === 'boolean' ? opts.profanityFilter : _config.get(ctx, 'conv.profanityFilter');
-  const curProfanitySig = _profanity.profanitySignature(ctx, profanityEnabled);
-  const profanityMask = profanityEnabled ? _profanity.createFilter({ configDir: ctx.configDir }).mask : null;
+  const configuredModel = profanityEnabled
+    ? _profanity.normalizeModelId(_config.get(ctx, 'conv.profanityModel'))
+    : 'off';
+  const profanityThreshold = _config.get(ctx, 'conv.profanityThreshold');
+  let activeModelId = configuredModel;
+  let activeModelHash = '';
+  let activeClassifier = null;
+  let modelFallback = false;
+  let modelWarning = null;
+  if (profanityEnabled && configuredModel !== 'off') {
+    if (typeof opts.profanityClassifier === 'function') {
+      activeClassifier = opts.profanityClassifier;
+      activeModelHash = 'injected';
+    } else {
+      const installed = _profanityModel.getInstalledModel(ctx, configuredModel);
+      if (!installed) {
+        modelFallback = true;
+        activeModelId = 'off';
+        modelWarning = {
+          path: _profanityModel.modelsRootDir(ctx) || '',
+          app: 'profanity-model',
+          error:
+            'profanity model "' +
+            configuredModel +
+            '" is not installed locally — falling back to word list (install with `keyflip conv profanity-model install ' +
+            configuredModel +
+            '`)',
+        };
+      } else {
+        try {
+          activeClassifier = await _profanityModel.loadLocalClassifier(ctx, configuredModel);
+          activeModelHash = installed.hash || installed.version || '1';
+        } catch (e) {
+          modelFallback = true;
+          activeModelId = 'off';
+          modelWarning = {
+            path: installed.dir || '',
+            app: 'profanity-model',
+            error:
+              'failed to load local profanity model "' +
+              configuredModel +
+              '" (' +
+              ((e && e.message) || String(e)) +
+              ') — falling back to word list',
+          };
+        }
+      }
+    }
+  }
+  const curProfanitySig = _profanity.profanitySignature(ctx, profanityEnabled, {
+    model: activeModelId,
+    modelHash: activeModelHash,
+    threshold: profanityThreshold,
+    fallback: modelFallback,
+  });
+  const profanityFilterObj = profanityEnabled
+    ? _profanity.createFilter({
+        configDir: ctx.configDir,
+        model: activeModelId,
+        threshold: profanityThreshold,
+        classifier: activeClassifier,
+      })
+    : null;
+  const profanityMask = profanityFilterObj ? profanityFilterObj.mask : null;
   const rebuildProfanity = !!opts.rebuildProfanity;
   // A conversation whose source file was deleted stays in the index (row, chunks, vectors) unless
   // the user turned conv.keepDeleted off. Off only affects sources that vanish from then on.
@@ -1171,8 +1257,11 @@ async function build(ctx, opts) {
     embedded: 0,
     embedding: null,
     profanityFilter: profanityEnabled ? 'on' : 'off',
+    profanityModel: activeModelId,
     profanityMasked: 0,
+    profanityModelMasked: 0,
   };
+  if (modelWarning) report.warnings.push(modelWarning);
   // A store an adapter refused outright contributes no sources at all, so it can never reach the
   // per-source `catch` below. Fold its reason in here: a database past the read budget counts as a
   // skipped source, while a store that still yielded chats from an unreadable -wal is a warning —
@@ -1223,203 +1312,225 @@ async function build(ctx, opts) {
   // since the last pass.
   const accounts = _convaccounts.attributor(ctx);
   let done = 0;
-  for (const src of sources) {
-    done++;
-    if (opts.onProgress) opts.onProgress({ phase: 'scan', done: done, total: sources.length, id: src.path });
-    const srcKey = conversations.sourceKey(src);
-    const prev = byKey[srcKey];
-    try {
-      // Fast path BEFORE parsing: an unchanged file keeps its id and hash by definition, so a
-      // no-op build is a stat() per source instead of re-reading every transcript. A row from
-      // an older id scheme is re-parsed once, so the id is re-derived under the current one.
-      const prevSigOk = ((prev && prev.profanitySig) || null) === curProfanitySig;
-      if (
-        !opts.force &&
-        !rebuildProfanity &&
-        prevSigOk &&
-        prev &&
-        prev.id &&
-        prev.hash &&
-        prev.scheme === ID_SCHEME &&
-        prev.chunkScheme === CHUNK_SCHEME &&
-        prev.mtimeMs === src.mtimeMs &&
-        prev.size === src.size &&
-        chunkBytesOk(ctx, prev)
-      ) {
-        const id = claimId(prev.id, srcKey);
-        if (id === prev.id) {
-          next[prev.id] = Object.assign({}, prev, accounts.fields(prev));
-          report.reused++;
-          report.profanityMasked += prev.profanityMasked || 0;
-          pendingEnsureTokens.push(prev.id);
+  try {
+    for (const src of sources) {
+      done++;
+      if (opts.onProgress) opts.onProgress({ phase: 'scan', done: done, total: sources.length, id: src.path });
+      const srcKey = conversations.sourceKey(src);
+      const prev = byKey[srcKey];
+      try {
+        // Fast path BEFORE parsing: an unchanged file keeps its id and hash by definition, so a
+        // no-op build is a stat() per source instead of re-reading every transcript. A row from
+        // an older id scheme is re-parsed once, so the id is re-derived under the current one.
+        const prevSigOk = ((prev && prev.profanitySig) || null) === curProfanitySig;
+        if (
+          !opts.force &&
+          !rebuildProfanity &&
+          prevSigOk &&
+          prev &&
+          prev.id &&
+          prev.hash &&
+          prev.scheme === ID_SCHEME &&
+          prev.chunkScheme === CHUNK_SCHEME &&
+          prev.mtimeMs === src.mtimeMs &&
+          prev.size === src.size &&
+          chunkBytesOk(ctx, prev)
+        ) {
+          const id = claimId(prev.id, srcKey);
+          if (id === prev.id) {
+            next[prev.id] = Object.assign({}, prev, accounts.fields(prev));
+            report.reused++;
+            report.profanityMasked += prev.profanityMasked || 0;
+            report.profanityModelMasked += prev.profanityModelMasked || 0;
+            pendingEnsureTokens.push(prev.id);
+            continue;
+          }
+          // A collision: reusing the row would point two paths at ONE chunk file. Fall through
+          // to the full parse so this source gets its own chunk file under the new id.
+        }
+        const conv = conversations.load(ctx, src, opts);
+        if (Array.isArray(conv.warnings) && conv.warnings.length) {
+          conv.warnings.forEach((w) => report.warnings.push(w));
+        }
+        const bytes = conv.messages.reduce((n, m) => n + Buffer.byteLength(m.text || ''), 0);
+        if (!conv.messages.length) {
+          report.empty++;
+          if (prev && prev.id && !next[prev.id]) {
+            removedIds.add(prev.id);
+            pendingDeletes.push(prev.id);
+            report.removed++;
+          }
           continue;
         }
-        // A collision: reusing the row would point two paths at ONE chunk file. Fall through
-        // to the full parse so this source gets its own chunk file under the new id.
-      }
-      const conv = conversations.load(ctx, src, opts);
-      if (Array.isArray(conv.warnings) && conv.warnings.length) {
-        conv.warnings.forEach((w) => report.warnings.push(w));
-      }
-      const bytes = conv.messages.reduce((n, m) => n + Buffer.byteLength(m.text || ''), 0);
-      if (!conv.messages.length) {
-        report.empty++;
-        if (prev && prev.id && !next[prev.id]) {
-          removedIds.add(prev.id);
-          pendingDeletes.push(prev.id);
-          report.removed++;
+        const id = claimId(conv.id, srcKey);
+        const had = meta.sources[id] || prev;
+        // Reuse is only safe when the entry really belongs to THIS id and its chunk file is
+        // still on disk. Checking the id matters: entries are looked up by sourceKey, and before the
+        // Codex id fix several rollouts shared one id, so reusing `had` blind could copy a
+        // neighbour's chunk count onto a source whose own chunk file was never written.
+        // An entry with hash null asked to be re-chunked (see the embed loop's disk check).
+        // The chunk file must also still be the one this entry describes: two transcripts that
+        // claimed one id could have overwritten it, and a reused count would then describe a
+        // conversation that is not on disk.
+        const sameEntry =
+          !!had &&
+          had.id === id &&
+          had.hash &&
+          had.chunkScheme === CHUNK_SCHEME &&
+          fs.existsSync(chunkPath(ctx, id)) &&
+          chunkBytesOk(ctx, had);
+        const hadSigOk = ((had && had.profanitySig) || null) === curProfanitySig;
+        if (
+          !opts.force &&
+          !rebuildProfanity &&
+          hadSigOk &&
+          sameEntry &&
+          had.mtimeMs === src.mtimeMs &&
+          had.size === src.size
+        ) {
+          // Re-attributed even though the row is reused: the account that was live when it was
+          // written may have been learned (or deleted) since the last pass.
+          next[id] = Object.assign(
+            {},
+            had,
+            conv.parentId ? { parentId: conv.parentId } : {},
+            src.subId ? { subId: src.subId } : {},
+            accounts.fields(conv),
+          );
+          report.reused++;
+          report.profanityMasked += had.profanityMasked || 0;
+          report.profanityModelMasked += had.profanityModelMasked || 0;
+          pendingEnsureTokens.push(id);
+          continue;
         }
-        continue;
-      }
-      const id = claimId(conv.id, srcKey);
-      const had = meta.sources[id] || prev;
-      // Reuse is only safe when the entry really belongs to THIS id and its chunk file is
-      // still on disk. Checking the id matters: entries are looked up by sourceKey, and before the
-      // Codex id fix several rollouts shared one id, so reusing `had` blind could copy a
-      // neighbour's chunk count onto a source whose own chunk file was never written.
-      // An entry with hash null asked to be re-chunked (see the embed loop's disk check).
-      // The chunk file must also still be the one this entry describes: two transcripts that
-      // claimed one id could have overwritten it, and a reused count would then describe a
-      // conversation that is not on disk.
-      const sameEntry =
-        !!had &&
-        had.id === id &&
-        had.hash &&
-        had.chunkScheme === CHUNK_SCHEME &&
-        fs.existsSync(chunkPath(ctx, id)) &&
-        chunkBytesOk(ctx, had);
-      const hadSigOk = ((had && had.profanitySig) || null) === curProfanitySig;
-      if (
-        !opts.force &&
-        !rebuildProfanity &&
-        hadSigOk &&
-        sameEntry &&
-        had.mtimeMs === src.mtimeMs &&
-        had.size === src.size
-      ) {
-        // Re-attributed even though the row is reused: the account that was live when it was
-        // written may have been learned (or deleted) since the last pass.
-        next[id] = Object.assign(
-          {},
-          had,
-          conv.parentId ? { parentId: conv.parentId } : {},
-          src.subId ? { subId: src.subId } : {},
-          accounts.fields(conv),
-        );
-        report.reused++;
-        report.profanityMasked += had.profanityMasked || 0;
-        pendingEnsureTokens.push(id);
-        continue;
-      }
-      const maskedTitle = profanityMask && conv.title ? profanityMask(conv.title).text : conv.title;
-      if (!opts.force && !rebuildProfanity && hadSigOk && sameEntry && had.hash === conv.hash) {
-        next[id] = Object.assign(
-          {},
-          had,
-          {
-            scheme: ID_SCHEME,
-            mtimeMs: src.mtimeMs,
-            size: src.size,
-            path: src.path,
-            updatedAt: conv.updatedAt,
-            title: maskedTitle,
-            cwd: conv.cwd,
-          },
-          conv.parentId ? { parentId: conv.parentId } : {},
-          src.subId ? { subId: src.subId } : {},
-          accounts.fields(conv),
-        );
-        report.reused++;
-        report.profanityMasked += had.profanityMasked || 0;
-        pendingEnsureTokens.push(id);
-        continue;
-      }
-      const chunks = chunkConversation(conv, { mask: profanityMask });
-      if (!chunks.length) {
-        report.empty++;
-        continue;
-      }
-      const maskedChunks = chunks.maskedChunks || 0;
-      // Old hashes/vectors may only seed prefix reuse when they belong to this same id —
-      // a path that changed id (or an entry copied from a colliding id) must start clean.
-      const sameOwner = !!had && had.id === id;
-      const oldHashes = sameOwner ? had.chunkHashes || readChunks(chunkPath(ctx, id)).map((c) => c.h) : [];
-      const newHashes = chunks.map((c) => c.h);
-      const chunksIdentical =
-        !opts.force &&
-        sameEntry &&
-        oldHashes.length === newHashes.length &&
-        oldHashes.every((h, idx) => h === newHashes[idx]);
-      if (chunksIdentical) {
-        next[id] = Object.assign(
-          {},
-          had,
-          {
-            scheme: ID_SCHEME,
-            mtimeMs: src.mtimeMs,
-            size: src.size,
-            path: src.path,
-            updatedAt: conv.updatedAt,
-            title: maskedTitle,
-            cwd: conv.cwd,
-            hash: conv.hash,
-            counts: conv.counts,
-            bytes: bytes,
-            profanitySig: curProfanitySig,
-            profanityMasked: maskedChunks,
-          },
-          conv.parentId ? { parentId: conv.parentId } : {},
-          src.subId ? { subId: src.subId } : {},
-          accounts.fields(conv),
-        );
-        report.reused++;
+        const reusedTitle =
+          had && had.title != null
+            ? had.title
+            : profanityMask && conv.title
+              ? profanityMask(conv.title).text
+              : conv.title;
+        if (!opts.force && !rebuildProfanity && hadSigOk && sameEntry && had.hash === conv.hash) {
+          next[id] = Object.assign(
+            {},
+            had,
+            {
+              scheme: ID_SCHEME,
+              mtimeMs: src.mtimeMs,
+              size: src.size,
+              path: src.path,
+              updatedAt: conv.updatedAt,
+              title: reusedTitle,
+              cwd: conv.cwd,
+            },
+            conv.parentId ? { parentId: conv.parentId } : {},
+            src.subId ? { subId: src.subId } : {},
+            accounts.fields(conv),
+          );
+          report.reused++;
+          report.profanityMasked += had.profanityMasked || 0;
+          report.profanityModelMasked += had.profanityModelMasked || 0;
+          pendingEnsureTokens.push(id);
+          continue;
+        }
+        const prepared = profanityFilterObj ? await profanityFilterObj.prepare(conv) : null;
+        const convMask = prepared ? prepared.mask : profanityMask;
+        const maskedTitle = convMask && conv.title ? convMask(conv.title).text : conv.title;
+        const chunks = chunkConversation(conv, { mask: convMask });
+        if (!chunks.length) {
+          report.empty++;
+          continue;
+        }
+        const maskedChunks = chunks.maskedChunks || 0;
+        const modelMaskedChunks = chunks.modelMaskedChunks || 0;
+        // Old hashes/vectors may only seed prefix reuse when they belong to this same id —
+        // a path that changed id (or an entry copied from a colliding id) must start clean.
+        const sameOwner = !!had && had.id === id;
+        const oldHashes = sameOwner ? had.chunkHashes || readChunks(chunkPath(ctx, id)).map((c) => c.h) : [];
+        const newHashes = chunks.map((c) => c.h);
+        const chunksIdentical =
+          !opts.force &&
+          sameEntry &&
+          oldHashes.length === newHashes.length &&
+          oldHashes.every((h, idx) => h === newHashes[idx]);
+        if (chunksIdentical) {
+          next[id] = Object.assign(
+            {},
+            had,
+            {
+              scheme: ID_SCHEME,
+              mtimeMs: src.mtimeMs,
+              size: src.size,
+              path: src.path,
+              updatedAt: conv.updatedAt,
+              title: maskedTitle,
+              cwd: conv.cwd,
+              hash: conv.hash,
+              counts: conv.counts,
+              bytes: bytes,
+              profanitySig: curProfanitySig,
+              profanityMasked: maskedChunks,
+              profanityModelMasked: modelMaskedChunks,
+            },
+            conv.parentId ? { parentId: conv.parentId } : {},
+            src.subId ? { subId: src.subId } : {},
+            accounts.fields(conv),
+          );
+          report.reused++;
+          report.profanityMasked += maskedChunks;
+          report.profanityModelMasked += modelMaskedChunks;
+          pendingEnsureTokens.push(id);
+          continue;
+        }
+        const entry = {
+          id: id,
+          scheme: ID_SCHEME,
+          chunkScheme: CHUNK_SCHEME,
+          app: conv.app,
+          surface: conv.surface,
+          title: maskedTitle,
+          cwd: conv.cwd,
+          createdAt: conv.createdAt,
+          updatedAt: conv.updatedAt,
+          counts: conv.counts,
+          path: src.path,
+          mtimeMs: src.mtimeMs,
+          size: src.size,
+          hash: conv.hash,
+          // The account the SOURCE names, kept apart from the resolved `account` below: the
+          // resolved value is this pass's answer and changes, the source's own fact does not.
+          parserAccount: conv.account || null,
+          chunks: chunks.length,
+          bytes: bytes,
+          chunkHashes: newHashes,
+          profanitySig: curProfanitySig,
+          profanityMasked: maskedChunks,
+          profanityModelMasked: modelMaskedChunks,
+          // Changed text invalidates the vector alignment. Keep the OLD vector/hash pair only
+          // so an appended or profanity-masked chat can reuse its unchanged chunks instead of
+          // embedding every chunk again.
+          vec: null,
+          _oldVec: sameOwner && space && had.vec && had.vec.space === space.hash ? had.vec : null,
+          _oldHashes: sameOwner && space && had.vec && had.vec.space === space.hash ? oldHashes : null,
+        };
+        if (conv.parentId) entry.parentId = conv.parentId;
+        if (src.subId) entry.subId = src.subId;
+        // Which account worked on it — stated if the user said so, inferred from the switch
+        // timeline otherwise (and labelled as an inference).
+        Object.assign(entry, accounts.fields(conv));
+        pendingWrites.push({ id: id, chunks: chunks, entry: entry });
+        next[id] = entry;
+        report.changed++;
+        report.indexed++;
         report.profanityMasked += maskedChunks;
-        pendingEnsureTokens.push(id);
-        continue;
+        report.profanityModelMasked += modelMaskedChunks;
+      } catch (e) {
+        report.skipped++;
+        report.errors.push({ path: src.path, app: src.app, error: (e && e.message) || String(e) });
       }
-      const entry = {
-        id: id,
-        scheme: ID_SCHEME,
-        chunkScheme: CHUNK_SCHEME,
-        app: conv.app,
-        surface: conv.surface,
-        title: maskedTitle,
-        cwd: conv.cwd,
-        createdAt: conv.createdAt,
-        updatedAt: conv.updatedAt,
-        counts: conv.counts,
-        path: src.path,
-        mtimeMs: src.mtimeMs,
-        size: src.size,
-        hash: conv.hash,
-        // The account the SOURCE names, kept apart from the resolved `account` below: the
-        // resolved value is this pass's answer and changes, the source's own fact does not.
-        parserAccount: conv.account || null,
-        chunks: chunks.length,
-        bytes: bytes,
-        chunkHashes: newHashes,
-        profanitySig: curProfanitySig,
-        profanityMasked: maskedChunks,
-        // Changed text invalidates the vector alignment. Keep the OLD vector/hash pair only
-        // so an appended or profanity-masked chat can reuse its unchanged chunks instead of
-        // embedding every chunk again.
-        vec: null,
-        _oldVec: sameOwner && space && had.vec && had.vec.space === space.hash ? had.vec : null,
-        _oldHashes: sameOwner && space && had.vec && had.vec.space === space.hash ? oldHashes : null,
-      };
-      if (conv.parentId) entry.parentId = conv.parentId;
-      if (src.subId) entry.subId = src.subId;
-      // Which account worked on it — stated if the user said so, inferred from the switch
-      // timeline otherwise (and labelled as an inference).
-      Object.assign(entry, accounts.fields(conv));
-      pendingWrites.push({ id: id, chunks: chunks, entry: entry });
-      next[id] = entry;
-      report.changed++;
-      report.indexed++;
-      report.profanityMasked += maskedChunks;
-    } catch (e) {
-      report.skipped++;
-      report.errors.push({ path: src.path, app: src.app, error: (e && e.message) || String(e) });
+    }
+  } finally {
+    if (activeClassifier && typeof activeClassifier.dispose === 'function') {
+      await activeClassifier.dispose();
     }
   }
 
@@ -1583,7 +1694,9 @@ async function build(ctx, opts) {
             : Object.keys(next).length,
       truncated: !(opts.apps && opts.apps.length) && !opts.limitSources ? sources.truncated || 0 : meta.truncated || 0,
       profanitySig: full ? curProfanitySig : meta.profanitySig || curProfanitySig,
+      profanityModel: activeModelId,
       profanityMasked: countProfanityMasked(next),
+      profanityModelMasked: countProfanityModelMasked(next),
       stats: countStats(next),
       sources: next,
     };
@@ -1915,6 +2028,8 @@ function catalog(ctx, opts) {
 
 function status(ctx, opts) {
   const profanityFilter = _config.get(ctx, 'conv.profanityFilter') ? 'on' : 'off';
+  const profanityModel =
+    profanityFilter === 'on' ? _profanity.normalizeModelId(_config.get(ctx, 'conv.profanityModel')) : 'off';
   const meta = readMeta(ctx);
   if (!meta)
     return {
@@ -1928,7 +2043,9 @@ function status(ctx, opts) {
       pendingChunks: 0,
       pendingTokensEstimate: 0,
       profanityFilter: profanityFilter,
+      profanityModel: profanityModel,
       profanityMasked: 0,
+      profanityModelMasked: 0,
     };
   const activeSpace = spaceOf(opts, ctx);
   let vectorSources = 0;
@@ -1994,7 +2111,9 @@ function status(ctx, opts) {
       staleModel || (meta.embedding && meta.embedding.space !== activeSpace.hash ? meta.embedding.model : null),
     backgroundEmbed: bg.running ? bg : null,
     profanityFilter: profanityFilter,
+    profanityModel: profanityModel,
     profanityMasked: countProfanityMasked(meta.sources),
+    profanityModelMasked: countProfanityModelMasked(meta.sources),
   };
 }
 

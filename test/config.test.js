@@ -356,3 +356,60 @@ test('conv.profanityFilter defaults ON and coerces on/off/true/false', function 
   assert.strictEqual(config.unset(ctx, 'conv.profanityFilter'), true);
   assert.strictEqual(config.get(ctx, 'conv.profanityFilter'), true);
 });
+
+test('conv.profanityModel defaults to off, accepts model ids, rejects control chars, and unset reverts', function () {
+  const ctx = makeCtx();
+  assert.strictEqual(config.get(ctx, 'conv.profanityModel'), 'off');
+  assert.strictEqual(config.describe()['conv.profanityModel'].type, 'string');
+  assert.strictEqual(
+    config.set(ctx, 'conv.profanityModel', 'Horizon-Labs/multilingual-toxicity-small'),
+    'Horizon-Labs/multilingual-toxicity-small',
+  );
+  assert.strictEqual(config.get(ctx, 'conv.profanityModel'), 'Horizon-Labs/multilingual-toxicity-small');
+  assert.throws(function () {
+    config.set(ctx, 'conv.profanityModel', 'bad\nmodel');
+  }, /control characters/);
+  assert.strictEqual(config.unset(ctx, 'conv.profanityModel'), true);
+  assert.strictEqual(config.get(ctx, 'conv.profanityModel'), 'off');
+});
+
+test('conv.profanityThreshold is a bounded float (0..1, default 0.8)', function () {
+  const ctx = makeCtx();
+  const d = config.describe()['conv.profanityThreshold'];
+  assert.strictEqual(d.type, 'float');
+  assert.strictEqual(d.default, 0.8);
+  assert.strictEqual(d.min, 0);
+  assert.strictEqual(d.max, 1);
+  assert.strictEqual(config.get(ctx, 'conv.profanityThreshold'), 0.8);
+
+  assert.strictEqual(config.set(ctx, 'conv.profanityThreshold', '0'), 0);
+  assert.strictEqual(config.set(ctx, 'conv.profanityThreshold', '0.5'), 0.5);
+  assert.strictEqual(config.set(ctx, 'conv.profanityThreshold', '0.85'), 0.85);
+  assert.strictEqual(config.set(ctx, 'conv.profanityThreshold', '.5'), 0.5);
+  assert.strictEqual(config.set(ctx, 'conv.profanityThreshold', '1'), 1);
+  assert.strictEqual(config.set(ctx, 'conv.profanityThreshold', 0.75), 0.75);
+  assert.strictEqual(config.get(ctx, 'conv.profanityThreshold'), 0.75);
+
+  ['abc', 'NaN', 'Infinity', ''].forEach(function (bad) {
+    assert.throws(function () {
+      config.set(ctx, 'conv.profanityThreshold', bad);
+    }, /expected a number/);
+  });
+  assert.throws(function () {
+    config.set(ctx, 'conv.profanityThreshold', '-0.1');
+  }, /must be >= 0/);
+  assert.throws(function () {
+    config.set(ctx, 'conv.profanityThreshold', '1.1');
+  }, /must be <= 1/);
+
+  // Tampered JSON drops out-of-range / non-finite float back to 0.8
+  fs.writeFileSync(
+    cpath(ctx),
+    JSON.stringify({
+      'conv.profanityThreshold': 1.5,
+      'conv.profanityModel': 'Horizon-Labs/multilingual-toxicity-small',
+    }),
+  );
+  assert.strictEqual(config.get(ctx, 'conv.profanityThreshold'), 0.8);
+  assert.strictEqual(config.get(ctx, 'conv.profanityModel'), 'Horizon-Labs/multilingual-toxicity-small');
+});
