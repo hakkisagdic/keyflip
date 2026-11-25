@@ -1106,7 +1106,7 @@ keyflip conv transfer a7dc93d0 --to codex         # başka bir yapay zekâ arac�
   bulur, bayat olanı değil — **gece saatinde değil, aralıkla** çalışır, çünkü günlük indeks bir gün geride
   kalırdı. Geçiş kademeli: değişmeyen bir transcript tek `stat()` demektir, yalnızca yeni ya da değişen
   parçalar gömülür, dolayısıyla bir tur saniyeler sürer. **Yerel** embedding modelini çalıştırır — bulut
-  modeli yok, kota yok — ve paylaşılan GPU'yu boğmamak için nazik varsayılanlar (`conv.embedBatch = 8`, `conv.embedPauseMs = 500`, `conv.maxEmbed = 300`; `keyflip config set` veya `--embed-batch` / `--embed-pause-ms` / `--max-embed` ile ayarlanır) kullanır; `keyflip conv status` kalan `pending` parça ve tahmini token sayısını gösterir. Durumu `--schedule-status` gösterir, `--unschedule` kaldırır; terminali açık
+  modeli yok, kota yok — ve paylaşılan GPU'yu boğmamak için nazik varsayılanlar (`conv.embedBatch = 8`, `conv.embedPauseMs = 500`, `conv.maxEmbed = 300`; `keyflip config set` veya `--embed-batch` / `--embed-pause-ms` / `--max-embed` ile ayarlanır) kullanır. Her tur ayrıca sınırlıdır: `conv.maxRssMb` (2048 MB) veya `conv.maxRunMinutes` (120 dk) aşılınca ilerlemesini kaydedip temiz çıkar (`--max-rss-mb` / `--max-run-min`, 0 = kapalı), sonraki tur kaldığı yerden sürer ve en az 5 dakikada bir ilerleme satırı yazar. `keyflip conv status` kalan `pending` parça ve tahmini token sayısını gösterir. Durumu `--schedule-status` gösterir, `--unschedule` kaldırır; terminali açık
   tutmayı severseniz ön planlı karşılığı `--watch`.
 - **`conv context` RAG giriş noktasıdır.** Karakter bütçeli (varsayılan 12.000) taşınabilir tek blok
   döndürür: kararlı başlıklar, kaynak id'leri, çalışma dizinleri ve tarihler; `--expand N` komşu
