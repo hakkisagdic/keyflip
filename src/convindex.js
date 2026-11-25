@@ -385,13 +385,42 @@ function writeMeta(ctx, meta, opts) {
       meta.profanityMasked = countProfanityMasked(meta.sources);
       meta.profanityModelMasked = countProfanityModelMasked(meta.sources);
     }
-    const replacer = function (k, v) {
-      if (k === '_oldVec' || k === '_oldHashes' || k === '_embeddedChunks') return undefined;
-      return v;
-    };
-    _fsutil.atomicWrite(metaPath(ctx), JSON.stringify(meta, replacer, 2) + '\n', 0o600);
+    _fsutil.atomicWriteChunks(metaPath(ctx), metaPieces(meta), 0o600);
   });
   return lockRes.acquired;
+}
+
+function metaReplacer(k, v) {
+  if (k === '_oldVec' || k === '_oldHashes' || k === '_embeddedChunks') return undefined;
+  return v;
+}
+
+// meta.json as `JSON.stringify(meta, replacer, 2) + '\n'` would write it, byte for byte, but one
+// source row at a time: with tens of thousands of rows the one-shot stringify allocated several
+// times the file's size at once, which is exactly the spike the memory guard trips over.
+function* metaPieces(meta) {
+  const indent = (text, pad) => text.replace(/\n/g, '\n' + pad);
+  let first = true;
+  yield '{';
+  for (const k of Object.keys(meta)) {
+    const v = metaReplacer(k, meta[k]);
+    if (v === undefined || typeof v === 'function' || typeof v === 'symbol') continue;
+    yield (first ? '\n  ' : ',\n  ') + JSON.stringify(k) + ': ';
+    first = false;
+    if (k !== 'sources' || !v || typeof v !== 'object' || Array.isArray(v)) {
+      yield indent(JSON.stringify(v, metaReplacer, 2), '  ');
+      continue;
+    }
+    let opened = false;
+    for (const id of Object.keys(v)) {
+      const rowText = JSON.stringify(metaReplacer(id, v[id]), metaReplacer, 2);
+      if (rowText === undefined) continue;
+      yield (opened ? ',\n    ' : '{\n    ') + JSON.stringify(id) + ': ' + indent(rowText, '    ');
+      opened = true;
+    }
+    yield opened ? '\n  }' : '{}';
+  }
+  yield first ? '}\n' : '\n}\n';
 }
 
 function emptyMeta() {
@@ -1152,7 +1181,7 @@ const DEFAULT_MAX_RUN_MIN = 120;
 const DEFAULT_PROGRESS_MS = 5 * 60 * 1000;
 // While scanning, finished conversations are staged on disk at once and committed to meta.json in
 // batches: a stop (or a crash) loses at most one batch of progress, and memory holds no chunk text.
-const SCAN_FLUSH_SOURCES = 500;
+const SCAN_FLUSH_SOURCES = 1000;
 const SCAN_FLUSH_MS = 120 * 1000;
 // Per-source errors and warnings are kept for the report, but never without bound.
 const MAX_REPORT_ENTRIES = 1000;
@@ -3021,6 +3050,7 @@ function contextPack(ctx, query, hits, opts) {
 }
 
 export {
+  metaPieces,
   SCHEMA_VERSION,
   INDEX_DIR,
   CHUNK_SCHEME,

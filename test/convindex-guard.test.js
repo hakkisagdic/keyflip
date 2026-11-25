@@ -332,3 +332,43 @@ test('CLI rejects a non-numeric limit', async function () {
   const r = await runCli(ctx, ['--no-embed', '--max-run-min', '-3']);
   assert.notStrictEqual(r.status, 0);
 });
+
+test('meta.json is written row by row but byte-identical to a one-shot JSON.stringify', function () {
+  const replacer = (k, v) => (k === '_oldVec' || k === '_oldHashes' || k === '_embeddedChunks' ? undefined : v);
+  const sources = Object.create(null);
+  sources['claude:local:a'] = {
+    id: 'claude:local:a',
+    title: 'Türkçe başlık "tırnak" \n satır',
+    chunkHashes: ['aa', 'bb'],
+    emptyList: [],
+    emptyObj: {},
+    nothing: undefined,
+    nullable: null,
+    _oldVec: { dim: 3 },
+    _oldHashes: ['x'],
+    vec: { space: 's', dim: 8, count: 2, _embeddedChunks: 2 },
+    counts: { messages: 2 },
+  };
+  sources['b'] = { id: 'b', chunkHashes: [] };
+  sources['gone'] = undefined;
+  const samples = [
+    { schemaVersion: 1, builtAt: null, embedding: null, stats: { sources: 2, byApp: { claude: { sources: 2 } } }, sources },
+    { schemaVersion: 1, sources: Object.create(null) },
+    { schemaVersion: 1, only: 'sources are not first', sources: { x: { id: 'x' } }, tail: [1, 2, { a: [] }] },
+    {},
+  ];
+  for (const m of samples) {
+    assert.strictEqual([...convindex.metaPieces(m)].join(''), JSON.stringify(m, replacer, 2) + '\n');
+  }
+});
+
+test('a built manifest on disk parses and equals what the build returned', async function () {
+  const ctx = ctxFor();
+  seedMany(ctx, 5);
+  const r = await convindex.build(ctx, { embed: true, post: async (_u, body) => ({ model: body.model, embeddings: body.input.map(() => Array(8).fill(0.5)) }) });
+  const m = readManifest(ctx);
+  assert.strictEqual(Object.keys(m.sources).length, 5);
+  assert.strictEqual(m.stats.sources, r.stats.sources);
+  assert.ok(fs.readFileSync(convindex.metaPath(ctx), 'utf8').endsWith('}\n'));
+  Object.values(m.sources).forEach((row) => assert.ok(row.vec && row.vec.count === row.chunks));
+});
