@@ -274,7 +274,7 @@ function usage() {
   print('                                 (--history also scans every blob keyflip ever committed)');
   print('  keyflip freshness [--json]     how old every saved login is: CLI token + claude.ai sign-ins (28-day,');
   print('                                 human-only) and any "Sign in again" refusal (alias: age)');
-  print("  keyflip test <provider>        fire one real request to check a provider's auth");
+  print("  keyflip test <provider> | --all   fire one real request to check one or all providers' auth");
   print(
     '  keyflip chains [account] [--tighten [--apply]]   what each login is made of, who can renew each part, and what is stale/shared/world-readable',
   );
@@ -13608,29 +13608,63 @@ function printHistoryLeaks(hist, cls) {
     );
 }
 
+function formatTestLine(name, r) {
+  if (r && r.ok === true) return style.ok('✓') + ' ' + name + ': ok (' + r.ms + 'ms, http ' + r.httpStatus + ')';
+  const res = r || { category: 'error' };
+  return (
+    style.err('✗') +
+    ' ' +
+    name +
+    ': ' +
+    res.category +
+    (res.httpStatus ? ' (http ' + res.httpStatus + ')' : '') +
+    (res.reason ? ' — ' + redact(String(res.reason)) : '')
+  );
+}
+
 async function cmdTest(ctx, rest) {
+  const all = rest.indexOf('--all') !== -1;
   const name = rest.filter(function (a) {
     return a.indexOf('-') !== 0;
   })[0];
-  if (!name)
-    return fail('usage: keyflip test <provider>   (fires one minimal real request to check auth + reachability)');
+  if ((all && name) || (!all && !name))
+    return fail(
+      'usage: keyflip test <provider> | --all   (fires one minimal real request to check auth + reachability)',
+    );
+  if (all) {
+    const names = provider.list(ctx);
+    if (!names.length) return fail('no providers to test (add one: keyflip provider add …)');
+    const results = await doctor.runAll(
+      names,
+      function (n) {
+        return doctor.testProvider(ctx, n);
+      },
+      4,
+    );
+    let ok = 0;
+    let failed = 0;
+    results.forEach(function (entry) {
+      if (entry.result && entry.result.ok === true) ok++;
+      else failed++;
+    });
+    if (failed > 0) process.exitCode = 1;
+    if (JSON_MODE) {
+      jsonOut({ results: results, ok: ok, failed: failed });
+      return;
+    }
+    results.forEach(function (entry) {
+      print(formatTestLine(entry.provider, entry.result));
+    });
+    print(ok + ' ok, ' + failed + ' failed');
+    return;
+  }
   if (!provider.exists(ctx, name)) return fail("no such provider: '" + name + "'");
   const r = await doctor.testProvider(ctx, name);
   if (JSON_MODE) {
     jsonOut({ provider: name, result: r });
     return;
   }
-  if (r.ok) print(style.ok('✓') + ' ' + name + ': ok (' + r.ms + 'ms, http ' + r.httpStatus + ')');
-  else
-    print(
-      style.err('✗') +
-        ' ' +
-        name +
-        ': ' +
-        r.category +
-        (r.httpStatus ? ' (http ' + r.httpStatus + ')' : '') +
-        (r.reason ? ' — ' + r.reason : ''),
-    );
+  print(formatTestLine(name, r));
 }
 
 // Parallel session: run Claude Code as <name> in THIS terminal only.
