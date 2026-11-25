@@ -350,6 +350,7 @@ keyflip provider catalog        # 19 preset: Z.AI/GLM, Zhipu, Kimi, DeepSeek, Mi
 keyflip provider add zai --key-file -          # bir preset yalnızca anahtar ister (URL katalogdan gelir)
 keyflip provider add benim-gw --from deepseek --key-file -   # preseti kendi adınla kaydet
 keyflip provider add openrouter --base-url https://openrouter.ai/api/v1 --key-file -   # herhangi bir endpoint
+keyflip provider fork zai zai-test              # bir provider yapılandırmasını çoğalt (anahtarı kopyalar; --no-key atlar)
 keyflip use zai                 # Claude Code'u ona yönlendir
 keyflip provider off            # aboneliğine geri dön (OAuth)
 keyflip provider list           # kayıtlı / aktif olan

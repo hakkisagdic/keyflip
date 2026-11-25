@@ -367,6 +367,7 @@ keyflip provider catalog        # 19 presets: Z.AI/GLM, Zhipu, Kimi, DeepSeek, M
 keyflip provider add zai --key-file -          # a preset needs nothing but the key (catalog picks the URL)
 keyflip provider add my-gw --from deepseek --key-file -   # preset under your own name
 keyflip provider add openrouter --base-url https://openrouter.ai/api/v1 --key-file -   # any endpoint
+keyflip provider fork zai zai-test              # duplicate a provider config (copies key; --no-key skips it)
 keyflip use zai                 # route Claude Code to it
 keyflip provider off            # back to your subscription (OAuth)
 keyflip provider list           # what's saved / active

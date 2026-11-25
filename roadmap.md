@@ -70,7 +70,7 @@ near‑term backlog; several are prerequisites for the big epics (E3 especially)
 | 9 | ✅ Priority + LRU deterministic account ordering (`priority` field) | E3 |
 | 10 | ✅ Route‑decision debug headers / `--verbose` (`x-keyflip-account`, `-route-reason`) | E3 |
 | 14 | `keyflip test --all` parallel provider health check | — |
-| 15 | `keyflip provider fork <src> <new>` duplicate a provider config | — |
+| 15 | ✅ `keyflip provider fork <src> <new>` duplicate a provider config | — |
 
 ### Phase 0b — provider ecosystem (the biggest gap vs competitors)
 | # | Item | Feeds |
