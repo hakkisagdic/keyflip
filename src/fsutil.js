@@ -45,6 +45,66 @@ function atomicWrite(filePath, data, mode) {
   }
 }
 
+// Like atomicWrite, but the content comes from an iterable of strings that is written piece by
+// piece, so a very large file (the conversation index manifest) never exists as one giant string
+// or buffer in memory. Same temp + rename shape and the same permission rules.
+function atomicWriteChunks(filePath, pieces, mode) {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  if (mode === undefined || mode === null) {
+    try {
+      mode = fs.statSync(filePath).mode & 0o777;
+    } catch (e) {
+      mode = 0o600;
+    }
+  }
+  const tmp = filePath + '.tmp-' + process.pid + '-' + seq++;
+  try {
+    fs.rmSync(tmp, { force: true });
+  } catch (e) {
+    /* ignore */
+  }
+  const fd = fs.openSync(tmp, 'w', mode);
+  try {
+    let batch = '';
+    for (const piece of pieces) {
+      batch += piece;
+      if (batch.length >= 1 << 20) {
+        fs.writeSync(fd, batch);
+        batch = '';
+      }
+    }
+    if (batch) fs.writeSync(fd, batch);
+  } catch (e) {
+    fs.closeSync(fd);
+    try {
+      fs.rmSync(tmp, { force: true });
+    } catch (e2) {
+      /* ignore */
+    }
+    throw e;
+  }
+  fs.closeSync(fd);
+  try {
+    fs.renameSync(tmp, filePath);
+  } catch (e) {
+    // Windows: destination held open, or replace-existing not permitted.
+    try {
+      fs.copyFileSync(tmp, filePath);
+    } finally {
+      try {
+        fs.rmSync(tmp, { force: true });
+      } catch (e2) {
+        /* ignore */
+      }
+    }
+  }
+  try {
+    fs.chmodSync(filePath, mode);
+  } catch (e) {
+    /* best effort (e.g. Windows) */
+  }
+}
+
 // Is `dest` safe to write as a file strictly under `root`, even against symlink escapes
 // that a lexical path check misses? Three checks:
 //   (a) dest is lexically under root (blocks `../` and absolute-path escapes),
@@ -130,4 +190,4 @@ function readJsonForWrite(filePath) {
   }
 }
 
-export { atomicWrite, sortKeys, writeJsonStable, readJsonForWrite, safeDestUnder };
+export { atomicWrite, atomicWriteChunks, sortKeys, writeJsonStable, readJsonForWrite, safeDestUnder };

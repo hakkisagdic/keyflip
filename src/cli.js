@@ -8527,7 +8527,7 @@ const CONV_USAGE = [
   '       keyflip conv search "<query>" [--hybrid|--semantic|--lexical] [--per-conv N] [--limit N] [--since 7d] [--account <name>] [--no-subagents]',
   '       keyflip conv context "<query>" [--hybrid] [--budget 12000] [--expand 1] [--no-subagents]   RAG block for an LLM prompt',
   '       keyflip conv show <id|prefix|title> [--format md|html|json] [--out <file|dir>] [--no-redact]',
-  '       keyflip conv index [--embed|--no-embed] [--embed-pause-ms N] [--embed-batch N] [--max-embed N] [--background] [--force] [--rebuild-profanity] [--writes] [--watch] [--interval N]  build/refresh the local retrieval index',
+  '       keyflip conv index [--embed|--no-embed] [--embed-pause-ms N] [--embed-batch N] [--max-embed N] [--max-rss-mb N] [--max-run-min N] [--background] [--force] [--rebuild-profanity] [--writes] [--watch] [--interval N]  build/refresh the local retrieval index',
   '                                     --watch re-indexes every N minutes (default 30) so search stays current',
   '       keyflip conv index --schedule [--interval N]   keep it current unattended (launchd/cron); --unschedule removes it',
   '       keyflip conv export (--all | <id>) [--obsidian] --out <dir> [--format md|html|json] [--no-redact]',
@@ -8566,6 +8566,8 @@ const CONV_VALUE_FLAGS = [
   '--embed-pause-ms',
   '--embed-batch',
   '--max-embed',
+  '--max-rss-mb',
+  '--max-run-min',
   '--search',
   '--interval',
   '--account',
@@ -8732,6 +8734,10 @@ async function convBuild(ctx, rest, embedDefault) {
   if (!batch.ok) throw new Error(batch.error);
   const maxEmbed = convInt(rest, '--max-embed', null, 1, 100000);
   if (!maxEmbed.ok) throw new Error(maxEmbed.error);
+  const maxRss = convInt(rest, '--max-rss-mb', null, 0, 262144);
+  if (!maxRss.ok) throw new Error(maxRss.error);
+  const maxRun = convInt(rest, '--max-run-min', null, 0, 10080);
+  if (!maxRun.ok) throw new Error(maxRun.error);
   const embed =
     embedDefault != null ? embedDefault : rest.indexOf('--no-embed') !== -1 ? false : rest.indexOf('--embed') !== -1;
   const background = rest.indexOf('--background') !== -1 && rest.indexOf('--foreground') === -1;
@@ -8744,6 +8750,14 @@ async function convBuild(ctx, rest, embedDefault) {
     embedPauseMs: pauseMs.value != null ? pauseMs.value : _cfg.get(ctx, 'conv.embedPauseMs'),
     embedBatch: batch.value != null ? batch.value : _cfg.get(ctx, 'conv.embedBatch'),
     maxEmbedSources: maxEmbed.value,
+    maxRssMb: maxRss.value != null ? maxRss.value : _cfg.get(ctx, 'conv.maxRssMb'),
+    maxRunMinutes: maxRun.value != null ? maxRun.value : _cfg.get(ctx, 'conv.maxRunMinutes'),
+    // Timestamped progress lines (every 5 min at least) so an unattended run that stalls shows in
+    // its log. With --json `print` writes to stderr, so stdout stays one JSON document.
+    log: function (line) {
+      const text = new Date().toISOString() + ' conv index: ' + line;
+      print(style.dim(text));
+    },
     background: background,
     force: rest.indexOf('--force') !== -1,
     rebuildProfanity: rest.indexOf('--rebuild-profanity') !== -1,
@@ -8770,6 +8784,9 @@ function convReportText(ctx, r) {
     r.skipped + ' skipped',
   ];
   if (r.rechunk) parts.push(r.rechunk + ' re-chunked (disk disagreed with the index)');
+  if (r.errorsDropped || r.warningsDropped) {
+    parts.push((r.errorsDropped || 0) + ' error(s) and ' + (r.warningsDropped || 0) + ' warning(s) not listed');
+  }
   if (r.profanityMasked) {
     parts.push(
       r.profanityMasked +
@@ -8788,6 +8805,9 @@ function convReportText(ctx, r) {
     (s.chunks || 0) +
     ' chunks';
   line += '\n' + style.dim(parts.join(' · ') + ' · ' + fmtBytes(s.bytes || 0) + ' · ' + (r.ms / 1000).toFixed(1) + 's');
+  if (r.stopped) {
+    line += '\n' + style.warn('Stopped early: ' + r.stopped.message);
+  }
   if (r.backgroundEmbed && (r.backgroundEmbed.started || r.backgroundEmbed.alreadyRunning)) {
     line +=
       '\n' +
