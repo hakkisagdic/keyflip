@@ -267,6 +267,8 @@ function usage() {
   print('                                 openrouter, ollama…) needs only the key — bare add = picker');
   print('  keyflip provider catalog       the preset endpoints (id, URL, models, docs)');
   print('  keyflip provider models <id>   ask the endpoint what models it serves (GET /v1/models)');
+  print('  keyflip provider fork <src> <new> [--no-key]');
+  print('                                 duplicate a provider config (copies its stored key unless --no-key)');
   print('  keyflip use <name>             route Claude Code to that provider (no restart);');
   print('                                 keyflip provider off = back to your subscription');
   print("  keyflip speedtest [name]       time a provider's endpoints, pick the fastest");
@@ -4356,6 +4358,39 @@ async function cmdProviderUse(ctx, name) {
   jsonOut({ provider: name, baseUrl: r.baseUrl });
 }
 
+function cmdProviderFork(ctx, rest) {
+  const noKey = rest.indexOf('--no-key') !== -1;
+  const unknownFlags = rest.filter(function (a) {
+    return a.indexOf('-') === 0 && a !== '--no-key';
+  });
+  if (unknownFlags.length) {
+    return fail('unknown flag: ' + unknownFlags[0] + ' (usage: keyflip provider fork <src> <new> [--no-key])');
+  }
+  const pos = rest.filter(function (a) {
+    return a.indexOf('-') !== 0;
+  });
+  const src = pos[0];
+  const dest = pos[1];
+  if (!src || !dest || pos.length > 2) {
+    return fail('usage: keyflip provider fork <src> <new> [--no-key]');
+  }
+  let r;
+  try {
+    r = provider.fork(ctx, src, dest, { noKey: noKey });
+  } catch (e) {
+    return fail(e && e.message ? e.message : String(e));
+  }
+  const keyNote = r.keyCopied ? 'key copied' : 'no key copied';
+  logmod.log('provider fork ' + src + ' -> ' + dest + ' (' + keyNote + ')');
+  print(style.ok('✅') + ' forked provider ' + src + ' -> ' + dest + ' (' + keyNote + ')');
+  jsonOut({
+    from: src,
+    to: dest,
+    baseUrl: r.meta.baseUrl,
+    keyCopied: r.keyCopied,
+  });
+}
+
 async function cmdProvider(ctx, rest) {
   const sub = rest[0];
   const args = rest.slice(1);
@@ -4365,6 +4400,14 @@ async function cmdProvider(ctx, rest) {
         ctx,
         function () {
           return cmdProviderAdd(ctx, args);
+        },
+        'provider',
+      );
+    case 'fork':
+      return withLock(
+        ctx,
+        function () {
+          return cmdProviderFork(ctx, args);
         },
         'provider',
       );
@@ -4419,7 +4462,7 @@ async function cmdProvider(ctx, rest) {
         'provider',
       );
     default:
-      return fail('unknown: keyflip provider ' + sub + ' (use: add | list | use | off | remove)');
+      return fail('unknown: keyflip provider ' + sub + ' (use: add | list | use | off | remove | fork)');
   }
 }
 
