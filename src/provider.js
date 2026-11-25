@@ -107,6 +107,47 @@ function add(ctx, name, opts) {
   return meta;
 }
 
+// Duplicate a provider profile under a new name. Copies metadata (mode 0600)
+// and, unless opts.noKey, copies the stored credential from src to dest.
+// Never modifies src or .active.json.
+function fork(ctx, src, dest, opts) {
+  opts = opts || {};
+  if (!profiles.isValidName(dest)) throw new Error("invalid provider name: '" + (dest == null ? '' : dest) + "'");
+  if (!profiles.isValidName(src) || !exists(ctx, src)) {
+    throw new Error("no such provider: '" + (src == null ? '' : src) + "' (see: keyflip provider list)");
+  }
+  if (exists(ctx, dest)) throw new Error("provider already exists: '" + dest + "'");
+  const srcMeta = read(ctx, src);
+  if (!srcMeta || typeof srcMeta !== 'object') {
+    throw new Error("could not read provider: '" + src + "'");
+  }
+  let key = null;
+  if (!opts.noKey) {
+    key = registerSecret(ctx.store.getProfile(keyStoreName(src)));
+  }
+  const meta = Object.assign({}, srcMeta, {
+    name: dest,
+    savedAt: ctx.now(),
+  });
+  fs.mkdirSync(providersDir(ctx), { recursive: true });
+  writeJsonStable(metaPath(ctx, dest), meta, 0o600);
+  let keyCopied = false;
+  if (!opts.noKey && key) {
+    try {
+      ctx.store.setProfile(keyStoreName(dest), key);
+      keyCopied = true;
+    } catch (e) {
+      try {
+        fs.rmSync(metaPath(ctx, dest), { force: true });
+      } catch {
+        /* ignore */
+      }
+      throw e;
+    }
+  }
+  return { meta: meta, keyCopied: keyCopied };
+}
+
 function remove(ctx, name) {
   try {
     fs.rmSync(metaPath(ctx, name), { force: true });
@@ -288,6 +329,7 @@ export {
   exists,
   readActive,
   add,
+  fork,
   remove,
   use,
   useOfficial,
