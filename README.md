@@ -1035,7 +1035,7 @@ keyflip conv transfer a7dc93d0 --to codex         # a handoff bundle for another
   instead of a stale one — it runs on an **interval**, not at a nightly hour, because a daily index would
   be a day behind. The pass is incremental: an unchanged transcript costs one `stat()`, and only new or
   changed chunks are embedded, so a tick costs seconds. It runs the **local** embedding model — no cloud
-  model, no quota — with GPU-friendly defaults (`conv.embedBatch = 8`, `conv.embedPauseMs = 500`, `conv.maxEmbed = 300`, overridable via `keyflip config set` or `--embed-batch` / `--embed-pause-ms` / `--max-embed`), and `keyflip conv status` reports remaining pending chunks and token estimates. `--schedule-status` shows the state, `--unschedule` removes it, and `--watch` is the
+  model, no quota — with GPU-friendly defaults (`conv.embedBatch = 8`, `conv.embedPauseMs = 500`, `conv.maxEmbed = 300`, overridable via `keyflip config set` or `--embed-batch` / `--embed-pause-ms` / `--max-embed`). A run is bounded too: it saves its progress and exits cleanly when it passes `conv.maxRssMb` (2048 MB) or `conv.maxRunMinutes` (120 min) (`--max-rss-mb` / `--max-run-min`, 0 = off), the next tick resumes, and it logs a progress line at least every 5 minutes. `keyflip conv status` reports remaining pending chunks and token estimates. `--schedule-status` shows the state, `--unschedule` removes it, and `--watch` is the
   foreground equivalent if you would rather keep a terminal open.
 - **Exports redact by default.** MD / self-contained HTML / canonical JSON, and Obsidian notes with YAML
   frontmatter, tags and an index note. Credential-shaped lines are masked unless you pass `--no-redact`.

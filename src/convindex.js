@@ -1546,6 +1546,7 @@ async function buildRun(ctx, opts, box) {
   }
   // Mid-scan commit: the rows scanned so far plus the untouched rows of the previous index. Nothing
   // is removed here (that waits for a finished scan), so a stop at any moment leaves a whole index.
+  const scanFlushSources = opts.scanFlushSources > 0 ? Math.floor(opts.scanFlushSources) : SCAN_FLUSH_SOURCES;
   let sinceScanFlush = 0;
   let lastScanFlushMs = Date.now();
   function flushScan() {
@@ -1803,7 +1804,7 @@ async function buildRun(ctx, opts, box) {
         report.profanityMasked += maskedChunks;
         report.profanityModelMasked += modelMaskedChunks;
         sinceScanFlush++;
-        if (sinceScanFlush >= SCAN_FLUSH_SOURCES || Date.now() - lastScanFlushMs >= SCAN_FLUSH_MS) flushScan();
+        if (sinceScanFlush >= scanFlushSources || Date.now() - lastScanFlushMs >= SCAN_FLUSH_MS) flushScan();
       } catch (e) {
         if (e instanceof GuardStop) throw e;
         report.skipped++;
