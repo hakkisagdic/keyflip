@@ -10,6 +10,8 @@ import { fileURLToPath } from 'url';
 import { makeCtx } from './helpers.js';
 import * as config from '../src/config.js';
 import * as convindex from '../src/convindex.js';
+import { installModel } from '../src/profanity-model-install.js';
+import { DEFAULT_MODEL_ID } from '../src/profanity-model.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -63,7 +65,7 @@ test('K1: the scan commits progress while it runs, not only at the end', async f
     scanFlushSources: 5,
     onProgress: function (p) {
       if (p.phase !== 'scan') return;
-      let rows = 0;
+      let rows;
       try {
         rows = Object.keys(readManifest(ctx).sources).length;
       } catch {
@@ -96,7 +98,10 @@ test('K2: a memory limit stops the run cleanly with the reason, and the next run
   assert.strictEqual(r1.stopped.reason, 'memory');
   assert.strictEqual(r1.stopped.phase, 'scan');
   assert.ok(r1.stopped.done >= 5 && r1.stopped.done < 12);
-  assert.ok(lines.some((l) => /memory guard/.test(l) && /resumes/.test(l)), 'the reason is logged');
+  assert.ok(
+    lines.some((l) => /memory guard/.test(l) && /resumes/.test(l)),
+    'the reason is logged',
+  );
   const rows1 = Object.keys(readManifest(ctx).sources).length;
   assert.ok(rows1 >= 4 && rows1 < 12, 'the finished conversations were saved: ' + rows1);
   assert.strictEqual(rows1, r1.indexed);
@@ -352,7 +357,13 @@ test('meta.json is written row by row but byte-identical to a one-shot JSON.stri
   sources['b'] = { id: 'b', chunkHashes: [] };
   sources['gone'] = undefined;
   const samples = [
-    { schemaVersion: 1, builtAt: null, embedding: null, stats: { sources: 2, byApp: { claude: { sources: 2 } } }, sources },
+    {
+      schemaVersion: 1,
+      builtAt: null,
+      embedding: null,
+      stats: { sources: 2, byApp: { claude: { sources: 2 } } },
+      sources,
+    },
     { schemaVersion: 1, sources: Object.create(null) },
     { schemaVersion: 1, only: 'sources are not first', sources: { x: { id: 'x' } }, tail: [1, 2, { a: [] }] },
     {},
@@ -365,10 +376,80 @@ test('meta.json is written row by row but byte-identical to a one-shot JSON.stri
 test('a built manifest on disk parses and equals what the build returned', async function () {
   const ctx = ctxFor();
   seedMany(ctx, 5);
-  const r = await convindex.build(ctx, { embed: true, post: async (_u, body) => ({ model: body.model, embeddings: body.input.map(() => Array(8).fill(0.5)) }) });
+  const r = await convindex.build(ctx, {
+    embed: true,
+    post: async (_u, body) => ({ model: body.model, embeddings: body.input.map(() => Array(8).fill(0.5)) }),
+  });
   const m = readManifest(ctx);
   assert.strictEqual(Object.keys(m.sources).length, 5);
   assert.strictEqual(m.stats.sources, r.stats.sources);
   assert.ok(fs.readFileSync(convindex.metaPath(ctx), 'utf8').endsWith('}\n'));
   Object.values(m.sources).forEach((row) => assert.ok(row.vec && row.vec.count === row.chunks));
+});
+
+async function ctxWithFakeModel() {
+  const ctx = ctxFor();
+  await installModel(ctx, DEFAULT_MODEL_ID, {
+    installRuntimeFn: async ({ dir }) => {
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, 'package.json'), '{"name":"rt"}\n');
+    },
+    downloadModelFn: async ({ weightsRoot, entry }) => {
+      const mDir = path.join(weightsRoot, ...entry.id.split('/'), entry.subfolder);
+      fs.mkdirSync(mDir, { recursive: true });
+      fs.writeFileSync(path.join(mDir, entry.modelFile), 'onnx-weights');
+    },
+  });
+  config.set(ctx, 'conv.profanityModel', DEFAULT_MODEL_ID);
+  return ctx;
+}
+
+test('K1: the local model is reloaded when memory nears the limit, so the run goes on', async function () {
+  const ctx = await ctxWithFakeModel();
+  seedMany(ctx, 6);
+  let loads = 0;
+  let disposed = 0;
+  const lines = [];
+  const loader = async function () {
+    loads++;
+    const clf = async (texts) => texts.map(() => ({ score: 0.01 }));
+    clf.dispose = async () => {
+      disposed++;
+    };
+    return clf;
+  };
+  // Over the soft share (80% of 200 MB) until the model has been reloaded once, then small again.
+  const r = await convindex.build(ctx, {
+    profanityLoadOpts: { runtimeLoader: loader },
+    maxRssMb: 200,
+    rssProbe: () => (loads < 2 ? 170 * MB : 50 * MB),
+    log: (l) => lines.push(l),
+  });
+  assert.strictEqual(r.stopped, undefined, JSON.stringify(r.stopped));
+  assert.strictEqual(r.indexed, 6);
+  assert.strictEqual(loads, 2, 'reloaded exactly once (at most once a minute)');
+  assert.ok(disposed >= 2, 'the old model was disposed and so was the last one');
+  assert.ok(lines.some((l) => /reloaded the local profanity model \(rss 170 MB -> 50 MB\)/.test(l)));
+});
+
+test('K2: a model that cannot be reloaded ends the run cleanly instead of failing every conversation', async function () {
+  const ctx = await ctxWithFakeModel();
+  seedMany(ctx, 6);
+  let loads = 0;
+  const loader = async function () {
+    loads++;
+    if (loads > 1) throw new Error('weights vanished');
+    const clf = async (texts) => texts.map(() => ({ score: 0.01 }));
+    clf.dispose = async () => {};
+    return clf;
+  };
+  const r = await convindex.build(ctx, {
+    profanityLoadOpts: { runtimeLoader: loader },
+    maxRssMb: 200,
+    rssProbe: () => 170 * MB,
+  });
+  assert.ok(r.stopped);
+  assert.strictEqual(r.stopped.reason, 'model');
+  assert.match(r.stopped.message, /weights vanished/);
+  assert.strictEqual(r.skipped, 0, 'no conversation was marked skipped');
 });

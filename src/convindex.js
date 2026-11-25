@@ -1186,6 +1186,11 @@ const SCAN_FLUSH_MS = 120 * 1000;
 // Per-source errors and warnings are kept for the report, but never without bound.
 const MAX_REPORT_ENTRIES = 1000;
 const CLASSIFY_GUARD_BATCH = 64;
+// The local model's runtime keeps native memory it never gives back during a long pass. Past this
+// share of the memory limit the model is reloaded (at most once a minute) before the guard has to
+// stop the whole run.
+const CLASSIFIER_SOFT_SHARE = 0.8;
+const CLASSIFIER_RECYCLE_MIN_GAP_MS = 60 * 1000;
 
 class GuardStop extends Error {
   constructor(stop) {
@@ -1301,6 +1306,25 @@ function makeRunGuard(opts) {
     peakRss: function () {
       return peakRss;
     },
+    rssNow: function () {
+      return rssProbe();
+    },
+    // Stop for a reason of the caller's own (the same clean exit as a limit).
+    halt: function (reason, message) {
+      stopped = {
+        reason: reason,
+        phase: state.phase,
+        done: state.done,
+        total: state.total,
+        rssBytes: rssProbe(),
+        elapsedMs: clock() - startedAt,
+        message: message + ' at ' + where() + '; progress saved, the next run resumes',
+      };
+      return stopped;
+    },
+    overSoftLimit: function () {
+      return maxRssMb > 0 && rssProbe() > maxRssMb * 1048576 * CLASSIFIER_SOFT_SHARE;
+    },
     // A timer beside the loop: it logs even when the loop is stuck inside one slow await.
     start: function () {
       if (!log || progressMs <= 0 || timer) return;
@@ -1369,6 +1393,9 @@ async function buildRun(ctx, opts, box) {
   let activeModelId = configuredModel;
   let activeModelHash = '';
   let activeClassifier = null;
+  // Set when this build loaded the local model itself: it can then be reloaded to give back the
+  // native memory its runtime keeps growing during a long pass (see guardedClassifier below).
+  let recycleClassifier = null;
   let modelFallback = false;
   let modelWarning = null;
   if (profanityEnabled && configuredModel !== 'off') {
@@ -1392,8 +1419,14 @@ async function buildRun(ctx, opts, box) {
         };
       } else {
         try {
-          activeClassifier = await _profanityModel.loadLocalClassifier(ctx, configuredModel);
+          activeClassifier = await _profanityModel.loadLocalClassifier(ctx, configuredModel, opts.profanityLoadOpts);
           activeModelHash = installed.hash || installed.version || '1';
+          recycleClassifier = async function () {
+            const old = activeClassifier;
+            activeClassifier = null;
+            if (old && typeof old.dispose === 'function') await old.dispose();
+            activeClassifier = await _profanityModel.loadLocalClassifier(ctx, configuredModel, opts.profanityLoadOpts);
+          };
         } catch (e) {
           modelFallback = true;
           activeModelId = 'off';
@@ -1421,16 +1454,34 @@ async function buildRun(ctx, opts, box) {
   // The classifier works through every sentence of a conversation in one call, which can take
   // minutes on a long chat: let the run guard speak between small batches, not only between sources.
   box.guard = guard;
+  let lastRecycleAt = 0;
+  async function maybeRecycleClassifier() {
+    if (!recycleClassifier || !guard.overSoftLimit()) return;
+    const now = Date.now();
+    if (now - lastRecycleAt < CLASSIFIER_RECYCLE_MIN_GAP_MS) return;
+    lastRecycleAt = now;
+    const before = guard.rssNow();
+    try {
+      await recycleClassifier();
+    } catch (e) {
+      throw new GuardStop(
+        guard.halt('model', 'could not reload the local profanity model (' + ((e && e.message) || String(e)) + ')'),
+      );
+    }
+    guard.log('reloaded the local profanity model (rss ' + fmtMb(before) + ' -> ' + fmtMb(guard.rssNow()) + ')');
+  }
   const guardedClassifier = activeClassifier
     ? async function (texts) {
         const list = Array.isArray(texts) ? texts : [];
         if (list.length <= CLASSIFY_GUARD_BATCH) {
           guard.assertOk();
+          await maybeRecycleClassifier();
           return activeClassifier(list);
         }
         const out = [];
         for (let i = 0; i < list.length; i += CLASSIFY_GUARD_BATCH) {
           guard.assertOk();
+          await maybeRecycleClassifier();
           const part = await activeClassifier(list.slice(i, i + CLASSIFY_GUARD_BATCH));
           for (const r of part) out.push(r);
         }
