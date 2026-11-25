@@ -215,6 +215,20 @@ SCHEMA['conv.maxEmbed'] = {
   max: 100000,
   help: 'Maximum conversations embedded per scheduled tick (0 = unlimited).',
 };
+SCHEMA['conv.maxRssMb'] = {
+  type: 'int',
+  default: 2048,
+  min: 0,
+  max: 262144,
+  help: 'Memory guard for `conv index`: when the process uses more than this many MB it saves its progress and exits cleanly; the next run resumes (0 = no limit).',
+};
+SCHEMA['conv.maxRunMinutes'] = {
+  type: 'int',
+  default: 120,
+  min: 0,
+  max: 10080,
+  help: 'Wall-clock limit for one `conv index` run in minutes: it saves its progress and exits cleanly, the next run resumes (0 = no limit).',
+};
 SCHEMA['conv.profanityFilter'] = {
   type: 'bool',
   default: true,
