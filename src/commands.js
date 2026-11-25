@@ -146,7 +146,7 @@ const CATALOG = [
     group: 'providers',
     safe: false,
     usage:
-      'keyflip provider catalog | add <id|name> [--base-url <url>] [--from <id>] [--key-file <f|->] | list | models <id|name> | off',
+      'keyflip provider catalog | add <id|name> [--base-url <url>] [--from <id>] [--key-file <f|->] | fork <src> <new> [--no-key] | list | models <id|name> | off',
     desc: 'Manage 3rd-party endpoints (relay/gateway/Bedrock/OpenRouter); a catalog preset needs only a key.',
   },
   {

@@ -290,6 +290,7 @@ keyflip provider catalog      # 19 presets (Z.AI, Zhipu, Kimi, DeepSeek, MiniMax
 keyflip provider add <id> --key-file -        # a preset needs only the key — URL/models come from it
 keyflip provider add <name> --from <id> --key-file -   # preset under the user's own name
 keyflip provider add <name> --base-url <url> --key-file <file|->  # key via stdin, never argv
+keyflip provider fork <src> <new> [--no-key]  # duplicate a provider config (copies key unless --no-key)
 keyflip provider models <id|name>   # GET /v1/models: what does it actually serve? (key never printed)
 keyflip use <name>            # route Claude Code to it (no restart)
 keyflip provider off          # back to the subscription (OAuth)

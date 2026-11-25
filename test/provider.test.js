@@ -5,7 +5,7 @@ import os from 'os';
 import path from 'path';
 import * as provider from '../src/provider.js';
 import * as settings from '../src/settings.js';
-import { makeCtx } from './helpers.js';
+import { makeCtx, assertPrivateMode } from './helpers.js';
 import _child_process from 'child_process';
 import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
@@ -160,4 +160,242 @@ test('CLI: provider add (key via stdin) -> use -> status -> off', function () {
   assert.strictEqual(r.status, 0, r.stderr);
   const cfg2 = JSON.parse(fs.readFileSync(path.join(home, '.claude', 'settings.json'), 'utf8'));
   assert.strictEqual(cfg2.env && cfg2.env.ANTHROPIC_BASE_URL, undefined);
+});
+
+// ---- #15 provider fork ----
+test('provider fork copies metadata (mode 0600) and stored key by default (K1)', function () {
+  let now = '2026-01-01T00:00:00.000Z';
+  const ctx = makeCtx({
+    now: function () {
+      return now;
+    },
+  });
+  const syntheticKey = ['sk', 'fork', 'secret', 'one'].join('-');
+  provider.add(ctx, 'src', {
+    baseUrl: 'https://relay.example/v1',
+    key: syntheticKey,
+    authScheme: 'api-key',
+    compat: 'openai',
+    models: { default: 'm1', haiku: 'm2' },
+    endpointCandidates: ['https://relay.example/v1', 'https://alt.example/v1'],
+  });
+
+  now = '2026-01-02T00:00:00.000Z';
+  const r = provider.fork(ctx, 'src', 'dest');
+  assert.strictEqual(r.keyCopied, true);
+  assert.strictEqual(r.meta.name, 'dest');
+  assert.strictEqual(r.meta.savedAt, '2026-01-02T00:00:00.000Z');
+  assert.strictEqual(r.meta.baseUrl, 'https://relay.example/v1');
+  assert.strictEqual(r.meta.authScheme, 'api-key');
+  assert.strictEqual(r.meta.compat, 'openai');
+  assert.deepStrictEqual(r.meta.models, { default: 'm1', haiku: 'm2' });
+  assert.deepStrictEqual(r.meta.endpointCandidates, ['https://relay.example/v1', 'https://alt.example/v1']);
+
+  const destFile = provider.metaPath(ctx, 'dest');
+  assertPrivateMode(destFile);
+  const rawDest = fs.readFileSync(destFile, 'utf8');
+  assert.strictEqual(rawDest.indexOf(syntheticKey), -1, 'key must not appear in metadata file');
+  assert.strictEqual(ctx.store.getProfile(provider.keyStoreName('dest')), syntheticKey);
+});
+
+test('provider fork with { noKey: true } copies metadata only and skips stored key (K2)', function () {
+  const ctx = ctxWithSettings();
+  const syntheticKey = ['sk', 'fork', 'secret', 'two'].join('-');
+  provider.add(ctx, 'src', {
+    baseUrl: 'https://relay.example/v1',
+    key: syntheticKey,
+    authScheme: 'bearer',
+    models: { default: 'm1' },
+  });
+
+  const r = provider.fork(ctx, 'src', 'destNoKey', { noKey: true });
+  assert.strictEqual(r.keyCopied, false);
+  assert.strictEqual(r.meta.name, 'destNoKey');
+  assert.strictEqual(r.meta.baseUrl, 'https://relay.example/v1');
+  assert.strictEqual(r.meta.authScheme, 'bearer');
+  assert.deepStrictEqual(r.meta.models, { default: 'm1' });
+  assertPrivateMode(provider.metaPath(ctx, 'destNoKey'));
+  assert.strictEqual(ctx.store.getProfile(provider.keyStoreName('destNoKey')), null);
+});
+
+test('provider fork when source has no stored key returns keyCopied=false (K3)', function () {
+  const ctx = ctxWithSettings();
+  provider.add(ctx, 'nokey', {
+    baseUrl: 'https://nokey.example/v1',
+    authScheme: 'bearer',
+  });
+
+  const r = provider.fork(ctx, 'nokey', 'nokeyCopy');
+  assert.strictEqual(r.keyCopied, false);
+  assertPrivateMode(provider.metaPath(ctx, 'nokeyCopy'));
+  assert.strictEqual(ctx.store.getProfile(provider.keyStoreName('nokeyCopy')), null);
+});
+
+test('provider fork leaves source, active provider, and settings.json untouched (K4)', function () {
+  const ctx = ctxWithSettings();
+  const syntheticKey = ['sk', 'fork', 'active', 'four'].join('-');
+  provider.add(ctx, 'src', {
+    baseUrl: 'https://relay.example/v1',
+    key: syntheticKey,
+    authScheme: 'bearer',
+    models: { sonnet: 's1' },
+  });
+  provider.use(ctx, 'src');
+
+  const srcBytesBefore = fs.readFileSync(provider.metaPath(ctx, 'src'), 'utf8');
+  const activeBytesBefore = fs.readFileSync(provider.activePath(ctx), 'utf8');
+  const settingsBytesBefore = fs.readFileSync(ctx.claudeSettingsPath, 'utf8');
+  const srcKeyBefore = ctx.store.getProfile(provider.keyStoreName('src'));
+
+  provider.fork(ctx, 'src', 'dest');
+
+  assert.strictEqual(fs.readFileSync(provider.metaPath(ctx, 'src'), 'utf8'), srcBytesBefore);
+  assert.strictEqual(fs.readFileSync(provider.activePath(ctx), 'utf8'), activeBytesBefore);
+  assert.strictEqual(fs.readFileSync(ctx.claudeSettingsPath, 'utf8'), settingsBytesBefore);
+  assert.strictEqual(ctx.store.getProfile(provider.keyStoreName('src')), srcKeyBefore);
+});
+
+test('provider fork refuses missing source and writes nothing (K5)', function () {
+  const ctx = ctxWithSettings();
+  assert.throws(function () {
+    provider.fork(ctx, 'nope', 'dest');
+  }, /no such provider/);
+  assert.strictEqual(provider.exists(ctx, 'dest'), false);
+  assert.strictEqual(ctx.store.getProfile(provider.keyStoreName('dest')), null);
+});
+
+test('provider fork refuses existing destination and src === dest without overwriting (K6)', function () {
+  const ctx = ctxWithSettings();
+  const srcKey = ['sk', 'fork', 'src', 'six'].join('-');
+  const destKey = ['sk', 'fork', 'dest', 'six'].join('-');
+  provider.add(ctx, 'src', { baseUrl: 'https://src.example/v1', key: srcKey });
+  provider.add(ctx, 'dest', { baseUrl: 'https://dest.example/v1', key: destKey });
+
+  const destBytesBefore = fs.readFileSync(provider.metaPath(ctx, 'dest'), 'utf8');
+  const srcBytesBefore = fs.readFileSync(provider.metaPath(ctx, 'src'), 'utf8');
+
+  assert.throws(function () {
+    provider.fork(ctx, 'src', 'dest');
+  }, /already exists/);
+  assert.strictEqual(fs.readFileSync(provider.metaPath(ctx, 'dest'), 'utf8'), destBytesBefore);
+  assert.strictEqual(ctx.store.getProfile(provider.keyStoreName('dest')), destKey);
+
+  assert.throws(function () {
+    provider.fork(ctx, 'src', 'src');
+  }, /already exists/);
+  assert.strictEqual(fs.readFileSync(provider.metaPath(ctx, 'src'), 'utf8'), srcBytesBefore);
+  assert.strictEqual(ctx.store.getProfile(provider.keyStoreName('src')), srcKey);
+});
+
+test('provider fork refuses invalid destination names and rolls back meta if setProfile throws (K7)', function () {
+  const ctx = ctxWithSettings();
+  const srcKey = ['sk', 'fork', 'src', 'seven'].join('-');
+  provider.add(ctx, 'src', { baseUrl: 'https://src.example/v1', key: srcKey });
+
+  ['../escape', '-bad', '.hidden', '__proto__', '', 'a/b'].forEach(function (bad) {
+    assert.throws(function () {
+      provider.fork(ctx, 'src', bad);
+    }, /invalid provider name/);
+  });
+  assert.deepStrictEqual(provider.list(ctx), ['src']);
+
+  const origSetProfile = ctx.store.setProfile.bind(ctx.store);
+  ctx.store.setProfile = function (name, val) {
+    if (name === provider.keyStoreName('boom')) {
+      throw new Error('store write failed');
+    }
+    return origSetProfile(name, val);
+  };
+
+  assert.throws(function () {
+    provider.fork(ctx, 'src', 'boom');
+  }, /store write failed/);
+  assert.strictEqual(fs.existsSync(provider.metaPath(ctx, 'boom')), false);
+});
+
+test('CLI: provider fork copies key or skips with --no-key, never prints key, refuses invalid calls (K8)', function () {
+  const BIN = path.join(__dirname, '..', 'bin', 'keyflip.js');
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'keyflip-prov-fork-'));
+  const cliKey = ['sk', 'fork', 'cli', 'secret', '99'].join('-');
+  try {
+    fs.mkdirSync(path.join(home, '.claude'), { recursive: true });
+    fs.writeFileSync(path.join(home, '.claude', '.credentials.json'), '{"claudeAiOauth":{"accessToken":"T"}}');
+    fs.writeFileSync(path.join(home, '.claude.json'), JSON.stringify({ oauthAccount: { emailAddress: 'a@x.com' } }));
+
+    function run(args, input) {
+      return _child_process.spawnSync(process.execPath, [BIN].concat(args), {
+        encoding: 'utf8',
+        input: input,
+        env: Object.assign({}, process.env, {
+          HOME: home,
+          USERPROFILE: home,
+          XDG_CONFIG_HOME: path.join(home, '.config'),
+          CCSWITCH_TEST_CLAUDE: 'stopped',
+          KEYFLIP_TEST_CLAUDE: 'stopped',
+          KEYFLIP_TEST_OFFLINE: '1',
+        }),
+      });
+    }
+
+    let r = run(
+      ['provider', 'add', 'relay', '--base-url', 'https://relay.example/v1', '--key-file', '-'],
+      cliKey + '\n',
+    );
+    assert.strictEqual(r.status, 0, r.stderr);
+
+    r = run(['provider', 'fork', 'relay', 'relay-copy']);
+    assert.strictEqual(r.status, 0, r.stderr);
+    assert.match(r.stdout, /forked provider relay -> relay-copy \(key copied\)/);
+    assert.strictEqual((r.stdout + r.stderr).indexOf(cliKey), -1, 'CLI output must not print the key');
+
+    const copyMetaFile = path.join(home, '.config', 'keyflip', 'providers', 'relay-copy.json');
+    assertPrivateMode(copyMetaFile);
+    assert.strictEqual(fs.readFileSync(copyMetaFile, 'utf8').indexOf(cliKey), -1);
+
+    r = run(['use', 'relay-copy']);
+    assert.strictEqual(r.status, 0, r.stderr);
+    const cfgCopy = JSON.parse(fs.readFileSync(path.join(home, '.claude', 'settings.json'), 'utf8'));
+    assert.strictEqual(cfgCopy.env.ANTHROPIC_AUTH_TOKEN, cliKey);
+
+    r = run(['provider', 'fork', 'relay', 'relay-nokey', '--no-key', '--json']);
+    assert.strictEqual(r.status, 0, r.stderr);
+    assert.strictEqual((r.stdout + r.stderr).indexOf(cliKey), -1, 'CLI --json output must not print the key');
+    const jsonOut = JSON.parse(r.stdout);
+    assert.deepStrictEqual(
+      {
+        from: jsonOut.from,
+        to: jsonOut.to,
+        baseUrl: jsonOut.baseUrl,
+        keyCopied: jsonOut.keyCopied,
+      },
+      {
+        from: 'relay',
+        to: 'relay-nokey',
+        baseUrl: 'https://relay.example/v1',
+        keyCopied: false,
+      },
+    );
+    assert.match(r.stderr, /no key copied/);
+
+    r = run(['use', 'relay-nokey']);
+    assert.strictEqual(r.status, 0, r.stderr);
+    const cfgNoKey = JSON.parse(fs.readFileSync(path.join(home, '.claude', 'settings.json'), 'utf8'));
+    assert.strictEqual(cfgNoKey.env.ANTHROPIC_BASE_URL, 'https://relay.example/v1');
+    assert.strictEqual(cfgNoKey.env.ANTHROPIC_AUTH_TOKEN, undefined);
+
+    [
+      ['provider', 'fork', 'relay', 'relay-copy'],
+      ['provider', 'fork', 'missing', 'relay-new'],
+      ['provider', 'fork', 'relay', '../bad'],
+      ['provider', 'fork', 'relay'],
+      ['provider', 'fork', 'relay', 'relay-x', '--bogus'],
+    ].forEach(function (args) {
+      const bad = run(args);
+      assert.notStrictEqual(bad.status, 0, 'expected non-zero exit for: ' + args.join(' '));
+      assert.strictEqual((bad.stdout + bad.stderr).indexOf(cliKey), -1, 'refusal output must not print key');
+    });
+    assert.strictEqual(fs.existsSync(path.join(home, '.config', 'keyflip', 'providers', 'relay-new.json')), false);
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
 });

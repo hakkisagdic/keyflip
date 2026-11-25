@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **`keyflip test --all`**: run `doctor.testProvider` across every saved provider in parallel with bounded concurrency (4), printing results in sorted provider-list order followed by an `N ok, M failed` summary and exiting non-zero if any provider fails (including in `--json` mode, which emits `{ results: [{ provider, result }], ok, failed }`). Exports pure `doctor.runAll(names, testFn, limit)`.
+- **`keyflip provider fork <src> <new> [--no-key]`**: duplicate an existing provider profile under a new name (mode `0600`), copying its metadata (`baseUrl`, `authScheme`, `compat`, `models`, `endpointCandidates`) and stored API key unless `--no-key` is passed. Refuses invalid names, missing sources, or existing destinations without writing anything, never modifies the source or active provider, and never prints the key.
 
 ### Fixed
 
