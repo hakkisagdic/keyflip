@@ -915,7 +915,7 @@ async function pauseAtLeast(ms) {
   }
 }
 
-async function embedSource(ctx, id, chunks, prev, space, opts) {
+async function embedSource(ctx, id, chunks, prev, space, opts, guard) {
   // A source with no chunks on disk has nothing to embed. Never record it as vectorized:
   // doing so used to leave a 0-byte vector file and a meta row claiming "embedded", which
   // hid the real problem (missing/torn chunk file) behind a healthy-looking count.
@@ -978,6 +978,7 @@ async function embedSource(ctx, id, chunks, prev, space, opts) {
     opts && opts.embedPauseMs > 0 ? Math.max(0, Math.min(60000, Math.floor(Number(opts.embedPauseMs)))) : 0;
   const fresh = [];
   for (let i = 0; i < need.length; i += batchSize) {
+    if (guard) guard.assertOk();
     const batch = need.slice(i, i + batchSize).map((c) => safeForEmbedding(c.text, space).slice(0, EMBED_MAX_CHARS));
     // A flaky local endpoint (busy model, restarted Ollama) must cost a retry, not the whole
     // run: embedSource throws only after 3 tries, and the caller skips just this source.
@@ -1139,12 +1140,197 @@ function forget(ctx, ref, opts) {
   return plan;
 }
 
+// ---- run guard -------------------------------------------------------------------------------
+
+// A scan over tens of thousands of transcripts must never be able to eat the machine. The run
+// guard watches the process' resident memory and wall clock; when either limit is crossed the
+// build writes what it has and returns cleanly (`report.stopped`), so the next scheduled run
+// resumes from the saved rows instead of starting over. It also writes a progress line at least
+// every few minutes, so a stalled run shows in the log instead of looking like silence.
+const DEFAULT_MAX_RSS_MB = 2048;
+const DEFAULT_MAX_RUN_MIN = 120;
+const DEFAULT_PROGRESS_MS = 5 * 60 * 1000;
+// While scanning, finished conversations are staged on disk at once and committed to meta.json in
+// batches: a stop (or a crash) loses at most one batch of progress, and memory holds no chunk text.
+const SCAN_FLUSH_SOURCES = 500;
+const SCAN_FLUSH_MS = 120 * 1000;
+// Per-source errors and warnings are kept for the report, but never without bound.
+const MAX_REPORT_ENTRIES = 1000;
+const CLASSIFY_GUARD_BATCH = 64;
+
+class GuardStop extends Error {
+  constructor(stop) {
+    super(stop && stop.message ? stop.message : 'conv index stopped by the run guard');
+    this.name = 'GuardStop';
+    this.stop = stop;
+  }
+}
+
+function guardNumber(v, dflt) {
+  const n = Number(v);
+  return v === undefined || v === null || v === '' || !Number.isFinite(n) || n < 0 ? dflt : n;
+}
+
+function fmtMb(bytes) {
+  return Math.round(bytes / 1048576) + ' MB';
+}
+
+function makeRunGuard(opts) {
+  opts = opts || {};
+  const clock = typeof opts.clock === 'function' ? opts.clock : Date.now;
+  const rssProbe = typeof opts.rssProbe === 'function' ? opts.rssProbe : () => process.memoryUsage.rss();
+  const maxRssMb = guardNumber(opts.maxRssMb, DEFAULT_MAX_RSS_MB); // 0 = no memory limit
+  const maxRunMin = guardNumber(opts.maxRunMinutes, DEFAULT_MAX_RUN_MIN); // 0 = no time limit
+  const progressMs = guardNumber(opts.progressEveryMs, DEFAULT_PROGRESS_MS);
+  const log = typeof opts.log === 'function' ? opts.log : null;
+  const startedAt = clock();
+  const state = { phase: 'scan', done: 0, total: 0 };
+  let lastLogAt = startedAt;
+  let lastProgressAt = startedAt;
+  let timer = null;
+  let stopped = null;
+  let peakRss = 0;
+
+  function where() {
+    return state.phase + ' ' + state.done + '/' + state.total;
+  }
+  function say(line) {
+    if (!log) return;
+    try {
+      log(line);
+    } catch {
+      /* a broken logger must never stop the build */
+    }
+  }
+  function heartbeat(now) {
+    if (progressMs <= 0 || now - lastLogAt < progressMs) return;
+    lastLogAt = now;
+    const rss = rssProbe();
+    const idle = Math.round((now - lastProgressAt) / 1000);
+    say(
+      'progress ' +
+        where() +
+        ' · rss ' +
+        fmtMb(rss) +
+        ' · ' +
+        Math.round((now - startedAt) / 1000) +
+        's elapsed' +
+        (idle >= 60 ? ' · no step finished for ' + idle + 's' : ''),
+    );
+  }
+  function check() {
+    if (stopped) return stopped;
+    const now = clock();
+    const rss = rssProbe();
+    if (rss > peakRss) peakRss = rss;
+    if (maxRssMb > 0 && rss > maxRssMb * 1048576) {
+      stopped = {
+        reason: 'memory',
+        phase: state.phase,
+        done: state.done,
+        total: state.total,
+        rssBytes: rss,
+        limitBytes: maxRssMb * 1048576,
+        elapsedMs: now - startedAt,
+        message:
+          'memory guard: rss ' +
+          fmtMb(rss) +
+          ' is over the ' +
+          maxRssMb +
+          ' MB limit at ' +
+          where() +
+          '; progress saved, the next run resumes',
+      };
+    } else if (maxRunMin > 0 && now - startedAt > maxRunMin * 60000) {
+      stopped = {
+        reason: 'time',
+        phase: state.phase,
+        done: state.done,
+        total: state.total,
+        rssBytes: rss,
+        limitMs: maxRunMin * 60000,
+        elapsedMs: now - startedAt,
+        message: 'time limit: ' + maxRunMin + ' min reached at ' + where() + '; progress saved, the next run resumes',
+      };
+    }
+    if (!stopped) heartbeat(now);
+    return stopped;
+  }
+  return {
+    check: check,
+    assertOk: function () {
+      const s = check();
+      if (s) throw new GuardStop(s);
+    },
+    step: function (phase, done, total) {
+      state.phase = phase;
+      state.done = done;
+      state.total = total;
+      lastProgressAt = clock();
+    },
+    log: say,
+    peakRss: function () {
+      return peakRss;
+    },
+    // A timer beside the loop: it logs even when the loop is stuck inside one slow await.
+    start: function () {
+      if (!log || progressMs <= 0 || timer) return;
+      timer = setInterval(
+        function () {
+          if (!stopped) heartbeat(clock());
+        },
+        Math.max(10, Math.min(progressMs, 30000)),
+      );
+      if (timer.unref) timer.unref();
+    },
+    end: function () {
+      if (timer) clearInterval(timer);
+      timer = null;
+    },
+  };
+}
+
+// Remove stage files a killed run left behind (the pid is in the name, so a live run's are kept).
+function sweepStaleStageFiles(ctx) {
+  for (const dir of [chunksDir(ctx), tokensDir(ctx)]) {
+    let names = [];
+    try {
+      names = fs.readdirSync(dir);
+    } catch {
+      continue;
+    }
+    for (const n of names) {
+      const m = /\.stage-(\d+)-\d+-[0-9a-f]+$/.exec(n);
+      if (!m || pidAlive(Number(m[1]))) continue;
+      try {
+        fs.rmSync(path.join(dir, n), { force: true });
+      } catch {
+        /* best-effort */
+      }
+    }
+  }
+}
+
+function pushCapped(arr, item, report, key) {
+  if (arr.length < MAX_REPORT_ENTRIES) arr.push(item);
+  else report[key] = (report[key] || 0) + 1;
+}
+
 // ---- build ---------------------------------------------------------------------------------
 
 // Parse every source, compare mtime/size (+ content hash after parse), write changed chunk
 // files, and optionally embed them. Returns a report; never mutates a tool's own store.
 async function build(ctx, opts) {
   opts = opts || {};
+  const box = {};
+  try {
+    return await buildRun(ctx, opts, box);
+  } finally {
+    if (box.guard) box.guard.end();
+  }
+}
+
+async function buildRun(ctx, opts, box) {
   const profanityEnabled =
     typeof opts.profanityFilter === 'boolean' ? opts.profanityFilter : _config.get(ctx, 'conv.profanityFilter');
   const configuredModel = profanityEnabled
@@ -1202,12 +1388,32 @@ async function build(ctx, opts) {
     threshold: profanityThreshold,
     fallback: modelFallback,
   });
+  const guard = makeRunGuard(Object.assign({}, opts, { log: typeof opts.log === 'function' ? opts.log : null }));
+  // The classifier works through every sentence of a conversation in one call, which can take
+  // minutes on a long chat: let the run guard speak between small batches, not only between sources.
+  box.guard = guard;
+  const guardedClassifier = activeClassifier
+    ? async function (texts) {
+        const list = Array.isArray(texts) ? texts : [];
+        if (list.length <= CLASSIFY_GUARD_BATCH) {
+          guard.assertOk();
+          return activeClassifier(list);
+        }
+        const out = [];
+        for (let i = 0; i < list.length; i += CLASSIFY_GUARD_BATCH) {
+          guard.assertOk();
+          const part = await activeClassifier(list.slice(i, i + CLASSIFY_GUARD_BATCH));
+          for (const r of part) out.push(r);
+        }
+        return out;
+      }
+    : null;
   const profanityFilterObj = profanityEnabled
     ? _profanity.createFilter({
         configDir: ctx.configDir,
         model: activeModelId,
         threshold: profanityThreshold,
-        classifier: activeClassifier,
+        classifier: guardedClassifier,
       })
     : null;
   const profanityMask = profanityFilterObj ? profanityFilterObj.mask : null;
@@ -1234,7 +1440,6 @@ async function build(ctx, opts) {
     const k = conversations.sourceKey(s);
     if (k) discoveredKeys.add(k);
   }
-  const pendingWrites = [];
   const pendingDeletes = [];
   const pendingBlankIds = [];
   const pendingEnsureTokens = [];
@@ -1311,10 +1516,84 @@ async function build(ctx, opts) {
   // did not change, but the account that was live when it was written may have been learned
   // since the last pass.
   const accounts = _convaccounts.attributor(ctx);
+  sweepStaleStageFiles(ctx);
+  // Finished conversations are written to stage files at once (chunk text never piles up in
+  // memory) and renamed into place, together with meta.json, every SCAN_FLUSH_SOURCES sources.
+  const stageSuffix = '.stage-' + process.pid + '-' + Date.now() + '-' + crypto.randomBytes(4).toString('hex');
+  const stagedRenames = [];
+  function stageConversation(id, chunks, entry) {
+    const body = chunks.map((c) => JSON.stringify(c)).join('\n') + '\n';
+    entry.chunkBytes = Buffer.byteLength(body);
+    const targetChunk = chunkPath(ctx, id);
+    const tmpChunk = targetChunk + stageSuffix;
+    _fsutil.atomicWrite(tmpChunk, body, 0o600);
+    stagedRenames.push({ tmp: tmpChunk, dest: targetChunk });
+    const targetTok = tokenPath(ctx, id);
+    const tmpTok = targetTok + stageSuffix;
+    _fsutil.atomicWrite(tmpTok, encodeTokensBuffer(chunks), 0o600);
+    stagedRenames.push({ tmp: tmpTok, dest: targetTok });
+  }
+  function applyStagedRenames(refreshMetaLock) {
+    let ops = 0;
+    while (stagedRenames.length) {
+      const r = stagedRenames[0];
+      fs.mkdirSync(path.dirname(r.dest), { recursive: true });
+      fs.renameSync(r.tmp, r.dest);
+      stagedRenames.shift();
+      ops++;
+      if (ops % 200 === 0 && typeof refreshMetaLock === 'function') refreshMetaLock();
+    }
+  }
+  // Mid-scan commit: the rows scanned so far plus the untouched rows of the previous index. Nothing
+  // is removed here (that waits for a finished scan), so a stop at any moment leaves a whole index.
+  let sinceScanFlush = 0;
+  let lastScanFlushMs = Date.now();
+  function flushScan() {
+    if (!stagedRenames.length) return;
+    const rows = Object.create(null);
+    Object.assign(rows, meta.sources, next);
+    const snap = {
+      schemaVersion: SCHEMA_VERSION,
+      builtAt: (ctx.now && ctx.now()) || new Date().toISOString(),
+      embedding: meta.embedding || null,
+      candidateSources: meta.candidateSources != null ? meta.candidateSources : Object.keys(rows).length,
+      truncated: meta.truncated || 0,
+      profanitySig: meta.profanitySig || curProfanitySig,
+      profanityModel: activeModelId,
+      profanityMasked: countProfanityMasked(rows),
+      profanityModelMasked: countProfanityModelMasked(rows),
+      stats: countStats(rows),
+      sources: rows,
+    };
+    const ok = writeMeta(ctx, snap, {
+      force: !!opts.force,
+      beforeMerge: applyStagedRenames,
+      removedIds: new Set(),
+      metaLockTimeoutMs: opts.metaLockTimeoutMs,
+    });
+    // A busy meta.lock only postpones the commit: the staged files stay and go in with the next one.
+    if (ok) {
+      sinceScanFlush = 0;
+      lastScanFlushMs = Date.now();
+    }
+  }
+  const knownBefore = Object.keys(meta.sources).length;
+  guard.log(
+    'scan start: ' +
+      sources.length +
+      ' sources, ' +
+      knownBefore +
+      ' already indexed' +
+      (knownBefore ? ' (resuming)' : ''),
+  );
+  guard.start();
   let done = 0;
+  let scanStop = null;
   try {
     for (const src of sources) {
       done++;
+      guard.step('scan', done, sources.length);
+      guard.assertOk();
       if (opts.onProgress) opts.onProgress({ phase: 'scan', done: done, total: sources.length, id: src.path });
       const srcKey = conversations.sourceKey(src);
       const prev = byKey[srcKey];
@@ -1350,7 +1629,7 @@ async function build(ctx, opts) {
         }
         const conv = conversations.load(ctx, src, opts);
         if (Array.isArray(conv.warnings) && conv.warnings.length) {
-          conv.warnings.forEach((w) => report.warnings.push(w));
+          conv.warnings.forEach((w) => pushCapped(report.warnings, w, report, 'warningsDropped'));
         }
         const bytes = conv.messages.reduce((n, m) => n + Buffer.byteLength(m.text || ''), 0);
         if (!conv.messages.length) {
@@ -1517,21 +1796,42 @@ async function build(ctx, opts) {
         // Which account worked on it — stated if the user said so, inferred from the switch
         // timeline otherwise (and labelled as an inference).
         Object.assign(entry, accounts.fields(conv));
-        pendingWrites.push({ id: id, chunks: chunks, entry: entry });
+        stageConversation(id, chunks, entry);
         next[id] = entry;
         report.changed++;
         report.indexed++;
         report.profanityMasked += maskedChunks;
         report.profanityModelMasked += modelMaskedChunks;
+        sinceScanFlush++;
+        if (sinceScanFlush >= SCAN_FLUSH_SOURCES || Date.now() - lastScanFlushMs >= SCAN_FLUSH_MS) flushScan();
       } catch (e) {
+        if (e instanceof GuardStop) throw e;
         report.skipped++;
-        report.errors.push({ path: src.path, app: src.app, error: (e && e.message) || String(e) });
+        pushCapped(
+          report.errors,
+          { path: src.path, app: src.app, error: (e && e.message) || String(e) },
+          report,
+          'errorsDropped',
+        );
       }
     }
+  } catch (e) {
+    if (!(e instanceof GuardStop)) throw e;
+    scanStop = e.stop;
   } finally {
     if (activeClassifier && typeof activeClassifier.dispose === 'function') {
       await activeClassifier.dispose();
     }
+  }
+  if (scanStop) {
+    // Stopped half way: the scanned rows are committed below and the unscanned ones are kept as
+    // they were, exactly like a filtered build. Nothing is removed and nothing is embedded.
+    report.stopped = scanStop;
+    guard.log(scanStop.message);
+  } else {
+    guard.log(
+      'scan done: ' + sources.length + ' sources · ' + report.indexed + ' parsed · ' + report.reused + ' reused',
+    );
   }
 
   // An empty source scanned earlier in this pass may have queued its previous id in
@@ -1557,7 +1857,7 @@ async function build(ctx, opts) {
   // Full discovery means anything absent is gone. Filtered builds must not delete the rest.
   // An empty app list is NO filter (the CLI passes []), so it must still count as a full build:
   // otherwise a deleted conversation keeps its row, chunk file and vector forever.
-  const full = !(opts.apps && opts.apps.length) && !opts.limitSources && !sources.truncated;
+  const full = !scanStop && !(opts.apps && opts.apps.length) && !opts.limitSources && !sources.truncated;
   const nowIsoForGone = () => (ctx.now && ctx.now()) || new Date().toISOString();
   if (full) {
     const claimedKeys = new Set(claimed.values());
@@ -1603,12 +1903,10 @@ async function build(ctx, opts) {
     });
   }
 
-  // Stage all new chunk and token sidecar payloads to temporary files BEFORE acquiring meta.lock
-  // so that tokenization and disk writes do not hold meta.lock; the locked section only performs
-  // fast atomic renames, unlinks, and the meta.json merge.
-  const stageSuffix = '.stage-' + process.pid + '-' + Date.now() + '-' + crypto.randomBytes(4).toString('hex');
-  const stagedRenames = [];
-  for (const id of pendingEnsureTokens) {
+  // Changed conversations were staged while scanning. Stage the missing token sidecars of reused
+  // ones now, BEFORE acquiring meta.lock, so that tokenization and disk writes do not hold it; the
+  // locked section only performs fast atomic renames, unlinks, and the meta.json merge.
+  for (const id of scanStop ? [] : pendingEnsureTokens) {
     const targetTok = tokenPath(ctx, id);
     if (!fs.existsSync(targetTok)) {
       const existingChunks = readChunks(chunkPath(ctx, id));
@@ -1618,19 +1916,6 @@ async function build(ctx, opts) {
         stagedRenames.push({ tmp: tmpTok, dest: targetTok });
       }
     }
-  }
-  for (const w of pendingWrites) {
-    const body = w.chunks.map((c) => JSON.stringify(c)).join('\n') + '\n';
-    w.entry.chunkBytes = Buffer.byteLength(body);
-    const targetChunk = chunkPath(ctx, w.id);
-    const tmpChunk = targetChunk + stageSuffix;
-    _fsutil.atomicWrite(tmpChunk, body, 0o600);
-    stagedRenames.push({ tmp: tmpChunk, dest: targetChunk });
-
-    const targetTok = tokenPath(ctx, w.id);
-    const tmpTok = targetTok + stageSuffix;
-    _fsutil.atomicWrite(tmpTok, encodeTokensBuffer(w.chunks), 0o600);
-    stagedRenames.push({ tmp: tmpTok, dest: targetTok });
   }
 
   function cleanupStagedFiles() {
@@ -1647,13 +1932,7 @@ async function build(ctx, opts) {
   function applyPendingLexicalMutations(refreshMetaLock) {
     if (lexicalCommitted) return;
     lexicalCommitted = true;
-    let ops = 0;
-    for (const r of stagedRenames) {
-      fs.mkdirSync(path.dirname(r.dest), { recursive: true });
-      fs.renameSync(r.tmp, r.dest);
-      ops++;
-      if (ops % 200 === 0 && typeof refreshMetaLock === 'function') refreshMetaLock();
-    }
+    applyStagedRenames(refreshMetaLock);
     for (const id of pendingDeletes) {
       if (next[id]) continue;
       try {
@@ -1719,6 +1998,11 @@ async function build(ctx, opts) {
     report.stats = meta.stats || countStats(meta.sources || {});
     return report;
   }
+  if (scanStop) {
+    report.stats = initialMeta.stats;
+    report.peakRssBytes = guard.peakRss();
+    return report;
+  }
 
   let didEmbedPass = false;
   let embedBaseline = null;
@@ -1778,10 +2062,18 @@ async function build(ctx, opts) {
       let consecutiveFails = 0;
       let sinceFlush = 0;
       let lastFlushMs = Date.now();
+      guard.log('embed start: ' + toEmbed.length + ' of ' + candidates.length + ' conversations');
       try {
         for (const id of toEmbed) {
           const entry = next[id];
           embedDone++;
+          guard.step('embed', embedDone, toEmbed.length);
+          const embedHalt = guard.check();
+          if (embedHalt) {
+            report.stopped = embedHalt;
+            guard.log(embedHalt.message);
+            break;
+          }
           if (opts.onProgress) opts.onProgress({ phase: 'embed', done: embedDone, total: toEmbed.length, id: id });
           const chunks = readChunks(chunkPath(ctx, id));
           const diskHashes = chunks.map((c) => c.h);
@@ -1820,7 +2112,7 @@ async function build(ctx, opts) {
               vec: entry._oldVec || entry.vec,
               chunkHashes: entry._oldHashes || entry.chunkHashes,
             });
-            const vec = await embedSource(ctx, id, chunks, prev, space, opts);
+            const vec = await embedSource(ctx, id, chunks, prev, space, opts, guard);
             if (vec) {
               const newlyEmbedded = typeof vec._embeddedChunks === 'number' ? vec._embeddedChunks : chunks.length;
               delete vec._embeddedChunks;
@@ -1872,6 +2164,11 @@ async function build(ctx, opts) {
               }
             }
           } catch (e) {
+            if (e instanceof GuardStop) {
+              report.stopped = e.stop;
+              guard.log(e.stop.message);
+              break;
+            }
             // One unreadable source must not abandon the sources behind it. Only a streak of
             // consecutive failures means the endpoint is down: then stop hammering it.
             consecutiveFails++;
@@ -1913,7 +2210,7 @@ async function build(ctx, opts) {
     report.stats = initialMeta.stats;
   }
   const claudeIncluded = !(opts.apps && opts.apps.length) || opts.apps.indexOf('claude') !== -1;
-  if (claudeIncluded && _writeindex.isEnabled(ctx, opts)) {
+  if (claudeIncluded && !report.stopped && _writeindex.isEnabled(ctx, opts)) {
     const wr = _writeindex.build(ctx, {
       force: !!opts.force,
       exclude: opts.writesExclude,
@@ -1925,6 +2222,7 @@ async function build(ctx, opts) {
       wr.warnings.forEach((w) => report.warnings.push({ path: _writeindex.dirOf(ctx), app: 'claude', error: w }));
     }
   }
+  report.peakRssBytes = guard.peakRss();
   return report;
 }
 
