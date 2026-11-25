@@ -1,0 +1,57 @@
+{
+  "gates": {
+    "lint": {
+      "run": "npm run lint",
+      "expect": "exit_zero",
+      "timeout": 600,
+      "inputs": [
+        "**"
+      ]
+    },
+    "test": {
+      "run": "npm run test",
+      "expect": "exit_zero",
+      "timeout": 2400,
+      "serialise": true,
+      "inputs": [
+        "**"
+      ]
+    },
+    "jetbrains-keyflip-gradle-assemble": {
+      "run": "cd jetbrains-keyflip && ./gradlew assemble --quiet",
+      "expect": "exit_zero",
+      "timeout": 1200,
+      "inputs": [
+        "jetbrains-keyflip/**"
+      ]
+    },
+    "jetbrains-keyflip-gradle-check": {
+      "run": "cd jetbrains-keyflip && ./gradlew check --quiet",
+      "expect": "exit_zero",
+      "timeout": 2400,
+      "serialise": true,
+      "inputs": [
+        "jetbrains-keyflip/**"
+      ]
+    },
+    "diff-check": {
+      "run": "git diff --check",
+      "expect": "exit_zero",
+      "timeout": 60
+    }
+  },
+  "profiles": {
+    "quick": [
+      "lint",
+      "diff-check"
+    ],
+    "full": [
+      "lint",
+      "test",
+      "jetbrains-keyflip-gradle-assemble",
+      "jetbrains-keyflip-gradle-check",
+      "diff-check"
+    ]
+  },
+  "default_profile": "quick"
+}
