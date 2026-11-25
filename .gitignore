@@ -35,5 +35,9 @@ agent-mail/*.md
 .polyctl/hold
 .polyctl/sessions.json
 .polyctl/lanes/
+.polyctl/project-key
+.polyctl/ledger/*.lock
+.polyctl/ledger/opt-ins.jsonl
+.polyctl/mail/
 .kiro/settings/mcp.json
 .mcp.json
